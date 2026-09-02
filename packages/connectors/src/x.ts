@@ -37,18 +37,21 @@ export const XCapabilities = {
 
 const idInputSchema = {
   type: "string",
+  minLength: 1,
   pattern: "^[0-9]{1,32}$",
   description: "The numeric X ID.",
 } as const;
 
 const cursorInputSchema = {
   type: ["string", "null"],
+  minLength: 1,
   maxLength: 2_048,
   description: "An optional cursor returned by the preceding page.",
 } as const;
 
 const userNameInputSchema = {
   type: "string",
+  minLength: 1,
   pattern: "^@?[A-Za-z0-9_]{1,15}$",
   description: "The X handle, with or without the leading @.",
 } as const;
@@ -147,7 +150,14 @@ export const XAgentPluginDescriptor = defineConnectorAgentPlugin({
 
 const xIdSchema = z.string().trim().regex(/^\d{1,32}$/u, "Expected a numeric X ID");
 const xUserNameSchema = z.string().trim().regex(/^@?[A-Za-z0-9_]{1,15}$/u, "Expected an X handle");
-const cursorSchema = z.string().max(2_048).nullable().optional();
+// X hands back `next_cursor: ""` on a last page, so a model that faithfully
+// pages with what it was given sends that empty cursor straight back. The
+// declared schema tells the model an empty cursor is not a value — which is
+// what lets the harness drop a blanked one before it arrives — and this
+// normalizes the provider's own spelling of "no cursor" to the same absence,
+// rather than forwarding `cursor=` to the API.
+const cursorSchema = z.string().max(2_048).nullable().optional()
+  .transform((value) => value === "" ? undefined : value);
 const userTimelineSchema = z.strictObject({
   userId: xIdSchema.optional(),
   userName: xUserNameSchema.optional(),
@@ -234,7 +244,7 @@ export function createXConnector(config: XConnectorConfig): ConnectorAdapter {
           cursor: args.cursor,
         }, context.signal);
         return {
-          output: boundXValue(output),
+          output: boundXPage(output),
           summary: `Read the X timeline for ${userName ? `@${userName}` : `user ${userId}`}`,
         };
       }
@@ -242,7 +252,7 @@ export function createXConnector(config: XConnectorConfig): ConnectorAdapter {
       if (name === "get_tweet_thread_context") {
         const args = threadContextSchema.parse(rawArgs);
         const output = await getThreadContext(request, args.tweetId, args.cursor, context.signal);
-        return { output: boundXValue(output), summary: `Read the X thread containing post ${args.tweetId}` };
+        return { output: boundXPage(output), summary: `Read the X thread containing post ${args.tweetId}` };
       }
 
       if (name === "get_tweet_replies_v2") {
@@ -252,7 +262,7 @@ export function createXConnector(config: XConnectorConfig): ConnectorAdapter {
           cursor: args.cursor,
           queryType: args.queryType,
         }, context.signal);
-        return { output: boundXValue(output), summary: `Read replies to X post ${args.tweetId}` };
+        return { output: boundXPage(output), summary: `Read replies to X post ${args.tweetId}` };
       }
 
       if (name === "list_timeline") {
@@ -261,7 +271,7 @@ export function createXConnector(config: XConnectorConfig): ConnectorAdapter {
           listId: args.listId,
           cursor: args.cursor,
         }, context.signal);
-        return { output: boundXValue(output), summary: `Read the X List timeline ${args.listId}` };
+        return { output: boundXPage(output), summary: `Read the X List timeline ${args.listId}` };
       }
 
       throw new ConnectorError("unsupported_capability", `Unsupported X tool: ${name}`);
@@ -388,6 +398,22 @@ async function resolveUserId(request: XRequest, userName: string, signal: AbortS
 
 function normalizeUserName(value: string): string {
   return value.startsWith("@") ? value.slice(1) : value;
+}
+
+/**
+ * What a tool returns for one provider page.
+ *
+ * X reports a last page as `next_cursor: ""` rather than by omitting it, and
+ * the plugin tells the model to keep paging while a cursor comes back. Handed
+ * that blank verbatim, a model pages with it forever: the request side reads it
+ * as no cursor, X answers with page one, and page one says `next_cursor: ""`
+ * again. Reporting the end of the list as `null` is what makes a last page
+ * legible as one, the same shape Slack returns.
+ */
+function boundXPage(output: Record<string, unknown>): unknown {
+  const bounded = boundXValue(output);
+  if (!isRecord(bounded) || !Object.hasOwn(bounded, "next_cursor")) return bounded;
+  return { ...bounded, next_cursor: stringValue(bounded, "next_cursor") || null };
 }
 
 function boundXValue(value: unknown, depth = 0): unknown {
