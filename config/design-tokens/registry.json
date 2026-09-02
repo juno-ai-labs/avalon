@@ -629,6 +629,12 @@
     "cmp.bubble.background": {
       "$type": "color"
     },
+    "cmp.bubble.human-background": {
+      "$type": "color"
+    },
+    "cmp.bubble.human-foreground": {
+      "$type": "color"
+    },
     "cmp.bubble.border": {
       "$type": "color"
     },

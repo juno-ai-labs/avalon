@@ -32,7 +32,7 @@ export interface ThemeChoice {
   mode: AppearanceMode;
 }
 
-export const defaultThemeChoice: ThemeChoice = { family: 'terra', mode: 'system' };
+export const defaultThemeChoice: ThemeChoice = { family: 'air', mode: 'system' };
 
 /**
  * The two appearances each family brings.
@@ -75,8 +75,8 @@ export const appearanceModeDescriptions: readonly Described<AppearanceMode>[] = 
 export const themeWindowBackground: Record<ResolvedTheme, string> = {
   'terra-light': '#ffffff',
   terra: '#111210',
-  air: '#f7f3ec',
-  'air-dark': '#100e0c',
+  air: '#fcfcfc',
+  'air-dark': '#070707',
 };
 
 export function parseThemeFamily(value: unknown): ThemeFamily | null {

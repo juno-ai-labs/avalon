@@ -1791,10 +1791,10 @@ describe('private work streams', () => {
 
     const row = screen.getByRole('link', { name: /Digest/u });
     expect(screen.queryByLabelText('Private work stream')).not.toBeInTheDocument();
-    expect(row.querySelector('.sidebar-workstream-facepile')).toBeNull();
+    expect(row.querySelector('.sidebar-workstream-facepile')).not.toBeNull();
   });
 
-  it('hides the current user so a solo personal row has no facepile', () => {
+  it('shows the full participant roster when a personal row contains only the current user', () => {
     renderWith([{
       ...workstream('00000000-4000-4000-8000-00000000002c', 'Just me', 'completed'),
       scope: 'personal',
@@ -1802,11 +1802,11 @@ describe('private work streams', () => {
     }]);
 
     const row = screen.getByRole('link', { name: /Just me/u });
-    expect(row.querySelector('.sidebar-workstream-facepile')).toBeNull();
+    expect(row.querySelector('.avatar-stack')).toHaveAccessibleName('Adam');
     expect(row.querySelector('.sidebar-workstream-public')).toBeNull();
   });
 
-  it('paints everyone else in a personal row except the current user', () => {
+  it('paints the full participant roster in a personal row', () => {
     renderWith([{
       ...workstream('00000000-4000-4000-8000-00000000002d', 'Pairing', 'completed'),
       scope: 'personal',
@@ -1814,8 +1814,8 @@ describe('private work streams', () => {
     }]);
 
     const row = screen.getByRole('link', { name: /Pairing/u });
-    expect(row.querySelector('.avatar-stack')).toHaveAccessibleName('Ari');
-    expect(row.querySelectorAll('.avatar-stack-item')).toHaveLength(1);
+    expect(row.querySelector('.avatar-stack')).toHaveAccessibleName('Adam; Ari');
+    expect(row.querySelectorAll('.avatar-stack-item')).toHaveLength(2);
     expect(row.querySelector('.avatar-overflow')).toBeNull();
   });
 
@@ -1828,7 +1828,7 @@ describe('private work streams', () => {
     }]);
 
     const row = screen.getByRole('link', { name: /Staffing/u });
-    expect(row.querySelector('.avatar-stack')).toHaveAccessibleName('Ellis; Drew; and 2 more');
+    expect(row.querySelector('.avatar-stack')).toHaveAccessibleName('Adam; Ellis; Drew; and 2 more');
     expect(within(row).getByText('+2')).toBeInTheDocument();
   });
 
@@ -1840,7 +1840,7 @@ describe('private work streams', () => {
     }]);
 
     const row = screen.getByRole('link', { name: /Pairing/u });
-    const face = row.querySelector('.avatar-stack-item');
+    const face = row.querySelectorAll('.avatar-stack-item')[1];
     if (!face) throw new Error('the pairing row rendered no facepile avatar');
     fireEvent.pointerMove(face, { pointerType: 'mouse' });
 
@@ -1881,12 +1881,16 @@ describe('private work streams', () => {
     }]);
 
     const row = screen.getByRole('link', { name: /Comp review/u });
-    // Five participants, three preview ids (Ellis, Drew, Casey). The two
-    // extras include the viewer (user-1), who is not in that preview, so the
-    // row paints the three others and +1 rather than +2.
-    expect(row.querySelector('.avatar-stack')).toHaveAccessibleName('Ellis; Drew; Casey; and 1 more');
+    // Five participants, three preview ids (Ellis, Drew, Casey), followed by
+    // the directory's exact overflow count.
+    const stack = row.querySelector('.avatar-stack');
+    expect(stack).toHaveAccessibleName('Ellis; Drew; Casey; and 2 more');
+    expect(stack).toHaveClass('is-grok-cluster');
+    expect(stack).toHaveAttribute('data-visible-count', '3');
     expect(row.querySelectorAll('.avatar-stack-item')).toHaveLength(3);
-    expect(within(row).getByText('+1')).toBeInTheDocument();
+    expect([...row.querySelectorAll('.avatar-stack-item')].map((item) => item.getAttribute('data-grok-shape')))
+      .toEqual(['circle', 'wedge', 'pill']);
+    expect(within(row).getByText('+2')).toBeInTheDocument();
     expect(within(row).queryByLabelText('Private work stream')).not.toBeInTheDocument();
     expect(row.querySelector('.sidebar-workstream-public')).toBeNull();
     expect(row).toHaveAccessibleName(/Comp review/u);
@@ -1902,8 +1906,8 @@ describe('private work streams', () => {
     }]);
 
     const row = screen.getByRole('link', { name: /Staffing overflow/u });
-    expect(row.querySelector('.avatar-stack')).toHaveAccessibleName('Ellis; Drew; and 2 more');
-    expect(within(row).getByText('+2')).toBeInTheDocument();
+    expect(row.querySelector('.avatar-stack')).toHaveAccessibleName('Ellis; Drew; and 3 more');
+    expect(within(row).getByText('+3')).toBeInTheDocument();
     expect(row).not.toHaveAccessibleName(/Ellis|Drew/u);
   });
 

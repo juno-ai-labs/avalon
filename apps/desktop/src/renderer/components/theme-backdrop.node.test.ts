@@ -12,27 +12,15 @@ function sourceFiles(directory: string): string[] {
   });
 }
 
-describe('where a theme backdrop is allowed to appear', () => {
-  /**
-   * The main window and nowhere else.
-   *
-   * The standalone Settings and meeting windows return their own surfaces from
-   * `App` before `AppShell` is reached, so they never mounted this — but by
-   * omission rather than by decision, which is a different thing and reads the
-   * same in a diff. Both are dense forms and keep a flat `surface-default`
-   * ground; on Air that does mean the two windows look different side by side.
-   *
-   * This is the counterpart to the stylesheet's "painted once" guard, which
-   * checks that no *second* surface paints a backdrop. Nothing checked which
-   * surfaces mount the frame, so a third one gaining or losing one would have
-   * been invisible in review. Changing this list is changing the decision.
-   */
-  it('is mounted by the application shell alone', () => {
+describe('where a retired theme backdrop may appear', () => {
+  /** The single GrokBot design has flat surfaces in every window. Keep the old
+   * backdrop frame unmounted until its remaining generated plumbing is removed. */
+  it('is not mounted by any renderer surface', () => {
     const mounting = sourceFiles(renderer)
       .filter((path) => /<ThemeBackdrop\b/u.test(readFileSync(path, 'utf8')))
       .map((path) => path.slice(renderer.length + 1))
       .sort();
 
-    expect(mounting).toEqual(['components/app-shell.tsx']);
+    expect(mounting).toEqual([]);
   });
 });
