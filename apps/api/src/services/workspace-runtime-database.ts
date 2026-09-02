@@ -94,7 +94,7 @@ export const WORKSPACE_LOCAL_TABLES = [
   "automation_email_receipts",
   "automation_email_rate_windows",
   "automation_resources",
-  // WorkspaceDO migration 23. The site-publish path writes it through this
+  // WorkspaceDO migration 28. The site-publish path writes it through this
   // facade, and the revocation walk reads it inside the object. Listed for the
   // reason `automation_directory` above is: a table missing here takes the
   // regional fallthrough and answers `no such table` from D1, which for this

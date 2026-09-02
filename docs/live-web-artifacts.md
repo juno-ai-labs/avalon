@@ -319,7 +319,7 @@ Two traps:
   `avalon_generated`, and the same `terminal:<workstream>:<path>` identity file
   publishes use. Its `content_ref` points at the version's **manifest**, so its
   MIME type is `application/vnd.rally.site-manifest+json`.
-- `artifact_registry` (WorkspaceDO, migration 23): `artifact_id` (the hostname
+- `artifact_registry` (WorkspaceDO, migration 28): `artifact_id` (the hostname
   label), `workspace_id`, `workstream_id`, `resource_id`, `mode`, `stateful`,
   `current_version`, `manifest_ref`, timestamps.
 - `ArtifactHostDO` (both regions, jurisdiction-pinned): `artifact_state` (one
