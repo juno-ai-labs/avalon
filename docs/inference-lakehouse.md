@@ -374,6 +374,8 @@ rejection, archived nowhere, is now diagnosable from its log row.
 [`agent-harness.md`](agent-harness.md) holds the reasoning and the alternatives
 rejected.
 
+Shipped in #541.
+
 ### 2026-09-01 — Application deploys use pinned stream bindings
 
 **What changed:** The two production Pipeline stream IDs now live in their

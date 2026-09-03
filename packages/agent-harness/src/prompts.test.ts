@@ -221,19 +221,6 @@ describe("prompt renderers", () => {
     expect(prompt).toContain("never replace the delivered body with only an embed, title, or invitation");
   });
 
-  it("routes HyperSight output through its required submission tool", () => {
-    const prompt = renderWorkstreamSystemPrompt({
-      title: "Customer health",
-      objective: "Render the customer health block.",
-      outputSurface: "block_dashboard",
-    });
-
-    expect(prompt).toContain("# HyperSight block output");
-    expect(prompt).toContain("The document-publishing workflow does not apply");
-    expect(prompt).toContain("Submit the finished Markdown through the block submission tool");
-    expect(prompt).toContain("ordinary assistant text is discarded");
-  });
-
   it("does not leave blank tombstones for conditional prompt sections", () => {
     const prompt = renderWorkstreamSystemPrompt({ title: "T", objective: "O" });
     expect(prompt).not.toMatch(/\n{3,}/u);

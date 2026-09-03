@@ -1,7 +1,5 @@
 import { Hono } from "hono";
 import {
-  AutomationDraftSchema,
-  ScopeSchema,
   asAutomationId,
   asUserId,
   asWorkspaceId,
@@ -27,6 +25,7 @@ import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
 import { createToolReceiptObjectPort } from "../runtime/tool-receipt-port";
 import type { ToolReceiptObjectPort } from "../durable-objects/workstream-tool-receipt-protocol";
 import type { PersistedRunStatus } from "../durable-objects/workstream-harness-run-storage";
+import { AutomationLegacyImportSourceSchema } from "../durable-objects/automation-legacy-import";
 
 const row = z.record(z.string(), z.union([z.string(), z.number(), z.null()]));
 
@@ -94,18 +93,10 @@ const WORKSPACE_SEED_TABLES = new Set([
 const seedAutomation = z.strictObject({
   id: z.string().uuid(),
   authorUserId: z.string().uuid(),
-  source: z.looseObject({
-    definition: AutomationDraftSchema,
-    status: z.enum(["active", "paused", "error"]),
-    scope: ScopeSchema,
-    unsupportedTrigger: z.boolean(),
-    schedules: z.array(z.looseObject({
-      nextDueAt: z.number().int().nonnegative().nullable(),
-    })),
-  }),
+  source: AutomationLegacyImportSourceSchema,
 });
 
-const seedBody = z.strictObject({
+export const SeedProductBodySchema = z.strictObject({
   workspaceId: z.string().uuid(),
   workspaceTables: z.record(z.string(), z.array(row)),
   automations: z.array(seedAutomation),
@@ -168,7 +159,7 @@ export const devRoutes = new Hono<{ Bindings: Env }>();
  * Everything is idempotent — messages replay-absorb by client id and message
  * id, the rest upsert or ignore — so a re-run repairs a partial seed.
  */
-devRoutes.post("/seed-product", zValidator("json", seedBody), async (c) => {
+devRoutes.post("/seed-product", zValidator("json", SeedProductBodySchema), async (c) => {
   if (c.env.APP_ENV !== "development" || c.env.RALLY_DEV_AUTH !== "true") {
     throw new ApiError(404, "not_found", "Development tooling is unavailable");
   }
@@ -189,7 +180,7 @@ devRoutes.post("/seed-product", zValidator("json", seedBody), async (c) => {
   }
 });
 
-async function seedProduct(env: Env, body: z.infer<typeof seedBody>) {
+async function seedProduct(env: Env, body: z.infer<typeof SeedProductBodySchema>) {
   const workspaceId = body.workspaceId;
   // A wiped local state means the WorkspaceDO has never learned who it is;
   // production teaches it at onboarding, the dev seed teaches it here.

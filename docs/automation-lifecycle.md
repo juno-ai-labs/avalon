@@ -758,6 +758,8 @@ load-bearing: it is the only thing that tells a personal automation that nothing
 sends for it, and a run that reads silence as "Rally has it covered" is the
 silent-loss defect this whole sequence began with, in its final form.
 
+Shipped in #541.
+
 ### 2026-09-03 — An inbound-email run holds the same tools as any other run
 
 **What changed:** The three `inbound_email` guards in
@@ -793,6 +795,8 @@ rewritten invariant and the same reasoning from the threat-model side. Anyone
 reintroducing a narrowing must do it for every external trigger, and the tests
 that proved the omissions (`connector-tool-selection.test.ts`,
 `firecrawl-web-tools.test.ts`) were inverted to assert the tools are present.
+
+Shipped in #541.
 
 ### 2026-09-03 — Acceptance takes an ID, and derives the rest from the draft
 
@@ -891,6 +895,8 @@ written; if a room should be able to create such a draft, the change is for the
 drafting tools to stop recommending personal plugins for room and workspace
 scopes, not for acceptance to skip the check.
 
+Shipped in #541.
+
 ### 2026-09-03 — The proposal card's Create stops answering 500
 
 **What changed:** `AutomationAgentService.acceptAuthoredDraft` built its create
@@ -941,6 +947,8 @@ of "no override" for every client, and it fixes nothing about the seam that
 allowed it — the next mismatched field would be another 500. Also rejected:
 `modelOverride: undefined` for explicitness, which `exactOptionalPropertyTypes`
 rejects outright.
+
+Shipped in #541.
 
 ### 2026-09-02 — Work-stream authoring recognizes real plugin loads and elicitation receipts
 

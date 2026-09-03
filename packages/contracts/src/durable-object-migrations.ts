@@ -30,7 +30,7 @@ const NUMERIC_SEGMENT = /^[0-9]{1,12}$/u;
 
 /**
  * The fixed words that appear in a name alongside its identifiers: the two
- * region tokens, and the role words `block-dashboard`, `automation`, and
+ * region tokens, and the role words `automation` and
  * `artifact`. Every one of them is a compile-time constant in
  * `apps/api/src/durable-objects/names.ts`.
  *
@@ -50,7 +50,7 @@ const NUMERIC_SEGMENT = /^[0-9]{1,12}$/u;
  * one-line change in a file a reviewer is looking at for exactly this reason,
  * which is the point.
  */
-const FIXED_SEGMENTS = new Set(["global", "eu", "block-dashboard", "automation", "artifact"]);
+const FIXED_SEGMENTS = new Set(["global", "eu", "automation", "artifact"]);
 
 /**
  * Every segment of an Avalon Durable Object name is one of three things: a

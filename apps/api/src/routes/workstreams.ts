@@ -7,14 +7,10 @@ import {
   ApplyWorkstreamBatchRequestSchema,
   CreateWorkstreamRequestSchema,
   IdSchema,
-  BlockDashboardPreferenceSchema,
-  BlockDashboardSchema,
   ParticipantSchema,
   PreviewWorkstreamBatchRequestSchema,
   ReorderWorkstreamPinsRequestSchema,
   WorkstreamResourceSchema,
-  UpdateBlockDashboardPreferenceRequestSchema,
-  UpdateBlockDashboardRequestSchema,
   UpdateWorkstreamRequestSchema,
   WorkstreamBootSchema,
   WorkstreamBatchAcceptedSchema,
@@ -34,7 +30,6 @@ import { WorkstreamDirectoryService } from "../services/workstream-directory-ser
 import { WorkstreamObjectCreationService } from "../services/workstream-object-creation-service";
 import { WorkstreamBatchUpdateService } from "../services/workstream-batch-update";
 import { requireOpenWorkstreamAuthority } from "../services/workstream-authority";
-import { BlockDashboardService } from "../services/block-dashboard-service";
 import { apiTelemetryEnvelope, emitAuthenticatedApiTelemetry, telemetryOperationId } from '../telemetry/api-emitter';
 
 const idParam = z.object({ id: IdSchema });
@@ -221,26 +216,6 @@ workstreamRoutes.delete("/:id/pin", zValidator("param", idParam), async (c) => {
   const result = await new WorkstreamDirectoryService(c.env, getAuth(c)).unpin(c.req.valid("param").id);
   return c.json(PinnedWorkstreamsSchema.parse(result));
 });
-workstreamRoutes.get("/:id/block-dashboard", zValidator("param", idParam), async (c) =>
-  c.json(BlockDashboardSchema.parse(await new BlockDashboardService(c.env, getAuth(c)).get(c.req.valid("param").id))),
-);
-workstreamRoutes.put(
-  "/:id/block-dashboard/preference",
-  zValidator("param", idParam),
-  zValidator("json", UpdateBlockDashboardPreferenceRequestSchema),
-  async (c) => c.json(BlockDashboardPreferenceSchema.parse(
-    await new BlockDashboardService(c.env, getAuth(c)).updatePreference(
-      c.req.valid("param").id,
-      c.req.valid("json"),
-    ),
-  )),
-);
-workstreamRoutes.put("/:id/block-dashboard", zValidator("param", idParam), zValidator("json", UpdateBlockDashboardRequestSchema), async (c) =>
-  c.json(BlockDashboardSchema.parse(await new BlockDashboardService(c.env, getAuth(c)).update(
-    c.req.valid("param").id,
-    c.req.valid("json"),
-  ))),
-);
 workstreamRoutes.get("/:id", zValidator("param", idParam), async (c) => {
   const id = c.req.valid("param").id;
   const operationId = telemetryOperationId(readRallyHeader((name) => c.req.header(name), RALLY_HEADERS.OPERATION_ID));
@@ -362,14 +337,4 @@ workstreamRoutes.get(
 workstreamRoutes.get("/:id/control-socket", zValidator("param", idParam), async (c) =>
   c.json(SocketTicketSchema.parse(await new WorkstreamService(c.env, getAuth(c))
     .workstreamControlSocketTicket(c.req.valid("param").id))),
-);
-workstreamRoutes.get(
-  "/:id/block-dashboard/blocks/:blockId/socket",
-  zValidator("param", idParam.extend({ blockId: IdSchema })),
-  async (c) => c.json(SocketTicketSchema.parse(
-    await new WorkstreamService(c.env, getAuth(c)).blockDashboardBlockSocketTicket(
-      c.req.valid("param").id,
-      c.req.valid("param").blockId,
-    ),
-  )),
 );

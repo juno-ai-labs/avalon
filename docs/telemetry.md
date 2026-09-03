@@ -25,7 +25,7 @@ terminates in Rally's EU-isolated Cloudflare resources.
 | `apps/desktop/src/main/index.ts` | Startup ordering, Crashpad start, process observers, IPC sender validation, upload scheduling, and product integration points. |
 | `apps/desktop/src/main/telemetry-intent.ts` | The renderer-intent allowlist and validator every `telemetry:product-intent` call passes through, kept out of the entry point so it can be tested by running it. |
 | `apps/desktop/src/renderer/lib/telemetry.ts` | Narrow renderer facade for registered screen, product-intent, and error-candidate calls. |
-| `apps/desktop/src/renderer/lib/socket-telemetry.ts` | The one `realtime_socket_state` producer, instantiated per live socket loop by the workspace, WorkstreamDO-control, SubstreamAgent-feed, and per-block HyperSight hooks; it also reports every WorkstreamDO-control and SubstreamAgent-feed connection start. |
+| `apps/desktop/src/renderer/lib/socket-telemetry.ts` | The one `realtime_socket_state` producer, instantiated per live socket loop by the workspace, WorkstreamDO-control, and SubstreamAgent-feed hooks; it also reports every WorkstreamDO-control and SubstreamAgent-feed connection start. |
 | `apps/api/src/routes/telemetry.ts` | Bounded bootstrap, anonymous/authenticated event, identity-link, preference, and crash-ingest routes. |
 | `apps/api/src/routes/telemetry-operations.ts`, `apps/api/src/telemetry/operator-auth.ts` | Bearer-authenticated, role-restricted regional status, replay, raw-crash access, and EU analysis HTTP surface. |
 | `apps/api/src/telemetry/` | Regional collector, identity/preference logic, typed telemetry-delivery contract, PostHog adapter, EU sink, replay, crash processing, operations, and lifecycle jobs. |
@@ -98,11 +98,8 @@ Every realtime socket reports its own connection transitions. The renderer is th
 authoritative source because it is the only party that can tell a first
 connection from a reconnection, and how many attempts one took: the room sees an
 admission either way. One `realtime_socket_state` names which socket
-(`workspace`, `workstream_control`, `substream_feed`, `block_dashboard`), whether
-it is connected, retrying, or stopped, the bounded cause, and the retry depth as
-a count bucket. HyperSight opens one socket per configured block, so a dashboard
-of six blocks reports six connections; the event names no block, so what it
-measures is the drop rate of that socket kind rather than of any one block.
+(`workspace`, `workstream_control`, `substream_feed`), whether it is connected,
+retrying, or stopped, the bounded cause, and the retry depth as a count bucket.
 Dictation's audio socket is deliberately outside this contract: it is an Azure
 transport with its own lifecycle, not one of the room sockets.
 The cause is stated where it is known rather than derived from a close code,
@@ -186,8 +183,8 @@ failed-route count. These are closed diagnostic properties, not new product
 outcomes.
 
 Work-stream collaboration records authoritative participant changes, resource
-attach/detach/watch/preview/open-source outcomes, stop/retry actions, unread
-attention consumption, and HyperSight open/configuration/run outcomes. Terminal
+attach/detach/watch/preview/open-source outcomes, stop/retry actions, and unread
+attention consumption. Terminal
 workspace lifecycle and policy events preserve only bounded result,
 repository-present, connector-class, local-file-retention, policy-mode, and
 active-sandbox dimensions. Connector telemetry covers setup, user actions,
@@ -686,6 +683,21 @@ signals, never by weakening policy or deadline tests.
 
 ## Changelog
 
+### 2026-09-03 — HyperSight telemetry is retired with the feature
+
+**What changed:** Dashboard run origins, outcome fields, spans, metrics,
+observability bindings, and model-source dimensions were removed from live
+contracts and emitters.
+
+**Why:** Emitting or accepting a deleted feature dimension would preserve a
+false operational contract and split dashboards on data that can no longer be
+produced.
+
+**Consequences:** Historical telemetry remains interpretable, while new events
+contain only live Rally sources.
+
+Shipped in #541.
+
 ### 2026-09-03 — Every substream mutation keeps a named server span
 
 **What changed:** Answer, reorder, stop, and retry commands share the
@@ -702,6 +714,8 @@ the common operation without multiplying the registry.
 
 **Consequences:** The socket cutover keeps request-equivalent server timing and
 error evidence without recording command contents.
+
+Shipped in #541.
 
 ### 2026-09-02 — Send readiness follows the addressed substream command socket
 

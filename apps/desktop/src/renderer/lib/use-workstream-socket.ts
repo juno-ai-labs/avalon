@@ -1,5 +1,4 @@
 import {
-  PersonalSocketEventSchema,
   ServerSocketEventSchema,
   WorkstreamSocketCommandResultSchema,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
@@ -7,7 +6,6 @@ import {
   type ActiveStreamCheckpoint,
   type ClientSocketEvent,
   type WorkstreamSocketCommandResult,
-  type PersonalSocketEvent,
   type ServerSocketEvent,
   type PendingTranscriptInput,
   type WorkstreamTranscriptSnapshot,
@@ -69,7 +67,7 @@ import {
   upsertTranscriptOverlay,
   upsertTranscriptMessage,
 } from './transcript';
-import type { HarnessStatus, BlockDashboard, BlockDashboardPreference, Message, WorkstreamDetail, WorkstreamSummary } from './types';
+import type { HarnessStatus, Message, WorkstreamDetail, WorkstreamSummary } from './types';
 import { withDerivedUnread } from './workstream-state-store';
 import { evictCachedSubstream, setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 import { useWorkstreamSocketResumeState, type StreamCursor } from './workstream-socket-resume';
@@ -1123,14 +1121,6 @@ export function useWorkstreamSocket(
       });
     };
 
-    // Only the dashboard itself. `block-dashboard-preference` is a cache read
-    // with no fetcher behind it — the control socket's boot frame and
-    // `block_dashboard_preference_updated` events write it — so invalidating it
-    // can never refetch, and leaving the call here would read as a repair path
-    // that no longer exists.
-    const syncBlockDashboardQueries = (): Promise<unknown> =>
-      queryClient.invalidateQueries({ queryKey: ['block-dashboard', workstreamId], exact: true });
-
     /**
      * Ask the room to re-send canonical state down the socket already open.
      *
@@ -1160,15 +1150,6 @@ export function useWorkstreamSocket(
       }
     };
     requestSnapshotRef.current = requestCanonicalSnapshot;
-
-    const applyPersonalEvent = (event: PersonalSocketEvent): void => {
-      if (event.type === 'block_dashboard_preference_updated') {
-        queryClient.setQueryData<BlockDashboardPreference>(
-          ['block-dashboard-preference', workstreamId],
-          event.preference,
-        );
-      }
-    };
 
     const applyEvent = (event: ServerSocketEvent): void => {
       if (event.type === 'pending_inputs_snapshot_chunk') {
@@ -1440,7 +1421,6 @@ export function useWorkstreamSocket(
           ),
         );
         queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
-        void syncBlockDashboardQueries();
         // Only when this snapshot answers a reconciliation. The context query
         // is not part of a snapshot, so refreshing it is a side effect of
         // repairing drift rather than of receiving canonical state — and doing
@@ -1679,24 +1659,6 @@ export function useWorkstreamSocket(
             resources: exists
               ? current.resources.map((candidate) => candidate.id === resource.id ? resource : candidate)
               : [...current.resources, resource],
-          };
-        });
-      } else if (event.type === 'block_dashboard_configuration_updated') {
-        queryClient.setQueryData<BlockDashboard>(['block-dashboard', workstreamId], event.blockDashboard);
-      } else if (event.type === 'block_dashboard_block_run_updated') {
-        queryClient.setQueryData<BlockDashboard>(['block-dashboard', workstreamId], (current) => {
-          if (!current || current.versionId !== event.run.configurationVersionId) return current;
-          return {
-            ...current,
-            blocks: current.blocks.map((block) => {
-              if (block.id !== event.run.blockId) return block;
-              if (
-                block.latestRun
-                && block.latestRun.id !== event.run.id
-                && block.latestRun.triggerSequence > event.run.triggerSequence
-              ) return block;
-              return { ...block, latestRun: event.run };
-            }),
           };
         });
       }
@@ -1959,7 +1921,6 @@ export function useWorkstreamSocket(
               void Promise.all([
                 queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY }),
                 queryClient.invalidateQueries({ queryKey: ['workstream-context', workstreamId] }),
-                syncBlockDashboardQueries(),
               ]);
               resumeState.lastSequence = Math.max(resumeState.lastSequence, targetSequence);
               if (canonicalResyncTarget === targetSequence) {
@@ -2128,11 +2089,6 @@ export function useWorkstreamSocket(
                 });
                 openTrace = null;
               }
-              return;
-            }
-            const personalEvent = PersonalSocketEventSchema.safeParse(parsed);
-            if (personalEvent.success) {
-              applyPersonalEvent(personalEvent.data);
               return;
             }
           } catch {

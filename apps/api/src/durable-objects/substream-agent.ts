@@ -12,7 +12,6 @@ import {
   IdSchema,
   MESSAGE_MAX_CHARACTERS,
   MESSAGE_TOO_LONG_MESSAGE,
-  PersonalSocketEventSchema,
   ResourceRelationshipTypeSchema,
   SubstreamSocketMutationTypeSchema,
   SubstreamIdSchema,
@@ -37,7 +36,6 @@ import {
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   WorkstreamSocketCommandResultSchema,
   WorkstreamWorkflowInputSchema,
-  type PersonalSocketEvent,
   type ServerSocketEvent,
   type TranscriptRangeResult,
   type TranscriptTurn,
@@ -63,10 +61,6 @@ import {
   type WorkstreamReaderAudience,
 } from "../lib/audience-containment";
 import {
-  contextCompactionCheckpointHash,
-  type ContextCompactionCheckpointIdentity,
-} from "../lib/context-compaction-fence";
-import {
   assertDurableObjectJurisdiction,
   durableObjectStubForWorkspace,
 } from "../lib/durable-object-namespace";
@@ -76,9 +70,6 @@ import {
   HarnessRunMetricsSchema,
   recordHarnessRunObservation,
 } from "../observability/harness-run-observability";
-import {
-  launchBlockDashboardRefresh,
-} from "../services/block-dashboard-service";
 import { diagnosticErrorCode, logError, logInfo, logWarn } from "../observability/logger";
 import { reportScheduledAlarmAttempt } from "./scheduled-alarm-report";
 import {
@@ -103,10 +94,6 @@ import {
 import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
 import { createToolReceiptObjectPort, createToolReceiptPortFactory } from "../runtime/tool-receipt-port";
 import {
-  createBlockDashboardObjectPort,
-  createBlockDashboardPortFactory,
-} from "../runtime/block-dashboard-port";
-import {
   loadToolReplayOutput,
   runWorkstreamHarness,
   type WorkstreamHarnessResult,
@@ -121,7 +108,6 @@ import {
   withLocalWorkstreamAuthorities,
   type LocalAuthorityExecutor,
 } from "../runtime/local-authorities";
-import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
 import { TerminalObjectPortError } from "../services/terminal/object-port";
 import { fireWorkstreamWakeup } from "../services/workstream-service";
 import { loadWorkstreamWakeup } from "../services/workstream-wakeup-service";
@@ -141,14 +127,7 @@ import {
   type WorkstreamRegionalEffectEnvelope,
 } from "./workstream-regional-effect";
 import { automationAgentName, substreamAgentName, substreamLoopId, workspaceDOName, workstreamDOName } from "./names";
-import {
-  BlockDashboardSourceRefreshRequestSchema,
-  type BlockDashboardContextFence,
-} from "./block-dashboard-protocol";
-import {
-  WorkstreamObjectStore,
-  type PendingBlockDashboardRefresh,
-} from "./workstream-object-storage";
+import { WorkstreamObjectStore } from "./workstream-object-storage";
 import type { SequencedSemanticRealtimeReference } from "./workstream-semantic-realtime-outbox";
 import { WorkstreamTerminalStorage } from "./workstream-terminal-storage";
 import { WorkstreamToolReceiptStorage } from "./workstream-tool-receipt-storage";
@@ -156,7 +135,6 @@ import {
   type ToolReceiptOperationRequest,
   ToolReceiptOperationRequestSchema,
 } from "./workstream-tool-receipt-protocol";
-import { WorkstreamBlockDashboardStorage } from "./workstream-block-dashboard-storage";
 import { WorkstreamMessageStorage } from "./workstream-message-storage";
 import { WorkstreamTranscriptStorage } from "./workstream-transcript-storage";
 import { LOOP_EXECUTION_LEASE_MS, SubstreamLoopStorage } from "./substream-loop-storage";
@@ -201,10 +179,6 @@ import {
   mutatesWakeups,
   SchedulingOperationRequestSchema,
 } from "./workstream-scheduling-protocol";
-import {
-  type BlockDashboardOperationRequest,
-  BlockDashboardOperationRequestSchema,
-} from "./workstream-block-dashboard-protocol";
 import {
   TerminalOperationRequestSchema,
   terminalOperationAffectsDirectory,
@@ -334,7 +308,6 @@ type SocketUpgradeIdentity = z.infer<typeof SocketUpgradeIdentitySchema>;
 
 const BroadcastRequestSchema = z.strictObject({
   event: z.unknown(),
-  audienceUserId: IdSchema.optional(),
 });
 const RuntimeResourceRequestSchema = z.strictObject({
   workspaceId: IdSchema,
@@ -444,7 +417,6 @@ export type SubstreamRuntimeBootstrapRequest = z.infer<typeof RuntimeBootstrapRe
 export type SubstreamTimerRefreshRequest = z.infer<typeof AgentTimerRefreshRequestSchema>;
 export type SubstreamPublishedEvent = z.infer<typeof RoomIdentitySchema> & {
   event: unknown;
-  audienceUserId?: string;
 };
 const MAX_REPLAY_EVENTS = 256;
 const MAX_REPLAY_BYTES = 512_000;
@@ -544,8 +516,6 @@ function activitiesForTranscriptTurns(
   return activities.filter((activity) => required.has(activity.activityId));
 }
 
-const BLOCK_DASHBOARD_DEBOUNCE_MS = 1_200;
-const BLOCK_DASHBOARD_MAX_DEBOUNCE_MS = 5_000;
 const MAINTENANCE_RECHECK_MS = 5 * 60_000;
 /** Matches the Agents SDK default, while keeping Avalon independent of it. */
 const KEEP_ALIVE_INTERVAL_MS = 30_000;
@@ -568,18 +538,6 @@ const AGENT_TIMER_ALARM_KIND = "agent_timer";
  * reconcile rather than an unbounded one.
  */
 const AGENT_TIMER_ALARM_LIMIT = 100;
-const BLOCK_DASHBOARD_REFRESH_EVENT_TYPES = new Set([
-  "transcript_turn_upserted",
-  "stream_completed",
-  "participant_added",
-  "participant_removed",
-  "resource_attached",
-  "resource_updated",
-  "elicitation_created",
-  "elicitation_answered",
-  "block_dashboard_configuration_updated",
-]);
-
 type SocketAttachment = z.infer<typeof SocketAttachmentSchema>;
 
 function recognizableSocketCreateMessage(decoded: unknown): {
@@ -628,10 +586,6 @@ function recognizableSocketMutation(decoded: unknown): {
   };
 }
 
-export function isPersonalEventAudience(socketUserId: string, audienceUserId: string): boolean {
-  return socketUserId === audienceUserId;
-}
-
 interface UserRow {
   id: string;
   email: string;
@@ -639,17 +593,6 @@ interface UserRow {
   avatar_url: string | null;
   timezone: string;
   created_at: string;
-}
-
-interface CompactionCheckpointRow extends Record<string, SqlStorageValue> {
-  execution_principal_key: string;
-  resource_visibility_fingerprint: string;
-  checkpoint_template_version: number;
-  run_id: string;
-  compacted_through_sequence: number;
-  messages_json: string;
-  summary: string;
-  model: string;
 }
 
 const textEncoder = new TextEncoder();
@@ -913,7 +856,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private product!: WorkstreamObjectProductService;
   private terminal!: WorkstreamTerminalStorage;
   private toolReceipts!: WorkstreamToolReceiptStorage;
-  private blockDashboard!: WorkstreamBlockDashboardStorage;
   private scheduling!: WorkstreamSchedulingStorage;
 
   private messages!: WorkstreamMessageStorage;
@@ -1014,7 +956,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       );
       this.terminal = new WorkstreamTerminalStorage(state.storage);
       this.toolReceipts = new WorkstreamToolReceiptStorage(state.storage);
-      this.blockDashboard = new WorkstreamBlockDashboardStorage(state.storage);
       this.scheduling = new WorkstreamSchedulingStorage(state.storage);
       this.messages = new WorkstreamMessageStorage(state.storage);
       this.resources = new WorkstreamResourceStorage(state.storage);
@@ -1504,9 +1445,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     if (request.method === "POST" && url.pathname === "/internal/identity") {
       return this.acceptIdentityOperation(request);
     }
-    if (request.method === "POST" && url.pathname === "/internal/block-dashboard") {
-      return this.acceptBlockDashboardOperation(request);
-    }
     if (request.method === "POST" && url.pathname === "/internal/terminal") {
       return this.acceptTerminalOperation(request);
     }
@@ -1517,21 +1455,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
 
     if (request.method === "POST" && url.pathname === "/internal/runtime-bootstrap") {
       return this.acceptRuntimeBootstrap(request);
-    }
-
-    if (request.method === "POST" && url.pathname === "/internal/block-dashboard-refresh-request") {
-      const parsed = BlockDashboardSourceRefreshRequestSchema.safeParse(
-        await request.json().catch(() => null),
-      );
-      const identity = this.objectStore.identity();
-      if (!parsed.success || !identity
-        || identity.workspaceId !== parsed.data.workspaceId
-        || identity.workstreamId !== parsed.data.workstreamId
-        || this.externalSubstreamId() !== "0") {
-        return jsonResponse({ error: "block_dashboard_source_identity_mismatch" }, 409);
-      }
-      await this.scheduleBlockDashboardRefresh(parsed.data.triggerSequence);
-      return jsonResponse({ ok: true });
     }
 
     if (request.method === "POST" && url.pathname === "/internal/refresh-agent-alarm") {
@@ -2020,13 +1943,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     return responseToRpcResult(await this.acceptSchedulingOperation(this.rpcRequest(input)));
   }
 
-  async executeBlockDashboardOperation(
-    input: BlockDashboardOperationRequest,
-  ): Promise<DurableObjectRpcResult> {
-    await this.initialized;
-    return responseToRpcResult(await this.acceptBlockDashboardOperation(this.rpcRequest(input)));
-  }
-
   async executeTerminalOperation(input: TerminalOperationRequest): Promise<DurableObjectRpcResult> {
     await this.initialized;
     return responseToRpcResult(await this.acceptTerminalOperation(this.rpcRequest(input)));
@@ -2119,28 +2035,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       {
         method: "POST",
         headers,
-        body: JSON.stringify({
-          event: input.event,
-          ...(input.audienceUserId ? { audienceUserId: input.audienceUserId } : {}),
-        }),
+        body: JSON.stringify({ event: input.event }),
       },
     )));
-  }
-
-  async requestBlockDashboardRefresh(
-    input: z.input<typeof BlockDashboardSourceRefreshRequestSchema>,
-  ): Promise<{ accepted: boolean; error?: string }> {
-    await this.initialized;
-    const parsed = BlockDashboardSourceRefreshRequestSchema.parse(input);
-    const identity = this.objectStore.identity();
-    if (!identity
-      || identity.workspaceId !== parsed.workspaceId
-      || identity.workstreamId !== parsed.workstreamId
-      || this.externalSubstreamId() !== "0") {
-      return { accepted: false, error: "block_dashboard_source_identity_mismatch" };
-    }
-    await this.scheduleBlockDashboardRefresh(parsed.triggerSequence);
-    return { accepted: true };
   }
 
   async refreshTimerAlarm(input: SubstreamTimerRefreshRequest): Promise<void> {
@@ -2501,37 +2398,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     return { status: 200, payload: { ok: true, value: value ?? null } };
   }
 
-  /**
-   * Dispatch one block-dashboard operation against this object's own storage.
-   *
-   * Identity is re-checked against the object's own before anything executes,
-   * for the reason `acceptToolReceiptOperation` gives: a misrouted stub must
-   * fail rather than settle another work stream's blocks. The main child holds
-   * these rows, so a non-main substream is refused here rather than answering
-   * from an empty table.
-   */
-  private async acceptBlockDashboardOperation(request: Request): Promise<Response> {
-    const outcome = await this.blockDashboardOperationOutcome(
-      await request.json().catch(() => null),
-    );
-    return jsonResponse(outcome.payload, outcome.status);
-  }
-
-  private async blockDashboardOperationOutcome(body: unknown): Promise<ObjectPortOutcome> {
-    const parsed = BlockDashboardOperationRequestSchema.safeParse(body);
-    if (!parsed.success) {
-      return { status: 400, payload: { ok: false, error: "invalid_block_dashboard_operation" } };
-    }
-    const refusal = this.objectPortRefusal(
-      parsed.data,
-      "workstream_block_dashboard_identity_mismatch",
-    );
-    if (refusal) return refusal;
-    const method = this.blockDashboard[parsed.data.operation] as (...args: unknown[]) => unknown;
-    const value = method.apply(this.blockDashboard, parsed.data.args);
-    return { status: 200, payload: { ok: true, value: value ?? null } };
-  }
-
   private async acceptTerminalOperation(request: Request): Promise<Response> {
     const parsed = TerminalOperationRequestSchema.safeParse(await request.json().catch(() => null));
     if (!parsed.success) {
@@ -2790,9 +2656,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private async acceptLoopActivation(request: Request): Promise<Response> {
     const parsed = RuntimeDispatchRequestSchema.safeParse(await request.json().catch(() => null));
     if (!parsed.success) return jsonResponse({ error: "invalid_substream_run_dispatch" }, 400);
-    if (parsed.data.reason === "block_dashboard_block") {
-      return jsonResponse({ error: "block_dashboard_runs_require_block_agent" }, 409);
-    }
     const identity = this.objectStore.identity();
     if (!identity
       || identity.workspaceId !== parsed.data.workspaceId
@@ -3536,11 +3399,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     };
     const recoveryOptions: Parameters<typeof reapStaleHarnessRuns>[1] = {
       receipts: createToolReceiptPortFactory(executionEnv),
-      blocks: createBlockDashboardPortFactory(executionEnv),
       workspaceId: input.workspaceId,
       workstreamId: input.workstreamId,
       limit: 25,
-      automationDatabase: withWorkspaceRuntimeDatabase(this.env, input.workspaceId).DB,
       onReceiptRepairFailure: (failure) => logWarn(this.env, "harness_residual_receipt_repair_failed", {
         workspace_id: failure.workspaceId,
         workstream_id: failure.workstreamId,
@@ -3643,7 +3504,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           { attemptId, owner: previousInstanceRecoveryOwner(attemptId) },
           stopped,
           createToolReceiptObjectPort(executionEnv, input.workspaceId, input.workstreamId),
-          createBlockDashboardObjectPort(executionEnv, input.workspaceId, input.workstreamId),
           terminalLoopFence,
         );
         this.recoverableHarnessAttempts.delete(input.harnessRunId);
@@ -3737,7 +3597,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         memberSafePayload: outcome.error ? { code: outcome.error.code } : {},
       },
       createToolReceiptObjectPort(executionEnv, input.workspaceId, input.workstreamId),
-      createBlockDashboardObjectPort(executionEnv, input.workspaceId, input.workstreamId),
       terminalLoopFence,
     );
     if (outcome.finalTurnId) {
@@ -4270,7 +4129,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         workspaceId: input.workspaceId,
         workstreamId: input.workstreamId,
         harnessRunId: input.harnessRunId,
-        source: input.reason === "block_dashboard_block" ? "block_dashboard" : "workstream",
+        source: "workstream",
         status: outcome.status,
         ...(outcome.error ? { failureCode: outcome.error.code } : {}),
         metrics: outcome.metrics,
@@ -4739,7 +4598,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       await outcome({ workspaceId, workstreamId, operation, args })
     ).payload as { ok?: boolean; value?: unknown; error?: string };
     return withLocalWorkstreamAuthorities(routed, workspaceId, workstreamId, {
-      blockDashboard: resident((body) => this.blockDashboardOperationOutcome(body)),
       harnessRun: resident((body) => this.harnessRunOperationOutcome(body)),
       identity: resident((body) => this.identityOperationOutcome(body)),
       message: resident((body) => this.messageOperationOutcome(body)),
@@ -4792,9 +4650,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     } else {
       this.recordRecentEvent(sequenced);
       this.broadcast(sequenced);
-    }
-    if (BLOCK_DASHBOARD_REFRESH_EVENT_TYPES.has(sequenced.type)) {
-      await this.scheduleBlockDashboardRefresh(sequenced.sequence);
     }
   }
 
@@ -4861,7 +4716,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
 
   /**
    * Deliver one ordered batch. An outbox row is acknowledged only after the
-   * semantic frame and its dashboard-refresh intent have both been accepted
+   * semantic frame has been accepted
    * locally. Replaying the same sequence after a crash is harmless at the
    * client cursor and is deduplicated in this isolate's replay cache.
    */
@@ -5800,8 +5655,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   }
 
   private hasDueAlarmWork(now: number): boolean {
-    return this.objectStore.pendingBlockDashboardRefresh() !== null
-      || this.objectStore.nextRegionalEffectDueAt() !== null
+    return this.objectStore.nextRegionalEffectDueAt() !== null
       || this.objectStore.nextSemanticRealtimeDueAt() !== null
       || this.nextLoopWorkAt(now) !== null
       || this.nextExternalSettlementAt() !== null
@@ -5876,15 +5730,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
 
   protected override async runDueAlarmWork(): Promise<void> {
     this.loopDrainDeferred = false;
-    const pending = this.objectStore.pendingBlockDashboardRefresh();
-    const nextBlockDashboardAt = this.objectStore.nextBlockDashboardDueAt();
     const nextEffectAt = this.objectStore.nextRegionalEffectDueAt();
     const nextSemanticRealtimeAt = this.objectStore.nextSemanticRealtimeDueAt();
     const hasLoopWork = this.nextLoopWorkAt() !== null;
     const nextExternalSettlementAt = this.nextExternalSettlementAt();
     // A timer that fired above may have left the index behind the table.
     this.syncAgentTimerAlarms();
-    if (!pending && nextEffectAt === null && nextSemanticRealtimeAt === null
+    if (nextEffectAt === null && nextSemanticRealtimeAt === null
       && !hasLoopWork && nextExternalSettlementAt === null) return;
 
     if (nextExternalSettlementAt !== null && nextExternalSettlementAt <= Date.now()) {
@@ -5944,24 +5796,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       }
     }
 
-    if (!pending || nextBlockDashboardAt === null || nextBlockDashboardAt > Date.now()) {
-      this.loopDrainDeferred = await this.drainLoopToCompletion() === "deferred";
-      return;
-    }
-    this.objectStore.deletePendingBlockDashboardRefresh();
-    try {
-      await launchBlockDashboardRefresh(
-        this.env,
-        pending.workspaceId,
-        pending.workstreamId,
-        pending.triggerSequence,
-        pending.contextFence,
-      );
-    } catch {
-      const retryAt = Date.now() + BLOCK_DASHBOARD_DEBOUNCE_MS;
-      this.objectStore.failPendingBlockDashboardRefresh(pending, retryAt);
-      await this.ensureAlarmNoLaterThan(retryAt);
-    }
     this.loopDrainDeferred = await this.drainLoopToCompletion() === "deferred";
   }
 
@@ -6318,22 +6152,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     }
 
     const rawEvent = unvalidatedEvent as Record<string, unknown>;
-    if (wrapped.success && wrapped.data.audienceUserId) {
-      const personalEvent = PersonalSocketEventSchema.safeParse({
-        ...rawEvent,
-        occurredAt:
-          typeof rawEvent.occurredAt === "string" ? rawEvent.occurredAt : new Date().toISOString(),
-      });
-      if (!personalEvent.success) {
-        return jsonResponse(
-          { error: "invalid_event", details: personalEvent.error.flatten().fieldErrors },
-          400,
-        );
-      }
-      this.broadcast(personalEvent.data, undefined, wrapped.data.audienceUserId);
-      return jsonResponse({ accepted: true }, 202);
-    }
-
     const requestedSequence =
       typeof rawEvent.sequence === "number" && Number.isSafeInteger(rawEvent.sequence)
         ? rawEvent.sequence
@@ -6382,101 +6200,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       const identity = this.objectStore.identity();
       if (identity) await this.broadcastPresence(identity.workspaceId, identity.workstreamId);
     }
-    if (BLOCK_DASHBOARD_REFRESH_EVENT_TYPES.has(event.type)) {
-      await this.scheduleBlockDashboardRefresh(event.sequence);
-    }
     return jsonResponse({ accepted: true, sequence: event.sequence }, 202);
-  }
-
-  private async scheduleBlockDashboardRefresh(triggerSequence: number): Promise<void> {
-    const identity = this.objectStore.identity();
-    if (!identity) return;
-    const now = Date.now();
-    const existing = this.objectStore.pendingBlockDashboardRefresh();
-    const contextFence = this.blockDashboardContextFence(identity.workspaceId);
-    const pending: PendingBlockDashboardRefresh = {
-      ...identity,
-      triggerSequence: Math.max(existing?.triggerSequence ?? 0, triggerSequence),
-      contextFence: existing && existing.contextFence.throughSequence > contextFence.throughSequence
-        ? existing.contextFence
-        : contextFence,
-      firstQueuedAt: existing?.firstQueuedAt ?? now,
-    };
-    const dueAt = Math.min(
-      now + BLOCK_DASHBOARD_DEBOUNCE_MS,
-      pending.firstQueuedAt + BLOCK_DASHBOARD_MAX_DEBOUNCE_MS,
-    );
-    this.objectStore.putPendingBlockDashboardRefresh(pending, dueAt);
-    await this.ensureAlarmNoLaterThan(dueAt);
-  }
-
-  /**
-   * Freeze a provider-valid main-feed window for every block in one refresh.
-   *
-   * A pending tool call is mutable operational state: its result can settle
-   * after the call's sequence was allocated. The upper waterline therefore
-   * stops before the earliest pending call. A completed tool row is a legal
-   * boundary because model projection recreates the assistant call and its
-   * tool result as one inseparable provider-valid pair.
-   */
-  private blockDashboardContextFence(workspaceId: string): BlockDashboardContextFence {
-    const pendingTool = this.state.storage.sql.exec<{ sequence_number: number | null }>(
-      `SELECT MIN(turn.transcript_sequence) AS sequence_number
-         FROM participant_transcript_blocks block
-         JOIN participant_transcript_turns turn ON turn.turn_id = block.turn_id
-        WHERE block.block_kind = 'tool'
-          AND block.lifecycle_state IN ('planned', 'started')`,
-    ).toArray()[0]?.sequence_number ?? null;
-    const throughSequence = this.state.storage.sql.exec<{ sequence_number: number | null }>(
-      `SELECT MAX(transcript_sequence) AS sequence_number
-         FROM participant_transcript_turns
-        WHERE entry_kind = 'conversation'
-          AND (? IS NULL OR transcript_sequence < ?)`,
-      pendingTool,
-      pendingTool,
-    ).toArray()[0]?.sequence_number ?? 0;
-    const revision = this.state.storage.sql.exec<{ revision: number }>(
-      `SELECT revision FROM resource_inventory_revision WHERE id = 1`,
-    ).toArray()[0]?.revision ?? 0;
-    const principalKey = `workspace:${workspaceId}`;
-    const fingerprint = `inventory:${revision}`;
-    const checkpoint = this.state.storage.sql.exec<CompactionCheckpointRow>(
-      `SELECT checkpoint.execution_principal_key, checkpoint.resource_visibility_fingerprint,
-              checkpoint.checkpoint_template_version, checkpoint.run_id,
-              checkpoint.compacted_through_sequence,
-              json_extract(payload.payload_json, '$.messages') AS messages_json,
-              json_extract(payload.payload_json, '$.summary') AS summary, checkpoint.model
-         FROM transcript_compaction_checkpoints checkpoint
-         JOIN transcript_facts fact ON fact.fact_id = checkpoint.checkpoint_fact_id
-         JOIN transcript_payloads payload ON payload.payload_id = fact.payload_id
-        WHERE checkpoint.execution_principal_key = ?
-          AND checkpoint.resource_visibility_fingerprint = ?
-          AND checkpoint.compacted_through_sequence <= ?
-        ORDER BY checkpoint.compacted_through_sequence DESC,
-                 checkpoint.updated_at DESC LIMIT 1`,
-      principalKey,
-      fingerprint,
-      throughSequence,
-    ).toArray()[0];
-    if (!checkpoint) return { throughSequence, compaction: null };
-    const identity: ContextCompactionCheckpointIdentity = {
-      executionPrincipalKey: checkpoint.execution_principal_key,
-      resourceVisibilityFingerprint: checkpoint.resource_visibility_fingerprint,
-      checkpointTemplateVersion: checkpoint.checkpoint_template_version,
-      checkpointRunId: checkpoint.run_id,
-      compactedThroughSequence: checkpoint.compacted_through_sequence,
-      messagesJson: checkpoint.messages_json,
-      summary: checkpoint.summary,
-      model: checkpoint.model,
-    };
-    return {
-      throughSequence,
-      compaction: {
-        checkpointRunId: checkpoint.run_id,
-        compactedThroughSequence: checkpoint.compacted_through_sequence,
-        checkpointHash: contextCompactionCheckpointHash(identity),
-      },
-    };
   }
 
   protected override armAlarmBeforeDueWork(now: number): Promise<unknown> {
@@ -6511,7 +6235,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       derivedCandidates: [
         this.objectStore.nextRegionalEffectDueAt(),
         this.objectStore.nextSemanticRealtimeDueAt(),
-        this.objectStore.nextBlockDashboardDueAt(),
         this.nextExternalSettlementAt(),
         now + KEEP_ALIVE_INTERVAL_MS,
       ],
@@ -6586,7 +6309,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const candidates: Array<number | null> = [
       this.objectStore.nextRegionalEffectDueAt(),
       this.objectStore.nextSemanticRealtimeDueAt(),
-      this.objectStore.nextBlockDashboardDueAt(),
       this.nextLoopWorkAt(now),
       this.nextExternalSettlementAt(),
     ];
@@ -7039,9 +6761,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   }
 
   private broadcast(
-    event: ServerSocketEvent | PersonalSocketEvent,
+    event: ServerSocketEvent,
     excluding?: WebSocket,
-    audienceUserId?: string,
   ): void {
     const payload = JSON.stringify(event);
     if (textEncoder.encode(payload).byteLength > WORKSTREAM_REALTIME_MAX_FRAME_BYTES) {
@@ -7052,7 +6773,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       if (socket === excluding) continue;
       const attachment = this.readAttachment(socket);
       if (!attachment?.subscribed) continue;
-      if (audienceUserId && !isPersonalEventAudience(attachment.userId, audienceUserId)) continue;
       try {
         socket.send(payload);
       } catch {

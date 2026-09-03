@@ -49,7 +49,6 @@ type CloudflareBinding =
   | Ai
   | DurableObjectNamespace
   | Env["SUBSTREAM_AGENTS"]
-  | Env["BLOCK_DASHBOARD_AGENTS"]
   | Env["WORKSTREAM_DOS"]
   | Env["WORKSPACE_DOS"]
   | Env["AUTOMATION_AGENTS"]

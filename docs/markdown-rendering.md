@@ -1,7 +1,7 @@
 # Rendering markdown in the desktop client
 
 Almost everything Rally shows a person is markdown a model wrote: a work-stream
-turn, a HyperSight block, a meeting briefing, a note, an automation's overview.
+turn, a meeting briefing, a note, an automation's overview.
 All of it goes through one component and one block of CSS. This document covers
 that renderer — what it adds on top of `react-markdown`, what a surface hosting
 it may and may not restyle, and the two tests that keep the arrangement from
@@ -34,7 +34,6 @@ Ten call sites, all passing a markdown string as `children`:
 | Surface | Call site |
 | --- | --- |
 | A work-stream turn, and the structured block above it | `workstream-blocks.tsx` |
-| A HyperSight dashboard block | `block-dashboard-panel.tsx` |
 | An automation's overview while it is being set up | `new-automation.tsx` |
 | The Control Tower meeting briefing | `screens/meeting-notes.tsx` |
 | A note's body | `screens/note-detail.tsx` |
@@ -125,7 +124,7 @@ of what a model meant, and a stored document's table uses the same workaround.
 Heading collapse is opt-in and enabled only by the main work-stream message
 feed. There, every heading h2 and below is an accordion, one level deep. Every
 other Markdown surface — the inspector rail, notes, attachment lightbox,
-HyperSight, meeting briefing, and automation setup — renders headings fully
+meeting briefing, and automation setup — renders headings fully
 expanded. This keeps compact feed navigation from becoming a surprising
 document-reader behavior. It also avoids borrowing `still`, whose citation
 behavior belongs to exported pictures rather than interactive screens.
@@ -635,8 +634,7 @@ becomes the characters it stood for;
 and why it refuses to touch a price.
 
 It does not own the markdown itself. Where a briefing's text comes from is
-[`meeting-notes.md`](meeting-notes.md); a HyperSight block's is
-[`agent-harness.md`](agent-harness.md); an automation overview's is
+[`meeting-notes.md`](meeting-notes.md); an automation overview's is
 [`automation-drafts.md`](automation-drafts.md). It does not own the surrounding
 screen either — a note's page geometry belongs to the note screen, and this
 document has an opinion only about the part of it that is markdown.
@@ -766,6 +764,19 @@ The traps, both of which have bitten:
   exercises none of the `ol` selectors.
 
 ## Changelog
+
+### 2026-09-03 — The dashboard markdown host is removed
+
+**What changed:** HyperSight's dashboard panel and its markdown rendering host
+were deleted.
+
+**Why:** Sharing the renderer did not make the panel an independent primitive;
+retaining the host would leave a hidden feature surface.
+
+**Consequences:** The shared renderer continues to serve the main feed and
+other documented live surfaces.
+
+Shipped in #541.
 
 ### 2026-09-02 — The heading gutter is margin, so an answer is never indented
 

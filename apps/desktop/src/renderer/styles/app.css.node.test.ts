@@ -184,25 +184,7 @@ describe('scrollbar gutter reservation on the always-tall scrollers', () => {
 });
 
 /**
- * `.rail-scroll` backs both the inspector rail and the HyperSight
- * (block-dashboard) rail — `inspector-rail.tsx` and `block-dashboard-panel.tsx`
- * both render a `.rail-scroll` div — and containment used to be declared only
- * for the HyperSight variant, via `.block-dashboard-rail .rail-scroll`.
- *
- * What that containment does, precisely, because the obvious reading is wrong:
- * scroll chaining walks the *ancestor* chain, and neither of these scrollers
- * has a scrollable ancestor to chain into. `.rail-surface` and `.sidebar` are
- * `position: fixed`, and `html`, `body` and `#root` are all `overflow: hidden`.
- * Scrolling past either edge could not have scrolled the transcript or the
- * workspace underneath it, and adding containment did not stop it doing so.
- * What `contain` suppresses is the other half of the property: the viewport's
- * own overscroll affordance — Chromium's rubber-band or glow — at the end of
- * the scroller.
- *
- * Why only the HyperSight rail carried it was never written down, and this
- * consolidation is not the repair of a defect anybody observed: it makes the
- * two rails identical, and gives the sidebar the same treatment, so that the
- * next person reading either rule finds one answer rather than two.
+ * Shared rail and sidebar scrollers contain viewport overscroll effects.
  */
 describe('overscroll containment on the shared rail and sidebar scrollers', () => {
   it.each([['.rail-scroll'], ['.sidebar-scroll']])('contains overscroll on %s', (selector) => {
@@ -210,20 +192,6 @@ describe('overscroll containment on the shared rail and sidebar scrollers', () =
 
     expect(declarations).not.toBeNull();
     expect(declarations).toContain('overscroll-behavior: contain;');
-  });
-
-  // Read off the selector preludes rather than searched for in the whole file,
-  // for the reason spelled out at the markdown guard below. `not.toContain` on
-  // the raw stylesheet was both. Under-strict: it misses
-  // `.block-dashboard-rail > .rail-scroll`, an `:is()` form, and a selector
-  // broken across lines, every one of which is the override it exists to
-  // forbid. And over-strict: `preludes()` strips comments, but a raw substring
-  // search does not, so a comment in the stylesheet explaining why the override
-  // was removed would have failed it — which makes the one place the reasoning
-  // belongs the one place it could not be written.
-  it('declares it on the shared rule rather than a HyperSight-only override', () => {
-    expect(preludes().filter((prelude) => /\.block-dashboard-rail\b[^,]*\.rail-scroll\b/u.test(prelude)))
-      .toEqual([]);
   });
 });
 
@@ -789,9 +757,8 @@ describe('inspector resource document chrome', () => {
   // will not shrink below the markdown's max-content, and `.rail-scroll`'s
   // `overflow-x: hidden` then clips the unwrapped lines. Naming the column
   // `minmax(0, 1fr)` and giving the scroller and the document host `min-width:
-  // 0` is what makes the preview take the rail rather than the file. HyperSight
-  // already had the scroller-side half on `.block-dashboard-panel`; dropping
-  // either half here returns the clip.
+  // 0` is what makes the preview take the rail rather than the file; removing
+  // either half returns the clip.
   it('gives the rail a column that can shrink below the document min-content', () => {
     const surface = rule('.rail-surface');
     expect(surface).not.toBeNull();

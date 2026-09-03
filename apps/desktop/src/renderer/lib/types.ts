@@ -381,37 +381,6 @@ export interface ElicitationData {
   createdAt?: string;
 }
 
-export interface BlockDashboardBlockRun {
-  id: string;
-  blockId: string;
-  configurationVersionId: string;
-  triggerSequence: number;
-  status: 'queued' | 'running' | 'completed' | 'failed' | 'stopped';
-  markdown: string | null;
-  error: { code: string; message: string } | null;
-  createdAt: string;
-  startedAt: string | null;
-  completedAt: string | null;
-}
-
-export interface BlockDashboardBlock {
-  id: string;
-  prompt: string;
-  latestRun: BlockDashboardBlockRun | null;
-}
-
-export interface BlockDashboard {
-  versionId: string | null;
-  versionNumber: number;
-  blocks: BlockDashboardBlock[];
-  updatedAt: string | null;
-}
-
-export interface BlockDashboardPreference {
-  visible: boolean;
-  updatedAt: string | null;
-}
-
 export interface MessageMention {
   type: 'person' | 'connector';
   personId?: string;

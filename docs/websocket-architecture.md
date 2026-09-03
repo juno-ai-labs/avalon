@@ -86,9 +86,8 @@ a draft is single-author configuration work that a person is either doing or not
 so there is no navigation latency to pre-pay. Main validates it as its own route
 kind, `automation_agent`, requiring exactly `/socket/automations/<id>`.
 
-HyperSight block sockets and dictation sockets keep their existing transports
-and lifecycles. They are not brokered by this module and are not part of the
-proactive work-stream swarm.
+Dictation sockets keep their existing transport and lifecycle. They are not
+brokered by this module and are not part of the proactive work-stream swarm.
 
 ### Selecting the swarm
 
@@ -312,7 +311,7 @@ Worker, or upgrade negotiation; those belong to
 snapshots or events; those belong to the Durable Object modules. It does not
 define cache waterlines or choose sockets over REST; see
 [`choosing-sockets-or-rest.md`](choosing-sockets-or-rest.md). It also does not
-move WorkspaceDO, HyperSight block, or dictation transport into Node.
+move WorkspaceDO or dictation transport into Node.
 
 ## Failure modes and limits
 
@@ -449,6 +448,19 @@ rows while intentionally leaving pins and active runs uncapped because those are
 explicit product states rather than speculative guesses.
 
 ## Changelog
+
+### 2026-09-03 — The dashboard branch is removed from socket architecture
+
+**What changed:** Block Dashboard admission, fan-out, event types, socket pool,
+and renderer ownership were deleted.
+
+**Why:** The feature no longer exists, so keeping its branch in the topology
+would obscure which objects and connections actually own realtime state.
+
+**Consequences:** The diagram and invariants now cover only workspace,
+work-stream control, and addressed substream connections.
+
+Shipped in #541.
 
 ### 2026-09-02 — Child mutations move onto their owning substream socket
 

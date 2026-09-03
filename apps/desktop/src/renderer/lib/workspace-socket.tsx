@@ -137,7 +137,7 @@ function invalidateTopic(
     activity: [['work-opportunities']],
     work_opportunities: [['work-opportunities']],
     workstream_directory: [WORKSTREAMS_QUERY_KEY],
-    viewer_preferences: [['telemetry-preference'], ['block-dashboard-preference']],
+    viewer_preferences: [['telemetry-preference']],
     feature_flags: [['feature-flags']],
   };
   for (const queryKey of roots[topic]) void queryClient.invalidateQueries({ queryKey });
