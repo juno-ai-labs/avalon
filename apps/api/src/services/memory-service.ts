@@ -1,5 +1,5 @@
 import type { WorkstreamWorkflowInput } from "@rally/contracts";
-import { asWorkspaceId } from "@rally/contracts";
+import { asWorkspaceId, MEMORY_RECALL_QUERY_LIMIT } from "@rally/contracts";
 import { newId, nowIso } from "@rally/db";
 import { z } from "zod";
 import type { Env } from "../env";
@@ -105,7 +105,7 @@ function workspaceMemoryObject(env: Env, workspaceId: string) {
  * retries with `{}`, which fails too.
  */
 const SearchInputSchema = z.union([
-  z.strictObject({ query: z.string().trim().min(1).max(2_000) }),
+  z.strictObject({ query: z.string().trim().min(1).max(MEMORY_RECALL_QUERY_LIMIT) }),
   z.strictObject({ memoryItemId: z.string().uuid() }),
 ], { error: "Send exactly one of query or memoryItemId: query to search, memoryItemId to reread one known item." });
 
@@ -674,7 +674,33 @@ export async function freezeRunMemoryContext(
   lease: MemoryRunLease,
   rawQuery: string,
 ): Promise<FrozenMemoryContext> {
-  const query = rawQuery.trim() || "Current work-stream objective and trigger";
+  // Bounded to what the recall surfaces accept, because this query is assembled
+  // from run content rather than chosen by anyone: `memoryQueryParts` joins the
+  // objective, the trigger context and the full text of the triggering message.
+  // An automation triggered by a long email or chat message therefore built a
+  // query over the automation memory tool's 2000-character bound, and the
+  // ZodError from that parse escaped run setup — before the frozen scope, before
+  // the first inference — so the run failed on every attempt and stayed failed,
+  // with a bare `harness_execution_failed` naming nothing anyone could act on.
+  //
+  // The two branches lose different amounts, and only one of them loses
+  // nothing. On the automation side the match is `instr(lower(text),
+  // lower(?))`, so a query longer than any stored memory could never have
+  // matched and truncation costs nothing at all. The workspace side is
+  // `hybridMemorySearch`, whose vector leg embeds the query — a 2000-character
+  // prefix genuinely does retrieve differently from the whole string, and that
+  // branch had no bound of its own forcing this.
+  //
+  // It is still the right cut, because of what the tail is. `memoryQueryParts`
+  // appends in order: the recallable objective first, then the trigger context,
+  // then the full text of the triggering message. Truncating drops the end of a
+  // long email or chat message, not the objective the recall is about.
+  //
+  // The bound is the receiving schema's rather than a new number of this
+  // function's choosing, and it is applied before the hash and the persisted
+  // text so a replay freezes the same query.
+  const query = (rawQuery.trim() || "Current work-stream objective and trigger")
+    .slice(0, MEMORY_RECALL_QUERY_LIMIT);
   const runs = createHarnessRunObjectPort(env, input.workspaceId, input.workstreamId);
   const fence = {
     runId: input.harnessRunId,
@@ -987,7 +1013,7 @@ export function createMemoryTools(env: Env, input: WorkstreamWorkflowInput): Har
           type: "object",
           additionalProperties: false,
           properties: {
-            query: { type: "string", minLength: 1, maxLength: 2_000 },
+            query: { type: "string", minLength: 1, maxLength: MEMORY_RECALL_QUERY_LIMIT },
             memoryItemId: { type: "string", format: "uuid" },
           },
           // Exclusivity is stated in the description and enforced by

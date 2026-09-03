@@ -1051,6 +1051,7 @@ const googleEmailActivityFilterFields = [
 
 const googleCalendarChangedActivityFilterFields = [
   { key: "status", label: "Status", description: "Google Calendar event status.", valueType: "string" },
+  { key: "seriesChange", label: "Whole series", description: "Whether the change covers every occurrence of a recurring event.", valueType: "boolean" },
   { key: "recurringEventId", label: "Recurring event", description: "Parent recurring event identifier.", valueType: "string" },
   { key: "eventType", label: "Event type", description: "Google Calendar event type.", valueType: "string" },
   { key: "htmlLink", label: "Event URL", description: "Canonical Google Calendar event URL.", valueType: "string" },
@@ -1059,7 +1060,9 @@ const googleCalendarChangedActivityFilterFields = [
 
 const googleCalendarCompletedActivityFilterFields = [
   { key: "completedAt", label: "Completed at", description: "ISO timestamp when the event ended.", valueType: "string" },
-  ...googleCalendarChangedActivityFilterFields.filter((field) => field.key !== "status" && field.key !== "htmlLink"),
+  ...googleCalendarChangedActivityFilterFields.filter((field) => (
+    field.key !== "status" && field.key !== "htmlLink" && field.key !== "seriesChange"
+  )),
 ] satisfies ConnectorActivityFilterField[];
 
 const googleDriveActivityFilterFields = [
@@ -1568,7 +1571,10 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       return { activities: [], cursor: { pageToken, baselining: true } };
     }
 
-    const activities: Omit<NormalizedActivity, "id">[] = [];
+    // Collected across the poll rather than normalized per page, so the
+    // instances of one series edit that share a page are collapsed here rather
+    // than reaching the workspace as an activity each.
+    const changed: Record<string, unknown>[] = [];
     let pageToken = input.pageToken;
     for (let page = 0; page < GOOGLE_MAX_POLL_PAGES; page += 1) {
       const url = calendarEventsUrl(calendarId, input.syncToken, pageToken);
@@ -1577,10 +1583,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         return pollCalendarChanges(connection, { baselining: true }, signal);
       }
       const payload = await safeJsonBounded(response, GOOGLE_POLL_RESPONSE_BYTES);
-      for (const event of recordArray(payload, "items")) {
-        const activity = normalizeCalendarActivity(connection, calendarId, event);
-        if (activity) activities.push(activity);
-      }
+      changed.push(...recordArray(payload, "items"));
       pageToken = readString(payload, "nextPageToken") ?? undefined;
       if (!pageToken) {
         const syncToken = requiredString(
@@ -1588,10 +1591,16 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
           "nextSyncToken",
           "Google Calendar incremental response did not include a sync token"
         );
-        return { activities, cursor: { syncToken } };
+        return {
+          activities: collapseCalendarSeriesChanges(connection, calendarId, changed),
+          cursor: { syncToken }
+        };
       }
     }
-    return { activities, cursor: { syncToken: input.syncToken, pageToken } };
+    return {
+      activities: collapseCalendarSeriesChanges(connection, calendarId, changed),
+      cursor: { syncToken: input.syncToken, pageToken }
+    };
   }
 
   async function pollCalendar(
@@ -2839,23 +2848,130 @@ function calendarEventsUrl(calendarId: string, syncToken?: string, pageToken?: s
   return url;
 }
 
+/**
+ * Google mints a recurring instance's id as `<master id>_<instance start>`. The
+ * suffix is a datetime stamp — `YYYYMMDD` for an all-day occurrence, otherwise
+ * `YYYYMMDDTHHMMSSZ` — and it is matched strictly, which is what makes the split
+ * trustworthy. Only the master half is drawn from the base32hex alphabet the id
+ * format documents, and it is matched greedily rather than against that alphabet
+ * because an imported event's id can carry an underscore of its own: greedy
+ * matching splits `a_b_20260101T000000Z` at the last underscore, where an
+ * alphabet-restricted master would refuse the id outright.
+ */
+const CALENDAR_INSTANCE_ID = /^(?<master>.+)_(?<instanceStart>\d{8}(?:T\d{6}Z)?)$/u;
+
+/**
+ * Which series an instance belongs to. Google states it outright except on a
+ * cancelled instance, which arrives stripped to its identifiers, and there the
+ * id's own shape is the only thing left to read it from.
+ *
+ * That reading is deliberately not attempted for anything else. A one-off event
+ * whose id merely ends in an underscore and eight digits would otherwise be
+ * given a series that does not exist, and since every instance of a series is
+ * now reported against it, the fabricated id would reach the workspace as a
+ * series activity rather than falling through to the individual path.
+ */
+function calendarSeriesId(event: Record<string, unknown>): string | null {
+  const recurringEventId = readString(event, "recurringEventId");
+  if (recurringEventId) return recurringEventId;
+  if (readString(event, "status") !== "cancelled") return null;
+  const eventId = readString(event, "id");
+  return eventId ? CALENDAR_INSTANCE_ID.exec(eventId)?.groups?.master ?? null : null;
+}
+
+/**
+ * One edit to a recurring series makes Google re-send every expanded instance
+ * of it — a thousand of them for a standup that runs to 2040 — and each carries
+ * its own etag, so keying identity on the etag made one edit a thousand
+ * activities. Every instance of a series is reported against the series, keyed
+ * on the master's id and the `updated` timestamp of the edit that touched it:
+ * stable across the pages and the polls the burst is spread over, so the
+ * workspace's dedupe collapses the repeats it sees on later polls.
+ *
+ * The grouping decides nothing on its own — it only saves normalizing an
+ * instance whose activity a sibling in the same poll already produced. An
+ * instance is classified by what it is, never by how many of its siblings
+ * happened to land in the same chunk: a burst is larger than the 150 items one
+ * poll fetches, so a batch-sensitive rule would report the same edit
+ * differently depending on where the page boundary fell.
+ *
+ * An occurrence edited on its own carries its own `updated`, so it is a
+ * distinct edit of the series and keeps its own activity rather than folding
+ * into the one for the series-wide change.
+ */
+function collapseCalendarSeriesChanges(
+  connection: ConnectorConnectionContext,
+  calendarId: string,
+  events: Record<string, unknown>[]
+): Omit<NormalizedActivity, "id">[] {
+  const groups = new Map<string, Record<string, unknown>[]>();
+  const order: Array<{ groupKey: string; seriesId: string } | { event: Record<string, unknown> }> = [];
+  for (const event of events) {
+    const seriesId = calendarSeriesId(event);
+    const updatedAt = timestampFromValue(readString(event, "updated"));
+    // Without a usable `updated` the series activity has no timestamp to key
+    // on that a later poll would arrive at again, and an identity whose content
+    // changes between polls is refused at ingest. Such an item stays an
+    // individual activity rather than being folded into one that cannot repeat.
+    if (!seriesId || !updatedAt) {
+      order.push({ event });
+      continue;
+    }
+    // A NUL joins the two halves because neither can contain one, so no pair of
+    // distinct series and timestamps can spell the same key.
+    const groupKey = `${seriesId}\u0000${updatedAt}`;
+    const group = groups.get(groupKey);
+    if (group) {
+      group.push(event);
+      continue;
+    }
+    groups.set(groupKey, [event]);
+    order.push({ groupKey, seriesId });
+  }
+
+  const activities: Omit<NormalizedActivity, "id">[] = [];
+  for (const entry of order) {
+    const [representative] = "groupKey" in entry ? groups.get(entry.groupKey) ?? [] : [entry.event];
+    if (!representative) continue;
+    const activity = "groupKey" in entry
+      ? normalizeCalendarActivity(connection, calendarId, representative, entry.seriesId)
+      : normalizeCalendarActivity(connection, calendarId, representative);
+    if (activity) activities.push(activity);
+  }
+  return activities;
+}
+
 function normalizeCalendarActivity(
   connection: ConnectorConnectionContext,
   calendarId: string,
-  event: Record<string, unknown>
+  event: Record<string, unknown>,
+  seriesId: string | null = null
 ): Omit<NormalizedActivity, "id"> | null {
-  const eventId = readString(event, "id");
+  const eventId = seriesId ?? readString(event, "id");
   if (!eventId) return null;
   const now = new Date().toISOString();
   const status = readString(event, "status") ?? "confirmed";
   const title = truncateText(readString(event, "summary")?.trim() || "Untitled event", 300);
+  // The series identity embeds this, and the group key the caller built embeds
+  // its own reading of the same field. The two have to agree, which they do
+  // because `collapseCalendarSeriesChanges` passes a series id only for an
+  // event whose `updated` it already parsed: the `now` fallback below is
+  // unreachable on that path, and would otherwise mint an identity that no
+  // later poll could arrive at again.
   const updatedAt = timestampFromValue(readString(event, "updated")) ?? now;
-  const start = sanitizeCalendarDateTime(readRecord(event, "start"));
-  const end = sanitizeCalendarDateTime(readRecord(event, "end"));
+  const start = seriesId ? sanitizeCalendarDateTime(null) : sanitizeCalendarDateTime(readRecord(event, "start"));
+  const end = seriesId ? sanitizeCalendarDateTime(null) : sanitizeCalendarDateTime(readRecord(event, "end"));
   const organizer = sanitizeGooglePerson(readRecord(event, "organizer"));
   const creator = sanitizeGooglePerson(readRecord(event, "creator"));
-  const attendees = recordArray(event, "attendees");
-  const version = readString(event, "etag") ?? updatedAt;
+  // A guest's `responseStatus` is per-occurrence — one person declining one
+  // Tuesday — and `googleStructuredPeople` carries the attendee record into
+  // `sourceText` whole. A series activity is re-emitted on every poll its burst
+  // spans and the workspace refuses a repeated identity whose payload changed,
+  // so the series names each guest without the RSVP that differs between the
+  // occurrences it covers.
+  const attendees = recordArray(event, "attendees")
+    .map((person) => (seriesId ? sanitizeGooglePerson(person) : person));
+  const version = seriesId ? `series:${updatedAt}` : readString(event, "etag") ?? updatedAt;
   const identity = `calendar:${calendarId}:${eventId}:${version}`;
   const cancelled = status === "cancelled";
   return {
@@ -2869,10 +2985,19 @@ function normalizeCalendarActivity(
     subject: { eventId, calendarId, status, start, end },
     occurredAt: updatedAt,
     receivedAt: now,
-    title: cancelled ? `Calendar event cancelled: ${title}` : `Calendar event changed: ${title}`,
-    summary: start.dateTime || start.date ? `Starts ${start.dateTime ?? start.date}` : "Calendar event metadata changed",
+    title: calendarActivityTitle(title, { cancelled, series: Boolean(seriesId) }),
+    summary: seriesId
+      ? cancelled
+        ? "Every occurrence of this recurring event was cancelled"
+        : "Every occurrence of this recurring event changed"
+      : start.dateTime || start.date
+        ? `Starts ${start.dateTime ?? start.date}`
+        : "Calendar event metadata changed",
+    // A location an exception overrides is per-occurrence for the same reason.
     textSnippet: truncateText(
-      [title, readString(event, "location")].filter((value): value is string => Boolean(value)).join(" · "),
+      [title, seriesId ? null : readString(event, "location")]
+        .filter((value): value is string => Boolean(value))
+        .join(" · "),
       1000
     ),
     payloadRef: null,
@@ -2886,12 +3011,26 @@ function normalizeCalendarActivity(
     ]),
     metadata: {
       status,
-      recurringEventId: readString(event, "recurringEventId"),
+      seriesChange: Boolean(seriesId),
+      recurringEventId: seriesId ?? readString(event, "recurringEventId"),
       eventType: readString(event, "eventType"),
-      htmlLink: readString(event, "htmlLink"),
+      // An instance's link opens that occurrence and differs across the
+      // instances one edit touched, so the series activity carries none rather
+      // than whichever instance a page happened to lead with.
+      htmlLink: seriesId ? null : readString(event, "htmlLink"),
       attendeesOmitted: readBoolean(event, "attendeesOmitted") ?? false
     }
   };
+}
+
+function calendarActivityTitle(
+  title: string,
+  kind: { cancelled: boolean; series: boolean }
+): string {
+  if (kind.series) {
+    return kind.cancelled ? `Recurring event cancelled: ${title}` : `Recurring event changed: ${title}`;
+  }
+  return kind.cancelled ? `Calendar event cancelled: ${title}` : `Calendar event changed: ${title}`;
 }
 
 function normalizeCalendarCompletionActivity(

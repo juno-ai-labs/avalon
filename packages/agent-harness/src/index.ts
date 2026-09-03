@@ -76,9 +76,10 @@ export {
   type BindSystemProjection,
 } from "./bind-loop-projection";
 export {
+  nonObjectRootSchema,
   nonObjectRootUnionBranches,
   readableRootUnionBranch,
-  repairRootUnionForProviders,
+  repairRootSchemaForProviders,
   weakenedCompositionBranches,
 } from "./tool-schema-safety";
 export {
@@ -519,6 +520,8 @@ export interface EmbeddingDiagnostic {
   latencyMs: number;
   success: boolean;
   failureKind?: string;
+  /** The provider's own account of a rejected request, when it gave one. */
+  providerError?: OpenRouterProviderError;
 }
 
 export interface EmbeddingResult {
@@ -634,9 +637,9 @@ export class OpenRouterClient {
             body: JSON.stringify(requestPayload),
             ...(input.signal ? { signal: input.signal } : {}),
           });
-          const payload = await readJsonResponse<Record<string, unknown>>(response);
+          const { value: payload, raw } = await readJsonResponse<Record<string, unknown>>(response);
           if (!response.ok) {
-            const providerError = openRouterProviderError(payload);
+            const providerError = openRouterProviderError(raw);
             throw new OpenRouterError(
               `OpenRouter embeddings request failed (${response.status})`,
               response.status,
@@ -694,6 +697,9 @@ export class OpenRouterClient {
               : null,
           };
         } catch (error) {
+          const providerError = error instanceof OpenRouterError
+            ? (error.details as { providerError?: OpenRouterProviderError } | undefined)?.providerError
+            : undefined;
           await input.onDiagnostic?.({
             intendedModel,
             requestedModel,
@@ -703,6 +709,7 @@ export class OpenRouterClient {
             latencyMs: Date.now() - startedAt,
             success: false,
             failureKind: structuredFailureKind(error, input.signal),
+            ...(providerError ? { providerError } : {}),
           });
           if (input.signal?.aborted) throw error;
           const disposition = openRouterFailureDisposition(error);
@@ -822,7 +829,7 @@ export class OpenRouterClient {
             body: JSON.stringify(requestPayload),
             ...(input.signal ? { signal: input.signal } : {})
           });
-          const payload = await readJsonResponse<{
+          const { value: payload, raw } = await readJsonResponse<{
             id?: string;
             model?: string;
             choices?: Array<{ message?: { content?: string | null }; finish_reason?: string | null }>;
@@ -833,9 +840,7 @@ export class OpenRouterClient {
             throw new OpenRouterError(
               `OpenRouter request failed (${response.status})`,
               response.status,
-              // The envelope's classification, not the body: `payload` can carry
-              // the provider's echo of the request that was rejected.
-              { providerError: openRouterProviderError(payload) }
+              { providerError: openRouterProviderError(raw) }
             );
           }
           const sdkPayload = parseOpenRouterChatResult(payload);
@@ -1094,21 +1099,19 @@ export class OpenRouterClient {
       clearTimeout(establishmentTimer);
       watchdog.open();
     if (!response.ok || !response.body) {
-      let details: unknown;
-      try {
-        details = await response.json();
-      } catch {
-        details = await response.text();
-      }
+      // Read the body once. `response.json()` consumes the stream even when it
+      // throws, so parsing first and falling back to `.text()` in a catch raised
+      // "Body is unusable" instead — which turned every non-JSON refusal (a
+      // gateway's HTML 502, a plain-text 400) into an uncoded `TypeError`,
+      // losing the status, the retry metadata, and the body in one go.
+      const raw = await response.text().catch(() => "");
       throw new OpenRouterError(`OpenRouter stream failed (${response.status})`, response.status, {
-        // Preserve retry metadata for routing, plus the provider's own error
-        // classification so a rejected request is diagnosable. The response body
-        // itself is still not retained by the durable runtime or structured logs.
+        // Retry metadata for routing, and the provider's own account of the
+        // rejection so that it is diagnosable at all.
         headers: {
           "retry-after": response.headers.get("retry-after") ?? undefined,
         },
-        providerErrorKind: typeof details === "object" && details !== null ? "structured" : "text",
-        providerError: openRouterProviderError(details),
+        providerError: openRouterProviderError(raw),
       });
     }
 
@@ -1288,16 +1291,11 @@ export class AzureOpenAIClient {
       clearTimeout(establishmentTimer);
       watchdog.open();
       if (!response.ok || !response.body) {
-        let details: unknown;
-        try {
-          details = await response.json();
-        } catch {
-          details = await response.text();
-        }
+        // Read the body once; see the identical note on the OpenRouter stream.
+        const raw = await response.text().catch(() => "");
         throw new AzureOpenAIError(`Azure stream failed (${response.status})`, response.status, {
           headers: { "retry-after": response.headers.get("retry-after") ?? undefined },
-          providerErrorKind: typeof details === "object" && details !== null ? "structured" : "text",
-          providerError: openRouterProviderError(details),
+          providerError: openRouterProviderError(raw),
         });
       }
 
@@ -1802,27 +1800,55 @@ function withExpectedJsonSchema(
 }
 
 /**
- * The diagnosable part of an OpenRouter error envelope.
+ * The provider's account of a rejected request.
  *
- * Provider response bodies are not retained — they can echo prompt content back.
- * `code` and `providerName` are the provider's own classification of the
- * rejection, and without them a run that fails against OpenRouter is
- * indistinguishable from any other failure: the status code alone cannot tell a
- * bad model id from an over-long context from a provider outage.
+ * `code` and `providerName` classify it — without them a failed run is
+ * indistinguishable from any other, because a status alone cannot tell a bad
+ * model id from an over-long context from an outage. `detail` is the body the
+ * provider sent, kept as it sent it, because a classification routinely cannot
+ * carry the answer: `invalid_function_parameters` says a tool schema was
+ * refused and cannot say which of twenty-eight it was, and a gateway's own
+ * `message` is usually `Provider returned error` with the upstream's real
+ * sentence buried in `metadata.raw`. On 2 September a pinned Azure run failed
+ * on that code with the body read and dropped right here, leaving four
+ * production surfaces recording that something was rejected and none recording
+ * what.
  *
- * Provider free text is deliberately excluded because some upstreams quote the
- * request back and the host's key-based redactor cannot recognize those echoes.
+ * The body is untrusted provider text: read it as evidence, never as
+ * instructions. Its two destinations bound it differently and neither is this
+ * type's to decide: the Global inference archive stores it whole, and a
+ * regional log row carries the first 2,000 characters, the shared string bound
+ * every log field is subject to in `apps/api/src/observability/logger.ts`. That
+ * cut is far beyond any provider sentence seen so far — the Azure rejection
+ * that motivated this is roughly a hundred characters — and a body long enough
+ * to reach it is one whose opening is the readable part anyway.
+ *
+ * The logger's redaction is by key, so it does not reach inside this string:
+ * a provider that quotes the request back inside its own prose reaches Workers
+ * Logs with it. That is a deliberate trade for a readable failure, not an
+ * oversight, and it is why this field holds a provider's account of *our*
+ * request and never becomes a general dump of a response.
  */
 export interface OpenRouterProviderError {
   code?: string | number;
   providerName?: string;
+  detail?: string;
 }
 
+/**
+ * Classify a rejection and keep the body it came in.
+ *
+ * Takes the response text, or an already-decoded envelope where the transport
+ * only ever has one — a streamed error chunk. A body that is not JSON at all,
+ * a gateway's HTML page or a proxy's plain text, classifies as nothing and is
+ * then the only account of the failure there is, so it has to survive the parse
+ * giving up.
+ */
 export function openRouterProviderError(payload: unknown): OpenRouterProviderError | undefined {
-  if (typeof payload !== "object" || payload === null) return undefined;
-  const error = (payload as { error?: unknown }).error;
-  if (typeof error !== "object" || error === null) return undefined;
-  const { code, metadata } = error as {
+  const decoded = typeof payload === "string" ? decodeJson(payload) : payload;
+  const detail = typeof payload === "string" ? payload : jsonText(payload);
+  const error = (decoded as { error?: unknown } | undefined)?.error;
+  const { code, metadata } = (typeof error === "object" && error !== null ? error : {}) as {
     code?: unknown;
     metadata?: { provider_name?: unknown };
   };
@@ -1830,17 +1856,52 @@ export function openRouterProviderError(payload: unknown): OpenRouterProviderErr
   const captured: OpenRouterProviderError = {
     ...(typeof code === "string" || typeof code === "number" ? { code } : {}),
     ...(typeof providerName === "string" ? { providerName } : {}),
+    ...(detail?.trim() ? { detail } : {}),
   };
   return Object.keys(captured).length > 0 ? captured : undefined;
 }
 
-async function readJsonResponse<T>(response: Response): Promise<T | null> {
-  const body = await response.text();
-  if (!body) return null;
+function decodeJson(text: string): unknown {
   try {
-    return JSON.parse(body) as T;
+    return JSON.parse(text);
   } catch {
-    return null;
+    return undefined;
+  }
+}
+
+/**
+ * An envelope as text, and nothing for the empty bodies that say nothing.
+ *
+ * `{}` and `[]` are deliberately dropped rather than recorded as `"{}"`: a body
+ * with no members is a body with no evidence in it, and a `detail` that reads
+ * as evidence and holds none is worse than an absent one. The array arm is
+ * explicit because `Object.keys([]).length` is also `0`, so the object test
+ * alone would have looked like it covered a case it happened to cover by
+ * accident.
+ */
+function jsonText(value: unknown): string | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  if (Array.isArray(value) ? value.length === 0 : Object.keys(value).length === 0) return undefined;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The decoded body, with the bytes kept beside it. A refusal that is not JSON —
+ * a gateway's HTML page, a proxy's plain text — decodes to nothing, and that
+ * text is then the only account of the failure there is, so the caller has to
+ * be able to reach it after the parse gives up.
+ */
+async function readJsonResponse<T>(response: Response): Promise<{ value: T | null; raw: string }> {
+  const raw = await response.text();
+  if (!raw) return { value: null, raw };
+  try {
+    return { value: JSON.parse(raw) as T, raw };
+  } catch {
+    return { value: null, raw };
   }
 }
 

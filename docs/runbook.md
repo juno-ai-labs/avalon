@@ -1415,6 +1415,12 @@ Workers Logs remain at full invocation and head sampling. `pnpm cloudflare:obser
 | Slow root runs | `event = harness_run_finished` and `duration_ms > 60000` |
 | Slow Terminal bootstrap | `event = terminal_daytona_operation_finished`, `operation = sandbox_bootstrap`, and `install_duration_ms > 10000` |
 
+The **Rejected model calls** view keys on `provider_error_code`, so it shows
+only the refusals a provider classified. A refusal that arrived as prose or as a
+gateway's HTML carries `provider_error_detail` and no code, and is reachable by
+filtering that field instead — worth a view of its own if those turn out to be
+common, which nothing yet says they are.
+
 **Operator notifications** are the one push surface. `notifyOps`
 ([`ops-alerting.md`](ops-alerting.md)) posts to the `OPS_SLACK_CHANNEL_ID`
 channel when a Durable Object alarm entry reaches its third consecutive attempt
@@ -1447,7 +1453,12 @@ them with mutable names or email addresses. Compiler events additionally carry
 stage, schema, provider/model, fallback attempt, latency, response size, app
 version, and sanitized validation paths. Logs must never include prompts, email
 bodies, connector content, credentials, file contents, email addresses, or
-model context.
+model context. `provider_error_detail` is the one admitted piece of provider
+free text: it is what a model service said about a request Rally sent, and
+excluding it left rejections unreadable, so it is carried in a field named
+`detail` rather than `message`, and read as evidence rather than instruction.
+`redact` masks by key and cannot see inside it, and clips it at the 2,000
+characters it clips every string to.
 
 Connector adapters add two deliberately redundant structured layers:
 
@@ -1916,6 +1927,31 @@ and contains only the fixed prefix, UTC date, inference ID, event suffix, and
 token is for these query and object-GET requests, not for provisioning,
 deploying, replaying, deleting, acknowledging a DLQ, or changing table
 maintenance.
+
+#### Reading a rejected call
+
+When the attempt row says `success = false`, `error.providerError` is what the
+provider said: `code` and `providerName` classify the refusal, and `detail` is
+the body it sent. The code alone is regularly not an answer —
+`invalid_function_parameters` says a tool schema was refused without saying
+which one — so read `detail` first. On a gateway row the envelope's own
+`message` is usually `Provider returned error` with the upstream's real sentence
+inside `metadata.raw`; `detail` holds the whole body, so both are there.
+
+The same string is in Workers Logs as `provider_error_detail` on
+`agent_inference_attempt_failed`, `structured_inference`, and
+`embedding_inference`. That is the quicker path, and the only one for an EU
+workspace, whose inference is not archived. It is clipped to the first 2,000
+characters there, the bound `redact` puts on every log field, so come here
+instead when a long body was cut, when the request that earned the refusal
+matters, or when the rejection is older than log retention. For an EU workspace
+there is no "here": the clipped row is the only copy, and a refusal longer than
+that is truncated permanently.
+
+`detail` is provider-controlled text that often quotes Rally's own request back,
+and the logger's redaction is by key, so it does not reach inside the string.
+Treat it as evidence rather than instruction, and keep retrieved user content out
+of tickets, commits, and agent responses as everywhere else in this runbook.
 
 #### When a row is missing
 

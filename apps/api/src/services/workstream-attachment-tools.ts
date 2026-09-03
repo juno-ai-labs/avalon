@@ -130,13 +130,26 @@ export function createWorkstreamAttachmentTools(
         idempotency: "safe",
         inputSchema: z.toJSONSchema(AttachmentListResourcesArgumentsSchema) as Record<string, unknown>,
       },
+      // The exclusivity between a cursor and the first page's filters is a
+      // refinement, and `z.toJSONSchema` cannot carry one, so the declared
+      // schema accepts an argument set the executor then rejects. Without the
+      // hook the runtime files that rejection as this tool's own data problem
+      // and tells the model to retry the same arguments.
+      validateInput: (raw) => {
+        const result = AttachmentListResourcesArgumentsSchema.safeParse(raw);
+        return result.success ? null : result.error;
+      },
       execute: async (raw) => {
         const args = AttachmentListResourcesArgumentsSchema.parse(raw);
-        const state = "cursor" in args
+        // The arguments are one flat object now, so presence is `!== undefined`
+        // rather than `in`: an optional key the model omitted is absent, but an
+        // executor that asked `in` would also accept an explicit `undefined`
+        // and hand it to a cursor read as if it were a cursor.
+        const state = args.cursor !== undefined
           ? await openCursorState(env, input, options, args.cursor, LIST_CURSOR_PURPOSE, ListCursorStateSchema)
           : null;
-        const attachmentKind = state?.attachmentKind ?? ("attachmentKind" in args ? args.attachmentKind ?? null : null);
-        const limit = state?.limit ?? ("limit" in args ? args.limit ?? DEFAULT_LIST_LIMIT : DEFAULT_LIST_LIMIT);
+        const attachmentKind = state?.attachmentKind ?? args.attachmentKind ?? null;
+        const limit = state?.limit ?? args.limit ?? DEFAULT_LIST_LIMIT;
         const asOf = state?.asOf ?? new Date().toISOString();
         if (options.loadVisibleResources) {
           if (state && state.mode !== "in_memory") {
@@ -232,21 +245,37 @@ export function createWorkstreamAttachmentTools(
         idempotency: "safe",
         inputSchema: z.toJSONSchema(AttachmentReadResourceArgumentsSchema) as Record<string, unknown>,
       },
+      // Same reason as `list_resources` above: exactly one of `resourceId` or
+      // `cursor` is a refinement the wire schema cannot state, so the model has
+      // to be the one told it got the arguments wrong.
+      validateInput: (raw) => {
+        const result = AttachmentReadResourceArgumentsSchema.safeParse(raw);
+        return result.success ? null : result.error;
+      },
       execute: async (raw, context) => {
         const args = AttachmentReadResourceArgumentsSchema.parse(raw);
         let resourceId: string;
         let start: number;
         let pageSize = DEFAULT_READ_CHARACTERS;
         let cursorVersion: { sha256: string; extractorVersion: string } | null = null;
-        if ("cursor" in args) {
+        if (args.cursor !== undefined) {
           const state = await openCursorState(env, input, options, args.cursor, READ_CURSOR_PURPOSE, ReadCursorStateSchema);
           resourceId = state.resourceId;
           start = state.start;
           pageSize = state.pageSize;
           cursorVersion = { sha256: state.sha256, extractorVersion: state.extractorVersion };
-        } else {
+        } else if (args.resourceId !== undefined) {
           resourceId = args.resourceId;
           start = args.startCharacter ?? 0;
+        } else {
+          // Unreachable: the schema's refinement requires exactly one of the
+          // two. Stated rather than asserted with `!`, so a refinement someone
+          // relaxes later fails as this tool's own error instead of reading a
+          // resource named `undefined`.
+          throw attachmentError(
+            "invalid_arguments",
+            "Send exactly one of resourceId or cursor",
+          );
         }
         let row: VisibleWorkstreamResourceRow;
         let ready: Awaited<ReturnType<typeof ensureReadyTextDerivative>>;

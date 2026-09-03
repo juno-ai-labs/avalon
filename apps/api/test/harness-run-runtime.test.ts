@@ -415,10 +415,13 @@ describe("durable harness attempt runtime", () => {
       .toMatchObject({ reused: false });
     expect(await persistImmutableRunScope(sqlite.runs, input(RUN_ONE), first.lease, scope))
       .toMatchObject({ reused: true });
-    await expect(persistImmutableRunScope(sqlite.runs, input(RUN_ONE), first.lease, {
+    // A deploy moves `promptVersion`, the tool-surface hash and the routing
+    // policy version, so an attempt resuming across one recomputes a different
+    // scope. It reuses what the run was admitted with instead of failing.
+    expect(await persistImmutableRunScope(sqlite.runs, input(RUN_ONE), first.lease, {
       ...scope,
       promptVersion: "prompt-v2",
-    })).rejects.toThrow("immutable_run_scope_mismatch");
+    })).toMatchObject({ reused: true });
 
     await persistRunPluginActivation(sqlite.runs, input(RUN_ONE), first.lease, {
       pluginId: "connection:00000000-0000-4000-8000-000000000099",
@@ -3854,7 +3857,7 @@ describe("durable harness attempt runtime", () => {
     ).get(RUN_ONE)).toEqual({ count: 1 });
   });
 
-  it("canonicalizes immutable scope and makes plugin activation idempotent but not mutable", async () => {
+  it("canonicalizes the recorded scope and makes plugin activation idempotent", async () => {
     const sqlite = fixture();
     openDatabases.push(sqlite.database);
     const claim = await claimHarnessAttempt(sqlite.runs, input(RUN_ONE), {
@@ -3899,10 +3902,10 @@ describe("durable harness attempt runtime", () => {
     };
     await persistRunPluginActivation(sqlite.runs, input(RUN_ONE), claim.lease, plugin);
     await persistRunPluginActivation(sqlite.runs, input(RUN_ONE), claim.lease, plugin);
-    await expect(persistRunPluginActivation(sqlite.runs, input(RUN_ONE), claim.lease, {
+    await persistRunPluginActivation(sqlite.runs, input(RUN_ONE), claim.lease, {
       ...plugin,
       toolSurfaceHash: "surface-v2",
-    })).rejects.toThrow("plugin_activation_mismatch");
+    });
 
     expect(sqlite.object.prepare(
       "SELECT eligible_connection_ids_json, eligible_capabilities_json, memory_context_hash FROM run_scopes WHERE run_id = ?",
