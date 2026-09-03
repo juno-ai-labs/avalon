@@ -286,7 +286,7 @@ describe("plugin revalidation verdicts", () => {
   } satisfies PluginAuthorizationConnection;
   const input = {
     workspaceId: asWorkspaceId(frozen.workspaceId),
-    workstreamId: asWorkstreamId("2e9f476e-8502-4b18-81ac-b89a75a0708e"),
+    parentId: asWorkstreamId("2e9f476e-8502-4b18-81ac-b89a75a0708e"),
     harnessRunId: asHarnessRunId("11c13ad0-a0c5-48ce-8479-061edb98e886"),
   } satisfies PluginAuthorizationInput;
 

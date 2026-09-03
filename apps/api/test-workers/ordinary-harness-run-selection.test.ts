@@ -22,7 +22,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { asWorkstreamId, type WorkstreamId } from "@rally/contracts";
 
-import { substreamAgentName, workspaceDOName } from "../src/durable-objects/names";
+import { conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
 import type { SubstreamAgent } from "../src/durable-objects/substream-agent";
 import {
   USER_ID,
@@ -103,7 +103,7 @@ function agent(): { stub: DurableObjectStub<SubstreamAgent>; workstreamId: Works
   );
   return {
     stub: env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
-      substreamAgentName("global", WORKSPACE_ID, workstreamId),
+      conversationObjectName("global", WORKSPACE_ID, workstreamId),
     )),
     workstreamId,
   };
@@ -143,7 +143,8 @@ async function openWorkstream(
 ): Promise<void> {
   expect((await stub.bootstrapRuntime({
     workspaceId: WORKSPACE_ID,
-    workstreamId,
+    parentKind: "workstream",
+    parentId: workstreamId,
     generation: 1,
   })).status).toBe(200);
   await runInDurableObject(stub, (_instance, state) => {

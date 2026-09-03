@@ -39,11 +39,19 @@ export const LEGACY_RALLY_HEADER_PREFIXES: readonly string[] = Object.freeze([
 
 /** Every product header name a request may carry, canonical spelling. */
 export const RALLY_HEADERS = Object.freeze({
-  AUTOMATION_ID: "x-rally-automation-id",
   DEV_USER_ID: "x-rally-dev-user-id",
   DEV_WORKSPACE_ID: "x-rally-dev-workspace-id",
   DRAFT_ID: "x-rally-draft-id",
   OPERATION_ID: "x-rally-operation-id",
+  /**
+   * The parent a conversation object belongs to, on a Worker-to-object socket
+   * upgrade: `PARENT_KIND` is `workstream` or `automation`, `PARENT_ID` the
+   * parent's id. Internal headers only, never sent by a client, so the CORS
+   * allowlist does not name them.
+   */
+  PARENT_ARCHIVED: "x-rally-parent-archived",
+  PARENT_ID: "x-rally-parent-id",
+  PARENT_KIND: "x-rally-parent-kind",
   PLACEMENT_AFFINITY: "x-rally-placement-affinity",
   REGION: "x-rally-region",
   SESSION_ID: "x-rally-session-id",

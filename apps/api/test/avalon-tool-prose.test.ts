@@ -12,7 +12,8 @@ import { createTestEnv } from "./helpers/cloudflare-test";
  */
 const workflowInput = (): WorkstreamWorkflowInput => ({
   workspaceId: "00000000-0000-4000-8000-000000000001",
-  workstreamId: "00000000-0000-4000-8000-000000000002",
+  parentKind: "workstream",
+  parentId: "00000000-0000-4000-8000-000000000002",
   loopId: "workstream:00000000-0000-4000-8000-000000000002:substream:0:loop",
   harnessRunId: "00000000-0000-4000-8000-000000000003",
   region: "global",

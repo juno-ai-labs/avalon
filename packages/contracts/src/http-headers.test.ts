@@ -45,10 +45,10 @@ describe("rally http headers", () => {
 
   it("falls through an empty canonical value to the superseded one", () => {
     const headers = new Headers({
-      "x-rally-draft-id": "",
-      "x-avalon-draft-id": "draft-1",
+      "x-rally-operation-id": "",
+      "x-avalon-operation-id": "op-1",
     });
-    expect(readRallyHeader(headers, RALLY_HEADERS.DRAFT_ID)).toBe("draft-1");
+    expect(readRallyHeader(headers, RALLY_HEADERS.OPERATION_ID)).toBe("op-1");
   });
 
   it("reads through a header accessor function", () => {

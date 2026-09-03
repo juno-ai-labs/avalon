@@ -165,7 +165,8 @@ describe('authoritative run outcome telemetry', () => {
     const routedEnv = env;
     const input = {
       workspaceId,
-      workstreamId,
+      parentKind: "workstream",
+      parentId: workstreamId,
       harnessRunId: runId,
       telemetryOperationId: operationId,
       telemetrySubjectUserId: userId,

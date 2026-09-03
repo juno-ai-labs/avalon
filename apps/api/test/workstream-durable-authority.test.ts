@@ -146,11 +146,11 @@ describe("a stack that never opened the durable-object authority", () => {
     await expect(activateWorkstreamLoop(env, {
       region: "global",
       workspaceId,
-      workstreamId,
+      parentKind: "workstream",
+      parentId: workstreamId,
       loopId: `workstream:${workstreamId}:substream:0:loop`,
       harnessRunId: asHarnessRunId("00000000-0000-7000-8000-0000000000b1"),
       triggerMessageId: null,
-      automationSubscriptionId: null,
       activityId: null,
       executionPrincipal: { type: "user", userId: memberId },
       reason: "test",

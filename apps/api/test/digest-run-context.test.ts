@@ -1,4 +1,4 @@
-import { asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import { asHarnessRunId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -27,7 +27,7 @@ const {
 const WORKSPACE = asWorkspaceId("00000000-0000-7000-8000-000000000001");
 const OWNER = "00000000-0000-7000-8000-000000000002";
 const WORKSTREAM = asWorkstreamId("00000000-0000-7000-8000-000000000003");
-const RUN = "00000000-0000-7000-8000-000000000004";
+const RUN = asHarnessRunId("00000000-0000-7000-8000-000000000004");
 const DELIVERY = "00000000-0000-7000-8000-000000000005";
 const SCHEDULE = "00000000-0000-7000-8000-000000000006";
 const BRIEF_MESSAGE = "00000000-0000-7000-8000-000000000007";
@@ -172,17 +172,17 @@ function workflowInput(overrides: Record<string, unknown> = {}) {
   return {
     region: "global" as const,
     workspaceId: WORKSPACE,
-    workstreamId: WORKSTREAM,
+    parentKind: "workstream" as const,
+    parentId: WORKSTREAM,
     loopId: `workstream:${WORKSTREAM}:substream:0:loop`,
     harnessRunId: RUN,
     triggerMessageId: BRIEF_MESSAGE,
-    automationSubscriptionId: null,
     activityId: null,
     digestDeliveryId: DELIVERY,
     executionPrincipal: { type: "user" as const, userId: OWNER },
     reason: "scheduled_digest",
     ...overrides,
-  } as Parameters<typeof loadRunPromptContext>[1];
+  } as unknown as Parameters<typeof loadRunPromptContext>[1];
 }
 
 const lease = { attemptId: ATTEMPT, owner: LEASE_OWNER } as Parameters<typeof loadRunPromptContext>[2];
@@ -270,7 +270,7 @@ describe("the window a scheduled digest run is given", () => {
     // turn, which is why the brief travels as its own labelled message.
     const projection = await projectModelProtocolTranscript(
       env,
-      { workspaceId: WORKSPACE, workstreamId: WORKSTREAM, triggerMessageId: BRIEF_MESSAGE },
+      { workspaceId: WORKSPACE, parentId: WORKSTREAM, triggerMessageId: BRIEF_MESSAGE },
       [{
         id: BRIEF_MESSAGE,
         workstreamId: WORKSTREAM,

@@ -181,11 +181,11 @@ function workflowInput(): WorkstreamWorkflowInput {
   return {
     region: "global",
     workspaceId: WORKSPACE_ID,
-    workstreamId: WORKSTREAM_ID,
+    parentKind: "workstream",
+    parentId: WORKSTREAM_ID,
     loopId: `workstream:${WORKSTREAM_ID}:substream:0:loop`,
     harnessRunId: HARNESS_RUN_ID,
     triggerMessageId: null,
-    automationSubscriptionId: null,
     activityId: null,
     executionPrincipal: { type: "user", userId: USER_ID },
     reason: "Core-tool idempotency test",

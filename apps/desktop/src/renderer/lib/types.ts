@@ -1,7 +1,9 @@
 import type {
   AgentModelOverride,
-  AutomationAttentionReason as ContractAutomationAttentionReason,
+  AutomationDraft as ContractAutomationDraft,
+  AutomationLifecycleState as ContractAutomationLifecycleState,
   AutomationPluginActivity,
+  AutomationRunStatus as ContractAutomationRunStatus,
   NoteDetail as ContractNoteDetail,
   NoteSummary as ContractNoteSummary,
   NoteTranscriptSegment as ContractNoteTranscriptSegment,
@@ -34,13 +36,11 @@ export type Scope = 'you' | 'workspace';
  */
 export type VisibilityScope = ContractScope;
 export type HarnessStatus = 'scheduled' | 'running' | 'needs_input' | 'completed' | 'failed' | 'stopped';
-export type AutomationStatus = 'active' | 'paused' | 'draft' | 'error';
-/**
- * Why an automation needs a person to look at it. Absent on the ones nothing is
- * wrong with, which is nearly all of them. `automationAttentionNotice` in
- * `automation-attention.ts` owns the words each reason is shown as.
- */
-export type AutomationAttentionReason = ContractAutomationAttentionReason;
+export type AutomationStatus = 'active' | 'paused' | 'draft';
+export type AutomationLifecycleState = ContractAutomationLifecycleState;
+export type AutomationRunStatus = ContractAutomationRunStatus;
+/** The definition an automation's conversation has submitted, as the wire carries it. */
+export type AutomationDefinition = ContractAutomationDraft;
 export type NoteSummary = ContractNoteSummary;
 export type NoteDetail = ContractNoteDetail;
 export type NoteTranscriptSegment = ContractNoteTranscriptSegment;
@@ -103,28 +103,34 @@ export interface PendingWorkspaceInvitation extends WorkspaceInvitationPreview {
   invitedByName: string;
 }
 
+/**
+ * Who can see an automation and who may change it, in the words the UI uses.
+ * `workstream` is the room that owns it, which `Scope` has no value for.
+ */
+export type AutomationScope = 'you' | 'workspace' | 'workstream';
+
 export interface AutomationSummary {
   id: string;
   name: string;
+  description: string;
   emailAddress?: string;
-  scope: Scope;
+  scope: AutomationScope;
+  /** The room that owns a `workstream`-scoped automation. */
+  owningWorkstreamId?: string;
   status: AutomationStatus;
-  /** Set only when something is wrong that the status cannot say on its own. */
-  attention?: AutomationAttentionReason;
   nextRunAt?: string;
   lastRunAt?: string;
   /** Last time the automation itself changed — a draft's only activity. */
   updatedAt: string;
-  statusMessage?: string;
 }
 
 /**
  * One automation in a work stream's context rail.
  *
- * The sidebar summary without its scope: every row in that rail belongs to the
- * work stream showing it, and `Scope` has no value that could say so.
+ * The sidebar summary without its scope and owner: every row in that rail
+ * belongs to the work stream showing it.
  */
-export type WorkstreamAutomationSummary = Omit<AutomationSummary, 'scope'>;
+export type WorkstreamAutomationSummary = Omit<AutomationSummary, 'scope' | 'owningWorkstreamId'>;
 
 export interface WorkstreamSummary {
   id: string;
@@ -133,16 +139,7 @@ export interface WorkstreamSummary {
   titleStatus: 'naming' | 'automatic' | 'settled';
   objective?: string;
   emailAddress?: string;
-  origin: 'ad_hoc' | 'automation';
   createdByUserId?: string;
-  automationName?: string;
-  /**
-   * Set when an automation generated this work stream. Generated execution
-   * records are fixed private work streams, so this identifies their origin;
-   * their own scope, creator, and participants still decide who may read them.
-   */
-  automationSubscriptionId?: string;
-  automationRunId?: string;
   harnessStatus: HarnessStatus;
   latestAttentionSequenceNumber: number;
   readThroughSequenceNumber: number;
@@ -163,7 +160,6 @@ export interface WorkstreamSummary {
   createdAt?: string;
   updatedAt?: string;
   archivedAt?: string;
-  plannedFor?: string;
   preview?: string;
   /**
    * Who may read it, the same way a note says it. `personal` means only the
@@ -501,17 +497,6 @@ export interface Message {
     ready: boolean;
   };
   /**
-   * Set on the system row telling this room that the person an automation runs
-   * as has lost access. The row renders as a card with one action rather than
-   * as prose, because there is something to do about it.
-   */
-  principalUnavailable?: {
-    automationId: string;
-    automationName: string;
-    outgoingUserName: string | null;
-    unreachableProviders: string[];
-  };
-  /**
    * Durable Object events and D1 transcript rows have independent sequence
    * counters. Realtime-only blocks use this anchor so their observed order can
    * be retained without treating an event sequence as a persisted message
@@ -575,34 +560,21 @@ export interface BackgroundTask {
   transcriptTurnId?: string;
 }
 
-export interface AutomationRunSummary {
+/**
+ * One run of an automation. Its id is also the run's substream under the
+ * automation, which is where its transcript lives.
+ */
+export interface AutomationRun {
   id: string;
-  workstreamId: string;
-  title: string;
-  status: HarnessStatus;
-  triggerType: string;
-  triggerTime: string;
-  resultSummary?: string;
+  automationId: string;
+  triggerType: 'manual' | 'schedule' | 'external_event' | 'inbound_email';
+  status: AutomationRunStatus;
+  plannedFor: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  resultSummary: string | null;
+  createdAt: string;
   durationMs?: number;
-  participants?: Participant[];
-}
-
-export interface AutomationTemplateUpdate {
-  versionId: string;
-  versionNumber: number;
-  overview: string;
-  instructions: string;
-  triggerSummary: string;
-  capabilities: string[];
-  expectedOutputs: string[];
-  recommendedPlugins: Array<{ pluginId: string; recommendedTools: string[]; reason: string }>;
-  activitySources: AutomationActivitySource[];
-}
-
-export interface AutomationActivitySource {
-  bindingKey: string;
-  connectorType: string;
-  suggestedPluginId?: string;
 }
 
 export interface HarnessRunMetadata {
@@ -615,15 +587,6 @@ export interface HarnessRunMetadata {
   startedAt?: string;
   completedAt?: string;
   createdAt: string;
-}
-
-export interface WorkstreamAutomationSubscription {
-  id: string;
-  name: string;
-  scope: Scope;
-  status: AutomationStatus;
-  triggerSummary: string;
-  executionScope: string;
 }
 
 export interface WorkstreamDetail extends WorkstreamSummary {
@@ -644,10 +607,6 @@ export interface WorkstreamDetail extends WorkstreamSummary {
   resources: WorkstreamResource[];
   connections: WorkstreamConnection[];
   backgroundTasks: BackgroundTask[];
-  automationRuns: AutomationRunSummary[];
-  automationSubscriptionId?: string;
-  automationSubscription?: WorkstreamAutomationSubscription;
-  automationRunId?: string;
   latestHarnessRunId?: string;
   latestHarnessRun?: HarnessRunMetadata;
   openElicitations?: ElicitationData[];
@@ -655,12 +614,6 @@ export interface WorkstreamDetail extends WorkstreamSummary {
 
 export interface WorkstreamBoot extends WorkstreamDetail {
   transcript: WorkstreamTranscriptSnapshot;
-}
-
-export interface WorkstreamDeferredContext {
-  backgroundTasks: BackgroundTask[];
-  automationRuns: AutomationRunSummary[];
-  automationSubscription?: WorkstreamAutomationSubscription;
 }
 
 export interface CreatedWorkstream {
@@ -688,68 +641,19 @@ export interface WorkOpportunity {
 /** Every run always lands in Rally; these are the extra frozen destinations. */
 export type AutomationDeliveryTargetType = 'slack_agent_dm' | 'email';
 
-export interface AutomationDeliveryChoice {
-  /** A connector-declared personal destination, with the type it declared. */
-  connection?: { id: string; targetType: AutomationDeliveryTargetType };
-  email?: boolean;
-}
-
-export type AutomationScope = 'you' | 'workspace';
-
 export interface AutomationDetail extends AutomationSummary {
-  description: string;
-  versionNumber: number;
-  overview: string;
-  instructions: string;
-  triggerSummary: string;
-  scheduleSummary?: string;
-  capabilities: string[];
-  expectedOutputs: string[];
-  recommendedPlugins: Array<{ pluginId: string; recommendedTools: string[]; reason: string }>;
-  defaultPluginIds: string[];
-  activitySourcePluginIds: Record<string, string>;
-  activitySources: AutomationActivitySource[];
-  executionScope: 'You' | 'Workspace';
-  owner?: WorkspaceMember;
-  runs: AutomationRunSummary[];
-  nextRun?: AutomationRunSummary;
-  templateUpdate?: AutomationTemplateUpdate;
-}
-
-export interface AutomationDraftQuestion {
-  id: string;
-  presentedAt: string;
-  prompt: string;
-  placeholder?: string;
-  responseType: 'free_text' | 'single_select' | 'multi_select';
-  options: Array<{ label: string; value: string; description?: string }>;
-  minimumSelections?: number;
-  maximumSelections?: number;
-  allowOther: boolean;
-}
-
-export interface AutomationDraftSummary {
-  name: string;
-  description: string;
-  overview: string;
-  recommendedPlugins: Array<{ pluginId: string; recommendedTools: string[]; reason: string }>;
-  activitySources: AutomationActivitySource[];
-  scope: Scope;
-  triggerSummary: string;
-  capabilities: string[];
-  requiresSlackDelivery: boolean;
-  requiresEmailDelivery: boolean;
-}
-
-export interface WorkspaceTemplate {
-  id: string;
-  name: string;
-  authorName: string;
-  description: string;
-  usageCount: number;
-  capabilities: string[];
-  latestVersion: number;
-  activitySources: AutomationActivitySource[];
+  lifecycle: AutomationLifecycleState;
+  authorUserId: string;
+  runAsUserId: string;
+  /** The latest submitted definition, or null before the chat has submitted one. */
+  currentDefinition: AutomationDefinition | null;
+  currentDefinitionRevision: number;
+  /** The revision that is running, or null while still a draft. */
+  acceptedDefinitionRevision: number | null;
+  connectorBindings: Record<string, string>;
+  /** One line per trigger of the current definition, or empty before one exists. */
+  triggerSummaries: string[];
+  recentRuns: AutomationRun[];
 }
 
 export interface SocketTicket {

@@ -49,11 +49,7 @@ function metadataState(metadata: WorkstreamControlMetadata): {
     // Full snapshots must overwrite nullable fields too. Omitting a field here
     // would preserve an old value after another client cleared it.
     emailAddress: metadata.emailAddress ?? undefined,
-    origin: metadata.originType,
     createdByUserId: metadata.createdByUserId ?? undefined,
-    automationSubscriptionId: metadata.automationSubscriptionId ?? undefined,
-    automationRunId: metadata.automationRunId ?? undefined,
-    plannedFor: metadata.plannedFor ?? undefined,
     harnessStatus: normalizeHarnessStatus(metadata.harnessStatus),
     latestAttentionSequenceNumber: latest,
     lastActivityAt: metadata.lastActivityAt,
@@ -87,11 +83,7 @@ function metadataState(metadata: WorkstreamControlMetadata): {
       titleStatus: metadata.titleStatus,
       objective: metadata.description,
       emailAddress: metadata.emailAddress ?? undefined,
-      origin: metadata.originType,
       createdByUserId: metadata.createdByUserId ?? undefined,
-      automationSubscriptionId: metadata.automationSubscriptionId ?? undefined,
-      automationRunId: metadata.automationRunId ?? undefined,
-      plannedFor: metadata.plannedFor ?? undefined,
       harnessStatus: normalizeHarnessStatus(metadata.harnessStatus),
       latestAttentionSequenceNumber: latest,
       readThroughSequenceNumber: seen,

@@ -20,56 +20,6 @@
         "model_plugin_id": "plugin_webhook"
       }
     ],
-    "automation_templates": [
-      {
-        "id": "00000000-0000-7000-8000-000000000010",
-        "workspace_id": "00000000-0000-7000-8000-000000000002",
-        "owner_user_id": "00000000-0000-7000-8000-000000000001",
-        "name": "Weekly changelog",
-        "description": "Prepare a concise changelog from completed work every Friday.",
-        "sharing_state": "workspace",
-        "latest_version_number": 1,
-        "created_at": "2026-07-31T18:02:00.000Z",
-        "updated_at": "2026-07-31T18:02:00.000Z"
-      },
-      {
-        "id": "00000000-0000-7000-8000-000000000014",
-        "workspace_id": "00000000-0000-7000-8000-000000000002",
-        "owner_user_id": "00000000-0000-7000-8000-000000000001",
-        "name": "Former-client monitor",
-        "description": "Watch a public page for meaningful changes.",
-        "sharing_state": "private",
-        "latest_version_number": 1,
-        "created_at": "2026-07-31T18:03:00.000Z",
-        "updated_at": "2026-07-31T18:03:00.000Z"
-      }
-    ],
-    "automation_template_versions": [
-      {
-        "id": "00000000-0000-7000-8000-000000000011",
-        "template_id": "00000000-0000-7000-8000-000000000010",
-        "version_number": 1,
-        "instructions": "Review work completed this week and prepare a readable changelog.",
-        "trigger_definitions_json": "[{\"type\":\"calendar\",\"rrule\":\"FREQ=WEEKLY;BYDAY=FR\",\"timezone\":\"America/Los_Angeles\",\"summary\":\"Every Friday at 2:00 PM\"}]",
-        "required_capabilities_json": "[]",
-        "expected_outputs_json": "[\"changelog\"]",
-        "default_behavior_json": "{}",
-        "created_by_user_id": "00000000-0000-7000-8000-000000000001",
-        "created_at": "2026-07-31T18:02:00.000Z"
-      },
-      {
-        "id": "00000000-0000-7000-8000-000000000015",
-        "template_id": "00000000-0000-7000-8000-000000000014",
-        "version_number": 1,
-        "instructions": "Fetch the configured page and report only meaningful changes.",
-        "trigger_definitions_json": "[{\"type\":\"interval\",\"intervalSeconds\":86400,\"summary\":\"Every 24 hours\"}]",
-        "required_capabilities_json": "[\"web.read\"]",
-        "expected_outputs_json": "[\"change summary\"]",
-        "default_behavior_json": "{}",
-        "created_by_user_id": "00000000-0000-7000-8000-000000000001",
-        "created_at": "2026-07-31T18:03:00.000Z"
-      }
-    ],
     "resources": [
       {
         "id": "00000000-0000-7000-8000-000000000041",
@@ -95,76 +45,62 @@
     {
       "id": "00000000-0000-7000-8000-000000000012",
       "authorUserId": "00000000-0000-7000-8000-000000000001",
-      "source": {
-        "definition": {
-          "name": "Weekly changelog",
-          "description": "Prepare a concise changelog from completed work every Friday.",
-          "overview": "Review completed work and publish a concise weekly changelog.",
-          "instructions": "Review work completed this week and prepare a readable changelog.",
-          "triggers": [{ "type": "calendar", "rrule": "FREQ=WEEKLY;BYDAY=FR;BYHOUR=14;BYMINUTE=0", "timezone": "America/Los_Angeles", "summary": "Every Friday at 2:00 PM" }],
-          "requiredCapabilities": [],
-          "expectedOutputs": ["changelog"],
-          "defaultBehavior": {},
-          "recommendedPlugins": [],
-          "memoryTables": [],
-          "suggestedScope": "workspace",
-          "followUpQuestion": null,
-          "elicitation": null,
-          "ready": true
-        },
-        "status": "active",
-        "scope": "workspace",
-        "unsupportedTrigger": false,
-        "defaultPluginIds": [],
-        "activitySourcePluginIds": {},
-        "connectorBindings": {},
-        "emailAddress": null,
-        "modelOverride": null,
-        "createdAt": 1785520920000,
-        "updatedAt": 1785520920000,
-        "schedules": [{
-          "scheduleId": "00000000-0000-7000-8000-000000000013",
-          "kind": "calendar",
-          "definition": { "rrule": "FREQ=WEEKLY;BYDAY=FR;BYHOUR=14;BYMINUTE=0", "timezone": "America/Los_Angeles", "acceptedAt": 1785520920000 },
-          "nextDueAt": 1786136400000
-        }],
-        "runs": [],
-        "memoryRecords": []
+      "scope": "workspace",
+      "draft": {
+        "name": "Weekly changelog",
+        "description": "Prepare a concise changelog from completed work every Friday.",
+        "overview": "Review completed work and publish a concise weekly changelog.",
+        "instructions": "Review work completed this week and prepare a readable changelog.",
+        "triggers": [
+          {
+            "type": "calendar",
+            "rrule": "FREQ=WEEKLY;BYDAY=FR;BYHOUR=14;BYMINUTE=0",
+            "timezone": "America/Los_Angeles",
+            "summary": "Every Friday at 2:00 PM"
+          }
+        ],
+        "requiredCapabilities": [],
+        "expectedOutputs": [
+          "changelog"
+        ],
+        "defaultBehavior": {},
+        "recommendedPlugins": [],
+        "memoryTables": [],
+        "suggestedScope": "workspace",
+        "followUpQuestion": null,
+        "elicitation": null,
+        "ready": true
       }
     },
     {
       "id": "00000000-0000-7000-8000-000000000016",
       "authorUserId": "00000000-0000-7000-8000-000000000001",
-      "source": {
-        "definition": {
-          "name": "Former-client monitor",
-          "description": "Watch a public page for meaningful changes.",
-          "overview": "Check the configured page daily and report meaningful changes.",
-          "instructions": "Fetch the configured page and report only meaningful changes.",
-          "triggers": [{ "type": "interval", "intervalSeconds": 86400, "summary": "Every 24 hours" }],
-          "requiredCapabilities": ["web.read"],
-          "expectedOutputs": ["change summary"],
-          "defaultBehavior": {},
-          "recommendedPlugins": [],
-          "memoryTables": [],
-          "suggestedScope": "personal",
-          "followUpQuestion": null,
-          "elicitation": null,
-          "ready": true
-        },
-        "status": "paused",
-        "scope": "personal",
-        "unsupportedTrigger": false,
-        "defaultPluginIds": [],
-        "activitySourcePluginIds": {},
-        "connectorBindings": {},
-        "emailAddress": null,
-        "modelOverride": null,
-        "createdAt": 1785520980000,
-        "updatedAt": 1785520980000,
-        "schedules": [],
-        "runs": [],
-        "memoryRecords": []
+      "scope": "personal",
+      "draft": {
+        "name": "Former-client monitor",
+        "description": "Watch a public page for meaningful changes.",
+        "overview": "Check the configured page daily and report meaningful changes.",
+        "instructions": "Fetch the configured page and report only meaningful changes.",
+        "triggers": [
+          {
+            "type": "interval",
+            "intervalSeconds": 86400,
+            "summary": "Every 24 hours"
+          }
+        ],
+        "requiredCapabilities": [
+          "web.read"
+        ],
+        "expectedOutputs": [
+          "change summary"
+        ],
+        "defaultBehavior": {},
+        "recommendedPlugins": [],
+        "memoryTables": [],
+        "suggestedScope": "personal",
+        "followUpQuestion": null,
+        "elicitation": null,
+        "ready": true
       }
     }
   ],
@@ -176,15 +112,49 @@
       "harnessStatus": "needs_input",
       "nextSequenceNumber": 4,
       "participants": [
-        { "user_id": "00000000-0000-7000-8000-000000000001", "added_by_user_id": "00000000-0000-7000-8000-000000000001", "participation_reason": "creator", "joined_at": "2026-07-31T19:30:00.000Z" },
-        { "user_id": "00000000-0000-7000-8000-000000000003", "added_by_user_id": "00000000-0000-7000-8000-000000000001", "participation_reason": "explicit", "joined_at": "2026-07-31T19:30:00.000Z" }
+        {
+          "user_id": "00000000-0000-7000-8000-000000000001",
+          "added_by_user_id": "00000000-0000-7000-8000-000000000001",
+          "participation_reason": "creator",
+          "joined_at": "2026-07-31T19:30:00.000Z"
+        },
+        {
+          "user_id": "00000000-0000-7000-8000-000000000003",
+          "added_by_user_id": "00000000-0000-7000-8000-000000000001",
+          "participation_reason": "explicit",
+          "joined_at": "2026-07-31T19:30:00.000Z"
+        }
       ],
       "harnessRuns": [],
       "toolInvocations": [],
       "resourceIds": [],
       "messages": [
-        { "id": "00000000-0000-7000-8000-000000000030", "client_message_id": "seed-acme-1", "author_type": "human", "author_user_id": "00000000-0000-7000-8000-000000000001", "author_name_snapshot": "Adam", "author_avatar_url_snapshot": null, "message_type": "text", "text_content": "Prepare the follow-up from today’s Acme call. Capture every promised action and flag anything that still needs an owner.", "structured_content_json": null, "sequence_number": 1, "created_at": "2026-07-31T19:30:00.000Z", "harness_run_id": null },
-        { "id": "00000000-0000-7000-8000-000000000031", "client_message_id": null, "author_type": "agent", "author_user_id": null, "message_type": "text", "text_content": "I found three follow-ups. Two have clear owners; the rollout date still needs a decision.", "structured_content_json": null, "sequence_number": 2, "created_at": "2026-07-31T19:42:00.000Z", "harness_run_id": null }
+        {
+          "id": "00000000-0000-7000-8000-000000000030",
+          "client_message_id": "seed-acme-1",
+          "author_type": "human",
+          "author_user_id": "00000000-0000-7000-8000-000000000001",
+          "author_name_snapshot": "Adam",
+          "author_avatar_url_snapshot": null,
+          "message_type": "text",
+          "text_content": "Prepare the follow-up from today\u2019s Acme call. Capture every promised action and flag anything that still needs an owner.",
+          "structured_content_json": null,
+          "sequence_number": 1,
+          "created_at": "2026-07-31T19:30:00.000Z",
+          "harness_run_id": null
+        },
+        {
+          "id": "00000000-0000-7000-8000-000000000031",
+          "client_message_id": null,
+          "author_type": "agent",
+          "author_user_id": null,
+          "message_type": "text",
+          "text_content": "I found three follow-ups. Two have clear owners; the rollout date still needs a decision.",
+          "structured_content_json": null,
+          "sequence_number": 2,
+          "created_at": "2026-07-31T19:42:00.000Z",
+          "harness_run_id": null
+        }
       ]
     },
     {
@@ -194,23 +164,132 @@
       "harnessStatus": "idle",
       "nextSequenceNumber": 6,
       "participants": [
-        { "user_id": "00000000-0000-7000-8000-000000000001", "added_by_user_id": "00000000-0000-7000-8000-000000000001", "participation_reason": "creator", "joined_at": "2026-07-31T19:20:00.000Z" }
+        {
+          "user_id": "00000000-0000-7000-8000-000000000001",
+          "added_by_user_id": "00000000-0000-7000-8000-000000000001",
+          "participation_reason": "creator",
+          "joined_at": "2026-07-31T19:20:00.000Z"
+        }
       ],
       "harnessRuns": [
-        { "id": "00000000-0000-7000-8000-000000000051", "origin": "message", "execution_principal_json": "{\"type\":\"user\",\"userId\":\"00000000-0000-7000-8000-000000000001\"}", "status": "completed", "started_at": "2026-07-31T19:34:58.000Z", "completed_at": "2026-07-31T19:40:00.000Z", "terminalized_at": "2026-07-31T19:40:00.000Z", "created_at": "2026-07-31T19:34:58.000Z" }
+        {
+          "id": "00000000-0000-7000-8000-000000000051",
+          "origin": "message",
+          "execution_principal_json": "{\"type\":\"user\",\"userId\":\"00000000-0000-7000-8000-000000000001\"}",
+          "status": "completed",
+          "started_at": "2026-07-31T19:34:58.000Z",
+          "completed_at": "2026-07-31T19:40:00.000Z",
+          "terminalized_at": "2026-07-31T19:40:00.000Z",
+          "created_at": "2026-07-31T19:34:58.000Z"
+        }
       ],
       "toolInvocations": [
-        { "id": "00000000-0000-7000-8000-000000000052", "harness_run_id": "00000000-0000-7000-8000-000000000051", "tool_call_id": "seed-tool-1", "tool_name": "Search invoice error events", "connection_id": null, "input_hash": "seed-search-invoice-errors", "input_json": "{\"query\":\"invoice retry failures\"}", "output_summary": "Found 18 related events across three deploys.", "status": "completed", "started_at": "2026-07-31T19:35:00.000Z", "completed_at": "2026-07-31T19:35:42.000Z" },
-        { "id": "00000000-0000-7000-8000-000000000053", "harness_run_id": "00000000-0000-7000-8000-000000000051", "tool_call_id": "seed-tool-2", "tool_name": "Inspect retry policy", "connection_id": null, "input_hash": "seed-inspect-retry-policy", "input_json": "{\"ticket\":\"ENG-142\"}", "output_summary": "The third retry overlaps the downstream timeout window.", "status": "completed", "started_at": "2026-07-31T19:36:00.000Z", "completed_at": "2026-07-31T19:37:18.000Z" },
-        { "id": "00000000-0000-7000-8000-000000000054", "harness_run_id": "00000000-0000-7000-8000-000000000051", "tool_call_id": "seed-tool-3", "tool_name": "Reproduce invoice failure", "connection_id": null, "input_hash": "seed-reproduce-invoice-failure", "input_json": "{\"fixture\":\"safe\"}", "output_summary": null, "status": "completed", "started_at": "2026-07-31T19:38:00.000Z", "completed_at": "2026-07-31T19:39:00.000Z" }
+        {
+          "id": "00000000-0000-7000-8000-000000000052",
+          "harness_run_id": "00000000-0000-7000-8000-000000000051",
+          "tool_call_id": "seed-tool-1",
+          "tool_name": "Search invoice error events",
+          "connection_id": null,
+          "input_hash": "seed-search-invoice-errors",
+          "input_json": "{\"query\":\"invoice retry failures\"}",
+          "output_summary": "Found 18 related events across three deploys.",
+          "status": "completed",
+          "started_at": "2026-07-31T19:35:00.000Z",
+          "completed_at": "2026-07-31T19:35:42.000Z"
+        },
+        {
+          "id": "00000000-0000-7000-8000-000000000053",
+          "harness_run_id": "00000000-0000-7000-8000-000000000051",
+          "tool_call_id": "seed-tool-2",
+          "tool_name": "Inspect retry policy",
+          "connection_id": null,
+          "input_hash": "seed-inspect-retry-policy",
+          "input_json": "{\"ticket\":\"ENG-142\"}",
+          "output_summary": "The third retry overlaps the downstream timeout window.",
+          "status": "completed",
+          "started_at": "2026-07-31T19:36:00.000Z",
+          "completed_at": "2026-07-31T19:37:18.000Z"
+        },
+        {
+          "id": "00000000-0000-7000-8000-000000000054",
+          "harness_run_id": "00000000-0000-7000-8000-000000000051",
+          "tool_call_id": "seed-tool-3",
+          "tool_name": "Reproduce invoice failure",
+          "connection_id": null,
+          "input_hash": "seed-reproduce-invoice-failure",
+          "input_json": "{\"fixture\":\"safe\"}",
+          "output_summary": null,
+          "status": "completed",
+          "started_at": "2026-07-31T19:38:00.000Z",
+          "completed_at": "2026-07-31T19:39:00.000Z"
+        }
       ],
-      "resourceIds": ["00000000-0000-7000-8000-000000000041"],
+      "resourceIds": [
+        "00000000-0000-7000-8000-000000000041"
+      ],
       "messages": [
-        { "id": "00000000-0000-7000-8000-000000000032", "client_message_id": "seed-eng-1", "author_type": "human", "author_user_id": "00000000-0000-7000-8000-000000000001", "author_name_snapshot": "Adam", "author_avatar_url_snapshot": null, "message_type": "text", "text_content": "Investigate ENG-142 and summarize the evidence before proposing a fix.", "structured_content_json": null, "sequence_number": 1, "created_at": "2026-07-31T19:20:00.000Z", "harness_run_id": null },
-        { "id": "00000000-0000-7000-8000-000000000033", "client_message_id": null, "author_type": "system", "author_user_id": null, "message_type": "system", "text_content": "Reviewing the latest failure events and attached ticket context.", "structured_content_json": null, "sequence_number": 2, "created_at": "2026-07-31T19:40:00.000Z", "harness_run_id": null },
-        { "id": "00000000-0000-7000-8000-000000000042", "client_message_id": null, "author_type": "agent", "author_user_id": null, "message_type": "tool", "text_content": "", "structured_content_json": "{\"invocation\":{\"id\":\"00000000-0000-7000-8000-000000000052\",\"harnessRunId\":\"00000000-0000-7000-8000-000000000051\",\"toolCallId\":\"seed-tool-1\",\"toolName\":\"Search invoice error events\",\"connectionId\":null,\"status\":\"completed\",\"inputSummary\":\"Search recent invoice retry failures\",\"outputSummary\":\"Found 18 related events across three deploys.\",\"startedAt\":\"2026-07-31T19:35:00.000Z\",\"completedAt\":\"2026-07-31T19:35:42.000Z\",\"error\":null}}", "sequence_number": 3, "created_at": "2026-07-31T19:35:42.000Z", "harness_run_id": "00000000-0000-7000-8000-000000000051" },
-        { "id": "00000000-0000-7000-8000-000000000043", "client_message_id": null, "author_type": "agent", "author_user_id": null, "message_type": "tool", "text_content": "", "structured_content_json": "{\"invocation\":{\"id\":\"00000000-0000-7000-8000-000000000053\",\"harnessRunId\":\"00000000-0000-7000-8000-000000000051\",\"toolCallId\":\"seed-tool-2\",\"toolName\":\"Inspect retry policy\",\"connectionId\":null,\"status\":\"completed\",\"inputSummary\":\"Compare retry settings with failure timestamps\",\"outputSummary\":\"The third retry overlaps the downstream timeout window.\",\"startedAt\":\"2026-07-31T19:36:00.000Z\",\"completedAt\":\"2026-07-31T19:37:18.000Z\",\"error\":null}}", "sequence_number": 4, "created_at": "2026-07-31T19:37:18.000Z", "harness_run_id": "00000000-0000-7000-8000-000000000051" },
-        { "id": "00000000-0000-7000-8000-000000000044", "client_message_id": null, "author_type": "agent", "author_user_id": null, "message_type": "tool", "text_content": "", "structured_content_json": "{\"invocation\":{\"id\":\"00000000-0000-7000-8000-000000000054\",\"harnessRunId\":\"00000000-0000-7000-8000-000000000051\",\"toolCallId\":\"seed-tool-3\",\"toolName\":\"Reproduce invoice failure\",\"connectionId\":null,\"status\":\"completed\",\"inputSummary\":\"Run the bounded reproduction against a safe fixture\",\"outputSummary\":null,\"startedAt\":\"2026-07-31T19:38:00.000Z\",\"completedAt\":null,\"error\":null}}", "sequence_number": 5, "created_at": "2026-07-31T19:38:00.000Z", "harness_run_id": "00000000-0000-7000-8000-000000000051" }
+        {
+          "id": "00000000-0000-7000-8000-000000000032",
+          "client_message_id": "seed-eng-1",
+          "author_type": "human",
+          "author_user_id": "00000000-0000-7000-8000-000000000001",
+          "author_name_snapshot": "Adam",
+          "author_avatar_url_snapshot": null,
+          "message_type": "text",
+          "text_content": "Investigate ENG-142 and summarize the evidence before proposing a fix.",
+          "structured_content_json": null,
+          "sequence_number": 1,
+          "created_at": "2026-07-31T19:20:00.000Z",
+          "harness_run_id": null
+        },
+        {
+          "id": "00000000-0000-7000-8000-000000000033",
+          "client_message_id": null,
+          "author_type": "system",
+          "author_user_id": null,
+          "message_type": "system",
+          "text_content": "Reviewing the latest failure events and attached ticket context.",
+          "structured_content_json": null,
+          "sequence_number": 2,
+          "created_at": "2026-07-31T19:40:00.000Z",
+          "harness_run_id": null
+        },
+        {
+          "id": "00000000-0000-7000-8000-000000000042",
+          "client_message_id": null,
+          "author_type": "agent",
+          "author_user_id": null,
+          "message_type": "tool",
+          "text_content": "",
+          "structured_content_json": "{\"invocation\":{\"id\":\"00000000-0000-7000-8000-000000000052\",\"harnessRunId\":\"00000000-0000-7000-8000-000000000051\",\"toolCallId\":\"seed-tool-1\",\"toolName\":\"Search invoice error events\",\"connectionId\":null,\"status\":\"completed\",\"inputSummary\":\"Search recent invoice retry failures\",\"outputSummary\":\"Found 18 related events across three deploys.\",\"startedAt\":\"2026-07-31T19:35:00.000Z\",\"completedAt\":\"2026-07-31T19:35:42.000Z\",\"error\":null}}",
+          "sequence_number": 3,
+          "created_at": "2026-07-31T19:35:42.000Z",
+          "harness_run_id": "00000000-0000-7000-8000-000000000051"
+        },
+        {
+          "id": "00000000-0000-7000-8000-000000000043",
+          "client_message_id": null,
+          "author_type": "agent",
+          "author_user_id": null,
+          "message_type": "tool",
+          "text_content": "",
+          "structured_content_json": "{\"invocation\":{\"id\":\"00000000-0000-7000-8000-000000000053\",\"harnessRunId\":\"00000000-0000-7000-8000-000000000051\",\"toolCallId\":\"seed-tool-2\",\"toolName\":\"Inspect retry policy\",\"connectionId\":null,\"status\":\"completed\",\"inputSummary\":\"Compare retry settings with failure timestamps\",\"outputSummary\":\"The third retry overlaps the downstream timeout window.\",\"startedAt\":\"2026-07-31T19:36:00.000Z\",\"completedAt\":\"2026-07-31T19:37:18.000Z\",\"error\":null}}",
+          "sequence_number": 4,
+          "created_at": "2026-07-31T19:37:18.000Z",
+          "harness_run_id": "00000000-0000-7000-8000-000000000051"
+        },
+        {
+          "id": "00000000-0000-7000-8000-000000000044",
+          "client_message_id": null,
+          "author_type": "agent",
+          "author_user_id": null,
+          "message_type": "tool",
+          "text_content": "",
+          "structured_content_json": "{\"invocation\":{\"id\":\"00000000-0000-7000-8000-000000000054\",\"harnessRunId\":\"00000000-0000-7000-8000-000000000051\",\"toolCallId\":\"seed-tool-3\",\"toolName\":\"Reproduce invoice failure\",\"connectionId\":null,\"status\":\"completed\",\"inputSummary\":\"Run the bounded reproduction against a safe fixture\",\"outputSummary\":null,\"startedAt\":\"2026-07-31T19:38:00.000Z\",\"completedAt\":null,\"error\":null}}",
+          "sequence_number": 5,
+          "created_at": "2026-07-31T19:38:00.000Z",
+          "harness_run_id": "00000000-0000-7000-8000-000000000051"
+        }
       ]
     }
   ]

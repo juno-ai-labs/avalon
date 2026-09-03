@@ -171,8 +171,8 @@ afterEach(() => {
  * through typed object ports while workspace memory tables stay regional.
  */
 function routedEnv(env: Env, runInput: WorkstreamWorkflowInput): Env {
-  const store = objectStores.get(runInput.workstreamId);
-  if (!store) throw new Error(`no object store for ${runInput.workstreamId}`);
+  const store = objectStores.get(runInput.parentId);
+  if (!store) throw new Error(`no object store for ${runInput.parentId}`);
   return env;
 }
 
@@ -357,11 +357,11 @@ function input(
     return {
       region: "global",
       workspaceId: WORKSPACE_ID,
-      workstreamId: automationRun === 1 ? AUTOMATION_WORKSTREAM_ONE : AUTOMATION_WORKSTREAM_TWO,
+      parentKind: "workstream",
+      parentId: automationRun === 1 ? AUTOMATION_WORKSTREAM_ONE : AUTOMATION_WORKSTREAM_TWO,
       loopId: `workstream:${automationRun === 1 ? AUTOMATION_WORKSTREAM_ONE : AUTOMATION_WORKSTREAM_TWO}:substream:0:loop`,
       harnessRunId: automationRun === 1 ? AUTOMATION_RUN_ONE : AUTOMATION_RUN_TWO,
       triggerMessageId: null,
-      automationSubscriptionId: AUTOMATION_SUBSCRIPTION_ID,
       activityId: null,
       executionPrincipal: { type: "workspace", workspaceId: WORKSPACE_ID },
       reason: "memory automation test",
@@ -371,11 +371,11 @@ function input(
   return {
     region: "global",
     workspaceId: WORKSPACE_ID,
-    workstreamId: owner ? WORKSTREAM_ONE : WORKSTREAM_TWO,
+    parentKind: "workstream",
+    parentId: owner ? WORKSTREAM_ONE : WORKSTREAM_TWO,
     loopId: `workstream:${owner ? WORKSTREAM_ONE : WORKSTREAM_TWO}:substream:0:loop`,
     harnessRunId: owner ? RUN_ONE : RUN_TWO,
     triggerMessageId: null,
-    automationSubscriptionId: null,
     activityId: null,
     executionPrincipal: user === "workspace"
       ? { type: "workspace", workspaceId: WORKSPACE_ID }
@@ -387,7 +387,7 @@ function input(
 function toolContext(runInput: WorkstreamWorkflowInput, receipt: string) {
   return {
     workspaceId: runInput.workspaceId,
-    workstreamId: runInput.workstreamId,
+    workstreamId: runInput.parentId,
     harnessRunId: runInput.harnessRunId,
     toolCallId: receipt,
     providerIdempotencyKey: receipt,
@@ -529,11 +529,11 @@ describe("scoped agent memory", () => {
     const reply: WorkstreamWorkflowInput = {
       region: "global",
       workspaceId: WORKSPACE_ID,
-      workstreamId: AUTOMATION_WORKSTREAM_TWO,
+      parentKind: "workstream",
+      parentId: AUTOMATION_WORKSTREAM_TWO,
       loopId: `workstream:${AUTOMATION_WORKSTREAM_TWO}:substream:0:loop`,
       harnessRunId: AUTOMATION_FOLLOW_UP_RUN,
       triggerMessageId: null,
-      automationSubscriptionId: null,
       activityId: null,
       executionPrincipal: { type: "user", userId: MEMBER_ID },
       reason: "human_message",
@@ -584,7 +584,6 @@ describe("scoped agent memory", () => {
     // subscription — so claiming this one is the mismatch, not a stale id.
     const borrowed: WorkstreamWorkflowInput = {
       ...input("owner"),
-      automationSubscriptionId: AUTOMATION_SUBSCRIPTION_ID,
     };
     await expect(resolveMemoryAccess(routedEnv(env, borrowed), borrowed))
       .rejects.toThrow("memory_automation_workstream_mismatch");
@@ -823,7 +822,7 @@ describe("scoped agent memory", () => {
     // else, so a routed UPDATE was refused outright; the authority now enforces
     // it by answering `reused` and never writing, which is the same guarantee
     // stated as an outcome rather than as a missing trigger.
-    const reFrozen = await testHarnessRunPort(objectStores.get(runInput.workstreamId)!)
+    const reFrozen = await testHarnessRunPort(objectStores.get(runInput.parentId)!)
       .persistMemoryContext({
         runId: RUN_ONE,
         attemptId: "attempt-owner",

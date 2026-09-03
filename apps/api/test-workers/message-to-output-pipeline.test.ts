@@ -50,7 +50,7 @@ import {
 } from "./helpers/scripted-provider";
 import { createCloudflareTestBinding } from "../test/helpers/cloudflare-test";
 import {
-  substreamAgentName,
+  conversationObjectName,
   substreamLoopId,
   workspaceDOName,
 } from "../src/durable-objects/names";
@@ -211,7 +211,7 @@ beforeEach(async () => {
 
 function agentStub(): DurableObjectStub {
   return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
-    substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
   ));
 }
 
@@ -1536,7 +1536,6 @@ describe("a member's message travels the whole pipeline", () => {
           loopId: initial.loop_id,
           harnessRunId: executionId,
           triggerMessageId: null,
-          automationSubscriptionId: null,
           activityId: null,
           executionPrincipal: { type: "user", userId: USER_ID },
           reason: "user_message",
@@ -2025,7 +2024,7 @@ describe("a member's message travels the whole pipeline", () => {
   it("admits a message through a non-main child using its external loop identity", async () => {
     const substreamId = asSubstreamId("00000000-0000-7000-8000-0000000005d0");
     const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
-      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID, substreamId),
+      conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID, substreamId),
     ));
     const child = stub as unknown as {
       bootstrapRuntime(input: Record<string, unknown>): Promise<{ status: number }>;
@@ -2051,7 +2050,6 @@ describe("a member's message travels the whole pipeline", () => {
         emailAddress: null,
         emailRouteStatus: null,
         systemKind: null,
-        automationSubscriptionId: null,
         automationRunId: null,
         plannedFor: null,
         modelOverride: null,

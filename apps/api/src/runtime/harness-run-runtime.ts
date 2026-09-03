@@ -42,7 +42,7 @@ export interface AttemptIdentity {
 
 export type HarnessRunCoordinates = Pick<
   WorkstreamWorkflowInput,
-  "workspaceId" | "workstreamId" | "harnessRunId"
+  "workspaceId" | "parentId" | "harnessRunId"
 >;
 
 export interface InlineChildResult {
@@ -365,7 +365,7 @@ export async function admitInlineChildAttempt(
 
   const childInput = {
     workspaceId: parentInput.workspaceId,
-    workstreamId: parentInput.workstreamId,
+    parentId: parentInput.parentId,
     harnessRunId: asHarnessRunId(admitted.childRunId),
   };
   if (admitted.outcome === "replay") {
@@ -415,7 +415,7 @@ export async function loadInlineChildResult(
   // caller's own rather than columns projected back out of the row.
   const childInput = {
     workspaceId: parentInput.workspaceId,
-    workstreamId: parentInput.workstreamId,
+    parentId: parentInput.parentId,
     harnessRunId: asHarnessRunId(row.run_id),
   };
   if (row.terminalized_at === null && !TERMINAL_RUN_STATUSES.has(row.status)) {
@@ -442,7 +442,7 @@ export async function loadInlineChildResult(
  */
 export async function terminalizeQueuedHarnessRun(
   runs: HarnessRunObjectPort,
-  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId" | "harnessRunId">,
+  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "parentId" | "harnessRunId">,
   identity: AttemptIdentity,
   error: { code: string; message: string },
   status: "failed" | "stopped" = "failed",
@@ -464,7 +464,7 @@ export async function terminalizeQueuedHarnessRun(
 
 export async function persistImmutableRunScope(
   runs: HarnessRunObjectPort,
-  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId" | "harnessRunId">,
+  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "parentId" | "harnessRunId">,
   lease: AttemptLease,
   scope: ImmutableRunScope,
 ): Promise<{ scopeHash: string; reused: boolean }> {
@@ -593,7 +593,7 @@ export async function persistInlineChildScope(
 
 export async function persistRunPluginActivation(
   runs: HarnessRunObjectPort,
-  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId" | "harnessRunId">,
+  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "parentId" | "harnessRunId">,
   lease: AttemptLease,
   plugin: { pluginId: string; toolSurfaceHash: string },
 ): Promise<void> {
@@ -711,7 +711,7 @@ export async function assertInlineChildAttemptOwned(
 
 export async function persistHarnessHostOutcome(
   runs: HarnessRunObjectPort,
-  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId" | "harnessRunId">,
+  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "parentId" | "harnessRunId">,
   lease: AttemptLease,
   finalTurn: { turnId: string; text: string } | null,
   participantNotice: { turnId: string; text: string } | null,
@@ -753,7 +753,7 @@ export async function persistHarnessHostOutcome(
 
 export async function loadPersistedHarnessHostOutcome(
   runs: HarnessRunObjectPort,
-  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId" | "harnessRunId">,
+  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "parentId" | "harnessRunId">,
 ): Promise<PersistedHarnessHostOutcome | null> {
   const lifecycle = await runs.lifecycleEvent({
     runId: input.harnessRunId,
@@ -1367,7 +1367,7 @@ function readErrorCode(errorJson: string | null): string | null {
 
 export async function terminalizeHarnessAttempt(
   runs: HarnessRunObjectPort,
-  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId" | "harnessRunId">,
+  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "parentId" | "harnessRunId">,
   lease: AttemptIdentity,
   outcome: TerminalOutcome,
   receipts: ToolReceiptObjectPort,
@@ -1424,7 +1424,7 @@ export async function terminalizeHarnessAttempt(
     await settleAndRecordResidualReceipts(runs, receipts, {
       runId: input.harnessRunId,
       workspaceId: input.workspaceId,
-      workstreamId: input.workstreamId,
+      workstreamId: input.parentId,
       attemptId: lease.attemptId,
       status: outcome.status,
       terminalizedAt: now,
@@ -1447,7 +1447,7 @@ export async function terminalizeHarnessAttempt(
     await settleAndRecordResidualReceipts(runs, receipts, {
       runId: input.harnessRunId,
       workspaceId: input.workspaceId,
-      workstreamId: input.workstreamId,
+      workstreamId: input.parentId,
       attemptId: lease.attemptId,
       status: outcome.status,
       terminalizedAt: settled.terminalizedAt,

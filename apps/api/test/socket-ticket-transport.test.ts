@@ -96,11 +96,12 @@ describe("socket ticket transport", () => {
       workspaceId,
       region: "global",
       role: "member",
-    }, workstreamId, "0", undefined, 42, true, {
+    }, { kind: "workstream", id: workstreamId }, "0", undefined, 42, true, {
       admission: {
         authorityGeneration: 7,
         role: "member",
         analyticsWorkspaceId: "analytics-workspace",
+        parentArchived: false,
       },
     });
     const request = new Request(`https://api.avalon.test/workstreams/${workstreamId}/socket`, {
@@ -158,7 +159,7 @@ describe("socket ticket transport", () => {
       workspaceId,
       region: "global",
       role: "member",
-    }, workstreamId);
+    }, { kind: "workstream", id: workstreamId });
     const request = new Request(`https://api.avalon.test/workstreams/${workstreamId}/socket`, {
       headers: {
         Origin: "app://avalon",
@@ -204,7 +205,7 @@ describe("socket ticket transport", () => {
     };
     const refusal = { status: 403, code: "connector_principal_cannot_hold_socket" };
 
-    await expect(issueSocketTicket(env, connector, "00000000-0000-7000-8000-000000000724"))
+    await expect(issueSocketTicket(env, connector, { kind: "workstream", id: "00000000-0000-7000-8000-000000000724" }))
       .rejects.toMatchObject(refusal);
     await expect(issueWorkspaceSocketTicket(env, connector)).rejects.toMatchObject(refusal);
     await expect(issueWorkstreamControlSocketTicket(env, connector, "00000000-0000-7000-8000-000000000724"))

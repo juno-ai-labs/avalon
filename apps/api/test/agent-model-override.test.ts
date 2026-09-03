@@ -53,7 +53,6 @@ function scheduleRunnerFor(fixture: Fixture) {
     workspaceId: WORKSPACE_ID,
     directory: {
       workstreamScheduleTargets: async () => ({ items: [] }),
-      plannedAutomationWorkstream: async () => null,
     },
     notificationIntents: {
       notificationIntentMaintenanceTarget: async () => ({ dueAt: null }),

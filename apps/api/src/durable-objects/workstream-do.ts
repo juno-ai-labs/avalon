@@ -14,6 +14,24 @@ import {
   type UserId,
   type WorkstreamControlSocketEvent,
 } from "@rally/contracts";
+import type {
+  ConversationEffectEnvelope,
+  ParentEffectEnvelope,
+} from "@rally/contracts/conversation-effects";
+import {
+  ConversationParentAuthorityRequestSchema,
+  ConversationParentAuthorityResultSchema,
+  ConversationParentAuthorizeViewerRequestSchema,
+  ConversationParentAuthorizeViewerResultSchema,
+  ConversationParentReserveChildRequestSchema,
+  ConversationParentReserveChildResultSchema,
+  type ConversationParentAuthorityRequest,
+  type ConversationParentAuthorityResult,
+  type ConversationParentAuthorizeViewerRequest,
+  type ConversationParentAuthorizeViewerResult,
+  type ConversationParentReserveChildRequest,
+  type ConversationParentReserveChildResult,
+} from "@rally/contracts/conversation-parent";
 import { truncateUtf16Safe } from "@rally/contracts/text";
 import { z } from "zod";
 
@@ -22,7 +40,6 @@ import { assertDurableObjectJurisdiction } from "../lib/durable-object-namespace
 import { withDurableObjectSelf } from "../lib/durable-object-self";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { uuidV7 } from "../lib/uuid-v7";
-import { diagnosticErrorCode, logInfo, logWarn } from "../observability/logger";
 import { reportScheduledAlarmAttempt } from "./scheduled-alarm-report";
 import {
   applyDurableObjectSqliteMigrations,
@@ -30,39 +47,26 @@ import {
 } from "./sqlite-migrations";
 import {
   SCHEDULED_ALARM_SCHEMA_STATEMENTS,
-  ScheduledDurableObject,
   type ScheduledAlarm,
 } from "./scheduled-alarms";
 import type { DurableObjectMigrationPlan } from "./migratable-durable-object";
 import {
-  isRetiredSuggestionFeedbackEffect,
-  WorkstreamRegionalEffectAckSchema,
-  WorkstreamRegionalEffectEnvelopeSchema,
-  WorkstreamRegionalEffectSchema,
-  isPersonNotificationEffect,
-  workstreamRegionalEffectHash,
-  workstreamRegionalEffectWakeMessage,
-  type WorkstreamRegionalEffect,
-  type WorkstreamRegionalEffectEnvelope,
-} from "./workstream-regional-effect";
+  CONVERSATION_CHILDREN_SCHEMA_STATEMENTS,
+  ConversationParentDurableObject,
+  type ConversationParentIdentity,
+  type DirectoryCommonEffect,
+} from "./conversation-parent-object";
 import {
-  substreamAgentName,
+  conversationObjectName,
   workspaceDOName,
   workstreamDOName,
 } from "./names";
 import { WorkspaceDirectoryApplyResultSchema } from "./workspace-directory-protocol";
-import { responseToRpcResult, type DurableObjectRpcResult } from "./rpc-result";
 import {
   revocationClosesSocket,
   SocketAccessRevocationSchema,
   type SocketAccessRevocation,
 } from "../services/access-revocation";
-
-const ForwardedEffectsSchema = z.strictObject({
-  substreamId: z.string().min(1).max(180),
-  envelopes: z.array(WorkstreamRegionalEffectEnvelopeSchema).min(1).max(25),
-});
-export type ForwardedEffects = z.infer<typeof ForwardedEffectsSchema>;
 
 const realtimeTextEncoder = new TextEncoder();
 
@@ -72,26 +76,6 @@ function workstreamControlPayload(event: WorkstreamControlSocketEvent): string {
     throw new Error("Work-stream control event exceeds the bounded frame size");
   }
   return payload;
-}
-
-interface ProjectionKeyRow extends Record<string, SqlStorageValue> {
-  next_version: number;
-  last_payload_hash: string;
-}
-
-interface StoredEnvelopeRow extends Record<string, SqlStorageValue> {
-  payload_json: string;
-  payload_hash: string;
-  attempts: number;
-}
-
-interface StoredProjectionRow extends Record<string, SqlStorageValue> {
-  effect_json: string;
-}
-
-interface StoredStateRow extends Record<string, SqlStorageValue> {
-  event_id: string;
-  waterline: number;
 }
 
 const WorkstreamSocketIdentitySchema = z.object({
@@ -127,11 +111,7 @@ interface WorkstreamMetadataRow extends Record<string, SqlStorageValue> {
   completed_at: number | null;
   archived_at: number | null;
   email_address: string | null;
-  origin_type: "ad_hoc" | "automation";
   created_by_user_id: string | null;
-  automation_subscription_id: string | null;
-  automation_run_id: string | null;
-  planned_for: number | null;
   title_status: "naming" | "automatic" | "settled";
   latest_attention_ordinal: number;
   unread_tracking_start_ordinal: number;
@@ -141,13 +121,6 @@ interface WorkstreamMetadataRow extends Record<string, SqlStorageValue> {
   source_created_at: number;
   source_updated_at: number;
 }
-
-const RETRY_BASE_MS = 5_000;
-const RETRY_MAX_MS = 5 * 60_000;
-// Generous fences, not history: the 10 GB object ceiling is the only hard
-// bound, so retention errs long. A replay older than the receipt window
-// converges on the per-key waterlines.
-const CHILD_EFFECT_RECEIPT_RETENTION_MS = 180 * 24 * 60 * 60_000;
 
 export const WORKSTREAM_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigration[] = [{
   version: 1,
@@ -433,6 +406,18 @@ export const WORKSTREAM_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
     `DROP TABLE IF EXISTS block_dashboard_configuration_versions`,
     `DROP TABLE IF EXISTS block_dashboard_user_preferences`,
   ],
+}, {
+  version: 6,
+  description: "register a child conversation before its first effect arrives",
+  statements: [
+    // Until now a child existed here only once its first `directory_common`
+    // effect landed. Creation now reserves the main conversation before the
+    // child object is initialized, and a run or side conversation is reserved
+    // the same way, so the parent can list its children without waiting for
+    // each to say something. The projection tables keep their shape; this is
+    // the registry beside them.
+    ...CONVERSATION_CHILDREN_SCHEMA_STATEMENTS,
+  ],
 }];
 
 function first<T extends Record<string, SqlStorageValue>>(cursor: SqlStorageCursor<T>): T | null {
@@ -483,36 +468,6 @@ function promptPreview(prompt: string): string {
   return truncateUtf16Safe(prompt.replace(/\s+/gu, " ").trim(), 40);
 }
 
-function canonicalState(effects: WorkstreamRegionalEffect[]): string {
-  const states = new Set(effects.flatMap((effect) => effect.kind === "directory_common" ? [effect.state] : []));
-  for (const state of [
-    "running", "interrupting", "preparing_context", "waiting_capacity", "scheduled",
-    "needs_input", "failed", "budget_exhausted", "idle", "completed", "cancelled",
-  ]) {
-    if (states.has(state)) return state;
-  }
-  return "idle";
-}
-
-function newestCommon(effects: WorkstreamRegionalEffect[]): Extract<WorkstreamRegionalEffect, { kind: "directory_common" }> {
-  const common = effects.filter((effect): effect is Extract<WorkstreamRegionalEffect, { kind: "directory_common" }> => (
-    effect.kind === "directory_common"
-  ));
-  if (common.length === 0) throw new Error("workstream_common_projection_missing");
-  return [...common].sort((left, right) => right.lastActivityAt.localeCompare(left.lastActivityAt))[0]!;
-}
-
-function latestParticipantAddedAt(
-  effects: readonly Extract<WorkstreamRegionalEffect, { kind: "directory_user" }>[],
-): string | null {
-  let latest: string | null = null;
-  for (const effect of effects) {
-    if (!effect.isParticipant || effect.participantAddedAt == null) continue;
-    if (latest === null || effect.participantAddedAt > latest) latest = effect.participantAddedAt;
-  }
-  return latest;
-}
-
 export { workstreamDOName };
 
 /**
@@ -535,18 +490,11 @@ export { workstreamDOName };
  */
 const MIGRATION_COMPONENT = "workstream_do";
 
-export class WorkstreamDO extends ScheduledDurableObject<Env> {
+export class WorkstreamDO extends ConversationParentDurableObject {
   private readonly state: DurableObjectState;
   /** This object's own `WORKSTREAM_DOS` name; see {@link selfObjectName}. */
   private objectName: string | null = null;
   private readonly initialized: Promise<void>;
-  /**
-   * Whether an eager directory delivery is already running. In memory only: a
-   * hibernated object wakes with no attempt outstanding, which is the
-   * conservative direction — it costs one redundant call the receiving object
-   * deduplicates, where the opposite would silently suppress the push.
-   */
-  private eagerDirectoryDeliveryInFlight = false;
 
   constructor(
     state: DurableObjectState,
@@ -701,11 +649,7 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
           env,
           env.SUBSTREAM_AGENTS,
           workspaceId,
-          substreamAgentName(
-            env.AVALON_REGION,
-            asWorkspaceId(workspaceId),
-            asWorkstreamId(workstreamId),
-          ),
+          conversationObjectName(env.AVALON_REGION, asWorkspaceId(workspaceId), workstreamId),
         );
         await stub.wake();
       } catch {
@@ -720,20 +664,6 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
     if (request.method === "GET" && (path === "/socket" || path === "/")) {
       return this.acceptSocket(request);
     }
-    if (request.method === "POST" && path === "/internal/substream-effects") {
-      return this.acceptSubstreamEffects(request);
-    }
-    if (request.method === "POST" && path === "/internal/regional-effect-delivery") {
-      const parsed = WorkstreamRegionalEffectAckSchema.safeParse(await request.json().catch(() => null));
-      if (!parsed.success) return json({ error: "invalid_regional_effect_request" }, 400);
-      const envelope = this.regionalEffect(parsed.data.messageId, parsed.data.payloadHash);
-      return envelope ? json(envelope) : json({ error: "regional_effect_not_found" }, 404);
-    }
-    if (request.method === "POST" && path === "/internal/regional-effect-ack") {
-      const parsed = WorkstreamRegionalEffectAckSchema.safeParse(await request.json().catch(() => null));
-      if (!parsed.success) return json({ error: "invalid_regional_effect_ack" }, 400);
-      return json({ ok: true, removed: this.ack(parsed.data.messageId, parsed.data.payloadHash) });
-    }
     if (request.method === "GET" && path === "/health") {
       return json({
         ok: true,
@@ -744,102 +674,246 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
     return json({ error: "not_found" }, 404);
   }
 
-  /** Native-RPC entrypoint for ordered child projection delivery. */
-  async receiveSubstreamEffects(input: ForwardedEffects): Promise<DurableObjectRpcResult> {
+  // ---------------------------------------------------------------------------
+  // The conversation-parent contract. `receiveChildEffects` and `listChildren`
+  // are inherited; the three below need this object's own row.
+  // ---------------------------------------------------------------------------
+
+  async authorizeViewer(
+    input: ConversationParentAuthorizeViewerRequest,
+  ): Promise<ConversationParentAuthorizeViewerResult> {
     await this.initialized;
-    return responseToRpcResult(await this.acceptSubstreamEffects(new Request(
-      "https://workstream.internal/internal/substream-effects",
-      { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input) },
-    )));
+    const request = ConversationParentAuthorizeViewerRequestSchema.parse(input);
+    const row = this.metadataRow();
+    if (!row) return ConversationParentAuthorizeViewerResultSchema.parse({ authorized: false, archived: false });
+    this.assertParent(request.workspaceId, request.parentId);
+    // Archive is reported, not folded into the answer: an archived work stream
+    // is still readable by the people who could read it, only not writable.
+    const authorized = row.scope === "workspace"
+      || this.userProjection(request.userId)?.isParticipant === true;
+    return ConversationParentAuthorizeViewerResultSchema.parse({
+      authorized,
+      archived: row.archived_at !== null,
+    });
   }
 
-  async loadRegionalEffect(
-    input: z.input<typeof WorkstreamRegionalEffectAckSchema>,
-  ): Promise<WorkstreamRegionalEffectEnvelope | null> {
+  async authority(input: ConversationParentAuthorityRequest): Promise<ConversationParentAuthorityResult> {
     await this.initialized;
-    const parsed = WorkstreamRegionalEffectAckSchema.parse(input);
-    return this.regionalEffect(parsed.messageId, parsed.payloadHash);
-  }
-
-  async acknowledgeRegionalEffect(
-    input: z.input<typeof WorkstreamRegionalEffectAckSchema>,
-  ): Promise<boolean> {
-    await this.initialized;
-    const parsed = WorkstreamRegionalEffectAckSchema.parse(input);
-    return this.ack(parsed.messageId, parsed.payloadHash);
+    const request = ConversationParentAuthorityRequestSchema.parse(input);
+    const row = this.metadataRow();
+    if (!row) {
+      return ConversationParentAuthorityResultSchema.parse({ exists: false, authorityGeneration: 0, archived: false });
+    }
+    this.assertParent(request.workspaceId, request.parentId);
+    return ConversationParentAuthorityResultSchema.parse({
+      exists: true,
+      authorityGeneration: row.authority_generation,
+      archived: row.archived_at !== null,
+    });
   }
 
   /**
-   * Hand this commit's directory effects to WorkspaceDO now, rather than
-   * leaving them for the alarm.
+   * Record a child before it is addressed.
    *
-   * A harness status change reaches the open work stream immediately, over the
-   * control socket that `broadcastMetadata` writes to. It reaches every *other*
-   * surface — the sidebar row, a second window, another member watching the
-   * same workspace — only once the effect has gone outbox, alarm, Queue,
-   * consumer batch, RPC. Queues is at-least-once and unordered by design, and
-   * the alarm adds its own delay on top, so a transition a person is actively
-   * waiting on arrived seconds after the thing that caused it.
-   *
-   * This delivers but deliberately **does not acknowledge**. The outbox is
-   * untouched — no row consumed, no `not_before` moved, no attempt counted — so
-   * the alarm, the Queue, and the activation fence keep exactly the lifecycle
-   * they had, and this is purely additive. WorkspaceDO applies by `messageId`
-   * and `payloadHash`, so the Queue's later copy of the same effect finds the
-   * receipt, reports no change, and publishes nothing a second time.
-   *
-   * Acknowledging here was the first attempt and was wrong. Draining the
-   * outbox eagerly meant whoever looked next found it empty: the activation
-   * fence reported that it had flushed nothing, and the effects it was supposed
-   * to be gating on had already gone. Delivery is a thing this can usefully
-   * race the Queue at; ownership of the outbox is not.
+   * Reserving the main conversation of a work stream that does not exist yet
+   * creates this object's row and puts a provisional directory row in the
+   * workspace synchronously, through the one parent-to-workspace RPC that is
+   * kept: the person who created the work stream is about to open it, and the
+   * Worker's visibility checks read the workspace directory. The provisional
+   * row is version 1 of this parent's projection, so the child's first real
+   * aggregate lands as version 2 and replaces it.
    */
-  private deliverDirectoryEffectsEagerly(): void {
-    if (this.eagerDirectoryDeliveryInFlight) return;
-    const effects = this.dueWorkspaceDirectoryEffects(25);
-    if (effects.length === 0) return;
-    const metadata = this.metadataRow();
-    if (!metadata) return;
-    this.eagerDirectoryDeliveryInFlight = true;
-    this.state.waitUntil((async () => {
-      try {
-        const workspace = await durableObjectStubForWorkspace(
-          this.env,
-          this.env.WORKSPACE_DOS,
-          metadata.workspace_id,
-          workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(metadata.workspace_id)),
-        );
-        await workspace.applyWorkstreamDirectoryEffects({
-          workspaceId: metadata.workspace_id,
-          envelopes: effects,
-        });
-      } catch {
-        // The outbox still holds every one of these, so the alarm and the Queue
-        // deliver them exactly as they would have. Nothing is lost by losing
-        // the race this was trying to win.
-      } finally {
-        this.eagerDirectoryDeliveryInFlight = false;
+  async reserveChild(input: ConversationParentReserveChildRequest): Promise<ConversationParentReserveChildResult> {
+    await this.initialized;
+    const request = ConversationParentReserveChildRequestSchema.parse(input);
+    const now = Date.now();
+    const reserved = this.state.storage.transactionSync(() => {
+      let metadata = this.metadataRow();
+      if (!metadata) {
+        if (request.substreamId !== "0" || !request.directory) throw new Error("workstream_parent_missing");
+        this.insertProvisionalMetadata(request, request.directory, now);
+        metadata = this.metadataRow();
+        if (!metadata) throw new Error("workstream_metadata_missing");
+      } else {
+        this.assertParent(request.workspaceId, request.parentId);
       }
-    })());
+      const registered = this.registerChild(request.substreamId, request.kind, request.createdByUserId, now);
+      const envelopes: ParentEffectEnvelope[] = [];
+      if (registered && request.substreamId === "0" && request.directory) {
+        const directory = request.directory;
+        const common = this.enqueueProjection("common", {
+          kind: "directory_common",
+          title: directory.title,
+          description: directory.description,
+          preview: "",
+          scope: directory.scope,
+          state: "idle",
+          systemKind: directory.systemKind,
+          lastActivityAt: directory.createdAt,
+          completedAt: null,
+          archivedAt: null,
+          emailAddress: directory.emailAddress,
+          createdByUserId: request.createdByUserId,
+          titleStatus: directory.titleStatus,
+          createdAt: directory.createdAt,
+          updatedAt: directory.createdAt,
+        }, now);
+        if (common) envelopes.push(common);
+        if (request.createdByUserId) {
+          const viewer = this.enqueueProjection(`user:${request.createdByUserId}`, {
+            kind: "directory_user",
+            userId: request.createdByUserId,
+            isParticipant: true,
+            participantAddedAt: directory.createdAt,
+            unreadCount: 0,
+            youAreMentioned: false,
+            unseen: false,
+            listable: true,
+          }, now);
+          if (viewer) envelopes.push(viewer);
+        }
+      }
+      return { authorityGeneration: metadata.authority_generation, envelopes };
+    });
+    if (reserved.envelopes.length > 0) await this.deliverProvisionalDirectory(reserved.envelopes);
+    await this.armNextAlarm();
+    return ConversationParentReserveChildResultSchema.parse({
+      reserved: true,
+      authorityGeneration: reserved.authorityGeneration,
+    });
   }
 
-  /** Maintenance activation fence: do not open a route before WorkspaceDO has its directory row. */
-  async flushWorkspaceDirectoryEffects(): Promise<number> {
-    await this.initialized;
-    let delivered = 0;
-    for (let batch = 0; batch < 400; batch += 1) {
-      // The WorkspaceDO RPC contract caps one atomic application at 25
-      // envelopes. Keep maintenance on that same production boundary rather
-      // than constructing a one-off oversized activation call.
-      const effects = this.dueWorkspaceDirectoryEffects(25);
-      if (effects.length === 0) break;
-      delivered += await this.deliverWorkspaceDirectoryEffects(effects);
+  private insertProvisionalMetadata(
+    request: ConversationParentReserveChildRequest,
+    directory: NonNullable<ConversationParentReserveChildRequest["directory"]>,
+    now: number,
+  ): void {
+    const createdAt = epoch(directory.createdAt) ?? now;
+    this.state.storage.sql.exec(
+      `INSERT INTO workstream_metadata
+         (id, workspace_id, workstream_id, region, authority_generation, title, description,
+          preview, scope, exact_state, system_kind, last_activity_at, completed_at,
+          archived_at, email_address, created_by_user_id, title_status,
+          source_created_at, source_updated_at, created_at, updated_at)
+       VALUES (1, ?, ?, ?, ?, ?, ?, '', ?, 'idle', ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?)`,
+      request.workspaceId,
+      request.parentId,
+      this.env.AVALON_REGION,
+      request.authorityGeneration,
+      directory.title,
+      directory.description,
+      directory.scope,
+      directory.systemKind,
+      createdAt,
+      directory.emailAddress,
+      request.createdByUserId,
+      directory.titleStatus,
+      createdAt,
+      createdAt,
+      now,
+      now,
+    );
+  }
+
+  /**
+   * The one synchronous parent-to-workspace delivery. Rows the workspace
+   * accepts leave the outbox here; anything it does not accept stays for the
+   * alarm, and the caller hears about it, because a person is waiting on this.
+   */
+  private async deliverProvisionalDirectory(envelopes: readonly ParentEffectEnvelope[]): Promise<void> {
+    const metadata = this.metadataRow();
+    if (!metadata) throw new Error("workstream_metadata_missing");
+    const workspace = await durableObjectStubForWorkspace(
+      this.env,
+      this.env.WORKSPACE_DOS,
+      metadata.workspace_id,
+      workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(metadata.workspace_id)),
+    );
+    const result = WorkspaceDirectoryApplyResultSchema.parse(
+      await workspace.applyWorkstreamDirectoryEffects({
+        workspaceId: metadata.workspace_id,
+        envelopes: [...envelopes],
+      }),
+    );
+    const accepted = new Set(result.accepted.map((entry) => `${entry.messageId}:${entry.payloadHash}`));
+    this.deleteParentEffects(envelopes.filter((envelope) => (
+      accepted.has(`${envelope.messageId}:${envelope.payloadHash}`)
+    )));
+    if (accepted.size !== envelopes.length) throw new Error("workspace_directory_provisional_row_incomplete");
+  }
+
+  // ---------------------------------------------------------------------------
+  // Hooks the shared parent machinery calls.
+  // ---------------------------------------------------------------------------
+
+  protected override parentIdentity(): ConversationParentIdentity | null {
+    const row = this.metadataRow();
+    return row ? {
+      region: row.region,
+      workspaceId: asWorkspaceId(row.workspace_id),
+      parentKind: "workstream",
+      parentId: row.workstream_id,
+      authorityGeneration: row.authority_generation,
+    } : null;
+  }
+
+  protected override admitChildEnvelope(envelope: ConversationEffectEnvelope, now: number): void {
+    if (envelope.parentKind !== "workstream") throw new Error("workstream_effect_parent_kind_mismatch");
+    const metadata = this.metadataRow();
+    // Identity is the workspace and the work stream. The generation is an
+    // epoch that this row *follows*, not a gate: it is stamped once when the
+    // metadata is first created and never rewritten, while a child stamps
+    // every effect with whatever generation is current when it enqueues.
+    // Effects are deduped by the receipt table, so accepting an effect from
+    // any epoch of the same work stream is safe; the row keeps up with the
+    // newest one it has seen.
+    if (metadata && (
+      metadata.workspace_id !== envelope.workspaceId
+      || metadata.workstream_id !== envelope.parentId
+    )) throw new Error("workstream_effect_identity_mismatch");
+    if (metadata && envelope.generation > metadata.authority_generation) {
+      this.state.storage.sql.exec(
+        `UPDATE workstream_metadata SET authority_generation = ? WHERE id = 1`,
+        envelope.generation,
+      );
     }
-    if (this.dueWorkspaceDirectoryEffects(1).length > 0) {
-      throw new Error("workspace_directory_activation_flush_limit");
-    }
-    await this.armNextAlarm();
-    return delivered;
+    if (!metadata) this.ensureMetadata(envelope, now);
+  }
+
+  /** A work stream forwards everything its children say. */
+  protected override forwardsChildEffect(): boolean {
+    return true;
+  }
+
+  protected override parentLogFields(): Record<string, unknown> {
+    const metadata = this.metadataRow();
+    return {
+      workspace_id: metadata?.workspace_id ?? null,
+      workstream_id: metadata?.workstream_id ?? null,
+      parent_kind: "workstream",
+    };
+  }
+
+  protected override onChildCommonAggregate(
+    _substreamId: string,
+    aggregate: DirectoryCommonEffect,
+    envelope: ConversationEffectEnvelope,
+    now: number,
+  ): void {
+    this.upsertMetadata(envelope, aggregate, now);
+  }
+
+  protected override onChildUserAggregate(): void {
+    this.state.storage.sql.exec(
+      `UPDATE workstream_metadata SET revision = revision + 1, updated_at = ? WHERE id = 1`,
+      Date.now(),
+    );
+  }
+
+  protected override afterChildEffects(): Promise<void> {
+    // Everyone reading *this* work stream hears now, over the control socket.
+    // Every other surface hears through the outbox, the Queue, and WorkspaceDO.
+    return this.broadcastMetadata();
   }
 
   override async webSocketMessage(socket: WebSocket, message: ArrayBuffer | string): Promise<void> {
@@ -889,79 +963,12 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * This object's derived wake reasons: outbox rows whose `not_before` has come.
-   *
-   * The base has already armed the next alarm and drained any stored entry, so
-   * everything below is free to await the network — a throw here costs this
-   * object nothing but the attempt counters the outbox itself keeps.
+   * This object's derived wake reason: outbox rows whose `not_before` has come.
+   * The base has already armed the next alarm, so this is free to await the
+   * network; a throw costs nothing but the attempt counters the outbox keeps.
    */
-  protected override async runDueAlarmWork(): Promise<void> {
-    const due = this.dueEffects();
-    if (due.length > 0) {
-      try {
-        // Every committed state change uses the same Queue wake-up path as
-        // activity and notification effects. Queues is intentionally treated
-        // as at-least-once and unordered; the envelope's state-key waterline is
-        // the receiver's freshness authority.
-        await this.env.ACTIVITY_QUEUE.sendBatch(due.map((effect) => ({
-          body: workstreamRegionalEffectWakeMessage(effect),
-        })));
-        const now = Date.now();
-        this.state.storage.transactionSync(() => {
-          for (const effect of due) {
-            const row = first(this.state.storage.sql.exec<{ attempts: number }>(
-              `SELECT attempts FROM durable_outbox WHERE message_id = ? AND payload_hash = ?`,
-              effect.messageId,
-              effect.payloadHash,
-            ));
-            if (!row) continue;
-            const attempts = row.attempts + 1;
-            const delay = Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** Math.min(attempts - 1, 6));
-            this.state.storage.sql.exec(
-              `UPDATE durable_outbox SET state = 'inflight', attempts = ?, not_before = ?
-                WHERE message_id = ? AND payload_hash = ?`,
-              attempts,
-              now + delay,
-              effect.messageId,
-              effect.payloadHash,
-            );
-          }
-        });
-        const metadata = this.metadataRow();
-        logInfo(this.env, "workstream_outbox_batch_enqueued", {
-          workspace_id: metadata?.workspace_id ?? null,
-          workstream_id: metadata?.workstream_id ?? null,
-          message_ids: due.map((effect) => effect.messageId),
-          effect_kinds: due.map((effect) => effect.effect.kind),
-          effect_count: due.length,
-          outcome: "queued",
-        });
-      } catch (error) {
-        const retryAt = Date.now() + RETRY_BASE_MS;
-        this.state.storage.transactionSync(() => {
-          for (const effect of due) {
-            this.state.storage.sql.exec(
-              `UPDATE durable_outbox SET state = 'pending', attempts = attempts + 1, not_before = ?
-                WHERE message_id = ? AND payload_hash = ?`,
-              retryAt,
-              effect.messageId,
-              effect.payloadHash,
-            );
-          }
-        });
-        const metadata = this.metadataRow();
-        logWarn(this.env, "workstream_outbox_enqueue_failed", {
-          workspace_id: metadata?.workspace_id ?? null,
-          workstream_id: metadata?.workstream_id ?? null,
-          message_ids: due.map((effect) => effect.messageId),
-          effect_kinds: due.map((effect) => effect.effect.kind),
-          effect_count: due.length,
-          retry_at: new Date(retryAt).toISOString(),
-          reason: diagnosticErrorCode(error, "queue_send_failed"),
-          error_name: error instanceof Error ? error.name : typeof error,
-        });
-      }
-    }
+  protected override runDueAlarmWork(): Promise<void> {
+    return this.drainParentOutbox();
   }
 
   private async acceptSocket(request: Request): Promise<Response> {
@@ -1068,235 +1075,7 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
     } : null;
   }
 
-  private async acceptSubstreamEffects(request: Request): Promise<Response> {
-    const parsed = ForwardedEffectsSchema.safeParse(await request.json().catch(() => null));
-    if (!parsed.success) return json({ error: "invalid_substream_effects" }, 400);
-    try {
-      let accepted = 0;
-      for (const envelope of parsed.data.envelopes) {
-        if (envelope.region !== this.env.AVALON_REGION) throw new Error("workstream_effect_region_mismatch");
-        // An old child may have committed this just before the deployment.
-        // Returning it as accepted lets that child delete the row; persisting
-        // it in the new parent would revive the retired feedback protocol.
-        if (!isRetiredSuggestionFeedbackEffect(envelope.effect)) {
-          this.applyChildEnvelope(parsed.data.substreamId, envelope);
-        }
-        accepted += 1;
-      }
-      await this.armNextAlarm();
-      await this.broadcastMetadata();
-      // `broadcastMetadata` has just told everyone reading *this* work stream.
-      // The same transition is what a sidebar row, a second window, and every
-      // other member of the workspace are waiting on, and their only path to it
-      // is the workspace socket — so start it here instead of at the alarm.
-      this.deliverDirectoryEffectsEagerly();
-      // A visibility change used to sweep block sockets from here. It no
-      // longer does: closing somebody's socket because their access ended is
-      // the access-revocation queue's job and nothing else's, so that this
-      // object cannot hold a second, quieter answer to the same question. See
-      // docs/access-revocation.md. Block lifecycle is a different question and
-      // still sweeps, at the configuration-change site that knows the answer.
-      return json({ ok: true, accepted });
-    } catch (error) {
-      return json({ error: error instanceof Error ? error.message : "substream_effect_failed" }, 409);
-    }
-  }
-
-  private applyChildEnvelope(substreamId: string, envelope: WorkstreamRegionalEffectEnvelope): void {
-    this.state.storage.transactionSync(() => {
-      const metadata = first(this.state.storage.sql.exec<{
-        workspace_id: string;
-        workstream_id: string;
-        authority_generation: number;
-      }>(`SELECT workspace_id, workstream_id, authority_generation FROM workstream_metadata WHERE id = 1`));
-      // Identity is the workspace and the work stream. The generation is an
-      // epoch that this row *follows*, not a gate: it is stamped once when the
-      // metadata is first created and never rewritten, while a child stamps
-      // every effect with whatever generation is current when it enqueues.
-      // Gating on equality therefore only ever held for a cutover that ran
-      // exactly once — any restart moved the child forward, left this row
-      // behind, and made every effect permanently unacceptable in one
-      // direction or the other. Effects are deduped by `child_effect_receipts`
-      // below, and no new work is admitted while a campaign runs, so accepting
-      // an effect from any epoch of the same work stream is safe; the row
-      // simply keeps up with the newest one it has seen.
-      if (metadata && (
-        metadata.workspace_id !== envelope.workspaceId
-        || metadata.workstream_id !== envelope.workstreamId
-      )) throw new Error("workstream_effect_identity_mismatch");
-      if (metadata && envelope.generation > metadata.authority_generation) {
-        this.state.storage.sql.exec(
-          `UPDATE workstream_metadata SET authority_generation = ? WHERE id = 1`,
-          envelope.generation,
-        );
-      }
-
-      const receipt = first(this.state.storage.sql.exec<{ payload_hash: string }>(
-        `SELECT payload_hash FROM child_effect_receipts WHERE substream_id = ? AND message_id = ?`,
-        substreamId,
-        envelope.messageId,
-      ));
-      if (receipt) {
-        if (receipt.payload_hash !== envelope.payloadHash) throw new Error("substream_effect_idempotency_conflict");
-        return;
-      }
-
-      const now = Date.now();
-      if (envelope.effect.kind === "directory_common") {
-        this.upsertChildProjection("common", substreamId, null, envelope, now);
-        const effect = this.aggregateCommon();
-        this.upsertMetadata(envelope, effect, now);
-        this.enqueueProjection(envelope, "common", effect, now);
-      } else if (envelope.effect.kind === "directory_user") {
-        this.upsertChildProjection("user", substreamId, envelope.effect.userId, envelope, now);
-        const effect = this.aggregateUser(envelope.effect.userId);
-        this.ensureMetadata(envelope, now);
-        this.state.storage.sql.exec(
-          `UPDATE workstream_metadata SET revision = revision + 1, updated_at = ? WHERE id = 1`,
-          now,
-        );
-        this.enqueueProjection(envelope, `user:${envelope.effect.userId}`, effect, now);
-      } else {
-        this.ensureMetadata(envelope, now);
-        this.enqueueImmutable(substreamId, envelope, now);
-      }
-      this.state.storage.sql.exec(
-        `INSERT INTO child_effect_receipts(substream_id, message_id, payload_hash, received_at)
-         VALUES (?, ?, ?, ?)`,
-        substreamId,
-        envelope.messageId,
-        envelope.payloadHash,
-        now,
-      );
-      // The receipt is a replay fence, not history. Past retention a
-      // redelivery converges on the per-key waterlines instead, so old
-      // receipts age out here the way every sibling receipt table's do.
-      this.state.storage.sql.exec(
-        `DELETE FROM child_effect_receipts
-          WHERE (substream_id, message_id) IN (
-            SELECT substream_id, message_id FROM child_effect_receipts
-             WHERE received_at < ?
-             ORDER BY received_at LIMIT 100
-          )`,
-        now - CHILD_EFFECT_RECEIPT_RETENTION_MS,
-      );
-    });
-  }
-
-  private upsertChildProjection(
-    kind: "common" | "user",
-    substreamId: string,
-    userId: string | null,
-    envelope: WorkstreamRegionalEffectEnvelope,
-    now: number,
-  ): void {
-    const table = kind === "common" ? "substream_directory" : "substream_user_directory";
-    const where = kind === "common" ? "substream_id = ?" : "substream_id = ? AND user_id = ?";
-    const params = kind === "common" ? [substreamId] : [substreamId, userId!];
-    const existing = first(this.state.storage.sql.exec<{ source_version: number; payload_hash: string }>(
-      `SELECT source_version, payload_hash FROM ${table} WHERE ${where}`,
-      ...params,
-    ));
-    if (existing && existing.source_version > envelope.sourceVersion) return;
-    if (existing?.source_version === envelope.sourceVersion) {
-      if (existing.payload_hash === envelope.payloadHash) return;
-      // Same version, different content. The child numbers these itself and
-      // restarts its counter when a maintenance import rebuilds it, while this
-      // projection survives — so a re-derived effect legitimately arrives under
-      // a version this object has already seen carrying different bytes. The
-      // child is the authority for its own projection, so the newer payload
-      // wins rather than failing the campaign. It is still worth saying out
-      // loud: outside a campaign the two should never disagree.
-      logWarn(this.env, "substream_projection_version_reused", {
-        substream_id: substreamId,
-        source_version: envelope.sourceVersion,
-        workstream_id: envelope.workstreamId,
-      });
-    }
-    if (kind === "common") {
-      this.state.storage.sql.exec(
-        `INSERT INTO substream_directory(substream_id, source_version, payload_hash, effect_json, updated_at)
-         VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT(substream_id) DO UPDATE SET source_version = excluded.source_version,
-           payload_hash = excluded.payload_hash, effect_json = excluded.effect_json,
-           updated_at = excluded.updated_at`,
-        substreamId,
-        envelope.sourceVersion,
-        envelope.payloadHash,
-        JSON.stringify(envelope.effect),
-        now,
-      );
-    } else {
-      this.state.storage.sql.exec(
-        `INSERT INTO substream_user_directory
-           (substream_id, user_id, source_version, payload_hash, effect_json, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?)
-         ON CONFLICT(substream_id, user_id) DO UPDATE SET source_version = excluded.source_version,
-           payload_hash = excluded.payload_hash, effect_json = excluded.effect_json,
-           updated_at = excluded.updated_at`,
-        substreamId,
-        userId,
-        envelope.sourceVersion,
-        envelope.payloadHash,
-        JSON.stringify(envelope.effect),
-        now,
-      );
-    }
-  }
-
-  private aggregateCommon(): Extract<WorkstreamRegionalEffect, { kind: "directory_common" }> {
-    const effects = this.state.storage.sql.exec<StoredProjectionRow>(
-      `SELECT effect_json FROM substream_directory ORDER BY substream_id`,
-    ).toArray().map((row) => WorkstreamRegionalEffectSchema.parse(JSON.parse(row.effect_json)));
-    const base = newestCommon(effects);
-    const common = effects.filter((effect): effect is Extract<WorkstreamRegionalEffect, { kind: "directory_common" }> => (
-      effect.kind === "directory_common"
-    ));
-    const lastActivityAt = common.reduce(
-      (latest, effect) => effect.lastActivityAt > latest ? effect.lastActivityAt : latest,
-      base.lastActivityAt,
-    );
-    return {
-      ...base,
-      state: canonicalState(effects),
-      lastActivityAt,
-      completedAt: common.every((effect) => effect.completedAt !== null) ? lastActivityAt : null,
-    };
-  }
-
-  private aggregateUser(userId: string): Extract<WorkstreamRegionalEffect, { kind: "directory_user" }> {
-    const effects = this.state.storage.sql.exec<StoredProjectionRow>(
-      `SELECT effect_json FROM substream_user_directory WHERE user_id = ? ORDER BY substream_id`,
-      userId,
-    ).toArray().map((row) => WorkstreamRegionalEffectSchema.parse(JSON.parse(row.effect_json)))
-      .filter((effect): effect is Extract<WorkstreamRegionalEffect, { kind: "directory_user" }> => (
-        effect.kind === "directory_user"
-      ));
-    if (effects.length === 0) throw new Error("workstream_user_projection_missing");
-    return {
-      kind: "directory_user",
-      userId,
-      isParticipant: effects.some((effect) => effect.isParticipant),
-      participantAddedAt: latestParticipantAddedAt(effects),
-      unreadCount: effects.reduce((count, effect) => count + effect.unreadCount, 0),
-      youAreMentioned: effects.some((effect) => effect.youAreMentioned),
-      // An OR across substreams, which is only the top level's answer because
-      // there is exactly one substream today. A second one would mean a room
-      // nobody opened lighting the parent's dot, so whoever adds substreams
-      // decides then whether unseen is per-substream or the root's alone.
-      unseen: effects.some((effect) => effect.unseen === true),
-      listable: effects.some((effect) => effect.listable),
-      seenAttentionOrdinal: Math.max(...effects.map((effect) => effect.seenAttentionOrdinal ?? 0)),
-      manualUnreadFromOrdinal: effects.reduce<number | null>((earliest, effect) => {
-        const value = effect.manualUnreadFromOrdinal ?? null;
-        return value === null ? earliest : earliest === null ? value : Math.min(earliest, value);
-      }, null),
-      manualUnreadGeneration: Math.max(...effects.map((effect) => effect.manualUnreadGeneration ?? 0)),
-      latestMentionAttentionOrdinal: Math.max(...effects.map((effect) => effect.latestMentionAttentionOrdinal ?? 0)),
-    };
-  }
-
-  private ensureMetadata(envelope: WorkstreamRegionalEffectEnvelope, now: number): void {
+  private ensureMetadata(envelope: ConversationEffectEnvelope, now: number): void {
     const existing = first(this.state.storage.sql.exec<{ one: number }>(
       `SELECT 1 AS one FROM workstream_metadata WHERE id = 1`,
     ));
@@ -1308,7 +1087,7 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
           archived_at, created_at, updated_at)
        VALUES (1, ?, ?, ?, ?, '', '', '', 'workspace', 'idle', NULL, ?, NULL, NULL, ?, ?)`,
       envelope.workspaceId,
-      envelope.workstreamId,
+      envelope.parentId,
       envelope.region,
       envelope.generation,
       now,
@@ -1318,29 +1097,27 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
   }
 
   private upsertMetadata(
-    envelope: WorkstreamRegionalEffectEnvelope,
-    effect: Extract<WorkstreamRegionalEffect, { kind: "directory_common" }>,
+    envelope: ConversationEffectEnvelope,
+    effect: DirectoryCommonEffect,
     now: number,
   ): void {
     this.state.storage.sql.exec(
       `INSERT INTO workstream_metadata
          (id, workspace_id, workstream_id, region, authority_generation, title, description,
           preview, scope, exact_state, system_kind, last_activity_at, completed_at,
-          archived_at, created_at, updated_at, revision, email_address, origin_type,
-          created_by_user_id, automation_subscription_id, automation_run_id, planned_for,
+          archived_at, created_at, updated_at, revision, email_address,
+          created_by_user_id,
           title_status, latest_attention_ordinal, unread_tracking_start_ordinal,
           next_wakeup_due_at, next_wakeup_prompt, next_terminal_action_at,
           source_created_at, source_updated_at)
-       VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET title = excluded.title, description = excluded.description,
          preview = excluded.preview, scope = excluded.scope, exact_state = excluded.exact_state,
          system_kind = excluded.system_kind, last_activity_at = excluded.last_activity_at,
          completed_at = excluded.completed_at, archived_at = excluded.archived_at,
          updated_at = excluded.updated_at, revision = workstream_metadata.revision + 1,
-         email_address = excluded.email_address, origin_type = excluded.origin_type,
+         email_address = excluded.email_address,
          created_by_user_id = excluded.created_by_user_id,
-         automation_subscription_id = excluded.automation_subscription_id,
-         automation_run_id = excluded.automation_run_id, planned_for = excluded.planned_for,
          title_status = excluded.title_status,
          latest_attention_ordinal = excluded.latest_attention_ordinal,
          unread_tracking_start_ordinal = excluded.unread_tracking_start_ordinal,
@@ -1350,7 +1127,7 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
          source_created_at = excluded.source_created_at,
          source_updated_at = excluded.source_updated_at`,
       envelope.workspaceId,
-      envelope.workstreamId,
+      envelope.parentId,
       envelope.region,
       envelope.generation,
       effect.title,
@@ -1365,11 +1142,7 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
       now,
       now,
       effect.emailAddress ?? null,
-      effect.originType ?? "ad_hoc",
       effect.createdByUserId ?? null,
-      effect.automationSubscriptionId ?? null,
-      effect.automationRunId ?? null,
-      epoch(effect.plannedFor),
       effect.titleStatus ?? "settled",
       effect.latestAttentionOrdinal ?? 0,
       effect.unreadTrackingStartOrdinal ?? 0,
@@ -1385,45 +1158,12 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
     return first(this.state.storage.sql.exec<WorkstreamMetadataRow>(
       `SELECT revision, authority_generation, workspace_id, workstream_id, region, title, description, preview,
               scope, exact_state, system_kind, last_activity_at, completed_at,
-              archived_at, email_address, origin_type, created_by_user_id,
-              automation_subscription_id, automation_run_id, planned_for,
+              archived_at, email_address, created_by_user_id,
               title_status, latest_attention_ordinal, unread_tracking_start_ordinal,
               next_wakeup_due_at, next_wakeup_prompt, next_terminal_action_at,
               source_created_at, source_updated_at
          FROM workstream_metadata WHERE id = 1`,
     ));
-  }
-
-  private userProjection(userId: string): Extract<WorkstreamRegionalEffect, { kind: "directory_user" }> | null {
-    const effects = this.state.storage.sql.exec<StoredProjectionRow>(
-      `SELECT effect_json FROM substream_user_directory WHERE user_id = ? ORDER BY substream_id`,
-      userId,
-    ).toArray().map((row) => WorkstreamRegionalEffectSchema.parse(JSON.parse(row.effect_json)))
-      .filter((effect): effect is Extract<WorkstreamRegionalEffect, { kind: "directory_user" }> => (
-        effect.kind === "directory_user"
-      ));
-    if (effects.length === 0) return null;
-    return {
-      kind: "directory_user",
-      userId,
-      isParticipant: effects.some((effect) => effect.isParticipant),
-      participantAddedAt: latestParticipantAddedAt(effects),
-      unreadCount: effects.reduce((count, effect) => count + effect.unreadCount, 0),
-      youAreMentioned: effects.some((effect) => effect.youAreMentioned),
-      // An OR across substreams, which is only the top level's answer because
-      // there is exactly one substream today. A second one would mean a room
-      // nobody opened lighting the parent's dot, so whoever adds substreams
-      // decides then whether unseen is per-substream or the root's alone.
-      unseen: effects.some((effect) => effect.unseen === true),
-      listable: effects.some((effect) => effect.listable),
-      seenAttentionOrdinal: Math.max(...effects.map((effect) => effect.seenAttentionOrdinal ?? 0)),
-      manualUnreadFromOrdinal: effects.reduce<number | null>((earliest, effect) => {
-        const value = effect.manualUnreadFromOrdinal ?? null;
-        return value === null ? earliest : earliest === null ? value : Math.min(earliest, value);
-      }, null),
-      manualUnreadGeneration: Math.max(...effects.map((effect) => effect.manualUnreadGeneration ?? 0)),
-      latestMentionAttentionOrdinal: Math.max(...effects.map((effect) => effect.latestMentionAttentionOrdinal ?? 0)),
-    };
   }
 
   /**
@@ -1452,14 +1192,6 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
     if (!row || row.archived_at !== null) return false;
     if (row.scope === "workspace") return true;
     return this.userProjection(userId)?.isParticipant === true;
-  }
-
-  private latestStateRow(stateKey: string): StoredStateRow | null {
-    return first(this.state.storage.sql.exec<StoredStateRow>(
-      `SELECT event_id, waterline FROM workstream_state_changes
-        WHERE state_key = ? ORDER BY waterline DESC LIMIT 1`,
-      stateKey,
-    ));
   }
 
   private stateVersionForUser(row: WorkstreamMetadataRow, userId: string) {
@@ -1492,11 +1224,7 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
       description: row.description,
       preview: row.preview,
       emailAddress: row.email_address,
-      originType: row.origin_type,
       createdByUserId: row.created_by_user_id,
-      automationSubscriptionId: row.automation_subscription_id,
-      automationRunId: row.automation_run_id,
-      plannedFor: iso(row.planned_for),
       titleStatus: row.title_status,
       exactState: row.exact_state,
       harnessStatus: harnessStatus(row.exact_state),
@@ -1558,14 +1286,13 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
       }
     }
     if (!identity) return { substreamIds: [] };
-    // The main substream keeps the historical name and is never listed in the
-    // directory, so it is named here rather than discovered.
-    const substreamIds = [
-      "0",
+    // Registered children plus any that spoke before registration existed.
+    const substreamIds = [...new Set([
+      ...this.childRegistry().map((child) => child.substreamId),
       ...this.state.storage.sql.exec<{ substream_id: string }>(
         `SELECT substream_id FROM substream_directory ORDER BY substream_id`,
-      ).toArray().map((row) => row.substream_id).filter((substreamId) => substreamId !== "0"),
-    ];
+      ).toArray().map((row) => row.substream_id),
+    ])];
     return { substreamIds };
   }
 
@@ -1605,246 +1332,8 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
     }
   }
 
-  private enqueueProjection(
-    source: WorkstreamRegionalEffectEnvelope,
-    projectionKey: string,
-    effect: WorkstreamRegionalEffect,
-    now: number,
-  ): void {
-    const payloadHash = workstreamRegionalEffectHash(effect);
-    const previous = first(this.state.storage.sql.exec<ProjectionKeyRow>(
-      `SELECT next_version, last_payload_hash FROM projection_keys WHERE projection_key = ?`,
-      projectionKey,
-    ));
-    if (previous?.last_payload_hash === payloadHash) return;
-    const sourceVersion = previous?.next_version ?? 1;
-    const messageId = this.recordStateChange(projectionKey, sourceVersion, effect, payloadHash, now);
-    this.state.storage.sql.exec(
-      `INSERT INTO projection_keys(projection_key, next_version, last_payload_hash, updated_at)
-       VALUES (?, ?, ?, ?)
-       ON CONFLICT(projection_key) DO UPDATE SET next_version = excluded.next_version,
-         last_payload_hash = excluded.last_payload_hash, updated_at = excluded.updated_at`,
-      projectionKey,
-      sourceVersion + 1,
-      payloadHash,
-      now,
-    );
-    this.insertOutbox({
-      ...source,
-      messageId,
-      partitionKey: projectionKey,
-      sourceVersion,
-      requiredProjectionVersion: null,
-      payloadHash,
-      effect,
-    }, now);
-  }
-
-  /**
-   * Append one immutable UI state row before its Queue wake-up can exist.
-   *
-   * The timestamp-prefixed ID is useful for cross-socket traces and sorts by
-   * observed wall time. The state-key waterline remains the correctness clock:
-   * clocks in independent Durable Objects cannot provide a global total order.
-   */
-  private recordStateChange(
-    stateKey: string,
-    waterline: number,
-    effect: WorkstreamRegionalEffect,
-    payloadHash: string,
-    now: number,
-  ): string {
-    const metadata = this.metadataRow();
-    if (!metadata) throw new Error("workstream_metadata_missing");
-    const clock = first(this.state.storage.sql.exec<{
-      next_sequence: number;
-      last_event_time: number;
-    }>(`SELECT next_sequence, last_event_time FROM workstream_state_clock WHERE id = 1`));
-    if (!clock) throw new Error("workstream_state_clock_missing");
-    const occurredAt = Math.max(now, clock.last_event_time);
-    const sequence = clock.next_sequence;
-    const eventId = uuidV7(occurredAt);
-    this.state.storage.sql.exec(
-      `UPDATE workstream_state_clock
-          SET next_sequence = ?, last_event_time = ? WHERE id = 1`,
-      sequence + 1,
-      occurredAt,
-    );
-    this.state.storage.sql.exec(
-      `INSERT INTO workstream_state_changes
-         (sequence, state_key, waterline, event_id, payload_hash, state_json, occurred_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      sequence,
-      stateKey,
-      waterline,
-      eventId,
-      payloadHash,
-      JSON.stringify(effect),
-      occurredAt,
-    );
-    // Reconnects need the current row, not every transition ever observed.
-    // Keep a bounded diagnostic/replay tail per independent state key.
-    this.state.storage.sql.exec(
-      `DELETE FROM workstream_state_changes
-        WHERE state_key = ? AND waterline <= ?`,
-      stateKey,
-      waterline - 1_024,
-    );
-    return eventId;
-  }
-
-  private enqueueImmutable(substreamId: string, source: WorkstreamRegionalEffectEnvelope, now: number): void {
-    let requiredProjectionVersion: number | null = null;
-    if (isPersonNotificationEffect(source.effect)) {
-      const key = `user:${source.effect.recipientUserId}`;
-      const projection = first(this.state.storage.sql.exec<ProjectionKeyRow>(
-        `SELECT next_version, last_payload_hash FROM projection_keys WHERE projection_key = ?`,
-        key,
-      ));
-      requiredProjectionVersion = (projection?.next_version ?? 1) - 1;
-      if (requiredProjectionVersion <= 0) throw new Error("workstream_notification_projection_dependency_uncommitted");
-    }
-    const messageId = `substream:${substreamId}:${source.messageId}`;
-    const payloadHash = workstreamRegionalEffectHash(source.effect, requiredProjectionVersion);
-    this.insertOutbox({
-      ...source,
-      messageId,
-      requiredProjectionVersion,
-      payloadHash,
-    }, now);
-  }
-
-  private insertOutbox(envelope: WorkstreamRegionalEffectEnvelope, now: number): void {
-    const inserted = this.state.storage.sql.exec<{ message_id: string }>(
-      `INSERT OR IGNORE INTO durable_outbox
-         (message_id, partition_key, source_version, source_epoch, effect_kind,
-          payload_json, payload_hash, state, attempts, not_before, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?)
-       RETURNING message_id`,
-      envelope.messageId,
-      envelope.partitionKey,
-      envelope.sourceVersion,
-      envelope.generation,
-      envelope.effect.kind,
-      JSON.stringify(WorkstreamRegionalEffectEnvelopeSchema.parse(envelope)),
-      envelope.payloadHash,
-      now,
-      now,
-    );
-    if (inserted.toArray().length === 0) {
-      const existing = first(this.state.storage.sql.exec<{ payload_hash: string }>(
-        `SELECT payload_hash FROM durable_outbox WHERE message_id = ?`,
-        envelope.messageId,
-      ));
-      if (existing?.payload_hash !== envelope.payloadHash) throw new Error("workstream_parent_outbox_conflict");
-    }
-  }
-
-  private dueEffects(limit = 25): WorkstreamRegionalEffectEnvelope[] {
-    return this.state.storage.sql.exec<StoredEnvelopeRow>(
-      `SELECT payload_json, payload_hash, attempts FROM durable_outbox
-        WHERE state IN ('pending', 'inflight') AND not_before <= ?
-        ORDER BY CASE effect_kind
-                   WHEN 'directory_common' THEN 0
-                   WHEN 'directory_user' THEN 1
-                   ELSE 2
-                 END,
-                 created_at, message_id LIMIT ?`,
-      Date.now(),
-      limit,
-    ).toArray().map((row) => WorkstreamRegionalEffectEnvelopeSchema.parse(JSON.parse(row.payload_json)));
-  }
-
-  private dueWorkspaceDirectoryEffects(limit: number): WorkstreamRegionalEffectEnvelope[] {
-    return this.state.storage.sql.exec<StoredEnvelopeRow>(
-      `SELECT payload_json, payload_hash, attempts FROM durable_outbox
-        WHERE state IN ('pending', 'inflight')
-          AND effect_kind IN ('directory_common', 'directory_user')
-        ORDER BY CASE effect_kind
-                   WHEN 'directory_common' THEN 0
-                   WHEN 'directory_user' THEN 1
-                   ELSE 2
-                 END,
-                 created_at, message_id LIMIT ?`,
-      limit,
-    ).toArray().map((row) => WorkstreamRegionalEffectEnvelopeSchema.parse(JSON.parse(row.payload_json)));
-  }
-
-  private regionalEffect(messageId: string, payloadHash: string): WorkstreamRegionalEffectEnvelope | null {
-    const row = first(this.state.storage.sql.exec<StoredEnvelopeRow>(
-      `SELECT payload_json, payload_hash, attempts FROM durable_outbox
-        WHERE message_id = ? AND payload_hash = ? AND state IN ('pending', 'inflight')`,
-      messageId,
-      payloadHash,
-    ));
-    return row ? WorkstreamRegionalEffectEnvelopeSchema.parse(JSON.parse(row.payload_json)) : null;
-  }
-
-  private ack(messageId: string, payloadHash: string): boolean {
-    return this.state.storage.sql.exec<{ message_id: string }>(
-      `DELETE FROM durable_outbox WHERE message_id = ? AND payload_hash = ?
-       RETURNING message_id`,
-      messageId,
-      payloadHash,
-    ).toArray().length === 1;
-  }
-
-  private async deliverWorkspaceDirectoryEffects(
-    effects: WorkstreamRegionalEffectEnvelope[],
-  ): Promise<number> {
-    if (effects.length === 0) return 0;
-    const ordered = [...effects].sort((left, right) => {
-      const priority = (effect: WorkstreamRegionalEffectEnvelope) => (
-        effect.effect.kind === "directory_common" ? 0 : effect.effect.kind === "directory_user" ? 1 : 2
-      );
-      return priority(left) - priority(right);
-    });
-    try {
-      const metadata = this.metadataRow();
-      if (!metadata) throw new Error("workstream_metadata_missing");
-      const workspace = await durableObjectStubForWorkspace(
-        this.env,
-        this.env.WORKSPACE_DOS,
-        metadata.workspace_id,
-        workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(metadata.workspace_id)),
-      );
-      const result = WorkspaceDirectoryApplyResultSchema.parse(
-        await workspace.applyWorkstreamDirectoryEffects({
-          workspaceId: metadata.workspace_id,
-          envelopes: ordered,
-        }),
-      );
-      const accepted = new Map(result.accepted.map((entry) => [entry.messageId, entry.payloadHash]));
-      let delivered = 0;
-      this.state.storage.transactionSync(() => {
-        for (const effect of effects) {
-          if (accepted.get(effect.messageId) !== effect.payloadHash) continue;
-          if (this.ack(effect.messageId, effect.payloadHash)) delivered += 1;
-        }
-      });
-      if (delivered !== effects.length) throw new Error("workspace_directory_effect_ack_incomplete");
-      return delivered;
-    } catch (error) {
-      const retryAt = Date.now() + RETRY_BASE_MS;
-      this.state.storage.transactionSync(() => {
-        for (const effect of effects) {
-          this.state.storage.sql.exec(
-            `UPDATE durable_outbox SET state = 'pending', attempts = attempts + 1, not_before = ?
-              WHERE message_id = ? AND payload_hash = ?`,
-            retryAt,
-            effect.messageId,
-            effect.payloadHash,
-          );
-        }
-      });
-      throw error;
-    }
-  }
-
   protected override nextDerivedAlarmCandidates(): readonly number[] {
-    const regional = first(this.state.storage.sql.exec<{ due_at: number | null }>(
-      `SELECT MIN(not_before) AS due_at FROM durable_outbox WHERE state IN ('pending', 'inflight')`,
-    ))?.due_at ?? null;
-    return regional === null ? [] : [regional];
+    const due = this.nextParentOutboxDueAt();
+    return due === null ? [] : [due];
   }
 }

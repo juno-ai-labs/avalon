@@ -31,7 +31,7 @@ import { asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 
 import type { AuthContext } from "../src/env";
 import { SubstreamLoopStorage } from "../src/durable-objects/substream-loop-storage";
-import { substreamAgentName, substreamLoopId, workspaceDOName } from "../src/durable-objects/names";
+import { conversationObjectName, substreamLoopId, workspaceDOName } from "../src/durable-objects/names";
 import {
   capturedProviderRequests,
   installScriptedProvider,
@@ -92,7 +92,7 @@ beforeEach(async () => {
 
 function agentStub(): DurableObjectStub {
   return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
-    substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
   ));
 }
 

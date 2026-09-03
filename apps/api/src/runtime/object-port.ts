@@ -1,6 +1,6 @@
-import { asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import { asSubstreamId, asWorkspaceId } from "@rally/contracts";
 
-import { substreamAgentName } from "../durable-objects/names";
+import { conversationObjectName } from "../durable-objects/names";
 import type { SubstreamAgent } from "../durable-objects/substream-agent";
 import { rpcResultBody } from "../durable-objects/rpc-result";
 import type { DurableObjectRpcResult } from "../durable-objects/rpc-result";
@@ -42,6 +42,7 @@ export interface ObjectPortContract<TStorage, TOperation extends keyof TStorage 
     request: {
       workspaceId: string;
       workstreamId: string;
+      substreamId: string;
       operation: TOperation;
       args: unknown[];
     },
@@ -61,11 +62,17 @@ export interface ObjectPortContract<TStorage, TOperation extends keyof TStorage 
 }
 
 /**
- * A Worker-side handle on one work stream's object-local state.
+ * A Worker-side handle on one conversation's object-local state.
  *
  * Each method is one round trip to the owning SubstreamAgent, where the whole
  * operation — its fences and its writes — runs synchronously against the
  * object's SQLite. Callers never see SQL, a table name, or a database handle.
+ *
+ * `workstreamId` is the conversation parent's id (a work stream or an
+ * automation; the name predates typed parents) and `substreamId` picks which
+ * of its conversations, the main one by default. A run executing inside an
+ * object reaches that object's own authorities without a stub whichever
+ * substream it is; see `local-authorities.ts`.
  *
  * This was four near-identical files. Their normalized diff was comments.
  */
@@ -85,11 +92,12 @@ export function createObjectPort<TStorage, TOperation extends keyof TStorage & s
    * mid-operation — belongs in `test-workers/`, where this override is unused.
    */
   localStorage?: TStorage,
+  substreamId: string = "0",
 ): ObjectPortOf<TStorage, TOperation> {
   // The owning object installs its endpoint here, once, for every port built
   // below it — the endpoint and not the storage, because the endpoint is what
   // holds the authority fence, the projection commit, and the alarm re-arm.
-  const resident = localWorkstreamAuthority(env, workspaceId, workstreamId, contract.authority);
+  const resident = localWorkstreamAuthority(env, workspaceId, workstreamId, contract.authority, substreamId);
   const call = async (operation: TOperation, args: unknown[]): Promise<unknown> => {
     if (localStorage) {
       const method = localStorage[operation] as (...rest: unknown[]) => unknown;
@@ -113,18 +121,20 @@ export function createObjectPort<TStorage, TOperation extends keyof TStorage & s
       env,
       env.SUBSTREAM_AGENTS,
       asWorkspaceId(workspaceId),
-      // No substream id, so this resolves to the main child. Every one of these
-      // authorities keeps its rows there, and each endpoint refuses a non-main
-      // substream rather than answering from an empty table.
-      substreamAgentName(
+      // Every authority keeps its rows in the conversation object they belong
+      // to, and each endpoint refuses a request naming a different substream
+      // rather than answering from an empty table.
+      conversationObjectName(
         env.AVALON_REGION,
         asWorkspaceId(workspaceId),
-        asWorkstreamId(workstreamId),
+        workstreamId,
+        substreamId === "0" ? "0" : asSubstreamId(substreamId),
       ),
     );
     const result = await contract.dispatch(stub, {
       workspaceId,
       workstreamId,
+      substreamId,
       operation,
       args,
     });

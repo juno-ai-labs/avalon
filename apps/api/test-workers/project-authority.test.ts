@@ -10,12 +10,12 @@ import {
   asUserId,
   asWorkspaceId,
   asWorkstreamId,
+  conversationEffectHash,
+  type ParentEffect,
   type WorkstreamId,
 } from "@rally/contracts";
 
 import { workspaceDOName } from "../src/durable-objects/names";
-import { workstreamRegionalEffectHash } from "../src/durable-objects/workstream-regional-effect";
-import type { WorkstreamRegionalEffect } from "../src/durable-objects/workstream-regional-effect";
 
 // 09f0, not 09a0: external-event-routing.test.ts owns 09a0, and a shared
 // object name is a shared input gate across files (test:scripts enforces
@@ -107,7 +107,7 @@ function directoryEnvelope(
   sourceVersion: number,
 ) {
   directorySeq += 1;
-  const effect: WorkstreamRegionalEffect = {
+  const effect: ParentEffect = {
     kind: "directory_common",
     title: "Member work stream",
     description: "",
@@ -118,10 +118,7 @@ function directoryEnvelope(
     lastActivityAt: "2026-08-01T00:00:00.000Z",
     completedAt: null,
     archivedAt,
-    originType: "ad_hoc",
     createdByUserId: OWNER,
-    automationSubscriptionId: null,
-    plannedFor: null,
     latestAttentionOrdinal: 0,
     unreadTrackingStartOrdinal: 0,
     createdAt: "2026-08-01T00:00:00.000Z",
@@ -129,17 +126,18 @@ function directoryEnvelope(
     resourceLinks: [],
   };
   return {
-    kind: "workstream_regional_effect" as const,
+    kind: "parent_effect" as const,
     contractVersion: 1 as const,
     region: "global" as const,
     workspaceId: WORKSPACE_ID,
-    workstreamId,
+    parentKind: "workstream" as const,
+    parentId: workstreamId,
     generation: 1,
     messageId: `00000000-0000-7000-8000-${String(directorySeq).padStart(9, "0")}9e0`,
     partitionKey: "common",
     sourceVersion,
     requiredProjectionVersion: null,
-    payloadHash: workstreamRegionalEffectHash(effect),
+    payloadHash: conversationEffectHash(effect),
     effect,
   };
 }

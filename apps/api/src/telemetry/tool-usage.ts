@@ -10,7 +10,6 @@ import {
   resourceTelemetryEventId,
   telemetryJourneyDuration,
 } from './product-usage';
-import { createIdentityObjectPort } from "../runtime/identity-port";
 import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
 
 export interface AgentToolStartedTelemetryInput {
@@ -133,6 +132,9 @@ export async function emitAgentToolTerminalTelemetry(
     harnessRunId: string;
     invocationId: string;
     replayed?: boolean;
+    /** Set on an automation run's loop; the provenance rides on the loop input. */
+    automationId?: string | undefined;
+    automationRunId?: string | undefined;
   },
 ): Promise<void> {
   const stored = await createHarnessRunObjectPort(env, input.workspaceId, input.workstreamId)
@@ -152,21 +154,9 @@ export async function emitAgentToolTerminalTelemetry(
     origin: stored.origin,
     parent_tool_call_id: stored.parent_tool_call_id,
     execution_principal_json: stored.execution_principal_json,
-    automation_id: null,
-    automation_run_id: null,
+    automation_id: input.automationId ?? null,
+    automation_run_id: input.automationRunId ?? null,
   };
-  // The work stream's automation run was a third table in the join, and the
-  // only column this needed from it. It is the identity authority's row, asked
-  // for after the status gate rather than fetched for every receipt.
-  const workstreamIdentity = await createIdentityObjectPort(
-    env,
-    input.workspaceId,
-    input.workstreamId,
-  ).identity();
-  row.automation_run_id = workstreamIdentity?.automation_run_id ?? null;
-  // The generated work stream owns its immutable back-link. Reading both IDs
-  // from that authority avoids reconstructing a cross-object JOIN in telemetry.
-  row.automation_id = workstreamIdentity?.automation_subscription_id ?? null;
 
   const plan = objectJson(row.execution_plan_json);
   const toolName = typeof plan.canonicalToolName === 'string' ? plan.canonicalToolName : '';

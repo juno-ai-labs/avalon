@@ -1,3 +1,4 @@
+import type { ConversationParentKind } from "@rally/contracts/conversation-parent";
 import {
   AcknowledgeWorkstreamReadRequestSchema,
   AnswerElicitationRequestSchema,
@@ -83,9 +84,8 @@ import {
 import { WorkstreamIdentityStorage } from "./workstream-identity-storage";
 import { substreamLoopId, workspaceDOName } from "./names";
 import { workstreamImportHash } from "./workstream-import-hash";
-import { WorkspaceAutomationOriginLabelSchema } from "./workspace-directory-protocol";
 import { WorkspaceReserveDraftAttachmentsResultSchema } from "./workspace-draft-attachment-protocol";
-import { WORKSTREAM_DIRECTORY_RESOURCE_LINK_LIMIT } from "./workstream-regional-effect";
+import { WORKSTREAM_DIRECTORY_RESOURCE_LINK_LIMIT } from "@rally/contracts/conversation-effects";
 import type { RegionalEffectCommand, WorkstreamObjectStore } from "./workstream-object-storage";
 import {
   LOOP_EXECUTION_LEASE_MS,
@@ -204,10 +204,6 @@ export const InitializeWorkstreamObjectInputSchema = z.strictObject({
    */
   notifyParticipants: z.boolean().default(false),
   modelOverride: z.string().max(200).nullable(),
-  originType: z.enum(["ad_hoc", "automation"]).default("ad_hoc"),
-  automationSubscriptionId: z.string().uuid().nullable().default(null),
-  automationRunId: z.string().uuid().nullable().default(null),
-  plannedFor: z.string().datetime({ offset: true }).nullable().default(null),
   systemKind: z.literal("digest").nullable().default(null),
   createdFromOpportunityId: z.string().uuid().nullable().default(null),
   opportunityVersion: z.number().int().positive().nullable().default(null),
@@ -257,11 +253,7 @@ interface RootRow extends SqlRow {
   updated_at: number;
   completed_at: number | null;
   archived_at: number | null;
-  origin_type: "ad_hoc" | "automation";
   created_by_user_id: string | null;
-  automation_subscription_id: string | null;
-  automation_run_id: string | null;
-  planned_for: number | null;
   email_address: string | null;
   system_kind: "digest" | null;
   title_status: "naming" | "automatic" | "settled";
@@ -919,12 +911,14 @@ export class WorkstreamObjectProductService {
 
   bootstrapRuntimeAuthority(input: {
     workspaceId: WorkspaceId;
-    workstreamId: WorkstreamId;
+    parentKind: ConversationParentKind;
+    parentId: string;
     generation: number;
   }): void {
     this.objectStore.ensureIdentity({
       workspaceId: input.workspaceId,
-      workstreamId: input.workstreamId,
+      parentKind: input.parentKind,
+      parentId: input.parentId,
     }, this.env.AVALON_REGION);
     const now = Date.now();
     const row = first(this.storage.sql.exec<{
@@ -981,23 +975,19 @@ export class WorkstreamObjectProductService {
     title: string;
     objective: string;
     scope: string;
-    originType: string;
     createdByUserId: string;
     participantUserIds: readonly string[];
     harnessStatus: string;
     emailAddress: string | null;
     emailRouteStatus: string | null;
     systemKind: string | null;
-    automationSubscriptionId: string | null;
-    automationRunId: string | null;
-    plannedFor: number | null;
     modelOverride: string | null;
     now: number;
   }): Promise<{ outcome: "provisioned" | "already_provisioned" }> {
     const identity = this.objectStore.identity();
     if (!identity
       || identity.workspaceId !== input.workspaceId
-      || identity.workstreamId !== input.workstreamId) {
+      || identity.parentId !== input.workstreamId) {
       throw new Error("workstream_provision_identity_mismatch");
     }
     return this.commitRuntimeMutation(
@@ -1057,12 +1047,15 @@ export class WorkstreamObjectProductService {
       throw new ApiError(422, "invalid_origin_resource", "One or more origin resources are unavailable");
     }
     const existing = this.objectStore.identity();
-    if (existing && (existing.workspaceId !== input.workspaceId || existing.workstreamId !== input.workstreamId)) {
+    if (existing && (existing.workspaceId !== input.workspaceId || existing.parentId !== input.workstreamId)) {
       throw new ApiError(409, "workstream_object_identity_mismatch", "The object identity does not match");
     }
+    // A member initializes a work stream; an automation's conversation is
+    // bootstrapped by its object and never comes through here.
     this.objectStore.ensureIdentity({
       workspaceId: input.workspaceId,
-      workstreamId: input.workstreamId,
+      parentKind: "workstream",
+      parentId: input.workstreamId,
     }, this.env.AVALON_REGION);
     const existingRoot = first(this.storage.sql.exec<RootRow>(`SELECT * FROM workstream WHERE id = 1`));
     if (existingRoot?.authority_mode === "authoritative") {
@@ -1169,16 +1162,13 @@ export class WorkstreamObjectProductService {
              state_reason_code = ?, next_sequence_number = 2, next_attention_ordinal = 2,
              authority_epoch = 1, scope_epoch = 0, listing_epoch = 1, run_revision = 1,
              created_at = ?, last_people_activity_at = ?, state_changed_at = ?,
-             origin_type = ?, created_by_user_id = ?, automation_subscription_id = ?,
-             automation_run_id = ?, planned_for = ?, email_address = ?, email_route_status = 'active',
+             created_by_user_id = ?, email_address = ?, email_route_status = 'active',
              created_from_opportunity_id = ?, opportunity_version = ?,
              opportunity_display_prompt_hash = ?, opportunity_execution_prompt_hash = ?,
              description_source = ?, system_kind = ?, title_status = ?, model_override = ?, updated_at = ?
          WHERE id = 1 AND authority_mode = 'preparing'`,
         input.generation, input.title, input.objective, input.scope, input.reason, now, now, now,
-        input.originType, input.creatorUserId, input.automationSubscriptionId,
-        input.automationRunId, input.plannedFor ? Date.parse(input.plannedFor) : null,
-        input.emailAddress, input.createdFromOpportunityId, input.opportunityVersion,
+        input.creatorUserId, input.emailAddress, input.createdFromOpportunityId, input.opportunityVersion,
         input.opportunityDisplayPromptHash, input.opportunityExecutionPromptHash,
         input.descriptionSource, input.systemKind, input.titleStatus, input.modelOverride, now,
       );
@@ -1394,11 +1384,11 @@ export class WorkstreamObjectProductService {
     return {
       region: this.env.AVALON_REGION,
       workspaceId: input.workspaceId,
-      workstreamId: input.workstreamId,
+      parentKind: this.objectStore.identity()?.parentKind ?? "workstream",
+      parentId: input.workstreamId,
       loopId: substreamLoopId(input.workstreamId),
       harnessRunId: runId,
       triggerMessageId: messageId,
-      automationSubscriptionId: input.automationSubscriptionId,
       activityId: null,
       executionPrincipal: input.executionPrincipal as WorkstreamWorkflowInput["executionPrincipal"],
       ...(input.slackOrigin ? { slackOrigin: input.slackOrigin as WorkstreamWorkflowInput["slackOrigin"] } : {}),
@@ -1565,16 +1555,6 @@ export class WorkstreamObjectProductService {
     const pin = await workspaceDatabase.prepare(
       `SELECT position FROM workspace_workstream_pins WHERE workstream_id = ? AND user_id = ?`,
     ).bind(root.workstream_key, userId).first<{ position: number }>();
-    // The automation's title is a typed question to the object that holds the
-    // directory, not SQL through the runtime facade. The facade routes by table
-    // name and sends anything unlisted to the regional database, which is how
-    // this read came to answer `no such table: automation_directory`. A work
-    // stream with no automation asks nothing.
-    const originLabel = root.automation_subscription_id === null ? null : WorkspaceAutomationOriginLabelSchema
-      .parse(await (await this.workspaceDirectory(root.parent_workspace_key)).automationOriginLabel({
-        workspaceId: root.parent_workspace_key,
-        automationId: root.automation_subscription_id,
-      })).title;
     const wakeup = first(this.storage.sql.exec<{ due_at: number; prompt: string }>(
       `SELECT due_at, prompt FROM workstream_wakeups
         WHERE status = 'pending' ORDER BY due_at, wakeup_id LIMIT 1`,
@@ -1590,12 +1570,7 @@ export class WorkstreamObjectProductService {
       titleStatus,
       objective: truncateUtf16Safe(root.description, WORKSTREAM_DESCRIPTION_MAX_CHARACTERS),
       emailAddress: root.email_address,
-      originType: root.origin_type,
-      originLabel: originLabel ? truncateUtf16Safe(originLabel, 120) : null,
       createdByUserId: root.created_by_user_id,
-      automationSubscriptionId: root.automation_subscription_id,
-      automationRunId: root.automation_run_id,
-      plannedFor: iso(root.planned_for),
       harnessStatus: harnessStatus(root.exact_state),
       latestAttentionSequenceNumber: latest,
       readThroughSequenceNumber: attention.seen_attention_ordinal,
@@ -1635,7 +1610,7 @@ export class WorkstreamObjectProductService {
     if (
       input.scope !== undefined
       && input.scope !== before.scope
-      && (before.system_kind !== null || before.automation_subscription_id !== null)
+      && before.system_kind !== null
     ) {
       throw new ApiError(
         422,
@@ -2996,11 +2971,7 @@ export class WorkstreamObjectProductService {
       completedAt: iso(root.completed_at),
       archivedAt: iso(root.archived_at),
       emailAddress: root.email_address,
-      originType: root.origin_type,
       createdByUserId: root.created_by_user_id,
-      automationSubscriptionId: root.automation_subscription_id,
-      automationRunId: root.automation_run_id,
-      plannedFor: iso(root.planned_for),
       titleStatus: root.title_status,
       latestAttentionOrdinal: Math.max(0, root.next_attention_ordinal - 1),
       unreadTrackingStartOrdinal: root.unread_tracking_start_ordinal,
@@ -4839,7 +4810,8 @@ export class WorkstreamObjectProductService {
       ...previousContext,
       region: this.env.AVALON_REGION,
       workspaceId: auth.workspaceId,
-      workstreamId: asWorkstreamId(root.workstream_key),
+      parentKind: root.parent_kind,
+      parentId: root.workstream_key,
       substreamId: this.externalSubstreamId(),
       loopId: loop.loop_id,
       harnessRunId: runId,
