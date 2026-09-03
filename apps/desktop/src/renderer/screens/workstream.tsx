@@ -1714,7 +1714,7 @@ export function WorkstreamScreen(): React.JSX.Element {
   useEffect(() => () => setBlockDashboardOpen(false), [setBlockDashboardOpen]);
 
   const stop = useMutation({
-    mutationFn: () => api!.stopHarness(id),
+    mutationFn: () => socketConnection.stopHarness(),
     onSuccess: () => {
       queryClient.setQueryData<WorkstreamDetail>(['workstream', id], (current) =>
         current ? { ...current, stopRequested: true } : current);
@@ -1724,7 +1724,7 @@ export function WorkstreamScreen(): React.JSX.Element {
   });
 
   const retry = useMutation({
-    mutationFn: () => api!.retryHarness(id),
+    mutationFn: () => socketConnection.retryHarness(),
     onSuccess: async () => {
       requestSocketSnapshot();
       await Promise.all([
@@ -1894,7 +1894,7 @@ export function WorkstreamScreen(): React.JSX.Element {
           }
         : overlay));
     try {
-      await api!.answerElicitation(id, elicitationId, answer, customResponse);
+      await socketConnection.answerElicitation(elicitationId, answer, customResponse);
       requestSocketSnapshot();
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY }),
@@ -2062,14 +2062,13 @@ export function WorkstreamScreen(): React.JSX.Element {
   };
 
   const reorderQueue = async (inputIds: string[]): Promise<void> => {
-    if (!api) throw new Error('This work stream is not ready to reorder queued messages.');
     const previous = queryClient.getQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(id));
     queryClient.setQueryData<TranscriptOverlay[]>(
       transcriptOverlaysQueryKey(id),
       (current) => applyPendingInputQueueOrder(current, inputIds),
     );
     try {
-      const result = await api.reorderPendingLoopInputs(id, inputIds);
+      const result = await socketConnection.reorderPendingInputs(inputIds);
       queryClient.setQueryData<TranscriptOverlay[]>(
         transcriptOverlaysQueryKey(id),
         (current) => assignPendingInputQueueSequences(current, result.pendingInputs),

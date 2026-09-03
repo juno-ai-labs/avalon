@@ -44,6 +44,7 @@ import {
   UpdateBlockDashboardRequestSchema,
   UpdateWorkspaceRequestSchema,
   WorkspaceSchema,
+  WorkspaceSocketClientEventSchema,
   WorkstreamContextSchema,
   WorkstreamSchema,
   WorkstreamResourceSchema,
@@ -826,15 +827,48 @@ describe("boundary contracts", () => {
         attachmentIds: [],
       },
     });
+    expect(ClientSocketEventSchema.parse({
+      type: "answer_elicitation",
+      operationId: id,
+      elicitationId: id,
+      payload: { answer: "Ship it" },
+    })).toEqual({
+      type: "answer_elicitation",
+      operationId: id,
+      elicitationId: id,
+      payload: { answer: "Ship it" },
+    });
+    expect(ClientSocketEventSchema.parse({
+      type: "reorder_pending_inputs",
+      operationId: id,
+      inputIds: [id],
+    })).toEqual({ type: "reorder_pending_inputs", operationId: id, inputIds: [id] });
+    expect(ClientSocketEventSchema.parse({ type: "stop_harness", operationId: id }))
+      .toEqual({ type: "stop_harness", operationId: id });
+    expect(ClientSocketEventSchema.parse({ type: "retry_harness", operationId: id }))
+      .toEqual({ type: "retry_harness", operationId: id });
+    expect(ClientSocketEventSchema.safeParse({
+      type: "add_participant",
+      userId: id,
+    }).success).toBe(false);
+    expect(WorkspaceSocketClientEventSchema.safeParse({
+      type: "create_message",
+      workstreamId: id,
+      substreamId: "0",
+      operationId: id,
+      payload: { text: "Continue", clientMessageId: "client-message-one" },
+    }).success).toBe(false);
     expect(WorkstreamSocketCommandResultSchema.safeParse({
       type: "client_command_failed",
       command: "create_message",
+      operationId: id,
       clientMessageId: "client-message-one",
       error: { status: 409, code: "conflict", message: "Try again" },
     }).success).toBe(true);
     const accepted = {
       type: "client_command_succeeded" as const,
       command: "create_message" as const,
+      operationId: id,
       clientMessageId: "client-message-one",
       turn: {
         turnId: id,

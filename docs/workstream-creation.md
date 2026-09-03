@@ -365,10 +365,11 @@ see
   incident this module's changelog records — a description derived from a
   message at the ceiling, parsed through `InitializeWorkstreamObjectInputSchema`,
   which is the schema that refused the create in production.
-- `apps/api/test-workers/workspace-socket-message-length.test.ts` — the same rule
-  on the socket follow-up messages actually travel over, on real workerd: an
-  over-long frame is answered rather than closed, and a malformed one still
-  closes. The composer's own guard on that screen is untested; see
+- `apps/api/test-workers/message-to-output-pipeline.test.ts` — follow-up messages
+  use the addressed SubstreamAgent socket on real workerd, remain idempotent
+  across hibernation, return correlated failures for malformed commands, and
+  reject an oversized message without closing the connection.
+  The composer's own length guard on that screen is untested; see
   [`potential-bugs.md`](potential-bugs.md).
 - `apps/api/test/substream-agent-snapshot.test.ts` — includes the case that the
   snapshot describes the latest run rather than naming its id. The snapshot
@@ -400,6 +401,19 @@ moment later against extra reads. Anything that wants that hop back has to deal
 with the backfill first. See [`regionalization.md`](regionalization.md).
 
 ## Changelog
+
+### 2026-09-02 — Follow-up creation now enters through the owning substream
+
+**What changed:** The work-stream composer sends an idempotent `create_message`
+command over the addressed SubstreamAgent socket. The former public message REST
+route and WorkspaceDO relay were removed.
+
+**Why:** A follow-up belongs to one child transcript and loop. Keeping admission
+on that child's ordered connection gives creation, replay, feed updates, and
+correlated failure one authority.
+
+**Consequences:** Opening work-stream creation remains a parent bootstrap route.
+Once the child exists, its conversation mutations use its socket.
 
 ### 2026-08-30 — A personal project's participant row uses one Radix tooltip
 

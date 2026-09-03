@@ -6,6 +6,7 @@ import {
   type AgentCompactionState,
   type ActiveStreamCheckpoint,
   type ClientSocketEvent,
+  type WorkstreamSocketCommandResult,
   type PersonalSocketEvent,
   type ServerSocketEvent,
   type PendingTranscriptInput,
@@ -109,6 +110,14 @@ export interface WorkstreamSocketConnection {
   workspaceSocketState: 'connecting' | 'connected' | 'reconnecting' | 'unavailable';
   activeCompaction: AgentCompactionState | null;
   createMessage(input: CreateWorkstreamMessageInput): Promise<AcceptedWorkstreamTurn>;
+  answerElicitation(
+    elicitationId: string,
+    answer: string | string[] | null,
+    customResponse?: string,
+  ): Promise<void>;
+  reorderPendingInputs(inputIds: string[]): Promise<{ pendingInputs: PendingTranscriptInput[] }>;
+  stopHarness(): Promise<void>;
+  retryHarness(): Promise<{ harnessRunId: string }>;
   loadTranscriptRange(input: {
     snapshotId: string;
     range: TranscriptRange;
@@ -122,10 +131,14 @@ export type AcceptedWorkstreamTurn = WorkstreamMessageAdmissionReceipt['turn']
   & Pick<WorkstreamMessageAdmissionReceipt, 'deliveryState'>;
 
 type CreateMessageSocketCommand = Extract<ClientSocketEvent, { type: 'create_message' }>;
+type SubstreamMutationCommand = Extract<ClientSocketEvent, { operationId: string }>;
+type SuccessfulSubstreamMutation = Extract<WorkstreamSocketCommandResult, {
+  type: 'client_command_succeeded';
+}>;
 
-interface PendingMessageCommand {
-  command: CreateMessageSocketCommand;
-  resolve: (turn: AcceptedWorkstreamTurn) => void;
+interface PendingSubstreamCommand {
+  command: SubstreamMutationCommand;
+  resolve: (result: SuccessfulSubstreamMutation) => void;
   reject: (error: Error) => void;
 }
 
@@ -663,6 +676,7 @@ export function useWorkstreamSocket(
   initialReason: Exclude<WorkstreamSocketStartReason, 'reconnect'> = 'active_workstream',
   socketLeaseId?: string,
   openCommitted = true,
+  substreamId = '0',
 ): WorkstreamSocketConnection {
   const queryClient = useQueryClient();
   const [generatedSocketLeaseId] = useState(() => socketLeaseId ?? uuidV7());
@@ -682,7 +696,7 @@ export function useWorkstreamSocket(
     initialReason,
     resolvedSocketLeaseId,
   );
-  const resumeState = useWorkstreamSocketResumeState(workstreamId);
+  const resumeState = useWorkstreamSocketResumeState(workstreamId, substreamId);
   const [state, setState] = useState<SocketState>('idle');
   const [openingError, setOpeningError] = useState<string>();
   const [openingRetryGeneration, setOpeningRetryGeneration] = useState(0);
@@ -702,6 +716,50 @@ export function useWorkstreamSocket(
   );
   const createMessage = useCallback(
     (input: CreateWorkstreamMessageInput): Promise<AcceptedWorkstreamTurn> => createMessageRef.current(input),
+    [],
+  );
+  const answerElicitationRef = useRef<WorkstreamSocketConnection['answerElicitation']>(
+    () => Promise.reject(new ApiError(
+      'The substream is not ready to answer questions.',
+      409,
+      'workstream_socket_unavailable',
+    )),
+  );
+  const answerElicitation = useCallback<WorkstreamSocketConnection['answerElicitation']>(
+    (...args) => answerElicitationRef.current(...args),
+    [],
+  );
+  const reorderPendingInputsRef = useRef<WorkstreamSocketConnection['reorderPendingInputs']>(
+    () => Promise.reject(new ApiError(
+      'The substream is not ready to reorder queued messages.',
+      409,
+      'workstream_socket_unavailable',
+    )),
+  );
+  const reorderPendingInputs = useCallback<WorkstreamSocketConnection['reorderPendingInputs']>(
+    (inputIds) => reorderPendingInputsRef.current(inputIds),
+    [],
+  );
+  const stopHarnessRef = useRef<WorkstreamSocketConnection['stopHarness']>(
+    () => Promise.reject(new ApiError(
+      'The substream is not ready to stop.',
+      409,
+      'workstream_socket_unavailable',
+    )),
+  );
+  const stopHarness = useCallback<WorkstreamSocketConnection['stopHarness']>(
+    () => stopHarnessRef.current(),
+    [],
+  );
+  const retryHarnessRef = useRef<WorkstreamSocketConnection['retryHarness']>(
+    () => Promise.reject(new ApiError(
+      'The substream is not ready to retry.',
+      409,
+      'workstream_socket_unavailable',
+    )),
+  );
+  const retryHarness = useCallback<WorkstreamSocketConnection['retryHarness']>(
+    () => retryHarnessRef.current(),
     [],
   );
   const loadTranscriptRangeRef = useRef<(input: {
@@ -734,6 +792,18 @@ export function useWorkstreamSocket(
         409,
         'workstream_socket_unavailable',
       ));
+      answerElicitationRef.current = () => Promise.reject(new ApiError(
+        'The substream is not ready to answer questions.', 409, 'workstream_socket_unavailable',
+      ));
+      reorderPendingInputsRef.current = () => Promise.reject(new ApiError(
+        'The substream is not ready to reorder queued messages.', 409, 'workstream_socket_unavailable',
+      ));
+      stopHarnessRef.current = () => Promise.reject(new ApiError(
+        'The substream is not ready to stop.', 409, 'workstream_socket_unavailable',
+      ));
+      retryHarnessRef.current = () => Promise.reject(new ApiError(
+        'The substream is not ready to retry.', 409, 'workstream_socket_unavailable',
+      ));
       loadTranscriptRangeRef.current = () => Promise.reject(new ApiError(
         'The work stream is not ready to load transcript ranges.',
         409,
@@ -762,17 +832,24 @@ export function useWorkstreamSocket(
       markOpenedSent = true;
     };
     markOpenedRef.current = markOpened;
-    const pendingMessageCommands = new Map<string, PendingMessageCommand>();
-    const sendPendingMessages = (target: RealtimeSocket | null = socket): void => {
+    const pendingSubstreamCommands = new Map<string, PendingSubstreamCommand>();
+    const sendPendingSubstreamCommands = (target: RealtimeSocket | null = socket): void => {
       if (target?.readyState !== REALTIME_SOCKET_OPEN) return;
-      for (const pending of pendingMessageCommands.values()) {
+      for (const pending of pendingSubstreamCommands.values()) {
         target.send(JSON.stringify(pending.command));
       }
     };
-    const rejectPendingMessages = (error: Error): void => {
-      for (const pending of pendingMessageCommands.values()) pending.reject(error);
-      pendingMessageCommands.clear();
+    const rejectPendingSubstreamCommands = (error: Error): void => {
+      for (const pending of pendingSubstreamCommands.values()) pending.reject(error);
+      pendingSubstreamCommands.clear();
     };
+    const submitSubstreamCommand = (
+      command: SubstreamMutationCommand,
+    ): Promise<SuccessfulSubstreamMutation> => new Promise((resolve, reject) => {
+      pendingSubstreamCommands.set(command.operationId, { command, resolve, reject });
+      sendPendingSubstreamCommands();
+      void connect();
+    });
     let reconnectTimer: number | null = null;
     let heartbeatTimer: number | null = null;
     let pongTimer: number | null = null;
@@ -873,10 +950,8 @@ export function useWorkstreamSocket(
     let openTrace: PerfTrace | null = null;
 
     createMessageRef.current = async (input): Promise<AcceptedWorkstreamTurn> => {
-      // Keyed by the client message id, which SubstreamAgent records on its own
-      // span as `rally.message.client_id`: the command travels over an
-      // already-open socket the platform traces as its own invocation, so this
-      // is the only value the renderer and the server both hold.
+      // The operation id correlates the private receipt; the client message id
+      // remains the durable write's idempotency key and tracing identity.
       const operationId = uuidV7();
       const trace = startPerfTrace('workstream_message_send', {
         traceId: input.clientId,
@@ -915,22 +990,43 @@ export function useWorkstreamSocket(
             ...(input.runMode ? { runMode: input.runMode } : {}),
           },
         };
-        const message = await trace.step('command_round_trip', () =>
-          new Promise<AcceptedWorkstreamTurn>((resolve, reject) => {
-            // The durable write is idempotent by clientMessageId. Keep this
-            // command across reconnects and resend the same identity: rejecting
-            // an ambiguous disconnect would invite the composer to mint a new
-            // identity and duplicate an already-accepted message.
-            pendingMessageCommands.set(input.clientId, { command, resolve, reject });
-            sendPendingMessages();
-            void connect();
-          }));
+        const result = await trace.step('command_round_trip', () => submitSubstreamCommand(command));
+        if (result.command !== 'create_message') throw new Error('substream_command_receipt_mismatch');
         trace.end();
-        return message;
+        return { ...result.turn, deliveryState: result.deliveryState };
       } catch (error) {
         trace.end({ outcome: 'failed' });
         throw error;
       }
+    };
+    answerElicitationRef.current = async (elicitationId, answer, customResponse): Promise<void> => {
+      const result = await submitSubstreamCommand({
+        type: 'answer_elicitation',
+        operationId: uuidV7(),
+        elicitationId,
+        payload: answer === null
+          ? { skipped: true }
+          : { answer, ...(customResponse ? { customResponse } : {}) },
+      });
+      if (result.command !== 'answer_elicitation') throw new Error('substream_command_receipt_mismatch');
+    };
+    reorderPendingInputsRef.current = async (inputIds) => {
+      const result = await submitSubstreamCommand({
+        type: 'reorder_pending_inputs',
+        operationId: uuidV7(),
+        inputIds,
+      });
+      if (result.command !== 'reorder_pending_inputs') throw new Error('substream_command_receipt_mismatch');
+      return { pendingInputs: result.pendingInputs };
+    };
+    stopHarnessRef.current = async (): Promise<void> => {
+      const result = await submitSubstreamCommand({ type: 'stop_harness', operationId: uuidV7() });
+      if (result.command !== 'stop_harness') throw new Error('substream_command_receipt_mismatch');
+    };
+    retryHarnessRef.current = async () => {
+      const result = await submitSubstreamCommand({ type: 'retry_harness', operationId: uuidV7() });
+      if (result.command !== 'retry_harness') throw new Error('substream_command_receipt_mismatch');
+      return { harnessRunId: result.harnessRunId };
     };
     // Readiness means the work-stream-specific handler is installed and can
     // hand a command to the room queue. The queue owns reconnecting
@@ -1819,7 +1915,7 @@ export function useWorkstreamSocket(
         // exactly the same span.
         const socketTicket = await api.getSocketTicket(
           workstreamId,
-          '0',
+          substreamId,
           trace.traceId,
           effectiveAfterSequence,
           speculative,
@@ -1893,7 +1989,7 @@ export function useWorkstreamSocket(
             }));
           }
           markOpened();
-          sendPendingMessages(nextSocket);
+          sendPendingSubstreamCommands(nextSocket);
           scheduleStabilityReset(nextSocket);
           scheduleHeartbeat(nextSocket);
         });
@@ -1907,14 +2003,19 @@ export function useWorkstreamSocket(
             const parsed: unknown = JSON.parse(String(messageEvent.data));
             const commandResult = WorkstreamSocketCommandResultSchema.safeParse(parsed);
             if (commandResult.success) {
-              const pending = pendingMessageCommands.get(commandResult.data.clientMessageId);
+              const pending = pendingSubstreamCommands.get(commandResult.data.operationId);
               if (!pending) return;
-              pendingMessageCommands.delete(commandResult.data.clientMessageId);
+              pendingSubstreamCommands.delete(commandResult.data.operationId);
               if (commandResult.data.type === 'client_command_succeeded') {
-                pending.resolve({
-                  ...commandResult.data.turn,
-                  deliveryState: commandResult.data.deliveryState,
-                });
+                if (pending.command.type !== commandResult.data.command) {
+                  pending.reject(new ApiError(
+                    'The substream returned a receipt for a different command.',
+                    500,
+                    'substream_command_receipt_mismatch',
+                  ));
+                } else {
+                  pending.resolve(commandResult.data);
+                }
               } else {
                 pending.reject(new ApiError(
                   commandResult.data.error.message,
@@ -1929,8 +2030,8 @@ export function useWorkstreamSocket(
             if (event.success) {
               if (event.data.type === 'error'
                 && ['workspace_socket_required', 'invalid_event'].includes(event.data.code)
-                && pendingMessageCommands.size > 0) {
-                rejectPendingMessages(new ApiError(
+                && pendingSubstreamCommands.size > 0) {
+                rejectPendingSubstreamCommands(new ApiError(
                   event.data.message,
                   400,
                   event.data.code,
@@ -1987,7 +2088,7 @@ export function useWorkstreamSocket(
               retrying: false,
               cause: 'access_revoked',
             });
-            rejectPendingMessages(new ApiError(
+            rejectPendingSubstreamCommands(new ApiError(
               'You can no longer access this work stream.',
               403,
               'workstream_access_revoked',
@@ -2097,14 +2198,26 @@ export function useWorkstreamSocket(
         409,
         'workstream_socket_unavailable',
       ));
+      answerElicitationRef.current = () => Promise.reject(new ApiError(
+        'The substream is no longer available.', 409, 'workstream_socket_unavailable',
+      ));
+      reorderPendingInputsRef.current = () => Promise.reject(new ApiError(
+        'The substream is no longer available.', 409, 'workstream_socket_unavailable',
+      ));
+      stopHarnessRef.current = () => Promise.reject(new ApiError(
+        'The substream is no longer available.', 409, 'workstream_socket_unavailable',
+      ));
+      retryHarnessRef.current = () => Promise.reject(new ApiError(
+        'The substream is no longer available.', 409, 'workstream_socket_unavailable',
+      ));
       loadTranscriptRangeRef.current = () => Promise.reject(new ApiError(
         'The work stream is no longer available.',
         409,
         'workstream_socket_unavailable',
       ));
       rejectPendingTranscriptRanges('The work stream changed while loading transcript ranges.');
-      rejectPendingMessages(new ApiError(
-        'The work stream changed while sending the message.',
+      rejectPendingSubstreamCommands(new ApiError(
+        'The substream changed while sending a command.',
         409,
         'workstream_socket_unavailable',
       ));
@@ -2130,6 +2243,7 @@ export function useWorkstreamSocket(
     queryClient,
     resolvedSocketLeaseId,
     resumeState,
+    substreamId,
     workstreamId,
   ]);
 
@@ -2143,19 +2257,27 @@ export function useWorkstreamSocket(
       sendReady,
       workspaceSocketState,
       activeCompaction,
+      answerElicitation,
       createMessage,
       loadTranscriptRange,
       requestSnapshot,
+      reorderPendingInputs,
+      retryHarness,
+      stopHarness,
     }),
     [
       activeCompaction,
+      answerElicitation,
       createMessage,
       loadTranscriptRange,
       openingError,
       requestSnapshot,
+      reorderPendingInputs,
       retryOpening,
+      retryHarness,
       sendReady,
       state,
+      stopHarness,
       workspaceSocketState,
     ],
   );

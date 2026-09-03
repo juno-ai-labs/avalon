@@ -51,15 +51,15 @@ test("catches the damage that prompted this check", () => {
   const found = collisions({
     "project-authority.test.ts": ["00000000-0000-7000-8000-0000000009a0"],
     "resource-version-capture.test.ts": ["00000000-0000-7000-8000-0000000009a0"],
-    "workspace-socket-message-length.test.ts": ["00000000-0000-7000-8000-0000000009a0"],
+    "durable-object-runtime.test.ts": ["00000000-0000-7000-8000-0000000009a0"],
   });
 
   assert.equal(found.length, 1);
   assert.equal(found[0].id, "00000000-0000-7000-8000-0000000009a0");
   assert.deepEqual(found[0].files, [
+    "durable-object-runtime.test.ts",
     "project-authority.test.ts",
     "resource-version-capture.test.ts",
-    "workspace-socket-message-length.test.ts",
   ]);
 });
 

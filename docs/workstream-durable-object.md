@@ -47,7 +47,7 @@ serve workspace product state or transcripts after cutover.
 | `apps/api/src/workflows/work-opportunity.ts` | Retryable admission and ranking compute using fenced WorkspaceDO RPC inputs and settlements. |
 | `apps/api/src/durable-objects/workspace-directory-protocol.ts` | Runtime-validated typed RPC contracts for cross-work-stream lists, visibility, scheduling, resource lookup, routing, feedback, and child effect application. |
 | `apps/api/src/durable-objects/workstream-do.ts` | Non-agent aggregation of child directory/user effects, HyperSight configuration and refresh fan-out, complete metadata WebSocket snapshots, and the regional delivery outbox. |
-| `apps/api/src/durable-objects/substream-agent.ts` | Authoritative substream SQL, direct Bind loop, hibernating feed socket, streaming checkpoints, timers, pending-input delivery, and child-to-parent effect RPC. |
+| `apps/api/src/durable-objects/substream-agent.ts` | Authoritative substream SQL, direct Bind loop, hibernating feed and child-command socket, streaming checkpoints, timers, pending-input delivery, and child-to-parent effect RPC. |
 | `apps/api/src/durable-objects/substream-loop-storage.ts` | Singleton loop lifecycle, execution-epoch and lease fencing, prepared-input admission/delivery state, subordinate execution receipts, and exact assistant-turn sequence reservations. |
 | `apps/api/src/durable-objects/block-dashboard-agent.ts` | One durable Bind execution owner per stable HyperSight block, including dispatch recovery, keep-alive, fenced source-runtime access, resumable token checkpoints, hibernating block sockets, and result settlement. |
 | `apps/api/src/durable-objects/durable-agent-runtime.ts` | Shared reference-counted keep-alive and single-flight drain primitives used by both agent Durable Objects. |
@@ -1563,6 +1563,30 @@ migration rather than a tolerant read, for the reason recorded in
 field every future reader has to know to ignore. Proved in
 `apps/api/test/workstream-object-schema.test.ts` by storing a pre-v37 receipt,
 applying the schema, and parsing the row through `WorkstreamWorkflowInputSchema`.
+
+### 2026-09-02 — Child-local mutations enter through SubstreamAgent's socket
+
+**What changed:** message admission, elicitation answer, pending-input reorder,
+stop, and retry share one addressed socket command protocol. Public work-stream
+REST routes and the unused WorkspaceDO message relay are removed. Each command has a private
+operation receipt and reconnect resend; manual retry stores the operation ID as
+its run ID. Archiving requests an executing loop's stop in the same object
+transaction that hides the work stream.
+
+**Why:** these transactions are owned by the substream, and its admitted socket
+already fixes the complete child address and caller identity. Leaving REST in
+front of them would make the work-stream product the transport owner and block
+reusing the same SubstreamAgent under AutomationAgent without route aliases.
+
+**Considered and rejected:** a WorkstreamDO relay, because it adds a parent hop
+without a parent decision; compatibility REST, because there are no clients to
+migrate; and moving participants/resources, because their ownership is not
+child-local.
+
+**What a future change has to respect:** the parent supplies child discovery,
+ticket admission, and lifecycle. Once admitted, conversation commands go to the
+child authority and their shared consequences leave through its existing
+effect/publication paths.
 
 ### 2026-09-02 — Fenced scope and activation writes reuse rather than refuse
 
