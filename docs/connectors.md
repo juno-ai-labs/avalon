@@ -936,6 +936,74 @@ server's own URL rather than an account at a provider, which is what a reconnect
 is matched against. And a connector may now be registered in a region with no
 credentials configured at all: the custom MCP adapter needs only a callback URI.
 
+### 2026-09-03 — A Google cursor can be `null`, because omission is not a move
+
+**What changed:** `pageToken` on `gmail.search`, `calendar.list_calendars`,
+`calendar.list_events`, and `drive.search` is declared
+`anyOf: [{string, minLength: 1}, {null}]` instead of a bare optional string,
+and the executor parses `null` as absence. Sending `null` now runs the first
+page. `apps/api/test/tool-argument-empty-strings.test.ts` descends into the
+union so its cursor sweep still covers these four.
+
+**Why:** The description added earlier the same day did not work, and the run
+that proved it had that description in front of it four times over. In a work
+stream created fresh after the deploy — no earlier calls to copy — a run made
+eight `drive.search` attempts and put a value in `pageToken` every time:
+`"x"`, `"null"` as a string, `"first"`, `" "`, `"undefined"`, `"/"` twice, and
+once its own leaked reasoning followed by garbage text. Three of the eight were
+exactly one character. Every call was rejected whole by Google, including the
+first, which needed no cursor at all.
+
+The leaked reasoning is the finding: *"here likely pageToken required? Schema
+says min but omit should maybe omit. We sent empty invalid. Need redo."* It was
+looking for a way to say "nothing". `minLength: 1` reads to a caller as a floor
+it has to clear rather than a rule that only applies once the key is present,
+and the two statements — prose saying *omit*, schema saying *at least one
+character* — resolve in favour of the machine-readable one. That is the
+reasonable reading, and no wording defeats it.
+
+`null` ends the search by making absence expressible as a value. It is the
+convention the strict structured-output dialects settle on for exactly this
+reason: every property present, absence spelled out.
+
+The declaration is `anyOf`, not the flat `type: ["string", "null"]` Slack's
+cursors use, because Bind's `sanitizeToolSchema` collapses the flat form to
+`type: "string"` and appends "Accepts string or null." to the description. That
+hands a caller a schema forbidding the value and prose permitting it — the
+conflict this change exists to end — so the flat form would have been inert.
+The union passes through whole.
+
+Measured across the whole registry with `droppedNullableBranches`, **46
+authored null branches are collapsed this way** — Linear 17, Slack 11, Granola
+9, Notion 5, X 4, of which 19 are cursors — so those callers cannot spell
+absence either. Google's four are the only ones that survive. Converting the
+rest is a change per connector and is not attempted here; the rule now lives in
+[`agent-tools.md`](agent-tools.md), which owns tool authoring, and the
+sanitization suite asserts over Google's four so a fifth paginated Google tool
+joins the guard rather than quietly missing it.
+
+**Considered and rejected:** Lowering or dropping `minLength`. It re-buys the
+Linear `after: ""` failure of 2026-09-02 — the harness drops a blanked optional
+argument only where the schema says the empty string is invalid, so relaxing it
+sends `""` to the provider instead of `"x"`. Also rejected: wrapping each
+issued token in a Rally-owned envelope and discarding anything unstamped. It
+works, but it defends against invented values rather than removing the reason
+for them, and it puts a second encoding between the caller and a cursor the
+provider already documents as opaque. Also rejected: removing `pageToken` and
+paging inside the tool. That is the cleanest shape and remains the fallback,
+but it changes what the tool means and gives an unbounded search no ceiling; a
+three-line schema change comes first, and 77 turns in a fortnight did echo a
+real cursor back, so pagination is genuinely used.
+
+**Consequences:** A caller may now send `null` for any of these four cursors and
+get the first page. The blank-argument rule is unaffected — both union branches
+reject the empty string, so `schemaRejectsEmptyString` still returns true and
+the harness still drops `""`. The cursor sweep in the API tests had to learn the
+union shape: read only at the top level it does not fail on this declaration, it
+stops matching it, and a guard that silently covers nothing is worse than one
+that fails. If a caller still invents a value after this, the answer is to stop
+exposing the cursor rather than to describe it again.
+
 ### 2026-09-03 — A Google cursor says where it comes from, and a rejection names the argument
 
 **What changed:** The `pageToken` parameter on `gmail.search`,
