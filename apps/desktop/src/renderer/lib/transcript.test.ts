@@ -2259,6 +2259,39 @@ describe('collapseSettledWorkIntoAccordion', () => {
     expect(collapsed.map((message) => message.sequenceNumber)).toEqual([1, 2, 3]);
   });
 
+  it('keeps the total in the header when the response begins in an unloaded stretch', () => {
+    // The seam means the response may have had earlier stretches nobody has
+    // loaded, so the one visible drawer is not known to be the whole of what
+    // the total measured — and filling the gap must not move the label.
+    const collapsed = collapseSettledWorkIntoAccordion([
+      plugin('plugin-before-gap', 'Slack'),
+      thinking('thought-after-gap', { precededByTranscriptGap: true }),
+      answer('turn-1'),
+    ]);
+
+    expect(collapsed[1]!.workAccordion?.durationMs).toBeNull();
+    expect(collapsed[2]!.workSummary).toEqual({ durationMs: 2_477_000 });
+  });
+
+  it('recovers coverage at the next thing a person read, so a later response keeps its total', () => {
+    // The guard above must not latch: once a row this client is looking at has
+    // gone by, whatever response starts after it starts in loaded territory,
+    // and its one drawer is its whole work after all.
+    const collapsed = collapseSettledWorkIntoAccordion([
+      thinking('thought-after-gap', { precededByTranscriptGap: true }),
+      answer('turn-0', { id: 'turn-0:text', workSummary: undefined }),
+      said('human-one'),
+      thinking('thought-one'),
+      answer('turn-1'),
+    ]);
+
+    // The drawer inside the partially loaded response still says only "Worked".
+    expect(collapsed[0]!.workAccordion?.durationMs).toBeNull();
+    // The one after the human message is a whole response again, and takes it.
+    expect(collapsed[3]!.workAccordion?.durationMs).toBe(2_477_000);
+    expect(collapsed[4]!.workSummary).toBeUndefined();
+  });
+
   it('carries an unknown total and a recovered accuracy through to the drawer', () => {
     const collapsed = collapseSettledWorkIntoAccordion([
       thinking('thought-one'),

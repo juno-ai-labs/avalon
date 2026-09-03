@@ -324,9 +324,21 @@ Counting a response's accordions needs the same boundary from the other side.
 The count resets at anything that is not this response's own work — a row a
 person read that is not an answer, a row opening a newly loaded island — and at
 the answer that carried the settled response total, which is the one signal in
-the feed saying the response it belonged to is over. Without that last reset a
+the feed saying the response it belonged to is over. That last reset runs
+wherever the answer carrying the total ended up, folded or not; without it a
 second response following the first with no human row between them would be
 counted as a continuation of it and would never take its own total.
+
+A seam is more than a reset, though, because the count is only a proxy. What the
+total needs to know is whether this accordion is the response's *only* one, and
+a response whose earlier stretches sit in an unloaded island can show exactly one
+accordion while having produced several. So a seam that lands on the response's
+own work — machinery, or an answer — additionally marks the response's coverage
+**partial**, and a partial response never hands its total to a drawer: the number
+would claim time the drawer does not contain, and would jump from the drawer back
+to the header the moment the gap was filled. The mark is not sticky: the next row
+a person read re-establishes coverage, because whatever response starts after a
+row this client is holding starts in the part of the transcript it has.
 
 ## Invariants
 
@@ -412,6 +424,12 @@ counted as a continuation of it and would never take its own total.
   Thinking overlaps plugin work and a plugin activity covers the gaps between
   its own calls, so a sum overstates the stretch by whatever ran concurrently. A
   stretch with no total of its own says "Worked" and no number.
+- **A response the client has only part of never labels a drawer.** Counting
+  accordions is a proxy for "this drawer is the whole response", and the proxy
+  fails across a seam: a response whose earlier stretches were never loaded shows
+  one accordion and produced several. A seam on the response's own work marks its
+  coverage partial and the total stays in the header, where it is a fact about
+  the answer rather than a claim about a drawer.
 - **A settled total is printed in exactly one place.** On the accordion where
   that accordion is the response's only one, in the message header otherwise —
   where the turn reached for nothing, and where the response narrated itself
@@ -505,6 +523,11 @@ It deliberately does **not** cover:
   row quietly doubled rather than two rows visibly repeating a number. Whoever
   projects thinking per attempt or per segment has to key the sum on the
   activity instead.
+- **A response the client holds only part of** collapses each stretch it can see,
+  and every one of those drawers reads a plain "Worked" — the total stays in the
+  header until the gap is filled, at which point the drawers are recounted and
+  one may take it. That is the safe direction: a number is never printed over a
+  drawer that cannot account for it.
 - **A stretch whose response total never arrived** still collapses, and its
   drawer reads a plain "Worked". The rows are behind the answer that reported on
   them either way; what is missing is only the number, and summing the rows to
@@ -529,7 +552,7 @@ It deliberately does **not** cover:
 | --- | --- | --- |
 | `lib/plugin-groups.test.ts` | `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/plugin-groups.test.ts` | The map: the two virtual groups, the unnamed-first-party fallback, name keying across the two id families, every glyph, and that no shipped connector still draws the plug. |
 | `lib/plugin-marks.test.ts` | same, `src/renderer/lib/plugin-marks.test.ts` | The marks: the monochrome variant asked for wherever a brand ships one, and one distinct mark per brand. |
-| `lib/transcript.test.ts` | same, `src/renderer/lib/transcript.test.ts` | Grouping over a composed feed: position, run boundaries, which timing wins, dropped rows, renumbering. Collapsing thinking: the summed run, the run boundary, the response total left out of it, the unknown segment, and the concurrent starts. Closing a reported-on stretch: what goes in the drawer, every stretch of a self-narrating run folding rather than only the last, the total moving out of the header and staying there when the response produced several drawers, the response-boundary reset, the two seam checks, the live tail left open, and the derived id. |
+| `lib/transcript.test.ts` | same, `src/renderer/lib/transcript.test.ts` | Grouping over a composed feed: position, run boundaries, which timing wins, dropped rows, renumbering. Collapsing thinking: the summed run, the run boundary, the response total left out of it, the unknown segment, and the concurrent starts. Closing a reported-on stretch: what goes in the drawer, every stretch of a self-narrating run folding rather than only the last, the total moving out of the header and staying there when the response produced several drawers, the response-boundary reset, the two seam checks, a partially loaded response withholding its total and recovering coverage at the next thing a person read, the live tail left open, and the derived id. |
 | `components/workstream-blocks.test.tsx` | same, `src/renderer/components/workstream-blocks.test.tsx` | The row: its wording in both tenses, its stable accessible name while the number ticks, the pulsing mark, the absent orb, and the thinking row's brain. The accordion: closed and open, the unknown and recovered totals, and the open flag taken from the feed. |
 | `screens/workspace-settings.test.tsx` | same, `src/renderer/screens/workspace-settings.test.tsx` | Settings: an installed row and the provider card it came from carrying the same mark, and a webhook carrying none. |
 
@@ -583,9 +606,20 @@ in a stretch to give each drawer its own number stays rejected too, and for the
 original reason: thinking overlaps plugin work, so a sum overstates by however
 much ran concurrently.
 
+**Follow-up in the same change:** review pointed out that counting accordions is
+only a proxy for "this drawer is the whole response", and that the proxy fails
+across a seam — a response whose earlier stretches were never loaded shows one
+accordion and produced several, so the total landed on a drawer that could not
+account for it and then jumped back to the header when the gap filled. A seam on
+a response's own work now marks its coverage partial and withholds the total;
+the next row a person read clears the mark. The alternative, carrying a real
+response identity through the projection so the count could be exact, buys a
+better answer for a case that already renders honestly without it.
+
 **What a future change has to respect:** the collapse boundary is still the run
 boundary the two grouping passes use, checked at both ends for the unloaded-island
-seam — an accordion must never reach past a sentence or across a gap. The
+seam — an accordion must never reach past a sentence or across a gap, and must
+never print a total for work it cannot show. The
 response total is still printed in exactly one place, and is still never computed
 from the rows inside a drawer. And nothing a reader is still watching may be
 folded away: if a future projection ever positions the response's live timer
