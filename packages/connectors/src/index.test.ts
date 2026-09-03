@@ -638,6 +638,32 @@ describe("connectors", () => {
     expectNormalized(tail);
   });
 
+  it("does not invent a series for a one-off event whose id looks like an instance", async () => {
+    const fetcher: typeof fetch = async () =>
+      googleJson({
+        items: [
+          {
+            ...calendarEvent("budget_20260910", "Budget review", "budget-etag"),
+            updated: "2026-09-02T12:00:00Z"
+          }
+        ],
+        nextSyncToken: "calendar-sync-new"
+      });
+    const adapter = googleAdapter(fetcher);
+    const result = await adapter.poll!(
+      googleConnection(["calendar.read"], { calendar: { syncToken: "calendar-sync-old" } }),
+      neverAborts()
+    );
+    expect(result.activities).toHaveLength(1);
+    expect(result.activities[0]).toMatchObject({
+      providerResourceId: "budget_20260910",
+      title: "Calendar event changed: Budget review",
+      dedupeKey: "calendar:primary:budget_20260910:budget-etag",
+      metadata: { seriesChange: false, recurringEventId: null }
+    });
+    expectNormalized(result.activities);
+  });
+
   it("resets an expired Calendar token through a silent bounded baseline", async () => {
     let calls = 0;
     const fetcher: typeof fetch = async (input) => {

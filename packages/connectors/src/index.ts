@@ -2849,17 +2849,29 @@ function calendarEventsUrl(calendarId: string, syncToken?: string, pageToken?: s
 }
 
 /**
- * Google mints a recurring instance's id as `<master id>_<instance start>`, and
- * both halves are drawn from the base32hex alphabet the id format allows.
- * A cancelled instance can arrive stripped to its identifiers, without the
- * `recurringEventId` that would otherwise say which series it belongs to, so
- * the series stays recoverable from the id when the field is missing.
+ * Google mints a recurring instance's id as `<master id>_<instance start>`. The
+ * master is matched greedily rather than by the base32hex alphabet the id
+ * format documents, because an imported event's id can itself contain an
+ * underscore and greedy matching splits `a_b_20260101T000000Z` at the last one,
+ * where an alphabet-restricted master would refuse the id outright.
  */
 const CALENDAR_INSTANCE_ID = /^(?<master>.+)_(?<instanceStart>\d{8}(?:T\d{6}Z)?)$/u;
 
+/**
+ * Which series an instance belongs to. Google states it outright except on a
+ * cancelled instance, which arrives stripped to its identifiers, and there the
+ * id's own shape is the only thing left to read it from.
+ *
+ * That reading is deliberately not attempted for anything else. A one-off event
+ * whose id merely ends in an underscore and eight digits would otherwise be
+ * given a series that does not exist, and since every instance of a series is
+ * now reported against it, the fabricated id would reach the workspace as a
+ * series activity rather than falling through to the individual path.
+ */
 function calendarSeriesId(event: Record<string, unknown>): string | null {
   const recurringEventId = readString(event, "recurringEventId");
   if (recurringEventId) return recurringEventId;
+  if (readString(event, "status") !== "cancelled") return null;
   const eventId = readString(event, "id");
   return eventId ? CALENDAR_INSTANCE_ID.exec(eventId)?.groups?.master ?? null : null;
 }
