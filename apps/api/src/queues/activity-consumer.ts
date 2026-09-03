@@ -739,9 +739,9 @@ export async function processConnectorEvent(
     workspaceId: activity.workspace_id,
     eventId: activity.id,
   });
-  if (!matched.claimed) {
-    await enqueueActivityOpportunity(env, activity.id, asWorkspaceId(activity.workspace_id));
-  }
+  const opportunity = matched.claimed
+    ? "claimed"
+    : await enqueueActivityOpportunity(env, activity.id, asWorkspaceId(activity.workspace_id));
   await projectActivityEvent(env, activity);
   await Promise.all(matched.deliveries.map((delivery) => env.ACTIVITY_QUEUE.send(delivery)));
   logInfo(env, "connector_event_processing_completed", {
@@ -752,7 +752,10 @@ export async function processConnectorEvent(
     connector_event_id: activity.id,
     deterministic_route_claimed: matched.claimed,
     deterministic_delivery_count: matched.deliveries.length,
-    opportunity_enqueued: !matched.claimed,
+    // What Suggested Work did with it, not merely whether it was offered: an
+    // event whose type is excluded from candidacy is offered and declined.
+    opportunity_enqueued: opportunity === "enqueued",
+    opportunity_outcome: opportunity,
     outcome: "processed",
   });
 }

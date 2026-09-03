@@ -25,6 +25,7 @@ const RESOURCE_PUBLICATION_FENCE_VERSION = 21;
 const OPENROUTER_MEMORY_EMBEDDING_VERSION = 23;
 const ARTIFACT_REGISTRY_VERSION = 28;
 const ARTIFACT_HOSTNAME_VERSION = 29;
+const RANKING_PENDING_DUE_VERSION = 30;
 
 /** Apply the ledger's versions in `(after, through]`, the way a deploy does. */
 function apply(database: DatabaseSync, through: number, after = 0): void {
@@ -765,5 +766,33 @@ describe("the WorkspaceDO artifact-hostname migration", () => {
       "INSERT INTO artifact_registry (artifact_id, workspace_id, workstream_id, resource_id, mode, stateful, current_version, manifest_ref, hostname_stub, created_at, updated_at) VALUES ('artifact-2', 'wrong', 'workstream-2', 'resource-1', 'static', 0, 1, 'x', 'only-three-words', 1, 1)",
     )).toThrow();
     database.close();
+  });
+});
+
+describe("the WorkspaceDO ranking-request parking column", () => {
+  it("adds `pending_due_at` to a set that already exists, unset", () => {
+    const database = new DatabaseSync(":memory:");
+    database.exec("PRAGMA foreign_keys = ON");
+    apply(database, RANKING_PENDING_DUE_VERSION - 1);
+    database.prepare(
+      `INSERT INTO suggested_work_sets (
+        user_id, candidate_fingerprint, opportunity_ids_json, ranking_reasoning,
+        model, status, due_at, request_seq, lease_id, lease_expires_at,
+        last_ranked_at, created_at, updated_at
+      ) VALUES (?, 'f', '[]', '', NULL, 'stale', 100, 3, NULL, NULL, NULL, 0, 0)`,
+    ).run("00000000-0000-7000-8000-0000000000b1");
+
+    apply(database, RANKING_PENDING_DUE_VERSION, RANKING_PENDING_DUE_VERSION - 1);
+
+    // A deployed object upgrades with its rows and their scheduling state
+    // intact; the new column is only ever written while a pass holds a lease.
+    expect(database.prepare(
+      `SELECT user_id, due_at, request_seq, pending_due_at FROM suggested_work_sets`,
+    ).all()).toEqual([{
+      user_id: "00000000-0000-7000-8000-0000000000b1",
+      due_at: 100,
+      request_seq: 3,
+      pending_due_at: null,
+    }]);
   });
 });
