@@ -917,7 +917,8 @@ filter field on the type, and carries no instance start, end, or `htmlLink`, no
 overriding location, and each guest without the per-occurrence
 `responseStatus`. A cancelled series arrives stripped of `recurringEventId`, so
 the master is recovered from the instance id's `<master>_<instance start>`
-shape. An occurrence edited on its own carries its own `updated` and so gets
+shape — only for a cancelled item, because reading a series out of any id that
+merely ends that way would invent one for a one-off event. An occurrence edited on its own carries its own `updated` and so gets
 its own activity for that edit.
 
 **Why:** One edit to a shared weekly meeting produced 730
