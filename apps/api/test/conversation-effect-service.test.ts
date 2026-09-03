@@ -207,10 +207,19 @@ function queued(body: unknown, attempts = 1) {
   return { batch, ack, retry };
 }
 
-function objectNamespace<T extends DurableObjectNamespace>(name: string, stub: object): T {
-  return createCloudflareTestBinding<T>({
-    idFromName: () => createTestDurableObjectId(name),
-    get: () => stub,
+/** A work stream parent that answers only the contract method the consumer calls. */
+function workstreamParent(receiveChildEffects: (input: unknown) => Promise<void>): Env["WORKSTREAM_DOS"] {
+  return createCloudflareTestBinding<Env["WORKSTREAM_DOS"]>({
+    idFromName: () => createTestDurableObjectId("workstream"),
+    get: () => ({ receiveChildEffects }),
+  });
+}
+
+/** An automation parent, answering the same contract method. */
+function automationParent(receiveChildEffects: (input: unknown) => Promise<void>): Env["AUTOMATION_DOS"] {
+  return createCloudflareTestBinding<Env["AUTOMATION_DOS"]>({
+    idFromName: () => createTestDurableObjectId("automation"),
+    get: () => ({ receiveChildEffects }),
   });
 }
 
@@ -821,7 +830,7 @@ describe("the activity Queue consumer's effect legs", () => {
     const workspace = workspaceSyncNamespace();
     const receiveChildEffects = vi.fn(async () => undefined);
     const env = regionalEnv(database, workspace, {
-      WORKSTREAM_DOS: objectNamespace<Env["WORKSTREAM_DOS"]>("workstream", { receiveChildEffects }),
+      WORKSTREAM_DOS: workstreamParent(receiveChildEffects),
     });
     const envelope = childMessage(directoryCommon(), {
       messageId: MESSAGE_ID,
@@ -860,8 +869,8 @@ describe("the activity Queue consumer's effect legs", () => {
     const workstreamReceive = vi.fn(async () => undefined);
     const automationReceive = vi.fn(async () => undefined);
     const env = regionalEnv(database, workspace, {
-      WORKSTREAM_DOS: objectNamespace<Env["WORKSTREAM_DOS"]>("workstream", { receiveChildEffects: workstreamReceive }),
-      AUTOMATION_DOS: objectNamespace<Env["AUTOMATION_DOS"]>("automation", { receiveChildEffects: automationReceive }),
+      WORKSTREAM_DOS: workstreamParent(workstreamReceive),
+      AUTOMATION_DOS: automationParent(automationReceive),
     });
     const envelope = childMessage(directoryCommon("Run 1"), {
       messageId: `run:${RUN_ID}`,
@@ -887,7 +896,7 @@ describe("the activity Queue consumer's effect legs", () => {
     const workspace = workspaceSyncNamespace();
     const receiveChildEffects = vi.fn(async () => { throw new Error("parent_unavailable"); });
     const env = regionalEnv(database, workspace, {
-      WORKSTREAM_DOS: objectNamespace<Env["WORKSTREAM_DOS"]>("workstream", { receiveChildEffects }),
+      WORKSTREAM_DOS: workstreamParent(receiveChildEffects),
     });
     const { batch, ack, retry } = queued(childMessage(directoryCommon(), {
       messageId: MESSAGE_ID,
@@ -1054,7 +1063,7 @@ describe("the activity Queue consumer's effect legs", () => {
     const workspace = workspaceSyncNamespace();
     const receiveChildEffects = vi.fn(async () => undefined);
     const env = regionalEnv(database, workspace, {
-      WORKSTREAM_DOS: objectNamespace<Env["WORKSTREAM_DOS"]>("workstream", { receiveChildEffects }),
+      WORKSTREAM_DOS: workstreamParent(receiveChildEffects),
     });
     const envelope = childMessage(directoryCommon(), {
       messageId: MESSAGE_ID,

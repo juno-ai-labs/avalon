@@ -15,12 +15,13 @@
  */
 
 import { env } from "cloudflare:workers";
-import { reset } from "cloudflare:test";
+import { reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { asAutomationId, asUserId, asWorkspaceId, asWorkstreamId, type AutomationScope } from "@rally/contracts";
 
 import { automationDOName, workspaceDOName, workstreamDOName } from "../src/durable-objects/names";
+import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import type { Env } from "../src/env";
 import { createAutomation } from "../src/services/automation-service";
 import { deliverParentEffects } from "./helpers/conversation-effects";
@@ -168,11 +169,13 @@ describe("automation directory", () => {
     expect(await workspaceStub().automationOwner({ workspaceId: WORKSPACE_ID, automationId }))
       .toEqual({ owningWorkstreamId: ROOM_ID });
     // A member who is not in the room does not get the room's rail at all.
-    await expect(workspaceStub().listWorkstreamAutomations({
+    // Asked inside the object: a rejection over the stub is reported a second
+    // time as unhandled, which fails the run even when the assertion held.
+    await expect(runInDurableObject(workspaceStub(), (instance: WorkspaceDO) => instance.listWorkstreamAutomations({
       workspaceId: WORKSPACE_ID,
       workstreamId: ROOM_ID,
       userId: MEMBER_ID,
-    })).rejects.toThrow("automation_directory_access_denied");
+    }))).rejects.toThrow("automation_directory_access_denied");
   });
 
   it("keeps the three scopes apart in one workspace", async () => {
