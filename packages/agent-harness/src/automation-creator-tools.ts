@@ -2,7 +2,8 @@ import { z } from "zod";
 
 import {
   AutomationSetEvaluatorRulesInputV1Schema,
-  isExternalEventTrigger,
+  automationActivitySourcePluginIds,
+  automationDraftAcceptanceBlocker,
   type AutomationDraft,
   type AutomationSetEvaluatorRulesInputV1,
 } from "@rally/contracts";
@@ -232,10 +233,7 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
         });
         if (!parsed.success) throw parsed.error;
         if (parsed.data.ready) {
-          const sourcePluginIds = parsed.data.triggers.flatMap((trigger) =>
-            trigger.type === "connector_activity" || trigger.type === "semantic_activity" || trigger.type === "webhook"
-              ? trigger.suggestedSourcePluginId ? [trigger.suggestedSourcePluginId] : []
-              : []);
+          const sourcePluginIds = Object.values(automationActivitySourcePluginIds(parsed.data.triggers));
           const unloadedPluginId = [...sourcePluginIds, ...parsed.data.recommendedPlugins.map((plugin) => plugin.pluginId)]
             .find((pluginId) => (
               !loadedAutomationPluginIds.has(pluginId) || !inspectedAutomationPluginIds.has(pluginId)
@@ -243,21 +241,27 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
           if (unloadedPluginId) {
             throw new Error(`Load and inspect ${unloadedPluginId} before submitting it in a ready automation draft`);
           }
-          // AutomationAgent refuses this too, and that throw is the one no
-          // caller can bypass. This one exists for what the model reads: a
+          // AutomationAgent refuses both of these too, and that throw is the one
+          // no caller can bypass. These exist for what the model reads: a
           // rejected tool call arrives as `error.message` verbatim, so the
-          // object's `automation_evaluator_rules_required` reaches it as a bare
-          // code tagged an external fault, with nothing naming the tool that
-          // fixes it. The comment on `set_evaluator_rules` below records where
-          // that ends — a model resubmitting the same draft until the loop runs
-          // out. Phrased like the plugin refusal above, for the same reason.
-          if (
-            (draftState.evaluatorRules?.evaluators.length ?? 0) === 0
-            && parsed.data.triggers.some(isExternalEventTrigger)
-          ) {
+          // object's code reaches it bare, tagged an external fault, with
+          // nothing naming the tool that fixes it. The comment on
+          // `set_evaluator_rules` below records where that ends — a model
+          // resubmitting the same draft until the loop runs out. The same
+          // predicate the object applies, so the two cannot disagree about
+          // which drafts are refused; only the wording is this side's.
+          const blocker = automationDraftAcceptanceBlocker(parsed.data, draftState.evaluatorRules ?? null);
+          if (blocker === "automation_evaluator_rules_required") {
             throw new Error(
               "Call set_evaluator_rules with at least one rule before submitting a ready draft "
               + "that has a connector_activity, semantic_activity or webhook trigger",
+            );
+          }
+          if (blocker === "automation_activity_source_unbound") {
+            throw new Error(
+              "Every rule's sourceBindingKey and suggestedSourcePluginId must match a connector_activity, "
+              + "semantic_activity or webhook trigger in this draft. Call set_evaluator_rules again with rules "
+              + "that name the triggers' bindings, or with [] when the draft no longer has such a trigger",
             );
           }
         }

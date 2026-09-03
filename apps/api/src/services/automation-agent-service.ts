@@ -31,17 +31,6 @@ export class AutomationAgentService {
   /**
    * Accept the draft an agent proposed in a work stream, by its id alone.
    *
-   * The other entry point takes the draft in the request because the standalone
-   * screen holds it client-side and echoes it back as a staleness check. A feed
-   * card holds nothing: the draft lives on the object, the card carries only
-   * what it displays, and re-sending a copy the client never had would be
-   * inventing a check rather than making one.
-   *
-   * Same authority underneath — one `acceptDraft`, two ways in.
-   */
-  /**
-   * Accept the draft an agent proposed in a work stream, by its id alone.
-   *
    * The only way an automation is created. Its twin took the draft in the
    * request body because a create wizard held one client-side and echoed it
    * back; that wizard was deleted on 2026-09-01, and with it the last caller

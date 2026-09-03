@@ -647,13 +647,13 @@ that schema's map; what follows is only what WorkspaceDO still holds.
   0090. Reading the distinction the other way is what produced the
   `slackUserIsLinked` incident below, and again the automation delivery-target
   500 of 2026-08-31.
-- `automation_delivery_targets` is gone from WorkspaceDO. The destinations a
-  personal automation copies its results to are now the acceptance row's frozen
-  `deliveryTargets` inside that automation's own object, re-resolved on every
-  edit and copied into each occurrence's run context; a `slack_agent_dm` entry
-  carries the selected installation and the linked Slack user, an `email` entry
-  the author's account address as it stood when the set was written. Rally itself
-  is never a destination — every run already owns a work stream.
+- `automation_delivery_targets` is gone from WorkspaceDO, and since 2026-09-03
+  an automation has no destinations anywhere: no `delivery_targets_json` on the
+  acceptance row (AutomationAgent schema v13 rebuilt the table without it) and
+  no `deliveryTargets` in a stored run context (v13 there and v37 in the
+  work-stream object strip the key from every existing copy). A room-owned
+  automation's result reaches the room through the child's wake; any other
+  destination is the run's own work, sent with its connector tools.
 - `slack_unfurled_links` records which Slack message carries which work-stream
   link, plus a hash of the attachment posted on it, so a posted unfurl card is
   rewritten exactly when it would render differently. Slack reports a shared link
@@ -892,6 +892,25 @@ perform the regional audit/control write explicitly through
 `workspaceRegionalDatabase`, with idempotent repair on retry.
 
 ## Changelog
+
+### 2026-09-03 — Stored automation state carries no delivery targets
+
+**What changed:** The automation bullet above no longer describes a frozen
+`deliveryTargets` set. AutomationAgent schema v13 dropped
+`automation_acceptance.delivery_targets_json` and stripped `$.deliveryTargets`
+from `automation_runs.context_json`; work-stream object schema v37 strips
+`$.automationRunContext.deliveryTargets` from `runs.execution_context_json`, the
+child's verbatim copy of the same context.
+
+**Why:** The field left the strict `AutomationRunContextV1Schema`, which both
+tables are read through, so any stored copy still carrying it stopped parsing.
+The automation object's copy was rewritten in the same change that removed the
+field; the child's copy was missed and is never cleared, so an in-flight run
+could not be claimed, recovered or settled, and an older failed one could not be
+retried. Rewriting stored state was chosen over tolerating the key on read
+because a tolerated key is a dead field every future reader has to know to
+ignore. The product reasoning is in
+[`automation-lifecycle.md`](automation-lifecycle.md).
 
 ### 2026-08-31 — Platform identity routes become plural and setup replay becomes durable
 
