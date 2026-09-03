@@ -10,9 +10,9 @@ import {
   backgroundRealtimeWorkstreamIds,
   invitationAccountMismatch,
   openWorkstreamId,
-  overlayWindowControls,
   showsAutomation,
   upsertProjectDirectory,
+  windowControlsShellClass,
   workstreamMatchesBatchFilter,
 } from './app-shell';
 
@@ -237,20 +237,28 @@ describe('showsAutomation', () => {
   });
 });
 
-describe('overlayWindowControls', () => {
-  // The main window asks for `hiddenInset`, and macOS is the only platform that
-  // honours it by painting the traffic lights over the page. Reserving room for
-  // them anywhere else indents a header against buttons that are not there.
-  it('reserves the band on macOS only', () => {
-    expect(overlayWindowControls('darwin')).toBe(true);
-    expect(overlayWindowControls('win32')).toBe(false);
-    expect(overlayWindowControls('linux')).toBe(false);
+/**
+ * The mapping itself, not just the decision behind it.
+ *
+ * A predicate returning `true` proves nothing about which class the shell then
+ * writes, and nothing in this suite renders `AppShell` — so an inverted ternary
+ * at the call site would put the traffic-light defect back on macOS with every
+ * test still green. Returning the class name is what makes that reachable here.
+ */
+describe('windowControlsShellClass', () => {
+  // The main window asks `hiddenInset` of darwin, which paints the traffic
+  // lights over the page. Everywhere else it asks `hidden`, and the buttons are
+  // in the window manager's frame or not drawn at all.
+  it('names the class on macOS and nothing anywhere else', () => {
+    expect(windowControlsShellClass('darwin')).toBe('has-overlay-window-controls');
+    expect(windowControlsShellClass('win32')).toBe('');
+    expect(windowControlsShellClass('linux')).toBe('');
   });
 
   // The runtime config is fetched, so the platform is briefly unknown. Reading
   // that as "nothing to clear" leaves the header where it already is rather
   // than jumping it sideways when the answer lands.
-  it('reserves nothing while the platform is still unknown', () => {
-    expect(overlayWindowControls(undefined)).toBe(false);
+  it('names nothing while the platform is still unknown', () => {
+    expect(windowControlsShellClass(undefined)).toBe('');
   });
 });
