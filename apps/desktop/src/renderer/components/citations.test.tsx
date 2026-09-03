@@ -1069,3 +1069,167 @@ describe('footnote citations', () => {
     expect(citations.open).not.toHaveBeenCalled();
   });
 });
+
+describe('citations while a turn streams', () => {
+  const claim = 'The connector source recognises the gap.[^avalon] It says so plainly.';
+  const definition = '\n\n[^avalon]: [packages/connectors/src/index.ts](resource://board-deck)\n';
+
+  it('stands a pill-shaped skeleton where a definition has not arrived yet', () => {
+    // The reference and its definition are seconds apart on the wire: the model
+    // writes the marker mid-sentence and the `[^avalon]: …` line at the bottom
+    // of the answer. remark-gfm reads a reference it cannot resolve as text, so
+    // for that whole stretch the reader watched raw `[^avalon]` sit in a
+    // paragraph — Rally showing somebody its own markup.
+    render(<MarkdownBody citations={context()} streaming>{claim}</MarkdownBody>);
+
+    expect(document.querySelectorAll('.citation-pill-pending')).toHaveLength(1);
+    expect(document.body).not.toHaveTextContent('[^avalon]');
+    // The words around it are untouched — this replaces the marker, not the line.
+    expect(document.body).toHaveTextContent('The connector source recognises the gap. It says so plainly.');
+  });
+
+  it('covers a reference that is still being typed, before its bracket closes', () => {
+    // The tail is the one place a half-written reference exists. Without this
+    // the reader gets the same raw markup one character at a time — `[^`,
+    // `[^a`, `[^av` — which is the artefact by a slower route.
+    render(<MarkdownBody citations={context()} streaming>{'The gap is real.[^ava'}</MarkdownBody>);
+
+    expect(document.querySelectorAll('.citation-pill-pending')).toHaveLength(1);
+    expect(document.body).not.toHaveTextContent('[^ava');
+    expect(document.body).toHaveTextContent('The gap is real.');
+  });
+
+  it('shows nothing at all for the bare bracket that has not said what it opens', () => {
+    // One character in, `[` could still become a citation, a link, a task
+    // list's box, or a bracket in prose. Drawing a pill would flash one in
+    // front of every link; leaving it puts a citation's opening bracket on
+    // screen. Waiting a frame is the only answer right whichever it becomes.
+    render(<MarkdownBody citations={context()} streaming>{'The gap is real.['}</MarkdownBody>);
+
+    expect(document.querySelector('.citation-pill-pending')).toBeNull();
+    expect(document.body).not.toHaveTextContent('real.[');
+    expect(document.body).toHaveTextContent('The gap is real.');
+  });
+
+  it('leaves an escaped marker escaped, rather than skeletoning what someone hid on purpose', () => {
+    // `\\[^avalon]` reaches the rewrite as a text node reading `[^avalon]` —
+    // micromark consumes the backslash before any plugin runs — so a rewrite
+    // that trusted the decoded value would cover syntax the author escaped to
+    // show, and then hand it back at settle when the escape is honoured.
+    const view = render(
+      <MarkdownBody citations={context()} streaming>{'Write it as \\[^avalon] in the body.'}</MarkdownBody>,
+    );
+
+    expect(document.querySelector('.citation-pill-pending')).toBeNull();
+    expect(document.body).toHaveTextContent('Write it as [^avalon] in the body.');
+
+    // The settled render already showed the literal; the point is that the
+    // streaming one does not disagree with it.
+    view.rerender(<MarkdownBody citations={context()}>{'Write it as \\[^avalon] in the body.'}</MarkdownBody>);
+    expect(document.body).toHaveTextContent('Write it as [^avalon] in the body.');
+  });
+
+  it('leaves an escaped marker escaped in the open tail too', () => {
+    render(<MarkdownBody citations={context()} streaming>{'Write it as \\[^ava'}</MarkdownBody>);
+
+    expect(document.querySelector('.citation-pill-pending')).toBeNull();
+    expect(document.body).toHaveTextContent('Write it as [^ava');
+  });
+
+  it('keeps a real marker covered when an escaped one follows it in the same paragraph', () => {
+    // Caught in a live window rather than here: with a verdict on the whole
+    // text run, the real marker's skeleton appeared while the sentence was
+    // short and then *vanished* as the escaped one streamed in behind it,
+    // reverting to raw `[^avalon]` mid-turn — the same defect the escape guard
+    // was added to remove, arriving by the other door. Whether a match
+    // qualifies now depends only on the text before it, which has already
+    // arrived, so a skeleton drawn once is never taken back.
+    const source = 'A real marker.[^avalon] An escaped one \\[^avalon] stays text.';
+    const view = render(<MarkdownBody citations={context()} streaming>{'A real marker.[^avalon] An escaped one'}</MarkdownBody>);
+    expect(document.querySelectorAll('.citation-pill-pending')).toHaveLength(1);
+
+    view.rerender(<MarkdownBody citations={context()} streaming>{source}</MarkdownBody>);
+
+    expect(document.querySelectorAll('.citation-pill-pending')).toHaveLength(1);
+    expect(document.body).toHaveTextContent('A real marker. An escaped one [^avalon] stays text.');
+  });
+
+  it('leaves a character reference alone, which decodes to the same characters', () => {
+    // `&#91;` is the other way to write a bracket that is not syntax, and it
+    // reaches a text node indistinguishable from one that is.
+    render(<MarkdownBody citations={context()} streaming>{'Write it as &#91;^avalon] in the body.'}</MarkdownBody>);
+
+    expect(document.querySelector('.citation-pill-pending')).toBeNull();
+    expect(document.body).toHaveTextContent('Write it as [^avalon] in the body.');
+  });
+
+  it('hands the skeleton over to the numbered pill when the turn settles', () => {
+    const view = render(<MarkdownBody citations={context()} streaming>{claim}</MarkdownBody>);
+    expect(document.querySelectorAll('.citation-pill-pending')).toHaveLength(1);
+
+    view.rerender(<MarkdownBody citations={context()}>{`${claim}${definition}`}</MarkdownBody>);
+
+    expect(document.querySelector('.citation-pill-pending')).toBeNull();
+    expect([...document.querySelectorAll('.citation-pill')].map((pill) => pill.textContent)).toEqual(['1']);
+  });
+
+  it('resolves the skeleton mid-stream once a later section defines it', () => {
+    // Heading collapse copies a definition onto the fragments that do not carry
+    // it, so in the feed the skeleton does not have to wait for the turn to
+    // end. This is the path the main transcript actually takes.
+    const heading = ['## Claims', '', claim, '', '## Sources', '', ''].join('\n');
+    const view = render(<MarkdownBody citations={context()} collapseHeadings streaming>{heading}</MarkdownBody>);
+    expect(document.querySelectorAll('.citation-pill-pending')).toHaveLength(1);
+
+    view.rerender(
+      <MarkdownBody citations={context()} collapseHeadings streaming>
+        {`${heading}[^avalon]: [packages/connectors/src/index.ts](resource://board-deck)\n`}
+      </MarkdownBody>,
+    );
+
+    expect(document.querySelector('.citation-pill-pending')).toBeNull();
+    expect([...document.querySelectorAll('.citation-pill')].map((pill) => pill.textContent)).toEqual(['1']);
+  });
+
+  it('leaves a settled reference nothing ever defined as ordinary text', () => {
+    // A skeleton is a promise that a source is coming. Once the turn is over,
+    // nothing is coming, and the literal marker is the honest rendering.
+    render(<MarkdownBody citations={context()}>{claim}</MarkdownBody>);
+
+    expect(document.querySelector('.citation-pill-pending')).toBeNull();
+    expect(document.body).toHaveTextContent('[^avalon]');
+  });
+
+  it('leaves footnote syntax inside code as code', () => {
+    // A message explaining the syntax is ordinary Rally output, and both forms
+    // of code keep their source as their own value rather than as text.
+    const source = 'Write `[^1]` in the body.\n\n```md\nA claim.[^1]\n```\n\nThen define it.[^1\n';
+    render(<MarkdownBody citations={context()} streaming>{source}</MarkdownBody>);
+
+    expect(document.querySelector('code')).toHaveTextContent('[^1]');
+    expect(document.querySelector('.markdown-code-block')).toHaveTextContent('A claim.[^1]');
+    // The one outside code — the half-written tail — is the only skeleton.
+    expect(document.querySelectorAll('.citation-pill-pending')).toHaveLength(1);
+  });
+
+  it('is not drawn on a saved still, because a still is never streamed', () => {
+    // Named for the surface, but `still` is not the mechanism and must not be
+    // read as one: the suppression is `streaming` being off, which a still
+    // always is. Kept beside the settled test rather than folded into it
+    // because the export card is its own caller, and a future `still` that
+    // somehow streamed would be the bug this pins the expectation for.
+    render(<MarkdownBody citations={context()} still streaming={false}>{claim}</MarkdownBody>);
+
+    expect(document.querySelector('.citation-pill-pending')).toBeNull();
+  });
+
+  it('leaves a half-written marker alone once text has arrived after it', () => {
+    // `[^ava more` is not a reference being typed — it is prose containing a
+    // bracket, and the end-anchor is what tells them apart. Pinned so that
+    // widening the open pattern has to fail a test.
+    render(<MarkdownBody citations={context()} streaming>{'The gap is real.[^ava more'}</MarkdownBody>);
+
+    expect(document.querySelector('.citation-pill-pending')).toBeNull();
+    expect(document.body).toHaveTextContent('The gap is real.[^ava more');
+  });
+});
