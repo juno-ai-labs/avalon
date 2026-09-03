@@ -5345,6 +5345,11 @@ async function loadRunPromptContext(
   additionalMessages: ModelMessage[];
   memoryContextHash: string | null;
 }> {
+  // An automation the room does not own sends its own result outward, so its
+  // final message is read wherever it sent it, not in Rally. Decided from the
+  // owning room directly rather than from the shape of `resultDelivery`, which
+  // now names only that room and so would answer this exactly backwards.
+  let automationSendsOutward = false;
   let automationContext:
     | {
         name: string;
@@ -5352,7 +5357,7 @@ async function loadRunPromptContext(
         instructions: string;
         expectedOutputs: string[];
         resultDelivery: Array<{
-          channel: "email" | "slack_agent_dm" | "workstream";
+          channel: "workstream";
           destination: string;
         }>;
         authoringOrigin: AutomationRunContextV1["authoringOrigin"];
@@ -5384,7 +5389,7 @@ async function loadRunPromptContext(
     AutomationMemoryTableSchema.array().parse(frozen.definition.memoryTables);
     const durableTables = (await readAutomationMemoryBootstrapForRun(env, input)).tables;
     type ResultDestination = {
-      channel: "email" | "slack_agent_dm" | "workstream";
+      channel: "workstream";
       destination: string;
     };
     // What Rally delivers on the run's behalf, which is now only the room a
@@ -5399,6 +5404,7 @@ async function loadRunPromptContext(
     const resultDelivery: ResultDestination[] = frozen.owningWorkstreamId !== null
       ? [{ channel: "workstream", destination: frozen.owningWorkstreamId }]
       : [];
+    automationSendsOutward = frozen.owningWorkstreamId === null;
     automationContext = {
       name: frozen.definition.name,
       versionNumber: frozen.definitionRevision,
@@ -5558,7 +5564,7 @@ async function loadRunPromptContext(
         : input.reason === "inbound_email"
           || Boolean(input.digestDeliveryId)
           || Boolean(input.slackOrigin)
-          || (automationContext?.resultDelivery.length ?? 0) > 0
+          || automationSendsOutward
           ? "external_delivery"
           : "workstream",
       ...(input.slackOrigin ? { slackOrigin: input.slackOrigin } : {}),

@@ -1427,18 +1427,34 @@ export const AutomationDraftSchema = z.object({
  * against the workspace's connections. That check is what the request field's
  * absence exposes rather than hides.
  */
-export function automationAcceptanceSelections(draft: AutomationDraft): {
-  activitySourcePluginIds: Record<string, string>;
-  defaultPluginIds: string[];
-} {
+/**
+ * Each binding key the triggers declare, mapped to the plugin its trigger
+ * suggested. A trigger that has not yet named both is not a source anything can
+ * bind to and is left out.
+ *
+ * The one definition of that map: acceptance, the template catalog, and the
+ * drafting tools all used to spell it out by hand, with filters that had begun
+ * to drift, and a trigger kind added to `isExternalEventTrigger` would have had
+ * to be added to each of them.
+ */
+export function automationActivitySourcePluginIds(
+  triggers: ReadonlyArray<AutomationDraft["triggers"][number]>,
+): Record<string, string> {
   const activitySourcePluginIds: Record<string, string> = {};
-  for (const trigger of draft.triggers) {
+  for (const trigger of triggers) {
     if (!isExternalEventTrigger(trigger)) continue;
     if (!trigger.sourceBindingKey || !trigger.suggestedSourcePluginId) continue;
     activitySourcePluginIds[trigger.sourceBindingKey] = trigger.suggestedSourcePluginId;
   }
+  return activitySourcePluginIds;
+}
+
+export function automationAcceptanceSelections(draft: AutomationDraft): {
+  activitySourcePluginIds: Record<string, string>;
+  defaultPluginIds: string[];
+} {
   return {
-    activitySourcePluginIds,
+    activitySourcePluginIds: automationActivitySourcePluginIds(draft.triggers),
     defaultPluginIds: [...new Set(draft.recommendedPlugins.map((plugin) => plugin.pluginId))],
   };
 }

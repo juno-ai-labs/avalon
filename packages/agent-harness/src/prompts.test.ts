@@ -93,7 +93,7 @@ describe("prompt renderers", () => {
           objective: "Produce the scheduled weekly engineering brief.",
           automation: workstreamAutomation,
         }),
-        hash: "bedac497f13985d668e3ed9031dbc49140e18de932b8092ba987ec2eb969dc43",
+        hash: "b80be0deda1ee6ba4f2a4884d77f840342106f68cd9d5c47e272a3d4b9ec22ab",
       },
       semanticTrigger: {
         actual: renderSemanticTriggerMessages({

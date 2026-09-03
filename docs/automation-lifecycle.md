@@ -508,9 +508,9 @@ email is addressed and rendered
   rather than given a 409 a client will retry.
 - **A derived plugin whose connection has gone** refuses the create:
   `automation_plugin_unavailable` when the workspace has no healthy connection
-  for it, `automation_workspace_connection_required` when a workspace-scoped
-  automation would bind a personal one, `automation_evaluator_connection_missing`
-  for an event source in the same state. These are the legitimate residue of the
+  for it, whether a recommended plugin or an event source,
+  `automation_workspace_connection_required` when a workspace-scoped
+  automation would bind a personal one. These are the legitimate residue of the
   gap between drafting and Create, they cannot be moved earlier, and each has a
   table row so it reaches a member as an instruction rather than as the generic
   conflict every untabled code used to produce.
@@ -565,7 +565,7 @@ email is addressed and rendered
 
 | Suite | Command | Covers |
 | --- | --- | --- |
-| `apps/api/test-workers/automation-agent.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd: identity plus the first turn plus one compiler admission committed before dispatch; evaluator replacement and its receipt in one transaction; an event-driven authored submission refused when its rules are absent or empty, exempted while the draft is not ready, and admitted through to acceptance once they are set; acceptance in place deleting only the draft conversation; generation-fenced memory with replayed write receipts; a memory table keeping its identity across revisions; the id-only accept creating the automation the object holds for a manual draft and for an external-event one whose source binding comes only from the draft, binding the plugins a draft recommends, giving it the email delivery its draft asked for, refusing a recommended plugin with no connection and a delivery channel that cannot be bound, a directory membership refusal answering 403, an `ApiError` raised inside the object surviving the RPC hop with its own status, and workspace abandonment retiring compiler, schedule, run, and outbox lanes before external work. |
+| `apps/api/test-workers/automation-agent.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd: identity plus the first turn plus one compiler admission committed before dispatch; evaluator replacement and its receipt in one transaction; an event-driven authored submission refused when its rules are absent or empty, exempted while the draft is not ready, and admitted through to acceptance once they are set; acceptance in place deleting only the draft conversation; generation-fenced memory with replayed write receipts; a memory table keeping its identity across revisions; the id-only accept creating the automation the object holds for a manual draft and for an external-event one whose source binding comes only from the draft, binding the plugins a draft recommends, refusing a recommended plugin with no connection, a directory membership refusal answering 403, an `ApiError` raised inside the object surviving the RPC hop with its own status, and workspace abandonment retiring compiler, schedule, run, and outbox lanes before external work. |
 | `apps/api/test-workers/automation-acceptance-bindings.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd, with `connector_connections` in WorkspaceDO and deliberately absent from D1: binding the plugins a draft recommends at acceptance, refusing one the workspace has no connection for, binding the live connection when a disabled row still holds the same plugin id, and the service answering a detail rather than an unmapped 500. Its first test asserts the table is absent from D1, because that absence is what makes the rest evidence. |
 | `apps/api/test-workers/automation-cutover.test.ts` | `pnpm --filter @rally/api test:workers` | A fresh WorkspaceDO reaching the final schema with no legacy lifecycle tables, and an import that discards audited drafts and replays cleanup safely. |
 | `apps/api/test-workers/external-event-routing.test.ts` | `pnpm --filter @rally/api test:workers` | One accepted event and one matcher serving an automation and two watched work streams. |
@@ -687,7 +687,10 @@ idempotent per workspace.
 `updateDeliveryTargets`, `PATCH /automations/:id`, the desktop delivery editor,
 the child's external delivery loop, and five error-table rows are removed.
 AutomationAgent schema v13 strips `$.deliveryTargets` from stored run contexts
-and rebuilds `automation_acceptance` without `delivery_targets_json`. The
+and rebuilds `automation_acceptance` without `delivery_targets_json`; work-stream
+object schema v37 strips the same key from the child's verbatim copy in
+`runs.execution_context_json`, which is never cleared and is read back through
+the same strict schema on claim, recovery, settlement and retry. The
 classifier's `reach.canDeliver` is now `owningWorkstreamId !== null`. The
 system prompt's result-delivery section gained a second arm that tells a run
 with no destination that sending is its own work. Separately and first, the
@@ -750,6 +753,42 @@ load-bearing: it is the only thing that tells a personal automation that nothing
 sends for it, and a run that reads silence as "Rally has it covered" is the
 silent-loss defect this whole sequence began with, in its final form.
 
+### 2026-09-03 — An inbound-email run holds the same tools as any other run
+
+**What changed:** The three `inbound_email` guards in
+`apps/api/src/services/integrations.ts` are gone: `loadHarnessTools` no longer
+withholds write-mode connector tools from a mail-started run, `createAvalonTools`
+no longer omits the Firecrawl search and fetch tools from one, and a child
+harness spawned by one keeps its `web.` capabilities. `triggerPolicy.inboundEmail`
+is still recorded on the run; nothing narrows on it.
+
+**Why:** The filter named one trigger out of several that carry untrusted
+content into the loop. A `connector_activity`, `semantic_activity` or `webhook`
+run reads third-party text that is exactly as untrusted as a mail body, and held
+every write tool it was bound while doing so; a control that applied to inbound
+email alone was not a boundary, and its existence let two documents claim a
+protection that did not exist for the other channels. Filtering on trigger
+provenance is done at ingress, where a sender must resolve to an active
+workspace member before a run exists, and where the same question can be asked
+of every trigger at once.
+
+**Considered and rejected:** *Leaving the guard in place until a general control
+replaces it*, which keeps a rule that misdescribes itself and defers the general
+question with no owner. *Generalizing the guard now into a trust flag on the
+workflow input gated at both tool-assembly sites*, which is the right shape if
+the team decides trigger content should narrow tools; it needs a policy for
+which triggers and which tools, and that policy is a decision to be made, not a
+default to be typed into a refactor.
+
+**Consequences:** A mail-started run may write to its bound connectors and fetch
+the web, and the prompt's empty delivery arm tells it to send results itself
+when its instructions say so, so a forwarded mail that passes the sender screen
+can steer sends as well as reads. [`security.md`](security.md) carries the
+rewritten invariant and the same reasoning from the threat-model side. Anyone
+reintroducing a narrowing must do it for every external trigger, and the tests
+that proved the omissions (`connector-tool-selection.test.ts`,
+`firecrawl-web-tools.test.ts`) were inverted to assert the tools are present.
+
 ### 2026-09-03 — Acceptance takes an ID, and derives the rest from the draft
 
 **What changed:** `POST /automations`, `AutomationAgentService.accept` and
@@ -810,10 +849,11 @@ parse; they refuse with a sentence instead of being silently dropped.
 **How it is proved:** `apps/api/test-workers/automation-agent.test.ts` on real
 workerd, one test per derived field plus both ends of the predicate. Each was
 broken in the production code and watched to fail for the reason its name
-claims, then reverted: emptying the activity-source map, the recommended-plugin
-list and the delivery list, and removing the trigger/evaluator agreement check
-and the delivery-channel check. The two silent defects are the ones this
-mattered most for, since nothing about them ever failed before.
+claims, then reverted: emptying the activity-source map and the recommended-plugin
+list, and removing the trigger/evaluator agreement check. The two silent defects
+are the ones this mattered most for, since nothing about them ever failed before.
+(The delivery list and the delivery-channel check this entry first covered were
+removed the same day by the entry above.)
 
 **Considered and rejected:** *passing `suggestedActivitySourcePluginIds` at the
 call site*, which fixes the loud symptom and leaves the shape, the two silent
@@ -824,6 +864,22 @@ puts the refusal after the drafting conversation has ended, where the person has
 nothing to act on — the same defect this entry is about, one field over.
 
 **What a future change has to respect:** recorded above as two invariants.
+Two refusals this entry first tabled, `automation_evaluator_source_binding_mismatch`
+and `automation_evaluator_connection_missing`, turned out to be unreachable once
+the predicate ran first: it returns `automation_activity_source_unbound` for the
+first condition, and the binding loop refuses `automation_plugin_unavailable` for
+the second. Their throws and rows are gone; the evaluator loop now only looks the
+connection up. One consequence to know about: the card's Create used to bind nothing, and now
+binds every plugin the draft recommends, holding each to the object's own rule
+that a personal connection is bound only by its owner. A room draft whose
+drafting loop recommended the author's personal connection is therefore created
+by the author and refused, legibly, for anyone else in the room
+(`automation_personal_connection_access_denied`), and a workspace-scoped draft
+recommending any personal connection is refused for everyone
+(`automation_workspace_connection_required`). Both are the rule working as
+written; if a room should be able to create such a draft, the change is for the
+drafting tools to stop recommending personal plugins for room and workspace
+scopes, not for acceptance to skip the check.
 
 ### 2026-09-03 — The proposal card's Create stops answering 500
 
@@ -967,7 +1023,9 @@ itself. It also caught a stale claim in the pull request description — copy
 quoted from a file the drafting-stack deletion had already removed — and noted
 what this does not close: `automation_evaluator_source_binding_mismatch`,
 `automation_evaluator_connection_missing` and `automation_plugin_unavailable`
-still refuse at Create in the same dead-end shape. Those depend on the accepting
+still refuse at Create in the same dead-end shape (the first two were made
+unreachable by the shared predicate and removed on 2026-09-03; only the third
+remains). Those depend on the accepting
 person's chosen connections rather than on the submitted draft, so they cannot
 move to submission the way this one could; the class is narrowed, not closed.
 

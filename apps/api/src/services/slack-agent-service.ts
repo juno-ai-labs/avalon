@@ -1359,93 +1359,6 @@ export class SlackAgentService {
     if (deliveryError) throw deliveryError;
   }
 
-  /** Deliver to the concrete identity frozen in AutomationRunContextV1. */
-  async deliverFrozenAutomationResult(input: {
-    workspaceId: string;
-    automationId: string;
-    automationRunId: string;
-    workstreamId: string;
-    recipientUserId: string;
-    connectionId: string;
-    slackTeamId: string;
-    slackUserId: string;
-    title: string;
-    text: string;
-    outcomeStatus: "completed" | "needs_input" | "failed" | "stopped";
-  }): Promise<"delivered" | "skipped"> {
-    this.env = withWorkspaceRuntimeDatabase(this.env, input.workspaceId);
-    const [rawConnection, membership, link, preferences] = await Promise.all([
-      this.env.DB.prepare(
-        `SELECT id, workspace_id, connector_type, encrypted_credentials, credential_iv, status
-           FROM connector_connections WHERE id = ? AND workspace_id = ?`,
-      ).bind(input.connectionId, input.workspaceId).first<Record<string, unknown>>(),
-      workspaceRegionalDatabase(this.env).prepare(
-        `SELECT 1 FROM workspace_members
-          WHERE workspace_id = ? AND user_id = ? AND status = 'active'`,
-      ).bind(input.workspaceId, input.recipientUserId).first(),
-      this.env.DB.prepare(
-        `SELECT 1 FROM slack_user_links
-          WHERE workspace_id = ? AND connection_id = ? AND user_id = ?
-            AND slack_team_id = ? AND slack_user_id = ? AND status = 'active'`,
-      ).bind(
-        input.workspaceId,
-        input.connectionId,
-        input.recipientUserId,
-        input.slackTeamId,
-        input.slackUserId,
-      ).first(),
-      this.env.DB.prepare(
-        `SELECT notify_needs_input, notify_automation_completed
-           FROM slack_delivery_preferences WHERE connection_id = ? AND user_id = ?`,
-      ).bind(input.connectionId, input.recipientUserId).first<{
-        notify_needs_input: number;
-        notify_automation_completed: number;
-      }>(),
-    ]);
-    if (
-      !rawConnection
-      || rawConnection.connector_type !== "slack"
-      || rawConnection.status !== "healthy"
-      || !membership
-      || !link
-      || (input.outcomeStatus === "needs_input"
-        ? preferences?.notify_needs_input === 0
-        : preferences?.notify_automation_completed === 0)
-    ) return "skipped";
-    const token = await this.tokenFromEncrypted({ ...rawConnection, connection_id: input.connectionId });
-    const opened = await slackApi(
-      token,
-      "conversations.open",
-      { users: input.slackUserId },
-      AbortSignal.timeout(10_000),
-    );
-    const channelId = opened.channel.id;
-    const title = input.outcomeStatus === "needs_input" ? `Action needed · ${input.title}` : input.title;
-    const deliveryKey = `${input.automationId}:${input.automationRunId}:slack_agent_dm`;
-    const threadTs = await postSlackTextChunks(
-      token,
-      channelId,
-      input.text,
-      undefined,
-      `${deliveryKey}:result`,
-      title,
-    );
-    await slackApi(token, "chat.postMessage", {
-      channel: channelId,
-      thread_ts: threadTs,
-      client_msg_id: await stableUuid(`${deliveryKey}:controls`),
-      text: "Open the full Rally result",
-      blocks: automationActionBlocks(
-        title,
-        input.workstreamId,
-        this.env.PUBLIC_WEB_BASE_URL,
-        this.env.AVALON_REGION,
-        input.workspaceId,
-      ),
-    }, AbortSignal.timeout(10_000));
-    return "delivered";
-  }
-
   /**
    * Sends one written digest to a person's Avalon Agent DM.
    *
@@ -3976,10 +3889,6 @@ function responseActionBlocks(workstreamId: string, webBase: string, region: "gl
     { type: "button", text: { type: "plain_text", text: "Open task" }, url: workstreamCanonicalUrl(webBase, { region, workspaceId, workstreamId }), action_id: "rally_open_task" },
     { type: "button", text: { type: "plain_text", text: "Give feedback" }, action_id: "rally_feedback", value: workstreamId },
   ] }, aiResponseDisclaimerBlock()];
-}
-
-function automationActionBlocks(title: string, workstreamId: string, webBase: string, region: "global" | "eu", workspaceId: string): Record<string, unknown>[] {
-  return [{ type: "header", text: { type: "plain_text", text: title.slice(0, 150) } }, { type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: "Open full result" }, url: workstreamCanonicalUrl(webBase, { region, workspaceId, workstreamId }), action_id: "rally_open_automation_result" }] }, aiResponseDisclaimerBlock()];
 }
 
 function aiResponseDisclaimerBlock(): Record<string, unknown> {

@@ -766,7 +766,6 @@ describe("AutomationAgent", () => {
       defaultPluginIds: [],
       activitySourcePluginIds: {},
       connectorBindings: {},
-      deliveryTargets: [],
       emailAddress: null,
       modelOverride: null,
       createdAt: 1_800_000_000_000,

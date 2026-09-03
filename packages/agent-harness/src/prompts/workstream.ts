@@ -11,13 +11,13 @@ export interface WorkstreamAutomationPromptContext {
   instructions: string;
   expectedOutputs: string[];
   /**
-   * Where Avalon itself copies this run's final message once the run ends —
-   * the destinations frozen on the automation when it was saved. The model is
-   * told so it does not send the same result a second time through a provider
-   * tool of its own.
+   * Where Rally itself posts this run's final message once the run ends: the
+   * work stream that owns the automation, when one does, and nothing else. The
+   * model is told so it does not post the same result there a second time, and
+   * told when the list is empty so it knows that nothing sends for it.
    */
   resultDelivery: Array<{
-    channel: "email" | "slack_agent_dm" | "workstream";
+    channel: "workstream";
     destination: string;
   }>;
   /**
@@ -115,9 +115,7 @@ export function renderWorkstreamSystemPrompt(input: WorkstreamPromptContext): st
     : input.automation.resultDelivery.length > 0
       ? `# Result delivery
 - Rally sends this run's final message to every destination in the task context's automation.resultDelivery once the run ends, so that message is the delivery.
-- A \`workstream\` destination is this room: Rally posts the final message here, so do not post the result here yourself. Posting elsewhere the instructions ask for is unaffected.
-- Before any outward send, drop every recipient — to, cc, channel, or DM target — that matches one of those destinations. Send to what remains; if nothing remains, do not send at all, and let the final message carry the result.
-- A recipient named in the authorized task context or by a person in this work stream, and matching no destination there, is unaffected by this section.`
+- A \`workstream\` destination is this room: Rally posts the final message here, so do not post the result here yourself. Posting elsewhere the instructions ask for is unaffected.`
       : `# Result delivery
 - Rally sends this run's result nowhere. automation.resultDelivery is empty, and that is the whole answer: there is no destination configured on this automation and none will be resolved after the run ends.
 - If the instructions ask for the result to reach anyone — an inbox, a channel, a DM, a document — sending it is part of doing the work, with your own tools, inside this run. A final message describing a send that did not happen is a failed run that reads like a successful one.

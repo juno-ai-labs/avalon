@@ -162,12 +162,13 @@ address-to-region/workspace/owner route needed before the regional object can be
 selected.
 
 For a personal automation, the normalized From mailbox must match its author. For
-a workspace automation, it must match an active workspace member. This check is
-defense in depth because email From headers can be spoofed, so inbound-email runs
-also omit every external connector tool declared as a write operation, and omit
-outbound web search and fetch tools so untrusted mail cannot use them as an
-exfiltration channel. Connector reads and Rally's internal work-stream tools
-remain available.
+a workspace automation, it must match an active workspace member. Email From
+headers can be spoofed, and this screen is the only control on a mail-started
+run: since 2026-09-03 an inbound-email run holds the same connector and web
+tools as every other automation run, so what stands between a spoofed From and a
+run that can write and send is membership screening at ingress.
+[`security.md`](security.md) records the decision and what a re-tightening would
+have to cover.
 
 Pausing an automation changes nothing in Global: the claim stands and the agent's
 own lifecycle check refuses the mail with `automation_not_active`, writing a
@@ -352,14 +353,13 @@ sunbird, terrapin, waxbill
 - **Work-stream mail never starts an agent run.** It attaches as an untrusted
   resource and transcript entry, and nothing more.
 - **An inbound address is a routing identifier, never an authenticator.** The From
-  match is defense in depth; the actual protection is that inbound-email runs get no
-  external connector writes and no outbound web tools.
-- **A run never delivers a result Rally is delivering.** The active destinations
-  travel in the automation prompt context as `resultDelivery`, and the platform
-  policy renders a `# Result delivery` section telling the run to drop every
-  recipient matching one before it sends anything. Removing either half puts the
-  duplicate back: the compiler no longer writes a provider send, so nothing else
-  stops a saved instruction that says "email me the briefing".
+  match against active membership is the control; an inbound-email run holds the
+  same tools as any other automation run, so ingress screening carries the weight.
+- **A run never posts a result Rally is posting.** The room that owns an
+  automation is the one destination Rally sends to, it travels in the automation
+  prompt context as `resultDelivery`, and the `# Result delivery` section tells
+  the run not to post the result there itself. For every other automation the
+  list is empty and the same section says that sending is the run's own work.
 - **`resultDelivery` mirrors each sender's own predicate, not a third one.** Email
   delivers from `active` and only in production; Slack deliberately delivers from
   `needs_input` too and skips a member who turned that notification off. A
@@ -447,10 +447,10 @@ registry, and what happens to mail addressed to one. It does not own:
 | --- | --- |
 | `apps/api/test/workstream-email-address.test.ts` | The format, the frozen vocabulary indexes, the distinct-adjective rule, collision advance, and the 64-byte bound. |
 | `apps/api/test/workstream-email-routing.test.ts` | Reservation, activation, disable/tombstone, and the regional fail-closed path. |
-| `apps/api/test/resend-inbound-email.test.ts` | Idempotency by Resend email ID, the lease, the sender check, the tool omissions, and the hourly budget. |
+| `apps/api/test/resend-inbound-email.test.ts` | Idempotency by Resend email ID, the lease, the sender check, and the hourly budget. |
 | `apps/api/test/email-markdown.test.ts` | The shared renderer: the structure these emails use, escaping, refused link targets, and the plain-text preview line. |
-| `apps/api/test/automation-run-context.test.ts` | That a run is told its frozen destinations — email, Slack by id, a `needs_input` Slack target Rally still delivers to — told nothing when a target cannot deliver, and told them in a fixed order. |
-| `apps/api/test-workers/automation-agent.test.ts` | On real workerd: that acceptance reserves and stores the address, and that a delivery receipt is refused for a target the run's frozen context does not name. |
+| `apps/api/test/automation-run-context.test.ts` | That a run is told its owning room as the one destination Rally posts to, and told an empty list when no room owns it. |
+| `apps/api/test-workers/automation-agent.test.ts` | On real workerd: that acceptance reserves and stores the address. |
 | `apps/api/test/health-env-contract.test.ts` | That the probe says when notification mail is falling back to the transactional sender. |
 
 Run one with

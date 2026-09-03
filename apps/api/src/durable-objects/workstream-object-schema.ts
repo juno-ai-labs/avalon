@@ -18,7 +18,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 36;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 37;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -2760,6 +2760,23 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
       `DROP TABLE pending_loop_input_mailbox`,
       `ALTER TABLE pending_loop_input_mailbox_v36 RENAME TO pending_loop_input_mailbox`,
       ...pendingLoopInputMailboxGuards(),
+    ],
+  },
+  {
+    version: 37,
+    description: "a stored automation run context has no delivery targets",
+    statements: [
+      // The frozen automation run context lives in two places: the automation's
+      // own object, whose v13 stripped `deliveryTargets` when the field left the
+      // strict schema, and here, copied verbatim into every child's execution
+      // receipt and never cleared. The schema that reads this column nests the
+      // same strict object, so a copy still carrying the key cannot be claimed,
+      // recovered, settled, or retried. Same rewrite, one level deeper.
+      `UPDATE runs
+          SET execution_context_json = json_remove(
+                execution_context_json, '$.automationRunContext.deliveryTargets')
+        WHERE json_extract(execution_context_json, '$.automationRunContext.deliveryTargets')
+              IS NOT NULL`,
     ],
   },
 ];

@@ -237,14 +237,6 @@ const AutomationLegacyImportRequestSchema = z.strictObject({
     defaultPluginIds: z.array(ModelPluginIdSchema),
     activitySourcePluginIds: ActivitySourcePluginIdsSchema,
     connectorBindings: z.record(z.string(), z.string()),
-    /**
-     * Accepted and ignored. This is the shape the cutover script emits from
-     * legacy tables, and the runbook keeps that script as the remedy for a
-     * workspace found still holding legacy state, so the import has to keep
-     * reading what the script writes. Nothing here is persisted from it: an
-     * automation has no destinations of its own any more.
-     */
-    deliveryTargets: z.array(z.unknown()).optional(),
     emailAddress: z.string().email().nullable(),
     modelOverride: AgentModelOverrideSchema.nullable(),
     createdAt: z.number().int().nonnegative(),
@@ -3136,12 +3128,11 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       eventFamilies: Record<string, string[]>;
     }>();
     for (const evaluator of rules.evaluators) {
-      const selectedPluginId = selectedByBinding.get(evaluator.source.sourceBindingKey);
-      if (!selectedPluginId || selectedPluginId !== evaluator.source.suggestedSourcePluginId) {
-        throw new Error("automation_evaluator_source_binding_mismatch");
-      }
-      const connection = connectionsByPlugin.get(selectedPluginId);
-      if (!connection) throw new Error("automation_evaluator_connection_missing");
+      // The blocker settled that this rule's binding key resolves to exactly
+      // this plugin, and the binding loop above that every selected plugin has
+      // a connection; a miss here is the absent connection it already refused.
+      const connection = connectionsByPlugin.get(evaluator.source.suggestedSourcePluginId);
+      if (!connection) throw new Error("automation_plugin_unavailable");
       const descriptors = registry.get(connection.connector_type).manifest.activityTriggers;
       const eventFamilies: Record<string, string[]> = {};
       for (const descriptor of descriptors) {

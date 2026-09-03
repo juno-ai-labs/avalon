@@ -184,12 +184,11 @@ author's zone when the author named one, and their own when nobody did.
   the result; a model asked for an email-shaped artifact produces one nested
   inside another, and asked for a table produces the one structure the renderer
   keeps verbatim rather than laying out.
-- **The destination is declared, not inferred.** A draft carries
-  `requestedDelivery`, the destinations the compiler understood the person to ask
-  for, and the create screen pre-selects from that. Reading it back out of the
-  draft's prose is guessing at something the compiler already knew, and the guess
-  ticks a destination for a briefing that merely *mentions* email. It stays a
-  request: what delivers is the set of rows on the created automation.
+- **A draft names no destination.** Where a result should go is written into
+  the instructions like any other step, and the run sends it there itself with
+  its connector tools; Rally posts the result nowhere but the room that owns the
+  automation. The former `requestedDelivery` field is gone, and a stored draft
+  that still carries it parses with the key stripped.
 - **A destination is not a step.** Rally sends each run's final message to the
   destinations chosen on the automation, so the compiler writes "email me the
   briefing" into `expectedOutputs` and never into `instructions` as a
@@ -291,7 +290,6 @@ from the API, not a second renderer completion.
 | `apps/api/test/automation-compile-connector-registry.test.ts` | The mapping above against the real, unmocked `loadAutomationCreatorPluginCatalog`: a stored connection naming a `connector_type` this environment does not register reaches `AutomationService.compile`'s catch block and comes back as `automation_connector_failed`. |
 | `packages/agent-harness/src/index.test.ts` | The compiler's submission loop: the field a refused draft is answered with, and that a corrected resubmission compiles. |
 | `packages/contracts/src/index.test.ts` | Every readiness refinement's path and message — what the model is actually told when a draft is refused. |
-| `apps/desktop/src/renderer/screens/new-automation.test.tsx` | Resuming `?draft=`, the screen naming the draft it wrote, and the delivery choice a draft's `requestedDelivery` pre-selects. |
 | `apps/desktop/src/renderer/components/sidebar.test.tsx` | Draft ordering, the row's link, and the archive menu item. |
 | `packages/agent-harness/src/automation-compiler-wire-roundtrip.test.ts` | A regression pin, not a two-version-skew detector: the normalizer's trigger handling for an unnamed multi-time-daily calendar schedule surviving `AutomationDraftStreamEventSchema` and a JSON transport round trip. |
 
@@ -335,6 +333,17 @@ conversation grants authority: connector bindings are validated and frozen at
 creation, not at draft time.
 
 ## Changelog
+
+### 2026-09-03 — A draft names no destination
+
+**What changed:** The body no longer describes `requestedDelivery`; the field
+left `AutomationDraftSchema` and the submit-draft tool schema, and the create
+screen that pre-selected from it was deleted on 2026-09-01. The Testing row for
+`new-automation.test.tsx` is removed with it.
+
+**Why:** An automation has no destinations of its own; the decision and its
+alternatives are in [`automation-lifecycle.md`](automation-lifecycle.md). This
+entry records that the drafts document caught up with it.
 
 ### 2026-09-01 — The standalone draft screen is retired
 
