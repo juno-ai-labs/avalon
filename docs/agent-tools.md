@@ -166,6 +166,25 @@ string is a real request. Deriving `inputSchema` from the zod schema with
 `z.toJSONSchema` keeps the two in step for free; a hand-written JSON Schema is
 where they drift, and where they drifted here.
 
+**And `minLength: 1` is only half of it: a parameter whose value may be "none"
+has to say so as a value.** A caller does not reliably answer "I have no
+cursor" by leaving the key out — it answers it by putting something in the box,
+and `minLength: 1` tells it the something must be at least one character. One
+run spent eight `drive.search` calls on `"x"`, `" "`, `"undefined"`, `"null"`
+as a string and `"/"` twice, with a description in front of it saying to omit
+the key, and wrote down why: *"Schema says min but omit should maybe omit."*
+Prose loses to the machine-readable half, so the schema has to admit the
+answer.
+
+**Declare that alternative as `anyOf`, never as a type array.** Bind's
+sanitizer collapses `type: ["string", "null"]` to `type: "string"` and appends
+"Accepts string or null." to the description — the null branch survives only as
+prose, which is the same two-halves-disagreeing shape the rule above exists to
+remove. `anyOf: [{ type: "string", minLength: 1 }, { type: "null" }]` passes
+through whole. `droppedNullableBranches` reports the difference and
+`apps/api/test/tool-schema-sanitization.test.ts` asserts over it; a new
+paginated tool is expected to join that assertion.
+
 If using zod for parsing do not just return the zod error object. Provide natural
 language errors and more importantly provide instructions on how to fix the error.
 For example a file might have changed and so the model needs to re-read it. Or the
@@ -817,6 +836,49 @@ future agent tool or plugin, not just this family.
   untrusted.
 
 ## Changelog
+
+### 2026-09-03 — A parameter that may be "none" says so as a value, spelled `anyOf`
+
+**What changed:** Principle 1 gains the other half of its rule. A parameter
+whose value may legitimately be absent declares a `null` alternative, and
+declares it as `anyOf: [{ type: "string", minLength: 1 }, { type: "null" }]`
+rather than `type: ["string", "null"]`. `droppedNullableBranches` in
+`packages/agent-harness/src/tool-schema-safety.ts` reports a declaration whose
+null branch the sanitizer does not deliver, and the sanitization suite asserts
+over Google's four cursors.
+
+**Why:** `minLength: 1` closed the empty-string hole and opened a worse one. It
+stops `""` reaching a provider, and it also tells a caller that whatever it
+sends must be at least one character — so a caller that will not leave the key
+out sends `"x"` instead. That is not hypothetical: in a work stream created
+after the description-only repair shipped, with that description in front of it
+four times, one run made eight `drive.search` attempts and put a value in
+`pageToken` every time, then said so in leaked reasoning — *"here likely
+pageToken required? Schema says min but omit should maybe omit."* Google
+rejects the whole request over one bad parameter, so the first search failed
+too, and the connector was abandoned for public web search.
+
+The spelling matters because only one of the two survives. Bind's
+`sanitizeToolSchema` collapses a type array to a scalar and moves the
+nullability into the description, which hands a caller a schema forbidding the
+value beside prose permitting it — precisely the conflict that produced the
+eight attempts. `tool-schema-safety.ts` already noted the collapse in passing;
+nothing connected it to the parameters that depend on it, and two automated
+reviews of the change read the two spellings as equivalent. That is what a test
+is for and a reviewer is not.
+
+**Considered and rejected:** Documenting this only in
+[`connectors.md`](connectors.md), where the Google change lives. The rule is
+about authoring any tool, the guard is the one this document already promises
+under Principle 1, and the next author to need it will not be writing a
+connector.
+
+**Consequences:** 46 authored null branches across five connectors — Linear 17,
+Slack 11, Granola 9, Notion 5, X 4, of which 19 are cursors — are still
+declared as type arrays and still collapsed, so their callers cannot spell
+absence either. The assertion added here covers Google's four only; widening it
+fails until those are converted, which is a change per connector rather than a
+line in this one.
 
 ### 2026-09-02 — A tool parameters root is a plain object, on every provider
 

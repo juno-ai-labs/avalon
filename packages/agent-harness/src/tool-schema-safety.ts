@@ -180,6 +180,52 @@ function stableKey(value: unknown): string {
  * across the boundary either, so the wire schema was never where exclusivity
  * held. [`docs/agent-tools.md`](../../../docs/agent-tools.md) carries the rule.
  */
+/**
+ * Properties that authored a `null` alternative the sanitizer does not deliver.
+ *
+ * A parameter whose value may legitimately be "none" has two spellings, and
+ * only one of them reaches the model. `type: ["string", "null"]` is collapsed
+ * to `type: "string"` here, and the nullability is appended to the description
+ * as "Accepts string or null." — a schema forbidding the value beside prose
+ * permitting it. `anyOf: [{ type: "string" }, { type: "null" }]` survives whole.
+ *
+ * That difference is not cosmetic, and it was measured rather than reasoned
+ * about. A caller told in prose to omit a cursor while `minLength: 1` said
+ * otherwise spent eight calls inventing values — `"x"`, `" "`, `"undefined"`,
+ * `"/"` — because absence was not expressible in the half of the declaration
+ * it treats as binding. Demoting a null branch into prose reproduces exactly
+ * that shape.
+ *
+ * Reports `property: authored-null-branch-not-delivered` for each one, so a
+ * caller can assert over the set it owns.
+ */
+export function droppedNullableBranches(schema: Record<string, unknown>): string[] {
+  const sanitized = sanitizeToolSchema(schema);
+  const authored = isPlainObject(schema.properties) ? schema.properties : {};
+  const delivered = isPlainObject(sanitized.properties) ? sanitized.properties : {};
+  const found: string[] = [];
+  for (const [name, declaration] of Object.entries(authored)) {
+    if (!isPlainObject(declaration) || !admitsNull(declaration)) continue;
+    const after = delivered[name];
+    if (!isPlainObject(after) || !admitsNull(after)) {
+      found.push(`${name}: authored-null-branch-not-delivered`);
+    }
+  }
+  return found;
+}
+
+/** Whether a property declaration admits `null`, in either spelling. */
+function admitsNull(declaration: Record<string, unknown>): boolean {
+  const declared = Array.isArray(declaration.type) ? declaration.type : [declaration.type];
+  if (declared.includes("null")) return true;
+  const branches = Array.isArray(declaration.anyOf)
+    ? declaration.anyOf
+    : Array.isArray(declaration.oneOf)
+      ? declaration.oneOf
+      : [];
+  return branches.some((branch) => isPlainObject(branch) && admitsNull(branch));
+}
+
 export function weakenedCompositionBranches(schema: Record<string, unknown>): string[] {
   const found: string[] = [];
   walkPair(schema, sanitizeToolSchema(schema), "", 0, found);
