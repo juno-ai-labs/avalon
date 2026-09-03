@@ -497,18 +497,6 @@ describe("telemetry registry", () => {
       workstreamId: "00000000-0000-4000-8000-000000000101",
       harnessRunId: "00000000-0000-4000-8000-000000000105", action: "retry", result: "success",
     }],
-    ["hypersight_opened", "desktop-renderer", "workspace-user", {
-      workstreamId: "00000000-0000-4000-8000-000000000101", blockCount: "two_to_five",
-    }],
-    ["hypersight_configuration_changed", "api", "workspace-user", {
-      workstreamId: "00000000-0000-4000-8000-000000000101", action: "reorder",
-      blockCount: "six_to_twenty", result: "success",
-    }],
-    ["hypersight_run_terminal", "api", "workspace-user", {
-      workstreamId: "00000000-0000-4000-8000-000000000101",
-      harnessRunId: "00000000-0000-4000-8000-000000000105", result: "success",
-      duration: "30s_2m", staleAtCompletion: false,
-    }],
     ["terminal_workspace_terminal", "api", "workspace-user", {
       workstreamId: "00000000-0000-4000-8000-000000000101", action: "start",
       result: "success", duration: "5s_30s", repositorySelected: true,
@@ -717,9 +705,6 @@ describe("telemetry registry", () => {
     expect(TelemetryEnvelopeSchema.safeParse(socketEnvelope({
       socket: "dictation", state: "connected", cause: "opened", attempts: "zero",
     })).success).toBe(false);
-    expect(TelemetryEnvelopeSchema.parse(socketEnvelope({
-      socket: "block_dashboard", state: "connected", cause: "opened", attempts: "zero",
-    }))).toMatchObject({ name: "realtime_socket_state" });
     expect(TelemetryEnvelopeSchema.safeParse(socketEnvelope({
       socket: "workspace", state: "retrying", cause: "server_closed", attempts: 3,
     })).success).toBe(false);

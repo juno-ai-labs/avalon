@@ -70,7 +70,6 @@ import { loadFlagTargetingAttributes } from "./flag-targeting-attributes";
 
 /** Flagship flag key behind Application → Developer. Boolean; defaults to off. */
 export const DEVELOPER_SETTINGS_FLAG_KEY = "developer-settings";
-export const HYPERSIGHT_FLAG_KEY: ProductFeatureFlagKey = "hypersight-enabled";
 export const MEETING_RECORDING_FLAG_KEY: ProductFeatureFlagKey = "meeting-recording-enabled";
 export const SUGGESTED_WORK_FLAG_KEY: ProductFeatureFlagKey = "suggested-work-enabled";
 export const AUTOMATION_WORKSPACE_TEMPLATES_FLAG_KEY: ProductFeatureFlagKey = "automation-workspace-templates-enabled";
@@ -183,7 +182,6 @@ export async function resolveClientFeatureFlagsForSubject(
   };
   const [
     developerSettings,
-    hypersightEnabled,
     meetingRecordingEnabled,
     suggestedWorkEnabled,
     automationWorkspaceTemplatesEnabled,
@@ -193,7 +191,6 @@ export async function resolveClientFeatureFlagsForSubject(
     controlTowerRefreshSeconds,
   ] = await Promise.all([
     resolveBooleanClientFlag(env, subject, DEVELOPER_SETTINGS_FLAG_KEY, context),
-    resolveBooleanClientFlag(env, subject, HYPERSIGHT_FLAG_KEY, context),
     resolveBooleanClientFlag(env, subject, MEETING_RECORDING_FLAG_KEY, context),
     resolveBooleanClientFlag(env, subject, SUGGESTED_WORK_FLAG_KEY, context),
     resolveBooleanClientFlag(env, subject, AUTOMATION_WORKSPACE_TEMPLATES_FLAG_KEY, context),
@@ -220,7 +217,6 @@ export async function resolveClientFeatureFlagsForSubject(
   ]);
   return {
     developerSettings,
-    hypersightEnabled,
     meetingRecordingEnabled,
     suggestedWorkEnabled,
     automationWorkspaceTemplatesEnabled,

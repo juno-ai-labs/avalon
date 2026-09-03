@@ -25,7 +25,6 @@ export const GPT_5_6_SOL_MODEL_ID = 'openai/gpt-5.6-sol' as const;
  */
 export const AZURE_ROUTED_MODEL_ROLES = [
   'inline_child',
-  'block_dashboard',
 ] as const satisfies readonly AgentModelRole[];
 const AZURE_ROUTED_MODEL_ROLE_SET = new Set<AgentModelRole>(AZURE_ROUTED_MODEL_ROLES);
 
@@ -145,15 +144,6 @@ export const MANAGED_MODELS = [
     description: 'Decides whether a completed automation run is worth delivering at all, and whether its result belongs in the work stream that owns the automation or in the work stream the run itself used, made visible.',
     defaultRouting: { model: 'google/gemini-2.5-flash-lite', fallbackModels: ['google/gemini-3.6-flash'] },
   },
-  {
-    rank: 11,
-    rankReason: 'Specialized · dashboard refreshes',
-    role: 'block_dashboard',
-    key: 'agent-model-block-dashboard',
-    label: 'HyperSight block',
-    description: 'Refreshes one shared read-only Markdown dashboard block from a reproducible interval of the work-stream transcript.',
-    defaultRouting: { model: 'x-ai/grok-4.3', fallbackModels: [] },
-  },
 ] as const satisfies readonly ManagedModelDefinition[];
 
 export const ManagedModelRoleSchema = z.enum(AGENT_MODEL_ROLES);
@@ -191,7 +181,6 @@ export const ModelValidationRequestSchema = z.object({
  * import this table directly and read it at runtime.
  */
 export const MANAGED_FLAGS = [
-  { key: 'hypersight-enabled', label: 'HyperSight Enabled', description: 'True shows HyperSight surfaces in Electron; false hides them without changing API availability.', defaultVariation: 'off' },
   { key: 'meeting-recording-enabled', label: 'Meeting Recording Enabled', description: 'True shows meeting-recording actions in Electron; false hides them without changing API availability.', defaultVariation: 'off' },
   { key: 'suggested-work-enabled', label: 'Suggested Work Enabled', description: 'True shows Suggested Work surfaces in Electron; false hides them without changing API availability.', defaultVariation: 'off' },
   { key: 'automation-workspace-templates-enabled', label: 'Automation Workspace Templates Enabled', description: 'True shows workspace-template surfaces in Electron; false hides them without changing API availability.', defaultVariation: 'off' },

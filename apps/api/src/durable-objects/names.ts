@@ -1,4 +1,4 @@
-import type { ArtifactId, AutomationId, BlockId, Region, SubstreamId, WorkspaceId, WorkstreamId } from "@rally/contracts";
+import type { ArtifactId, AutomationId, Region, SubstreamId, WorkspaceId, WorkstreamId } from "@rally/contracts";
 
 /** One regional workspace control object. */
 export function workspaceDOName(region: Region, workspaceId: WorkspaceId): string {
@@ -54,21 +54,6 @@ export function substreamLoopId(
   substreamId: SubstreamId | "0" = "0",
 ): string {
   return `workstream:${workstreamId}:substream:${substreamId}:loop`;
-}
-
-/** One durable Bind-loop owner for each stable HyperSight block. */
-export function blockDashboardAgentName(
-  region: Region,
-  workspaceId: WorkspaceId,
-  workstreamId: WorkstreamId,
-  blockId: BlockId,
-): string {
-  return `${workstreamDOName(region, workspaceId, workstreamId)}:block-dashboard:${blockId}`;
-}
-
-/** Permanent Bind-loop identity for one HyperSight block across its executions. */
-export function blockDashboardLoopId(blockId: BlockId): string {
-  return `block-dashboard:${blockId}:loop`;
 }
 
 /**

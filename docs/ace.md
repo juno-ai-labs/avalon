@@ -37,8 +37,8 @@ Ace-specific Access application by copying the migration site's policies and
 identity-provider settings. Ace therefore follows the same employee rule while
 keeping a distinct audience.
 
-`GET /api/flags` reads `hypersight-enabled`, `meeting-recording-enabled`,
-`suggested-work-enabled`, `automation-workspace-templates-enabled`,
+`GET /api/flags` reads `meeting-recording-enabled`, `suggested-work-enabled`,
+`automation-workspace-templates-enabled`,
 `multiple-workspaces-enabled`, and `digests-enabled`. The editor exposes enabled/paused state, default Boolean
 value, ordered first-match rules, all eleven operators, nested AND/OR groups,
 and sticky percentage rollouts. A rule is reordered by dragging its handle
@@ -72,16 +72,15 @@ not invent one. Peek does not lease, acknowledge, retry, or remove a message.
 Ace deliberately discards Cloudflare's returned purge reference, so this first
 Queues surface has no delete capability.
 
-`GET /api/models` reads the eleven `agent-model-*` JSON flags. Ace hard-codes
+`GET /api/models` reads the ten `agent-model-*` JSON flags. Ace hard-codes
 the role catalog because Flagship knows only opaque keys: each entry explains
 the code path the model serves and carries the same checked-in route the API
 Worker uses when Flagship is unavailable. The suggested model list combines
 the reviewed work-stream pin choices with the classifier model used only by
 fleet routing; either a primary or fallback input may also carry an arbitrary
 OpenRouter model id entered as free text. Sol is the exception: Ace suggests
-and accepts it only for `inline_child` and `block_dashboard`, the roles whose
-complete execution paths currently receive Bind's Azure configuration and
-pricing port. A role such as `workstream` is not safe merely because its main
+and accepts it only for `inline_child`, whose complete execution path receives
+Bind's Azure configuration and pricing port. A role such as `workstream` is not safe merely because its main
 turn is routed: its attachment-summary pass still uses the structured
 OpenRouter gateway.
 
@@ -318,6 +317,22 @@ When a save succeeds but clients do not change, inspect in order:
    response even if a live notification was lost.
 
 ## Changelog
+
+### 2026-09-03 — HyperSight has no managed rollout surface
+
+**What changed:** Ace no longer carries the Block Dashboard model role,
+feature-flag payload, queue protocol, deployment binding, or editor controls.
+Its deploy removes the retired `hypersight-enabled` and
+`agent-model-block-dashboard` keys if Flagship still holds them.
+
+**Why:** HyperSight is removed rather than disabled, so leaving an operator
+surface would advertise settings with no runtime consumer.
+
+**Consequences:** Ace manages only live Rally capabilities. Flag retirement is
+idempotent, so later deploys accept the keys already being absent. Historical
+changelog entries still describe the feature while it existed.
+
+Shipped in #541.
 
 ### 2026-09-02 — Sol appears only for completely Azure-routed roles
 

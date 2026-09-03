@@ -60,7 +60,6 @@ export type LocalAuthorityExecutor = (
  * authority a change to this file rather than to every caller of one.
  */
 export interface LocalWorkstreamAuthorities {
-  blockDashboard?: LocalAuthorityExecutor;
   harnessRun?: LocalAuthorityExecutor;
   identity?: LocalAuthorityExecutor;
   message?: LocalAuthorityExecutor;

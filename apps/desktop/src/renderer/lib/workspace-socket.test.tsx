@@ -469,7 +469,6 @@ describe('WorkspaceSocketProvider', () => {
       ['work-opportunities'],
       ['workstreams'],
       ['telemetry-preference'],
-      ['block-dashboard-preference'],
       ['feature-flags'],
     ]) expect(invalidatedRoots).toContain(JSON.stringify(root));
     // The two sidebar lists are pushed whole, so a topic must never invalidate
@@ -496,7 +495,6 @@ describe('WorkspaceSocketProvider', () => {
       changedFlag: 'meeting-recording-enabled',
       flags: {
         developerSettings: false,
-        hypersightEnabled: true,
         meetingRecordingEnabled: true,
         controlTowerRefreshSeconds: 60,
       },
@@ -751,7 +749,6 @@ describe('WorkspaceSocketProvider', () => {
       reason: 'initial',
       featureFlags: {
         developerSettings: false,
-        hypersightEnabled: true,
         meetingRecordingEnabled: false,
         controlTowerRefreshSeconds: 60,
       },
@@ -840,7 +837,7 @@ describe('WorkspaceSocketProvider', () => {
     expect(queryClient.getQueryData(['notes']))
       .toEqual([expect.objectContaining({ id: '00000000-0000-7000-8000-000000000006', title: 'Standup' })]);
     expect(queryClient.getQueryData(['feature-flags']))
-      .toMatchObject({ hypersightEnabled: true, meetingRecordingEnabled: false });
+      .toMatchObject({ meetingRecordingEnabled: false });
 
     // The point of the payload: the only thing the client said was where it
     // had got to. A directory request here would be the round trip this frame

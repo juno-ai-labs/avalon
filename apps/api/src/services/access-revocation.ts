@@ -35,7 +35,6 @@ const RevocationTargetSchema = z.discriminatedUnion("scope", [
     workstreamId: IdSchema,
     substreamId: z.union([z.literal("0"), IdSchema]),
   }),
-  z.strictObject({ scope: z.literal("block"), workstreamId: IdSchema, blockId: IdSchema }),
   z.strictObject({ scope: z.literal("automation"), automationId: IdSchema }),
   /**
    * A live web artifact's supervisor, a sibling of the work streams.

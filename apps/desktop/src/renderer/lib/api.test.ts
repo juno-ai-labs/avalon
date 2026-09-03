@@ -670,26 +670,6 @@ describe('Rally API wire adapter', () => {
     expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({ method: 'POST' });
   });
 
-  it('updates the personal HyperSight visibility preference', async () => {
-    // Reading it has no endpoint any more: the work-stream detail and the
-    // control socket's boot frame both carry it. Writing still does.
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(json({ visible: true, updatedAt: timestamp }));
-    vi.stubGlobal('fetch', fetchMock);
-    const api = new RallyApi('https://api.rally.test', session);
-
-    await expect(api.updateBlockDashboardPreference(workstreamId, true)).resolves.toEqual({
-      visible: true,
-      updatedAt: timestamp,
-    });
-
-    const preferenceUrl = `https://api.rally.test/workstreams/${workstreamId}/block-dashboard/preference`;
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(preferenceUrl);
-    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: 'PUT' });
-    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({ visible: true });
-  });
-
   it('uses the template, watch, and detach service contracts without inventing response fields', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(json({ templateId: '00000000-0000-7000-8000-000000000007' }, { status: 201 }))

@@ -31,11 +31,11 @@ describe('Ace product-flag fanout', () => {
     });
     await consumeFlagChanges(createTestBatch({
       queue: 'avalon-product-feature-flag-changes',
-      messages: [{ body: { kind: 'flagship_product_flag_changed', flagKey: 'hypersight-enabled' }, ack, retry: vi.fn() }],
+      messages: [{ body: { kind: 'flagship_product_flag_changed', flagKey: 'meeting-recording-enabled' }, ack, retry: vi.fn() }],
     }), env);
 
     expect(globalSend).toHaveBeenCalledWith([{ body: {
-      kind: 'product_feature_flag_changed', flagKey: 'hypersight-enabled', workspaceId: '11111111-1111-4111-8111-111111111111',
+      kind: 'product_feature_flag_changed', flagKey: 'meeting-recording-enabled', workspaceId: '11111111-1111-4111-8111-111111111111',
     } }]);
     expect(euSend).toHaveBeenCalledOnce();
     expect(ack).toHaveBeenCalledOnce();
@@ -52,8 +52,8 @@ describe('Ace product-flag fanout', () => {
     };
     const euSend = vi.fn(async () => undefined);
     const messages = [
-      { body: { kind: 'flagship_product_flag_changed', flagKey: 'hypersight-enabled' }, ack: vi.fn(), retry: vi.fn() },
-      { body: { kind: 'flagship_product_flag_changed', flagKey: 'hypersight-enabled' }, ack: vi.fn(), retry: vi.fn() },
+      { body: { kind: 'flagship_product_flag_changed', flagKey: 'meeting-recording-enabled' }, ack: vi.fn(), retry: vi.fn() },
+      { body: { kind: 'flagship_product_flag_changed', flagKey: 'meeting-recording-enabled' }, ack: vi.fn(), retry: vi.fn() },
       { body: { kind: 'flagship_product_flag_changed', flagKey: 'suggested-work-enabled' }, ack: vi.fn(), retry: vi.fn() },
     ];
     const env = createTestEnv({

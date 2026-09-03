@@ -1,4 +1,4 @@
-import type { BlockDashboardPreference, WorkstreamControlMetadata } from '@rally/contracts';
+import type { WorkstreamControlMetadata } from '@rally/contracts';
 import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook } from '@testing-library/react';
@@ -129,7 +129,6 @@ function metadata(revision: number, overrides: Partial<WorkstreamControlMetadata
     nextPendingWakeup: null,
     nextTerminalActionAt: null,
     viewer: {
-      blockDashboardPreference: { visible: false, updatedAt: null },
       isParticipant: true,
       listable: true,
       unreadCount: 3,
@@ -328,8 +327,6 @@ describe('useWorkstreamControlSocket', () => {
     const queryClient = new QueryClient();
     setCachedWorkstreams(queryClient, [summary()]);
     queryClient.setQueryData(['ordered-transcript', workstreamId], { sensitive: true });
-    queryClient.setQueryData(['block-dashboard', workstreamId], { blocks: [{ sensitive: true }] });
-    queryClient.setQueryData(['block-dashboard-preference', workstreamId], { visible: true });
     const getWorkstreamControlSocketTicket = vi.fn(async () => ({
       url: `wss://api.rally.test/socket/workstreams/${workstreamId}`,
       ticket: 'control-ticket',
@@ -353,47 +350,6 @@ describe('useWorkstreamControlSocket', () => {
       attempts: 'zero',
     }]);
     expect(queryClient.getQueryData(['ordered-transcript', workstreamId])).toBeUndefined();
-    expect(queryClient.getQueryData(['block-dashboard', workstreamId])).toBeUndefined();
-    expect(queryClient.getQueryData(['block-dashboard-preference', workstreamId])).toBeUndefined();
-  });
-
-  it('applies HyperSight configuration and personal visibility from WorkstreamDO', async () => {
-    vi.stubGlobal('WebSocket', FakeWebSocket);
-    const queryClient = new QueryClient();
-    const getWorkstreamControlSocketTicket = vi.fn(async () => ({
-      url: `wss://api.rally.test/socket/workstreams/${workstreamId}`,
-      ticket: 'control-ticket',
-      protocols: socketTicketProtocols('control-ticket'),
-    }));
-    renderHook(
-      () => useWorkstreamControlSocket({ getWorkstreamControlSocketTicket }, workstreamId, true),
-      { wrapper: wrapper(queryClient) },
-    );
-    await flushPromises();
-    const socket = FakeWebSocket.instances[0]!;
-    act(() => socket.open());
-    const blockId = '00000000-0000-7000-8000-000000000014';
-    const versionId = '00000000-0000-7000-8000-000000000015';
-    act(() => socket.event({
-      type: 'block_dashboard_configuration_updated',
-      occurredAt: '2026-08-17T20:00:00.000Z',
-      blockDashboard: {
-        versionId,
-        versionNumber: 1,
-        updatedAt: '2026-08-17T20:00:00.000Z',
-        blocks: [{ id: blockId, prompt: 'Summarize', latestRun: null }],
-      },
-    }));
-    act(() => socket.event({
-      type: 'block_dashboard_preference_updated',
-      occurredAt: '2026-08-17T20:00:02.000Z',
-      preference: { visible: true, updatedAt: '2026-08-17T20:00:02.000Z' },
-    }));
-
-    expect(queryClient.getQueryData(['block-dashboard', workstreamId]))
-      .toMatchObject({ blocks: [{ latestRun: null }] });
-    expect(queryClient.getQueryData<BlockDashboardPreference>(['block-dashboard-preference', workstreamId]))
-      .toEqual({ visible: true, updatedAt: '2026-08-17T20:00:02.000Z' });
   });
 
   it('logs the first malformed control frame without logging its payload', async () => {

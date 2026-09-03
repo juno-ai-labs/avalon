@@ -192,7 +192,6 @@
     "bindings": [
       { "name": "SUBSTREAM_AGENTS", "class_name": "SubstreamAgent" },
       { "name": "AUTOMATION_AGENTS", "class_name": "AutomationAgent" },
-      { "name": "BLOCK_DASHBOARD_AGENTS", "class_name": "BlockDashboardAgent" },
       { "name": "WORKSTREAM_DOS", "class_name": "WorkstreamDO" },
       { "name": "WORKSPACE_DOS", "class_name": "WorkspaceDO" },
       { "name": "CRASH_SYMBOLICATOR", "class_name": "CrashSymbolicatorContainer" },
@@ -216,7 +215,8 @@
   // artifact id its hostname carries, which is what lets the artifact serving
   // Worker reach it holding nothing but a Host header. Its facet classes are
   // dynamic and deliberately absent from this list — only Rally's own classes
-  // are ever migrated here.
+  // are ever migrated here. v8 irreversibly deletes the retired HyperSight
+  // class and all objects in its namespace; rollback cannot restore that state.
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["WorkstreamRoom", "WorkspaceScheduler"] },
     { "tag": "v2", "new_sqlite_classes": ["CrashSymbolicatorContainer"] },
@@ -228,7 +228,8 @@
     { "tag": "v4", "deleted_classes": ["WorkspaceScheduler"] },
     { "tag": "v5", "new_sqlite_classes": ["SlackReactionTicker"] },
     { "tag": "v6", "new_sqlite_classes": ["AutomationAgent"] },
-    { "tag": "v7", "new_sqlite_classes": ["ArtifactHostDO"] }
+    { "tag": "v7", "new_sqlite_classes": ["ArtifactHostDO"] },
+    { "tag": "v8", "deleted_classes": ["BlockDashboardAgent"] }
   ],
   "queues": {
     "producers": [

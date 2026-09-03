@@ -11,8 +11,6 @@ export const UserIdSchema = IdSchema.brand<"UserId">();
 export type UserId = z.infer<typeof UserIdSchema>;
 export const SubstreamIdSchema = z.union([z.literal("0"), IdSchema]).brand<"SubstreamId">();
 export type SubstreamId = z.infer<typeof SubstreamIdSchema>;
-export const BlockIdSchema = IdSchema.brand<"BlockId">();
-export type BlockId = z.infer<typeof BlockIdSchema>;
 /**
  * A live web artifact's id.
  *
@@ -30,7 +28,6 @@ export const asWorkstreamId = (value: string): WorkstreamId => WorkstreamIdSchem
 export const asHarnessRunId = (value: string): HarnessRunId => HarnessRunIdSchema.parse(value);
 export const asUserId = (value: string): UserId => UserIdSchema.parse(value);
 export const asSubstreamId = (value: string): SubstreamId => SubstreamIdSchema.parse(value);
-export const asBlockId = (value: string): BlockId => BlockIdSchema.parse(value);
 export const asArtifactId = (value: string): ArtifactId => ArtifactIdSchema.parse(value);
 
 export const ModelPluginIdSchema = z.string().regex(/^plugin_[a-z][a-z0-9_]{0,62}$/u);
