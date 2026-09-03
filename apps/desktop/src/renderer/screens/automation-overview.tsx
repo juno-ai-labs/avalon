@@ -14,7 +14,6 @@ import {
   LoaderCircle,
   Mail,
   Menu,
-  MessageSquare,
   PanelRight,
   Play,
   RefreshCcw,
@@ -41,7 +40,7 @@ import { useUiStore } from '../lib/ui-store';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { InspectorRail } from '../components/inspector-rail';
-import { RallyMark, AvatarStack, Badge, Button, EmptyState, IconButton, InlineError, Modal, OpeningState, StatusDot } from '../components/primitives';
+import { AvatarStack, Badge, Button, EmptyState, IconButton, InlineError, Modal, OpeningState, StatusDot } from '../components/primitives';
 
 type RunFilter = 'all' | 'scheduled' | 'manual';
 
@@ -93,7 +92,7 @@ function RunRow({ run, onOpen }: { run: AutomationRunSummary; onOpen: () => void
 
 export function AutomationOverviewScreen(): React.JSX.Element {
   const { id = '' } = useParams();
-  const { api, session } = useAppSession();
+  const { api } = useAppSession();
   const featureFlags = useClientFeatureFlags(api);
   // Publishing still stores a template and the API still serves it, but the
   // browser that installed one lived on the retired draft screen, so nothing
@@ -143,13 +142,6 @@ export function AutomationOverviewScreen(): React.JSX.Element {
     enabled: Boolean(api && id),
     staleTime: 10_000,
   });
-  const connections = useQuery({
-    queryKey: ['connections'],
-    queryFn: ({ signal }) => api!.getConnections(signal),
-    enabled: Boolean(api),
-    staleTime: 10_000,
-  });
-
   const reportedAutomationId = useRef<string | null>(null);
   useEffect(() => {
     const detail = automation.data;
@@ -176,20 +168,6 @@ export function AutomationOverviewScreen(): React.JSX.Element {
     onSuccess: (workstream) => {
       void queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
       void navigate(`/workstreams/${workstream.id}`);
-    },
-  });
-  /**
-   * Turning one destination on or off, without touching the others.
-   *
-   * The API replaces the whole set, so the current set is the starting point
-   * rather than the one box that moved: sending only the toggled destination
-   * would silently drop the other one.
-   */
-  const setDelivery = useMutation({
-    mutationFn: (next: Array<{ type: 'email' } | { type: 'slack_agent_dm'; connectionId: string }>) =>
-      api!.updateAutomation(id, { deliveryTargets: next }),
-    onSuccess: (updated) => {
-      queryClient.setQueryData(['automation', id], updated);
     },
   });
   const share = useMutation({
@@ -231,77 +209,6 @@ export function AutomationOverviewScreen(): React.JSX.Element {
   const detail = automation.data;
   const attention = detail.attention ? automationAttentionNotice(detail.attention) : null;
   const automationEmailAddress = detail.emailAddress;
-  const deliveryTargets = detail.deliveryTargets ?? [];
-  const availableDeliveryConnections = (connections.data ?? []).filter((connection) =>
-    connection.userDelivery);
-  const ownerEmail = session?.user.email ?? '';
-  // A destination frozen on the automation is offered whatever the connection
-  // list says. Without this a connection that is unlinked or disabled — which
-  // retains its delivery-target row rather than cascading it away — leaves a
-  // destination that is still delivering, has no row on screen to untick, and
-  // is replayed inside every set this screen sends, so the API rejects the lot
-  // and no destination can be changed at all.
-  const unmatchedDeliveryTargets = deliveryTargets.filter((target) =>
-    target.type !== 'email'
-    && !availableDeliveryConnections.some((connection) => connection.id === target.connectionId));
-  // Whether a destination is *disconnected* is a different question from whether
-  // it is missing from the list, and only the connection query can answer it.
-  // This screen renders as soon as the *automation* resolves, so an absent
-  // `connections.data` is indistinguishable from an empty one: while the list
-  // was loading — and permanently if it failed, since nothing here retries —
-  // every healthy connector destination was declared disconnected and the reader
-  // was told to "turn off to stop trying", which destroys a working one. The row
-  // still has to appear, or the sentence below claims nothing is being sent
-  // while the destination is delivering.
-  const deliveryConnectionsKnown = connections.isSuccess;
-  const deliveryChoices = [
-    ...(ownerEmail || deliveryTargets.some((target) => target.type === 'email')
-      ? [{
-        key: 'email',
-        type: 'email' as const,
-        label: deliveryTargets.find((target) => target.type === 'email')?.displayName ?? ownerEmail,
-        checked: deliveryTargets.some((target) => target.type === 'email'),
-        status: deliveryTargets.find((target) => target.type === 'email')?.status,
-        available: true,
-      }]
-      : []),
-    ...availableDeliveryConnections.map((connection) => ({
-      key: connection.id,
-      // The connector declares its own surface, so this list grows with the
-      // connector catalog rather than with this file.
-      type: connection.userDelivery!.targetType,
-      label: `${connection.userDelivery!.label} · ${connection.displayName}`,
-      checked: deliveryTargets.some((target) => target.connectionId === connection.id),
-      status: deliveryTargets.find((target) => target.connectionId === connection.id)?.status,
-      available: true,
-    })),
-    ...unmatchedDeliveryTargets.map((target) => ({
-      key: target.connectionId!,
-      type: target.type,
-      label: target.displayName,
-      checked: true,
-      status: target.status,
-      available: !deliveryConnectionsKnown,
-    })),
-  ].map((choice) => ({
-    ...choice,
-    // The whole set as it would be after this box moves: the API replaces the
-    // set, so a payload carrying only the toggled destination drops the other.
-    // Turning one on drops any other of the same type first — the table holds
-    // one row per type, so two connections offering the same surface are one
-    // destination, and appending the second would compose a set the API refuses.
-    next: (choice.checked
-      ? deliveryTargets.filter((target) => choice.type === 'email'
-        ? target.type !== 'email'
-        : target.connectionId !== choice.key)
-      : [...deliveryTargets.filter((target) => target.type !== choice.type),
-        choice.type === 'email'
-          ? { type: 'email' as const, connectionId: null }
-          : { type: choice.type, connectionId: choice.key }]
-    ).map((target) => target.type === 'email'
-      ? { type: 'email' as const }
-      : { type: 'slack_agent_dm' as const, connectionId: target.connectionId! }),
-  }));
   // A dialog reopened after a failed delete must not greet the user with the
   // last attempt's error before they have tried anything.
   const openDelete = (): void => {
@@ -396,42 +303,6 @@ export function AutomationOverviewScreen(): React.JSX.Element {
                     ? 'Email this address from your Rally account email to start a new work stream.'
                     : 'Email this address from a workspace member email to start a new work stream.'}
                 </small>
-              </section>
-            )}
-            {detail.scope === 'you' && deliveryChoices.length > 0 && (
-              <section aria-label="Delivered to" className="automation-delivery-fact">
-                <h2>Delivered to</h2>
-                <ul>
-                  <li className="is-locked">
-                    {/* Stands where the other rows' checkbox is, so every icon
-                        below it lines up rather than stepping in. */}
-                    <span aria-hidden="true" className="delivery-locked-spacer" />
-                    <RallyMark /><span>Rally work stream</span>
-                  </li>
-                  {deliveryChoices.map((choice) => (
-                    <li key={choice.key}>
-                      <label>
-                        <input
-                          checked={choice.checked}
-                          disabled={setDelivery.isPending}
-                          onChange={() => setDelivery.mutate(choice.next)}
-                          type="checkbox"
-                        />
-                        {choice.type === 'email' ? <Mail size={13} /> : <MessageSquare size={13} />}
-                        <span title={choice.label}>{choice.label}</span>
-                      </label>
-                      {!choice.available
-                        ? <small className="is-warning">Disconnected — turn off to stop trying</small>
-                        : choice.status === 'needs_input' && <small className="is-warning">Last delivery failed</small>}
-                    </li>
-                  ))}
-                </ul>
-                {connections.error
-                  && <small className="is-warning">Rally cannot check your connections right now, so a destination may be missing from this list.</small>}
-                {setDelivery.error && <InlineError>{setDelivery.error.message}</InlineError>}
-                {deliveryChoices.some((choice) => choice.checked)
-                  ? <small>Every run is saved to its own work stream, whatever else is chosen.</small>
-                  : <small className="is-warning">Results now only go to the work stream — nothing will be sent to you.</small>}
               </section>
             )}
             <section><h2>Execution</h2><p><Users size={14} />{detail.executionScope}</p><small>{detail.scope === 'you' ? 'Uses your authorized connections' : 'Uses explicitly bound workspace connections'}</small></section>

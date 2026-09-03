@@ -15,11 +15,3 @@ export function canonicalExternalResultText(message: Message | null): string | n
   }
   return message.textContent.trim() || null;
 }
-
-/** Skip the provider call when canonical rendering produced no content. */
-export async function deliverCanonicalExternalResult<Result>(
-  text: string | null,
-  deliver: (savedText: string) => Promise<Result>,
-): Promise<Result | "skipped"> {
-  return text === null ? "skipped" : deliver(text);
-}

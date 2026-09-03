@@ -308,7 +308,6 @@ export async function cutoverWorkspaceAutomations(input: {
       triggers,
       requiredCapabilities: JSON.parse(String(row.required_capabilities_json)),
       expectedOutputs: JSON.parse(String(row.expected_outputs_json)),
-      requestedDelivery: [],
       defaultBehavior: JSON.parse(String(row.default_behavior_json)),
       recommendedPlugins: JSON.parse(String(row.recommended_plugins_json)),
       memoryTables: JSON.parse(String(row.memory_tables_json)),
@@ -317,19 +316,6 @@ export async function cutoverWorkspaceAutomations(input: {
       elicitation: null,
       ready: true,
     });
-    const deliveryTargets = input.storage.sql.exec<Record<string, SqlStorageValue>>(
-      `SELECT target_type, connection_id, slack_team_id, slack_user_id, email_address
-         FROM automation_delivery_targets
-        WHERE automation_subscription_id = ? AND status <> 'disabled' ORDER BY target_type`,
-      automationId,
-    ).toArray().map((target) => target.target_type === "email"
-      ? { type: "email" as const, emailAddress: String(target.email_address) }
-      : {
-          type: "slack_agent_dm" as const,
-          connectionId: String(target.connection_id),
-          slackTeamId: String(target.slack_team_id),
-          slackUserId: String(target.slack_user_id),
-        });
     const createdAt = epoch(String(row.created_at)) ?? 0;
     const updatedAt = epoch(String(row.updated_at)) ?? createdAt;
     const schedules = input.storage.sql.exec<Record<string, SqlStorageValue>>(
@@ -375,7 +361,6 @@ export async function cutoverWorkspaceAutomations(input: {
         .parse(JSON.parse(String(row.activity_trigger_bindings_json))),
       connectorBindings: z.record(z.string(), z.string())
         .parse(JSON.parse(String(row.connector_bindings_json))),
-      deliveryTargets,
       emailAddress: row.email_address === null ? null : String(row.email_address),
       modelOverride: row.model_override === null ? null : AgentModelOverrideSchema.parse(row.model_override),
       createdAt,

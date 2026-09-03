@@ -1,5 +1,9 @@
 import { newId, nowIso } from "@rally/db";
-import { TriggerDefinitionSchema } from "@rally/contracts";
+import {
+  automationActivitySourcePluginIds,
+  isExternalEventTrigger,
+  TriggerDefinitionSchema,
+} from "@rally/contracts";
 import type {
   AutomationDraft,
   AutomationScope,
@@ -80,7 +84,7 @@ export class AutomationService {
 
   async publishTemplate(input: { name: string; description: string; draft: AutomationDraft }) {
     if (!input.draft.ready) throw new ApiError(422, "template_not_ready", "Finish the automation recipe before publishing it");
-    const activitySourcePluginIds = suggestedActivitySourcePluginIds(input.draft.triggers);
+    const activitySourcePluginIds = automationActivitySourcePluginIds(input.draft.triggers);
     const connectorSelection = await this.validateConnectorSelections(
       input.draft.suggestedScope,
       [],
@@ -129,7 +133,7 @@ export class AutomationService {
     if (!ownership.owned) {
       throw new ApiError(404, "template_not_found", "Automation template not found");
     }
-    const activitySourcePluginIds = suggestedActivitySourcePluginIds(draft.triggers);
+    const activitySourcePluginIds = automationActivitySourcePluginIds(draft.triggers);
     const connectorSelection = await this.validateConnectorSelections(
       draft.suggestedScope,
       [],
@@ -407,8 +411,7 @@ function activitySourceDefinitions(triggers: TriggerDefinition[]): Array<{
     suggestedPluginId?: string;
   }>();
   for (const trigger of triggers) {
-    if (trigger.type !== "connector_activity" && trigger.type !== "semantic_activity" && trigger.type !== "webhook") continue;
-    if (!trigger.sourceBindingKey) continue;
+    if (!isExternalEventTrigger(trigger) || !trigger.sourceBindingKey) continue;
     const connectorType = trigger.type === "webhook" ? "generic_webhook" : trigger.connectorType;
     if (!connectorType) continue;
     sources.set(trigger.sourceBindingKey, {
@@ -418,8 +421,4 @@ function activitySourceDefinitions(triggers: TriggerDefinition[]): Array<{
     });
   }
   return [...sources.values()];
-}
-function suggestedActivitySourcePluginIds(triggers: TriggerDefinition[]): Record<string, string> {
-  return Object.fromEntries(activitySourceDefinitions(triggers).flatMap((source) =>
-    source.suggestedPluginId ? [[source.bindingKey, source.suggestedPluginId] as const] : []));
 }

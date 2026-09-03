@@ -233,7 +233,7 @@ Every address, identifier, URL, name, date, and quoted fact in an outward-facing
 
 Interactive multi-round work starts with a short plan and reports meaningful phase changes. Headless runs skip progress narration. Completions lead with the outcome, evidence, and blockers; private reasoning is never emitted.
 
-An automation run's final message is what Rally delivers, so the run is told which destinations Rally will send it to and told to drop every recipient matching one before it sends anything of its own. Without that, an automation asked to email its owner does the sending as well as Rally and the owner receives it twice. The destinations travel in the automation context as `resultDelivery`, filtered by the predicate each channel's own sender uses, and the rule is a `# Result delivery` section rendered only when that list is non-empty — as a standing bullet it was charged to every interactive run, where the list is absent and a rule about it can only be resolved and then ignored. [`workstream-email-addresses.md`](workstream-email-addresses.md#outbound-automation-results) owns the delivery itself.
+An automation run's final message is what Rally posts to the work stream that owns the automation, when one does, so the run is told that room as the single entry in the automation context's `resultDelivery` and told not to post the result there itself. When the list is empty, which it is for every personal and workspace automation, the same `# Result delivery` section says so and tells the run that any sending its instructions ask for is its own work, done with its tools inside the run; left silent, a run that *describes* emailing a summary has not emailed it. The section is rendered only for automation runs — as a standing bullet it was charged to every interactive run, where the list is absent and a rule about it can only be resolved and then ignored. [`automation-lifecycle.md`](automation-lifecycle.md) owns why an automation has no destinations of its own.
 
 A document-shaped request is written as a Markdown file in the work stream's terminal workspace and published as a generated resource, rather than streamed into the transcript (`DOCUMENT_GENERATION_POLICY`, `prompts/document-generation.ts`). The section carries the document-type trigger, the narration discipline, the same-path revision rule with its import recovery, the participant override in both directions, and the inline fallback when the workspace cannot be reached. It names no tool: the Terminal plugin's activated system message already carries the write-beneath-the-resource-directory-then-publish mechanics, and this section renders before that plugin loads. It is standing platform policy on every work-stream run, with an explicit output-surface tie-breaker: an externally delivered run includes the complete usable result in its final message because recipients cannot open Rally resource embeds, while a HyperSight block run skips publication and submits finished Markdown through its required block tool. [`terminal-workspaces.md`](terminal-workspaces.md) owns the publish path the normal work-stream rule steers into.
 
@@ -245,7 +245,7 @@ Written answers are GitHub-flavoured Markdown, and TeX or math delimiters are ne
 
 ### Automation compilation
 
-Natural-language automation creation compiles to the validated draft schema. The compiler preserves established choices, defaults to personal scope and manual execution when omitted, and writes three to eight self-contained outcome-focused steps. A calendar recurrence carries the IANA timezone a person named for it and null otherwise, and the account zones it would otherwise have to guess at — the requester's and the workspace's — are rendered into a user-role message the policy defers to by name; exact provider events use deterministic triggers and meaning-based conditions use semantic triggers. Connector manifests expose trusted activity descriptors with exact event names and typed deterministic filters through plugin search, inspection, and loading. Each connector-activity or semantic-activity trigger names a reusable source binding key and suggests one inspected plugin; acceptance binds that slot to one authorized connection without requiring the source plugin to be preloaded at runtime. Required capabilities are the minimum external grants. A destination Avalon delivers to is described rather than instructed: the compiler never writes a provider send for one, because Avalon sends the result there itself. Which destinations the owner asked for is a required field of the submit-draft schema, `requestedDelivery`, closed to the two Avalon offers — the create screen selects from it rather than re-reading the draft's prose. It records what was asked and never what was inferred: a briefing *about* somebody's inbox is not a request to be emailed, a send aimed at a third party is not a request for the owner, and a request to be "sent the result" that names no channel resolves to nothing rather than to a guess.
+Natural-language automation creation compiles to the validated draft schema. The compiler preserves established choices, defaults to personal scope and manual execution when omitted, and writes three to eight self-contained outcome-focused steps. A calendar recurrence carries the IANA timezone a person named for it and null otherwise, and the account zones it would otherwise have to guess at — the requester's and the workspace's — are rendered into a user-role message the policy defers to by name; exact provider events use deterministic triggers and meaning-based conditions use semantic triggers. Connector manifests expose trusted activity descriptors with exact event names and typed deterministic filters through plugin search, inspection, and loading. Each connector-activity or semantic-activity trigger names a reusable source binding key and suggests one inspected plugin; acceptance binds that slot to one authorized connection without requiring the source plugin to be preloaded at runtime. Required capabilities are the minimum external grants. Where a result should go is written into the instructions like any other step, and the run sends it there itself with its connector tools; the submit-draft schema carries no delivery field, and Rally posts the result nowhere but the room that owns the automation, if one does.
 
 Request-scoped attachment tools may be added directly to the preloaded automation architect. They inherit its `automation_*` wire prefix and are not catalog-loaded connector capabilities. The API host freezes their admitted resource IDs and owns every authorization recheck; the harness only exposes the supplied strict tools for that compiler run.
 
@@ -391,7 +391,7 @@ and only bounded resource paths travel through the structured failure allowlist.
    on a person. Status cleanup and suppressed-delivery receipts may run without
    one; reply or comment content may not.
 
-Web discovery and page reading are bounded Firecrawl tools. Search returns ranked links and page fetch returns clean markdown. Both are omitted without `FIRECRAWL_API_KEY` and from inbound-email runs.
+Web discovery and page reading are bounded Firecrawl tools. Search returns ranked links and page fetch returns clean markdown. Both are omitted without `FIRECRAWL_API_KEY`; an inbound-email run holds them like any other, per [`security.md`](security.md).
 
 ### Elicitation
 
@@ -1241,6 +1241,48 @@ silently return every test to the shared key while each still passes alone.
 
 ## Changelog
 
+### 2026-09-03 — A run delivers its own result, and no trigger narrows its tools
+
+**What changed:** The `# Result delivery` section of the work-stream system
+prompt has two arms: one names the owning room as the only destination Rally
+posts to and tells the run not to post there itself, the other tells a run with
+an empty `resultDelivery` that nothing sends for it and that any sending its
+instructions ask for is its own work. The list's channel type is `workstream`
+alone. `requestedDelivery` is gone from the submit-draft tool schema and its
+normalizer, and the drafting tool's submission pre-check now applies the same
+`automationDraftAcceptanceBlocker` the object does, phrasing both of its
+refusals for the model. In `apps/api/src/services/integrations.ts` the three
+`inbound_email` tool guards are gone, so a mail-started run holds write-mode
+connector tools and the Firecrawl web tools like any other run.
+
+**Why:** Delivery destinations chosen at creation and sent by a loop after the
+run could not express what instructions can, and their existence let a run read
+silence as "Rally has it covered"; the empty arm is what stops that. The
+inbound-email guards named one trigger of several that carry untrusted content
+and so described a boundary that did not exist. Both decisions and their
+alternatives are recorded in [`automation-lifecycle.md`](automation-lifecycle.md)
+and [`security.md`](security.md); this entry records that the harness body above
+now describes them.
+
+Two corrections landed on review before this merged. `outputSurface` gained a
+fourth value, `self_delivery`, for an automation run no room owns: the
+`external_delivery` section says the final message *is delivered* outside the
+work stream, which for a run whose delivery section says nothing sends for it
+would license leaving the result in the final message; the new section keeps
+the outside-reader guidance and says the run's own sends are the only delivery.
+And the automations plugin's system message and the submit-draft scope
+description stopped promising that a personal automation "delivers to their own
+inbox or DM": they now say Rally posts a result only to an owning room, and
+that any other send must be written into the instructions as a step.
+
+**What a future change has to respect:** the empty arm is load-bearing and must
+stay accurate in both directions; a destination Rally sends to must appear in
+the list and nothing else may. The submission pre-check must keep applying the
+object's own predicate rather than a copy of it, or the two drift and a refusal
+reaches the model as a bare code again. The authoring text and the run prompt
+describe the same contract from two ends, so a change to where results go edits
+both.
+
 ### 2026-09-03 — Gemini 3.8 Flash defaults to low reasoning
 
 **What changed:** `google/gemini-3.8-flash` joined `x-ai/grok-4.6` in the
@@ -1401,6 +1443,7 @@ prefix retrieves differently — and it is accepted because `memoryQueryParts`
 appends the objective first and the triggering message last, so what is dropped
 is the tail of a long message rather than the objective. Reordering those parts
 would change what truncation costs.
+
 
 ### 2026-09-02 — A deploy no longer kills the runs it interrupts
 

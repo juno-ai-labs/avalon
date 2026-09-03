@@ -1546,6 +1546,24 @@ directory write at all.
 
 ## Changelog
 
+### 2026-09-03 — A stored automation run context has no delivery targets
+
+**What changed:** Schema v37 rewrites `runs.execution_context_json` with
+`json_remove('$.automationRunContext.deliveryTargets')` wherever the key is
+present. No table changes shape.
+
+**Why:** The frozen automation run context is copied verbatim into the child's
+execution receipt and never cleared, and the schema it is read back through on
+claim, lease recovery, settlement and retry nests the strict
+`AutomationRunContextV1Schema`, from which `deliveryTargets` was removed on this
+date. The automation object rewrote its own copy in its v13; without the same
+rewrite here, every run dispatched before the deploy stopped parsing. A data
+migration rather than a tolerant read, for the reason recorded in
+[`automation-lifecycle.md`](automation-lifecycle.md): a tolerated key is a dead
+field every future reader has to know to ignore. Proved in
+`apps/api/test/workstream-object-schema.test.ts` by storing a pre-v37 receipt,
+applying the schema, and parsing the row through `WorkstreamWorkflowInputSchema`.
+
 ### 2026-09-02 — Fenced scope and activation writes reuse rather than refuse
 
 **What changed:** `FencedWriteOutcome` loses its `mismatch` member. `persistScope`

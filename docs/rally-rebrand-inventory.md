@@ -338,8 +338,7 @@ Linear native-agent plugin, and the core plugin's own utilities line all moved;
 the four Slack connector labels moved earlier, in the Slack cut-over.
 
 **Not section 9, and deliberately left here:** the remaining transactional email
-copy (`invitation-email-service.ts`, `automation-email-content.ts`,
-`automation-email-service.ts`, `digest-email-content.ts`) and the API error
+copy (`invitation-email-service.ts`, `digest-email-content.ts`) and the API error
 strings surfaced in the client UI. Those are user-facing copy the public-site
 pass did not reach, and they are section 7's remainder rather than this
 section's.

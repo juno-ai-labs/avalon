@@ -170,19 +170,6 @@ export const AutomationSetEvaluatorRulesMutationSchema = z.strictObject({
   evaluatorRules: z.unknown(),
 });
 
-const AutomationRunDeliveryTargetV1Schema = z.discriminatedUnion("type", [
-  z.strictObject({
-    type: z.literal("email"),
-    emailAddress: z.string().email(),
-  }),
-  z.strictObject({
-    type: z.literal("slack_agent_dm"),
-    connectionId: IdSchema,
-    slackTeamId: z.string().min(1),
-    slackUserId: z.string().min(1),
-  }),
-]);
-
 export const AutomationRunTriggerV1Schema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("manual"), requestedByUserId: UserIdSchema }),
   z.strictObject({
@@ -279,14 +266,14 @@ export const AutomationRunContextV1Schema = z.strictObject({
   defaultPluginIds: z.array(z.string().min(1)),
   activitySourcePluginIds: z.record(z.string(), z.string().min(1)),
   connectorBindings: z.record(z.string(), z.unknown()),
-  deliveryTargets: z.array(AutomationRunDeliveryTargetV1Schema),
   /**
    * The work stream that owns this automation, for a `workstream`-scoped one.
    *
-   * Frozen here rather than resolved at delivery, and not part of
-   * `deliveryTargets`: nobody chose it. A room's automation delivers to its
-   * room because that is what it belongs to, so there is no entry to keep in
-   * agreement with the scope and no principal to record beside it.
+   * The only destination an automation has. It follows from ownership rather
+   * than from anybody choosing it, which is why it survived the deletion of the
+   * chosen ones: a room's automation delivers to its room because that is what
+   * it belongs to. Everything outside Rally is now the run's own to send, with
+   * the connector tools it was bound.
    */
   owningWorkstreamId: IdSchema.nullable().default(null),
   /**
