@@ -640,6 +640,22 @@ migrations set `PRAGMA foreign_keys = ON` themselves, so a replay ends with
 enforcement on however the connection was opened. Ten of the sixteen private
 copies never wrote that pragma and were relying on it anyway.
 
+## Holding the effect queue
+
+The test Worker binds `ACTIVITY_QUEUE` as a producer with no consumer, and
+Miniflare accepts a `sendBatch` to such a queue: an object's drain alarm sends,
+deletes its outbox rows, and the envelope is gone before a test can read it. A
+test that asserts on what a child or a parent queued, or that wants to deliver
+those envelopes at a moment of its choosing, calls `useHeldEffectQueue()` from
+`./helpers/effect-queue-hold` at file scope. It refuses effect envelopes only,
+the way a Queue outage refuses them, so the producer defers the rows and keeps
+them `pending`; the helpers in `./helpers/conversation-effects`
+(`pendingChildEffects`, `deliverChildEffects`, `deliverParentEffects`,
+`deliverEffectsToWorkspace`) then read exactly those rows and hand them to the
+real consumer. The real drain, with its delete on success, is proved once in
+`conversation-effect-queue.test.ts`; every other test only needs the effects to
+arrive when it says so.
+
 ## Letting a run reach the model
 
 **Decide deliberately whether your test lets a run get as far as inference, and
@@ -680,7 +696,11 @@ system-provision `provision` path when that is the state shape under test. A
 create-effects case can invoke the real product `initialize` mutation
 without the endpoint's later execution-receipt activation. An elicitation-answer
 case can use a settled parent-run row when run execution is not the subject. If
-the run really has to complete, install the double.
+the run really has to complete, install the double, and give the run a model to
+route to: `wrangler.test.jsonc` deliberately leaves `OPENROUTER_PRIMARY_MODEL`
+unset so a run nobody meant to reach inference cannot, and a file that installs
+the double calls `useSelectedModel()` from `./helpers/selected-model` at file
+scope so its runs do not die on an empty route plan before they reach it.
 
 ```ts
 import { useOpenRouterDouble } from "./helpers/openrouter-double";
