@@ -373,7 +373,7 @@ registry, and what happens to mail addressed to one. It does not own:
 | For | Read |
 | --- | --- |
 | The create path that awaits activation | [`workstream-creation.md`](workstream-creation.md) |
-| Which connectors offer a personal delivery surface | [`connectors.md`](connectors.md#delivering-automation-results-to-a-person) |
+| Which connectors can carry a digest to a person | [`connectors.md`](connectors.md#delivering-a-digest-to-a-person) |
 | The Global/EU bridge this registry is reached through | [`regionalization.md`](regionalization.md) |
 | Untrusted-input handling and the spoofing threat model | [`security.md`](security.md) |
 | The AutomationAgent tables the frozen destinations and receipts live in | [`automation-lifecycle.md`](automation-lifecycle.md), [`data-model.md`](data-model.md) |
