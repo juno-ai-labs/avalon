@@ -1835,7 +1835,12 @@ export function ConversationSurface({
             Boolean(activeElicitation),
             detail.harnessStatus,
           ) ? (
-            <EmptyState title="Ready to begin" description="Send a message to start work in this stream." />
+            <EmptyState
+              title="Ready to begin"
+              description={parentKind === 'automation'
+                ? 'Describe what this automation should do, and Rally will draft it with you.'
+                : 'Send a message to start work in this stream.'}
+            />
           ) : (
             <MessageFeed
               citations={citations}
@@ -1886,6 +1891,7 @@ export function ConversationSurface({
         <div className="composer-stack">
           <WorkstreamComposer
             api={api ?? undefined}
+            placeholder={parentKind === 'automation' ? 'Describe this automation…' : 'Message the work stream…'}
             attachments={attachmentDraft.attachments}
             error={sendError ?? attachmentDraft.error ?? attachResource.error?.message ?? stop.error?.message ?? retry.error?.message}
             fileInputRef={fileInputRef}
