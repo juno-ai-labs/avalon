@@ -421,6 +421,8 @@ export interface InferenceAttemptEvent {
   failureKind?: string;
   /** The provider's own classification of a rejected request, when it gave one. */
   providerError?: OpenRouterProviderError;
+  /** Archive-only rejection body. See `ProviderErrorBody`; never log this. */
+  providerErrorBody?: ProviderErrorBody;
 }
 
 /**
@@ -473,6 +475,8 @@ export type StructuredModelDiagnostic = {
   failureKind?: string;
   /** The provider's own classification of a rejected request, when it gave one. */
   providerError?: OpenRouterProviderError;
+  /** Archive-only rejection body. See `ProviderErrorBody`; never log this. */
+  providerErrorBody?: ProviderErrorBody;
   validationIssues?: Array<{ path: string; code: string }>;
   /** Exact provider request body. Present only on `model_request`. */
   requestPayload?: Record<string, unknown>;
@@ -635,13 +639,13 @@ export class OpenRouterClient {
             body: JSON.stringify(requestPayload),
             ...(input.signal ? { signal: input.signal } : {}),
           });
-          const payload = await readJsonResponse<Record<string, unknown>>(response);
+          const { value: payload, raw } = await readJsonResponse<Record<string, unknown>>(response);
           if (!response.ok) {
             const providerError = openRouterProviderError(payload);
             throw new OpenRouterError(
               `OpenRouter embeddings request failed (${response.status})`,
               response.status,
-              { providerError },
+              { providerError, providerErrorBody: providerErrorBody(raw) },
             );
           }
           if (!payload) throw new OpenRouterError("OpenRouter returned no embeddings response");
@@ -823,7 +827,7 @@ export class OpenRouterClient {
             body: JSON.stringify(requestPayload),
             ...(input.signal ? { signal: input.signal } : {})
           });
-          const payload = await readJsonResponse<{
+          const { value: payload, raw } = await readJsonResponse<{
             id?: string;
             model?: string;
             choices?: Array<{ message?: { content?: string | null }; finish_reason?: string | null }>;
@@ -834,9 +838,13 @@ export class OpenRouterClient {
             throw new OpenRouterError(
               `OpenRouter request failed (${response.status})`,
               response.status,
-              // The envelope's classification, not the body: `payload` can carry
-              // the provider's echo of the request that was rejected.
-              { providerError: openRouterProviderError(payload) }
+              // The envelope's classification for every log-facing reader, and
+              // the body for the archive alone: `payload` can carry the
+              // provider's echo of the request that was rejected.
+              {
+                providerError: openRouterProviderError(payload),
+                providerErrorBody: providerErrorBody(raw),
+              }
             );
           }
           const sdkPayload = parseOpenRouterChatResult(payload);
@@ -965,9 +973,13 @@ export class OpenRouterClient {
             throw error;
           }
         } catch (error) {
-          const providerError = error instanceof OpenRouterError
-            ? (error.details as { providerError?: OpenRouterProviderError } | undefined)?.providerError
+          const details = error instanceof OpenRouterError
+            ? error.details as {
+              providerError?: OpenRouterProviderError;
+              providerErrorBody?: ProviderErrorBody;
+            } | undefined
             : undefined;
+          const providerError = details?.providerError;
           await emitDiagnostic({
             stage: "complete",
             schemaName: input.schemaName,
@@ -981,6 +993,9 @@ export class OpenRouterClient {
             failureKind: structuredFailureKind(error, input.signal),
             ...(responsePayload ? { responsePayload } : {}),
             ...(providerError ? { providerError } : {}),
+            ...(details?.providerErrorBody
+              ? { providerErrorBody: details.providerErrorBody }
+              : {}),
           });
           if (input.signal?.aborted) throw error;
           const disposition = openRouterFailureDisposition(error);
@@ -1095,21 +1110,24 @@ export class OpenRouterClient {
       clearTimeout(establishmentTimer);
       watchdog.open();
     if (!response.ok || !response.body) {
-      let details: unknown;
-      try {
-        details = await response.json();
-      } catch {
-        details = await response.text();
-      }
+      // Read once. `response.json()` consumes the stream even when it throws,
+      // so parsing first and falling back to `.text()` raises "Body is
+      // unusable" instead — which replaced every non-JSON refusal (a gateway's
+      // HTML 502, a plain-text 400) with an uncoded `TypeError`, losing the
+      // status, the retry metadata, and the body in one go.
+      const raw = await response.text().catch(() => "");
+      const details: unknown = parsedProviderErrorBody(raw);
       throw new OpenRouterError(`OpenRouter stream failed (${response.status})`, response.status, {
         // Preserve retry metadata for routing, plus the provider's own error
         // classification so a rejected request is diagnosable. The response body
-        // itself is still not retained by the durable runtime or structured logs.
+        // rides along for the inference archive only; it is still kept out of the
+        // durable runtime and structured logs.
         headers: {
           "retry-after": response.headers.get("retry-after") ?? undefined,
         },
         providerErrorKind: typeof details === "object" && details !== null ? "structured" : "text",
         providerError: openRouterProviderError(details),
+        providerErrorBody: providerErrorBody(raw),
       });
     }
 
@@ -1127,6 +1145,7 @@ export class OpenRouterClient {
         if (chunk.error) {
           throw new OpenRouterError("OpenRouter stream error", undefined, {
             providerError: openRouterProviderError({ error: chunk.error }),
+            providerErrorBody: providerErrorBody({ error: chunk.error }),
           });
         }
         generationId ??= chunk.id || null;
@@ -1289,16 +1308,14 @@ export class AzureOpenAIClient {
       clearTimeout(establishmentTimer);
       watchdog.open();
       if (!response.ok || !response.body) {
-        let details: unknown;
-        try {
-          details = await response.json();
-        } catch {
-          details = await response.text();
-        }
+        // Read once; see the identical note on the OpenRouter stream above.
+        const raw = await response.text().catch(() => "");
+        const details: unknown = parsedProviderErrorBody(raw);
         throw new AzureOpenAIError(`Azure stream failed (${response.status})`, response.status, {
           headers: { "retry-after": response.headers.get("retry-after") ?? undefined },
           providerErrorKind: typeof details === "object" && details !== null ? "structured" : "text",
           providerError: openRouterProviderError(details),
+          providerErrorBody: providerErrorBody(raw),
         });
       }
 
@@ -1315,6 +1332,7 @@ export class AzureOpenAIClient {
           if (chunk.error) {
             throw new AzureOpenAIError("Azure stream error", undefined, {
               providerError: openRouterProviderError({ error: chunk.error }),
+              providerErrorBody: providerErrorBody({ error: chunk.error }),
             });
           }
           generationId ??= chunk.id || null;
@@ -1805,18 +1823,85 @@ function withExpectedJsonSchema(
 /**
  * The diagnosable part of an OpenRouter error envelope.
  *
- * Provider response bodies are not retained — they can echo prompt content back.
- * `code` and `providerName` are the provider's own classification of the
- * rejection, and without them a run that fails against OpenRouter is
+ * Provider response bodies are not retained *here* — they can echo prompt
+ * content back. `code` and `providerName` are the provider's own classification
+ * of the rejection, and without them a run that fails against OpenRouter is
  * indistinguishable from any other failure: the status code alone cannot tell a
  * bad model id from an over-long context from a provider outage.
  *
- * Provider free text is deliberately excluded because some upstreams quote the
- * request back and the host's key-based redactor cannot recognize those echoes.
+ * Provider free text is deliberately excluded from this type because some
+ * upstreams quote the request back and the host's key-based redactor cannot
+ * recognize those echoes, and everything that reads this type is log-facing.
+ * The text itself is carried separately by `providerErrorBody`, which only the
+ * regional inference archive is allowed to read.
  */
 export interface OpenRouterProviderError {
   code?: string | number;
   providerName?: string;
+}
+
+/**
+ * The provider's rejection body, exactly as it answered.
+ *
+ * A classification code says a request was refused; only the body says what
+ * about it was refused. `invalid_function_parameters` cannot name which of
+ * twenty-eight tool schemas the provider objected to, and on 2 September a
+ * pinned Azure run failed on that code with nothing else retained anywhere in
+ * production — the sentence that would have named the tool was read and
+ * dropped at the transport.
+ *
+ * It is untrusted, unredacted provider text that may quote the request back,
+ * so it is admitted to exactly one destination: the regional inference archive
+ * (`docs/inference-lakehouse.md`), whose records already hold the complete
+ * request and response and which is barred from Workers Logs. **Never make this
+ * a log field, a durable run row, or anything a member sees.** It is a separate
+ * field from `providerError` rather than another key inside it so that
+ * sensitivity is carried by the name a caller has to type, not by a convention
+ * about which subkeys are safe to spread.
+ *
+ * No length ceiling is imposed. The archive is sized for multimodal request
+ * bodies and already stores this attempt's own prompt, so truncating the one
+ * field that explains the failure would trade the diagnosis for nothing.
+ */
+export type ProviderErrorBody = Record<string, unknown> | string;
+
+/**
+ * The rejection body as the transport received it: the decoded JSON envelope,
+ * or the raw text when the provider did not answer JSON at all — which is
+ * itself diagnostic, because a gateway's HTML error page and a model service's
+ * refusal fail the same way through a code alone.
+ */
+/**
+ * A refusal body decoded as far as it goes: JSON when it is JSON, the text
+ * itself otherwise. Which of the two it is decides `providerErrorKind`, and
+ * only the parsed form can be classified at all.
+ */
+function parsedProviderErrorBody(raw: string): unknown {
+  if (!raw) return undefined;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return raw;
+  }
+}
+
+export function providerErrorBody(payload: unknown): ProviderErrorBody | undefined {
+  if (typeof payload === "string") {
+    if (!payload.trim()) return undefined;
+    const parsed = parsedProviderErrorBody(payload);
+    // A body that parses to an object is archived as one, so a query can read
+    // into it. Anything else — a JSON array, a bare scalar, a gateway's HTML —
+    // is kept as the text it arrived as rather than reshaped into a lie about
+    // what the provider sent.
+    return isProviderErrorRecord(parsed) ? parsed : payload;
+  }
+  return isProviderErrorRecord(payload) ? payload : undefined;
+}
+
+/** A non-empty JSON object: the one shape worth archiving as structure. */
+function isProviderErrorRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    && Object.keys(value).length > 0;
 }
 
 export function openRouterProviderError(payload: unknown): OpenRouterProviderError | undefined {
@@ -1835,13 +1920,19 @@ export function openRouterProviderError(payload: unknown): OpenRouterProviderErr
   return Object.keys(captured).length > 0 ? captured : undefined;
 }
 
-async function readJsonResponse<T>(response: Response): Promise<T | null> {
-  const body = await response.text();
-  if (!body) return null;
+/**
+ * The decoded body, with the bytes kept beside it. A refusal that is not JSON —
+ * a gateway's HTML page, a proxy's plain text — decodes to nothing, and that
+ * text is then the only account of the failure there is, so the caller has to
+ * be able to reach it after the parse gives up.
+ */
+async function readJsonResponse<T>(response: Response): Promise<{ value: T | null; raw: string }> {
+  const raw = await response.text();
+  if (!raw) return { value: null, raw };
   try {
-    return JSON.parse(body) as T;
+    return { value: JSON.parse(raw) as T, raw };
   } catch {
-    return null;
+    return { value: null, raw };
   }
 }
 

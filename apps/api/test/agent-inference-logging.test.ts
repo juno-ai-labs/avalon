@@ -83,6 +83,16 @@ describe("agent inference logging", () => {
       disposition: "fallback",
       failureKind: "api",
       providerError: { code: 400, providerName: "xAI" },
+      // The body is archived, never logged: it is unredacted provider text that
+      // may quote the request back, and Workers Logs has no way to recognize
+      // that echo.
+      providerErrorBody: {
+        error: {
+          code: 400,
+          message: "Provider returned error",
+          metadata: { raw: "verbatim echo of the rejected prompt" },
+        },
+      },
     });
 
     expect(logged).toHaveBeenCalledTimes(1);
@@ -99,7 +109,9 @@ describe("agent inference logging", () => {
     });
     const entry = logged.mock.calls[0]![0] as Record<string, unknown>;
     expect(entry).not.toHaveProperty("provider_error_message");
+    expect(entry).not.toHaveProperty("provider_error_body");
     expect(JSON.stringify(entry)).not.toContain("Provider returned error");
+    expect(JSON.stringify(entry)).not.toContain("verbatim echo");
     logged.mockRestore();
   });
 
