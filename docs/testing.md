@@ -882,30 +882,27 @@ has. Assert the property that replaced it, and put the reason in the test.
 
 ## What the objects' RPC surface has, and has not
 
-Every public `async` method on `WorkspaceDO`, `SubstreamAgent`, `WorkstreamDO`
-and `BlockDashboardAgent` is an interface some Worker calls across a stub. As of
-2026-08-23, **60 of 79 are exercised somewhere in `test-workers/`**. The count is
-mechanical — grep each class's public async methods, then grep the suite for each
-name — so re-derive it rather than trusting this number after a change:
+Every public `async` method on `WorkspaceDO`, `SubstreamAgent`, and `WorkstreamDO`
+is an interface some Worker calls across a stub. Coverage counts are mechanical,
+so re-derive them rather than trusting a checked-in number after a change:
 
 ```bash
 grep -c "^  \(override \)\?async " apps/api/src/durable-objects/workspace-do.ts
 ```
-
-The nineteen with no workerd exercise, so nobody has to rediscover the list:
-
-| Object | Unexercised |
-| --- | --- |
-| `WorkspaceDO` | `activityEventSource`, `applyWorkstreamRegionalEffect`, `dueWorkstreamDirectory`, `existingOpportunities`, `getOpportunity`, `latestActivityEventCursor`, `notificationDirectoryState`, `opportunityWindow`, `resourceAccess`, `workstreamScheduleTargets` |
-| `SubstreamAgent` | `createRuntimeSuggestion`, `publishEvent`, `requestBlockDashboardRefresh` |
-| `WorkstreamDO` | `acknowledgeRegionalEffect`, `authorizeBlockDashboardBlockViewer`, `controlBlockDashboard`, `loadRegionalEffect` |
-| `BlockDashboardAgent` | `initializeBlock`, `revalidateViewerAccess` |
 
 The receipt storage class is covered differently, and better: `tool-receipt-authority.test.ts`
 reflects over `WorkstreamToolReceiptStorage`'s own methods and drives each one
 through the real endpoint, so a method added without a dispatch entry fails there
 without anyone remembering to add a case. That is worth copying for the next
 typed port rather than maintaining another hand-written list.
+
+The remaining methods without a workerd RPC exercise are:
+
+| Object | Unexercised |
+| --- | --- |
+| `WorkspaceDO` | `activityEventSource`, `applyWorkstreamRegionalEffect`, `dueWorkstreamDirectory`, `existingOpportunities`, `getOpportunity`, `latestActivityEventCursor`, `notificationDirectoryState`, `opportunityWindow`, `resourceAccess`, `workstreamScheduleTargets` |
+| `SubstreamAgent` | `publishEvent` |
+| `WorkstreamDO` | `acknowledgeRegionalEffect`, `loadRegionalEffect` |
 
 **Uncovered here does not mean untested** — several have Node suites over their
 storage class, which is the right rung for what the SQL decides. It means

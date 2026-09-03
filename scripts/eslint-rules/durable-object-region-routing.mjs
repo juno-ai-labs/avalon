@@ -1,6 +1,5 @@
 const durableObjectBindings = new Set([
   "CRASH_SYMBOLICATOR",
-  "BLOCK_DASHBOARD_AGENTS",
   "SUBSTREAM_AGENTS",
   "AUTOMATION_AGENTS",
   "WORKSPACE_DOS",

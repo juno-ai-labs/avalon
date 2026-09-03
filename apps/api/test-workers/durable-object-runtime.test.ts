@@ -3,7 +3,6 @@
 import { env } from "cloudflare:workers";
 import {
   asAutomationId,
-  asBlockId,
   asSubstreamId,
   asUserId,
   asWorkspaceId,
@@ -12,7 +11,6 @@ import {
   WORKSTREAM_REALTIME_MAX_FRAME_BYTES,
   WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
   WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
-  type BlockDashboardBlockRun,
 } from "@rally/contracts";
 import {
   evictDurableObject,
@@ -25,10 +23,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SubstreamAgent } from "../src/durable-objects/substream-agent";
 import type { AutomationAgent } from "../src/durable-objects/automation-agent";
-import {
-  BLOCK_DASHBOARD_AGENT_SCHEMA_MIGRATIONS,
-  BlockDashboardAgent,
-} from "../src/durable-objects/block-dashboard-agent";
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS, WorkspaceDO } from "../src/durable-objects/workspace-do";
 import { WORKSTREAM_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workstream-do";
 import { WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS } from "../src/durable-objects/workstream-object-schema";
@@ -46,7 +40,6 @@ import type { Env } from "../src/env";
 import { clearFlagTargetingAttributeCache } from "../src/services/flag-targeting-attributes";
 import {
   admitFixturePendingInput,
-  seedCanonicalMessageRecord,
   seedParticipantMessage,
   holdLoopExecuting,
 } from "./helpers/substream-fixture";
@@ -54,7 +47,6 @@ import {
   automationAgentName,
   substreamAgentName,
   substreamLoopId,
-  blockDashboardAgentName,
   workspaceDOName,
   workstreamDOName,
 } from "../src/durable-objects/names";
@@ -63,11 +55,6 @@ import {
   type WireWorkstreamRegionalEffect,
   type WorkstreamRegionalEffect,
 } from "../src/durable-objects/workstream-regional-effect";
-import {
-  BlockDashboardBlockDispatchSchema,
-  blockDashboardBlockResultHash,
-  type BlockDashboardBlockDispatch,
-} from "../src/durable-objects/block-dashboard-protocol";
 import { WorkspaceActivityEventListResultSchema } from "../src/durable-objects/workspace-activity-event-protocol";
 import {
   LegacyWorkspaceConnectorEventClaimResultSchema,
@@ -84,7 +71,6 @@ const WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-000000000102");
 const CHILD_SUBSTREAM_ID = asSubstreamId("00000000-0000-7000-8000-000000000103");
 const USER_ID = asUserId("00000000-0000-7000-8000-000000000104");
 const SESSION_ID = "runtime-test-session";
-const BLOCK_DASHBOARD_BLOCK_ID = asBlockId("00000000-0000-7000-8000-000000000109");
 const AUTOMATION_ID = asAutomationId("00000000-0000-7000-8000-00000000010a");
 
 beforeEach(async () => {
@@ -289,22 +275,10 @@ function connectorEvent(eventId = "00000000-0000-7000-8000-000000000301") {
   };
 }
 
-type TestableBlockDashboardAgent = {
-  recordStreamEvent(
-    dispatch: BlockDashboardBlockDispatch,
-    event: Record<string, unknown>,
-  ): Promise<void>;
-  persistAndSettle(
-    dispatch: BlockDashboardBlockDispatch,
-    outcome: { run: BlockDashboardBlockRun },
-    leaseToken: string,
-  ): Promise<{ failed: boolean; errorCode: string | null; retryAt: number | null }>;
-};
-
 type TestableSubstreamAgent = {
   publishAgentRuntimeEvent(event: Record<string, unknown>): Promise<void>;
+  deliverCommittedRealtimeEvent(event: Record<string, unknown>): Promise<void>;
   drainSemanticRealtimeOutbox(): Promise<void>;
-  scheduleBlockDashboardRefresh(triggerSequence: number): Promise<void>;
   semanticRealtimeEvent(input: Record<string, unknown>): Record<string, unknown>;
   nextLoopWorkAt(): number | null;
   agentDrain: { resume(operation: () => Promise<void>, settled: () => void): Promise<void> };
@@ -319,15 +293,8 @@ type TestableSubstreamAgent = {
   latestSocketRevocationAt: number;
 };
 
-type TestableDispatchScheduler = {
-  nextRunDispatchAt?(): number | null;
-  nextRunAt?(): number | null;
-  agentDrain: { resume(operation: () => Promise<void>, settled: () => void): Promise<void> };
-};
-
 type TestableWorkstreamDO = {
   applyChildEnvelope(substreamId: string, envelope: ReturnType<typeof effectEnvelope>): void;
-  deliverBlockDashboardDispatches(limit?: number): Promise<void>;
 };
 
 async function fetchAndDrain(
@@ -765,8 +732,9 @@ describe("Durable Objects in the Workers runtime", () => {
   it("does not read a preparing work stream while resolving its first model", async () => {
     await seedOpenAuthority();
     await seedCreatorProfile();
+    const modelTargetingWorkstreamId = asWorkstreamId("00000000-0000-7000-8000-0000000001ab");
     const child = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
-      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+      substreamAgentName("global", WORKSPACE_ID, modelTargetingWorkstreamId),
     ));
     const auth = {
       sessionId: SESSION_ID,
@@ -804,7 +772,7 @@ describe("Durable Objects in the Workers runtime", () => {
 
       await product.initialize(auth, {
         workspaceId: WORKSPACE_ID,
-        workstreamId: WORKSTREAM_ID,
+        workstreamId: modelTargetingWorkstreamId,
         generation: 1,
         title: "Authority-safe model targeting",
         objective: "Resolve the first model without querying a preparing object",
@@ -1044,23 +1012,6 @@ describe("Durable Objects in the Workers runtime", () => {
         absentTables: ["agent_run_dispatches", "run_steering"],
       },
       {
-        namespace: env.BLOCK_DASHBOARD_AGENTS,
-        name: blockDashboardAgentName(
-          "global",
-          WORKSPACE_ID,
-          WORKSTREAM_ID,
-          BLOCK_DASHBOARD_BLOCK_ID,
-        ),
-        constructor: BlockDashboardAgent,
-        migrations: BLOCK_DASHBOARD_AGENT_SCHEMA_MIGRATIONS.length,
-        tables: [
-          "_sql_schema_migrations",
-          "block_dashboard_block_identity",
-          "agent_run_dispatches",
-          "latest_dispatch_freshness",
-        ],
-      },
-      {
         namespace: env.WORKSTREAM_DOS,
         name: workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
         constructor: WorkstreamDO,
@@ -1070,9 +1021,6 @@ describe("Durable Objects in the Workers runtime", () => {
           "substream_directory",
           "durable_outbox",
           "workstream_socket_ticket_receipts",
-          "block_dashboard_configuration_versions",
-          "block_dashboard_dispatch_outbox",
-          "block_dashboard_source_refresh_outbox",
         ],
       },
       {
@@ -1230,125 +1178,6 @@ describe("Durable Objects in the Workers runtime", () => {
     expect(ids.some((id) => id.equals(childId))).toBe(true);
   });
 
-  it("freezes HyperSight before a pending tool and advances only after the pair settles", async () => {
-    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
-      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
-    ));
-    await fetchAndDrain(stub, "https://substream.test/health");
-    await runInDurableObject(stub, async (_instance, state) => {
-      state.storage.sql.exec(
-        `INSERT INTO workstream
-           (id, workstream_key, parent_workspace_key, region, authority_mode,
-            authority_generation, title, description, scope, exact_state,
-            state_reason_code, next_sequence_number, next_attention_ordinal,
-            authority_epoch, scope_epoch, source_authorization_floor, listing_epoch,
-            deletion_epoch, run_revision, created_at, last_people_activity_at,
-            state_changed_at, updated_at)
-         VALUES (1, ?, ?, 'global', 'authoritative', 1, '', '', 'workspace', 'running',
-                 'test', 4, 3, 1, 0, 0, 1, 0, 1, 1000, 1000, 1000, 1000)`,
-        WORKSTREAM_ID,
-        WORKSPACE_ID,
-      );
-      state.storage.sql.exec(
-        `INSERT INTO substreams
-           (id, kind, inherit_mode, inherit_from_substream_id, inherit_fence_seq,
-            depth, return_mode, origin_message_id, owner_user_id, audience,
-            tool_policy, status, created_at, closed_at)
-         VALUES ('0', 'main', 'none', NULL, NULL, 0, 'none', NULL, NULL,
-                 'workspace', 'full', 'open', 1000, NULL)`,
-      );
-      state.storage.sql.exec(
-        `INSERT INTO substream_agent_identity(id, external_substream_id, created_at, updated_at)
-         VALUES (1, '0', 1000, 1000)`,
-      );
-      state.storage.sql.exec(
-        `INSERT INTO resource_inventory_revision(id, revision, updated_at) VALUES (1, 0, 1000)`,
-      );
-      await seedParticipantMessage(state, {
-        id: "message-1", sequence: 1, text: "before tool", authorType: "agent",
-        attentionOrdinal: 1, now: 1_000,
-      });
-      await seedCanonicalMessageRecord(state, {
-        id: "tool-2", sequence: 2, messageType: "tool",
-        structuredContentJson: '{"invocation":{"status":"pending"}}',
-        effectIntentId: "effect-2", toolName: "terminal_run", toolStatus: "pending", now: 1_001,
-      });
-      await seedParticipantMessage(state, {
-        id: "message-3", sequence: 3, text: "queued while the tool runs",
-        authorUserId: USER_ID, attentionOrdinal: 2, now: 1_002,
-      });
-    });
-
-    const requestRefresh = async (triggerSequence: number): Promise<void> => {
-      const response = await fetchAndDrain(
-        stub,
-        "https://substream.test/internal/block-dashboard-refresh-request",
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID, triggerSequence }),
-        },
-      );
-      expect(response.status).toBe(200);
-    };
-    await requestRefresh(3);
-    await runInDurableObject(stub, async (_instance, state) => {
-      const pending = JSON.parse(state.storage.sql.exec<{ payload_json: string }>(
-        `SELECT payload_json FROM due_work WHERE job_key = 'block_dashboard_refresh'`,
-      ).one().payload_json) as { contextFence: { throughSequence: number } };
-      expect(pending.contextFence.throughSequence).toBe(1);
-      state.storage.sql.exec(
-        `UPDATE participant_transcript_blocks
-            SET lifecycle_state = 'completed', revision = revision + 1
-          WHERE turn_id = 'tool-2' AND block_kind = 'tool'`,
-      );
-    });
-
-    await requestRefresh(4);
-    await runInDurableObject(stub, (_instance, state) => {
-      const pending = JSON.parse(state.storage.sql.exec<{ payload_json: string }>(
-        `SELECT payload_json FROM due_work WHERE job_key = 'block_dashboard_refresh'`,
-      ).one().payload_json) as { contextFence: { throughSequence: number } };
-      expect(pending.contextFence.throughSequence).toBe(3);
-    });
-  });
-
-  it("gives each stable HyperSight block an isolated SQLite dispatch ledger that survives eviction", async () => {
-    const secondBlockId = asBlockId("00000000-0000-7000-8000-000000000110");
-    const first = env.BLOCK_DASHBOARD_AGENTS.get(env.BLOCK_DASHBOARD_AGENTS.idFromName(
-      blockDashboardAgentName("global", WORKSPACE_ID, WORKSTREAM_ID, BLOCK_DASHBOARD_BLOCK_ID),
-    ));
-    const second = env.BLOCK_DASHBOARD_AGENTS.get(env.BLOCK_DASHBOARD_AGENTS.idFromName(
-      blockDashboardAgentName("global", WORKSPACE_ID, WORKSTREAM_ID, secondBlockId),
-    ));
-    await Promise.all([
-      fetchAndDrain(first, "https://block-dashboard.test/health"),
-      fetchAndDrain(second, "https://block-dashboard.test/health"),
-    ]);
-    await runInDurableObject(first, (_instance, state) => {
-      state.storage.sql.exec(
-        `INSERT INTO block_dashboard_block_identity
-           (id, workspace_id, workstream_id, block_id, region, created_at)
-         VALUES (1, ?, ?, ?, 'global', 1)`,
-        WORKSPACE_ID,
-        WORKSTREAM_ID,
-        BLOCK_DASHBOARD_BLOCK_ID,
-      );
-    });
-    await runInDurableObject(second, (_instance, state) => {
-      expect(state.storage.sql.exec<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM block_dashboard_block_identity`,
-      ).one().count).toBe(0);
-    });
-    await evictDurableObject(first);
-    await fetchAndDrain(first, "https://block-dashboard.test/health");
-    await runInDurableObject(first, (_instance, state) => {
-      expect(state.storage.sql.exec<{ block_id: string }>(
-        `SELECT block_id FROM block_dashboard_block_identity WHERE id = 1`,
-      ).one().block_id).toBe(BLOCK_DASHBOARD_BLOCK_ID);
-    });
-  });
-
   it("uses a ref-counted heartbeat alarm only while an in-memory loop is active", async () => {
     const id = env.SUBSTREAM_AGENTS.idFromName(
       substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID, CHILD_SUBSTREAM_ID),
@@ -1462,636 +1291,6 @@ describe("Durable Objects in the Workers runtime", () => {
       expect(replacements.map((row) => row.source_version)).toEqual([1, 2, 3]);
       expect(replacements.slice(0, 2).every((row) => row.state === "inflight")).toBe(true);
       state.storage.sql.exec(`DELETE FROM durable_outbox`);
-    });
-  });
-
-  it("keeps HyperSight configuration and viewer preferences authoritative in WorkstreamDO", async () => {
-    const stub = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
-      workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
-    ));
-    const at = "2026-08-17T20:00:00.000Z";
-    const initialized = await fetchAndDrain(stub, "https://workstream.test/internal/substream-effects", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        substreamId: "0",
-        envelopes: [effectEnvelope({
-          kind: "directory_common",
-          title: "HyperSight authority",
-          description: "The parent owns dashboard configuration",
-          preview: "Control plane",
-          scope: "workspace",
-          state: "idle",
-          systemKind: null,
-          lastActivityAt: at,
-          completedAt: null,
-          archivedAt: null,
-          latestAttentionOrdinal: 9,
-        }, "block-dashboard-common")],
-      }),
-    });
-    expect(initialized.status).toBe(200);
-
-    const versionId = "00000000-0000-7000-8000-000000000111";
-    const updated = await fetchAndDrain(stub, "https://workstream.test/internal/block-dashboard", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        operation: "update_configuration",
-        workspaceId: WORKSPACE_ID,
-        workstreamId: WORKSTREAM_ID,
-        userId: USER_ID,
-        configurationVersionId: versionId,
-        createdAt: at,
-        input: {
-          expectedVersionNumber: 0,
-          blocks: [{ id: BLOCK_DASHBOARD_BLOCK_ID, prompt: "" }],
-        },
-      }),
-    });
-    expect(updated.status).toBe(200);
-    expect(await updated.json()).toMatchObject({
-      blockDashboard: {
-        versionId,
-        versionNumber: 1,
-        blocks: [{ id: BLOCK_DASHBOARD_BLOCK_ID, prompt: "", latestRun: null }],
-      },
-      runs: [],
-    });
-
-    const conflict = await fetchAndDrain(stub, "https://workstream.test/internal/block-dashboard", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        operation: "update_configuration",
-        workspaceId: WORKSPACE_ID,
-        workstreamId: WORKSTREAM_ID,
-        userId: USER_ID,
-        configurationVersionId: "00000000-0000-7000-8000-000000000112",
-        createdAt: at,
-        input: { expectedVersionNumber: 0, blocks: [] },
-      }),
-    });
-    expect(conflict.status).toBe(409);
-    expect(await conflict.json()).toEqual({ error: "block_dashboard_version_conflict" });
-
-    const preference = await fetchAndDrain(stub, "https://workstream.test/internal/block-dashboard", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        operation: "update_preference",
-        workspaceId: WORKSPACE_ID,
-        workstreamId: WORKSTREAM_ID,
-        userId: USER_ID,
-        visible: true,
-        updatedAt: at,
-      }),
-    });
-    expect(await preference.json()).toEqual({ preference: { visible: true, updatedAt: at } });
-    await runInDurableObject(stub, (_instance, state) => {
-      expect(state.storage.sql.exec<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM block_dashboard_configuration_versions`,
-      ).one().count).toBe(1);
-      expect(state.storage.sql.exec<{ visible: number }>(
-        `SELECT visible FROM block_dashboard_user_preferences WHERE user_id = ?`,
-        USER_ID,
-      ).one().visible).toBe(1);
-    });
-  });
-
-  it("dispatches a block to its named agent and applies versioned results idempotently", async () => {
-    await seedOpenAuthority();
-    const stub = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
-      workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
-    ));
-    const at = "2026-08-17T20:00:00.000Z";
-    await fetchAndDrain(stub, "https://workstream.test/internal/substream-effects", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        substreamId: "0",
-        envelopes: [effectEnvelope({
-          kind: "directory_common",
-          title: "HyperSight dispatch",
-          description: "One block, one agent",
-          preview: "Dispatch",
-          scope: "workspace",
-          state: "idle",
-          systemKind: null,
-          lastActivityAt: at,
-          completedAt: null,
-          archivedAt: null,
-          latestAttentionOrdinal: 9,
-        }, "block-dashboard-dispatch-common")],
-      }),
-    });
-    const versionId = "00000000-0000-7000-8000-000000000113";
-    const updated = await fetchAndDrain(stub, "https://workstream.test/internal/block-dashboard", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        operation: "update_configuration",
-        workspaceId: WORKSPACE_ID,
-        workstreamId: WORKSTREAM_ID,
-        userId: USER_ID,
-        configurationVersionId: versionId,
-        createdAt: at,
-        input: {
-          expectedVersionNumber: 0,
-          blocks: [{ id: BLOCK_DASHBOARD_BLOCK_ID, prompt: "Summarize the current state" }],
-        },
-      }),
-    });
-    expect(await updated.json()).toMatchObject({ runs: [] });
-    const scheduled = await fetchAndDrain(stub, "https://workstream.test/internal/block-dashboard", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        operation: "schedule_refresh",
-        workspaceId: WORKSPACE_ID,
-        workstreamId: WORKSTREAM_ID,
-        triggerSequence: 9,
-        contextFence: { throughSequence: 0, compaction: null },
-      }),
-    });
-    const payload = await scheduled.json() as { runs: BlockDashboardBlockRun[] };
-    expect(payload.runs).toHaveLength(1);
-    const queued = payload.runs[0]!;
-    await runInDurableObject(stub, async (instance) => {
-      await (instance as unknown as TestableWorkstreamDO).deliverBlockDashboardDispatches();
-    });
-
-    const blockStub = env.BLOCK_DASHBOARD_AGENTS.get(env.BLOCK_DASHBOARD_AGENTS.idFromName(
-      blockDashboardAgentName("global", WORKSPACE_ID, WORKSTREAM_ID, BLOCK_DASHBOARD_BLOCK_ID),
-    ));
-    await fetchAndDrain(blockStub, "https://block-dashboard.test/health");
-    await runInDurableObject(blockStub, (_instance, state) => {
-      expect(state.storage.sql.exec<{ block_id: string }>(
-        `SELECT block_id FROM block_dashboard_block_identity WHERE id = 1`,
-      ).one().block_id).toBe(BLOCK_DASHBOARD_BLOCK_ID);
-      expect(state.storage.sql.exec<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM agent_run_dispatches WHERE block_run_id = ?`,
-        queued.id,
-      ).one().count).toBe(1);
-    });
-
-    const running = {
-      ...queued,
-      status: "running" as const,
-      startedAt: "2026-08-17T20:00:01.000Z",
-    };
-    const effect = {
-      operation: "block_result",
-      workspaceId: WORKSPACE_ID,
-      workstreamId: WORKSTREAM_ID,
-      blockId: BLOCK_DASHBOARD_BLOCK_ID,
-      sourceVersion: 1,
-      payloadHash: blockDashboardBlockResultHash(running),
-      run: running,
-    };
-    const first = await fetchAndDrain(stub, "https://workstream.test/internal/block-dashboard", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(effect),
-    });
-    expect(await first.json()).toEqual({ accepted: true });
-    const duplicate = await fetchAndDrain(stub, "https://workstream.test/internal/block-dashboard", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(effect),
-    });
-    expect(await duplicate.json()).toEqual({ accepted: false });
-    await runInDurableObject(stub, (_instance, state) => {
-      expect(state.storage.sql.exec<{ status: string; started_at: number }>(
-        `SELECT status, started_at FROM block_dashboard_block_runs WHERE block_run_id = ?`,
-        queued.id,
-      ).one()).toEqual({ status: "running", started_at: Date.parse(running.startedAt) });
-    });
-
-    const checkpointText = "Streaming HyperSight output survives eviction";
-    await runInDurableObject(blockStub, async (instance, state) => {
-      const dispatch = BlockDashboardBlockDispatchSchema.parse(JSON.parse(
-        state.storage.sql.exec<{ dispatch_json: string }>(
-          `SELECT dispatch_json FROM agent_run_dispatches WHERE block_run_id = ?`,
-          queued.id,
-        ).one().dispatch_json,
-      ));
-      const checkpoint = {
-        streamId: "00000000-0000-7000-8000-000000000116",
-        harnessRunId: dispatch.harnessRunId,
-        turnId: "turn-runtime-resume",
-        epoch: 0,
-        streamSeq: 4,
-        seenTurnIds: ["turn-runtime-resume"],
-        text: checkpointText,
-        turnStartOffset: 0,
-        roomSequence: 4,
-        createdAt: "2026-08-17T20:00:02.000Z",
-      };
-      state.storage.sql.exec(
-        `UPDATE agent_run_dispatches SET state = 'running', terminal_outcome_json = NULL,
-           started_at = ?, completed_at = NULL WHERE block_run_id = ?`,
-        Date.parse("2026-08-17T20:00:01.000Z"),
-        queued.id,
-      );
-      const testable = instance as unknown as TestableBlockDashboardAgent;
-      await testable.recordStreamEvent(dispatch, {
-        type: "stream_started",
-        streamId: checkpoint.streamId,
-        harnessRunId: dispatch.harnessRunId,
-        turnId: checkpoint.turnId,
-        epoch: checkpoint.epoch,
-        streamSeq: 0,
-        reset: false,
-      });
-      await testable.recordStreamEvent(dispatch, {
-        type: "stream_delta",
-        streamId: checkpoint.streamId,
-        harnessRunId: dispatch.harnessRunId,
-        turnId: checkpoint.turnId,
-        epoch: checkpoint.epoch,
-        streamSeq: 1,
-        reset: false,
-        delta: checkpointText,
-      });
-      expect(state.storage.sql.exec<{ revision: number }>(
-        `SELECT revision FROM agent_stream_checkpoint WHERE id = 1`,
-      ).one().revision).toBe(2);
-    });
-    const blockSocketResponse = await blockStub.fetch("https://block-dashboard.test/socket", {
-      headers: {
-        Upgrade: "websocket",
-        "x-rally-region": "global",
-        "x-rally-workspace-id": WORKSPACE_ID,
-        "x-rally-workstream-id": WORKSTREAM_ID,
-        "x-rally-block-dashboard-block-id": BLOCK_DASHBOARD_BLOCK_ID,
-        "x-rally-user-id": USER_ID,
-        "x-rally-session-id": SESSION_ID,
-        "x-rally-socket-ticket-id": "00000000-0000-7000-8000-000000000117",
-        "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
-      },
-    });
-    if (blockSocketResponse.status !== 101) {
-      throw new Error(`HyperSight socket rejected: ${blockSocketResponse.status} ${await blockSocketResponse.text()}`);
-    }
-    const blockSocket = blockSocketResponse.webSocket!;
-    blockSocket.accept();
-    const replayed = await fetchAndDrain(blockStub, "https://block-dashboard.test/socket", {
-      headers: {
-        Upgrade: "websocket",
-        "x-rally-region": "global",
-        "x-rally-workspace-id": WORKSPACE_ID,
-        "x-rally-workstream-id": WORKSTREAM_ID,
-        "x-rally-block-dashboard-block-id": BLOCK_DASHBOARD_BLOCK_ID,
-        "x-rally-user-id": USER_ID,
-        "x-rally-session-id": SESSION_ID,
-        "x-rally-socket-ticket-id": "00000000-0000-7000-8000-000000000117",
-        "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
-      },
-    });
-    expect(replayed.status).toBe(401);
-    const expired = await fetchAndDrain(blockStub, "https://block-dashboard.test/socket", {
-      headers: {
-        Upgrade: "websocket",
-        "x-rally-region": "global",
-        "x-rally-workspace-id": WORKSPACE_ID,
-        "x-rally-workstream-id": WORKSTREAM_ID,
-        "x-rally-block-dashboard-block-id": BLOCK_DASHBOARD_BLOCK_ID,
-        "x-rally-user-id": USER_ID,
-        "x-rally-session-id": SESSION_ID,
-        "x-rally-socket-ticket-id": "00000000-0000-7000-8000-000000000118",
-        "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) - 1),
-      },
-    });
-    expect(expired.status).toBe(401);
-    await evictDurableObject(blockStub);
-    const pong = nextMessage(blockSocket);
-    blockSocket.send("ping");
-    expect((await pong).data).toBe("pong");
-    const snapshot = nextMessage(blockSocket);
-    blockSocket.send(JSON.stringify({ type: "subscribe" }));
-    expect(JSON.parse(String((await snapshot).data))).toMatchObject({
-      type: "block_dashboard_block_snapshot",
-      blockId: BLOCK_DASHBOARD_BLOCK_ID,
-      run: { id: queued.id, status: "running", markdown: checkpointText },
-      streamCheckpoint: { roomSequence: 2, text: checkpointText },
-    });
-
-    const continuedText = " and continues without a visual reset";
-    const continued = nextMessage(blockSocket);
-    await runInDurableObject(blockStub, async (instance, state) => {
-      const dispatch = BlockDashboardBlockDispatchSchema.parse(JSON.parse(
-        state.storage.sql.exec<{ dispatch_json: string }>(
-          `SELECT dispatch_json FROM agent_run_dispatches WHERE block_run_id = ?`,
-          queued.id,
-        ).one().dispatch_json,
-      ));
-      await (instance as unknown as TestableBlockDashboardAgent).recordStreamEvent(dispatch, {
-        type: "stream_delta",
-        streamId: "00000000-0000-7000-8000-000000000116",
-        harnessRunId: dispatch.harnessRunId,
-        turnId: "turn-runtime-resume",
-        epoch: 0,
-        streamSeq: 2,
-        reset: false,
-        delta: continuedText,
-      });
-      const persisted = JSON.parse(state.storage.sql.exec<{ checkpoint_json: string }>(
-        `SELECT checkpoint_json FROM agent_stream_checkpoint WHERE id = 1`,
-      ).one().checkpoint_json) as { roomSequence: number; text: string };
-      expect(persisted).toMatchObject({
-        roomSequence: 3,
-        text: checkpointText + continuedText,
-      });
-    });
-    expect(JSON.parse(String((await continued).data))).toMatchObject({
-      type: "block_dashboard_block_stream_checkpoint",
-      blockRunId: queued.id,
-      streamCheckpoint: { roomSequence: 3, text: checkpointText + continuedText },
-    });
-
-    const terminalFrames = nextMessages(blockSocket, 2);
-    await runInDurableObject(blockStub, async (instance, state) => {
-      const dispatch = BlockDashboardBlockDispatchSchema.parse(JSON.parse(
-        state.storage.sql.exec<{ dispatch_json: string }>(
-          `SELECT dispatch_json FROM agent_run_dispatches WHERE block_run_id = ?`,
-          queued.id,
-        ).one().dispatch_json,
-      ));
-      const completed = {
-        ...running,
-        status: "completed" as const,
-        markdown: checkpointText + continuedText,
-        completedAt: "2026-08-17T20:00:03.000Z",
-      };
-      state.storage.sql.exec(
-        `UPDATE agent_run_dispatches
-            SET state = 'running', lease_token = 'successor-terminal-owner',
-                lease_expires_at = ?
-          WHERE block_run_id = ?`,
-        Date.now() + 60_000,
-        queued.id,
-      );
-      const testable = instance as unknown as TestableBlockDashboardAgent;
-      await expect(testable.persistAndSettle(dispatch, {
-        run: completed,
-      }, "obsolete-terminal-owner")).rejects.toMatchObject({
-        code: "block_dashboard_dispatch_ownership_lost",
-      });
-      expect(state.storage.sql.exec<{
-        lease_token: string | null;
-        terminal_outcome_json: string | null;
-      }>(
-        `SELECT lease_token, terminal_outcome_json FROM agent_run_dispatches
-          WHERE block_run_id = ?`,
-        queued.id,
-      ).one()).toEqual({
-        lease_token: "successor-terminal-owner",
-        terminal_outcome_json: null,
-      });
-      expect(state.storage.sql.exec<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM agent_stream_checkpoint`,
-      ).one().count).toBe(1);
-
-      await testable.persistAndSettle(dispatch, {
-        run: completed,
-      }, "successor-terminal-owner");
-      expect(state.storage.sql.exec<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM agent_stream_checkpoint`,
-      ).one().count).toBe(0);
-    });
-    const terminalEvents = (await terminalFrames).map((event) => JSON.parse(String(event.data)));
-    expect(terminalEvents.find((event) => event.type === "block_dashboard_block_stream_checkpoint"))
-      .toMatchObject({
-      type: "block_dashboard_block_stream_checkpoint",
-      blockRunId: queued.id,
-      streamCheckpoint: null,
-    });
-    // A block socket is closed by the access-revocation queue and by nothing
-    // else; the agent never re-asks D1 on its own. See docs/access-revocation.md.
-    const blockClosed = nextClose(blockSocket);
-    await blockStub.revokeSocketAccess({
-      reason: "workspace_membership_removed",
-      workspaceId: WORKSPACE_ID,
-      userId: USER_ID,
-      sessionId: null,
-    });
-    expect((await blockClosed).code).toBe(1008);
-  });
-
-  it("coalesces obsolete queued HyperSight dispatches while preserving an in-flight run", async () => {
-    await seedOpenAuthority();
-    await env.DB.prepare(
-      `UPDATE workstream_authority_control SET phase = 'maintenance_importing' WHERE id = 1`,
-    ).run();
-    const blockStub = env.BLOCK_DASHBOARD_AGENTS.get(env.BLOCK_DASHBOARD_AGENTS.idFromName(
-      blockDashboardAgentName("global", WORKSPACE_ID, WORKSTREAM_ID, BLOCK_DASHBOARD_BLOCK_ID),
-    ));
-    const versionId = "00000000-0000-7000-8000-000000000131";
-    const dispatch = (ordinal: number) => BlockDashboardBlockDispatchSchema.parse({
-      region: "global",
-      workspaceId: WORKSPACE_ID,
-      workstreamId: WORKSTREAM_ID,
-      blockId: BLOCK_DASHBOARD_BLOCK_ID,
-      blockRunId: `00000000-0000-7000-8000-${String(132 + ordinal).padStart(12, "0")}`,
-      harnessRunId: `00000000-0000-7000-8000-${String(142 + ordinal).padStart(12, "0")}`,
-      configurationVersionId: versionId,
-      configurationVersionNumber: 1,
-      prompt: "Summarize the newest state",
-      triggerSequence: ordinal,
-      contextFence: { throughSequence: ordinal, compaction: null },
-      createdAt: new Date(Date.parse("2026-08-18T12:00:00.000Z") + ordinal).toISOString(),
-    });
-    const first = dispatch(1);
-    const second = dispatch(2);
-    const newest = dispatch(3);
-    const staleRetry = dispatch(0);
-    await blockStub.dispatchRun(first);
-    await blockStub.dispatchRun(second);
-    await blockStub.dispatchRun(newest);
-    await blockStub.dispatchRun(staleRetry);
-
-    await runInDurableObject(blockStub, (_instance, state) => {
-      const rows = state.storage.sql.exec<{
-        block_run_id: string;
-        state: string;
-        terminal_outcome_json: string | null;
-      }>(
-        `SELECT block_run_id, state, terminal_outcome_json
-           FROM agent_run_dispatches ORDER BY created_at, block_run_id`,
-      ).toArray();
-      expect(rows).toHaveLength(4);
-      expect(rows.find((row) => row.block_run_id === newest.blockRunId)?.terminal_outcome_json).toBeNull();
-      expect(rows.find((row) => row.block_run_id === staleRetry.blockRunId)).toMatchObject({
-        state: "completed",
-      });
-      expect(JSON.parse(rows.find((row) =>
-        row.block_run_id === staleRetry.blockRunId)!.terminal_outcome_json!)).toMatchObject({
-        run: { status: "stopped", error: { code: "block_dashboard_run_superseded" } },
-      });
-      for (const row of rows.filter((candidate) => candidate.block_run_id !== newest.blockRunId)) {
-        if (row.terminal_outcome_json === null) expect(row.state).toBe("running");
-        else expect(JSON.parse(row.terminal_outcome_json)).toMatchObject({
-          run: { status: "stopped", error: { code: "block_dashboard_run_superseded" } },
-        });
-      }
-      expect(rows.filter((row) => row.block_run_id !== newest.blockRunId
-        && row.state === "queued" && row.terminal_outcome_json === null)).toHaveLength(0);
-      expect(rows.filter((row) => row.state === "running" && row.terminal_outcome_json === null).length)
-        .toBeLessThanOrEqual(1);
-    });
-  });
-
-  it("holds later same-block dispatches behind an older parent outbox retry", async () => {
-    await seedOpenAuthority();
-    await env.DB.prepare(
-      `UPDATE workstream_authority_control SET phase = 'maintenance_importing' WHERE id = 1`,
-    ).run();
-    const parent = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
-      workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
-    ));
-    await fetchAndDrain(parent, "https://workstream.test/health");
-    const configurationVersionId = "00000000-0000-7000-8000-000000000151";
-    const makeDispatch = (ordinal: number) => BlockDashboardBlockDispatchSchema.parse({
-      region: "global",
-      workspaceId: WORKSPACE_ID,
-      workstreamId: WORKSTREAM_ID,
-      blockId: BLOCK_DASHBOARD_BLOCK_ID,
-      blockRunId: `00000000-0000-7000-8000-${String(151 + ordinal).padStart(12, "0")}`,
-      harnessRunId: `00000000-0000-7000-8000-${String(161 + ordinal).padStart(12, "0")}`,
-      configurationVersionId,
-      configurationVersionNumber: 1,
-      prompt: "Respect per-block head-of-line delivery",
-      triggerSequence: ordinal,
-      contextFence: { throughSequence: ordinal, compaction: null },
-      createdAt: new Date(Date.parse("2026-08-18T12:00:00.000Z") + ordinal).toISOString(),
-    });
-    const older = makeDispatch(1);
-    const newer = makeDispatch(2);
-    const notBefore = Date.now() + 60_000;
-    await runInDurableObject(parent, async (instance, state) => {
-      state.storage.sql.exec(
-        `INSERT INTO block_dashboard_configuration_versions
-           (configuration_version_id, version_number, blocks_json, created_by_user_id, created_at)
-         VALUES (?, 1, ?, ?, 1)`,
-        configurationVersionId,
-        JSON.stringify([{ id: BLOCK_DASHBOARD_BLOCK_ID, prompt: older.prompt }]),
-        USER_ID,
-      );
-      for (const [dispatch, createdAt, dueAt] of [
-        [older, 1, notBefore],
-        [newer, 2, Date.now()],
-      ] as const) {
-        state.storage.sql.exec(
-          `INSERT INTO block_dashboard_block_runs
-             (block_run_id, configuration_version_id, block_id, prompt, trigger_sequence,
-              harness_run_id, status, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, 'queued', ?)`,
-          dispatch.blockRunId,
-          configurationVersionId,
-          BLOCK_DASHBOARD_BLOCK_ID,
-          dispatch.prompt,
-          dispatch.triggerSequence,
-          dispatch.harnessRunId,
-          createdAt,
-        );
-        state.storage.sql.exec(
-          `INSERT INTO block_dashboard_dispatch_outbox
-             (block_run_id, block_id, dispatch_json, attempts, not_before, created_at)
-           VALUES (?, ?, ?, 0, ?, ?)`,
-          dispatch.blockRunId,
-          BLOCK_DASHBOARD_BLOCK_ID,
-          JSON.stringify(dispatch),
-          dueAt,
-          createdAt,
-        );
-      }
-      await (instance as unknown as TestableWorkstreamDO).deliverBlockDashboardDispatches();
-      expect(state.storage.sql.exec<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM block_dashboard_dispatch_outbox`,
-      ).one().count).toBe(2);
-    });
-    await runInDurableObject(parent, async (instance, state) => {
-      state.storage.sql.exec(
-        `UPDATE block_dashboard_dispatch_outbox SET not_before = 0 WHERE block_run_id = ?`,
-        older.blockRunId,
-      );
-      const testable = instance as unknown as TestableWorkstreamDO;
-      await testable.deliverBlockDashboardDispatches();
-      expect(state.storage.sql.exec<{ block_run_id: string }>(
-        `SELECT block_run_id FROM block_dashboard_dispatch_outbox`,
-      ).one().block_run_id).toBe(newer.blockRunId);
-      await testable.deliverBlockDashboardDispatches();
-      expect(state.storage.sql.exec<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM block_dashboard_dispatch_outbox`,
-      ).one().count).toBe(0);
-    });
-    const child = env.BLOCK_DASHBOARD_AGENTS.get(env.BLOCK_DASHBOARD_AGENTS.idFromName(
-      blockDashboardAgentName("global", WORKSPACE_ID, WORKSTREAM_ID, BLOCK_DASHBOARD_BLOCK_ID),
-    ));
-    await runInDurableObject(child, (_instance, state) => {
-      const rows = state.storage.sql.exec<{ block_run_id: string }>(
-        `SELECT block_run_id FROM agent_run_dispatches ORDER BY created_at, block_run_id`,
-      ).toArray();
-      expect(rows.map((row) => row.block_run_id)).toEqual([older.blockRunId, newer.blockRunId]);
-    });
-  });
-
-  it("terminalizes a malformed HyperSight dispatch instead of retrying it forever", async () => {
-    await seedOpenAuthority();
-    const parent = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
-      workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
-    ));
-    await fetchAndDrain(parent, "https://workstream.test/health");
-    const configurationVersionId = "00000000-0000-7000-8000-000000000171";
-    const blockRunId = "00000000-0000-7000-8000-000000000172";
-    await runInDurableObject(parent, async (instance, state) => {
-      state.storage.sql.exec(
-        `INSERT INTO block_dashboard_configuration_versions
-           (configuration_version_id, version_number, blocks_json, created_by_user_id, created_at)
-         VALUES (?, 1, ?, ?, 1)`,
-        configurationVersionId,
-        JSON.stringify([{ id: BLOCK_DASHBOARD_BLOCK_ID, prompt: "Summarize" }]),
-        USER_ID,
-      );
-      state.storage.sql.exec(
-        `INSERT INTO block_dashboard_block_runs
-           (block_run_id, configuration_version_id, block_id, prompt, trigger_sequence,
-            harness_run_id, status, created_at)
-         VALUES (?, ?, ?, 'Summarize', 1, ?, 'queued', 1)`,
-        blockRunId,
-        configurationVersionId,
-        BLOCK_DASHBOARD_BLOCK_ID,
-        "00000000-0000-7000-8000-000000000173",
-      );
-      state.storage.sql.exec(
-        `INSERT INTO block_dashboard_dispatch_outbox
-           (block_run_id, block_id, dispatch_json, attempts, not_before, created_at)
-         VALUES (?, ?, ?, 0, 0, 1)`,
-        blockRunId,
-        BLOCK_DASHBOARD_BLOCK_ID,
-        JSON.stringify({ schema: "drifted" }),
-      );
-
-      await (instance as unknown as TestableWorkstreamDO).deliverBlockDashboardDispatches();
-
-      expect(state.storage.sql.exec<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM block_dashboard_dispatch_outbox`,
-      ).one().count).toBe(0);
-      const run = state.storage.sql.exec<{
-        status: string;
-        error_json: string | null;
-        completed_at: number | null;
-      }>(
-        `SELECT status, error_json, completed_at FROM block_dashboard_block_runs
-          WHERE block_run_id = ?`,
-        blockRunId,
-      ).one();
-      expect(run.status).toBe("failed");
-      expect(run.completed_at).not.toBeNull();
-      expect(JSON.parse(run.error_json!)).toMatchObject({
-        code: "block_dashboard_dispatch_invalid",
-      });
     });
   });
 
@@ -2458,14 +1657,14 @@ describe("Durable Objects in the Workers runtime", () => {
     try {
       const delivered = nextMessage(socket);
       await expect(stub.notifyProductFeatureFlagChanged(
-        "hypersight-enabled",
+        "meeting-recording-enabled",
         WORKSPACE_ID,
         "wnam",
       )).resolves.toBe(1);
       expect(JSON.parse(String((await delivered).data))).toMatchObject({
         type: "workspace_feature_flags",
-        changedFlag: "hypersight-enabled",
-        flags: { hypersightEnabled: false, meetingRecordingEnabled: false },
+        changedFlag: "meeting-recording-enabled",
+        flags: { meetingRecordingEnabled: false },
       });
     } finally {
       socket.close(1000, "test complete");
@@ -2596,7 +1795,7 @@ describe("Durable Objects in the Workers runtime", () => {
     }
   });
 
-  it("names a work stream's substreams and blocks when its access is revoked", async () => {
+  it("names a work stream's substreams when its access is revoked", async () => {
     await seedOpenAuthority();
     const parent = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
       workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
@@ -2627,7 +1826,6 @@ describe("Durable Objects in the Workers runtime", () => {
     // directory, so a walk that only read the table would skip the one object
     // holding the transcript.
     expect(result.substreamIds).toContain("0");
-    expect(Array.isArray(result.blockIds)).toBe(true);
   });
 
   it("pushes a child state change to the workspace socket without waiting for the Queue", async () => {
@@ -3251,12 +2449,12 @@ describe("Durable Objects in the Workers runtime", () => {
           automations: { waterline: number; items: Array<{ id: string; name: string; emailAddress: string | null }> };
           notes: { waterline: number; items: Array<{ id: string; title: string }> };
         };
-        featureFlags: { hypersightEnabled: boolean; meetingRecordingEnabled: boolean };
+        featureFlags: { meetingRecordingEnabled: boolean };
       };
 
       expect(event.type).toBe("workspace_sync");
       expect(event.reason).toBe("initial");
-      expect(event.featureFlags).toMatchObject({ hypersightEnabled: false, meetingRecordingEnabled: false });
+      expect(event.featureFlags).toMatchObject({ meetingRecordingEnabled: false });
       const page = event.sidebar;
       expect(page).toBeDefined();
       expect(page.workstreams.items).toHaveLength(1);
@@ -6386,14 +5584,14 @@ describe("Durable Objects in the Workers runtime", () => {
       });
 
       const testable = instance as unknown as TestableSubstreamAgent;
-      const dashboard = vi.spyOn(testable, "scheduleBlockDashboardRefresh")
-        .mockRejectedValueOnce(new Error("forced_dashboard_intent_failure"));
+      const delivery = vi.spyOn(testable, "deliverCommittedRealtimeEvent")
+        .mockRejectedValueOnce(new Error("forced_semantic_delivery_failure"));
       await expect(testable.drainSemanticRealtimeOutbox())
-        .rejects.toThrow("forced_dashboard_intent_failure");
-      dashboard.mockRestore();
+        .rejects.toThrow("forced_semantic_delivery_failure");
+      delivery.mockRestore();
 
       // The canonical row and its exact room sequence survive together. The
-      // outbox is not acknowledged until dashboard refresh intent is durable.
+      // outbox is acknowledged only after delivery succeeds.
       expect(state.storage.sql.exec(
         `SELECT turn_id FROM participant_transcript_turns WHERE turn_id = ?`,
         "00000000-0000-7000-8000-00000000014a",
@@ -6408,26 +5606,10 @@ describe("Durable Objects in the Workers runtime", () => {
       );
     });
 
-    // Simulate the isolate disappearing in the gap before its best-effort
-    // post-commit continuation could re-arm delivery. Construction derives the
-    // alarm from the persisted outbox and the platform alarm then drains it —
-    // nothing else wakes this object, so synchronize with that delivery
-    // rather than forcing it: a `runDurableObjectAlarm` call is a no-op in
-    // the window where an auto-fired overdue alarm has not yet re-armed, and
-    // a direct `alarm()` invocation would keep this test green even if
-    // construction stopped arming the alarm. A probe may run while the drain
-    // is still in flight, but a read-only probe can neither advance nor
-    // duplicate delivery and succeeds only once the drain has synchronously
-    // acknowledged the row; it fails by timeout if the reconstructed object
-    // never armed or never delivered.
+    // Simulate eviction in the gap before the best-effort continuation could
+    // re-arm delivery. Construction derives the alarm from the durable outbox.
     await evictDurableObject(stub);
     await stub.wake();
-    // The empty outbox is the complete witness: the drain acknowledges the
-    // row only after the semantic frame and the dashboard-refresh intent are
-    // both durable, so nothing further is asserted here. `realtime_state` is
-    // written at enqueue time and would pass before the drain ever ran, and
-    // the pending dashboard-refresh row is consumed by the debounced alarm,
-    // so asserting either from a separate invocation proves nothing or races.
     await expect.poll(
       () => runInDurableObject(stub, (_instance, state) => Number(state.storage.sql.exec(
         `SELECT COUNT(*) AS count FROM durable_outbox
@@ -6435,9 +5617,6 @@ describe("Durable Objects in the Workers runtime", () => {
       ).one().count)),
       { timeout: 4_000, interval: 50 },
     ).toBe(0);
-    // The poll keeps its tighter 4s budget so a genuine recovery failure is
-    // reported as its own `expected 1 to be +0` well inside the suite's 30s
-    // test budget, rather than as a harness timeout.
   });
 
   it("hydrates an overtaken pending upsert as a delivered removal from the minimal receipt", async () => {
@@ -6807,7 +5986,7 @@ describe("Durable Objects in the Workers runtime", () => {
   // in-memory drain flag, so a claimed run stopped contributing a due time, the
   // alarm was deleted, and the cancelled drain left nothing to rediscover it.
   // A drain that never settles is exactly the state a cancellation produces.
-  it("keeps a claimed run schedulable in both agents while a drain is in flight", async () => {
+  it("keeps a claimed run schedulable while a drain is in flight", async () => {
     await seedOpenAuthority();
     const wedged = new Promise<void>(() => {});
 
@@ -6847,22 +6026,6 @@ describe("Durable Objects in the Workers runtime", () => {
       // Put the drain in the state a cancelled invocation leaves behind.
       void testable.agentDrain.resume(() => wedged, () => undefined);
       expect(testable.nextLoopWorkAt()).not.toBeNull();
-    });
-
-    const block = env.BLOCK_DASHBOARD_AGENTS.get(env.BLOCK_DASHBOARD_AGENTS.idFromName(
-      blockDashboardAgentName("global", WORKSPACE_ID, WORKSTREAM_ID, BLOCK_DASHBOARD_BLOCK_ID),
-    ));
-    await fetchAndDrain(block, "https://block-dashboard.test/health");
-    await runInDurableObject(block, async (instance, state) => {
-      const testable = instance as unknown as TestableDispatchScheduler;
-      state.storage.sql.exec(
-        `INSERT INTO agent_run_dispatches
-           (block_run_id, dispatch_json, configuration_version_number, trigger_sequence,
-            source_created_at, state, attempt, available_at, started_at, created_at, updated_at)
-         VALUES ('block-wedged', '{}', 1, 0, 1, 'running', 1, 1, 1, 1, 1)`,
-      );
-      void testable.agentDrain.resume(() => wedged, () => undefined);
-      expect(testable.nextRunAt!()).not.toBeNull();
     });
   });
 

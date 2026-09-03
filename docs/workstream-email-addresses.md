@@ -470,6 +470,8 @@ a section describing a sender that no longer exists.
 and a permanently rejected recipient is no longer something Rally can mark,
 because Rally is no longer the sender.
 
+Shipped in #541.
+
 ### 2026-08-29 — The inbound receipt lease becomes one typed claim
 
 **What changed:** The work-stream inbound path's receipt handling moved from

@@ -1,21 +1,16 @@
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import {
-  BlockDashboardPreferenceSchema,
-  BlockDashboardSchema,
   UserIdSchema,
   WORKSTREAM_REALTIME_MAX_FRAME_BYTES,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   WorkspaceIdSchema,
   WorkstreamIdSchema,
-  asBlockId,
   asWorkspaceId,
   asWorkstreamId,
   WorkstreamControlMetadataSchema,
   WorkstreamControlSocketClientEventSchema,
   WorkstreamControlSocketEventSchema,
   type WorkstreamControlMetadata,
-  type BlockDashboard,
-  type BlockDashboardBlockRun,
   type UserId,
   type WorkstreamControlSocketEvent,
 } from "@rally/contracts";
@@ -51,16 +46,6 @@ import {
   type WorkstreamRegionalEffectEnvelope,
 } from "./workstream-regional-effect";
 import {
-  BlockDashboardBlockDispatchSchema,
-  BlockDashboardControlRequestSchema,
-  BlockDashboardSocketRetractionRequestSchema,
-  BlockDashboardSourceRefreshRequestSchema,
-  BlockDashboardViewerAuthorizationRequestSchema,
-  blockDashboardBlockResultHash,
-  type BlockDashboardContextFence,
-} from "./block-dashboard-protocol";
-import {
-  blockDashboardAgentName,
   substreamAgentName,
   workspaceDOName,
   workstreamDOName,
@@ -107,26 +92,6 @@ interface StoredProjectionRow extends Record<string, SqlStorageValue> {
 interface StoredStateRow extends Record<string, SqlStorageValue> {
   event_id: string;
   waterline: number;
-}
-
-interface BlockDashboardConfigurationRow extends Record<string, SqlStorageValue> {
-  configuration_version_id: string;
-  version_number: number;
-  blocks_json: string;
-  created_at: number;
-}
-
-interface BlockDashboardBlockRunRow extends Record<string, SqlStorageValue> {
-  block_run_id: string;
-  block_id: string;
-  configuration_version_id: string;
-  trigger_sequence: number;
-  status: BlockDashboardBlockRun["status"];
-  markdown: string | null;
-  error_json: string | null;
-  created_at: number;
-  started_at: number | null;
-  completed_at: number | null;
 }
 
 const WorkstreamSocketIdentitySchema = z.object({
@@ -181,11 +146,8 @@ const RETRY_BASE_MS = 5_000;
 const RETRY_MAX_MS = 5 * 60_000;
 // Generous fences, not history: the 10 GB object ceiling is the only hard
 // bound, so retention errs long. A replay older than the receipt window
-// converges on the per-key waterlines; a HyperSight run older than the ledger
-// window is superseded display history whose latest row per block is always
-// kept regardless of age.
+// converges on the per-key waterlines.
 const CHILD_EFFECT_RECEIPT_RETENTION_MS = 180 * 24 * 60 * 60_000;
-const BLOCK_RUN_LEDGER_RETENTION_MS = 180 * 24 * 60 * 60_000;
 
 export const WORKSTREAM_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigration[] = [{
   version: 1,
@@ -460,6 +422,17 @@ export const WORKSTREAM_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
     `CREATE INDEX durable_outbox_delivery_idx
       ON durable_outbox(state, not_before, created_at, message_id)`,
   ],
+}, {
+  version: 5,
+  description: "remove retired block dashboard product state and pending deliveries",
+  statements: [
+    `DROP TABLE IF EXISTS block_dashboard_source_refresh_outbox`,
+    `DROP TABLE IF EXISTS block_dashboard_dispatch_outbox`,
+    `DROP TABLE IF EXISTS block_dashboard_block_result_receipts`,
+    `DROP TABLE IF EXISTS block_dashboard_block_runs`,
+    `DROP TABLE IF EXISTS block_dashboard_configuration_versions`,
+    `DROP TABLE IF EXISTS block_dashboard_user_preferences`,
+  ],
 }];
 
 function first<T extends Record<string, SqlStorageValue>>(cursor: SqlStorageCursor<T>): T | null {
@@ -479,48 +452,6 @@ function epoch(timestamp: string | null | undefined): number | null {
   const parsed = Date.parse(timestamp);
   if (!Number.isFinite(parsed) || parsed < 0) throw new Error("invalid_workstream_timestamp");
   return parsed;
-}
-
-function parseBlockDashboardBlocks(value: string): Array<{ id: string; prompt: string }> {
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    if (!Array.isArray(parsed)) return [];
-    return parsed.flatMap((entry) => {
-      if (!entry || typeof entry !== "object") return [];
-      const id = (entry as { id?: unknown }).id;
-      const prompt = (entry as { prompt?: unknown }).prompt;
-      return typeof id === "string" && typeof prompt === "string" ? [{ id, prompt }] : [];
-    });
-  } catch {
-    return [];
-  }
-}
-
-function parseBlockDashboardError(value: string | null): { code: string; message: string } | null {
-  if (!value) return null;
-  try {
-    const parsed = JSON.parse(value) as { code?: unknown; message?: unknown };
-    return typeof parsed.code === "string" && typeof parsed.message === "string"
-      ? { code: parsed.code, message: parsed.message }
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-function blockDashboardRun(row: BlockDashboardBlockRunRow): BlockDashboardBlockRun {
-  return {
-    id: row.block_run_id,
-    blockId: row.block_id,
-    configurationVersionId: row.configuration_version_id,
-    triggerSequence: row.trigger_sequence,
-    status: row.status,
-    markdown: row.markdown,
-    error: parseBlockDashboardError(row.error_json),
-    createdAt: new Date(row.created_at).toISOString(),
-    startedAt: iso(row.started_at),
-    completedAt: iso(row.completed_at),
-  };
 }
 
 function readSocketAttachment(socket: WebSocket): WorkstreamSocketAttachment | null {
@@ -792,9 +723,6 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
     if (request.method === "POST" && path === "/internal/substream-effects") {
       return this.acceptSubstreamEffects(request);
     }
-    if (request.method === "POST" && path === "/internal/block-dashboard") {
-      return this.acceptBlockDashboardRequest(request);
-    }
     if (request.method === "POST" && path === "/internal/regional-effect-delivery") {
       const parsed = WorkstreamRegionalEffectAckSchema.safeParse(await request.json().catch(() => null));
       if (!parsed.success) return json({ error: "invalid_regional_effect_request" }, 400);
@@ -821,17 +749,6 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     return responseToRpcResult(await this.acceptSubstreamEffects(new Request(
       "https://workstream.internal/internal/substream-effects",
-      { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input) },
-    )));
-  }
-
-  /** Native-RPC entrypoint for all HyperSight control and settlement operations. */
-  async controlBlockDashboard(
-    input: z.input<typeof BlockDashboardControlRequestSchema>,
-  ): Promise<DurableObjectRpcResult> {
-    await this.initialized;
-    return responseToRpcResult(await this.acceptBlockDashboardRequest(new Request(
-      "https://workstream.internal/internal/block-dashboard",
       { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input) },
     )));
   }
@@ -923,23 +840,6 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
     }
     await this.armNextAlarm();
     return delivered;
-  }
-
-  /** Revalidates a block socket against the parent work-stream authority. */
-  async authorizeBlockDashboardBlockViewer(
-    input: z.input<typeof BlockDashboardViewerAuthorizationRequestSchema>,
-  ): Promise<boolean> {
-    await this.initialized;
-    const request = BlockDashboardViewerAuthorizationRequestSchema.parse(input);
-    const metadata = this.metadataRow();
-    if (!metadata
-      || metadata.workspace_id !== request.workspaceId
-      || metadata.workstream_id !== request.workstreamId
-      || !this.canRead(request.userId)) return false;
-    const configuration = this.latestBlockDashboardConfiguration();
-    return configuration
-      ? parseBlockDashboardBlocks(configuration.blocks_json).some((block) => block.id === request.blockId)
-      : false;
   }
 
   override async webSocketMessage(socket: WebSocket, message: ArrayBuffer | string): Promise<void> {
@@ -1062,8 +962,6 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
         });
       }
     }
-    await this.deliverBlockDashboardSourceRefresh();
-    await this.deliverBlockDashboardDispatches();
   }
 
   private async acceptSocket(request: Request): Promise<Response> {
@@ -1168,590 +1066,6 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
       region: this.env.AVALON_REGION,
       role: role.role,
     } : null;
-  }
-
-  private assertBlockDashboardIdentity(workspaceId: string, workstreamId: string): WorkstreamMetadataRow {
-    const metadata = this.metadataRow();
-    if (!metadata
-      || metadata.workspace_id !== workspaceId
-      || metadata.workstream_id !== workstreamId) {
-      throw new Error("block_dashboard_workstream_identity_mismatch");
-    }
-    return metadata;
-  }
-
-  private latestBlockDashboardConfiguration(): BlockDashboardConfigurationRow | null {
-    return first(this.state.storage.sql.exec<BlockDashboardConfigurationRow>(
-      `SELECT configuration_version_id, version_number, blocks_json, created_at
-         FROM block_dashboard_configuration_versions
-        ORDER BY version_number DESC LIMIT 1`,
-    ));
-  }
-
-  private loadBlockDashboard(): BlockDashboard {
-    const configuration = this.latestBlockDashboardConfiguration();
-    if (!configuration) {
-      return { versionId: null, versionNumber: 0, blocks: [], updatedAt: null };
-    }
-    const blocks = parseBlockDashboardBlocks(configuration.blocks_json);
-    return BlockDashboardSchema.parse({
-      versionId: configuration.configuration_version_id,
-      versionNumber: configuration.version_number,
-      blocks: blocks.map((block) => {
-        const row = first(this.state.storage.sql.exec<BlockDashboardBlockRunRow>(
-          `SELECT block_run_id, block_id, configuration_version_id, trigger_sequence,
-                  status, markdown, error_json, created_at, started_at, completed_at
-             FROM block_dashboard_block_runs
-            WHERE configuration_version_id = ? AND block_id = ?
-            ORDER BY trigger_sequence DESC, created_at DESC LIMIT 1`,
-          configuration.configuration_version_id,
-          block.id,
-        ));
-        return { ...block, latestRun: row ? blockDashboardRun(row) : null };
-      }),
-      updatedAt: new Date(configuration.created_at).toISOString(),
-    });
-  }
-
-  private scheduleBlockDashboardRefresh(
-    triggerSequence: number,
-    contextFence: BlockDashboardContextFence,
-  ): BlockDashboardBlockRun[] {
-    const metadata = this.metadataRow();
-    const configuration = this.latestBlockDashboardConfiguration();
-    if (!metadata || !configuration) return [];
-    const createdAtMs = Date.now();
-    const createdAt = new Date(createdAtMs).toISOString();
-    const launched: BlockDashboardBlockRun[] = [];
-    for (const block of parseBlockDashboardBlocks(configuration.blocks_json)) {
-      if (block.prompt.trim().length === 0) continue;
-      const blockRunId = uuidV7();
-      const harnessRunId = uuidV7();
-      const dispatch = BlockDashboardBlockDispatchSchema.parse({
-        region: this.env.AVALON_REGION,
-        workspaceId: metadata.workspace_id,
-        workstreamId: metadata.workstream_id,
-        blockId: block.id,
-        blockRunId,
-        harnessRunId,
-        configurationVersionId: configuration.configuration_version_id,
-        configurationVersionNumber: configuration.version_number,
-        prompt: block.prompt,
-        triggerSequence,
-        contextFence,
-        createdAt,
-      });
-      const inserted = this.state.storage.transactionSync(() => {
-        const row = this.state.storage.sql.exec<{ block_run_id: string }>(
-          `INSERT OR IGNORE INTO block_dashboard_block_runs
-             (block_run_id, configuration_version_id, block_id, prompt, trigger_sequence,
-              harness_run_id, status, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, 'queued', ?) RETURNING block_run_id`,
-          blockRunId,
-          configuration.configuration_version_id,
-          block.id,
-          block.prompt,
-          triggerSequence,
-          harnessRunId,
-          createdAtMs,
-        ).toArray()[0];
-        if (!row) return false;
-        this.state.storage.sql.exec(
-          `INSERT INTO block_dashboard_dispatch_outbox
-             (block_run_id, block_id, dispatch_json, attempts, not_before, created_at)
-           VALUES (?, ?, ?, 0, ?, ?)`,
-          blockRunId,
-          block.id,
-          JSON.stringify(dispatch),
-          createdAtMs,
-          createdAtMs,
-        );
-        return true;
-      });
-      if (!inserted) continue;
-      launched.push({
-        id: blockRunId,
-        blockId: block.id,
-        configurationVersionId: configuration.configuration_version_id,
-        triggerSequence,
-        status: "queued",
-        markdown: null,
-        error: null,
-        createdAt,
-        startedAt: null,
-        completedAt: null,
-      });
-    }
-    if (launched.length > 0) {
-      // The run ledger is display history: readers use only the latest run
-      // per block, so terminal rows past retention age out here — each block's
-      // newest run survives regardless of age, and result receipts and stale
-      // dispatch rows cascade with their run.
-      this.state.storage.sql.exec(
-        `DELETE FROM block_dashboard_block_runs
-          WHERE block_run_id IN (
-            SELECT older.block_run_id FROM block_dashboard_block_runs older
-             WHERE older.created_at < ?
-               AND older.status IN ('completed', 'failed', 'stopped')
-               AND EXISTS (
-                 SELECT 1 FROM block_dashboard_block_runs newer
-                  WHERE newer.block_id = older.block_id
-                    AND newer.trigger_sequence > older.trigger_sequence
-               )
-             ORDER BY older.created_at LIMIT 100
-          )`,
-        Date.now() - BLOCK_RUN_LEDGER_RETENTION_MS,
-      );
-      this.state.waitUntil((async () => {
-        await this.deliverBlockDashboardDispatches();
-        await this.armNextAlarm();
-      })());
-    }
-    return launched;
-  }
-
-  private async acceptBlockDashboardRequest(request: Request): Promise<Response> {
-    const parsed = BlockDashboardControlRequestSchema.safeParse(await request.json().catch(() => null));
-    if (!parsed.success) return json({ error: "invalid_block_dashboard_request" }, 400);
-    try {
-      const input = parsed.data;
-      const metadata = this.assertBlockDashboardIdentity(input.workspaceId, input.workstreamId);
-      if (input.operation === "get") return json({ blockDashboard: this.loadBlockDashboard() });
-      if (input.operation === "get_preference") {
-        const row = first(this.state.storage.sql.exec<{ visible: number; updated_at: number }>(
-          `SELECT visible, updated_at FROM block_dashboard_user_preferences WHERE user_id = ?`,
-          input.userId,
-        ));
-        return json({
-          preference: BlockDashboardPreferenceSchema.parse({
-            visible: row?.visible === 1,
-            updatedAt: row ? new Date(row.updated_at).toISOString() : null,
-          }),
-        });
-      }
-      if (input.operation === "update_preference") {
-        const updatedAt = Date.parse(input.updatedAt);
-        this.state.storage.sql.exec(
-          `INSERT INTO block_dashboard_user_preferences(user_id, visible, updated_at)
-           VALUES (?, ?, ?)
-           ON CONFLICT(user_id) DO UPDATE SET visible = excluded.visible,
-             updated_at = excluded.updated_at`,
-          input.userId,
-          input.visible ? 1 : 0,
-          updatedAt,
-        );
-        const preference = BlockDashboardPreferenceSchema.parse({
-          visible: input.visible,
-          updatedAt: input.updatedAt,
-        });
-        await this.broadcastBlockDashboardEvent({
-          type: "block_dashboard_preference_updated",
-          occurredAt: input.updatedAt,
-          preference,
-        }, input.userId);
-        return json({ preference });
-      }
-      if (input.operation === "update_configuration") {
-        const previousConfiguration = this.latestBlockDashboardConfiguration();
-        const previousBlockIds = previousConfiguration
-          ? parseBlockDashboardBlocks(previousConfiguration.blocks_json).map((block) => block.id)
-          : [];
-        const createdAt = Date.parse(input.createdAt);
-        const inserted = this.state.storage.transactionSync(() => {
-          const current = this.latestBlockDashboardConfiguration()?.version_number ?? 0;
-          if (current !== input.input.expectedVersionNumber) return false;
-          this.state.storage.sql.exec(
-            `INSERT INTO block_dashboard_configuration_versions
-               (configuration_version_id, version_number, blocks_json, created_by_user_id, created_at)
-             VALUES (?, ?, ?, ?, ?)`,
-            input.configurationVersionId,
-            current + 1,
-            JSON.stringify(input.input.blocks),
-            input.userId,
-            createdAt,
-          );
-          this.queueBlockDashboardSourceRefresh(metadata.revision);
-          return true;
-        });
-        if (!inserted) return json({ error: "block_dashboard_version_conflict" }, 409);
-        const blockDashboard = this.loadBlockDashboard();
-        await this.broadcastBlockDashboardEvent({
-          type: "block_dashboard_configuration_updated",
-          occurredAt: input.createdAt,
-          blockDashboard,
-        });
-        const currentBlockIds = new Set(blockDashboard.blocks.map((block) => block.id));
-        await this.closeSocketsForRemovedBlocks(
-          previousBlockIds.filter((blockId) => !currentBlockIds.has(blockId)),
-        );
-        this.state.waitUntil((async () => {
-          await this.deliverBlockDashboardSourceRefresh();
-          await this.armNextAlarm();
-        })());
-        return json({ blockDashboard, runs: [] });
-      }
-      if (input.operation === "schedule_refresh") {
-        const runs = this.scheduleBlockDashboardRefresh(
-          input.triggerSequence,
-          input.contextFence,
-        );
-        return json({ runs });
-      }
-
-      if (input.operation === "import_authority_rows") {
-        if (metadata.authority_generation !== input.generation) {
-          return json({ error: "block_dashboard_import_generation_mismatch" }, 409);
-        }
-        this.state.storage.transactionSync(() => {
-          for (const configuration of input.configurations) {
-            this.state.storage.sql.exec(
-              `INSERT INTO block_dashboard_configuration_versions
-                 (configuration_version_id, version_number, blocks_json,
-                  created_by_user_id, created_at)
-               VALUES (?, ?, ?, ?, ?)
-               ON CONFLICT(configuration_version_id) DO UPDATE SET
-                 version_number = excluded.version_number,
-                 blocks_json = excluded.blocks_json,
-                 created_by_user_id = excluded.created_by_user_id,
-                 created_at = excluded.created_at`,
-              configuration.configurationVersionId,
-              configuration.versionNumber,
-              configuration.blocksJson,
-              configuration.createdByUserId,
-              configuration.createdAt,
-            );
-          }
-          for (const run of input.runs) {
-            this.state.storage.sql.exec(
-              `INSERT INTO block_dashboard_block_runs
-                 (block_run_id, configuration_version_id, block_id, prompt,
-                  trigger_sequence, harness_run_id, status, markdown, error_json,
-                  created_at, started_at, completed_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-               ON CONFLICT(block_run_id) DO UPDATE SET
-                 configuration_version_id = excluded.configuration_version_id,
-                 block_id = excluded.block_id, prompt = excluded.prompt,
-                 trigger_sequence = excluded.trigger_sequence,
-                 harness_run_id = excluded.harness_run_id, status = excluded.status,
-                 markdown = excluded.markdown, error_json = excluded.error_json,
-                 created_at = excluded.created_at, started_at = excluded.started_at,
-                 completed_at = excluded.completed_at`,
-              run.blockRunId,
-              run.configurationVersionId,
-              run.blockId,
-              run.prompt,
-              run.triggerSequence,
-              run.harnessRunId,
-              run.status,
-              run.markdown,
-              run.errorJson,
-              run.createdAt,
-              run.startedAt,
-              run.completedAt,
-            );
-          }
-          for (const preference of input.preferences) {
-            this.state.storage.sql.exec(
-              `INSERT INTO block_dashboard_user_preferences(user_id, visible, updated_at)
-               VALUES (?, ?, ?)
-               ON CONFLICT(user_id) DO UPDATE SET visible = excluded.visible,
-                 updated_at = excluded.updated_at`,
-              preference.userId,
-              preference.visible ? 1 : 0,
-              preference.updatedAt,
-            );
-          }
-        });
-        return json({ imported: {
-          configurations: input.configurations.length,
-          runs: input.runs.length,
-          preferences: input.preferences.length,
-        } });
-      }
-
-      if (input.blockId !== input.run.blockId
-        || input.payloadHash !== blockDashboardBlockResultHash(input.run)) {
-        return json({ error: "block_dashboard_block_result_invalid" }, 409);
-      }
-      const accepted = this.state.storage.transactionSync(() => {
-        const current = first(this.state.storage.sql.exec<{
-          block_id: string;
-          configuration_version_id: string;
-        }>(
-          `SELECT block_id, configuration_version_id FROM block_dashboard_block_runs
-            WHERE block_run_id = ?`,
-          input.run.id,
-        ));
-        if (!current
-          || current.block_id !== input.blockId
-          || current.configuration_version_id !== input.run.configurationVersionId) {
-          throw new Error("block_dashboard_block_result_identity_mismatch");
-        }
-        const receipt = first(this.state.storage.sql.exec<{
-          source_version: number;
-          payload_hash: string;
-        }>(
-          `SELECT source_version, payload_hash FROM block_dashboard_block_result_receipts
-            WHERE block_run_id = ?`,
-          input.run.id,
-        ));
-        if (receipt && receipt.source_version > input.sourceVersion) return false;
-        if (receipt?.source_version === input.sourceVersion) {
-          if (receipt.payload_hash !== input.payloadHash) {
-            throw new Error("block_dashboard_block_result_version_conflict");
-          }
-          return false;
-        }
-        this.state.storage.sql.exec(
-          `UPDATE block_dashboard_block_runs SET status = ?, markdown = ?, error_json = ?,
-             started_at = ?, completed_at = ? WHERE block_run_id = ?`,
-          input.run.status,
-          input.run.markdown,
-          input.run.error ? JSON.stringify(input.run.error) : null,
-          input.run.startedAt ? Date.parse(input.run.startedAt) : null,
-          input.run.completedAt ? Date.parse(input.run.completedAt) : null,
-          input.run.id,
-        );
-        this.state.storage.sql.exec(
-          `INSERT INTO block_dashboard_block_result_receipts
-             (block_run_id, block_id, source_version, payload_hash, received_at)
-           VALUES (?, ?, ?, ?, ?)
-           ON CONFLICT(block_run_id) DO UPDATE SET source_version = excluded.source_version,
-             payload_hash = excluded.payload_hash, received_at = excluded.received_at`,
-          input.run.id,
-          input.blockId,
-          input.sourceVersion,
-          input.payloadHash,
-          Date.now(),
-        );
-        return true;
-      });
-      return json({ accepted });
-    } catch (error) {
-      return json({ error: error instanceof Error ? error.message : "block_dashboard_request_failed" }, 409);
-    }
-  }
-
-  private async broadcastBlockDashboardEvent(
-    event: WorkstreamControlSocketEvent,
-    audienceUserId?: string,
-  ): Promise<void> {
-    const sockets = this.state.getWebSockets();
-    if (sockets.length === 0) return;
-    const activeUsers = new Set(sockets.flatMap((socket) => {
-      const attachment = readSocketAttachment(socket);
-      return attachment?.subscribed ? [attachment.userId] : [];
-    }));
-    if (audienceUserId) {
-      for (const userId of [...activeUsers]) {
-        if (userId !== audienceUserId) activeUsers.delete(userId);
-      }
-    }
-    if (activeUsers.size === 0) return;
-    const payload = workstreamControlPayload(event);
-    for (const socket of sockets) {
-      const attachment = readSocketAttachment(socket);
-      if (!attachment?.subscribed || !activeUsers.has(attachment.userId)) continue;
-      // Same object-local check as `broadcastMetadata`, and this path has no
-      // other guard at all: block dashboard events would otherwise keep
-      // flowing to a reader the work stream just excluded.
-      if (!this.canRead(attachment.userId)) {
-        socket.close(WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, "You can no longer read this work stream");
-        continue;
-      }
-      socket.send(payload);
-    }
-  }
-
-  /**
-   * Close the sockets of blocks that just left the dashboard.
-   *
-   * A block that stopped existing takes its readers with it, which is a fact
-   * about the block rather than about who was reading it. Losing access is a
-   * different question with exactly one answer — see `docs/access-revocation.md`
-   * — and this must not become a second one.
-   */
-  private async closeSocketsForRemovedBlocks(blockIds: readonly string[]): Promise<void> {
-    const metadata = this.metadataRow();
-    if (!metadata || blockIds.length === 0) return;
-    await Promise.allSettled(blockIds.map(async (blockId) => {
-      const stub = await durableObjectStubForWorkspace(
-        this.env,
-        this.env.BLOCK_DASHBOARD_AGENTS,
-        metadata.workspace_id,
-        blockDashboardAgentName(
-          this.env.AVALON_REGION,
-          asWorkspaceId(metadata.workspace_id),
-          asWorkstreamId(metadata.workstream_id),
-          asBlockId(blockId),
-        ),
-      );
-      await stub.revalidateViewerAccess(BlockDashboardSocketRetractionRequestSchema.parse({
-        workspaceId: metadata.workspace_id,
-        workstreamId: metadata.workstream_id,
-        blockId,
-        region: this.env.AVALON_REGION,
-      }));
-    }));
-  }
-
-  private async deliverBlockDashboardDispatches(limit = 10): Promise<void> {
-    const rows = this.state.storage.sql.exec<{
-      block_run_id: string;
-      block_id: string;
-      dispatch_json: string;
-      attempts: number;
-    }>(
-      `SELECT pending.block_run_id, pending.block_id, pending.dispatch_json, pending.attempts
-         FROM block_dashboard_dispatch_outbox AS pending
-        WHERE pending.not_before <= ?
-          AND NOT EXISTS (
-            SELECT 1 FROM block_dashboard_dispatch_outbox AS earlier
-             WHERE earlier.block_id = pending.block_id
-               AND (earlier.created_at < pending.created_at
-                 OR (earlier.created_at = pending.created_at
-                   AND earlier.block_run_id < pending.block_run_id))
-          )
-        ORDER BY pending.created_at, pending.block_run_id LIMIT ?`,
-      Date.now(),
-      limit,
-    ).toArray();
-    for (const row of rows) {
-      let dispatch: z.infer<typeof BlockDashboardBlockDispatchSchema>;
-      try {
-        dispatch = BlockDashboardBlockDispatchSchema.parse(JSON.parse(row.dispatch_json));
-      } catch (error) {
-        const completedAt = Date.now();
-        this.state.storage.transactionSync(() => {
-          this.state.storage.sql.exec(
-            `UPDATE block_dashboard_block_runs
-                SET status = 'failed', error_json = ?,
-                    completed_at = COALESCE(completed_at, ?)
-              WHERE block_run_id = ? AND status IN ('queued', 'running')`,
-            JSON.stringify({
-              code: "block_dashboard_dispatch_invalid",
-              message: "The HyperSight block could not start",
-            }),
-            completedAt,
-            row.block_run_id,
-          );
-          this.state.storage.sql.exec(
-            `DELETE FROM block_dashboard_dispatch_outbox WHERE block_run_id = ?`,
-            row.block_run_id,
-          );
-        });
-        logWarn(this.env, "block_dashboard_dispatch_invalid", {
-          block_id: row.block_id,
-          block_run_id: row.block_run_id,
-          reason: truncateUtf16Safe(error instanceof Error ? error.message : "unknown", 500),
-        });
-        await this.broadcastBlockDashboardEvent({
-          type: "block_dashboard_configuration_updated",
-          occurredAt: new Date(completedAt).toISOString(),
-          blockDashboard: this.loadBlockDashboard(),
-        });
-        continue;
-      }
-      try {
-        const stub = await durableObjectStubForWorkspace(
-          this.env,
-          this.env.BLOCK_DASHBOARD_AGENTS,
-          dispatch.workspaceId,
-          blockDashboardAgentName(
-            dispatch.region,
-            dispatch.workspaceId,
-            dispatch.workstreamId,
-            dispatch.blockId,
-          ),
-        );
-        await stub.dispatchRun(dispatch);
-        this.state.storage.sql.exec(
-          `DELETE FROM block_dashboard_dispatch_outbox WHERE block_run_id = ?`,
-          row.block_run_id,
-        );
-      } catch {
-        const attempts = row.attempts + 1;
-        const delay = Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** Math.min(attempts - 1, 6));
-        this.state.storage.sql.exec(
-          `UPDATE block_dashboard_dispatch_outbox SET attempts = ?, not_before = ?
-            WHERE block_run_id = ?`,
-          attempts,
-          Date.now() + delay,
-          row.block_run_id,
-        );
-      }
-    }
-  }
-
-  private queueBlockDashboardSourceRefresh(triggerSequence: number): void {
-    const now = Date.now();
-    this.state.storage.sql.exec(
-      `INSERT INTO block_dashboard_source_refresh_outbox
-         (id, trigger_sequence, attempts, not_before, created_at, updated_at)
-       VALUES (1, ?, 0, ?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET
-         trigger_sequence = MAX(block_dashboard_source_refresh_outbox.trigger_sequence,
-                                excluded.trigger_sequence),
-         attempts = 0,
-         not_before = MIN(block_dashboard_source_refresh_outbox.not_before, excluded.not_before),
-         updated_at = excluded.updated_at`,
-      triggerSequence,
-      now,
-      now,
-      now,
-    );
-  }
-
-  private async deliverBlockDashboardSourceRefresh(): Promise<void> {
-    const row = first(this.state.storage.sql.exec<{
-      trigger_sequence: number;
-      attempts: number;
-    }>(
-      `SELECT trigger_sequence, attempts FROM block_dashboard_source_refresh_outbox
-        WHERE id = 1 AND not_before <= ?`,
-      Date.now(),
-    ));
-    if (!row) return;
-    const metadata = this.metadataRow();
-    if (!metadata) return;
-    try {
-      const request = BlockDashboardSourceRefreshRequestSchema.parse({
-        workspaceId: metadata.workspace_id,
-        workstreamId: metadata.workstream_id,
-        triggerSequence: row.trigger_sequence,
-      });
-      const stub = await durableObjectStubForWorkspace(
-        this.env,
-        this.env.SUBSTREAM_AGENTS,
-        metadata.workspace_id,
-        substreamAgentName(
-          this.env.AVALON_REGION,
-          asWorkspaceId(metadata.workspace_id),
-          asWorkstreamId(metadata.workstream_id),
-        ),
-      );
-      const response = await stub.requestBlockDashboardRefresh(request);
-      if (!response.accepted) {
-        throw new Error(response.error ?? "block_dashboard_source_refresh_rejected");
-      }
-      this.state.storage.sql.exec(
-        `DELETE FROM block_dashboard_source_refresh_outbox
-          WHERE id = 1 AND trigger_sequence = ?`,
-        row.trigger_sequence,
-      );
-    } catch {
-      const attempts = row.attempts + 1;
-      const delay = Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** Math.min(attempts - 1, 6));
-      this.state.storage.sql.exec(
-        `UPDATE block_dashboard_source_refresh_outbox
-            SET attempts = ?, not_before = ?, updated_at = ?
-          WHERE id = 1 AND trigger_sequence = ?`,
-        attempts,
-        Date.now() + delay,
-        Date.now(),
-        row.trigger_sequence,
-      );
-    }
   }
 
   private async acceptSubstreamEffects(request: Request): Promise<Response> {
@@ -2209,36 +1523,23 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
         manualUnreadFromSequenceNumber: viewer?.manualUnreadFromOrdinal ?? null,
         manualUnreadGeneration: viewer?.manualUnreadGeneration ?? 0,
         latestMentionSequenceNumber: viewer?.latestMentionAttentionOrdinal ?? 0,
-        blockDashboardPreference: this.blockDashboardPreferenceFor(userId),
       },
     });
   }
 
-  /** Absent means hidden, which is what a work stream opens as. */
-  private blockDashboardPreferenceFor(userId: string): { visible: boolean; updatedAt: string | null } {
-    const row = first(this.state.storage.sql.exec<{ visible: number; updated_at: number }>(
-      `SELECT visible, updated_at FROM block_dashboard_user_preferences WHERE user_id = ?`,
-      userId,
-    ));
-    return {
-      visible: row?.visible === 1,
-      updatedAt: row ? new Date(row.updated_at).toISOString() : null,
-    };
-  }
-
   /**
    * Drop every socket this object holds for a person whose access ended, and
-   * carry the same revocation to its substreams and blocks.
+   * carry the same revocation to its substreams.
    *
    * The only way a socket here is closed for lost access; see
    * `docs/access-revocation.md`. Its registries are the only place its
-   * substreams and blocks are listed, so it answers with them and stops there —
+   * substreams are listed, so it answers with them and stops there —
    * what carries the revocation onward is the consumer's business, not this
    * object's.
    */
   async revokeSocketAccess(
     revocation: SocketAccessRevocation,
-  ): Promise<{ substreamIds: string[]; blockIds: string[] }> {
+  ): Promise<{ substreamIds: string[] }> {
     await this.initialized;
     const request = SocketAccessRevocationSchema.parse(revocation);
     const identity = this.metadataRow();
@@ -2256,8 +1557,7 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
         // Already closing; the runtime owns the rest of the teardown.
       }
     }
-    if (!identity) return { substreamIds: [], blockIds: [] };
-    const configuration = this.latestBlockDashboardConfiguration();
+    if (!identity) return { substreamIds: [] };
     // The main substream keeps the historical name and is never listed in the
     // directory, so it is named here rather than discovered.
     const substreamIds = [
@@ -2266,11 +1566,7 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
         `SELECT substream_id FROM substream_directory ORDER BY substream_id`,
       ).toArray().map((row) => row.substream_id).filter((substreamId) => substreamId !== "0"),
     ];
-    return {
-      substreamIds,
-      blockIds: (configuration ? parseBlockDashboardBlocks(configuration.blocks_json) : [])
-        .map((block) => block.id),
-    };
+    return { substreamIds };
   }
 
   private async broadcastMetadata(): Promise<void> {
@@ -2549,13 +1845,6 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
     const regional = first(this.state.storage.sql.exec<{ due_at: number | null }>(
       `SELECT MIN(not_before) AS due_at FROM durable_outbox WHERE state IN ('pending', 'inflight')`,
     ))?.due_at ?? null;
-    const blockDashboard = first(this.state.storage.sql.exec<{ due_at: number | null }>(
-      `SELECT MIN(not_before) AS due_at FROM block_dashboard_dispatch_outbox`,
-    ))?.due_at ?? null;
-    const sourceRefresh = first(this.state.storage.sql.exec<{ due_at: number | null }>(
-      `SELECT MIN(not_before) AS due_at FROM block_dashboard_source_refresh_outbox`,
-    ))?.due_at ?? null;
-    return [regional, blockDashboard, sourceRefresh]
-      .filter((candidate): candidate is number => candidate !== null);
+    return regional === null ? [] : [regional];
   }
 }

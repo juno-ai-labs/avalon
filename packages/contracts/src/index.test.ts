@@ -4,7 +4,6 @@ import {
   readStructuredFailure,
   ActivityQueueMessageSchema,
   ActiveStreamCheckpointSchema,
-  BlockDashboardStreamCheckpointSchema,
   AnswerElicitationRequestSchema,
   AppendNoteTranscriptSegmentRequestSchema,
   AutomationDraftSchema,
@@ -26,8 +25,6 @@ import {
   ConnectorManifestSchema,
   HarnessFailureCodeSchema,
   HarnessRunMetadataSchema,
-  BlockDashboardPreferenceSchema,
-  BlockDashboardBlockSocketEventSchema,
   MessageSchema,
   MentionSchema,
   NoteDetailSchema,
@@ -37,11 +34,8 @@ import {
   ResourceRevisionSchema,
   ResourceSchema,
   resourceDirectionForRelationship,
-  PersonalSocketEventSchema,
   ServerSocketEventSchema,
   StartWorkOpportunityRequestSchema,
-  UpdateBlockDashboardPreferenceRequestSchema,
-  UpdateBlockDashboardRequestSchema,
   UpdateWorkspaceRequestSchema,
   WorkspaceSchema,
   WorkspaceSocketClientEventSchema,
@@ -355,7 +349,6 @@ describe("boundary contracts", () => {
       "workstream",
       "inline_child",
       "automation_compiler",
-      "block_dashboard",
       "meeting_notes",
       "addressing_classifier",
       "workstream_naming",
@@ -368,7 +361,6 @@ describe("boundary contracts", () => {
       "agent-model-workstream",
       "agent-model-inline-child",
       "agent-model-automation-compiler",
-      "agent-model-block-dashboard",
       "agent-model-meeting-notes",
       "agent-model-addressing-classifier",
       "agent-model-workstream-naming",
@@ -886,72 +878,6 @@ describe("boundary contracts", () => {
       ...accepted,
       deliveryState: "replayed",
     }).success).toBe(false);
-  });
-
-  it("bounds HyperSight configuration and preserves unique block identities", () => {
-    expect(UpdateBlockDashboardRequestSchema.parse({
-      expectedVersionNumber: 3,
-      blocks: [{ id, prompt: "Give me the last five to-do items" }],
-    })).toEqual({
-      expectedVersionNumber: 3,
-      blocks: [{ id, prompt: "Give me the last five to-do items" }],
-    });
-    expect(UpdateBlockDashboardRequestSchema.safeParse({
-      expectedVersionNumber: 3,
-      blocks: [{ id, prompt: "First" }, { id, prompt: "Duplicate" }],
-    }).success).toBe(false);
-    expect(UpdateBlockDashboardRequestSchema.safeParse({
-      expectedVersionNumber: 3,
-      blocks: Array.from({ length: 25 }, (_, index) => ({
-        id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
-        prompt: "Too many",
-      })),
-    }).success).toBe(false);
-  });
-
-  it("validates personal HyperSight visibility preferences and their realtime updates", () => {
-    expect(UpdateBlockDashboardPreferenceRequestSchema.parse({ visible: true })).toEqual({ visible: true });
-    expect(UpdateBlockDashboardPreferenceRequestSchema.safeParse({ visible: true, shared: true }).success).toBe(false);
-    const preference = BlockDashboardPreferenceSchema.parse({
-      visible: true,
-      updatedAt: "2026-08-07T20:00:00.000Z",
-    });
-    expect(PersonalSocketEventSchema.parse({
-      type: "block_dashboard_preference_updated",
-      occurredAt: "2026-08-07T20:00:00.000Z",
-      preference,
-    })).toMatchObject({ type: "block_dashboard_preference_updated", preference });
-    expect(ServerSocketEventSchema.safeParse({
-      type: "block_dashboard_preference_updated",
-      sequence: 44,
-      occurredAt: "2026-08-07T20:00:00.000Z",
-      preference,
-    }).success).toBe(false);
-  });
-
-  it("carries resumable stream checkpoints on HyperSight block-agent sockets", () => {
-    const checkpoint = BlockDashboardStreamCheckpointSchema.parse({
-      streamId: id,
-      harnessRunId: id,
-      turnId: "turn-1",
-      epoch: 0,
-      streamSeq: 8,
-      seenTurnIds: ["turn-1"],
-      text: "A partially streamed block",
-      turnStartOffset: 0,
-      roomSequence: 8,
-      createdAt: "2026-08-18T20:00:00.000Z",
-    });
-    expect(BlockDashboardBlockSocketEventSchema.parse({
-      type: "block_dashboard_block_stream_checkpoint",
-      occurredAt: "2026-08-18T20:00:01.000Z",
-      blockId: id,
-      blockRunId: id,
-      streamCheckpoint: checkpoint,
-    })).toMatchObject({
-      type: "block_dashboard_block_stream_checkpoint",
-      streamCheckpoint: { roomSequence: 8, text: "A partially streamed block" },
-    });
   });
 
   it("keeps room replay sequence separate from Bind stream epochs", () => {

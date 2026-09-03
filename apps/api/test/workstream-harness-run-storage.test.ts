@@ -186,16 +186,6 @@ describe("claiming a run's attempt", () => {
     });
   });
 
-  it("does not expire a HyperSight attempt owned by another agent object", () => {
-    const { binding, storage, sql } = open();
-    seedRun(sql, RUN, { origin: "block_dashboard_block" });
-    storage.claimAttempt({ ...fence, runId: RUN, leaseSeconds: 300, lifecycleEventId: "event-1" });
-
-    expect(expireLocalAttemptLeasesFromPreviousInstance(binding, NOW + 1_000)).toEqual([]);
-    expect(sql.exec(`SELECT lease_owner, lease_expires_at FROM runs WHERE run_id = ?`, RUN).one())
-      .toMatchObject({ lease_owner: "owner-1", lease_expires_at: NOW + 300_000 });
-  });
-
   it("settles a recovered attempt whose cancellation preceded the eviction", () => {
     const { binding, storage, sql } = open();
     seedRun(sql, RUN);
@@ -469,18 +459,6 @@ describe("claiming a run's attempt", () => {
     });
   });
 
-  it("leaves the work stream alone when a HyperSight block claims", () => {
-    const { storage, sql } = open();
-    seedRun(sql, RUN, { origin: "block_dashboard_block" });
-
-    storage.claimAttempt({ ...fence, runId: RUN, leaseSeconds: 60, lifecycleEventId: "event-1" });
-
-    // A block run is beside the conversation rather than holding it, so the
-    // sidebar must not report the work stream busy on its account.
-    expect(sql.exec(`SELECT exact_state FROM workstream WHERE id = 1`).one())
-      .toMatchObject({ exact_state: "idle" });
-  });
-
   it("reports the contended run's own lease when a duplicate dispatch races it", () => {
     const { storage, sql } = open();
     seedRun(sql, RUN);
@@ -499,21 +477,6 @@ describe("claiming a run's attempt", () => {
     })).toEqual({ outcome: "busy", activeLeaseExpiresAt: NOW + 300_000 });
     expect(sql.exec(`SELECT lease_owner FROM runs WHERE run_id = ?`, RUN).one())
       .toMatchObject({ lease_owner: "owner-1" });
-  });
-
-  it("lets a HyperSight block claim beside a live interactive run", () => {
-    const { storage, sql } = open();
-    seedRun(sql, OTHER);
-    seedRun(sql, RUN, { origin: "block_dashboard_block" });
-    storage.claimAttempt({
-      ...fence, runId: OTHER, leaseSeconds: 60, lifecycleEventId: "event-other",
-    });
-
-    // Each block owns its own run. The single-mutating-run rule is about the
-    // member's conversation, not about every run in the work stream.
-    expect(storage.claimAttempt({
-      ...fence, runId: RUN, attemptId: "attempt-2", leaseSeconds: 60, lifecycleEventId: "event-1",
-    })).toMatchObject({ outcome: "claimed" });
   });
 
   it("refuses a run whose cancellation was requested", () => {
