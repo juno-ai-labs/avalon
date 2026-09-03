@@ -1,8 +1,6 @@
 import type {
   InferenceAttemptEvent,
   InferenceRequestEvent,
-  OpenRouterProviderError,
-  ProviderErrorBody,
   StructuredModelDiagnostic,
 } from "@rally/agent-harness";
 import { z } from "zod";
@@ -137,41 +135,6 @@ function commonRecord(
     ...(context.draftId ? { draft_id: context.draftId } : {}),
     inference_request_id: inferenceRequestId,
   };
-}
-
-function persistedProviderError(error: OpenRouterProviderError): Record<string, string | number> {
-  return {
-    ...(typeof error.code === "string" || typeof error.code === "number"
-      ? { code: error.code }
-      : {}),
-    ...(typeof error.providerName === "string" ? { providerName: error.providerName } : {}),
-  };
-}
-
-/**
- * The `error` column of a failed attempt: the provider's classification, and
- * the body it sent with it.
- *
- * The body is unredacted provider text and this archive is the one place it is
- * admitted — records here already carry the complete request and response, and
- * the security model above forbids emitting any of these JSON fields to Workers
- * Logs. Without it an operator holds a code such as
- * `invalid_function_parameters` and no way to learn which tool schema earned
- * it, which is what made the 2 September Sol failure unreadable.
- *
- * A body with no classification beside it is still recorded: a provider that
- * answers a bare string, or JSON in a shape the classifier does not read, is
- * exactly the case where the body is the only evidence there is.
- */
-function persistedInferenceError(input: {
-  providerError?: OpenRouterProviderError;
-  providerErrorBody?: ProviderErrorBody;
-}): Record<string, unknown> | undefined {
-  const error = {
-    ...(input.providerError ? { providerError: persistedProviderError(input.providerError) } : {}),
-    ...(input.providerErrorBody === undefined ? {} : { providerErrorBody: input.providerErrorBody }),
-  };
-  return Object.keys(error).length > 0 ? error : undefined;
 }
 
 function payloadObjectKey(record: InferenceLakehouseRecord): string {
@@ -323,10 +286,7 @@ export function captureStreamingInferenceAttempt(
       : {}),
     ...(attempt.responseBytes !== undefined ? { response_bytes: attempt.responseBytes } : {}),
     ...(attempt.response ? { response: { ...attempt.response } } : {}),
-    ...(() => {
-      const error = persistedInferenceError(attempt);
-      return error ? { error } : {};
-    })(),
+    ...(attempt.providerError ? { error: { providerError: attempt.providerError } } : {}),
     metadata: { cursor: attempt.cursor },
   });
 }
@@ -388,10 +348,7 @@ export function captureStructuredInferenceDiagnostic(
       : {}),
     ...(diagnostic.responseBytes !== undefined ? { response_bytes: diagnostic.responseBytes } : {}),
     ...(diagnostic.responsePayload ? { response: diagnostic.responsePayload } : {}),
-    ...(() => {
-      const error = persistedInferenceError(diagnostic);
-      return error ? { error } : {};
-    })(),
+    ...(diagnostic.providerError ? { error: { providerError: diagnostic.providerError } } : {}),
     metadata: {
       attempt: diagnostic.attempt,
       fallbackAttempt: diagnostic.fallbackAttempt,

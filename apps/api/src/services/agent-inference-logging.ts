@@ -53,6 +53,9 @@ export function createAgentInferenceLogger(
           attempt: attempt.cursor.endpointAttempt,
           provider_error_code: attempt.providerError?.code,
           provider_error_provider: attempt.providerError?.providerName,
+          // `detail`, not `message`: the logger reserves `message` for the row
+          // summary it derives, and this is an opaque provider string.
+          provider_error_detail: attempt.providerError?.detail,
         });
       }
     },
