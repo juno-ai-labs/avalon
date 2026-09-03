@@ -910,7 +910,7 @@ fixture table instead, where it is reviewable.
 **What changed:** The `pageToken` parameter on `gmail.search`,
 `calendar.list_calendars`, `calendar.list_events`, and `drive.search` carries a
 description: echo back the exact `nextPageToken` a previous call returned,
-holding that call's own filters unchanged, never construct one, and stop when
+holding that call's other arguments unchanged, never construct one, and stop when
 `nextPageToken` is `null`. Separately, a Google rejection that names an argument
 now reaches the caller as `field` on the structured failure, with the argument
 named in the message, instead of a bare `Google API failed (400)`.
@@ -981,6 +981,16 @@ reachable and removing it would silently truncate large searches at
 `maxResults`. Also rejected: putting the guidance in the plugin system message
 or its worked examples, which are read when choosing a tool rather than when
 filling an argument, and which would carry it for Drive alone.
+
+One sentence covers all four tools rather than a per-tool list of the arguments
+to hold. The list came first and was wrong on its second day: `orderBy` was
+missed on `drive.search`, which is exactly the silent resume the clause exists
+to prevent, and a reviewer caught it rather than the code. A rule that names
+every argument cannot be short by one, and the machinery that assembled four
+near-identical sentences was more than the difference was worth. The cost is
+that a caller is told to hold `maxResults` steady too, where Google would in
+fact allow it to vary between pages; steady is safe, and one sentence that is
+slightly over-strict beats four that can each go stale.
 
 **Consequences:** A new paginated Google tool that ships a bare `pageToken`
 fails `index.test.ts`, which asserts the set of tools exposing one and that each
