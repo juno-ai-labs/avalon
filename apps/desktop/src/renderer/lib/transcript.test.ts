@@ -2273,23 +2273,73 @@ describe('collapseSettledWorkIntoAccordion', () => {
     expect(collapsed[2]!.workSummary).toEqual({ durationMs: 2_477_000 });
   });
 
-  it('recovers coverage at the next thing a person read, so a later response keeps its total', () => {
-    // The guard above must not latch: once a row this client is looking at has
-    // gone by, whatever response starts after it starts in loaded territory,
-    // and its one drawer is its whole work after all.
+  it('recovers coverage at the next settled total, so a later response keeps its own', () => {
+    // The guard above must not latch: a settled total is the end of the response
+    // that may have been partly unloaded, and whatever follows it is loaded.
     const collapsed = collapseSettledWorkIntoAccordion([
       thinking('thought-after-gap', { precededByTranscriptGap: true }),
-      answer('turn-0', { id: 'turn-0:text', workSummary: undefined }),
-      said('human-one'),
+      answer('turn-0', { id: 'turn-0:text' }),
       thinking('thought-one'),
       answer('turn-1'),
     ]);
 
-    // The drawer inside the partially loaded response still says only "Worked".
+    // The drawer inside the partially loaded response says only "Worked", and
+    // its total stays in the header.
     expect(collapsed[0]!.workAccordion?.durationMs).toBeNull();
-    // The one after the human message is a whole response again, and takes it.
-    expect(collapsed[3]!.workAccordion?.durationMs).toBe(2_477_000);
-    expect(collapsed[4]!.workSummary).toBeUndefined();
+    expect(collapsed[1]!.workSummary).toEqual({ durationMs: 2_477_000 });
+    // The next response is whole, and takes it.
+    expect(collapsed[2]!.workAccordion?.durationMs).toBe(2_477_000);
+    expect(collapsed[3]!.workSummary).toBeUndefined();
+  });
+
+  it('does not treat a steer as the end of the response it interrupts', () => {
+    // A steer is committed as its own canonical turn between two answers of one
+    // response, while the response activity spans both sides of it. Counting it
+    // as a boundary let the last stretch take a total covering both.
+    const collapsed = collapseSettledWorkIntoAccordion([
+      said('human-one'),
+      thinking('thought-one'),
+      answer('turn-1', { id: 'turn-1:text', workSummary: undefined }),
+      said('human-steer'),
+      thinking('thought-two'),
+      answer('turn-2'),
+    ]);
+
+    expect(collapsed[4]!.workAccordion?.durationMs).toBeNull();
+    expect(collapsed[5]!.workSummary).toEqual({ durationMs: 2_477_000 });
+  });
+
+  it('leaves a stretch open while any row in it is still reporting live work', () => {
+    // A streaming answer overlay is inserted at `transcriptSequence - 1`, so it
+    // can arrive below the response's own still-running timer. Folding on
+    // position alone put that live timer inside a closed drawer.
+    const liveResponseTotal = thinking('act-response', {
+      thoughtEvent: {
+        status: 'started', durationMs: 195_000, activeVerb: 'working', completedVerb: 'worked',
+      },
+    });
+    const collapsed = collapseSettledWorkIntoAccordion([
+      thinking('thought-one'),
+      liveResponseTotal,
+      answer('turn-1', { id: 'overlay:text', streaming: true, workSummary: undefined }),
+    ]);
+
+    expect(collapsed.map((message) => message.messageType)).toEqual(['thought', 'thought', 'text']);
+  });
+
+  it('closes that stretch once the live row settles', () => {
+    // The same rows, with the timer settled: nothing is being watched any more.
+    const collapsed = collapseSettledWorkIntoAccordion([
+      thinking('thought-one'),
+      thinking('act-response', { thoughtEvent: {
+        status: 'completed', durationMs: 195_000, activeVerb: 'working', completedVerb: 'worked',
+      } }),
+      answer('turn-1', { id: 'overlay:text', workSummary: undefined }),
+    ]);
+
+    expect(collapsed.map((message) => message.messageType)).toEqual(['work_accordion', 'text']);
+    expect(collapsed[0]!.workAccordion?.rows.map((row) => row.id))
+      .toEqual(['thought-one', 'act-response']);
   });
 
   it('carries an unknown total and a recovered accuracy through to the drawer', () => {

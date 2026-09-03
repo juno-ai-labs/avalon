@@ -1828,6 +1828,28 @@ function isCollapsedWorkRow(message: Message): boolean {
 }
 
 /**
+ * A row that is still reporting live work.
+ *
+ * The accordion's one hard rule is that nothing a reader is still watching gets
+ * folded away, and this is what states it. The feed's ordinary shape makes the
+ * rule look free — the projection positions a response's own timer after every
+ * block of its last turn, so while it runs it is the final row with no answer
+ * beneath it — but a streaming overlay is inserted at `transcriptSequence - 1`
+ * and can therefore arrive *below* that still-running timer, putting an answer
+ * under it. Relying on the ordering was the defect; this asks the rows.
+ *
+ * It reads each row's own reported state rather than `AgentWorkTiming`'s
+ * narrower `running`, which additionally demands a start to count from: a row
+ * whose activity is still marked active is a row reporting live work even when
+ * its number has frozen, and that is the row that must not disappear.
+ */
+function isStillRunningWorkRow(message: Message): boolean {
+  if (message.messageType === 'thought') return message.thoughtEvent?.status === 'started';
+  if (message.messageType === 'plugin_activity') return message.pluginActivity?.active === true;
+  return false;
+}
+
+/**
  * Fold each finished stretch of machinery behind the answer it produced.
  *
  * While a stretch is running, every row of it is progress: the reader watches
@@ -1873,20 +1895,29 @@ function isCollapsedWorkRow(message: Message): boolean {
  * sum of the rows inside, which would overstate the stretch by however much of
  * it ran concurrently; see the invariant in `plugin-activity-rows.md`.
  *
- * The stretch count resets at anything that is not this run's own work: a row a
- * person read that is not an answer, a newly loaded island, and the answer that
- * carried the settled response total, which is the signal that the response it
- * belonged to is over.
+ * The settled response total is the only response boundary this feed carries,
+ * so it is the only thing that starts the count over. A row a person read is
+ * not one: a steer is committed as its own canonical turn *between* two answers
+ * of a single response, while the response activity — and the total it settles
+ * to — spans both sides of it, so counting it as a boundary let the last
+ * stretch take a total covering the whole thing.
  *
  * The count is only a proxy for "this accordion is the whole response", and it
  * fails across a seam: a response whose earlier stretches were never loaded
- * shows one accordion here and produced several. So a seam landing on a
- * response's own work also marks its coverage **partial**, and a partial
- * response never hands its total to a drawer — the number would claim time the
- * drawer cannot show, and would jump from the drawer back to the header the
- * moment the gap was filled. The mark is not sticky: the next row a person read
- * re-establishes coverage, because a response starting after a row this client
- * is holding starts in the part of the transcript it has.
+ * shows one accordion here and produced several. So a seam marks coverage
+ * **partial**, and a partial response never hands its total to a drawer — the
+ * number would claim time the drawer cannot show, and would jump from the
+ * drawer back to the header the moment the gap was filled. That mark clears
+ * where the count does, at the next settled total: the response it ends is the
+ * one that might have been partly unloaded, and what follows it is loaded.
+ *
+ * Neither is the rule that keeps live work on screen. **Nothing a reader is
+ * still watching is folded away** is stated directly, by asking each row of the
+ * stretch whether it is still reporting work — see
+ * {@link isStillRunningWorkRow}. Position looks like it would answer this, and
+ * does not: a streaming overlay is inserted at `transcriptSequence - 1` and can
+ * arrive below the response's own still-running timer, putting an answer under
+ * a row nobody is finished with.
  *
  * The accordion keeps the attention ordinal of the first row it swallowed,
  * because the unread divider is placed at the first row carrying one and the
@@ -1912,20 +1943,11 @@ export function collapseSettledWorkIntoAccordion(messages: readonly Message[]): 
   // rows this client happens to hold rather than of the response's own work.
   let responseCoverageIsPartial = false;
   for (const message of messages) {
+    // A row opening a newly loaded island says nothing about what came before
+    // it, and what came before it may be more of this same response — so no
+    // accordion built from here on is known to be the response's only one.
+    if (message.precededByTranscriptGap) responseCoverageIsPartial = true;
     const answer = message.messageType === 'text' && message.authorType === 'agent';
-    if (!(answer || isCollapsedWorkRow(message))) {
-      // Anything else a person reads ends the response these are counted over.
-      // It also settles coverage: a response that starts after a row this
-      // client is looking at starts in the part of the transcript it holds.
-      accordionsInResponse = 0;
-      responseCoverageIsPartial = false;
-    } else if (message.precededByTranscriptGap) {
-      // The response's own work opens a newly loaded island. What came before
-      // it was never fetched and may be more of this same response, so no
-      // accordion built from here on is known to be the response's only one.
-      accordionsInResponse = 0;
-      responseCoverageIsPartial = true;
-    }
     // An answer carrying the seam is itself the first row of a newly loaded
     // island, so the machinery above it in this list belongs to an earlier one
     // and is not this answer's to fold.
@@ -1939,7 +1961,10 @@ export function collapseSettledWorkIntoAccordion(messages: readonly Message[]): 
         // rather than before it.
         if (rows[start]!.precededByTranscriptGap) break;
       }
-      collapsed = rows.splice(start);
+      // Nothing a reader is still watching is folded away. A stretch holding a
+      // row that is still reporting live work stays in the feed until it
+      // settles, at which point the next render closes it.
+      if (!rows.slice(start).some(isStillRunningWorkRow)) collapsed = rows.splice(start);
     }
     const summary = answer ? message.workSummary : undefined;
     if (collapsed.length === 0) {
@@ -1984,10 +2009,11 @@ export function collapseSettledWorkIntoAccordion(messages: readonly Message[]): 
       if (movesTotal) delete host.workSummary;
       rows.push(host);
     }
-    // A settled response total is the one signal in the feed saying the
-    // response it belonged to is over — wherever the answer carrying it ended
-    // up, folded or not. The next response counts its own accordions from zero,
-    // over the loaded rows that follow it.
+    // The settled response total is the only response boundary this feed
+    // carries, so it is the only thing that starts the count over. A row a
+    // person read is not one: a steer is committed as its own canonical turn
+    // *between* two answers of one response, and resetting there let the last
+    // stretch take a total covering both sides of it.
     if (summary !== undefined) {
       accordionsInResponse = 0;
       responseCoverageIsPartial = false;

@@ -256,10 +256,17 @@ timer folded the last stretch only and left every earlier one expanded above the
 sentence that had already summarized it, which is the stack of spent timers this
 feature exists to remove. Keying it on the answer folds each stretch as its own
 report arrives, and the live tail — the rows with no answer under them yet — is
-the only thing left open, which is exactly the part still worth watching. That
-tail always includes the response's own timer while it runs: the projection
-positions that row after every block of the response's last turn, so it never
-sits above an answer and is never swallowed.
+the only thing left open, which is exactly the part still worth watching.
+
+**Nothing a reader is still watching is folded away, and the pass says so
+directly** rather than leaning on where the rows sit. Every row of a stretch is
+asked whether it is still reporting work, and one that is keeps the whole
+stretch in the feed until it settles. Position looks like it would answer the
+same question — the projection puts a response's own timer after every block of
+its last turn, so ordinarily it is the final row with no answer beneath it — but
+a streaming answer overlay is inserted at `transcriptSequence - 1` and can
+arrive *below* that still-running timer, which put a live timer inside a closed
+drawer.
 
 The control is the markdown headings' collapse chevron — the same `ChevronRight`
 at 14px and 1.8, the same muted neutral, the same quarter turn on the same
@@ -320,25 +327,27 @@ turn is exactly where it lands — and such an answer opens a newly loaded islan
 which makes the machinery above it in the list some earlier island's. It has no
 stretch of its own to fold, so it keeps its total in the header.
 
-Counting a response's accordions needs the same boundary from the other side.
-The count resets at anything that is not this response's own work — a row a
-person read that is not an answer, a row opening a newly loaded island — and at
-the answer that carried the settled response total, which is the one signal in
-the feed saying the response it belonged to is over. That last reset runs
-wherever the answer carrying the total ended up, folded or not; without it a
-second response following the first with no human row between them would be
-counted as a continuation of it and would never take its own total.
+Counting a response's accordions needs a boundary of its own, and **the settled
+response total is the only one this feed carries**. It runs wherever the answer
+carrying it ended up, folded or not; without it a second response following the
+first would be counted as a continuation and would never take its own total.
 
-A seam is more than a reset, though, because the count is only a proxy. What the
-total needs to know is whether this accordion is the response's *only* one, and
-a response whose earlier stretches sit in an unloaded island can show exactly one
-accordion while having produced several. So a seam that lands on the response's
-own work — machinery, or an answer — additionally marks the response's coverage
-**partial**, and a partial response never hands its total to a drawer: the number
-would claim time the drawer does not contain, and would jump from the drawer back
-to the header the moment the gap was filled. The mark is not sticky: the next row
-a person read re-establishes coverage, because whatever response starts after a
-row this client is holding starts in the part of the transcript it has.
+A row a person read is deliberately *not* a boundary, which is the
+counter-intuitive half. A steer is committed as its own canonical turn *between*
+two answers of one response — [`agent-harness.md`](agent-harness.md) has the
+promotion rule — while the response activity, and the total it settles to, spans
+both sides of it. Resetting there let the stretch after the steer take a total
+covering the work before it too, which is the exact mislabel this counter exists
+to prevent.
+
+The count is also only a proxy for "this accordion is the whole response", and
+the proxy fails across a seam: a response whose earlier stretches sit in an
+unloaded island shows one accordion while having produced several. So a seam
+marks the response's coverage **partial**, and a partial response never hands its
+total to a drawer — the number would claim time the drawer does not contain, and
+would jump from the drawer back to the header the moment the gap was filled. That
+mark clears where the count does, at the next settled total: the response it ends
+is the one that might have been partly unloaded, and what follows it is loaded.
 
 ## Invariants
 
@@ -417,9 +426,15 @@ row this client is holding starts in the part of the transcript it has.
   only the last stretch. Keying on "every row in the stretch reports itself
   settled" was rejected for the reason it always was: it would close the drawer
   mid-run, in the window between one plugin finishing and the next starting.
-- **Nothing a reader is still watching is folded away.** The response's own
-  timer is positioned after every block of its last turn, so while it runs it is
-  the final row of the feed and no answer sits below it to fold it in.
+- **Nothing a reader is still watching is folded away.** A stretch holding a row
+  that still reports live work stays in the feed until it settles. This is asked
+  of the rows, never inferred from where they sit: a streaming overlay is
+  inserted at `transcriptSequence - 1` and can arrive below the response's own
+  still-running timer.
+- **The settled response total is the only response boundary the feed carries.**
+  A row a person read is not one — a steer is its own canonical turn inside a
+  single response — so nothing else resets the accordion count or the coverage
+  mark.
 - **The accordion's total is the response's, never a sum of the rows in it.**
   Thinking overlaps plugin work and a plugin activity covers the gaps between
   its own calls, so a sum overstates the stretch by whatever ran concurrently. A
@@ -528,6 +543,12 @@ It deliberately does **not** cover:
   header until the gap is filled, at which point the drawers are recounted and
   one may take it. That is the safe direction: a number is never printed over a
   drawer that cannot account for it.
+- **A response whose settled total never found a host answer** never resets the
+  count, so every later response in that window keeps its total in the header
+  rather than on its drawer. Nothing is wrong on screen — the header is where a
+  total is always correct — but the drawers stop taking one until a total lands
+  on an answer again. Scoping the count to a real response identity, if the
+  projection ever carries one into this pass, would fix it.
 - **A stretch whose response total never arrived** still collapses, and its
   drawer reads a plain "Worked". The rows are behind the answer that reported on
   them either way; what is missing is only the number, and summing the rows to
@@ -552,7 +573,7 @@ It deliberately does **not** cover:
 | --- | --- | --- |
 | `lib/plugin-groups.test.ts` | `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/plugin-groups.test.ts` | The map: the two virtual groups, the unnamed-first-party fallback, name keying across the two id families, every glyph, and that no shipped connector still draws the plug. |
 | `lib/plugin-marks.test.ts` | same, `src/renderer/lib/plugin-marks.test.ts` | The marks: the monochrome variant asked for wherever a brand ships one, and one distinct mark per brand. |
-| `lib/transcript.test.ts` | same, `src/renderer/lib/transcript.test.ts` | Grouping over a composed feed: position, run boundaries, which timing wins, dropped rows, renumbering. Collapsing thinking: the summed run, the run boundary, the response total left out of it, the unknown segment, and the concurrent starts. Closing a reported-on stretch: what goes in the drawer, every stretch of a self-narrating run folding rather than only the last, the total moving out of the header and staying there when the response produced several drawers, the response-boundary reset, the two seam checks, a partially loaded response withholding its total and recovering coverage at the next thing a person read, the live tail left open, and the derived id. |
+| `lib/transcript.test.ts` | same, `src/renderer/lib/transcript.test.ts` | Grouping over a composed feed: position, run boundaries, which timing wins, dropped rows, renumbering. Collapsing thinking: the summed run, the run boundary, the response total left out of it, the unknown segment, and the concurrent starts. Closing a reported-on stretch: what goes in the drawer, every stretch of a self-narrating run folding rather than only the last, the total moving out of the header and staying there when the response produced several drawers, the settled-total response boundary and a steer not being one, the two seam checks, a partially loaded response withholding its total until the next settled total, a stretch held open by a row still reporting live work and closing once it settles, and the derived id. |
 | `components/workstream-blocks.test.tsx` | same, `src/renderer/components/workstream-blocks.test.tsx` | The row: its wording in both tenses, its stable accessible name while the number ticks, the pulsing mark, the absent orb, and the thinking row's brain. The accordion: closed and open, the unknown and recovered totals, and the open flag taken from the feed. |
 | `screens/workspace-settings.test.tsx` | same, `src/renderer/screens/workspace-settings.test.tsx` | Settings: an installed row and the provider card it came from carrying the same mark, and a webhook carrying none. |
 
@@ -590,13 +611,12 @@ is Rally's own report on the rows above it, so an answer arriving *is* the "that
 stretch is done" signal, and it arrives once per stretch rather than once per
 response.
 
-**Considered and rejected:** collapsing only once every row in the stretch
-reports itself settled. That was rejected when the accordion was first built, for
-the reason it is still rejected: it closes the drawer mid-run, in the window
-between one plugin finishing and the next starting. Nothing was needed in its
-place — the response's own timer is positioned after every block of its last
-turn, so while it runs it is the final row of the feed with no answer beneath it
-to fold it away, and the live tail stays open on its own.
+**Considered and rejected:** collapsing only once every row of the *transcript*
+reports itself settled — the whole feed waiting on the slowest thing in it. That
+stays rejected: it closes nothing during a run, in the window between one plugin
+finishing and the next starting, which is most of a run. What replaced it is the
+narrower form, per stretch, which review forced and which is now the rule (see
+the follow-up below).
 
 Also rejected: printing the response total on the last of several accordions,
 which is what the unchanged move-rule would have done. It would have labelled a
@@ -606,15 +626,37 @@ in a stretch to give each drawer its own number stays rejected too, and for the
 original reason: thinking overlaps plugin work, so a sum overstates by however
 much ran concurrently.
 
-**Follow-up in the same change:** review pointed out that counting accordions is
-only a proxy for "this drawer is the whole response", and that the proxy fails
-across a seam — a response whose earlier stretches were never loaded shows one
-accordion and produced several, so the total landed on a drawer that could not
-account for it and then jumped back to the header when the gap filled. A seam on
-a response's own work now marks its coverage partial and withholds the total;
-the next row a person read clears the mark. The alternative, carrying a real
-response identity through the projection so the count could be exact, buys a
-better answer for a case that already renders honestly without it.
+**Three follow-ups in the same change, all from review.**
+
+*A partly loaded response must not label a drawer.* Counting accordions is only a
+proxy for "this drawer is the whole response", and the proxy fails across a seam:
+a response whose earlier stretches were never loaded shows one accordion and
+produced several, so the total landed on a drawer that could not account for it
+and then jumped back to the header when the gap filled. A seam now marks the
+response's coverage partial and withholds the total. The alternative — carrying a
+real response identity through the projection so the count could be exact — buys
+a better answer for a case that already renders honestly without it.
+
+*A steer is not a response boundary.* The count reset at any row a person read,
+which is wrong for the one case that matters: a steer is committed as its own
+canonical turn between two answers of a single response, while the response
+activity spans both sides of it, so the stretch after the steer took a total
+covering the work before it too. The settled response total is now the only
+boundary, which is the one signal in the feed that actually means "this response
+is over". The cost is named under **Failure modes**: an orphaned total no longer
+resets anything, so later responses keep their totals in the header — the safe
+direction, and the same thing a response identity would fix.
+
+*Live work must not be folded away, and position does not prove it isn't.* The
+first version leaned on the projection positioning a response's own timer after
+every block of its last turn — true of canonical rows, and not true once a
+streaming answer overlay is inserted at `transcriptSequence - 1`, which puts an
+answer *below* a still-running timer and folded that timer into a closed drawer.
+The invariant is now stated directly: every row of a stretch is asked whether it
+still reports live work, and one that does holds the stretch open. This is the
+narrow, per-stretch form of what the original entry rejected as a whole-feed
+rule, and it costs nothing during a run because the stretch a reader is watching
+is the one with no answer under it yet.
 
 **What a future change has to respect:** the collapse boundary is still the run
 boundary the two grouping passes use, checked at both ends for the unloaded-island
