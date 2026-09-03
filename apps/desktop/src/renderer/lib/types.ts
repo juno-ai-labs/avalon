@@ -430,6 +430,27 @@ export interface ExternalActor {
   avatarUrl: string | null;
 }
 
+/**
+ * A settled stretch of work, and how well its duration is known.
+ *
+ * One shape rather than two identical ones, because the total genuinely moves
+ * between the two places it can be printed — a message header (`workSummary`)
+ * and the accordion over the run that produced it (`workAccordion`) — and
+ * `workSummaryLabel` renders either from the same fields. Two structurally
+ * identical literals would let a field added to one drift away from the other
+ * while still type-checking at that call, which is the accident this name
+ * exists to prevent.
+ *
+ * `durationMs` is null where there is no honest total: one the transcript could
+ * not establish, or a stretch not known to be the whole response and so with
+ * none of its own — the rows inside overlap, and summing them would overstate
+ * it. Both read as a plain "Worked".
+ */
+export interface WorkTotal {
+  durationMs: number | null;
+  timingAccuracy?: 'observed' | 'upper_bound';
+}
+
 export interface Message {
   id: string;
   /** Ordered-transcript sequence. Present only on canonical transcript rows. */
@@ -551,10 +572,7 @@ export interface Message {
    * and `collapseSettledWorkIntoAccordion` moves this total onto it so the
    * header carries nothing.
    */
-  workSummary?: {
-    durationMs: number | null;
-    timingAccuracy?: 'observed' | 'upper_bound';
-  };
+  workSummary?: WorkTotal;
   /**
    * The finished run's machinery, and the total that stands for it.
    *
@@ -570,17 +588,7 @@ export interface Message {
    * heights the cache has to be told about individually. One row, one
    * measurement, one thing to remember about it.
    */
-  workAccordion?: {
-    /**
-     * Null where this drawer has no honest total: an unknown one, or a stretch
-     * that is not the whole response and so has none of its own — the rows
-     * inside overlap, and summing them would overstate it. Both read as a plain
-     * "Worked".
-     */
-    durationMs: number | null;
-    timingAccuracy?: 'observed' | 'upper_bound';
-    rows: Message[];
-  };
+  workAccordion?: WorkTotal & { rows: Message[] };
   elicitation?: ElicitationData;
 }
 
