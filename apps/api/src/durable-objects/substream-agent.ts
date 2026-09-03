@@ -5062,6 +5062,21 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         },
       });
       if (!(error instanceof ApiError)) {
+        // Everything that is not an `ApiError` reaches the person as the same
+        // `substream_command_failed`, so this entry is the only account of what
+        // actually threw, and it has to survive the two error shapes that get
+        // here. A `ZodError`'s `message` is multi-line JSON, which as a `reason`
+        // aggregates into nothing and buries the field that failed inside a
+        // blob; a retry whose fence failed its own contract logged that blob and
+        // read as an unexplained 500. The issues are lifted out as
+        // `path`/`code` pairs — schema shape rather than member data, safe to
+        // record where the values would not be, and the same treatment
+        // `request_failed` gives a validation failure on the HTTP side — while
+        // `reason` keeps a stable code that groups. `frames` names the call
+        // site, which matters most for exactly these errors: a command path runs
+        // several `parse` calls and the message says which field, never which
+        // one of them threw.
+        const validation = error instanceof z.ZodError ? error : null;
         logWarn(this.env, "substream_socket_command_failed", {
           workspace_id: attachment.workspaceId,
           workstream_id: attachment.workstreamId,
@@ -5069,7 +5084,18 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           user_id: attachment.userId,
           command: command.type,
           operation_id: command.operationId,
-          reason: error instanceof Error ? error.message : "unknown",
+          reason: validation
+            ? "schema_validation_failed"
+            : error instanceof Error ? error.message : "unknown",
+          ...(validation
+            ? {
+              validation_issues: validation.issues.slice(0, 25).map((issue) => ({
+                path: issue.path.map(String).join(".") || "(root)",
+                code: issue.code,
+              })),
+            }
+            : {}),
+          frames: harnessErrorFrames(error),
         });
       }
       span.setError(safe.code, safe.message);
