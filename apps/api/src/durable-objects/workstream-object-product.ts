@@ -30,10 +30,12 @@ import {
   WorkstreamIdSchema,
   WORKSTREAM_NAMING_GRACE_MS,
   asHarnessRunId,
+  asSubstreamId,
   asUserId,
   asWorkspaceId,
   asWorkstreamId,
   type HarnessRunId,
+  type SubstreamId,
   type WorkspaceId,
   type WorkstreamId,
 } from "@rally/contracts";
@@ -80,6 +82,7 @@ import {
 } from "./scheduled-alarms";
 import { WorkstreamIdentityStorage } from "./workstream-identity-storage";
 import { substreamLoopId, workspaceDOName } from "./names";
+import { workstreamImportHash } from "./workstream-import-hash";
 import { WorkspaceAutomationOriginLabelSchema } from "./workspace-directory-protocol";
 import { WorkspaceReserveDraftAttachmentsResultSchema } from "./workspace-draft-attachment-protocol";
 import { WORKSTREAM_DIRECTORY_RESOURCE_LINK_LIMIT } from "./workstream-regional-effect";
@@ -445,7 +448,58 @@ export class WorkstreamObjectProductService {
     private readonly env: Env,
     private readonly transcript = new WorkstreamTranscriptStorage(storage),
     private readonly loops = new SubstreamLoopStorage(storage),
+    private readonly externalSubstreamId: () => SubstreamId = () => asSubstreamId("0"),
   ) {}
+
+  private conversationLoopId(root: RootRow): string {
+    return substreamLoopId(
+      asWorkstreamId(root.workstream_key),
+      this.externalSubstreamId(),
+    );
+  }
+
+  private socketCommandReceipt(
+    sql: SqlStorage,
+    auth: AuthContext,
+    operationId: string,
+    command: "reorder_pending_inputs" | "stop_harness",
+    requestHash: string,
+  ): "new" | "replayed" {
+    const sourceId = `user:${auth.userId}`;
+    const receipt = first(sql.exec<{ request_hash: string }>(
+      `SELECT request_hash FROM durable_inbox_receipts
+        WHERE channel = 'substream_socket_command'
+          AND source_kind = 'regional_service' AND source_id = ?
+          AND source_generation = 1 AND message_id = ?`,
+      sourceId,
+      operationId,
+    ));
+    if (receipt) {
+      if (receipt.request_hash !== requestHash) {
+        throw new ApiError(
+          409,
+          "substream_command_idempotency_conflict",
+          "This substream command id was already used for another command",
+        );
+      }
+      return "replayed";
+    }
+    sql.exec(
+      `INSERT INTO durable_inbox_receipts
+         (channel, source_kind, source_id, source_generation, message_id,
+          partition_key, source_version, source_epoch, request_hash,
+          result_code, result_hash, received_at)
+       VALUES ('substream_socket_command', 'regional_service', ?, 1, ?,
+               ?, 1, 0, ?, 'succeeded', ?, ?)`,
+      sourceId,
+      operationId,
+      `${this.externalSubstreamId()}:${command}`,
+      requestHash,
+      requestHash,
+      Date.now(),
+    );
+    return "new";
+  }
 
   private beginInputPreparation(inputId: string, now: number): void {
     const claim = this.activeInputPreparations.get(inputId);
@@ -3111,7 +3165,7 @@ export class WorkstreamObjectProductService {
   }
 
   private ensureExternalMessageLoop(root: RootRow, now: number) {
-    const loopId = substreamLoopId(asWorkstreamId(root.workstream_key));
+    const loopId = this.conversationLoopId(root);
     const projection = this.transcript.readBindProjection(loopId);
     return this.loops.ensureLoop({
       loopId,
@@ -3681,7 +3735,7 @@ export class WorkstreamObjectProductService {
       const root = await authorizedRoot();
       const loop = this.loops.loop();
       if (!loop || loop.loop_id !== existingPending.loop_id
-        || loop.loop_id !== substreamLoopId(asWorkstreamId(root.workstream_key))) {
+        || loop.loop_id !== this.conversationLoopId(root)) {
         throw new Error("substream_loop_identity_mismatch");
       }
       return this.pendingMessageResult(existingPending, false);
@@ -3837,7 +3891,7 @@ export class WorkstreamObjectProductService {
       const bindPayloadJson = canonicalModelMessageJson(bindMessage);
       const loop = this.loops.loop();
       if (!loop) throw new Error("substream_loop_not_initialized");
-      if (loop.loop_id !== substreamLoopId(asWorkstreamId(root.workstream_key))) {
+      if (loop.loop_id !== this.conversationLoopId(root)) {
         throw new Error("substream_loop_identity_mismatch");
       }
       const attachmentDescriptors = input.attachmentIds.map((resourceId, position) => {
@@ -4212,7 +4266,7 @@ export class WorkstreamObjectProductService {
       const root = await this.authorize(auth);
       const loop = this.loops.loop();
       if (!loop || loop.loop_id !== replay.loop_id
-        || loop.loop_id !== substreamLoopId(asWorkstreamId(root.workstream_key))) {
+        || loop.loop_id !== this.conversationLoopId(root)) {
         throw new Error("substream_loop_identity_mismatch");
       }
       return {
@@ -4305,7 +4359,7 @@ export class WorkstreamObjectProductService {
     const bindPayloadJson = canonicalModelMessageJson(bindMessage);
     const loop = this.loops.loop();
     if (!loop) throw new Error("substream_loop_not_initialized");
-    if (loop.loop_id !== substreamLoopId(asWorkstreamId(root.workstream_key))) {
+    if (loop.loop_id !== this.conversationLoopId(root)) {
       throw new Error("substream_loop_identity_mismatch");
     }
     let remaining = 0;
@@ -4426,35 +4480,59 @@ export class WorkstreamObjectProductService {
 
   async reorderPendingInputs(
     auth: AuthContext,
+    operationId: string,
     inputIds: readonly string[],
   ): Promise<{ pendingInputs: PendingTranscriptInput[] }> {
     const root = await this.authorize(auth);
-    const loop = this.loops.loop();
-    if (!loop) throw new Error("substream_loop_not_initialized");
-    if (loop.loop_id !== substreamLoopId(asWorkstreamId(root.workstream_key))) {
-      throw new Error("substream_loop_identity_mismatch");
-    }
-    this.loops.reorderPendingInputs({ inputIds, now: Date.now() });
-    return { pendingInputs: this.transcript.pendingTranscriptInputs() };
+    const requestHash = workstreamImportHash({ command: "reorder_pending_inputs", inputIds });
+    return this.storage.transactionSync(() => {
+      const replay = this.socketCommandReceipt(
+        this.storage.sql,
+        auth,
+        operationId,
+        "reorder_pending_inputs",
+        requestHash,
+      );
+      if (replay === "new") {
+        const loop = this.loops.loop();
+        if (!loop) throw new Error("substream_loop_not_initialized");
+        if (loop.loop_id !== this.conversationLoopId(root)) {
+          throw new Error("substream_loop_identity_mismatch");
+        }
+        this.loops.reorderPendingInputsInTransaction({ inputIds, now: Date.now() });
+      }
+      return { pendingInputs: this.transcript.pendingTranscriptInputs() };
+    });
   }
 
-  async stop(auth: AuthContext): Promise<void> {
+  async stop(auth: AuthContext, operationId: string): Promise<void> {
     const root = await this.authorize(auth);
-    const loop = this.loops.loop();
-    if (!loop) throw new Error("substream_loop_not_initialized");
-    if (loop.loop_id !== substreamLoopId(asWorkstreamId(root.workstream_key))) {
-      throw new Error("substream_loop_identity_mismatch");
-    }
-    if (loop.status === "idle") return;
-    if (loop.active_execution_id === null || loop.active_execution_epoch === null
-      || loop.lease_owner === null) throw new Error("substream_loop_execution_fence_missing");
-    this.loops.requestStop({
-      executionId: loop.active_execution_id,
-      executionEpoch: loop.active_execution_epoch,
-      leaseOwner: loop.lease_owner,
-      expectedLoopRevision: loop.revision,
-      reason: "stopped_by_user",
-      now: Date.now(),
+    const requestHash = workstreamImportHash({ command: "stop_harness" });
+    this.storage.transactionSync(() => {
+      const replay = this.socketCommandReceipt(
+        this.storage.sql,
+        auth,
+        operationId,
+        "stop_harness",
+        requestHash,
+      );
+      if (replay === "replayed") return;
+      const loop = this.loops.loop();
+      if (!loop) throw new Error("substream_loop_not_initialized");
+      if (loop.loop_id !== this.conversationLoopId(root)) {
+        throw new Error("substream_loop_identity_mismatch");
+      }
+      if (loop.status === "idle") return;
+      if (loop.active_execution_id === null || loop.active_execution_epoch === null
+        || loop.lease_owner === null) throw new Error("substream_loop_execution_fence_missing");
+      this.loops.requestStopInTransaction({
+        executionId: loop.active_execution_id,
+        executionEpoch: loop.active_execution_epoch,
+        leaseOwner: loop.lease_owner,
+        expectedLoopRevision: loop.revision,
+        reason: "stopped_by_user",
+        now: Date.now(),
+      });
     });
   }
 
@@ -4462,7 +4540,7 @@ export class WorkstreamObjectProductService {
     const root = await this.authorize(auth);
     const loop = this.loops.loop();
     if (!loop) throw new Error("substream_loop_not_initialized");
-    if (loop.loop_id !== substreamLoopId(asWorkstreamId(root.workstream_key))) {
+    if (loop.loop_id !== this.conversationLoopId(root)) {
       throw new Error("substream_loop_identity_mismatch");
     }
     const replay = first(this.storage.sql.exec<{ execution_context_json: string | null }>(
@@ -4520,7 +4598,7 @@ export class WorkstreamObjectProductService {
       region: this.env.AVALON_REGION,
       workspaceId: auth.workspaceId,
       workstreamId: asWorkstreamId(root.workstream_key),
-      substreamId: "0",
+      substreamId: this.externalSubstreamId(),
       loopId: loop.loop_id,
       harnessRunId: runId,
       triggerMessageId: latest.trigger_part_id,
