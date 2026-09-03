@@ -1069,3 +1069,88 @@ describe('footnote citations', () => {
     expect(citations.open).not.toHaveBeenCalled();
   });
 });
+
+describe('citations while a turn streams', () => {
+  const claim = 'The connector source recognises the gap.[^avalon] It says so plainly.';
+  const definition = '\n\n[^avalon]: [packages/connectors/src/index.ts](resource://board-deck)\n';
+
+  it('stands a pill-shaped skeleton where a definition has not arrived yet', () => {
+    // The reference and its definition are seconds apart on the wire: the model
+    // writes the marker mid-sentence and the `[^avalon]: …` line at the bottom
+    // of the answer. remark-gfm reads a reference it cannot resolve as text, so
+    // for that whole stretch the reader watched raw `[^avalon]` sit in a
+    // paragraph — Rally showing somebody its own markup.
+    render(<MarkdownBody citations={context()} streaming>{claim}</MarkdownBody>);
+
+    expect(document.querySelectorAll('.citation-pill-pending')).toHaveLength(1);
+    expect(document.body).not.toHaveTextContent('[^avalon]');
+    // The words around it are untouched — this replaces the marker, not the line.
+    expect(document.body).toHaveTextContent('The connector source recognises the gap. It says so plainly.');
+  });
+
+  it('covers a reference that is still being typed, before its bracket closes', () => {
+    // The tail is the one place a half-written reference exists. Without this
+    // the reader gets the same raw markup one character at a time — `[`, `[^`,
+    // `[^a` — which is the artefact by a slower route.
+    render(<MarkdownBody citations={context()} streaming>{'The gap is real.[^ava'}</MarkdownBody>);
+
+    expect(document.querySelectorAll('.citation-pill-pending')).toHaveLength(1);
+    expect(document.body).not.toHaveTextContent('[^ava');
+    expect(document.body).toHaveTextContent('The gap is real.');
+  });
+
+  it('hands the skeleton over to the numbered pill when the turn settles', () => {
+    const view = render(<MarkdownBody citations={context()} streaming>{claim}</MarkdownBody>);
+    expect(document.querySelectorAll('.citation-pill-pending')).toHaveLength(1);
+
+    view.rerender(<MarkdownBody citations={context()}>{`${claim}${definition}`}</MarkdownBody>);
+
+    expect(document.querySelector('.citation-pill-pending')).toBeNull();
+    expect([...document.querySelectorAll('.citation-pill')].map((pill) => pill.textContent)).toEqual(['1']);
+  });
+
+  it('resolves the skeleton mid-stream once a later section defines it', () => {
+    // Heading collapse copies a definition onto the fragments that do not carry
+    // it, so in the feed the skeleton does not have to wait for the turn to
+    // end. This is the path the main transcript actually takes.
+    const heading = ['## Claims', '', claim, '', '## Sources', '', ''].join('\n');
+    const view = render(<MarkdownBody citations={context()} collapseHeadings streaming>{heading}</MarkdownBody>);
+    expect(document.querySelectorAll('.citation-pill-pending')).toHaveLength(1);
+
+    view.rerender(
+      <MarkdownBody citations={context()} collapseHeadings streaming>
+        {`${heading}[^avalon]: [packages/connectors/src/index.ts](resource://board-deck)\n`}
+      </MarkdownBody>,
+    );
+
+    expect(document.querySelector('.citation-pill-pending')).toBeNull();
+    expect([...document.querySelectorAll('.citation-pill')].map((pill) => pill.textContent)).toEqual(['1']);
+  });
+
+  it('leaves a settled reference nothing ever defined as ordinary text', () => {
+    // A skeleton is a promise that a source is coming. Once the turn is over,
+    // nothing is coming, and the literal marker is the honest rendering.
+    render(<MarkdownBody citations={context()}>{claim}</MarkdownBody>);
+
+    expect(document.querySelector('.citation-pill-pending')).toBeNull();
+    expect(document.body).toHaveTextContent('[^avalon]');
+  });
+
+  it('leaves footnote syntax inside code as code', () => {
+    // A message explaining the syntax is ordinary Rally output, and both forms
+    // of code keep their source as their own value rather than as text.
+    const source = 'Write `[^1]` in the body.\n\n```md\nA claim.[^1]\n```\n\nThen define it.[^1\n';
+    render(<MarkdownBody citations={context()} streaming>{source}</MarkdownBody>);
+
+    expect(document.querySelector('code')).toHaveTextContent('[^1]');
+    expect(document.querySelector('.markdown-code-block')).toHaveTextContent('A claim.[^1]');
+    // The one outside code — the half-written tail — is the only skeleton.
+    expect(document.querySelectorAll('.citation-pill-pending')).toHaveLength(1);
+  });
+
+  it('is not drawn on a saved still, which has no stream to wait for', () => {
+    render(<MarkdownBody citations={context()} still>{claim}</MarkdownBody>);
+
+    expect(document.querySelector('.citation-pill-pending')).toBeNull();
+  });
+});
