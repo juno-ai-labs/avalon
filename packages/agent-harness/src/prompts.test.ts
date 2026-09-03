@@ -191,6 +191,23 @@ describe("prompt renderers", () => {
     expect(prompt).not.toMatch(/terminal_[a-z_]+/u);
   });
 
+  it("tells a self-delivering run that its sends are the only delivery", () => {
+    // The surface an automation no room owns runs on. It shares the outside
+    // reader with external delivery and must not share its claim: that
+    // section says the final message is delivered, which here would license
+    // the run to leave the result in its final message and send nothing.
+    const prompt = renderWorkstreamSystemPrompt({
+      title: "Weekly engineering brief",
+      objective: "Write the weekly engineering brief.",
+      outputSurface: "self_delivery",
+    });
+
+    expect(prompt).toContain("# Sending the result yourself");
+    expect(prompt).toContain("Nothing sends this run's final message anywhere");
+    expect(prompt).toContain("recipients cannot open Rally resource embeds");
+    expect(prompt).not.toContain("# External delivery output");
+  });
+
   it("keeps the complete body on external delivery surfaces", () => {
     const prompt = renderWorkstreamSystemPrompt({
       title: "Weekly engineering brief",

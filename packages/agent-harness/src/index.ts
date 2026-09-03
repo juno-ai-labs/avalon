@@ -2150,7 +2150,7 @@ const automationDraftSubmissionJsonSchema = {
     suggestedScope: {
       type: "string",
       enum: ["personal", "workspace", "workstream"],
-      description: "Who can see and change this automation, which cannot be changed after it is accepted: \"personal\" belongs to the person who asked and delivers to them, \"workspace\" belongs to the admins and acts with the workspace's own connections, \"workstream\" belongs to this work stream — everyone in the room can manage it, its results land here, and it outlives whoever asked for it. Ask which one before submitting. There is no work stream to name: an automation can only ever belong to the one it was written in."
+      description: "Who can see and change this automation, which cannot be changed after it is accepted: \"personal\" belongs to the person who asked and acts with their own connections, \"workspace\" belongs to the admins and acts with the workspace's own connections, \"workstream\" belongs to this work stream — everyone in the room can manage it, Rally posts its results here, and it outlives whoever asked for it. Ask which one before submitting. There is no work stream to name: an automation can only ever belong to the one it was written in. Nothing else is delivered for an automation: a result that should reach an inbox, a channel, a DM, or a document is sent by the run itself, so the instructions must name that send and its recipient as a step."
     },
     ready: {
       type: "boolean",
