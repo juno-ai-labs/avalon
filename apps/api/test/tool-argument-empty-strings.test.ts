@@ -80,7 +80,13 @@ function stringBranch(
   if (!branches?.length) return "unreadable";
   let sawUnreadable = false;
   for (const branch of branches) {
-    if (!branch || typeof branch !== "object" || Array.isArray(branch)) continue;
+    // A branch that is not a schema object is not a branch this helper can rule
+    // on, and skipping it quietly is the same silent pass the throw above
+    // exists to stop.
+    if (!branch || typeof branch !== "object" || Array.isArray(branch)) {
+      sawUnreadable = true;
+      continue;
+    }
     const nested = stringBranch(branch as Record<string, unknown>, depth + 1);
     if (nested === "unreadable") sawUnreadable = true;
     else if (nested !== null) return nested;
