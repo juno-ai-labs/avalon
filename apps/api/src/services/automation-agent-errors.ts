@@ -60,14 +60,6 @@ const AUTOMATION_ERROR_RESPONSES = {
     status: 409,
     message: "This automation is not ready yet. Answer Rally's outstanding question first.",
   },
-  automation_definition_revision_stale: {
-    // Not "reload": by the time anybody reads this the newer draft has already
-    // arrived over the automation's socket, and the desktop has no reload
-    // control to name. Re-reading the summary and pressing the button again is
-    // the recovery, on every client.
-    status: 409,
-    message: "This draft changed while you were reviewing it. Review the updated draft, then create it again.",
-  },
   automation_pending_elicitation: {
     status: 409,
     message: "Answer Rally's outstanding question before creating this automation.",
@@ -100,14 +92,6 @@ const AUTOMATION_ERROR_RESPONSES = {
     status: 422,
     message: "This automation's trigger is missing the connection it watches. Ask Rally to set it up again.",
   },
-  automation_evaluator_source_binding_mismatch: {
-    status: 422,
-    message: "This automation's trigger and its rules disagree about which connection to watch. Ask Rally to set it up again.",
-  },
-  automation_evaluator_connection_missing: {
-    status: 409,
-    message: "A connection this automation needs is unavailable. Reconnect it and try again.",
-  },
   automation_plugin_unavailable: {
     status: 409,
     message: "A connection this automation needs is unavailable. Reconnect it and try again.",
@@ -124,9 +108,6 @@ const AUTOMATION_ERROR_RESPONSES = {
     status: 503,
     message: "Rally is finishing an update to automations. Try again in a moment.",
   },
-  // "Request" is the HTTP object, not anything on the screen, and "draft" is
-  // already the sidebar's word for the thing being created.
-  automation_draft_id_required: { status: 422, message: "This automation has no draft to create from." },
   // A draft written outside a work stream has no room to belong to, and one
   // cannot be supplied: the request carries no room by design.
   automation_workstream_scope_requires_authoring_room: {

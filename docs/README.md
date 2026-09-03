@@ -117,7 +117,7 @@ update it in the same change.
 | [`linear-integration.md`](linear-integration.md) | The Linear OAuth, webhook, and native-agent design against Linear's published contracts. |
 | [`slack-integration.md`](slack-integration.md) | The Slack Agent connector's product boundary, tools, and event handling. |
 | [`slack-permissions.md`](slack-permissions.md) | Every configured Slack OAuth scope and the behavior that depends on it. Read before adding a scope. |
-| [`workstream-email-addresses.md`](workstream-email-addresses.md) | The permanent per-work-stream and per-automation address format at `automation.rallywith.ai` and its derivation, plus outbound automation results: the frozen destinations, the notification sender, the `resultDelivery` a run is told about so it does not deliver a second copy, and how the result body is rendered. Read before changing where an automation's result goes or what it looks like. |
+| [`workstream-email-addresses.md`](workstream-email-addresses.md) | The permanent per-work-stream and per-automation address format at `automation.rallywith.ai` and its derivation, the inbound path that starts a run from a mail, its sender screen and hourly budget, and the notification sender. Rally sends an automation's result nowhere but the room that owns it; [`automation-lifecycle.md`](automation-lifecycle.md) owns that. Read before changing how mail reaches an automation. |
 | [`workstream-links.md`](workstream-links.md) | The canonical workspace-addressed work-stream link, its legacy readers, why resource and workspace IDs sit in the path, and the site rewrite that serves it. Read before emitting or parsing a work-stream link anywhere. |
 
 ## Development, verification, and operations
