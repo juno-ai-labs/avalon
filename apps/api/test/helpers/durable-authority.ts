@@ -3,12 +3,6 @@ import { vi } from "vitest";
 
 import { applyWorkstreamObjectSchema } from "../../src/durable-objects/workstream-object-schema";
 import {
-  BLOCK_DASHBOARD_OPERATIONS,
-  type BlockDashboardObjectPort,
-  type BlockDashboardOperation,
-} from "../../src/durable-objects/workstream-block-dashboard-protocol";
-import { WorkstreamBlockDashboardStorage } from "../../src/durable-objects/workstream-block-dashboard-storage";
-import {
   TOOL_RECEIPT_OPERATIONS,
   type ToolReceiptObjectPort,
   type ToolReceiptOperation,
@@ -1268,8 +1262,8 @@ export function testSubstreamAgentsBinding(
  * production ports collapsed onto for the same reason. The three copies this
  * replaces had all drifted from production in the same way: none applied the
  * `?? null` coalesce the real seam applies, so a method returning `undefined` —
- * `wakeup`, `oldestOpenElicitation`, `descriptionRefreshState`,
- * `compactionCheckpoint`, and their receipt and block-dashboard counterparts —
+ * `wakeup`, `oldestOpenElicitation`, `descriptionRefreshState`, and
+ * `compactionCheckpoint` —
  * answered the Node suite differently from the wire, where JSON has no
  * `undefined` and an absent `value` arrives as `null`.
  */
@@ -1466,14 +1460,4 @@ export function testResourcePortFactory(database: DatabaseSync): (
 ) => ResourceObjectPort {
   const port = testResourcePort(database);
   return () => port;
-}
-
-/** A block-dashboard port over a real storage instance in this isolate. */
-export function testBlockDashboardPort(database: DatabaseSync): BlockDashboardObjectPort {
-  return testObjectPort<
-    WorkstreamBlockDashboardStorage, BlockDashboardOperation, BlockDashboardObjectPort
-  >(
-    new WorkstreamBlockDashboardStorage(plainBinding(database)),
-    BLOCK_DASHBOARD_OPERATIONS,
-  );
 }

@@ -12,7 +12,7 @@ import { deferredZodSchema } from "@rally/contracts/deferred-zod-schema";
  * The wire contract for one work stream's harness runs.
  *
  * The sixth authority on this pattern, and the one the other five have been
- * fencing against: every block-dashboard write, every tool receipt and every
+ * fencing against: every tool receipt and every
  * scope insert proved its right to write by joining `harness_runs` and checking
  * `lease_owner`. Those joins become this port's own fence.
  */

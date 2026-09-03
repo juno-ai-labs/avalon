@@ -40,7 +40,7 @@ export function createSchedulingObjectPort(
   env: Env,
   workspaceId: string,
   workstreamId: string,
-  /** The same in-isolate seam the receipt and block-dashboard ports take. */
+  /** The same in-isolate seam the other durable runtime ports take. */
   localStorage?: WorkstreamSchedulingStorage,
 ): SchedulingObjectPort {
   return createObjectPort(

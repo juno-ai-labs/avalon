@@ -222,7 +222,7 @@ function launchedWorkstreamDetail(
 /**
  * How long the home content stays mounted fading out under the transcript that
  * replaced it. The stylesheet animates over the same span, so the two have to
- * agree — the same contract `RAIL_CROSSFADE_MS` keeps for the right sidebar.
+ * agree — the same contract `RAIL_EXIT_FADE_MS` keeps for the right sidebar.
  */
 const HOME_HAND_OFF_MS = 190;
 

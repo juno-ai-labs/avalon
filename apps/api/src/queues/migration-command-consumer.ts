@@ -32,7 +32,6 @@ import {
 } from "@rally/contracts/durable-object-migrations";
 import { asWorkspaceId } from "@rally/contracts";
 
-import { BLOCK_DASHBOARD_AGENT_SCHEMA_MIGRATIONS } from "../durable-objects/block-dashboard-agent";
 import { latestMigrationVersion, type ForcedMigrationOutcome } from "../durable-objects/migration-reporting";
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../durable-objects/workspace-do";
 import { WORKSTREAM_DO_SCHEMA_MIGRATIONS } from "../durable-objects/workstream-do";
@@ -69,8 +68,6 @@ export function migrationCommandDispatchers(env: Env): Record<
   return {
     SubstreamAgent: (objectId, command) =>
       durableObjectStubById(env, env.SUBSTREAM_AGENTS, objectId).forceMigration(command),
-    BlockDashboardAgent: (objectId, command) =>
-      durableObjectStubById(env, env.BLOCK_DASHBOARD_AGENTS, objectId).forceMigration(command),
     WorkstreamDO: (objectId, command) =>
       durableObjectStubById(env, env.WORKSTREAM_DOS, objectId).forceMigration(command),
     WorkspaceDO: (objectId, command) =>
@@ -88,7 +85,6 @@ export function migrationCommandDispatchers(env: Env): Record<
  */
 export const MIGRATION_COMMAND_HEADS: Readonly<Record<string, number>> = {
   SubstreamAgent: latestMigrationVersion(WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS),
-  BlockDashboardAgent: latestMigrationVersion(BLOCK_DASHBOARD_AGENT_SCHEMA_MIGRATIONS),
   WorkstreamDO: latestMigrationVersion(WORKSTREAM_DO_SCHEMA_MIGRATIONS),
   WorkspaceDO: latestMigrationVersion(WORKSPACE_DO_SCHEMA_MIGRATIONS),
 };

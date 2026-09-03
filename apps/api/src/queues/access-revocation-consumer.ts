@@ -1,7 +1,6 @@
 import {
   asArtifactId,
   asAutomationId,
-  asBlockId,
   asWorkspaceId,
   asWorkstreamId,
   type SubstreamId,
@@ -10,7 +9,6 @@ import {
 import {
   artifactHostDOName,
   automationAgentName,
-  blockDashboardAgentName,
   substreamAgentName,
   workspaceDOName,
   workstreamDOName,
@@ -130,17 +128,12 @@ export async function applyAccessRevocation(env: Env, message: AccessRevocationM
       workstreamDOName(env.AVALON_REGION, workspaceId, workstreamId),
       placementAffinity,
     );
-    const { substreamIds, blockIds } = await workstream.revokeSocketAccess(revocation);
+    const { substreamIds } = await workstream.revokeSocketAccess(revocation);
     await publishDescendantRevocations(env, [
       ...substreamIds.map((substreamId) => descendantRevocation(revocation, {
         scope: "substream",
         workstreamId: target.workstreamId,
         substreamId,
-      })),
-      ...blockIds.map((blockId) => descendantRevocation(revocation, {
-        scope: "block",
-        workstreamId: target.workstreamId,
-        blockId,
       })),
     ]);
     return;
@@ -163,14 +156,8 @@ export async function applyAccessRevocation(env: Env, message: AccessRevocationM
     return;
   }
 
-  const block = await durableObjectStubForWorkspace(
-    env,
-    env.BLOCK_DASHBOARD_AGENTS,
-    workspaceId,
-    blockDashboardAgentName(env.AVALON_REGION, workspaceId, workstreamId, asBlockId(target.blockId)),
-    placementAffinity,
-  );
-  await block.revokeSocketAccess(revocation);
+  const exhaustiveTarget: never = target;
+  throw new Error(`unsupported_access_revocation_target:${String(exhaustiveTarget)}`);
 }
 
 /** Queue entry point: one hop per message, retried on its own. */

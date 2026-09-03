@@ -713,7 +713,6 @@ describes behaviour to replace, not a pattern to copy into something new.**
 | Work-stream directory pages (membership, order, pins) | First page carried on the `workspace_sync` answer to `subscribe`; later pages requested with `list_workstreams`; a `workstream_directory` sync event invalidates them and the client asks again | **Partly.** The first page is pushed and later ones are a scroll the reader asked for, but a pin or a reorder still arrives as news rather than as the changed row. |
 | Work-stream common/viewer state | Pushed on both the WorkstreamDO and WorkspaceDO sockets, waterlined | Yes. |
 | Transcript parts, tool blocks, token frames, presence | SubstreamAgent socket, snapshot on subscribe | Yes. |
-| HyperSight block output | BlockDashboardAgent socket, checkpoint on connect | Yes. |
 | Transcript range loading | Correlated, snapshot-fenced half-open range request on the SubstreamAgent socket | Yes — a pull the reader asked for, answered by the authority with explicit inspected coverage. |
 | Opening a work stream | Selecting the row immediately subscribes the SubstreamAgent feed; its first `snapshot` carries metadata, the unread-centered 5 + anchor + 5 range, the latest-five range, active turns, and reconnect timing baselines, while the WorkstreamDO control socket starts independently | Yes. `GET /workstreams/:id` remains only as an explicit manual recovery twin after the socket starts retrying or becomes unavailable. |
 | Workspace profile, members, invitations, connectors, resources, digest, flags, viewer preferences | `workspace_sync` invalidation on the socket → REST refetch of whichever surface is mounted | **No.** The socket carries the news; the data comes over HTTP. |
@@ -798,6 +797,19 @@ read survives, and it is not a precedent.
   the caller is made to wait for.
 
 ## Changelog
+
+### 2026-09-03 — HyperSight has neither a socket nor a REST surface
+
+**What changed:** The dashboard ticket audience, WebSocket routes, service
+methods, and HTTP endpoints were deleted together with their clients.
+
+**Why:** The feature is gone and there are no clients to preserve. Leaving one
+transport as compatibility code would leave a writable path into retired state.
+
+**Consequences:** Work-stream control and substream room sockets describe the
+complete live realtime surface.
+
+Shipped in #541.
 
 ### 2026-09-02 — Substream-local commands move together onto the child socket
 

@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 
 import { MAX_RAIL_WIDTH, MIN_RAIL_WIDTH } from '../lib/ui-store';
 
-// Both right sidebars are pinned this far from the window's right edge, so the
+// The right sidebar is pinned this far from the window's right edge, so the
 // width under the pointer is what is left of the window once that gap and the
 // pointer's own distance from the edge are taken off.
 const RAIL_EDGE_GAP = 8;
@@ -14,7 +14,7 @@ function widthUnderPointer(clientX: number): number {
 }
 
 /**
- * The grab handle shared by HyperSight and the inspector rail: a short pill
+ * The inspector rail's grab handle: a short pill
  * standing just outside the sidebar's leading edge, which colors and grows as
  * it is grabbed so the affordance is legible without drawing a second border
  * down the panel. It is a sibling of the sidebar rather than a child, both

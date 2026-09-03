@@ -11,40 +11,26 @@ describe('context rail state', () => {
       railVariant: 'context',
       railWidth: 360,
       inspector: null,
-      blockDashboardOpen: false,
-      blockDashboardWidth: 360,
       railScope: null,
     });
   });
 
-  it('clamps HyperSight to the same width range as the rail it shares the sidebar with', () => {
-    useUiStore.getState().setBlockDashboardWidth(120);
-    expect(useUiStore.getState().blockDashboardWidth).toBe(320);
-
-    useUiStore.getState().setBlockDashboardWidth(900);
-    expect(useUiStore.getState().blockDashboardWidth).toBe(560);
-
-    useUiStore.getState().setBlockDashboardOpen(true);
-    expect(useUiStore.getState().blockDashboardOpen).toBe(true);
-  });
-
-  it('keeps a separate remembered width per panel and per work stream', () => {
+  it('keeps a separate remembered width per work stream', () => {
     useUiStore.getState().setRailScope('workstream-one');
-    expect(useUiStore.getState()).toMatchObject({ railWidth: 360, blockDashboardWidth: 360 });
+    expect(useUiStore.getState()).toMatchObject({ railWidth: 360 });
 
     useUiStore.getState().setRailWidth(420);
-    useUiStore.getState().setBlockDashboardWidth(520);
 
-    // A work stream that has never opened either panel starts at the default.
+    // A work stream that has never opened the panel starts at the default.
     useUiStore.getState().setRailScope('workstream-two');
-    expect(useUiStore.getState()).toMatchObject({ railWidth: 360, blockDashboardWidth: 360 });
+    expect(useUiStore.getState()).toMatchObject({ railWidth: 360 });
     useUiStore.getState().setRailWidth(330);
 
     useUiStore.getState().setRailScope('workstream-one');
-    expect(useUiStore.getState()).toMatchObject({ railWidth: 420, blockDashboardWidth: 520 });
+    expect(useUiStore.getState()).toMatchObject({ railWidth: 420 });
 
     useUiStore.getState().setRailScope('workstream-two');
-    expect(useUiStore.getState()).toMatchObject({ railWidth: 330, blockDashboardWidth: 360 });
+    expect(useUiStore.getState()).toMatchObject({ railWidth: 330 });
   });
 
   it('clamps and persists sidebar resizing', () => {

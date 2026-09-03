@@ -6,9 +6,6 @@ import {
   AutomationDraftSchema,
   AgentModelOverrideSchema,
   AutomationDetailSchema,
-  ActivitySourcePluginIdsSchema,
-  ModelPluginIdSchema,
-  ScopeSchema,
   automationAcceptanceSelections,
   automationDraftAcceptanceBlocker,
   isExternalEventTrigger,
@@ -29,9 +26,8 @@ import {
   type AutomationSetEvaluatorRulesMutation,
   type AutomationRunContextV1,
 } from "@rally/contracts";
-import {
-} from "@rally/agent-harness";
 import { z } from "zod";
+import { AutomationLegacyImportRequestSchema } from "./automation-legacy-import";
 import { sha256 } from "../lib/crypto";
 import { assertDurableObjectJurisdiction } from "../lib/durable-object-namespace";
 import { uuidV7 } from "../lib/uuid-v7";
@@ -55,7 +51,6 @@ import { validateDraftEvaluatorRules } from "../services/external-event-evaluato
 import { WorkstreamEmailRoutingService } from "../services/workstream-email-routing-service";
 import { attachWorkstreamRuntimeResource } from "../services/workstream-object-client";
 import { workstreamImportHash } from "./workstream-import-hash";
-import { AGENT_RUN_DISPATCH_LEASE_MS } from "./agent-run-dispatch-queue";
 import {
   SCHEDULED_ALARM_SCHEMA_STATEMENTS,
   ScheduledDurableObject,
@@ -123,6 +118,12 @@ const RUN_PROJECTION_STATES = Object.keys(RUN_EXECUTION_STATE) as [
 const MIGRATION_COMPONENT = "automation_agent";
 const COMPILER_DISPATCH_ALARM_KIND = "compiler_dispatch";
 const AUTOMATION_SCHEDULE_ALARM_KIND = "automation_schedule";
+/**
+ * How long an outbox delivery owns its row before a later alarm may retry it.
+ * This is the existing five-minute durable rediscovery lease, now named for
+ * the only live consumer instead of retaining the retired dashboard queue.
+ */
+const AUTOMATION_OUTBOX_DELIVERY_LEASE_MS = 5 * 60_000;
 const DEFAULT_AUTOMATION_EMAIL_MAX_RUNS_PER_HOUR = 30;
 
 const AutomationInboundEmailAdmissionSchema = z.strictObject({
@@ -220,73 +221,6 @@ const AutomationInboundEmailScreenSchema = z.strictObject({
   resendEmailId: z.string().min(1),
   /** Absent before the message is fetched; null once fetched and unresolvable. */
   senderUserId: z.string().uuid().nullable().optional(),
-});
-
-const AutomationLegacyImportRequestSchema = z.strictObject({
-  schemaVersion: z.literal(1),
-  automationId: z.string().uuid(),
-  workspaceId: z.string().uuid(),
-  authorUserId: z.string().uuid(),
-  region: z.enum(["global", "eu"]),
-  sourceHash: z.string().min(1),
-  source: z.strictObject({
-    definition: AutomationDraftSchema,
-    status: z.enum(["active", "paused", "error"]),
-    scope: ScopeSchema,
-    unsupportedTrigger: z.boolean(),
-    defaultPluginIds: z.array(ModelPluginIdSchema),
-    activitySourcePluginIds: ActivitySourcePluginIdsSchema,
-    connectorBindings: z.record(z.string(), z.string()),
-    emailAddress: z.string().email().nullable(),
-    modelOverride: AgentModelOverrideSchema.nullable(),
-    createdAt: z.number().int().nonnegative(),
-    updatedAt: z.number().int().nonnegative(),
-    schedules: z.array(z.strictObject({
-      scheduleId: z.string().min(1),
-      kind: z.enum(["calendar", "interval"]),
-      definition: z.record(z.string(), z.unknown()),
-      nextDueAt: z.number().int().nonnegative().nullable(),
-    })),
-    runs: z.array(z.strictObject({
-      runId: z.string().uuid(),
-      workstreamId: z.string().uuid(),
-      triggerType: z.string().min(1),
-      plannedFor: z.number().int().nonnegative().nullable(),
-      status: z.enum(["scheduled", "running", "needs_input", "completed", "failed"]),
-      workflowInstanceId: z.string().nullable(),
-      createdAt: z.number().int().nonnegative(),
-      updatedAt: z.number().int().nonnegative(),
-    })),
-    memoryRecords: z.array(z.strictObject({
-      kind: z.enum([
-        "scope",
-        "item",
-        "mutation",
-        "index_receipt",
-        "table",
-        "table_column",
-        "table_row",
-        "table_cell",
-        "table_mutation",
-      ]),
-      recordId: z.string().min(1),
-      payload: z.record(z.string(), z.unknown()),
-    })),
-    /** The pre-cutover inbound-email dedupe ledger and its hourly windows. */
-    inboundEmailReceipts: z.array(z.strictObject({
-      resendEmailId: z.string().min(1),
-      svixId: z.string().min(1),
-      payloadRef: z.string().min(1).nullable(),
-      workstreamId: z.string().uuid().nullable(),
-      runId: z.string().uuid().nullable(),
-      receivedAt: z.number().int().nonnegative(),
-      refused: z.boolean(),
-    })).optional(),
-    inboundEmailRateWindows: z.array(z.strictObject({
-      windowStartedAt: z.number().int().nonnegative(),
-      acceptedCount: z.number().int().nonnegative(),
-    })).optional(),
-  }),
 });
 
 export const AUTOMATION_AGENT_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigration[] = [{
@@ -2959,7 +2893,7 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
         `UPDATE automation_outbox
             SET state = 'delivering', attempt = attempt + 1,
                 not_before = ?, updated_at = ? WHERE effect_id = ?`,
-        now + AGENT_RUN_DISPATCH_LEASE_MS,
+        now + AUTOMATION_OUTBOX_DELIVERY_LEASE_MS,
         now,
         row.effect_id,
       );

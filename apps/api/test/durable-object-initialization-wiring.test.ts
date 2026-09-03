@@ -5,7 +5,6 @@ import { describe, expect, it } from "vitest";
 // the one shared input gate. Keep the exact strings close to the call sites so
 // formatting-only changes fail visibly instead of silently weakening coverage.
 const migratableClasses = [
-  "block-dashboard-agent.ts",
   "substream-agent.ts",
   "workspace-do.ts",
   "workstream-do.ts",
