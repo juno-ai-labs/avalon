@@ -468,12 +468,14 @@ describe("agent harness", () => {
       model: "x-ai/grok-4.6",
       reasoningEffort: "none",
     });
+    await client.structured({ ...structuredInput, model: "google/gemini-3.8-flash" });
 
-    expect(requestBodies).toHaveLength(3);
+    expect(requestBodies).toHaveLength(4);
     expect(requestBodies[0]).not.toHaveProperty("reasoning");
     expect(requestBodies[0]).not.toHaveProperty("parallel_tool_calls");
     expect(requestBodies[1]?.reasoning).toEqual({ effort: "low" });
     expect(requestBodies[2]?.reasoning).toEqual({ effort: "none" });
+    expect(requestBodies[3]?.reasoning).toEqual({ effort: "low" });
   });
 
   it("keeps the intended model in structured fallback trace metadata", async () => {
