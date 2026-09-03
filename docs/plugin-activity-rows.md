@@ -573,7 +573,7 @@ It deliberately does **not** cover:
 | --- | --- | --- |
 | `lib/plugin-groups.test.ts` | `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/plugin-groups.test.ts` | The map: the two virtual groups, the unnamed-first-party fallback, name keying across the two id families, every glyph, and that no shipped connector still draws the plug. |
 | `lib/plugin-marks.test.ts` | same, `src/renderer/lib/plugin-marks.test.ts` | The marks: the monochrome variant asked for wherever a brand ships one, and one distinct mark per brand. |
-| `lib/transcript.test.ts` | same, `src/renderer/lib/transcript.test.ts` | Grouping over a composed feed: position, run boundaries, which timing wins, dropped rows, renumbering. Collapsing thinking: the summed run, the run boundary, the response total left out of it, the unknown segment, and the concurrent starts. Closing a reported-on stretch: what goes in the drawer, every stretch of a self-narrating run folding rather than only the last, the total moving out of the header and staying there when the response produced several drawers, the settled-total response boundary and a steer not being one, the two seam checks, a partially loaded response withholding its total until the next settled total, a stretch held open by a row still reporting live work and closing once it settles, and the derived id. |
+| `lib/transcript.test.ts` | same, `src/renderer/lib/transcript.test.ts` | Grouping over a composed feed: position, run boundaries, which timing wins, dropped rows, renumbering. Collapsing thinking: the summed run, the run boundary, the response total left out of it, the unknown segment, and the concurrent starts. Closing a reported-on stretch: what goes in the drawer, every stretch of a self-narrating run folding rather than only the last, the total moving out of the header and staying there when the response produced several drawers, the settled-total response boundary and a steer not being one, the two seam checks, a partially loaded response withholding its total until the next settled total, a stretch held open by a live timer or by a plugin run still marked active and closing once it settles, a final answer that folds nothing keeping its total in the header, and the derived id. |
 | `components/workstream-blocks.test.tsx` | same, `src/renderer/components/workstream-blocks.test.tsx` | The row: its wording in both tenses, its stable accessible name while the number ticks, the pulsing mark, the absent orb, and the thinking row's brain. The accordion: closed and open, the unknown and recovered totals, and the open flag taken from the feed. |
 | `screens/workspace-settings.test.tsx` | same, `src/renderer/screens/workspace-settings.test.tsx` | Settings: an installed row and the provider card it came from carrying the same mark, and a webhook carrying none. |
 
@@ -652,6 +652,9 @@ first version leaned on the projection positioning a response's own timer after
 every block of its last turn — true of canonical rows, and not true once a
 streaming answer overlay is inserted at `transcriptSequence - 1`, which puts an
 answer *below* a still-running timer and folded that timer into a closed drawer.
+Review raised the same doubt from the other end: a plugin run is anchored at its
+own last call inside `run.turnId`, so one still reading `active` sits above an
+answer arriving in the next turn, and its pulsing mark went into the drawer too.
 The invariant is now stated directly: every row of a stretch is asked whether it
 still reports live work, and one that does holds the stretch open. This is the
 narrow, per-stretch form of what the original entry rejected as a whole-feed
