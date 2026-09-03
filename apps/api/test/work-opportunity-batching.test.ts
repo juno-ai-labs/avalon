@@ -3,7 +3,12 @@ import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AuthContext, Env } from "../src/env";
 import { __workOpportunityTesting, WorkOpportunityService } from "../src/services/work-opportunity-service";
-import { enqueueActivityOpportunity } from "../src/services/work-opportunity-batching";
+import { createConnectorRegistry } from "@rally/connectors";
+import {
+  enqueueActivityOpportunity,
+  isSuggestedWorkCandidateEventType,
+  SUGGESTED_WORK_EXCLUDED_EVENT_TYPE_PREFIXES,
+} from "../src/services/work-opportunity-batching";
 import { WorkstreamService } from "../src/services/workstream-service";
 import { createCloudflareTestBinding, createTestD1PreparedStatement, createTestEnv } from "./helpers/cloudflare-test";
 import { openWorkstreamAuthorityForTest, testSubstreamAgentsBinding } from "./helpers/durable-authority";
@@ -178,12 +183,13 @@ describe("suggested-work aggregation", () => {
       }),
     });
 
-    await enqueueActivityOpportunity(
+    const outcome = await enqueueActivityOpportunity(
       environment(database, { WORKSPACE_DOS: workspaces }),
       activityId,
       workspaceId,
     );
 
+    expect(outcome).toBe("enqueued");
     expect(enqueueOpportunitySource.mock.calls.map(([input]) => input)).toEqual([
       expect.objectContaining({
         partitionKey: `workspace:${userOne}`,
@@ -196,6 +202,148 @@ describe("suggested-work aggregation", () => {
         sourceId: activityId,
       }),
     ]);
+  });
+
+  it("withholds CI status activity from every admission window", async () => {
+    const database = migratedDatabase();
+    seed(database);
+    const activityId = "00000000-0000-7000-8000-000000000121";
+    const enqueueOpportunitySource = vi.fn(async (input: Record<string, unknown>) => {
+      void input;
+    });
+    const connectorEvent = vi.fn(async () => ({
+      connectorType: "github",
+      activity: {
+        id: activityId,
+        workspaceId,
+        region: "global",
+        connectionId: "00000000-0000-7000-8000-000000000011",
+        connectionScope: "workspace",
+        connectionOwnerUserId: null,
+        provider: "github",
+        providerEventId: "check-run-event",
+        eventType: "github.check_run.completed",
+        resourceType: "github_check_run",
+        providerResourceId: "juno-ai-labs/avalon/check-runs/1",
+        actor: {},
+        subject: {},
+        occurredAt: "2026-08-07T00:00:00.000Z",
+        receivedAt: "2026-08-07T00:00:01.000Z",
+        title: "CI passed",
+        summary: "A commit status, not work for a person",
+        textSnippet: "lint: success",
+        payloadRef: null,
+        visibility: {},
+        targetUserIds: [],
+        entityKeys: ["github:check_run:1"],
+        dedupeKey: "github:check-run-event",
+        rawContentHash: null,
+        metadata: {},
+        externalPeople: [],
+      },
+    }));
+    const workspaces = createCloudflareTestBinding<Env["WORKSPACE_DOS"]>({
+      idFromName: vi.fn().mockReturnValue({}),
+      get: vi.fn().mockReturnValue({ connectorEvent, enqueueOpportunitySource }),
+    });
+
+    const outcome = await enqueueActivityOpportunity(
+      environment(database, { WORKSPACE_DOS: workspaces }),
+      activityId,
+      workspaceId,
+    );
+
+    // The activity was read — the decision needs its event type — and then
+    // nothing was opened for it, for either member, and the caller is told so
+    // rather than left to infer "unclaimed, therefore enqueued".
+    expect(outcome).toBe("excluded");
+    expect(connectorEvent).toHaveBeenCalledTimes(1);
+    expect(enqueueOpportunitySource).not.toHaveBeenCalled();
+
+    // The families the gate names, and the neighbours it must keep admitting.
+    for (const excluded of [
+      "github.check_run.created",
+      "github.check_run.completed",
+      "github.workflow_run.requested",
+      "github.workflow_run.in_progress",
+      "github.workflow_run.completed",
+    ]) {
+      expect(isSuggestedWorkCandidateEventType(excluded), excluded).toBe(false);
+    }
+    for (const admitted of [
+      "github.pull_request.opened",
+      "github.pull_request_review.submitted",
+      "github.push",
+      // One series edit is one activity per connection since the connector's
+      // 2026-09-02 collapse, and a moved or cancelled meeting can be work.
+      "calendar.event_changed",
+      "calendar.event_completed",
+      "email.received",
+      "linear.issue.update",
+    ]) {
+      expect(isSuggestedWorkCandidateEventType(admitted), admitted).toBe(true);
+    }
+  });
+
+  it("withholds only what the connector that emits it already called operational", () => {
+    // The gate is Suggested Work's own judgement, not the digest's — the
+    // recorded decision in `activity-consumer.ts` is that this surface must not
+    // inherit that notification choice, and 142 of the 205 declared types are
+    // operational where this gate withholds 5. What it may not do is disagree
+    // with a manifest: a type withheld from the home screen has to be one its
+    // own connector already declined to call news. This is the check that keeps
+    // the two from drifting apart, since neither file mentions the other in a
+    // way a grep would find.
+    const oauth = { clientId: "client", clientSecret: "secret", redirectUri: "https://api.example.com/callback" };
+    const registry = createConnectorRegistry({
+      granola: { redirectUri: "https://api.example.com/callback" },
+      google: oauth,
+      github: {
+        appId: "1",
+        clientId: "Iv1.client-id",
+        clientSecret: "secret",
+        privateKey: `${["-----BEGIN", "PRIVATE KEY-----"].join(" ")}\nAA==\n${["-----END", "PRIVATE KEY-----"].join(" ")}`,
+        webhookSecret: "webhook",
+        redirectUri: "https://api.example.com/callback",
+      },
+      linear: oauth,
+      notion: oauth,
+      slack: { ...oauth, signingSecret: "signing" },
+      x: { apiKey: "key" },
+    });
+
+    const withheld: string[] = [];
+    const digestibleButWithheld: string[] = [];
+    for (const manifest of registry.list()) {
+      const digestible = new Set(manifest.digestibleActivityTypes);
+      for (const eventType of manifest.activityTypes) {
+        if (isSuggestedWorkCandidateEventType(eventType)) continue;
+        withheld.push(eventType);
+        if (digestible.has(eventType)) digestibleButWithheld.push(eventType);
+      }
+    }
+
+    // Nothing this gate withholds is news to its own connector.
+    expect(digestibleButWithheld).toEqual([]);
+    // And the five it withholds today are the two CI families, whole.
+    expect([...withheld].sort()).toEqual([
+      "github.check_run.completed",
+      "github.check_run.created",
+      "github.workflow_run.completed",
+      "github.workflow_run.in_progress",
+      "github.workflow_run.requested",
+    ]);
+
+    // Every prefix earns its place. A prefix matching no declared type is a
+    // rule written against an event nobody emits — it reads as coverage and is
+    // not, and the assertion above cannot see it, because withholding nothing
+    // leaves that list unchanged. This is how a family renamed at the
+    // connector (`check_run` to `check_suite`, say) surfaces here rather than
+    // as a bill.
+    const declared = registry.list().flatMap((manifest) => manifest.activityTypes);
+    expect(SUGGESTED_WORK_EXCLUDED_EVENT_TYPE_PREFIXES.filter((prefix) => (
+      !declared.some((eventType) => eventType.startsWith(prefix))
+    ))).toEqual([]);
   });
 
   // Two suites lived here and covered the D1 batching window: the debounce and

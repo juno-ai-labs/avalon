@@ -712,15 +712,38 @@ export class WorkspaceProductStorage {
     });
   }
 
+  /**
+   * Ask for the member's set to be ranked by `dueAt`. `MIN` wins against a
+   * request already outstanding, so a later ask can never delay an earlier one.
+   *
+   * While a pass holds the lease, `due_at` is that pass's own claim time — in
+   * the past, and about to be answered — so a request arriving mid-pass is
+   * parked in `pending_due_at` instead, `MIN` among the requests that arrive
+   * during the pass, and `settleRanking` re-arms `due_at` from it once the
+   * pass is over. Before that column existed, a mid-pass request took `MIN`
+   * against the stale claim time, kept it, and ran the moment the pass
+   * settled: under continuous admissions a member was re-ranked back to back
+   * whatever the debounce said. An expired lease is a crashed pass, not one in
+   * flight, and is treated as unleased.
+   */
   markRankingDue(userId: string, dueAt: number, now = Date.now(), clearFingerprint = false): number {
     this.storage.sql.exec(
       `INSERT INTO suggested_work_sets (
         user_id, candidate_fingerprint, opportunity_ids_json, ranking_reasoning,
-        model, status, due_at, request_seq, lease_id, lease_expires_at,
+        model, status, due_at, pending_due_at, request_seq, lease_id, lease_expires_at,
         last_ranked_at, created_at, updated_at
-      ) VALUES (?, '', '[]', '', NULL, 'stale', ?, 1, NULL, NULL, NULL, ?, ?)
+      ) VALUES (?, '', '[]', '', NULL, 'stale', ?, NULL, 1, NULL, NULL, NULL, ?, ?)
       ON CONFLICT(user_id) DO UPDATE SET
-        due_at = MIN(COALESCE(suggested_work_sets.due_at, excluded.due_at), excluded.due_at),
+        due_at = CASE
+          WHEN suggested_work_sets.lease_id IS NOT NULL
+            AND COALESCE(suggested_work_sets.lease_expires_at, 0) >= excluded.updated_at
+          THEN suggested_work_sets.due_at
+          ELSE MIN(COALESCE(suggested_work_sets.due_at, excluded.due_at), excluded.due_at) END,
+        pending_due_at = CASE
+          WHEN suggested_work_sets.lease_id IS NOT NULL
+            AND COALESCE(suggested_work_sets.lease_expires_at, 0) >= excluded.updated_at
+          THEN MIN(COALESCE(suggested_work_sets.pending_due_at, excluded.due_at), excluded.due_at)
+          ELSE suggested_work_sets.pending_due_at END,
         candidate_fingerprint = CASE WHEN ? = 1 THEN '' ELSE suggested_work_sets.candidate_fingerprint END,
         request_seq = suggested_work_sets.request_seq + 1,
         updated_at = excluded.updated_at`,
@@ -997,12 +1020,21 @@ export class WorkspaceProductStorage {
     );
   }
 
+  /**
+   * End a pass. A request that arrived during it (`request_seq` moved on) is
+   * re-armed at the time it asked for, which `markRankingDue` parked in
+   * `pending_due_at`; a completed pass with no newer request clears the due
+   * time, and a failed one retries at `retryAt` — or at the parked request's
+   * time, whichever comes first, so a retry never delays a request already
+   * made.
+   */
   settleRanking(input: WorkspaceOpportunityRankingSettleRequest, now = Date.now()): void {
     if (input.outcome === "completed") {
       this.storage.sql.exec(
         `UPDATE suggested_work_sets
             SET lease_id = NULL, lease_expires_at = NULL, last_ranked_at = ?,
-                due_at = CASE WHEN request_seq = ? THEN NULL ELSE due_at END,
+                due_at = CASE WHEN request_seq = ? THEN NULL ELSE COALESCE(pending_due_at, due_at) END,
+                pending_due_at = NULL,
                 updated_at = ?
           WHERE user_id = ? AND lease_id = ?`,
         now,
@@ -1013,14 +1045,17 @@ export class WorkspaceProductStorage {
       );
       return;
     }
+    const retryAt = input.retryAt === null ? now : epoch(input.retryAt);
     this.storage.sql.exec(
       `UPDATE suggested_work_sets
           SET status = 'failed', lease_id = NULL, lease_expires_at = NULL,
-              due_at = CASE WHEN request_seq = ? THEN ? ELSE due_at END,
+              due_at = CASE WHEN request_seq = ? THEN ? ELSE MIN(COALESCE(pending_due_at, due_at), ?) END,
+              pending_due_at = NULL,
               updated_at = ?
         WHERE user_id = ? AND lease_id = ?`,
       input.requestSeq,
-      input.retryAt === null ? now : epoch(input.retryAt),
+      retryAt,
+      retryAt,
       now,
       input.userId,
       input.leaseId,

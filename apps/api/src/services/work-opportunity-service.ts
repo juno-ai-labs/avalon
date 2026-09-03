@@ -51,10 +51,32 @@ const MAX_RANK_ROUNDS = 10;
 const OPPORTUNITY_TTL_MS = 14 * 24 * 60 * 60_000;
 const RETRY_DELAY_MS = 5 * 60_000;
 const IMPRESSION_RERANK_INTERVAL_MS = 60 * 60_000;
-// Long enough for a burst of admissions in one window to schedule a single
-// ranking rather than one per decision, short enough that a member who is in
-// the app watching does not notice the wait.
-const DUE_DEBOUNCE_MS = 2 * 60_000;
+// How long a stream of admissions may go on before the sets behind it are
+// reordered: the delay `persistDecision` writes for the members an admission
+// makes due, and the default for `markSuggestedWorkDue`. This was two minutes,
+// which read as "a member who is watching does not notice the wait" — but with
+// activity flowing continuously it meant a member was re-ranked every two
+// minutes all day (1,970 tournaments for three people on 2026-09-02), and
+// nobody watches the home screen at that cadence. It governs nothing else: the
+// immediate triggers — a suggestion naming the member, a dismissal, a start —
+// write their own due time, and the read path's repair has its own delay
+// below. The number is a product setting, not a derived one.
+const DUE_DEBOUNCE_MS = 30 * 60_000;
+// How long after a member *opens the home screen* and finds their set unranked
+// or holed the ranking that repairs it may wait. This is a member standing in
+// front of the surface, not a stream of admissions, so it does not share the
+// debounce above: a new member sees the recency fallback until this fires,
+// and that is their first impression of the product. It fires only on a hole
+// or an unranked set, never on an ordinary read, so its cost is bounded by how
+// often those arise rather than by how often people look.
+const READ_REPAIR_DELAY_MS = 2 * 60_000;
+// How much of an existing opportunity's admission reasoning the next admission
+// call gets to see, per opportunity. Up to twelve of them ride along on every
+// call, and at the previous 4,000-character cap they were roughly half of an
+// 18,000-token prompt whose actual evidence was four activities. The model
+// needs enough of the rationale to recognise a duplicate, not the whole memo.
+// The number is a starting point, not a measurement.
+const ADMISSION_CONTEXT_REASONING_CHARACTERS = 600;
 // Seen this recently and the member is presumed to be looking at Avalon now, so
 // their set is ranked ahead of everyone else's.
 // Not seen for this long and no amount of incoming activity earns them a model
@@ -750,7 +772,7 @@ async function loadAdmissionContext(env: Env, window: WindowRow) {
     existingOpportunities: opportunityRows.results.map((row) => ({
       id: row.id,
       displayPrompt: row.display_prompt,
-      admissionReasoning: row.admission_reasoning.slice(0, 4_000),
+      admissionReasoning: row.admission_reasoning.slice(0, ADMISSION_CONTEXT_REASONING_CHARACTERS),
     })),
   };
 }
@@ -1088,7 +1110,11 @@ async function processModelBatch(
       schemaName: "work_opportunity_admission",
       jsonSchema: admissionJsonSchema,
       parse: (value) => AdmissionResultSchema.parse(value),
-      reasoningEffort: "high",
+      // Admission is a coarse gate biased toward `ignore`, asked tens of
+      // thousands of times a day; the ranking's elimination rounds already run
+      // low for the same reason. At `high`, reasoning was a quarter of every
+      // admission call's output tokens.
+      reasoningEffort: "low",
     });
     const sourceIds = new Set(batch.map(({ source }) => source.id));
     const eagerUserIds: string[] = [];
@@ -1537,7 +1563,7 @@ export class WorkOpportunityService {
       userId: this.auth.userId,
       now: nowIso(),
       limit: size,
-      scheduleAt: new Date(Date.now() + DUE_DEBOUNCE_MS).toISOString(),
+      scheduleAt: new Date(Date.now() + READ_REPAIR_DELAY_MS).toISOString(),
     });
     return WorkOpportunityPageSchema.parse(result);
   }
@@ -1705,6 +1731,9 @@ export const __workOpportunityTesting = {
     batchEvents: MAX_BATCH_EVENTS,
     batchCharacters: MAX_BATCH_CHARACTERS,
     modelConcurrency: MAX_MODEL_CONCURRENCY,
+    dueDebounceMs: DUE_DEBOUNCE_MS,
+    readRepairDelayMs: READ_REPAIR_DELAY_MS,
+    admissionContextReasoningCharacters: ADMISSION_CONTEXT_REASONING_CHARACTERS,
     rankCandidates: MAX_RANK_CANDIDATES,
     rankCharacters: MAX_RANK_CHARACTERS,
     rankCandidateCharacters: MAX_RANK_CANDIDATE_CHARACTERS,
