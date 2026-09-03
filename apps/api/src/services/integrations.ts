@@ -5387,27 +5387,18 @@ async function loadRunPromptContext(
       channel: "email" | "slack_agent_dm" | "workstream";
       destination: string;
     };
-    const resultDelivery: ResultDestination[] = frozen.deliveryTargets.flatMap<ResultDestination>((target) => {
-      // Match the sender's production guard. In development and tests no email
-      // leaves Rally, so claiming that it will would suppress the model's own
-      // requested delivery and leave the result nowhere.
-      if (target.type === "email") {
-        return env.APP_ENV === "production"
-          ? [{ channel: "email", destination: target.emailAddress }]
-          : [];
-      }
-      return [{ channel: "slack_agent_dm", destination: target.slackUserId }];
-    }).sort((left, right) => left.channel.localeCompare(right.channel)
-      || left.destination.localeCompare(right.destination));
-    // The owning room is a destination Rally delivers to, and it is the one
-    // `deliveryTargets` never contains — nobody chose it, it follows from what
-    // the automation belongs to. Left out, a room-owned automation authored in
-    // a Slack channel got the origin section telling it where "here" is and no
-    // section telling it Rally already posts the result, which is the
-    // duplicate-send this section exists to prevent.
-    if (frozen.owningWorkstreamId !== null) {
-      resultDelivery.push({ channel: "workstream", destination: frozen.owningWorkstreamId });
-    }
+    // What Rally delivers on the run's behalf, which is now only the room a
+    // work-stream automation belongs to. Chosen destinations are gone: an
+    // automation that wants to reach somewhere outside Rally sends there itself,
+    // with the connector tools it was bound, as part of doing the work.
+    //
+    // This section exists to prevent a duplicate send, so it has to stay
+    // accurate in both directions. Naming the room stops the run posting the
+    // result there a second time; naming nothing, for every other scope, is
+    // what tells the run that nobody will send this for it.
+    const resultDelivery: ResultDestination[] = frozen.owningWorkstreamId !== null
+      ? [{ channel: "workstream", destination: frozen.owningWorkstreamId }]
+      : [];
     automationContext = {
       name: frozen.definition.name,
       versionNumber: frozen.definitionRevision,

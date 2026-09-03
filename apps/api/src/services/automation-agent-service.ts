@@ -159,20 +159,6 @@ export class AutomationAgentService {
     }));
   }
 
-  async updateDeliveryTargets(automationId: string, deliveryTargets: unknown): Promise<AutomationDetail> {
-    const id = asAutomationId(automationId);
-    const agent = await this.agent(id);
-    const participant = await this.participantOfOwningWorkstream(id);
-    return withAutomationErrors(() => agent.updateDeliveryTargets({
-      automationId: id,
-      workspaceId: this.auth.workspaceId,
-      userId: this.auth.userId,
-      actorRole: this.auth.role,
-      participantOfOwningWorkstream: participant,
-      deliveryTargets,
-    }));
-  }
-
   async delete(automationId: string): Promise<void> {
     const id = asAutomationId(automationId);
     const agent = await this.agent(id);

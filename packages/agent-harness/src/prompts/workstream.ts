@@ -110,13 +110,19 @@ export function renderWorkstreamSystemPrompt(input: WorkstreamPromptContext): st
       ? `# HyperSight block output
 - This run produces a HyperSight block. The document-publishing workflow does not apply: do not write or publish a document. Submit the finished Markdown through the block submission tool; ordinary assistant text is discarded.`
       : null;
-  const resultDeliverySection = (input.automation?.resultDelivery.length ?? 0) > 0
-    ? `# Result delivery
+  const resultDeliverySection = input.automation === undefined
+    ? null
+    : input.automation.resultDelivery.length > 0
+      ? `# Result delivery
 - Rally sends this run's final message to every destination in the task context's automation.resultDelivery once the run ends, so that message is the delivery.
+- A \`workstream\` destination is this room: Rally posts the final message here, so do not post the result here yourself. Posting elsewhere the instructions ask for is unaffected.
 - Before any outward send, drop every recipient — to, cc, channel, or DM target — that matches one of those destinations. Send to what remains; if nothing remains, do not send at all, and let the final message carry the result.
-- A recipient named in the authorized task context or by a person in this work stream, and matching no destination there, is unaffected by this section.
-- A \`workstream\` destination is this room: Rally posts the final message here, so do not post the result here yourself. Posting elsewhere the instructions ask for is unaffected.`
-    : null;
+- A recipient named in the authorized task context or by a person in this work stream, and matching no destination there, is unaffected by this section.`
+      : `# Result delivery
+- Rally sends this run's result nowhere. automation.resultDelivery is empty, and that is the whole answer: there is no destination configured on this automation and none will be resolved after the run ends.
+- If the instructions ask for the result to reach anyone — an inbox, a channel, a DM, a document — sending it is part of doing the work, with your own tools, inside this run. A final message describing a send that did not happen is a failed run that reads like a successful one.
+- Send to what the instructions name. Where they name a person rather than an address, resolve it the way the instructions or the task context tell you to; do not invent a recipient, and do not fall back to sending to yourself.
+- If the instructions ask for no delivery, send nothing. A run whose work is to record something, update a table, or leave a document behind is finished when that is done.`;
   const origin = input.automation?.authoringOrigin ?? null;
   const authoringOriginSection = origin
     ? `# Where this automation was set up
@@ -139,12 +145,20 @@ export function renderWorkstreamSystemPrompt(input: WorkstreamPromptContext): st
     authoringOriginSection,
     workspaceAuthoritySection,
   ].filter((section): section is string => section !== null).join("\n\n");
-  // Result delivery: only for a run Avalon actually delivers for. As a standing
-  // bullet it was charged to every interactive run — where `resultDelivery` is
-  // not in the context at all — and a rule whose subject is absent is one a
-  // model has to resolve before it can ignore it. "Email this to Bob" is the
-  // case that costs: read as applying, it turns a requested send into a
-  // description of one, against the standing rule to perform the write.
+  // Result delivery: only for an automation run. As a standing bullet it was
+  // charged to every interactive run — where `resultDelivery` is not in the
+  // context at all — and a rule whose subject is absent is one a model has to
+  // resolve before it can ignore it.
+  //
+  // Both arms are load-bearing now that an automation has no destinations of
+  // its own beyond the room that owns it. The populated arm still prevents the
+  // duplicate send. The empty arm is the one that carries the new model: with
+  // nothing delivering for it, a run that only *describes* emailing the result
+  // has not emailed it, and the person who asked for a weekly summary gets
+  // silence. "Email this to Bob" used to be the case that cost, read as
+  // applying and turning a requested send into a description of one; now the
+  // expensive misreading is the opposite one, so the empty arm says outright
+  // that sending is part of the work.
   return `
 You are Rally a helpful assistant in a multi-player collaborative environment (more than one human participant (a user) can be expected).
 
