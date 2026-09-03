@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import {
+  AutomationDraftSchema,
   asAutomationId,
   asUserId,
   asWorkspaceId,
@@ -8,10 +9,8 @@ import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 
 import type { Env } from "../env";
-import { automationAgentName, workspaceDOName } from "../durable-objects/names";
-import { canonicalTranscriptJson } from "../durable-objects/ordered-transcript-sqlite/canonical-payload-store";
+import { automationDOName, workspaceDOName } from "../durable-objects/names";
 import { ApiError } from "../lib/api-error";
-import { sha256 } from "../lib/crypto";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import {
   bootstrapWorkstreamRuntimeEnvironment,
@@ -19,13 +18,13 @@ import {
 import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
 import { readWorkstreamAuthorityControl } from "../services/workstream-authority";
 import { WorkstreamObjectClient } from "../services/workstream-object-client";
+import { createAutomation } from "../services/automation-service";
 import { createIdentityObjectPort } from "../runtime/identity-port";
 import { createTranscriptObjectPort } from "../runtime/transcript-port";
 import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
 import { createToolReceiptObjectPort } from "../runtime/tool-receipt-port";
 import type { ToolReceiptObjectPort } from "../durable-objects/workstream-tool-receipt-protocol";
 import type { PersistedRunStatus } from "../durable-objects/workstream-harness-run-storage";
-import { AutomationLegacyImportSourceSchema } from "../durable-objects/automation-legacy-import";
 
 const row = z.record(z.string(), z.union([z.string(), z.number(), z.null()]));
 
@@ -86,14 +85,15 @@ async function insertToolReceipts(
  * touch is enumerated here rather than taken from the request.
  */
 const WORKSPACE_SEED_TABLES = new Set([
-  "connector_connections", "automation_templates", "automation_template_versions",
+  "connector_connections",
   "resources",
 ]);
 
 const seedAutomation = z.strictObject({
   id: z.string().uuid(),
   authorUserId: z.string().uuid(),
-  source: AutomationLegacyImportSourceSchema,
+  scope: z.enum(["personal", "workspace"]),
+  draft: AutomationDraftSchema,
 });
 
 export const SeedProductBodySchema = z.strictObject({
@@ -120,7 +120,7 @@ const SeedProductResultSchema = z.strictObject({
   workspaceTables: z.record(z.string(), z.number()),
   automations: z.array(z.strictObject({
     automationId: z.string().uuid(),
-    lifecycle: z.enum(["active", "paused"]),
+    lifecycle: z.enum(["active"]),
   })),
   workstreams: z.array(z.object({
     workstreamId: z.string().uuid(),
@@ -218,49 +218,39 @@ async function seedProduct(env: Env, body: z.infer<typeof SeedProductBodySchema>
 
   const automations = [];
   for (const automation of body.automations) {
-    const automationId = asAutomationId(automation.id);
-    const sourceHash = await sha256(canonicalTranscriptJson(automation.source));
-    const agent = await durableObjectStubForWorkspace(
+    // The same three steps a person takes: the object with its conversation,
+    // the definition the conversation would have submitted, and Create.
+    const { automationId } = await createAutomation(env, {
+      workspaceId,
+      authorUserId: automation.authorUserId,
+      scope: automation.scope,
+      owningWorkstreamId: null,
+      automationId: automation.id,
+    });
+    const object = await durableObjectStubForWorkspace(
       env,
-      env.AUTOMATION_AGENTS,
+      env.AUTOMATION_DOS,
       asWorkspaceId(workspaceId),
-      automationAgentName(env.AVALON_REGION, asWorkspaceId(workspaceId), automationId),
+      automationDOName(env.AVALON_REGION, asWorkspaceId(workspaceId), asAutomationId(automationId)),
     );
-    const receipt = await agent.importAcceptedAutomation({
-      schemaVersion: 1,
+    await object.submitDefinition({
+      workspaceId: asWorkspaceId(workspaceId),
       automationId,
-      workspaceId,
-      authorUserId: automation.authorUserId,
-      region: env.AVALON_REGION,
-      sourceHash,
-      source: automation.source,
+      draft: { ...automation.draft, suggestedScope: automation.scope },
+      evaluatorRules: null,
+      submittedByRunId: null,
     });
-    await workspaceObject.applyAutomationProjection({
-      schemaVersion: 1,
+    await object.apply({
+      workspaceId: asWorkspaceId(workspaceId),
       automationId,
-      workspaceId,
-      authorUserId: automation.authorUserId,
-      authorityGeneration: receipt.authorityGeneration,
-      projectionVersion: 1,
-      payloadHash: sourceHash,
-      lifecycle: receipt.lifecycle,
-      scope: automation.source.scope,
-      title: automation.source.definition.name,
-      description: automation.source.definition.description,
-      nextRunAt: automation.source.schedules.reduce<number | null>((value, schedule) => (
-        schedule.nextDueAt !== null && (value === null || schedule.nextDueAt < value)
-          ? schedule.nextDueAt
-          : value
-      ), null),
-      attentionCode: automation.source.unsupportedTrigger ? "unsupported_trigger"
-        : automation.source.status === "error" ? "legacy_runtime_error" : null,
+      actor: { userId: asUserId(automation.authorUserId), actorRole: "owner", participantOfOwningWorkstream: false },
     });
-    automations.push({ automationId, lifecycle: receipt.lifecycle });
+    automations.push({ automationId, lifecycle: "active" as const });
   }
 
   const results = [];
   for (const workstream of body.workstreams) {
-    const routed = await bootstrapWorkstreamRuntimeEnvironment(env, workspaceId, workstream.id);
+    const routed = await bootstrapWorkstreamRuntimeEnvironment(env, workspaceId, workstream.id, "workstream");
     const copied: Record<string, number> = {};
 
     const identityPort = createIdentityObjectPort(env, workspaceId, workstream.id);

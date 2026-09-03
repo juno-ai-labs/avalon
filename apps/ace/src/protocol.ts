@@ -101,15 +101,6 @@ export const MANAGED_MODELS = [
   },
   {
     rank: 6,
-    rankReason: 'Core path · automation setup',
-    role: 'automation_compiler',
-    key: 'agent-model-automation-compiler',
-    label: 'Automation architect',
-    description: 'Turns an automation setup conversation into the saved automation definition, schedule, scope, and delivery plan.',
-    defaultRouting: { model: 'x-ai/grok-4.5', fallbackModels: ['google/gemini-3.6-flash'] },
-  },
-  {
-    rank: 7,
     rankReason: 'Focused · live and final passes',
     role: 'meeting_notes',
     key: 'agent-model-meeting-notes',
@@ -118,7 +109,7 @@ export const MANAGED_MODELS = [
     defaultRouting: { model: 'x-ai/grok-4.3', fallbackModels: ['google/gemini-3.6-flash'] },
   },
   {
-    rank: 8,
+    rank: 7,
     rankReason: 'Background · candidate creation',
     role: 'work_opportunity_admission',
     key: 'agent-model-work-opportunity-admission',
@@ -127,21 +118,12 @@ export const MANAGED_MODELS = [
     defaultRouting: { model: 'google/gemini-2.5-flash-lite', fallbackModels: ['google/gemini-3.6-flash'] },
   },
   {
-    rank: 9,
+    rank: 8,
     rankReason: 'Background · per-person ordering',
     role: 'work_opportunity_ranking',
     key: 'agent-model-work-opportunity-ranking',
     label: 'Suggested-work ranking',
     description: 'Orders admitted suggestions for one person, accounting for freshness and impressions before storing the visible set.',
-    defaultRouting: { model: 'google/gemini-2.5-flash-lite', fallbackModels: ['google/gemini-3.6-flash'] },
-  },
-  {
-    rank: 10,
-    rankReason: 'Background · every automation result',
-    role: 'automation_result_disposition',
-    key: 'agent-model-automation-result-disposition',
-    label: 'Automation result disposition',
-    description: 'Decides whether a completed automation run is worth delivering at all, and whether its result belongs in the work stream that owns the automation or in the work stream the run itself used, made visible.',
     defaultRouting: { model: 'google/gemini-2.5-flash-lite', fallbackModels: ['google/gemini-3.6-flash'] },
   },
 ] as const satisfies readonly ManagedModelDefinition[];
@@ -183,7 +165,6 @@ export const ModelValidationRequestSchema = z.object({
 export const MANAGED_FLAGS = [
   { key: 'meeting-recording-enabled', label: 'Meeting Recording Enabled', description: 'True shows meeting-recording actions in Electron; false hides them without changing API availability.', defaultVariation: 'off' },
   { key: 'suggested-work-enabled', label: 'Suggested Work Enabled', description: 'True shows Suggested Work surfaces in Electron; false hides them without changing API availability.', defaultVariation: 'off' },
-  { key: 'automation-workspace-templates-enabled', label: 'Automation Workspace Templates Enabled', description: 'True shows workspace-template surfaces in Electron; false hides them without changing API availability.', defaultVariation: 'off' },
   { key: 'multiple-workspaces-enabled', label: 'Multiple Workspaces Enabled', description: 'True shows workspace switching, invitations, creation, and background attention in Electron; false hides them without changing API availability.', defaultVariation: 'off' },
   { key: 'digests-enabled', label: 'Digests Enabled', description: 'True sends scheduled digests as configured; false stops delivery for whoever the rule reaches and hides the Digest settings section in Electron for them, without touching their saved schedule, destinations, or cursor.', defaultVariation: 'on' },
   { key: 'live-artifacts-enabled', label: 'Live Artifacts Enabled', description: 'True shows live-artifact surfaces in Electron — the rail site detail and preview, the data view, and the artifact window; false hides them. An artifact URL somebody already holds keeps working either way, because its authorization is structural rather than flagged.', defaultVariation: 'off' },

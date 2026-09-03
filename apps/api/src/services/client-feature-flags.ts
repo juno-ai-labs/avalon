@@ -72,7 +72,6 @@ import { loadFlagTargetingAttributes } from "./flag-targeting-attributes";
 export const DEVELOPER_SETTINGS_FLAG_KEY = "developer-settings";
 export const MEETING_RECORDING_FLAG_KEY: ProductFeatureFlagKey = "meeting-recording-enabled";
 export const SUGGESTED_WORK_FLAG_KEY: ProductFeatureFlagKey = "suggested-work-enabled";
-export const AUTOMATION_WORKSPACE_TEMPLATES_FLAG_KEY: ProductFeatureFlagKey = "automation-workspace-templates-enabled";
 export const MULTIPLE_WORKSPACES_FLAG_KEY: ProductFeatureFlagKey = "multiple-workspaces-enabled";
 export const LIVE_ARTIFACTS_FLAG_KEY: ProductFeatureFlagKey = "live-artifacts-enabled";
 
@@ -184,7 +183,6 @@ export async function resolveClientFeatureFlagsForSubject(
     developerSettings,
     meetingRecordingEnabled,
     suggestedWorkEnabled,
-    automationWorkspaceTemplatesEnabled,
     multipleWorkspacesEnabled,
     liveArtifactsEnabled,
     digestsEnabled,
@@ -193,7 +191,6 @@ export async function resolveClientFeatureFlagsForSubject(
     resolveBooleanClientFlag(env, subject, DEVELOPER_SETTINGS_FLAG_KEY, context),
     resolveBooleanClientFlag(env, subject, MEETING_RECORDING_FLAG_KEY, context),
     resolveBooleanClientFlag(env, subject, SUGGESTED_WORK_FLAG_KEY, context),
-    resolveBooleanClientFlag(env, subject, AUTOMATION_WORKSPACE_TEMPLATES_FLAG_KEY, context),
     resolveBooleanClientFlag(env, subject, MULTIPLE_WORKSPACES_FLAG_KEY, context),
     resolveBooleanClientFlag(env, subject, LIVE_ARTIFACTS_FLAG_KEY, context),
     // `digests-enabled` (`DIGESTS_ENABLED_FLAG_KEY` in `digest-flags.ts`) —
@@ -219,7 +216,6 @@ export async function resolveClientFeatureFlagsForSubject(
     developerSettings,
     meetingRecordingEnabled,
     suggestedWorkEnabled,
-    automationWorkspaceTemplatesEnabled,
     multipleWorkspacesEnabled,
     liveArtifactsEnabled,
     digestsEnabled,

@@ -85,7 +85,7 @@ async function project(
   } satisfies Pick<ToolReceiptObjectPort, "receiptForCall">;
   const loaded = await __integrationTesting.loadToolInvocation(
     createTestEnv({ DB: lookup.binding }),
-    { workspaceId, workstreamId, harnessRunId },
+    { workspaceId, parentId: workstreamId, harnessRunId },
     "tool-call-1",
     port,
   );
@@ -163,7 +163,7 @@ describe("tool invocation attribution", () => {
 
     expect(await __integrationTesting.loadToolInvocation(
       createTestEnv({ DB: lookup.binding }),
-      { workspaceId, workstreamId, harnessRunId },
+      { workspaceId, parentId: workstreamId, harnessRunId },
       "tool-call-1",
       port,
     )).toBeNull();

@@ -11,7 +11,7 @@ import {
 } from "@rally/contracts";
 import { z } from "zod";
 
-import { substreamAgentName } from "../durable-objects/names";
+import { conversationObjectName } from "../durable-objects/names";
 import type { AuthContext, Env } from "../env";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { workstreamImportHash } from "../durable-objects/workstream-import-hash";
@@ -187,7 +187,7 @@ export async function consumeWorkstreamBatchUpdate(
     env,
     env.SUBSTREAM_AGENTS,
     workspaceId,
-    substreamAgentName(env.AVALON_REGION, workspaceId, workstreamId, asSubstreamId("0")),
+    conversationObjectName(env.AVALON_REGION, workspaceId, workstreamId, asSubstreamId("0")),
   );
   const result = QueuedWorkstreamBatchUpdateResultSchema.parse(
     await stub.applyQueuedBatchUpdate(event),

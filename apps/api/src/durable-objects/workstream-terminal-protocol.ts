@@ -213,6 +213,8 @@ export function terminalOperationAffectsDirectory(operation: TerminalOperation):
 export const TerminalOperationRequestSchema = z.strictObject({
   workspaceId: z.string().uuid(),
   workstreamId: z.string().uuid(),
+  /** Which of the parent's conversations; absent means the main one. */
+  substreamId: z.union([z.literal("0"), z.string().uuid()]).optional(),
   operation: z.string().min(1).max(64).refine(isTerminalOperation, {
     message: "unknown_terminal_operation",
   }),

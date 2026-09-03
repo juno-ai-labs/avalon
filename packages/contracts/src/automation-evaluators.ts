@@ -125,13 +125,16 @@ export const ExternalEventPredicateLeafV1Schema = z.union([
   }),
 ]);
 
+/**
+ * One rule is one AND group. There is no OR inside a rule: a draft that needs
+ * "A or B" writes two rules, which is also how they are stored and matched, one
+ * registration each.
+ */
 export const ExternalEventPredicateV1Schema = z.union([
   z.strictObject({ kind: z.literal("always") }),
   z.strictObject({
-    kind: z.literal("dnf"),
-    anyOf: z.array(z.strictObject({
-      allOf: z.array(ExternalEventPredicateLeafV1Schema).min(1),
-    })).min(1),
+    kind: z.literal("all"),
+    allOf: z.array(ExternalEventPredicateLeafV1Schema).min(1),
   }),
 ]);
 
@@ -148,10 +151,8 @@ export const ExternalEventEvaluatorV1Schema = z.strictObject({
 
 export const AutomationExternalEvaluatorSetV1Schema = z.strictObject({
   schemaVersion: z.literal(1),
-  automationId: IdSchema.brand<"AutomationId">(),
-  definitionRevision: z.number().int().positive().brand<"AutomationDefinitionRevision">(),
-  authorityGeneration: z.number().int().positive().brand<"AutomationAuthorityGeneration">(),
-  projectionVersion: z.number().int().positive().brand<"AutomationEvaluatorProjectionVersion">(),
+  automationId: IdSchema,
+  definitionRevision: z.number().int().positive(),
   evaluators: z.array(ExternalEventEvaluatorV1Schema),
 }).superRefine((value, context) => {
   const identities = new Set<string>();
@@ -214,95 +215,62 @@ export const AutomationSetEvaluatorRulesInputV1Schema = z.strictObject({
   });
 });
 
+export const ExternalEventDestinationSchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("automation"), automationId: IdSchema }),
+  z.strictObject({
+    kind: z.literal("workstream_resource_update"),
+    workstreamId: IdSchema,
+    substreamId: z.union([z.literal("0"), IdSchema]),
+    resourceId: IdSchema,
+  }),
+]);
+export type ExternalEventDestination = z.infer<typeof ExternalEventDestinationSchema>;
+
+/**
+ * Complete replacement of one destination's evaluators. A repeat with the same
+ * set is equivalent; there is no coordinate to compare and no hash to conflict.
+ */
 export const ExternalEventRegistrationProjectionV1Schema = z.strictObject({
   schemaVersion: z.literal(1),
   workspaceId: IdSchema.brand<"WorkspaceId">(),
-  destination: z.discriminatedUnion("kind", [
-    z.strictObject({ kind: z.literal("automation"), automationId: IdSchema }),
-    z.strictObject({
-      kind: z.literal("workstream_resource_update"),
-      workstreamId: IdSchema,
-      substreamId: z.union([z.literal("0"), IdSchema]),
-      resourceId: IdSchema,
-    }),
-  ]),
-  authorityGeneration: z.number().int().positive(),
-  projectionVersion: z.number().int().positive(),
-  sourceHash: NonEmptyStringSchema,
+  destination: ExternalEventDestinationSchema,
   evaluators: z.array(ExternalEventEvaluatorV1Schema),
 });
+
+/**
+ * One matched event for one destination, carried whole.
+ *
+ * Admission is idempotent on the destination side (an automation keys its run
+ * on the event id; a watched work stream keys its receipt on the event and
+ * registration ids), so a redelivery is a no-op and the message needs no lease.
+ */
+export const WorkspaceExternalEventSchema = z.strictObject({
+  id: IdSchema,
+  eventSequence: z.number().int().positive(),
+  eventType: NonEmptyStringSchema,
+  title: NonEmptyStringSchema,
+  summary: z.string(),
+  occurredAt: z.number().int().nonnegative(),
+  audienceUserIds: z.array(IdSchema),
+  audienceKind: z.enum(["workspace", "restricted"]),
+});
+export type WorkspaceExternalEvent = z.infer<typeof WorkspaceExternalEventSchema>;
 
 export const WorkspaceExternalEventDeliveryQueueMessageSchema = z.strictObject({
   type: z.literal("workspace_external_event_delivery_v1"),
   schemaVersion: z.literal(1),
   region: z.enum(["global", "eu"]),
   workspaceId: IdSchema.brand<"WorkspaceId">(),
-  workspaceEventId: IdSchema,
-  deliveryId: IdSchema,
+  registrationId: IdSchema,
+  destination: ExternalEventDestinationSchema,
+  event: WorkspaceExternalEventSchema,
   payloadHash: NonEmptyStringSchema,
 });
 
 export const WorkspaceExternalEventMatchResultSchema = z.strictObject({
-  /**
-   * Durable claim witness across retries. Unlike `deliveries`, this remains
-   * true after matching deliveries have already settled and no longer need to
-   * be re-enqueued.
-   */
-  claimed: z.boolean(),
+  /** Whether any registration matched, whatever was already delivered. */
+  matched: z.boolean(),
   deliveries: z.array(WorkspaceExternalEventDeliveryQueueMessageSchema),
-});
-
-export const WorkspaceExternalEventDeliveryClaimRequestSchema = z.strictObject({
-  schemaVersion: z.literal(1),
-  workspaceId: IdSchema.brand<"WorkspaceId">(),
-  workspaceEventId: IdSchema,
-  deliveryId: IdSchema,
-  payloadHash: NonEmptyStringSchema,
-  leaseId: IdSchema,
-});
-
-export const WorkspaceExternalEventDeliveryClaimResultSchema = z.discriminatedUnion("outcome", [
-  z.strictObject({ outcome: z.literal("delivered") }),
-  z.strictObject({ outcome: z.literal("busy"), retryAt: z.number().int().nonnegative() }),
-  z.strictObject({
-    outcome: z.literal("claimed"),
-    leaseExpiresAt: z.number().int().nonnegative(),
-    destination: z.discriminatedUnion("kind", [
-      z.strictObject({
-        kind: z.literal("automation"),
-        automationId: IdSchema,
-        authorityGeneration: z.number().int().positive(),
-        projectionVersion: z.number().int().positive(),
-      }),
-      z.strictObject({
-        kind: z.literal("workstream_resource_update"),
-        workstreamId: IdSchema,
-        substreamId: z.union([z.literal("0"), IdSchema]),
-        resourceId: IdSchema,
-        authorityGeneration: z.number().int().positive(),
-        projectionVersion: z.number().int().positive(),
-      }),
-    ]),
-    event: z.strictObject({
-      id: IdSchema,
-      eventSequence: z.number().int().positive(),
-      eventType: NonEmptyStringSchema,
-      title: NonEmptyStringSchema,
-      summary: z.string(),
-      occurredAt: z.number().int().nonnegative(),
-      audienceUserIds: z.array(IdSchema),
-      audienceKind: z.enum(["workspace", "restricted"]),
-    }),
-  }),
-]);
-
-export const WorkspaceExternalEventDeliverySettleRequestSchema = z.strictObject({
-  schemaVersion: z.literal(1),
-  workspaceId: IdSchema.brand<"WorkspaceId">(),
-  deliveryId: IdSchema,
-  leaseId: IdSchema,
-  outcome: z.enum(["delivered", "not_delivered"]),
-  outcomeCode: NonEmptyStringSchema,
 });
 
 export const ConnectorActivityFilterValueTypeV2Schema = z.enum([
@@ -362,5 +330,4 @@ export type DraftExternalEventEvaluatorV1 = z.infer<typeof DraftExternalEventEva
 export type AutomationSetEvaluatorRulesInputV1 = z.infer<typeof AutomationSetEvaluatorRulesInputV1Schema>;
 export type ExternalEventRegistrationProjectionV1 = z.infer<typeof ExternalEventRegistrationProjectionV1Schema>;
 export type WorkspaceExternalEventDeliveryQueueMessage = z.infer<typeof WorkspaceExternalEventDeliveryQueueMessageSchema>;
-export type WorkspaceExternalEventDeliveryClaimResult = z.infer<typeof WorkspaceExternalEventDeliveryClaimResultSchema>;
 export type ConnectorActivityTriggerDescriptorV2 = z.infer<typeof ConnectorActivityTriggerDescriptorV2Schema>;

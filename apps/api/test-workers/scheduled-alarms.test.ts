@@ -9,12 +9,12 @@
  * was called. `docs/durable-object-alarms.md` is the module document.
  */
 import { env } from "cloudflare:workers";
-import { asSubstreamId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import { asSubstreamId, asWorkspaceId, asWorkstreamId, conversationEffectHash } from "@rally/contracts";
 import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
-  substreamAgentName,
+  conversationObjectName,
   workspaceDOName,
 } from "../src/durable-objects/names";
 import {
@@ -27,7 +27,6 @@ import {
   type ScheduledAlarmRun,
 } from "../src/durable-objects/scheduled-alarms";
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
-import { workstreamRegionalEffectHash } from "../src/durable-objects/workstream-regional-effect";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000000a1");
 const WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-0000000000a2");
@@ -783,17 +782,17 @@ describe("a workspace's schedule", () => {
     await stub.applyWorkstreamDirectoryEffects({
       workspaceId: WORKSPACE_ID,
       envelopes: [{
-        kind: "workstream_regional_effect" as const,
+        kind: "parent_effect" as const,
         contractVersion: 1 as const,
         region: "global" as const,
         workspaceId: WORKSPACE_ID,
-        workstreamId: WORKSTREAM_ID,
+        parentKind: "workstream" as const, parentId: WORKSTREAM_ID,
         generation: 1,
         messageId: "00000000-0000-7000-8000-0000000000e9",
         partitionKey: "common",
         sourceVersion: 1,
         requiredProjectionVersion: null,
-        payloadHash: workstreamRegionalEffectHash(effect),
+        payloadHash: conversationEffectHash(effect),
         effect,
       }],
     });
@@ -895,11 +894,11 @@ describe("an agent's own wake-ups", () => {
   it("keeps a future timer visible behind an overdue timer during a run drain", async () => {
     await seedOpenAuthority();
     const agent = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
-      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+      conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
     ));
     await agent.bootstrapRuntime({
       workspaceId: WORKSPACE_ID,
-      workstreamId: WORKSTREAM_ID,
+      parentKind: "workstream" as const, parentId: WORKSTREAM_ID,
       generation: 1,
     });
 
@@ -922,11 +921,11 @@ describe("an agent's own wake-ups", () => {
   it("indexes every pending wake-up so one alarm can fire them all", async () => {
     await seedOpenAuthority();
     const agent = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
-      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+      conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
     ));
     await agent.bootstrapRuntime({
       workspaceId: WORKSPACE_ID,
-      workstreamId: WORKSTREAM_ID,
+      parentKind: "workstream" as const, parentId: WORKSTREAM_ID,
       generation: 1,
     });
     const dueAt = Date.now() + 120_000;
@@ -985,11 +984,11 @@ describe("an agent's own wake-ups", () => {
   it("leaves nothing armed once its last wake-up is gone", async () => {
     await seedOpenAuthority();
     const agent = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
-      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+      conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
     ));
     await agent.bootstrapRuntime({
       workspaceId: WORKSPACE_ID,
-      workstreamId: WORKSTREAM_ID,
+      parentKind: "workstream" as const, parentId: WORKSTREAM_ID,
       generation: 1,
     });
     await runInDurableObject(agent, (_instance, state) => {

@@ -125,7 +125,8 @@ describe("the development seed", () => {
       automations: {
         id: string;
         authorUserId: string;
-        source: { definition: unknown; status: string; scope: string };
+        scope: string;
+        draft: { ready: boolean; triggers: unknown[] };
       }[];
       workstreams: {
         id: string; nextSequenceNumber: number;
@@ -145,10 +146,14 @@ describe("the development seed", () => {
     for (const automation of fixtures.automations) {
       expect(automation.id).toMatch(/^[0-9a-f-]{36}$/u);
       expect(automation.authorUserId).toMatch(/^[0-9a-f-]{36}$/u);
-      expect(automation.source.definition).toBeTypeOf("object");
-      expect(["active", "paused"]).toContain(automation.source.status);
-      expect(["personal", "workspace"]).toContain(automation.source.scope);
+      expect(automation.draft).toBeTypeOf("object");
+      // The seed route applies each draft the way a person's Create does, so a
+      // draft the object would refuse fails the seed loudly.
+      expect(automation.draft.ready).toBe(true);
+      expect(automation.draft.triggers.length).toBeGreaterThan(0);
+      expect(["personal", "workspace"]).toContain(automation.scope);
     }
+    expect(fixtures.workspaceTables).not.toHaveProperty("automation_templates");
     expect(fixtures.workstreams.length).toBeGreaterThan(0);
     for (const workstream of fixtures.workstreams) {
       const sequences = workstream.messages.map((message) => message.sequence_number);

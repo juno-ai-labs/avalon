@@ -13,7 +13,7 @@ import {
 import { bindLoopNonSystemMessages } from "@rally/agent-harness";
 
 import type { Env } from "../src/env";
-import { substreamAgentName, substreamLoopId } from "../src/durable-objects/names";
+import { conversationObjectName, substreamLoopId } from "../src/durable-objects/names";
 import { SubstreamLoopStorage } from "../src/durable-objects/substream-loop-storage";
 import { WorkstreamHarnessRunStorage } from "../src/durable-objects/workstream-harness-run-storage";
 import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
@@ -34,7 +34,7 @@ beforeEach(async () => reset());
 describe("work-stream transcript on workerd SQLite", () => {
   it("keeps participant appends off the internal transcript RPC boundary", async () => {
     const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
-      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+      conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
     ));
     const retiredRequest = {
       workspaceId: WORKSPACE_ID,
@@ -59,7 +59,7 @@ describe("work-stream transcript on workerd SQLite", () => {
 
   it("commits exact projections and repairs an interrupted tool batch before later input", async () => {
     const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
-      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+      conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
     ));
     const receiptRunId = "00000000-0000-7000-8000-000000000703";
     const attemptId = "workerd-test-attempt";
@@ -73,7 +73,6 @@ describe("work-stream transcript on workerd SQLite", () => {
       loopId: LOOP_ID,
       harnessRunId: receiptRunId,
       triggerMessageId: null,
-      automationSubscriptionId: null,
       activityId: null,
       executionPrincipal: { type: "user", userId: USER_ID },
       reason: "user_message",
@@ -279,7 +278,7 @@ describe("work-stream transcript on workerd SQLite", () => {
 
   it("keeps an interrupted assistant reservation recoverable after eviction", async () => {
     const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
-      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+      conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
     ));
     const receiptRunId = "00000000-0000-7000-8000-000000000705";
     const now = Date.now();
@@ -291,7 +290,6 @@ describe("work-stream transcript on workerd SQLite", () => {
       loopId: LOOP_ID,
       harnessRunId: receiptRunId,
       triggerMessageId: null,
-      automationSubscriptionId: null,
       activityId: null,
       executionPrincipal: { type: "user", userId: USER_ID },
       reason: "user_message",
@@ -456,7 +454,7 @@ describe("work-stream transcript on workerd SQLite", () => {
     // though they exist and are timed, and a client rebuilding the row from
     // `activities` had no timing to show and no way to say so.
     const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
-      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+      conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
     ));
     await runInDurableObject(stub, async (_instance, state) => {
       seedWorkstreamRoot(state, 1, { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID });
@@ -582,7 +580,7 @@ describe("work-stream transcript on workerd SQLite", () => {
 
   it("preserves two canonical compaction replacements and both completed edges", async () => {
     const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
-      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+      conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
     ));
     await runInDurableObject(stub, async (_instance, state) => {
       seedWorkstreamRoot(state, 1, { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID });

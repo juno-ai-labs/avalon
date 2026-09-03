@@ -692,7 +692,7 @@ describe("environment guardrails", () => {
         region: "global",
         role: "owner",
       },
-      "00000000-0000-7000-8000-000000000003",
+      { kind: "workstream", id: "00000000-0000-7000-8000-000000000003" },
     );
     await expect(verifySocketTicket(env, ticket)).resolves.toMatchObject({
       sessionId: "session",

@@ -4,7 +4,6 @@ import { IdSchema } from "@rally/contracts";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
 import {
-  AutomationSocketService,
   SocketService,
   WorkspaceSocketService,
   WorkstreamControlSocketService,
@@ -12,27 +11,22 @@ import {
 import { RealtimeTranscriptionService } from "../services/realtime-transcription-service";
 
 const params = z.object({ id: IdSchema });
-const substreamParams = params.extend({ substreamId: z.union([z.literal("0"), IdSchema]) });
+const conversationParams = z.object({
+  parentId: IdSchema,
+  substreamId: z.union([z.literal("0"), IdSchema]),
+});
 const workspaceParams = z.object({ workspaceId: IdSchema });
 // Optional: a client that presents its ticket through `Sec-WebSocket-Protocol`
 // sends no query at all, and the service rejects a request that carries neither.
 const query = z.object({ ticket: z.string().min(20).max(4_000).optional() });
 
 export const socketRoutes = new Hono<HonoAppEnv>();
-socketRoutes.get("/workstreams/:id/substreams/:substreamId", zValidator("param", substreamParams), zValidator("query", query), async (c) =>
+// One conversation's feed, whoever its parent is: the ticket names the parent
+// and the object it was issued for.
+socketRoutes.get("/conversations/:parentId/:substreamId", zValidator("param", conversationParams), zValidator("query", query), async (c) =>
   new SocketService(c.env).upgrade(
-    c.req.valid("param").id,
+    c.req.valid("param").parentId,
     c.req.valid("param").substreamId,
-    c.req.valid("query").ticket,
-    c.req.raw,
-  ),
-);
-socketRoutes.get(
-  "/automations/:id",
-  zValidator("param", params),
-  zValidator("query", query),
-  async (c) => new AutomationSocketService(c.env).upgrade(
-    c.req.valid("param").id,
     c.req.valid("query").ticket,
     c.req.raw,
   ),

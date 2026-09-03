@@ -249,7 +249,6 @@ describe("client feature flags", () => {
         developerSettings: false,
         meetingRecordingEnabled: false,
         suggestedWorkEnabled: false,
-        automationWorkspaceTemplatesEnabled: false,
         multipleWorkspacesEnabled: false,
         liveArtifactsEnabled: false,
         // The one field that fails the other direction: a digest already sends
@@ -269,7 +268,6 @@ describe("client feature flags", () => {
         developerSettings: false,
         meetingRecordingEnabled: false,
         suggestedWorkEnabled: false,
-        automationWorkspaceTemplatesEnabled: false,
         multipleWorkspacesEnabled: false,
         liveArtifactsEnabled: false,
         // `serving(false)` is an explicit, successfully-served `false` — the
@@ -374,7 +372,6 @@ describe("client feature flags", () => {
     // exactly once — does not depend on which order they arrived in.
     expect((flags.getBooleanDetails as ReturnType<typeof vi.fn>).mock.calls.map(([key]) => key).sort())
       .toEqual([
-        "automation-workspace-templates-enabled",
         "developer-settings",
         "digests-enabled",
         "live-artifacts-enabled",
@@ -420,7 +417,6 @@ describe("GET /feature-flags", () => {
       developerSettings: true,
       meetingRecordingEnabled: true,
       suggestedWorkEnabled: true,
-      automationWorkspaceTemplatesEnabled: true,
       multipleWorkspacesEnabled: true,
       liveArtifactsEnabled: true,
       digestsEnabled: true,
@@ -446,7 +442,6 @@ describe("GET /feature-flags", () => {
       developerSettings: false,
       meetingRecordingEnabled: false,
       suggestedWorkEnabled: false,
-      automationWorkspaceTemplatesEnabled: false,
       multipleWorkspacesEnabled: false,
       liveArtifactsEnabled: false,
       // The one field that answers `true` here: an unresolvable flag must

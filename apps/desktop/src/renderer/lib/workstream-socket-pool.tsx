@@ -4,6 +4,7 @@ import {
   type WorkstreamSocketApi,
   type WorkstreamSocketConnection,
 } from './use-workstream-socket';
+import type { ConversationParentKind } from '@rally/contracts/conversation-parent';
 import { useWorkstreamControlSocket } from './use-workstream-control-socket';
 import { uuidV7 } from './telemetry';
 
@@ -192,6 +193,12 @@ function RetainedWorkstreamSocketOwners({
  * Own work-stream sockets above the route so changing routes does not tear down
  * the connection that was just being viewed. Keyed socket owners stay mounted
  * while the unkeyed route subtree keeps its normal in-place reconciliation.
+ *
+ * Work streams only. Every id here names a WorkstreamDO parent, so the
+ * control warm-up a hover starts is always for a parent that has a control
+ * socket; an automation's conversation is opened by its own screen through
+ * `useRetainedWorkstreamSocket` with `parentKind: 'automation'`, which never
+ * matches the pool and so never warms one.
  */
 export function WorkstreamSocketPool({
   activeWorkstreamId,
@@ -374,12 +381,12 @@ export function useWorkstreamSocketHoverWarmup(workstreamId: string): {
 }
 
 export function useWorkstreamSocketOpenContext(
-  workstreamId: string,
+  parentId: string,
 ): () => WorkstreamSocketOpenContext {
   const actions = useContext(RetainedWorkstreamSocketActionsContext);
   return useCallback(
-    () => actions?.openContext(workstreamId) ?? { state: 'cold' },
-    [actions, workstreamId],
+    () => actions?.openContext(parentId) ?? { state: 'cold' },
+    [actions, parentId],
   );
 }
 
@@ -387,19 +394,39 @@ export function useWorkstreamSocketOpenContext(
  * Read the connection owned by `WorkstreamSocketPool`. The direct disabled
  * hook keeps standalone screen tests and non-shell embeddings compatible
  * without opening a duplicate socket in the real application.
+ *
+ * The pool retains work streams only: its active id is the one on the
+ * `/workstreams/:id` route, and its warm-up opens a WorkstreamDO control
+ * socket that an automation does not have. An automation parent, or any
+ * substream other than the main one, therefore always takes the direct hook,
+ * which mounts no control socket for it.
  */
 export function useRetainedWorkstreamSocket(
   api: WorkstreamSocketApi | null,
-  workstreamId: string,
+  parentId: string,
   enabled: boolean,
+  parentKind: ConversationParentKind = 'workstream',
+  substreamId = '0',
 ): WorkstreamSocketConnection {
   const actions = useContext(RetainedWorkstreamSocketActionsContext);
   const connections = useContext(RetainedWorkstreamSocketConnectionsContext);
-  const matchesRetainedConnection = actions?.activeWorkstreamId === workstreamId;
+  const matchesRetainedConnection = parentKind === 'workstream'
+    && substreamId === '0'
+    && actions?.activeWorkstreamId === parentId;
   const admit = actions?.admit;
   useLayoutEffect(() => {
-    if (enabled && matchesRetainedConnection) admit?.(workstreamId);
-  }, [admit, enabled, matchesRetainedConnection, workstreamId]);
-  const direct = useWorkstreamSocket(api, workstreamId, enabled && !matchesRetainedConnection);
-  return matchesRetainedConnection ? connections.get(workstreamId) ?? direct : direct;
+    if (enabled && matchesRetainedConnection) admit?.(parentId);
+  }, [admit, enabled, matchesRetainedConnection, parentId]);
+  const direct = useWorkstreamSocket(
+    api,
+    parentId,
+    enabled && !matchesRetainedConnection,
+    false,
+    'active_workstream',
+    undefined,
+    true,
+    substreamId,
+    parentKind,
+  );
+  return matchesRetainedConnection ? connections.get(parentId) ?? direct : direct;
 }

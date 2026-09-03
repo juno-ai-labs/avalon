@@ -8,8 +8,8 @@ import {
 
 import {
   artifactHostDOName,
-  automationAgentName,
-  substreamAgentName,
+  automationDOName,
+  conversationObjectName,
   workspaceDOName,
   workstreamDOName,
 } from "../durable-objects/names";
@@ -75,9 +75,8 @@ export async function applyAccessRevocation(env: Env, message: AccessRevocationM
     await publishDescendantRevocations(env, [
       ...workstreamIds.map((workstreamId) =>
         descendantRevocation(revocation, { scope: "workstream", workstreamId })),
-      // AutomationAgent holds its own socket room, so losing workspace access
-      // has to reach it the same way it reaches every other socket-holding
-      // object — the room never re-authorizes on its own.
+      // An automation holds no socket of its own, but its conversation and
+      // its runs do, and only the automation object can name them.
       ...automationIds.map((automationId) =>
         descendantRevocation(revocation, { scope: "automation", automationId })),
       // An artifact host holds no socket, but it holds viewer sessions, and a
@@ -107,14 +106,24 @@ export async function applyAccessRevocation(env: Env, message: AccessRevocationM
   }
 
   if (target.scope === "automation") {
-    const agent = await durableObjectStubForWorkspace(
+    const automation = await durableObjectStubForWorkspace(
       env,
-      env.AUTOMATION_AGENTS,
+      env.AUTOMATION_DOS,
       workspaceId,
-      automationAgentName(env.AVALON_REGION, workspaceId, asAutomationId(target.automationId)),
+      automationDOName(env.AVALON_REGION, workspaceId, asAutomationId(target.automationId)),
       placementAffinity,
     );
-    await agent.revokeSocketAccess(revocation);
+    const { children } = await automation.listChildren({
+      workspaceId,
+      parentId: target.automationId,
+    });
+    // Each child conversation is its own hop, addressed by its parent's id the
+    // way a work stream's substreams are.
+    await publishDescendantRevocations(env, children.map((child) => descendantRevocation(revocation, {
+      scope: "substream",
+      workstreamId: target.automationId,
+      substreamId: child.substreamId,
+    })));
     return;
   }
 
@@ -144,7 +153,7 @@ export async function applyAccessRevocation(env: Env, message: AccessRevocationM
       env,
       env.SUBSTREAM_AGENTS,
       workspaceId,
-      substreamAgentName(
+      conversationObjectName(
         env.AVALON_REGION,
         workspaceId,
         workstreamId,

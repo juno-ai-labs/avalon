@@ -370,9 +370,9 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
                 input: evaluator.source.resourceId,
               });
             }
-            if (!descriptor || evaluator.when.kind !== "dnf") continue;
-            for (const [groupIndex, group] of evaluator.when.anyOf.entries()) {
-              for (const [leafIndex, leaf] of group.allOf.entries()) {
+            if (!descriptor || evaluator.when.kind !== "all") continue;
+            {
+              for (const [leafIndex, leaf] of evaluator.when.allOf.entries()) {
                 const field = (descriptor.filterFields ?? []).find((candidate) => candidate.key === leaf.attribute);
                 if (
                   !field
@@ -381,7 +381,7 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
                 ) {
                   issues.push({
                     code: "custom",
-                    path: ["evaluators", index, "when", "anyOf", groupIndex, "allOf", leafIndex],
+                    path: ["evaluators", index, "when", "allOf", leafIndex],
                     message: "This filter field, operator, or value type is not one the plugin declares. Use a field from automation_plugin_inspect with one of the operators it lists and a value of the type it names.",
                     input: leaf,
                   });
@@ -389,11 +389,11 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
                 if (
                   (leaf.kind === "person_id" || leaf.kind === "person_id_array")
                   && (Array.isArray(leaf.value) ? leaf.value : [leaf.value])
-                    .some((personId) => !resolvedAutomationPersonIds.has(personId))
+                    .some((personId: string) => !resolvedAutomationPersonIds.has(personId))
                 ) {
                   issues.push({
                     code: "custom",
-                    path: ["evaluators", index, "when", "anyOf", groupIndex, "allOf", leafIndex, "value"],
+                    path: ["evaluators", index, "when", "allOf", leafIndex, "value"],
                     message: "This person ID was never resolved. Find the person with people_search and use an ID it returned.",
                     input: leaf.value,
                   });

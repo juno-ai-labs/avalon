@@ -28,7 +28,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { asAutomationId, asUserId, asWorkspaceId } from "@rally/contracts";
 
 import type { AutomationAgent } from "../src/durable-objects/automation-agent";
-import { automationAgentName, workspaceDOName } from "../src/durable-objects/names";
+import { automationDOName, workspaceDOName } from "../src/durable-objects/names";
 import { AutomationAgentService } from "../src/services/automation-agent-service";
 import type { Env } from "../src/env";
 
@@ -73,7 +73,7 @@ const DEFINITION = {
  */
 function automationStub() {
   return env.AUTOMATION_AGENTS.get(env.AUTOMATION_AGENTS.idFromName(
-    automationAgentName("global", WORKSPACE_ID, AUTOMATION_ID),
+    automationDOName("global", WORKSPACE_ID, AUTOMATION_ID),
   ));
 }
 

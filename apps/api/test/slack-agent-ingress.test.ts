@@ -620,12 +620,11 @@ describe("work-stream link unfurl card", () => {
     return String(section.text?.text ?? "");
   }
 
-  it("shows title, status, last activity, and automation origin", () => {
+  it("shows title, status, and last activity", () => {
     const blocks = workstreamUnfurlBlocks({
       title: "Daily product brief",
       harnessStatus: "needs_input",
       lastActivityAt: "2026-08-10T12:00:00.000Z",
-      automationName: "Daily monitor",
     }, url);
 
     const text = cardText(blocks);
@@ -633,7 +632,6 @@ describe("work-stream link unfurl card", () => {
     // word follows in the detail line so the emoji is never the only carrier.
     expect(text).toContain(`:warning: *<${url}|Daily product brief>*`);
     expect(text.split("\n")[1]).toMatch(/^Needs input · /u);
-    expect(text).toContain("via Daily monitor");
     // Rendered in each reader's own timezone, and it cannot rot into a lie the
     // way a baked "24m ago" would on a card that is never re-rendered.
     expect(text).toContain(`<!date^${Math.floor(Date.parse("2026-08-10T12:00:00.000Z") / 1000)}^`);
@@ -645,7 +643,6 @@ describe("work-stream link unfurl card", () => {
       title: "Pricing restructure",
       harnessStatus: "running",
       lastActivityAt: "2026-08-10T12:00:00.000Z",
-      automationName: null,
     }, url));
 
     expect(text).toContain(":large_green_circle: *<");
@@ -658,7 +655,6 @@ describe("work-stream link unfurl card", () => {
       title: "Board decision",
       harnessStatus: "failed",
       lastActivityAt: "2026-08-10T12:00:00.000Z",
-      automationName: null,
     }, url));
 
     expect(text).toContain(":red_circle: *<");
@@ -674,7 +670,6 @@ describe("work-stream link unfurl card", () => {
         title: "Daily product brief",
         harnessStatus,
         lastActivityAt: "2026-08-10T12:00:00.000Z",
-        automationName: null,
       }, url));
 
       expect(text.startsWith("*<"), harnessStatus).toBe(true);
@@ -688,7 +683,6 @@ describe("work-stream link unfurl card", () => {
       title: "<https://evil.example|Click me> & co",
       harnessStatus: "completed",
       lastActivityAt: null,
-      automationName: null,
     }, url));
 
     expect(text).toContain("&lt;https://evil.example|Click me&gt; &amp; co");
@@ -700,7 +694,6 @@ describe("work-stream link unfurl card", () => {
       title: "   ",
       harnessStatus: "some_future_status",
       lastActivityAt: "not-a-date",
-      automationName: null,
     }, url));
 
     expect(text).toBe(`*<${url}|Untitled work stream>*`);
@@ -722,7 +715,6 @@ describe("work-stream link unfurl card", () => {
         title: "Daily product brief",
         harnessStatus: "failed",
         lastActivityAt: null,
-        automationName: null,
       }, url),
     ]) {
       expect(blocks.at(-1)).toEqual({
@@ -793,7 +785,6 @@ describe("recording shared work-stream links for refresh", () => {
     title: "Quarterly planning",
     harnessStatus: "running",
     lastActivityAt: "2026-08-10T12:00:00.000Z",
-    automationName: null,
   };
 
   it("records a link with the exact URL Slack reported", () => {

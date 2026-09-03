@@ -2240,7 +2240,6 @@ describe("Slack ingress maintenance reaps link challenges", () => {
       workspaceId: WORKSPACE_ID,
       directory: {
         workstreamScheduleTargets: async () => ({ items: [] }),
-        plannedAutomationWorkstream: async () => null,
       },
       notificationIntents: {
         notificationIntentMaintenanceTarget: async () => ({ dueAt: null }),

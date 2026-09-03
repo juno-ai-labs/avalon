@@ -1,5 +1,8 @@
 import { z } from "zod";
-import { AutomationRunContextV1Schema, AutomationScopeSchema } from "./automation-agent";
+import { AutomationLifecycleStateSchema,
+  AutomationRunReferenceV1Schema,
+  AutomationRunTriggerV1Schema,
+  AutomationScopeSchema } from "./automation-agent";
 import {
   TranscriptActivitySchema,
   PendingTranscriptInputSchema,
@@ -32,6 +35,9 @@ import {
 import type { AutomationSetEvaluatorRulesInputV1 } from "./automation-evaluators";
 export * from "./automation-evaluators";
 export * from "./automation-agent";
+export * from "./conversation-parent";
+export * from "./conversation-effects";
+import { ConversationParentKindSchema } from "./conversation-parent";
 export * from "./identifiers";
 
 export * from "./artifacts";
@@ -243,14 +249,12 @@ export type AgentModelOverride = z.infer<typeof AgentModelOverrideSchema>;
 export const AGENT_MODEL_ROLES = [
   "workstream",
   "inline_child",
-  "automation_compiler",
   "meeting_notes",
   "addressing_classifier",
   "workstream_naming",
   "work_opportunity_admission",
   "work_opportunity_ranking",
   "workstream_description",
-  "automation_result_disposition",
 ] as const;
 export type AgentModelRole = (typeof AGENT_MODEL_ROLES)[number];
 
@@ -258,14 +262,12 @@ export type AgentModelRole = (typeof AGENT_MODEL_ROLES)[number];
 export const AGENT_MODEL_FLAG_KEYS: Readonly<Record<AgentModelRole, string>> = {
   workstream: "agent-model-workstream",
   inline_child: "agent-model-inline-child",
-  automation_compiler: "agent-model-automation-compiler",
   meeting_notes: "agent-model-meeting-notes",
   addressing_classifier: "agent-model-addressing-classifier",
   workstream_naming: "agent-model-workstream-naming",
   work_opportunity_admission: "agent-model-work-opportunity-admission",
   work_opportunity_ranking: "agent-model-work-opportunity-ranking",
   workstream_description: "agent-model-workstream-description",
-  automation_result_disposition: "agent-model-automation-result-disposition",
 };
 
 /** One task's primary OpenRouter model and its ordered fallback route. */
@@ -413,8 +415,6 @@ export const ClientFeatureFlagsSchema = z.object({
   meetingRecordingEnabled: z.boolean().default(false),
   /** Whether Suggested Work surfaces are shown in Electron for this person. */
   suggestedWorkEnabled: z.boolean().default(false),
-  /** Whether workspace-template surfaces are shown in Electron for this person. */
-  automationWorkspaceTemplatesEnabled: z.boolean().default(false),
   /** Whether Electron offers workspace switching and plural workspace setup. */
   multipleWorkspacesEnabled: z.boolean().default(false),
   /**
@@ -455,7 +455,6 @@ export const ClientFeatureFlagsSchema = z.object({
 export const ProductFeatureFlagKeySchema = z.enum([
   "meeting-recording-enabled",
   "suggested-work-enabled",
-  "automation-workspace-templates-enabled",
   "multiple-workspaces-enabled",
   "digests-enabled",
   "live-artifacts-enabled",
@@ -476,8 +475,6 @@ export const ViewerSchema = z.object({
   user: UserSchema,
   connectedAt: TimestampSchema
 });
-
-export const WorkstreamOriginSchema = z.enum(["ad_hoc", "automation"]);
 
 /** The most prompt text a compact work-stream wake-up marker may expose. */
 export const WORKSTREAM_WAKEUP_PROMPT_PREVIEW_LENGTH = 40;
@@ -573,12 +570,7 @@ export const WorkstreamSchema = z.object({
   objective: z.string().max(WORKSTREAM_DESCRIPTION_MAX_CHARACTERS),
   /** Stable inbound address. Null is transitional for pre-migration rows only. */
   emailAddress: z.string().email().max(254).nullable().default(null),
-  originType: WorkstreamOriginSchema,
-  originLabel: z.string().max(120).nullable(),
   createdByUserId: IdSchema.nullable(),
-  automationSubscriptionId: IdSchema.nullable(),
-  automationRunId: IdSchema.nullable(),
-  plannedFor: TimestampSchema.nullable(),
   harnessStatus: HarnessStatusSchema,
   latestAttentionSequenceNumber: z.number().int().nonnegative(),
   readThroughSequenceNumber: z.number().int().nonnegative(),
@@ -1437,90 +1429,51 @@ export function automationDraftAcceptanceBlocker(
   return null;
 }
 
-export const AutomationDraftStreamEventSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("started") }),
-  z.object({
-    type: z.literal("thinking"),
-    inferenceRequestId: z.string().min(1).max(200),
-    status: z.enum(["started", "completed"]),
-    durationMs: z.number().int().nonnegative()
-  }),
-  z.object({
-    type: z.literal("delta"),
-    delta: z.string(),
-    reset: z.boolean().default(false)
-  }),
-  z.object({
-    type: z.literal("tool"),
-    toolCallId: z.string().min(1).max(200),
-    name: z.string().min(1).max(200),
-    summary: z.string().min(1).max(1000),
-    status: z.enum(["started", "completed", "failed"]),
-    /** The single plugin that owns this tool, or null for Avalon-owned tools. */
-    plugin: AutomationPluginActivitySchema.nullable().default(null),
-    durationMs: z.number().int().nonnegative().optional()
-  }),
-  z.object({
-    type: z.literal("completed"),
-    /**
-     * The draft subscription this turn wrote. It is the automation's real id
-     * from the first turn onward — the row the sidebar lists, the next turn
-     * updates, and creation promotes — so the client adopts it rather than
-     * keeping the key it opened the conversation with.
-     */
-    draftId: IdSchema,
-    elicitationId: IdSchema.nullable().default(null),
-    elicitationPresentedAt: TimestampSchema.nullable().default(null),
-    draft: AutomationDraftSchema,
-    assistantMessage: z.string().min(1)
-  }),
-  z.object({
-    type: z.literal("error"),
-    error: z.object({
-      status: z.number().int().min(0).max(599),
-      code: z.string().min(1),
-      message: z.string().min(1),
-      requestId: z.string().min(1).nullable().default(null),
-      details: z.record(z.string(), z.unknown()).optional()
-    })
-  })
-]);
-
-export const AutomationCompilerMessageSchema = z.object({
-  role: z.enum(["user", "assistant"]),
-  content: z.string()
-});
-
 /**
- * A draft automation as the compiler left it: the transcript so far, the
- * resources it was given, and the draft it last produced. It is what the
- * builder screen needs to pick a draft back up out of the sidebar, and exactly
- * what the next compile turn sends back.
- */
-export const AutomationDraftStateSchema = z.object({
-  draftId: IdSchema,
-  messages: z.array(AutomationCompilerMessageSchema),
-  attachmentIds: z.array(IdSchema).default([]),
-  elicitationId: IdSchema.nullable().default(null),
-  elicitationPresentedAt: TimestampSchema.nullable().default(null),
-  draft: AutomationDraftSchema
-});
-
-/**
- * Why an automation needs a person to look at it, when its status alone cannot
- * say. `unsupported_trigger` is the load-bearing one: the automation's trigger
- * has no equivalent in the runtime that replaced the one it was built on, so it
- * will not start on its own again.
+ * What a run reads from its automation at start, by definition revision.
  *
- * The wire carries the reason and not a sentence. The words a person reads are
- * the client's — that keeps the copy rewritable without reprojecting every
- * automation that already carries a reason, and keeps a server-side string that
- * was written for an operator out of a product surface.
+ * The run carries only `AutomationRunReferenceV1` into its loop; this is the
+ * answer to that reference. Everything a run needs to act is here, resolved by
+ * the parent at the moment the run asks, so nothing is frozen by copy and no
+ * later field change has to migrate stored run contexts.
  */
-export const AutomationAttentionReasonSchema = z.enum([
-  "unsupported_trigger",
-  "legacy_runtime_error",
-  "run_projection_integrity_conflict",
+export const AutomationRunDefinitionV1Schema = z.strictObject({
+  schemaVersion: z.literal(1),
+  automationId: IdSchema,
+  runId: IdSchema,
+  definitionRevision: z.number().int().positive(),
+  definition: z.strictObject({
+    name: z.string().min(1),
+    description: z.string().min(1),
+    overview: z.string().min(1),
+    instructions: z.string().min(1),
+    requiredCapabilities: z.array(z.string()),
+    expectedOutputs: z.array(z.string()),
+    defaultBehavior: z.record(z.string(), z.unknown()),
+    recommendedPlugins: z.array(AutomationPluginRecommendationSchema),
+    memoryTables: z.array(AutomationMemoryTableSchema),
+  }),
+  defaultPluginIds: z.array(ModelPluginIdSchema),
+  activitySourcePluginIds: ActivitySourcePluginIdsSchema,
+  connectorBindings: z.record(z.string(), z.string()),
+  scope: AutomationScopeSchema,
+  /** The room that owns a `workstream`-scoped automation: the one place a run may post its result. */
+  owningWorkstreamId: IdSchema.nullable(),
+  runAsUserId: IdSchema,
+  modelOverride: z.string().min(1).nullable(),
+  trigger: AutomationRunTriggerV1Schema,
+  /** The content that started an inbound-email run, rendered as loop input. */
+  opening: z.strictObject({
+    textContent: z.string().min(1),
+    structuredContent: z.record(z.string(), z.unknown()),
+    resourceId: IdSchema,
+  }).nullable(),
+  state: z.enum(["pending", "running", "needs_input", "completed", "failed", "stopped"]),
+});
+export type AutomationRunDefinitionV1 = z.infer<typeof AutomationRunDefinitionV1Schema>;
+
+export const AutomationRunStatusSchema = z.enum([
+  "pending", "running", "needs_input", "completed", "failed", "stopped",
 ]);
 
 export const AutomationSummarySchema = z.object({
@@ -1528,36 +1481,29 @@ export const AutomationSummarySchema = z.object({
   name: z.string(),
   description: z.string(),
   emailAddress: z.string().email().nullable().default(null),
-  scope: ScopeSchema,
-  status: z.enum(["draft", "active", "paused", "error"]),
-  /** Null for every automation nothing is wrong with, which is nearly all. */
-  attention: AutomationAttentionReasonSchema.nullable().default(null),
+  scope: AutomationScopeSchema,
+  /** The room that owns a `workstream`-scoped automation; null for the other two. */
+  owningWorkstreamId: IdSchema.nullable().default(null),
+  status: z.enum(["draft", "active", "paused"]),
   nextRunAt: TimestampSchema.nullable(),
   lastRunAt: TimestampSchema.nullable(),
-  /** Last time the subscription itself changed. It is the only activity a draft
-   * has, since a draft never runs. */
   updatedAt: TimestampSchema,
-  updateAvailable: z.boolean()
 });
 
 /**
- * One automation in a work stream's rail.
- *
- * The sidebar summary without its scope, because every row in that list is
- * owned by the work stream showing it. Carrying a scope here would be a second
- * copy of a fact the list's own identity already establishes, and the only
- * value it could hold is the one `ScopeSchema` deliberately does not offer.
+ * One automation in a work stream's rail: the summary without its scope and
+ * owner, because every row in that list is owned by the work stream showing it.
  */
-export const WorkstreamAutomationSummarySchema = AutomationSummarySchema.omit({ scope: true });
+export const WorkstreamAutomationSummarySchema = AutomationSummarySchema.omit({
+  scope: true,
+  owningWorkstreamId: true,
+});
 export type WorkstreamAutomationSummary = z.infer<typeof WorkstreamAutomationSummarySchema>;
 
 /**
- * What a takeover did.
- *
- * `unboundProviders` is why this is not a bare acknowledgement: the claimant may
- * have no connection for one of the providers the last principal took with
- * them, and the card that prompted the claim stays up naming only those. The
- * rest of the automation moves regardless — most of it working beats none.
+ * What a takeover did. `unboundProviders` is why this is not a bare
+ * acknowledgement: the claimant may have no connection for one of the
+ * providers the last principal took with them.
  */
 export const AutomationExecutionPrincipalClaimSchema = z.strictObject({
   principalUserId: IdSchema,
@@ -1570,47 +1516,29 @@ export type AutomationExecutionPrincipalClaim =
   z.infer<typeof AutomationExecutionPrincipalClaimSchema>;
 
 export const AutomationRunSchema = z.object({
+  /** The run id, which is also its substream under the automation. */
   id: IdSchema,
-  automationSubscriptionId: IdSchema,
-  workstreamId: IdSchema,
-  triggerType: z.string(),
+  automationId: IdSchema,
+  triggerType: z.enum(["manual", "schedule", "external_event", "inbound_email"]),
   plannedFor: TimestampSchema.nullable(),
   startedAt: TimestampSchema.nullable(),
   completedAt: TimestampSchema.nullable(),
-  status: HarnessStatusSchema,
+  status: AutomationRunStatusSchema,
   resultSummary: z.string().nullable(),
-  createdAt: TimestampSchema
-});
-
-export const AutomationTemplateUpdateSchema = z.object({
-  versionId: IdSchema,
-  versionNumber: z.number().int().positive(),
-  instructions: z.string(),
-  overview: z.string(),
-  triggers: z.array(TriggerDefinitionSchema),
-  requiredCapabilities: z.array(z.string()),
-  expectedOutputs: z.array(z.string()),
-  recommendedPlugins: z.array(AutomationPluginRecommendationSchema).default([]),
-  memoryTables: z.array(AutomationMemoryTableSchema).default([]),
+  createdAt: TimestampSchema,
 });
 
 export const AutomationDetailSchema = AutomationSummarySchema.extend({
-  templateId: IdSchema,
-  templateVersionId: IdSchema,
-  versionNumber: z.number().int().positive(),
-  instructions: z.string(),
-  overview: z.string(),
-  triggers: z.array(TriggerDefinitionSchema),
-  requiredCapabilities: z.array(z.string()),
-  expectedOutputs: z.array(z.string()).default([]),
-  executionPrincipal: z.record(z.string(), z.unknown()),
-  recommendedPlugins: z.array(AutomationPluginRecommendationSchema).default([]),
-  memoryTables: z.array(AutomationMemoryTableSchema).default([]),
-  defaultPluginIds: z.array(ModelPluginIdSchema).default([]),
-  activitySourcePluginIds: ActivitySourcePluginIdsSchema.default({}),
-  templateUpdate: AutomationTemplateUpdateSchema.nullable().default(null),
-  nextPlannedWorkstream: WorkstreamSchema.nullable(),
-  recentRuns: z.array(AutomationRunSchema)
+  lifecycle: AutomationLifecycleStateSchema,
+  authorUserId: IdSchema,
+  runAsUserId: IdSchema,
+  /** The latest submitted definition, or null before the chat has submitted one. */
+  currentDefinition: AutomationDraftSchema.nullable(),
+  currentDefinitionRevision: z.number().int().nonnegative(),
+  /** The revision that is running, or null while still a draft. */
+  acceptedDefinitionRevision: z.number().int().positive().nullable(),
+  connectorBindings: z.record(z.string(), z.string()),
+  recentRuns: z.array(AutomationRunSchema),
 });
 
 export const ApiErrorSchema = z.object({
@@ -1937,27 +1865,6 @@ export const AnswerElicitationRequestSchema = z.union([
     skipped: z.literal(true)
   })
 ]);
-export const CompileAutomationRequestSchema = z.object({
-  /**
-   * The draft subscription this conversation is already writing to. Absent on
-   * the first turn, and ignored when it names anything but a visible draft the
-   * caller owns — a compile turn may update a draft, never an automation that
-   * runs.
-   */
-  draftId: IdSchema.optional(),
-  messages: z.array(AutomationCompilerMessageSchema).min(1),
-  currentDraft: AutomationDraftSchema.nullable().default(null),
-  attachmentIds: z.array(IdSchema).max(10).default([]),
-  inputMode: z.enum(['typed', 'suggested_prompt', 'elicitation_response', 'edit']).default('typed'),
-  connectorMentionCount: z.number().int().min(0).max(100).default(0),
-  resolvedElicitation: z.object({
-    id: IdSchema,
-    responseType: z.enum(['free_text', 'single_select', 'multi_select']),
-    resolution: z.enum(['answered', 'skipped']),
-    customResponseUsed: z.boolean(),
-    presentedAt: TimestampSchema,
-  }).optional(),
-});
 export const CreateWebhookConnectionRequestSchema = z.object({
   displayName: z.string().min(1).max(180),
   scope: ScopeSchema,
@@ -2524,11 +2431,7 @@ export const WorkstreamControlMetadataSchema = z.strictObject({
   description: z.string().max(4_000),
   preview: z.string().max(1_000),
   emailAddress: z.string().email().max(254).nullable(),
-  originType: WorkstreamOriginSchema,
   createdByUserId: IdSchema.nullable(),
-  automationSubscriptionId: IdSchema.nullable(),
-  automationRunId: IdSchema.nullable(),
-  plannedFor: TimestampSchema.nullable(),
   titleStatus: z.enum(["naming", "automatic", "settled"]),
   exactState: z.string().min(1).max(80),
   harnessStatus: HarnessStatusSchema,
@@ -3020,7 +2923,13 @@ export const SlackSearchAuthorizationSchema = z.strictObject({
 export const WorkstreamWorkflowInputSchema = z.object({
   region: RegionSchema,
   workspaceId: WorkspaceIdSchema,
-  workstreamId: WorkstreamIdSchema,
+  /**
+   * The conversation's parent: a work stream or an automation. `parentId` is
+   * what every object port and the object name are keyed on; the parent's
+   * substream `0` holds the product rows for every substream under it.
+   */
+  parentKind: ConversationParentKindSchema,
+  parentId: IdSchema,
   /** External child identity. Existing producers and the main feed use `0`. */
   substreamId: SubstreamIdSchema.optional(),
   /** Stable identity of the one persistent loop owned by this substream. */
@@ -3049,13 +2958,11 @@ export const WorkstreamWorkflowInputSchema = z.object({
    * cost.
    */
   transcriptFenceMessageId: TranscriptTurnIdSchema.nullable().optional(),
-  automationSubscriptionId: IdSchema.nullable(),
   /**
-   * The occurrence snapshot frozen by AutomationAgent before the child exists.
-   * Automation runs must use this value instead of reconstructing effective
-   * settings from WorkspaceDO catalog tables after dispatch.
+   * Set on a run under an automation. A reference, not a copy: the run reads
+   * its definition from the automation by revision when it starts.
    */
-  automationRunContext: AutomationRunContextV1Schema.optional(),
+  automationRun: AutomationRunReferenceV1Schema.optional(),
   activityId: IdSchema.nullable(),
   /**
    * Set when the workspace scheduler started this run from a due wake-up. The
@@ -3540,14 +3447,10 @@ export type AutomationDraft = z.infer<typeof AutomationDraftSchema>;
 export type AutomationMemoryTable = z.infer<typeof AutomationMemoryTableSchema>;
 export type AutomationMemoryTableColumn = z.infer<typeof AutomationMemoryTableColumnSchema>;
 export type MemoryTableColumnType = z.infer<typeof MemoryTableColumnTypeSchema>;
-export type AutomationDraftStreamEvent = z.infer<typeof AutomationDraftStreamEventSchema>;
-export type AutomationCompilerMessage = z.infer<typeof AutomationCompilerMessageSchema>;
-export type AutomationDraftState = z.infer<typeof AutomationDraftStateSchema>;
 export type AutomationSummary = z.infer<typeof AutomationSummarySchema>;
 export type AutomationDetail = z.infer<typeof AutomationDetailSchema>;
-export type AutomationAttentionReason = z.infer<typeof AutomationAttentionReasonSchema>;
 export type AutomationRun = z.infer<typeof AutomationRunSchema>;
-export type AutomationTemplateUpdate = z.infer<typeof AutomationTemplateUpdateSchema>;
+export type AutomationRunStatus = z.infer<typeof AutomationRunStatusSchema>;
 export type ActivitySourcePluginIds = z.infer<typeof ActivitySourcePluginIdsSchema>;
 export type DigestSchedule = z.infer<typeof DigestScheduleSchema>;
 export type DigestDeliveryTarget = z.infer<typeof DigestDeliveryTargetSchema>;

@@ -195,7 +195,6 @@ describe("the description a long message opens with", () => {
       originResourceIds: [],
       modelOverride: null,
       originType: "ad_hoc",
-      automationSubscriptionId: null,
       automationRunId: null,
       plannedFor: null,
       systemKind: null,

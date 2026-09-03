@@ -253,7 +253,7 @@ function env(database: ToolSelectionDatabase): Env {
       }),
     }),
     SUBSTREAM_AGENTS: database.agents,
-    AUTOMATION_AGENTS: testSubstreamAgentsBinding(database.objectStore, {
+    AUTOMATION_DOS: testSubstreamAgentsBinding(database.objectStore, {
       extra: {
         admitAuthoredDraft: vi.fn(async (request: Record<string, unknown>) => {
           database.admittedAutomationDrafts.push(request);
@@ -273,7 +273,8 @@ function workflowInput(automationSubscriptionId: string | null = null): Workstre
   return {
     region: "global",
     workspaceId: WORKSPACE_ID,
-    workstreamId: WORKSTREAM_ID,
+    parentKind: "workstream",
+    parentId: WORKSTREAM_ID,
     loopId: `workstream:${WORKSTREAM_ID}:substream:0:loop`,
     harnessRunId: HARNESS_RUN_ID,
     triggerMessageId: null,

@@ -35,6 +35,8 @@ export function createIdentityObjectPort(
   workspaceId: string,
   workstreamId: string,
   localStorage?: WorkstreamIdentityStorage,
+  /** Which of the parent's conversations; the main one by default. */
+  substreamId?: string,
 ): IdentityObjectPort {
-  return createObjectPort(env, workspaceId, workstreamId, CONTRACT, localStorage);
+  return createObjectPort(env, workspaceId, workstreamId, CONTRACT, localStorage, substreamId);
 }

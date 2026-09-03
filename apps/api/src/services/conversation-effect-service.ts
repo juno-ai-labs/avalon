@@ -5,15 +5,14 @@ import { ApiError } from "../lib/api-error";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { logInfo, logWarn } from "../observability/logger";
 import {
+  ParentEffectEnvelopeSchema,
   WorkstreamMentionNotificationEffectSchema,
   WorkstreamParticipantNotificationEffectSchema,
-  WorkstreamRegionalEffectEnvelopeSchema,
-  WorkstreamRegionalEffectQueueMessageSchema,
-  workstreamRegionalEffectHash,
-  type WorkstreamRegionalEffectEnvelope,
-  type WorkstreamRegionalEffectQueueMessage,
-} from "../durable-objects/workstream-regional-effect";
-import { workspaceDOName, workstreamDOName } from "../durable-objects/names";
+  conversationEffectHash,
+  isDirectoryEffect,
+  type ParentEffectEnvelope,
+} from "@rally/contracts/conversation-effects";
+import { workspaceDOName } from "../durable-objects/names";
 import {
   WorkspaceDirectoryApplyResultSchema,
   WorkspaceDirectoryNotificationStateSchema,
@@ -36,7 +35,7 @@ import { publishWorkspaceSync } from "./workspace-realtime-service";
 import { workspaceRegionalDatabase } from "./workspace-runtime-database";
 
 function workspaceTopicsForEffect(
-  effect: WorkstreamRegionalEffectEnvelope["effect"],
+  effect: ParentEffectEnvelope["effect"],
 ) {
   if (effect.kind === "activity_event") {
     return ["activity", "work_opportunities"] as const;
@@ -61,23 +60,13 @@ export interface WorkstreamRegionalEffectResult {
   notificationIntentId: string | null;
 }
 
-export function isWorkspaceDirectoryEffect(
-  effect: WorkstreamRegionalEffectEnvelope["effect"],
-): effect is Extract<WorkstreamRegionalEffectEnvelope["effect"], {
-  kind: "directory_common" | "directory_user" | "suggestion_feedback";
-}> {
-  return effect.kind === "directory_common"
-    || effect.kind === "directory_user"
-    || effect.kind === "suggestion_feedback";
-}
-
 /** Apply one unordered, at-least-once Queue delivery to WorkspaceDO. */
 export async function applyQueuedWorkspaceDirectoryEffect(
   env: Env,
-  input: WorkstreamRegionalEffectEnvelope,
+  input: ParentEffectEnvelope,
 ): Promise<void> {
-  const message = WorkstreamRegionalEffectEnvelopeSchema.parse(input);
-  if (!isWorkspaceDirectoryEffect(message.effect)) {
+  const message = ParentEffectEnvelopeSchema.parse(input);
+  if (!isDirectoryEffect(message.effect)) {
     throw new Error("non_workspace_effect_misdirected_to_workspace_do");
   }
   const workspace = await durableObjectStubForWorkspace(
@@ -100,42 +89,38 @@ export async function applyQueuedWorkspaceDirectoryEffect(
 }
 
 /**
- * Apply one WorkstreamDO activity/mention effect to the regional delivery plane.
- * Product state commits idempotently in WorkspaceDO before the thin D1 Queue
- * receipt; a crash between those authorities retries the same event or intent
- * identity. Directory effects never enter here.
+ * Apply one parent's activity or notification effect to the regional delivery
+ * plane. Product state commits idempotently in WorkspaceDO together with its
+ * receipt; a redelivery converges on the same event or intent identity.
+ * Directory effects never enter here.
  */
 export async function applyWorkstreamRegionalEffect(
   env: Env,
-  input: WorkstreamRegionalEffectEnvelope,
+  input: ParentEffectEnvelope,
 ): Promise<WorkstreamRegionalEffectResult> {
-  const message = WorkstreamRegionalEffectEnvelopeSchema.parse(input);
+  const message = ParentEffectEnvelopeSchema.parse(input);
   if (message.region !== env.AVALON_REGION) throw new Error("workstream_effect_region_mismatch");
   if (
-    workstreamRegionalEffectHash(message.effect, message.requiredProjectionVersion)
+    conversationEffectHash(message.effect, message.requiredProjectionVersion)
     !== message.payloadHash
   ) {
     throw new Error("workstream_effect_payload_hash_mismatch");
   }
-  if (
-    message.effect.kind === "directory_common"
-    || message.effect.kind === "directory_user"
-    || message.effect.kind === "suggestion_feedback"
-  ) {
+  if (isDirectoryEffect(message.effect) || message.effect.kind === "directory_automation") {
     throw new Error("workspace_owned_effect_misdirected_to_regional_queue");
   }
 
   const route = await env.DB.prepare(
     `SELECT generation, state FROM workstream_authority_routes
       WHERE workspace_id = ? AND workstream_id = ?`,
-  ).bind(message.workspaceId, message.workstreamId).first<{ generation: number; state: string }>();
+  ).bind(message.workspaceId, message.parentId).first<{ generation: number; state: string }>();
   if (route?.state === "active" && route.generation > message.generation) {
     // A previous authority generation can still have Queue messages in flight.
     // Its state was superseded at cutover, so acknowledging it is the only
     // terminal and safe outcome; applying it would regress the current owner.
     logInfo(env, "workstream_regional_effect_apply_terminal", {
       workspace_id: message.workspaceId,
-      workstream_id: message.workstreamId,
+      workstream_id: message.parentId,
       message_id: message.messageId,
       effect_kind: message.effect.kind,
       outcome: "skipped",
@@ -200,7 +185,7 @@ export async function applyWorkstreamRegionalEffect(
   if (message.effect.kind !== "activity_event" && !applied.notificationIntentId) {
     logInfo(env, "workstream_notification_terminal", {
       workspace_id: message.workspaceId,
-      workstream_id: message.workstreamId,
+      workstream_id: message.parentId,
       message_id: message.messageId,
       kind: message.effect.kind,
       recipient_user_id: message.effect.recipientUserId,
@@ -553,62 +538,4 @@ async function requireNotificationIntentTransition(
     && result.state === input.state
   ) return;
   throw new Error(`workstream_notification_transition_not_applied:${result.outcome}`);
-}
-
-/** Remove an acknowledged DO outbox row; the replay receipt stays in WorkspaceDO. */
-export async function acknowledgeWorkstreamOutboxEffect(
-  env: Env,
-  message: WorkstreamRegionalEffectEnvelope,
-): Promise<void> {
-  const objectName = workstreamDOName(message.region, message.workspaceId, message.workstreamId);
-  const workstream = await durableObjectStubForWorkspace(
-    env,
-    env.WORKSTREAM_DOS,
-    message.workspaceId,
-    objectName,
-  );
-  const removed = await workstream.acknowledgeRegionalEffect({
-    messageId: message.messageId,
-    payloadHash: message.payloadHash,
-  });
-  logInfo(env, "workstream_outbox_acknowledged", {
-    workspace_id: message.workspaceId,
-    workstream_id: message.workstreamId,
-    message_id: message.messageId,
-    effect_kind: message.effect.kind,
-    removed,
-    outcome: removed ? "deleted" : "already_absent",
-  });
-}
-
-export async function loadWorkstreamRegionalEffect(
-  env: Env,
-  input: WorkstreamRegionalEffectQueueMessage,
-): Promise<WorkstreamRegionalEffectEnvelope | null> {
-  const wake = WorkstreamRegionalEffectQueueMessageSchema.parse(input);
-  const objectName = workstreamDOName(wake.region, wake.workspaceId, wake.workstreamId);
-  const workstream = await durableObjectStubForWorkspace(
-    env,
-    env.WORKSTREAM_DOS,
-    wake.workspaceId,
-    objectName,
-  );
-  const loaded = await workstream.loadRegionalEffect({
-    messageId: wake.messageId,
-    payloadHash: wake.payloadHash,
-  });
-  // A prior acknowledgement may have removed this row after a duplicate
-  // wake-up was queued. There is nothing left for this delivery to do, and
-  // retrying it cannot recreate an acknowledged row.
-  if (!loaded) return null;
-  const envelope = WorkstreamRegionalEffectEnvelopeSchema.parse(loaded);
-  if (
-    envelope.region !== wake.region
-    || envelope.workspaceId !== wake.workspaceId
-    || envelope.workstreamId !== wake.workstreamId
-    || envelope.generation !== wake.generation
-    || envelope.messageId !== wake.messageId
-    || envelope.payloadHash !== wake.payloadHash
-  ) throw new Error("workstream_effect_fetch_identity_mismatch");
-  return envelope;
 }

@@ -23,13 +23,13 @@ import {
   asUserId,
   asWorkspaceId,
   asWorkstreamId,
+  conversationEffectHash,
+  type ParentEffect,
   type UserId,
   type WorkstreamId,
 } from "@rally/contracts";
 
 import { workspaceDOName } from "../src/durable-objects/names";
-import { workstreamRegionalEffectHash } from "../src/durable-objects/workstream-regional-effect";
-import type { WorkstreamRegionalEffect } from "../src/durable-objects/workstream-regional-effect";
 /**
  * Its own workspace, not the shared fixture's.
  *
@@ -45,8 +45,6 @@ const OUTSIDER = asUserId("00000000-0000-7000-8000-0000000008a2");
 const MEMBER_A = asUserId("00000000-0000-7000-8000-0000000008a3");
 const MEMBER_B = asUserId("00000000-0000-7000-8000-0000000008a4");
 const MEMBER_C = asUserId("00000000-0000-7000-8000-0000000008a5");
-const AUTOMATION = "00000000-0000-7000-8000-0000000008b1";
-const PLANNED_FOR = "2026-08-20T09:00:00.000Z";
 
 let envelopeSeq = 0;
 let workstreamSeq = 0;
@@ -57,23 +55,24 @@ function nextWorkstreamId(): WorkstreamId {
 }
 
 function envelope(
-  effect: WorkstreamRegionalEffect,
+  effect: ParentEffect,
   workstreamId: WorkstreamId,
   sourceVersion = 1,
 ) {
   envelopeSeq += 1;
   return {
-    kind: "workstream_regional_effect" as const,
+    kind: "parent_effect" as const,
     contractVersion: 1 as const,
     region: "global" as const,
     workspaceId: WORKSPACE_ID,
-    workstreamId,
+    parentKind: "workstream" as const,
+    parentId: workstreamId,
     generation: 1,
     messageId: `00000000-0000-7000-8000-${String(envelopeSeq).padStart(9, "0")}8d0`,
     partitionKey: effect.kind === "directory_user" ? `user:${effect.userId}` : "common",
     sourceVersion,
     requiredProjectionVersion: null,
-    payloadHash: workstreamRegionalEffectHash(effect),
+    payloadHash: conversationEffectHash(effect),
     effect,
   };
 }
@@ -90,9 +89,6 @@ interface SeedInput {
   scope?: "personal" | "workspace";
   systemKind?: "digest" | null;
   archivedAt?: string | null;
-  originType?: "ad_hoc" | "automation";
-  automationSubscriptionId?: string | null;
-  plannedFor?: string | null;
   participants?: UserId[];
   /** Participants who have been put in it and have not opened it. */
   unseenFor?: UserId[];
@@ -104,7 +100,7 @@ interface SeedInput {
 /** Publish one work stream into the directory, the way its own object would. */
 async function seedWorkstream(input: SeedInput): Promise<WorkstreamId> {
   const workstreamId = nextWorkstreamId();
-  const common: WorkstreamRegionalEffect = {
+  const common: ParentEffect = {
     kind: "directory_common",
     title: input.title,
     description: "",
@@ -115,10 +111,7 @@ async function seedWorkstream(input: SeedInput): Promise<WorkstreamId> {
     lastActivityAt: input.lastActivityAt,
     completedAt: null,
     archivedAt: input.archivedAt ?? null,
-    originType: input.originType ?? "ad_hoc",
     createdByUserId: input.createdByUserId ?? OWNER,
-    automationSubscriptionId: input.automationSubscriptionId ?? null,
-    plannedFor: input.plannedFor ?? null,
     latestAttentionOrdinal: 0,
     unreadTrackingStartOrdinal: 0,
     createdAt: "2026-08-01T00:00:00.000Z",
@@ -267,68 +260,6 @@ describe("what the workspace object answers about its work streams", () => {
       // reporting notes at all would fail here rather than silently leave a
       // grouping's **Archive all** counting only half of what it takes.
       expect(result.noteIds).toEqual([]);
-    });
-
-    it("reaches nothing the sidebar keeps out of the grouping it named", async () => {
-      // The defect: this was the fifth reader of the directory and the only one
-      // without `origin_type <> 'automation'`, which the paged list, the pinned
-      // rows, the running rows and the socket push all carry. A heading's
-      // **Archive all** therefore archived run history the reader had never
-      // been shown under that heading — irreversibly, and counted in the
-      // confirmation as one of the "work streams in This month".
-      const visible = await seedWorkstream({
-        title: "In the heading",
-        lastActivityAt: "2021-03-12T12:00:00.000Z",
-      });
-      const run = await seedWorkstream({
-        title: "An automation's run",
-        lastActivityAt: "2021-03-12T13:00:00.000Z",
-        originType: "automation",
-        automationSubscriptionId: AUTOMATION,
-      });
-      // The worse half: a run that has not happened yet. Archiving takes it out
-      // of the scheduler's own `archived_at IS NULL` idempotency lookup.
-      const planned = await seedWorkstream({
-        title: "A run that has not happened yet",
-        lastActivityAt: "2021-03-12T14:00:00.000Z",
-        originType: "automation",
-        automationSubscriptionId: AUTOMATION,
-        plannedFor: PLANNED_FOR,
-      });
-      const filter = {
-        lastActivityAt: {
-          atOrAfter: "2021-03-10T00:00:00.000Z",
-          before: "2021-03-20T00:00:00.000Z",
-        },
-        pinned: false,
-        includeSystem: false,
-      } as const;
-
-      const targets = await workspace().batchUpdateTargets({
-        workspaceId: WORKSPACE_ID,
-        userId: OWNER,
-        filter,
-      });
-
-      expect(targets.items).toEqual([visible]);
-      expect(targets.items).not.toContain(run);
-      expect(targets.items).not.toContain(planned);
-
-      // Asserted against the sidebar's own answer rather than restated, so the
-      // two cannot drift apart again without this failing: whatever the list
-      // shows in that range is what the action reaches.
-      const page = await workspace().listWorkstreams({
-        workspaceId: WORKSPACE_ID,
-        userId: OWNER,
-        limit: 250,
-        includeSystem: false,
-      });
-      const listedInRange = page.items
-        .filter((item) => item.lastActivityAt >= filter.lastActivityAt.atOrAfter
-          && item.lastActivityAt < filter.lastActivityAt.before)
-        .map((item) => item.id)
-        .sort();
-      expect([...targets.items].sort()).toEqual(listedInRange);
     });
 
     it("freezes one operation and resumes only its undispatched targets", async () => {
@@ -861,89 +792,6 @@ describe("what the workspace object answers about its work streams", () => {
         workstreamId,
         workstream: { participantUserIds: [MEMBER_A, OWNER] },
       });
-    });
-  });
-
-  describe("plannedWorkstream — the run an automation has queued", () => {
-    it("finds the work stream planned for that subscription at that instant", async () => {
-      const planned = await seedWorkstream({
-        title: "Daily product brief",
-        lastActivityAt: "2026-08-15T09:00:00.000Z",
-        originType: "automation",
-        automationSubscriptionId: AUTOMATION,
-        plannedFor: PLANNED_FOR,
-      });
-
-      await expect(workspace().plannedWorkstream({
-        workspaceId: WORKSPACE_ID,
-        userId: OWNER,
-        automationSubscriptionId: AUTOMATION,
-        plannedFor: PLANNED_FOR,
-      })).resolves.toMatchObject({ id: planned, title: "Daily product brief" });
-    });
-
-    it("finds nothing for a different instant of the same subscription", async () => {
-      await seedWorkstream({
-        title: "Daily product brief",
-        lastActivityAt: "2026-08-15T09:00:00.000Z",
-        originType: "automation",
-        automationSubscriptionId: AUTOMATION,
-        plannedFor: PLANNED_FOR,
-      });
-
-      // The pair is the key. Matching the subscription alone would hand the
-      // scheduler yesterday's work stream to reuse for today's run.
-      await expect(workspace().plannedWorkstream({
-        workspaceId: WORKSPACE_ID,
-        userId: OWNER,
-        automationSubscriptionId: AUTOMATION,
-        plannedFor: "2026-08-21T09:00:00.000Z",
-      })).resolves.toBeNull();
-    });
-
-    it("finds nothing once the planned work stream is archived", async () => {
-      const subscription = "00000000-0000-7000-8000-0000000008b2";
-      await seedWorkstream({
-        title: "Deleted automation's run",
-        lastActivityAt: "2026-08-16T09:00:00.000Z",
-        originType: "automation",
-        automationSubscriptionId: subscription,
-        plannedFor: PLANNED_FOR,
-        archivedAt: "2026-08-16T10:00:00.000Z",
-      });
-
-      await expect(workspace().plannedWorkstream({
-        workspaceId: WORKSPACE_ID,
-        userId: OWNER,
-        automationSubscriptionId: subscription,
-        plannedFor: PLANNED_FOR,
-      })).resolves.toBeNull();
-    });
-
-    it("gives the scheduler its exact planned row without borrowing a member audience", async () => {
-      const transferredSubscription = "00000000-0000-7000-8000-0000000008b3";
-      const planned = await seedWorkstream({
-        title: "Transferred private automation run",
-        lastActivityAt: "2026-08-16T11:00:00.000Z",
-        scope: "personal",
-        participants: [OUTSIDER],
-        createdByUserId: OWNER,
-        originType: "automation",
-        automationSubscriptionId: transferredSubscription,
-        plannedFor: PLANNED_FOR,
-      });
-
-      await expect(workspace().plannedWorkstream({
-        workspaceId: WORKSPACE_ID,
-        userId: OWNER,
-        automationSubscriptionId: transferredSubscription,
-        plannedFor: PLANNED_FOR,
-      })).resolves.toBeNull();
-      await expect(workspace().plannedAutomationWorkstream({
-        workspaceId: WORKSPACE_ID,
-        automationSubscriptionId: transferredSubscription,
-        plannedFor: PLANNED_FOR,
-      })).resolves.toMatchObject({ id: planned });
     });
   });
 
