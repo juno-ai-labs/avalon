@@ -35,17 +35,28 @@ string a reconnect is matched against is the string the adapter dials.
 
 - **Request headers.** The header names and values are stored as the
   connection's credential — encrypted at rest, bound to the connection, never
-  returned to a client — and replayed on every MCP request. The row is written
-  first and then *proved*: the service reads the server's catalog through the
-  ordinary credential door, and a server that cannot be reached takes the row
-  with it. A connection whose only symptom is a plugin that fails to load inside
-  somebody's run three days later is the failure this avoids.
+  returned to a client — and replayed on every MCP request.
 - **OAuth.** The endpoint travels through Rally's sealed OAuth state to the
   shared hosted-MCP authorization: protected-resource discovery, dynamic client
   registration as `Rally`, authorization code with PKCE, and refresh. Nothing is
   written until the callback returns, so an abandoned authorization leaves no
   half-made connection, and the callback cannot be pointed at a server other
   than the one whose consent screen the person saw.
+
+**Both paths prove the server before reporting success**, through the adapter's
+own health check — the same discovery an activation runs, so the connection's
+tool policy, the model-facing name normalization, the schema bounds, and the
+collision checks all decide it. A connection whose only symptom is a plugin that
+fails to load inside somebody's run three days later is the failure this avoids,
+and counting the raw catalog instead would let one through: a server whose every
+tool a `read_only_tools` connection filters out is not empty, it is unusable.
+
+What an unusable server costs differs by path, deliberately. A header connection
+is deleted again — nothing else happened, and there is no grant to keep. An
+authorized one is kept and marked `error` with the reason, because the person
+completed a consent screen and Rally holds a real credential; the authorization
+attempt still fails, so the browser handoff says so and the connection is theirs
+to reconnect or remove.
 
 A workspace connection is an administrator's to make, as every workspace
 connection is. A personal one is any member's.
@@ -115,8 +126,15 @@ can see what is being held back rather than watching it disappear.
   at the contract, and the transport sets its own after applying whatever the
   connection carries.
 - **Remote text is data on every surface it reaches.** Tool names,
-  descriptions, and annotations are untrusted on the way to the model *and* on
-  the way to the settings screen, which bounds and strips them before rendering.
+  descriptions, annotations, and a server's own error messages are untrusted on
+  the way to the model *and* on the way to the settings screen, which bounds
+  each and strips its control and bidi characters before rendering. The
+  sanitized name is for the screen only: `tools/call` still receives the exact
+  remote name the discovery path retained.
+- **A credential never crosses a redirect.** The MCP transport sends every
+  request with `redirect: "manual"` and treats a 3xx as an answer, so a server
+  cannot have Rally re-send a bearer token or a configured header to another
+  host by answering with a `Location`.
 - **The connector's trusted catalog prose names no server.** A connector's
   agent-plugin descriptor is code-authored and may not interpolate connection
   labels ([`connectors.md`](connectors.md)), so every custom MCP plugin
@@ -140,8 +158,9 @@ watches, or work-stream origins.
 
 | Condition | Result |
 | --- | --- |
-| The server refuses or cannot be reached at creation | The request fails with `custom_mcp_unreachable` and the row is removed; nothing is left in Connections. |
-| The server advertises no tools at creation | The same refusal: Rally does not store a connection with nothing to call. |
+| A header-authenticated server refuses or cannot be reached at creation | The request fails with `custom_mcp_unreachable` and the row is removed; nothing is left in Connections. |
+| An authorized server refuses or cannot be reached at the callback | The attempt fails with `custom_mcp_unreachable` and the desktop says so; the connection is kept, marked `error` with the reason, and can be reconnected or removed. |
+| The server offers no tool this connection may use | The same refusal on both paths — including a `read_only_tools` connection to a server that annotates nothing as read-only, which advertises tools and can call none of them. |
 | The server becomes unreachable later | The settings pane reports the catalog as unreadable and still shows the endpoint and policy; the model's plugin fails to load with `plugin_tools_unavailable`. |
 | More than 16 headers, or a header value over 8,192 characters | The create request is refused before anything is written. Set by the team on 2026-09-03. |
 | A header value carries a newline, or names a transport header | Refused at the contract, so a configured value can neither split a request nor override what Rally negotiated. |

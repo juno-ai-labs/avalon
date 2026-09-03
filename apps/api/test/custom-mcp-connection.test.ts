@@ -189,6 +189,60 @@ describe("custom MCP connections", () => {
       .rejects.toMatchObject({ status: 422, code: "custom_mcp_policy_unsupported" });
   });
 
+  it("refuses a read-only connection to a server that marks nothing read-only", async () => {
+    const { auth, database, env } = fixture();
+    // The server advertises a tool, so counting the raw catalog would accept
+    // this. The policy leaves nothing to call, and every activation would fail.
+    stubMcpServer([WRITE_TOOL]);
+    const service = new ConnectionService(env, auth);
+
+    await expect(service.createCustomMcp({
+      displayName: "Acme docs",
+      scope: "workspace",
+      serverUrl: SERVER_URL,
+      requestHeaders: { "X-Api-Key": "secret-value" },
+      toolPolicy: "read_only_tools",
+    })).rejects.toMatchObject({ status: 422, code: "custom_mcp_unreachable" });
+    expect(database.prepare("SELECT count(*) AS count FROM connector_connections").get())
+      .toEqual({ count: 0 });
+
+    // The same server is usable with the policy that can reach it.
+    await expect(service.createCustomMcp({
+      displayName: "Acme docs",
+      scope: "workspace",
+      serverUrl: SERVER_URL,
+      requestHeaders: { "X-Api-Key": "secret-value" },
+      toolPolicy: "all_tools",
+    })).resolves.toMatchObject({ connection: { displayName: "Acme docs" } });
+  });
+
+  it("does not offer a member a policy control their change would be refused by", async () => {
+    const { auth, env } = fixture();
+    stubMcpServer([READ_TOOL, WRITE_TOOL]);
+    const { connection } = await new ConnectionService(env, auth).createCustomMcp({
+      displayName: "Acme docs",
+      scope: "workspace",
+      serverUrl: SERVER_URL,
+      requestHeaders: { "X-Api-Key": "secret-value" },
+      toolPolicy: "all_tools",
+    });
+    const memberService = new ConnectionService(env, {
+      sessionId: "session",
+      userId: MEMBER_ID,
+      workspaceId: WORKSPACE_ID,
+      region: "global",
+      role: "member",
+    });
+
+    // A member may read the catalog — knowing what the workspace can call is
+    // theirs to know — but the control they would be 403'd on is not offered.
+    const settings = await memberService.getCustomMcpSettings(connection.id);
+    expect(settings).toMatchObject({ toolPolicy: "all_tools", toolPolicyEditable: false });
+    expect(settings.tools.map((tool) => tool.name)).toEqual(["search_docs", "publish_doc"]);
+    await expect(memberService.updateCustomMcpToolPolicy(connection.id, "read_only_tools"))
+      .rejects.toMatchObject({ status: 403, code: "workspace_admin_required" });
+  });
+
   it("keeps a workspace server an administrator's decision", async () => {
     const { env } = fixture();
     stubMcpServer([READ_TOOL]);
