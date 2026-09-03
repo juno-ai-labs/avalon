@@ -2868,13 +2868,21 @@ function calendarSeriesId(event: Record<string, unknown>): string | null {
  * One edit to a recurring series makes Google re-send every expanded instance
  * of it — a thousand of them for a standup that runs to 2040 — and each carries
  * its own etag, so keying identity on the etag made one edit a thousand
- * activities. Instances of the same series that share an `updated` timestamp
- * are one edit and become one series activity, keyed on the master's id and
- * that timestamp: stable across the pages and the polls the burst is spread
- * over, so the workspace's dedupe collapses the repeats it sees on later polls.
+ * activities. Every instance of a series is reported against the series, keyed
+ * on the master's id and the `updated` timestamp of the edit that touched it:
+ * stable across the pages and the polls the burst is spread over, so the
+ * workspace's dedupe collapses the repeats it sees on later polls.
  *
- * An instance edited on its own is an exception with its own `updated`, lands
- * in a group of one, and stays the individual activity it was.
+ * The grouping decides nothing on its own — it only saves normalizing an
+ * instance whose activity a sibling in the same poll already produced. An
+ * instance is classified by what it is, never by how many of its siblings
+ * happened to land in the same chunk: a burst is larger than the 150 items one
+ * poll fetches, so a batch-sensitive rule would report the same edit
+ * differently depending on where the page boundary fell.
+ *
+ * An occurrence edited on its own carries its own `updated`, so it is a
+ * distinct edit of the series and keeps its own activity rather than folding
+ * into the one for the series-wide change.
  */
 function collapseCalendarSeriesChanges(
   connection: ConnectorConnectionContext,
@@ -2906,15 +2914,9 @@ function collapseCalendarSeriesChanges(
 
   const activities: Omit<NormalizedActivity, "id">[] = [];
   for (const entry of order) {
-    const group = "groupKey" in entry ? groups.get(entry.groupKey) ?? [] : [entry.event];
-    const [representative, ...rest] = group;
+    const [representative] = "groupKey" in entry ? groups.get(entry.groupKey) ?? [] : [entry.event];
     if (!representative) continue;
-    // Every instance of one edit carries the same series-level summary,
-    // location, organizer, guests, and status, so which of them represents the
-    // series does not depend on how the burst happened to be paginated. The
-    // fields that do differ per instance — its start, its end, its own link —
-    // are left off the series activity for that reason.
-    const activity = "groupKey" in entry && rest.length > 0
+    const activity = "groupKey" in entry
       ? normalizeCalendarActivity(connection, calendarId, representative, entry.seriesId)
       : normalizeCalendarActivity(connection, calendarId, representative);
     if (activity) activities.push(activity);
@@ -2938,7 +2940,14 @@ function normalizeCalendarActivity(
   const end = seriesId ? sanitizeCalendarDateTime(null) : sanitizeCalendarDateTime(readRecord(event, "end"));
   const organizer = sanitizeGooglePerson(readRecord(event, "organizer"));
   const creator = sanitizeGooglePerson(readRecord(event, "creator"));
-  const attendees = recordArray(event, "attendees");
+  // A guest's `responseStatus` is per-occurrence — one person declining one
+  // Tuesday — and `googleStructuredPeople` carries the attendee record into
+  // `sourceText` whole. A series activity is re-emitted on every poll its burst
+  // spans and the workspace refuses a repeated identity whose payload changed,
+  // so the series names each guest without the RSVP that differs between the
+  // occurrences it covers.
+  const attendees = recordArray(event, "attendees")
+    .map((person) => (seriesId ? sanitizeGooglePerson(person) : person));
   const version = seriesId ? `series:${updatedAt}` : readString(event, "etag") ?? updatedAt;
   const identity = `calendar:${calendarId}:${eventId}:${version}`;
   const cancelled = status === "cancelled";
@@ -2961,8 +2970,11 @@ function normalizeCalendarActivity(
       : start.dateTime || start.date
         ? `Starts ${start.dateTime ?? start.date}`
         : "Calendar event metadata changed",
+    // A location an exception overrides is per-occurrence for the same reason.
     textSnippet: truncateText(
-      [title, readString(event, "location")].filter((value): value is string => Boolean(value)).join(" · "),
+      [title, seriesId ? null : readString(event, "location")]
+        .filter((value): value is string => Boolean(value))
+        .join(" · "),
       1000
     ),
     payloadRef: null,
