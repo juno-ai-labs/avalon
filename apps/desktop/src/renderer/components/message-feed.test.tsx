@@ -1,6 +1,6 @@
 import { render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { MessageFeed } from './message-feed';
+import { measureMessageFeedRow, MessageFeed } from './message-feed';
 import type { Message } from '../lib/types';
 
 const answer = vi.fn(async () => undefined);
@@ -26,6 +26,17 @@ function message(overrides: Partial<Message> & Pick<Message, 'id'>): Message {
  * both surfaces rather than each screen deciding separately.
  */
 describe('MessageFeed', () => {
+  it('measures the row that is live now instead of replaying an older resize entry', () => {
+    const row = document.createElement('div');
+    const rect = vi.spyOn(row, 'getBoundingClientRect');
+    rect.mockReturnValueOnce({ height: 413.6 } as DOMRect);
+    rect.mockReturnValueOnce({ height: 276.2 } as DOMRect);
+
+    expect(measureMessageFeedRow(row)).toBe(414);
+    expect(measureMessageFeedRow(row)).toBe(276);
+    expect(rect).toHaveBeenCalledTimes(2);
+  });
+
   it('renders every message when the adapter does not window the list', () => {
     render(
       <MessageFeed

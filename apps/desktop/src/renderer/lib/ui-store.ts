@@ -9,6 +9,7 @@ export interface RailInspector {
 
 interface UiState {
   sidebarOpen: boolean;
+  sidebarCollapsed: boolean;
   sidebarWidth: number;
   railOpen: boolean;
   railVariant: RailVariant;
@@ -17,6 +18,7 @@ interface UiState {
   railLeaving: boolean;
   railScope: string | null;
   setSidebarOpen: (open: boolean) => void;
+  setSidebarCollapsed: (collapsed: boolean) => void;
   setSidebarWidth: (width: number) => void;
   openRail: (variant?: RailVariant) => void;
   closeRail: () => void;
@@ -35,9 +37,17 @@ interface UiState {
 export const MIN_RAIL_WIDTH = 320;
 export const MAX_RAIL_WIDTH = 560;
 export const DEFAULT_RAIL_WIDTH = 360;
-export const MIN_SIDEBAR_WIDTH = 224;
-export const MAX_SIDEBAR_WIDTH = 360;
-export const DEFAULT_SIDEBAR_WIDTH = 242;
+/** GrokBot's compact rail and expanded-sidebar geometry. */
+export const COLLAPSED_SIDEBAR_WIDTH = 88;
+export const MIN_SIDEBAR_WIDTH = 240;
+export const MAX_SIDEBAR_WIDTH = 400;
+export const DEFAULT_SIDEBAR_WIDTH = 280;
+/** The main conversation width GrokBot protects before forcing the icon rail. */
+export const SIDEBAR_CONTENT_MIN_WIDTH = 424;
+/** Drag thresholds include GrokBot's ten-pixel hysteresis on expansion. */
+export const SIDEBAR_COLLAPSE_DRAG_THRESHOLD = 210;
+export const SIDEBAR_EXPAND_DRAG_THRESHOLD = 220;
+export const SIDEBAR_COLLAPSED_STORAGE_KEY = 'rally.sidebar-collapsed';
 const SIDEBAR_WIDTH_STORAGE_KEY = 'rally.sidebar-width';
 const RAIL_WIDTH_STORAGE_PREFIX = 'rally.rail-width';
 
@@ -95,8 +105,29 @@ function saveSidebarWidth(width: number): void {
   }
 }
 
+function loadSidebarCollapsed(): boolean {
+  if (typeof window === 'undefined') return false;
+
+  try {
+    return window.localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+function saveSidebarCollapsed(collapsed: boolean): void {
+  if (typeof window === 'undefined') return;
+
+  try {
+    window.localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, String(collapsed));
+  } catch {
+    // Local persistence is best-effort; compacting should still work when storage is unavailable.
+  }
+}
+
 export const useUiStore = create<UiState>((set, get) => ({
   sidebarOpen: false,
+  sidebarCollapsed: loadSidebarCollapsed(),
   sidebarWidth: loadSidebarWidth(),
   railOpen: false,
   railVariant: 'context',
@@ -105,6 +136,10 @@ export const useUiStore = create<UiState>((set, get) => ({
   railLeaving: false,
   railScope: null,
   setSidebarOpen: (sidebarOpen) => set({ sidebarOpen }),
+  setSidebarCollapsed: (sidebarCollapsed) => {
+    saveSidebarCollapsed(sidebarCollapsed);
+    set({ sidebarCollapsed });
+  },
   setSidebarWidth: (width) => {
     const sidebarWidth = clampSidebarWidth(width);
     saveSidebarWidth(sidebarWidth);

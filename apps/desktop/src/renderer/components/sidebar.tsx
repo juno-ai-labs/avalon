@@ -60,7 +60,15 @@ import {
   telemetryVisibility,
 } from '../lib/telemetry';
 import type { AutomationSummary, NoteSummary, Workspace, WorkspaceMember, WorkstreamSummary } from '../lib/types';
-import { MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, useUiStore } from '../lib/ui-store';
+import {
+  COLLAPSED_SIDEBAR_WIDTH,
+  MAX_SIDEBAR_WIDTH,
+  MIN_SIDEBAR_WIDTH,
+  SIDEBAR_COLLAPSE_DRAG_THRESHOLD,
+  SIDEBAR_CONTENT_MIN_WIDTH,
+  SIDEBAR_EXPAND_DRAG_THRESHOLD,
+  useUiStore,
+} from '../lib/ui-store';
 import { useDebugEnabled } from '../lib/use-debug-enabled';
 import { DeleteAutomationDialog } from './delete-automation-dialog';
 import { Avatar, AvatarStack, Badge, Button, IconButton, InlineError, Modal, StatusDot, TitleSkeleton } from './primitives';
@@ -72,6 +80,10 @@ import { WorkstreamGlyph } from './workstream-glyph';
 interface SidebarProps {
   /** GrokBot-style shell: navigation is work streams only. */
   conversationOnly?: boolean;
+  /** The responsive or manually selected GrokBot icon rail. */
+  compact?: boolean;
+  /** Current window width, used to keep room for the conversation while resizing. */
+  windowWidth?: number;
   workspace: Workspace;
   members?: WorkspaceMember[];
   automations: AutomationSummary[];
@@ -505,6 +517,36 @@ function CommandShortcutHint({
   );
 }
 
+/**
+ * The row itself gets deliberately terse when the sidebar becomes an icon
+ * rail. GrokBot keeps the missing context one hover away with the same card in
+ * both sidebar forms, so resizing never changes what hovering a person means.
+ */
+function WorkstreamHoverPreview({
+  description,
+  workstream,
+}: {
+  description: string | undefined;
+  workstream: WorkstreamSummary;
+}): React.JSX.Element {
+  return (
+    <div className="sidebar-workstream-preview">
+      <div className="sidebar-workstream-preview-header">
+        <span className="sidebar-workstream-preview-identity">
+          <WorkstreamGlyph id={workstream.id} size={16} />
+          <span className="sidebar-workstream-preview-name">{workstream.title}</span>
+        </span>
+        <time dateTime={workstream.lastActivityAt}>
+          {formatSidebarActivityTime(workstream.lastActivityAt)}
+        </time>
+      </div>
+      <span className={clsx('sidebar-workstream-preview-copy', !description && 'is-empty')}>
+        {description || 'No messages yet'}
+      </span>
+    </div>
+  );
+}
+
 function WorkstreamRow({
   commandShortcut,
   commandShortcutsVisible,
@@ -543,6 +585,43 @@ function WorkstreamRow({
   const location = useLocation();
   const socketWarmup = useWorkstreamSocketHoverWarmup(workstream.id);
   const socketOpenContext = useWorkstreamSocketOpenContext(workstream.id);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const previewOpenTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const previewCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancelPreviewTimer = useCallback(() => {
+    if (previewOpenTimer.current !== null) {
+      clearTimeout(previewOpenTimer.current);
+      previewOpenTimer.current = null;
+    }
+    if (previewCloseTimer.current !== null) {
+      clearTimeout(previewCloseTimer.current);
+      previewCloseTimer.current = null;
+    }
+  }, []);
+  const schedulePreviewOpen = useCallback(() => {
+    cancelPreviewTimer();
+    previewOpenTimer.current = setTimeout(() => {
+      previewOpenTimer.current = null;
+      setPreviewOpen(true);
+    }, 300);
+  }, [cancelPreviewTimer]);
+  const schedulePreviewClose = useCallback(() => {
+    cancelPreviewTimer();
+    // GrokBot leaves 100ms to cross a small pointer gap without flashing the
+    // card. The preview remains non-interactive, so this is grace rather than
+    // a second hover target.
+    previewCloseTimer.current = setTimeout(() => {
+      previewCloseTimer.current = null;
+      setPreviewOpen(false);
+    }, 100);
+  }, [cancelPreviewTimer]);
+  const closePreview = useCallback(() => {
+    cancelPreviewTimer();
+    setPreviewOpen(false);
+  }, [cancelPreviewTimer]);
+  useEffect(() => () => {
+    cancelPreviewTimer();
+  }, [cancelPreviewTimer]);
   // The row is a cache entry, not a read: nothing here refetches, so the grace
   // is what ends a skeleton whose rename never arrived. Read
   // `lib/naming-skeleton.ts` before changing when it comes down.
@@ -589,6 +668,7 @@ function WorkstreamRow({
             }
             : undefined}
           onDragStart={(event) => {
+              closePreview();
               // Chromium refuses to start a drag with an empty payload, and the
               // id is the payload every other surface would want anyway. The
               // order itself is tracked in the sidebar's own state: reading it
@@ -600,6 +680,11 @@ function WorkstreamRow({
               drag?.onDragStart(workstream);
             }}
           onDrop={drag ? (event) => event.preventDefault() : undefined}
+          onContextMenu={closePreview}
+          onBlur={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) schedulePreviewClose();
+          }}
+          onFocus={schedulePreviewOpen}
           onKeyDown={drag
             ? (event) => {
               // Alt rather than a bare arrow: the arrows move focus through the
@@ -610,11 +695,28 @@ function WorkstreamRow({
               drag.onMove(workstream, event.key === 'ArrowUp' ? -1 : 1);
             }
             : undefined}
-          onPointerEnter={socketWarmup.onPointerEnter}
-          onPointerLeave={socketWarmup.onPointerLeave}
-          onPointerCancel={socketWarmup.onPointerCancel}
+          onPointerEnter={() => {
+            socketWarmup.onPointerEnter();
+            schedulePreviewOpen();
+          }}
+          onPointerLeave={() => {
+            socketWarmup.onPointerLeave();
+            schedulePreviewClose();
+          }}
+          onPointerCancel={() => {
+            socketWarmup.onPointerCancel();
+            schedulePreviewClose();
+          }}
         >
-          <NavLink
+          <Tooltip.Root open={previewOpen}>
+            <Tooltip.Trigger asChild>
+              {/* Radix Slot string-merges a child's className. NavLink's
+                  className is a callback, so making the link the slotted child
+                  turns that callback into text and removes every row class.
+                  Keep the positioning trigger on a plain element and leave the
+                  navigation element's class resolver untouched. */}
+              <div className="sidebar-workstream-preview-anchor">
+                <NavLink
             aria-keyshortcuts={commandShortcut === undefined ? undefined : `Meta+${commandShortcut}`}
             className={({ isActive }) => clsx(
               'sidebar-row workstream-row',
@@ -632,6 +734,7 @@ function WorkstreamRow({
             onClick={(event) => {
               if (event.defaultPrevented || event.button !== 0
                 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+              closePreview();
               const destination = `/workstreams/${workstream.id}`;
               if (location.pathname === destination) return;
               const socketContext = socketOpenContext();
@@ -651,7 +754,7 @@ function WorkstreamRow({
             to={`/workstreams/${workstream.id}`}
           >
             <span className="sidebar-row-icon">
-              <WorkstreamGlyph id={workstream.id} size={30} />
+              <WorkstreamGlyph id={workstream.id} size={36} />
               <span className="workstream-row-status">
                 <StatusDot compact status={workstreamMarkerStatus(workstream)} tooltip />
               </span>
@@ -712,7 +815,22 @@ function WorkstreamRow({
               {workstream.scope === 'workspace' && <PublicMarker />}
             </span>
             <CommandShortcutHint shortcut={commandShortcut} visible={commandShortcutsVisible} />
-          </NavLink>
+                </NavLink>
+              </div>
+            </Tooltip.Trigger>
+            <Tooltip.Portal>
+              <Tooltip.Content
+                align="center"
+                aria-label={`Preview ${workstream.title}`}
+                className="sidebar-workstream-preview-surface"
+                collisionPadding={8}
+                side="right"
+                sideOffset={8}
+              >
+                <WorkstreamHoverPreview description={description} workstream={workstream} />
+              </Tooltip.Content>
+            </Tooltip.Portal>
+          </Tooltip.Root>
         </div>
       </ContextMenu.Trigger>
       <ContextMenu.Portal>
@@ -967,6 +1085,8 @@ function moveWithin(ids: string[], id: string, index: number): string[] {
 
 export function Sidebar({
   conversationOnly = false,
+  compact = false,
+  windowWidth = window.innerWidth,
   workspace,
   members = [],
   automations,
@@ -1009,9 +1129,12 @@ export function Sidebar({
   const location = useLocation();
   const navigate = useNavigate();
   const sidebarOpen = useUiStore((state) => state.sidebarOpen);
+  const sidebarCollapsed = useUiStore((state) => state.sidebarCollapsed);
   const sidebarWidth = useUiStore((state) => state.sidebarWidth);
   const setSidebarOpen = useUiStore((state) => state.setSidebarOpen);
+  const setSidebarCollapsed = useUiStore((state) => state.setSidebarCollapsed);
   const setSidebarWidth = useUiStore((state) => state.setSidebarWidth);
+  const effectiveSidebarWidth = compact ? COLLAPSED_SIDEBAR_WIDTH : sidebarWidth;
   const openPublicPage = useCallback(async (path: string): Promise<void> => {
     const bridge = desktopBridge();
     const { webBaseUrl } = await bridge.getRuntimeConfig();
@@ -1593,17 +1716,33 @@ export function Sidebar({
   // the pointer instead keeps the reveal generous and the hit area honest.
   useEffect(() => {
     const track = (event: PointerEvent): void => {
-      const near = Math.abs(event.clientX - sidebarWidth) <= EDGE_REVEAL_DISTANCE;
+      const near = Math.abs(event.clientX - effectiveSidebarWidth) <= EDGE_REVEAL_DISTANCE;
       setPointerNearEdge((current) => current === near ? current : near);
     };
     window.addEventListener('pointermove', track);
     return () => window.removeEventListener('pointermove', track);
-  }, [sidebarWidth]);
+  }, [effectiveSidebarWidth]);
+
+  const resizeSidebar = useCallback((requestedWidth: number): void => {
+    const availableWidth = windowWidth - SIDEBAR_CONTENT_MIN_WIDTH;
+    if (compact) {
+      if (requestedWidth < SIDEBAR_EXPAND_DRAG_THRESHOLD || availableWidth < MIN_SIDEBAR_WIDTH) return;
+      setSidebarCollapsed(false);
+      setSidebarWidth(Math.min(requestedWidth, availableWidth));
+      return;
+    }
+    if (requestedWidth < SIDEBAR_COLLAPSE_DRAG_THRESHOLD) {
+      setSidebarCollapsed(true);
+      return;
+    }
+    if (availableWidth < MIN_SIDEBAR_WIDTH) return;
+    setSidebarWidth(Math.min(requestedWidth, availableWidth));
+  }, [compact, setSidebarCollapsed, setSidebarWidth, windowWidth]);
 
   useEffect(() => {
     if (!resizing) return undefined;
 
-    const move = (event: PointerEvent): void => setSidebarWidth(event.clientX - grabOffset.current);
+    const move = (event: PointerEvent): void => resizeSidebar(event.clientX - grabOffset.current);
     const stop = (): void => setResizing(false);
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', stop, { once: true });
@@ -1611,7 +1750,17 @@ export function Sidebar({
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', stop);
     };
-  }, [resizing, setSidebarWidth]);
+  }, [resizeSidebar, resizing]);
+
+  useEffect(() => {
+    const toggleCompact = (event: KeyboardEvent): void => {
+      if (!event.metaKey || event.altKey || event.ctrlKey || event.shiftKey || event.key.toLowerCase() !== 'b') return;
+      event.preventDefault();
+      setSidebarCollapsed(!sidebarCollapsed);
+    };
+    window.addEventListener('keydown', toggleCompact, true);
+    return () => window.removeEventListener('keydown', toggleCompact, true);
+  }, [setSidebarCollapsed, sidebarCollapsed]);
 
   // Waits for the list itself to carry the change before chasing the row.
   //
@@ -1681,7 +1830,11 @@ export function Sidebar({
         <Menu size={17} />
       </IconButton>
       {sidebarOpen && <button aria-label="Close navigation" className="sidebar-scrim" onClick={() => setSidebarOpen(false)} type="button" />}
-      <aside aria-label="Rally navigation" className={clsx('sidebar', sidebarOpen && 'is-mobile-open', resizing && 'is-resizing')}>
+      <aside
+        aria-label="Rally navigation"
+        className={clsx('sidebar', compact && 'is-compact', sidebarOpen && 'is-mobile-open', resizing && 'is-resizing')}
+        data-sidebar-collapsed={compact ? '' : undefined}
+      >
         <div className="sidebar-titlebar window-drag">
           <IconButton className="window-no-drag mobile-only" label="Close navigation" onClick={() => setSidebarOpen(false)}>
             <ChevronsLeft size={16} />
@@ -1964,6 +2117,18 @@ export function Sidebar({
         */}
         {/* <OnboardingChecklist /> */}
 
+        {compact && (
+          <NavLink
+            aria-label="New chat"
+            className={({ isActive }) => clsx('sidebar-new-button sidebar-rail-new-button window-no-drag', isActive && 'is-active')}
+            onClick={() => markSurfaceEntrypoint('sidebar_new')}
+            state={location.pathname === '/workstreams/new' ? undefined : { returnTo: location.pathname }}
+            to="/workstreams/new"
+          >
+            <Plus aria-hidden="true" size={19} strokeWidth={1.6} />
+          </NavLink>
+        )}
+
         {accountMenu ?? <DropdownMenu.Root>
           <DropdownMenu.Trigger asChild>
             <button aria-label="Open account menu" className="account-trigger window-no-drag" type="button">
@@ -2032,16 +2197,20 @@ export function Sidebar({
           aria-label="Resize navigation"
           aria-orientation="vertical"
           aria-valuemax={MAX_SIDEBAR_WIDTH}
-          aria-valuemin={MIN_SIDEBAR_WIDTH}
-          aria-valuenow={sidebarWidth}
+          aria-valuemin={COLLAPSED_SIDEBAR_WIDTH}
+          aria-valuenow={effectiveSidebarWidth}
           className={clsx('sidebar-resizer', pointerNearEdge && 'is-near')}
           onKeyDown={(event) => {
-            if (event.key === 'ArrowLeft') setSidebarWidth(sidebarWidth - 16);
-            if (event.key === 'ArrowRight') setSidebarWidth(sidebarWidth + 16);
+            if (event.key === 'ArrowLeft' && !compact) {
+              resizeSidebar(sidebarWidth > MIN_SIDEBAR_WIDTH
+                ? sidebarWidth - 16
+                : SIDEBAR_COLLAPSE_DRAG_THRESHOLD - 1);
+            }
+            if (event.key === 'ArrowRight') resizeSidebar(compact ? MIN_SIDEBAR_WIDTH : sidebarWidth + 16);
           }}
           onPointerDown={(event) => {
             event.currentTarget.setPointerCapture(event.pointerId);
-            grabOffset.current = event.clientX - sidebarWidth;
+            grabOffset.current = event.clientX - effectiveSidebarWidth;
             setResizing(true);
           }}
           role="separator"

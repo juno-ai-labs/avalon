@@ -19,7 +19,7 @@ import type { WorkstreamMessageDeliveryMode } from '../lib/use-workstream-socket
 import type { AttachmentPreview } from './attachments';
 import { ComposerQueue, type ComposerQueueItem } from './composer-queue';
 import { ComposerInput } from './composer-input';
-import { Avatar, Badge, Button, Modal } from './primitives';
+import { Avatar, Button, Modal } from './primitives';
 import type { RallyRegion } from '../../common/desktop';
 
 /**
@@ -141,7 +141,11 @@ export function WorkstreamComposer({
   const mentionLabels = useMemo(() => candidates.map((candidate) => candidate.label), [candidates]);
   const visibleCandidates = mentionQuery === null
     ? []
-    : candidates.filter((candidate) => candidate.label.toLowerCase().includes(mentionQuery.toLowerCase())).slice(0, 8);
+    : candidates.filter((candidate) => {
+        const query = mentionQuery.toLowerCase();
+        return candidate.label.toLowerCase().includes(query)
+          || candidate.member?.email.toLowerCase().includes(query);
+      }).slice(0, 8);
   const mentionNavigation = useMentionNavigation(
     visibleCandidates.map((candidate) => candidate.id),
     (index) => {

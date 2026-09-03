@@ -13,7 +13,11 @@ import {
 } from '../lib/app-session';
 import { desktopBridge } from '../lib/platform';
 import { uuidV7 } from '../lib/telemetry';
-import { useUiStore } from '../lib/ui-store';
+import {
+  COLLAPSED_SIDEBAR_WIDTH,
+  SIDEBAR_CONTENT_MIN_WIDTH,
+  useUiStore,
+} from '../lib/ui-store';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { useProjectDirectories } from '../lib/use-project-directories';
 import { useNotesQuery } from '../lib/use-notes-query';
@@ -233,7 +237,19 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   const railOpen = useUiStore((state) => state.railOpen);
   const railWidth = useUiStore((state) => state.railWidth);
   const railLeaving = useUiStore((state) => state.railLeaving);
+  const sidebarCollapsed = useUiStore((state) => state.sidebarCollapsed);
   const sidebarWidth = useUiStore((state) => state.sidebarWidth);
+  const [windowWidth, setWindowWidth] = useState(() => window.innerWidth);
+  useEffect(() => {
+    const measure = (): void => setWindowWidth(window.innerWidth);
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, []);
+  // GrokBot protects 424px for the conversation. Its saved expanded width is
+  // the other half of the breakpoint, so resizing the sidebar also moves the
+  // point at which it becomes an icon rail.
+  const sidebarCompact = sidebarCollapsed || windowWidth < sidebarWidth + SIDEBAR_CONTENT_MIN_WIDTH;
+  const effectiveSidebarWidth = sidebarCompact ? COLLAPSED_SIDEBAR_WIDTH : sidebarWidth;
   // Replacing rather than pushing, so Back cannot return to an automation that
   // is no longer served — true of an archived draft as much as a deleted
   // automation.
@@ -517,6 +533,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
           />
         )}
         automations={automations.data ?? []}
+        compact={sidebarCompact}
         conversationOnly
         members={members.data ?? []}
         // Not `isLoading`: the first page is not fetched, so there is no
@@ -763,6 +780,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         onLoadMoreNotes={notes.fetchMore}
         workspace={workspace}
         workstreams={workstreams.data ?? []}
+        windowWidth={windowWidth}
       />
         <span aria-live="polite" className="sr-only">
           {switchingWorkspace ? `Opening ${switchingWorkspace.name}…` : ''}
