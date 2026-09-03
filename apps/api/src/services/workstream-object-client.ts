@@ -7,7 +7,6 @@ import {
   WorkstreamTranscriptSnapshotSchema,
   WorkstreamSchema,
   WorkstreamMessageAdmissionReceiptSchema,
-  ReorderPendingLoopInputsResultSchema,
   type Elicitation,
   asSubstreamId,
   asWorkspaceId,
@@ -17,7 +16,6 @@ import {
   type WorkstreamDetail,
   type WorkstreamTranscriptSnapshot,
   type WorkstreamMessageAdmissionReceipt,
-  type PendingTranscriptInput,
 } from "@rally/contracts";
 import type {
   AcknowledgeWorkstreamReadRequestSchema,
@@ -52,7 +50,6 @@ const CreatedMessageSchema = WorkstreamMessageAdmissionReceiptSchema;
 const AnsweredElicitationSchema = z.strictObject({
   elicitation: ElicitationSchema.optional(),
 });
-const RetriedRunSchema = z.object({ harnessRunId: z.string().uuid() });
 const InitializedWorkstreamSchema = z.strictObject({
   workstream: WorkstreamSchema,
   turnId: z.string().uuid(),
@@ -227,12 +224,6 @@ export class WorkstreamObjectClient {
     return CreatedMessageSchema.parse(await this.request({ operation: "create_message", input }));
   }
 
-  async reorderPendingInputs(inputIds: string[]): Promise<{ pendingInputs: PendingTranscriptInput[] }> {
-    return ReorderPendingLoopInputsResultSchema.parse(
-      await this.request({ operation: "reorder_pending_inputs", inputIds }),
-    );
-  }
-
   async addParticipant(userId: string): Promise<WorkstreamDetail["participants"][number]> {
     return ParticipantSchema.parse(await this.request({ operation: "add_participant", userId }));
   }
@@ -259,14 +250,6 @@ export class WorkstreamObjectClient {
       input,
     }));
     return { elicitation: parsed.elicitation };
-  }
-
-  async stop(): Promise<void> {
-    await this.request({ operation: "stop" });
-  }
-
-  async retry(): Promise<{ harnessRunId: string }> {
-    return RetriedRunSchema.parse(await this.request({ operation: "retry" }));
   }
 
 }

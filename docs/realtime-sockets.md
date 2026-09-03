@@ -38,7 +38,7 @@ connection lifecycle around that admission protocol.
 | `apps/api/src/durable-objects/workspace-do.ts` | Accepts the persistent workspace synchronization/command socket, serves authoritative cursor-paged work-stream rows, persists a bounded replay log, and consumes its purpose-specific ticket in SQL. |
 | `apps/api/src/durable-objects/workstream-do.ts` | Accepts the per-work-stream aggregate metadata socket and returns complete viewer-specific snapshots. |
 | `apps/api/src/durable-objects/block-dashboard-agent.ts` | Accepts one hibernating socket per visible configured block and returns its durable run plus active-output checkpoint. |
-| `apps/api/src/durable-objects/substream-agent.ts` | Accepts the direct read/stream/download feed and `create_message` commands, consumes its distinct ticket in SQL, and admits writes from the identity serialized when the socket was authorized. |
+| `apps/api/src/durable-objects/substream-agent.ts` | Accepts the direct read/stream/download feed and all substream-local commands (message, elicitation answer, pending-input reorder, stop, retry), consumes its distinct ticket in SQL, and admits writes from the identity serialized when the socket was authorized. |
 | `apps/api/src/durable-objects/automation-agent.ts` | Accepts one hibernating socket per automation draft, consumes its ticket in `automation_socket_ticket_receipts`, re-reads the session and membership from D1, and admits only the automation's author. |
 | `apps/desktop/src/renderer/lib/use-automation-agent-socket.ts` | The automation draft feed: ticket request, snapshot fence against the compiler stream, folded narration, heartbeat, and reconnect backoff. |
 | `apps/desktop/src/renderer/lib/workspace-socket.tsx` | Keeps the workspace socket alive across navigation, correlates/retries directory-page requests, resumes its waterline, applies current work-stream rows, and invalidates workspace query surfaces. |
@@ -48,7 +48,7 @@ connection lifecycle around that admission protocol.
 | `apps/desktop/src/renderer/lib/use-workstream-control-socket.ts` | Applies complete waterlined WorkstreamDO metadata snapshots to detail and sidebar caches. |
 | `apps/desktop/src/renderer/lib/workstream-state-store.ts` | Shared common/viewer and WorkspaceDO-directory waterline ledgers used by both parent sockets; independently rejects stale state fields and older pin/page fields. |
 | `apps/desktop/src/renderer/lib/use-block-dashboard-sockets.ts` | Opens block sockets only while HyperSight is visible, applies full stream checkpoints, rejects stale revisions, and reconnects without duplicate text. |
-| `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Keeps a pooled SubstreamAgent feed, resends idempotent message commands after reconnect, explicitly disables legacy feed-derived presence, and invokes the separate WorkstreamDO control lifecycle. |
+| `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Keeps a pooled, substream-addressed SubstreamAgent feed, resends idempotent child commands after reconnect until their private operation receipts arrive, explicitly disables legacy feed-derived presence, and invokes the separate WorkstreamDO control lifecycle. |
 | `packages/contracts/src/workstream-transcript.ts` | Ordered turn/block, snapshot-fenced range, gap coverage, and nested UTC activity contracts used by the SubstreamAgent feed. |
 | `apps/desktop/src/renderer/lib/workstream-socket-pool.tsx` | Owns the work-stream sockets above the route, gives each mounted owner one opaque lease ID shared by its control/feed starts, warms one presence-free control/feed pair after a one-second sidebar hover, and retains recently viewed pairs without remounting their connection hooks. |
 | `apps/desktop/src/renderer/lib/realtime-socket.ts` | Preserves the browser `WebSocket` event/readiness contract for the work-stream hooks while routing Electron transport through one socket-ID-multiplexed privileged-bridge listener; browser development keeps the native constructor. |
@@ -726,6 +726,75 @@ the provider's redirect and cannot move; [`security.md`](security.md) records
 what that leaves exposed.
 
 ## Changelog
+
+### 2026-09-03 — A durable command is acknowledged independently of its socket
+
+**What changed:** Substream mutation handlers use the identity already admitted
+on the hibernating socket, emit a named `workstream.room.substream_command` span,
+and guard every private receipt send against a concurrently closed connection.
+Elicitation and retry wake/publication work after the commit is best-effort;
+failure is logged for alarm/outbox recovery while the client still receives the
+truth about the durable write. The desktop retains a command across a send race
+for reconnect replay and rejects all waiting commands if the bounded socket-open
+sequence reaches its terminal state.
+
+**Why:** A disconnect or wake-up failure after commit could previously escape
+the handler or report failure for state which was already durable, causing the
+renderer to retire the one replay key that could recover it.
+
+**Considered and rejected:** A second per-command wall-clock timeout would race
+the existing heartbeat/reconnect owner and require an ungrounded new limit.
+Command liveness remains the socket lifecycle's responsibility.
+
+**Consequences:** A lost receipt is a delivery miss, not a second mutation
+outcome. Reconnect resends the same operation id, while terminal inability to
+open rejects the queue instead of leaving promises pending forever.
+
+### 2026-09-02 — Child feed recovery stays inside the addressed SubstreamAgent
+
+**What changed:** renderer detail, transcript, overlay, feed-source, and
+snapshot-generation caches now include a non-main substream ID. A child's
+`resync_required` reconnects that socket from sequence zero for a canonical
+child snapshot; only main child `0` can use the work-stream REST recovery boot.
+Reorder and stop receipts are committed with their mutations so reconnect
+resends cannot act on newer child state.
+
+**Why:** a work-stream ID identifies the parent, not one of its conversations.
+Sharing its cache keys made child frames overwrite main-feed state, while a
+parent REST recovery could never reconstruct the child's transcript. A private
+receipt sent without durable mutation fencing also acknowledged an old command
+after applying it to a newer queue or execution.
+
+**Considered and rejected:** adding a child REST boot, because the owning socket
+already supplies the canonical snapshot and another read path would duplicate
+authority; and dropping ambiguous commands on disconnect, because the caller
+would lose read-your-write certainty.
+
+**What a future change has to respect:** feed identity is the full parent-plus-
+child address. Child recovery remains on the child transport, and every
+retriable mutation needs a durable fence at the transaction it changes.
+
+### 2026-09-02 — The substream socket becomes the child command plane
+
+**What changed:** one operation-ID protocol now carries message admission,
+elicitation answer, pending-input reorder, stop, and retry directly to the
+addressed SubstreamAgent. The desktop retains each command across reconnect and
+the object returns a private correlated result. Retry reuses the operation ID
+as its durable run receipt, making an ambiguous resend safe. The unused
+WorkspaceDO `create_message` command is removed in the same hard cutover.
+
+**Why:** the ticket has already selected and authorized the child authority.
+Routing these same mutations through work-stream REST added an unnecessary
+product-parent hop and would have coupled a future automation-owned substream to
+work-stream routes.
+
+**Considered and rejected:** dual REST/socket support because no deployed client
+needs a compatibility window. Parent-owned participants, resources, metadata,
+and archive remain outside this child protocol.
+
+**What a future change has to respect:** every child command needs a durable
+idempotency identity and a private receipt; canonical consequences still travel
+as sequenced feed state.
 
 ### 2026-09-02 — A room-owned automation cannot block the whole sidebar snapshot
 

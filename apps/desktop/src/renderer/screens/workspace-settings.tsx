@@ -48,6 +48,7 @@ import { ThemePicker } from '../components/theme-picker';
 import { DigestSettings } from '../components/digest-settings';
 import { SLACK_PERSONAL_CAPABILITIES } from '../lib/slack-personal-capabilities';
 import { useAppSession } from '../lib/app-session';
+import { invalidateCachedWorkstreamDetails } from '../lib/workstreams-cache';
 import { ApiError } from '../lib/api';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { desktopBridge } from '../lib/platform';
@@ -1002,7 +1003,7 @@ export function WorkspaceSettingsScreen({
           setConnectorOAuthMessage(`${providerName} is connected.`);
           void Promise.all([
             queryClient.invalidateQueries({ queryKey: ['connections'] }),
-            queryClient.invalidateQueries({ queryKey: ['workstream'] }),
+            invalidateCachedWorkstreamDetails(queryClient),
             queryClient.invalidateQueries({ queryKey: ['automation'] }),
           ]);
           return;

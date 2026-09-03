@@ -71,11 +71,11 @@ That is the shape of the gap: the equivalent guard on the new-work-stream
 composer is covered three ways, and the two were written together. This one
 holds the same rule on the other composer, across a contract — resolve means
 sent — that only the screen and the component together express, and rests on a
-code read. Its failure is not silent at the server: the WorkspaceDO answers the
-same refusal with the same sentence, which
-`test-workers/workspace-socket-message-length.test.ts` proves. But everything
-between the keystroke and that socket frame — the draft surviving, the optimistic
-turn never appearing — nothing checks.
+code read. Its failure is not silent at the server: the SubstreamAgent answers
+the same refusal with the same sentence, which
+`test-workers/message-to-output-pipeline.test.ts` proves. But everything between
+the keystroke and that socket frame — the draft surviving, the optimistic turn
+never appearing — nothing checks.
 
 **What would settle it.** A harness that renders `WorkstreamScreen` for real —
 session, query client, router, workspace and work-stream sockets — and asserts

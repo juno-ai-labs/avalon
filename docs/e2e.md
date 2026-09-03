@@ -17,14 +17,20 @@ pnpm dev:api
 pnpm smoke:local
 ```
 
-The smoke check signs in through development-only authentication, verifies protected workspace routes, validates the right-rail fixtures and persisted tool transcript, replays a human message without duplicating agent work, receives a realtime snapshot, and rejects reuse of the single-use socket ticket. It does not create provider data or send email.
+The smoke check signs in through development-only authentication, verifies
+protected workspace routes, validates the right-rail fixtures and persisted
+tool transcript from the canonical boot, replays a human message over the main
+SubstreamAgent socket without duplicating agent work, receives its private
+command receipt, and rejects reuse of the single-use socket ticket. It does not
+create provider data or send email.
 
 Set `AVALON_SMOKE_BASE_URL` to exercise another Worker. Local Workers use the development session endpoint; hosted production smoke tests must also set a short-lived `AVALON_SMOKE_ACCESS_TOKEN` because development authentication remains disabled in production.
 
 ## Automated behavioral lane
 
-`pnpm e2e:local` drives the running local stack through the same public API the
-desktop client uses, in three lanes: **happy** paths that must produce an agent
+`pnpm e2e:local` drives the running local stack through the same REST bootstrap
+and SubstreamAgent command socket the desktop client uses, in three lanes:
+**happy** paths that must produce an agent
 reply (create-and-reply, follow-up, stop, transcript ordering, title
 settlement), **sad** paths that must be refused safely (auth, validation,
 idempotent replays, missing targets), and **chaos** paths that must not corrupt
@@ -61,6 +67,9 @@ This lane exists because it catches what the unit and workerd suites
 structurally cannot: its first sustained run found a view trigger that crashed
 every retried run's settlement, a creation path that never scheduled
 work-stream naming, and a compound-SELECT limit under concurrent load.
+Follow-up messages, idempotency replays, validation refusals, concurrent bursts,
+and Stop all use the main child's socket; the lane must not preserve deleted
+work-stream REST mutation routes as a hidden compatibility client.
 
 ## Right-sidebar and desktop acceptance
 

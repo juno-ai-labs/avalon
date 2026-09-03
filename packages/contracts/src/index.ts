@@ -1969,25 +1969,7 @@ export const ReorderWorkstreamPinsRequestSchema = z.object({
   workstreamIds: z.array(IdSchema),
 });
 
-/**
- * The visible pending-input queue in its new promotion order, not a move of
- * one row.
- *
- * A drag produces a complete arrangement. Sending that arrangement lets the
- * object permute the existing `input_sequence` values without inferring a
- * gap from a list state the client may no longer share. Ids that have
- * already been delivered are ignored rather than rejected, and visible
- * pending inputs the caller does not name keep their relative order behind
- * the ones it did.
- *
- * Deliberately unbounded. Nothing limits how many messages may wait on a
- * loop, so any count this array could be capped at would refuse a drag and
- * leave the queue unreorderable for as long as the person stayed above it.
- */
-export const ReorderPendingLoopInputsRequestSchema = z.object({
-  inputIds: z.array(IdSchema),
-});
-
+/** The authoritative visible pending-input queue after a reorder command. */
 export const ReorderPendingLoopInputsResultSchema = z.object({
   pendingInputs: z.array(PendingTranscriptInputSchema),
 });
@@ -2064,6 +2046,14 @@ export const WorkstreamBootSchema = WorkstreamDetailSchema.extend({
 
 export const WORKSTREAM_REALTIME_MAX_FRAME_BYTES = 1_000_000;
 
+export const SubstreamSocketMutationTypeSchema = z.enum([
+  "create_message",
+  "answer_elicitation",
+  "reorder_pending_inputs",
+  "stop_harness",
+  "retry_harness",
+]);
+
 export const ClientSocketEventSchema = z.discriminatedUnion("type", [
   z.strictObject({
     type: z.literal("subscribe"),
@@ -2097,12 +2087,21 @@ export const ClientSocketEventSchema = z.discriminatedUnion("type", [
     operationId: IdSchema,
     payload: CreateMessageRequestSchema,
   }),
-  z.object({ type: z.literal("stop_harness") }),
-  z.object({ type: z.literal("answer_elicitation"), elicitationId: IdSchema, payload: AnswerElicitationRequestSchema }),
-  z.object({ type: z.literal("add_participant"), userId: IdSchema }),
-  z.object({ type: z.literal("remove_participant"), userId: IdSchema }),
-  z.object({ type: z.literal("attach_resource"), resourceId: IdSchema }),
-  z.object({ type: z.literal("detach_resource"), resourceId: IdSchema })
+  z.strictObject({
+    type: z.literal("answer_elicitation"),
+    operationId: IdSchema,
+    elicitationId: IdSchema,
+    payload: AnswerElicitationRequestSchema,
+  }),
+  z.strictObject({
+    type: z.literal("reorder_pending_inputs"),
+    operationId: IdSchema,
+    // The whole visible order, not one move. Intentionally unbounded because
+    // the durable queue itself has no count ceiling.
+    inputIds: z.array(IdSchema),
+  }),
+  z.strictObject({ type: z.literal("stop_harness"), operationId: IdSchema }),
+  z.strictObject({ type: z.literal("retry_harness"), operationId: IdSchema }),
 ]);
 
 /** Workspace-owned query surfaces kept coherent by the one WorkspaceDO socket. */
@@ -2154,13 +2153,6 @@ export const WorkspaceSocketClientEventSchema = z.discriminatedUnion("type", [
     revision: z.number().int().positive(),
     applicationState: z.enum(["foreground", "background"]),
     foregroundWorkstreamId: WorkstreamIdSchema.nullable(),
-  }),
-  z.strictObject({
-    type: z.literal("create_message"),
-    workstreamId: IdSchema,
-    substreamId: z.union([z.literal("0"), IdSchema]),
-    operationId: IdSchema,
-    payload: CreateMessageRequestSchema,
   }),
   z.strictObject({
     type: z.literal("list_workstreams"),
@@ -2556,7 +2548,7 @@ export type WorkstreamControlSocketEvent = z.infer<typeof WorkstreamControlSocke
  * event sequence: the canonical transcript-turn upsert is replayable and
  * broadcast, while this receipt is private to the socket that submitted it.
  * Reconnecting clients resend the same `clientMessageId` and receive the same
- * accepted turn through the idempotent write path.
+ * private receipt through the command's idempotent write path.
  */
 export const WorkstreamMessageDeliveryStateSchema = z.enum(["canonical", "pending"]);
 export const WorkstreamMessageAdmissionReceiptSchema = z.strictObject({
@@ -2568,23 +2560,50 @@ export const WorkstreamMessageAdmissionReceiptSchema = z.strictObject({
   deliveryState: WorkstreamMessageDeliveryStateSchema,
 });
 
-export const WorkstreamSocketCommandResultSchema = z.discriminatedUnion("type", [
+const WorkstreamSocketCommandErrorSchema = z.strictObject({
+  status: z.number().int().min(0).max(599),
+  code: z.string().min(1).max(160),
+  message: z.string().min(1).max(1_000),
+  details: z.record(z.string(), z.unknown()).optional(),
+});
+
+export const WorkstreamSocketCommandResultSchema = z.union([
   z.strictObject({
     type: z.literal("client_command_succeeded"),
     command: z.literal("create_message"),
+    operationId: IdSchema,
     clientMessageId: z.string().min(1).max(120),
     ...WorkstreamMessageAdmissionReceiptSchema.shape,
   }),
   z.strictObject({
+    type: z.literal("client_command_succeeded"),
+    command: z.literal("answer_elicitation"),
+    operationId: IdSchema,
+    elicitation: ElicitationSchema.optional(),
+  }),
+  z.strictObject({
+    type: z.literal("client_command_succeeded"),
+    command: z.literal("reorder_pending_inputs"),
+    operationId: IdSchema,
+    ...ReorderPendingLoopInputsResultSchema.shape,
+  }),
+  z.strictObject({
+    type: z.literal("client_command_succeeded"),
+    command: z.literal("stop_harness"),
+    operationId: IdSchema,
+  }),
+  z.strictObject({
+    type: z.literal("client_command_succeeded"),
+    command: z.literal("retry_harness"),
+    operationId: IdSchema,
+    harnessRunId: IdSchema,
+  }),
+  z.strictObject({
     type: z.literal("client_command_failed"),
-    command: z.literal("create_message"),
-    clientMessageId: z.string().min(1).max(120),
-    error: z.strictObject({
-      status: z.number().int().min(0).max(599),
-      code: z.string().min(1).max(160),
-      message: z.string().min(1).max(1_000),
-      details: z.record(z.string(), z.unknown()).optional(),
-    }),
+    command: SubstreamSocketMutationTypeSchema,
+    operationId: IdSchema,
+    clientMessageId: z.string().min(1).max(120).optional(),
+    error: WorkstreamSocketCommandErrorSchema,
   }),
 ]);
 
@@ -3562,6 +3581,7 @@ export type ConnectorOAuthAttemptStatus = z.infer<typeof ConnectorOAuthAttemptSt
 export type ConnectorOAuthStart = z.infer<typeof ConnectorOAuthStartSchema>;
 export type ConnectorOAuthAttempt = z.infer<typeof ConnectorOAuthAttemptSchema>;
 export type ClientSocketEvent = z.infer<typeof ClientSocketEventSchema>;
+export type SubstreamSocketMutationType = z.infer<typeof SubstreamSocketMutationTypeSchema>;
 export type WorkstreamSocketCommandResult = z.infer<typeof WorkstreamSocketCommandResultSchema>;
 export type WorkstreamMessageDeliveryState = z.infer<typeof WorkstreamMessageDeliveryStateSchema>;
 export type WorkstreamMessageAdmissionReceipt = z.infer<typeof WorkstreamMessageAdmissionReceiptSchema>;
