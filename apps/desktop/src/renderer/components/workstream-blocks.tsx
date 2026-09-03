@@ -52,7 +52,7 @@ import { pluginGroupIconForContract, type PluginGroupIcon } from '../lib/plugin-
 import { isPluginBrandMark, type PluginBrandMark } from '../lib/plugin-marks';
 import { reportTelemetryProductIntent } from '../lib/telemetry';
 import { isThinkingEvent, thoughtVerb } from '../lib/transcript';
-import type { ElicitationData, Message, MessageMention } from '../lib/types';
+import type { ElicitationData, Message, MessageMention, WorkTotal } from '../lib/types';
 import { useTextClamped } from '../lib/use-text-clamped';
 import { AgentWorkTiming } from './agent-work-timing';
 import {
@@ -1465,14 +1465,18 @@ function SystemMessageBlock({ disclosure, message }: { disclosure?: RowDisclosur
 }
 
 /**
- * How a settled response's total reads in a message header.
+ * How a settled total reads, in a message header or on an accordion.
  *
- * Null is an unknown duration, not a zero one, and the header then says only
- * that Rally worked — the same rule the plugin rows follow, for the same
- * reason: a transcript that cannot see how long something took must not
- * report a time it does not have.
+ * It takes the `WorkTotal` both of those carry rather than one field's own
+ * type, because the total moves between them and this is the one place either
+ * is turned into a sentence.
+ *
+ * Null is an unknown duration, not a zero one — or a stretch with no total of
+ * its own — and the line then says only that Rally worked: the same rule the
+ * plugin rows follow, for the same reason. A transcript that cannot see how
+ * long something took must not report a time it does not have.
  */
-function workSummaryLabel(summary: NonNullable<Message['workSummary']>): string {
+function workSummaryLabel(summary: WorkTotal): string {
   if (summary.durationMs === null) return 'Worked';
   const duration = formatDuration(summary.durationMs) ?? '0ms';
   return summary.timingAccuracy === 'upper_bound'
