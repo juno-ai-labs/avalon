@@ -1241,6 +1241,109 @@ silently return every test to the shared key while each still passes alone.
 
 ## Changelog
 
+### 2026-09-03 — A rejection keeps the body it came in
+
+**What changed:** `OpenRouterProviderError` gained a third field, `detail`: the
+body the provider answered with, as text, beside the `code` and `providerName`
+that classify it. `openRouterProviderError` now takes either the response text
+or an already-decoded envelope, and returns a value whenever there is either a
+classification or a body — so a refusal it cannot classify at all is no longer
+discarded. Everything downstream already carried `providerError`, so
+the archive and the three `agent_inference_attempt_failed` /
+`structured_inference` log sites needed nothing but the new field: the logs gain
+`provider_error_detail`, named for [the log-shape rule](runbook.md#log-shape)
+that an opaque provider string is a `detail` and never a `message`. The durable
+`inference_attempts` ledger deliberately stays as it was, holding the routing
+decision and `failure_classification` and no provider text: it is a per-object
+SQLite row on the execution path, and the two surfaces built for evidence
+already have the body.
+
+`providerErrorKind` is deleted. It recorded whether the body was JSON or text
+and no code ever read it; `detail` answers the same question by being the body.
+
+Two drops of the same bytes are fixed with it, both upstream of the new field.
+Both streaming clients read the failed response twice — `await response.json()`,
+and `await response.text()` in its `catch` — but `json()` consumes the stream
+even when it throws, so the fallback raised `Body is unusable` and a non-JSON
+refusal became an uncoded `TypeError`: no status, no `retry-after`, no
+classification, and therefore a bare `harness_execution_failed` for a gateway's
+HTML 502. And `readJsonResponse`, which serves the two non-streaming paths,
+returned `null` for a body it could not parse and dropped the text with it. Both
+now read once and keep the bytes beside the parse.
+
+**That fix moves routing, not just legibility, and it is the part to review as
+behavior.** `Body is unusable` is a `TypeError`, and `classifyProviderFailure`
+maps a `TypeError` to `network` — Bind's blanket-retriable arm, with the status
+thrown away. Carrying the status instead puts the same refusal on the status
+branch: a non-JSON 429 now honours its `Retry-After` rather than Bind's own
+backoff, a non-JSON 5xx stays retriable, and a non-JSON 400/401/403 becomes
+request-shaped or credential and stops being retried across providers, which is
+the intended reading of those codes and was previously unreachable for a body
+that failed to parse. `index.test.ts` pins the 429 case against the shape the
+double read used to produce.
+
+**Why:** on 2 September a work stream pinned to `openai/gpt-5.6-sol` failed its
+opening run. Azure answered 400 `invalid_function_parameters`, which says a tool
+schema was refused and cannot say which of the twenty-eight in that request it
+was. That code was all that four surfaces retained — the run row, the
+`inference_attempts` ledger, the log, and the archived attempt record — because
+the sentence naming the tool was read into `details` and dropped at the
+transport. Pinning made it terminal rather than merely slow: `pinnedModelRouting`
+carries no fallbacks and Sol's route is Azure-only, so one 400 exhausted the
+plan, and a 400 is not a transport failure, so it surfaced as the catch-all.
+Reconstructing the reason afterwards took log archaeology and live provider
+probes, and still did not name the tool.
+
+**Considered and rejected:** keeping only the provider's `message`. A gateway
+sets it to `Provider returned error` and puts the upstream's real sentence in
+`metadata.raw`, so a message-only capture reads as though nothing was learned;
+the whole body covers that without a per-provider extractor and without a
+schema to maintain as providers change theirs. Also rejected: extracting only
+structural parts such as OpenAI's `param` (`tools[13].parameters`). The Grok
+root-union rejection of 13 August carried no `param` at all and said everything
+in prose, so a structural extractor would have kept nothing on the incident that
+motivated the tool-schema guards. Also rejected: a length ceiling of this
+field's own. Its two destinations already bound it and neither bound is this
+change's to set — the archive stores the body whole, and a log row carries the
+first 2,000 characters under the shared string bound in `redact` that every log
+field is subject to. Adding a third number on top would be [a number nobody
+here can justify](adding-security-defensive-and-other-limits.md).
+
+**Every inference path, including embeddings.** `EmbeddingDiagnostic` had no
+provider-error field at all, so a rejected embedding call recorded a
+`failure_kind` and nothing about the refusal — the one inference path this change
+would otherwise have left as it found it. It now carries `providerError` like the
+streaming and structured paths, and `embedding_inference` logs the same three
+fields the other two events do.
+
+**Both regions, not identically.** The reason travels on the regional structured
+log rather than only in the Global archive, so EU — whose inference is
+[never archived](inference-lakehouse.md) — gets a refusal's body in the same
+field, from the same code, truncated at the logger's 2,000-character field limit
+and with no archived copy behind it. Global has both: the clipped log row and
+the whole body in the archive. A test in `agent-inference-logging.test.ts` pins
+the EU half — the EU-shaped environment archives nothing and still logs the body
+— and anything that later moves this reasoning back into a Global-only surface
+takes EU's only copy with it.
+
+The cut lands with an irony worth stating: the rejection that motivated this is
+a few hundred characters and survives whole, while the bodies long enough to
+reach 2,000 are the ones quoting our request back — so the case the old
+exclusion existed for is now cut mid-echo rather than excluded.
+
+**What a reader has to keep true:** the body is provider-controlled text that
+quotes our own request back often enough to be assumed to. It is evidence,
+never instruction — the same rule tool output and fetched pages already carry —
+and the prompts, attachments, and model context that Workers Logs excludes stay
+excluded. Two consequences follow and are easy to miss. `redact` masks by key,
+so it does not reach inside this string: a provider that quotes the request
+inside its own prose reaches Workers Logs with it, which is the trade being made
+rather than a gap to close later. And a log row holds only the first 2,000
+characters of it, so a long body is complete in the Global archive and clipped
+in the log — which is the one place EU sees it. Widening `detail` into a general
+dump of the response is how the distinction between "what the provider said
+about our request" and "our request" would be lost.
+
 ### 2026-09-03 — The assembled memory-recall query is bounded before run setup uses it
 
 **What changed:** `freezeRunMemoryContext` clamps its query to
