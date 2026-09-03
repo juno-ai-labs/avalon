@@ -244,6 +244,11 @@ describe('token references', () => {
   const RULE_LOCAL = ['--sidebar-row-background', '--pill-overhang', '--rail-slot',
     '--composer-line-height', '--composer-text-padding', '--system-message-lines',
     '--tw-fade-scrollbar-thumb', '--tw-fade-scrollbar-width', '--av-cmp-sidebar-width',
+    // The window chrome's own geometry, not an appearance: how far the
+    // platform's window buttons reach into the page. `:root` states the
+    // no-overlay default and `.workspace-shell.has-overlay-window-controls`
+    // states macOS's band, both in this file.
+    '--av-cmp-window-controls-inset',
     '--turn-bubble-radius'];
 
   // Set at runtime rather than in CSS: some by components as inline styles,

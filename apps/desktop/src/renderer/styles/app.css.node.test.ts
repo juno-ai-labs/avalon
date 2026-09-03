@@ -829,3 +829,46 @@ describe('composer queue preview', () => {
     }
   });
 });
+
+/**
+ * The window's own buttons are drawn over the page on macOS, and the sidebar's
+ * 48px title bar is what normally holds anything readable clear of them. Below
+ * 921px the sidebar leaves the flow for a drawer, and the work-stream and
+ * automation headers slide under the traffic lights — where the title is both
+ * illegible and unclickable, since the buttons are chrome above the web
+ * contents and take the press.
+ *
+ * Nothing in a component test can see it: the DOM is identical either way, and
+ * the defect is entirely in resolved layout against chrome that jsdom does not
+ * draw.
+ */
+describe('window-control gutter while the sidebar is a drawer', () => {
+  it('defaults the inset to nothing, so only macOS pays for the band', () => {
+    // Windows and Linux keep their buttons in a frame above the web contents,
+    // so a header there has nothing to clear. `AppShell` adds the class from
+    // `runtime.platform`; the token is what the class means.
+    expect(rule(':root')).toContain('--av-cmp-window-controls-inset: 0px;');
+    expect(rule('.workspace-shell.has-overlay-window-controls'))
+      .toContain('--av-cmp-window-controls-inset: 82px;');
+  });
+
+  // 82px is the traffic lights' own geometry: three 12px buttons on a 20px
+  // pitch from `trafficLightPosition` x: 18, ending at 70, plus the header's
+  // air. `max()` rather than the token alone so the 8px the narrow layout
+  // already used survives on the platforms where the inset is zero.
+  it('starts the collapsed headers after the band rather than under it', () => {
+    const collapsed = stylesheet.match(/@media \(max-width: 920px\) \{([\s\S]*?)\n\}/u)?.[1];
+    expect(collapsed).toBeDefined();
+    expect(ruleWithin(collapsed!, '.workstream-header,\n  .automation-overview-header'))
+      .toContain('padding-left: max(8px, var(--av-cmp-window-controls-inset));');
+  });
+
+  // The one coupling nothing else would notice. A stylesheet rule keyed on a
+  // class no component writes is inert, and the symptom is the defect this
+  // change fixed coming back on macOS alone — where nothing in this suite runs.
+  // Read from disk rather than imported for the reason at the top of this file.
+  it('is keyed on the class the shell actually writes', () => {
+    const shell = readFileSync(resolve(process.cwd(), 'src/renderer/components/app-shell.tsx'), 'utf8');
+    expect(shell).toContain("'has-overlay-window-controls'");
+  });
+});

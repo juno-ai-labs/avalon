@@ -10,6 +10,7 @@ import {
   backgroundRealtimeWorkstreamIds,
   invitationAccountMismatch,
   openWorkstreamId,
+  overlayWindowControls,
   showsAutomation,
   upsertProjectDirectory,
   workstreamMatchesBatchFilter,
@@ -233,5 +234,23 @@ describe('showsAutomation', () => {
     expect(showsAutomation('/automations/new', automationId)).toBe(false);
     expect(showsAutomation('/automations/00000000-0000-7000-8000-000000000009', automationId)).toBe(false);
     expect(showsAutomation('/workstreams/new', automationId)).toBe(false);
+  });
+});
+
+describe('overlayWindowControls', () => {
+  // The main window asks for `hiddenInset`, and macOS is the only platform that
+  // honours it by painting the traffic lights over the page. Reserving room for
+  // them anywhere else indents a header against buttons that are not there.
+  it('reserves the band on macOS only', () => {
+    expect(overlayWindowControls('darwin')).toBe(true);
+    expect(overlayWindowControls('win32')).toBe(false);
+    expect(overlayWindowControls('linux')).toBe(false);
+  });
+
+  // The runtime config is fetched, so the platform is briefly unknown. Reading
+  // that as "nothing to clear" leaves the header where it already is rather
+  // than jumping it sideways when the answer lands.
+  it('reserves nothing while the platform is still unknown', () => {
+    expect(overlayWindowControls(undefined)).toBe(false);
   });
 });
