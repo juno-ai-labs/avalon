@@ -496,7 +496,47 @@ describe("connectors", () => {
     expectNormalized(result.activities);
   });
 
-  it("collapses one recurring-series edit into a single Calendar activity", async () => {
+  /** The series master Google holds for `standup`, as `events.get` returns it. */
+  function standupMaster(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      id: "standup",
+      etag: "master-etag",
+      status: "confirmed",
+      updated: "2026-09-02T09:15:00Z",
+      summary: "Weekly standup",
+      location: "Room 4",
+      htmlLink: "https://calendar.google.com/event?eid=standup",
+      organizer: { displayName: "Samantha", email: "samantha@example.com" },
+      attendees: [{ email: "dana@example.com", displayName: "Dana", responseStatus: "accepted" }],
+      start: { dateTime: "2026-08-24T10:00:00-07:00", timeZone: "America/Los_Angeles" },
+      end: { dateTime: "2026-08-24T10:30:00-07:00", timeZone: "America/Los_Angeles" },
+      recurrence: ["RRULE:FREQ=WEEKLY;BYDAY=MO"],
+      ...overrides
+    };
+  }
+
+  /** Routes the one master read a changed series costs; everything else is the sync page. */
+  function calendarFetcher(
+    pages: (url: URL) => Response | Promise<Response>,
+    masters: Record<string, Record<string, unknown> | number>,
+    masterReads: URL[] = []
+  ): typeof fetch {
+    return async (input) => {
+      const url = requestUrl(input);
+      const master = /\/calendars\/primary\/events\/([^/?]+)$/u.exec(url.pathname)?.[1];
+      if (master !== undefined) {
+        masterReads.push(url);
+        const body = masters[decodeURIComponent(master)];
+        if (body === undefined) throw new Error(`Unexpected Calendar master read: ${url}`);
+        return typeof body === "number"
+          ? googleJson({ error: { code: body, message: "Not Found" } }, body)
+          : googleJson(body);
+      }
+      return pages(url);
+    };
+  }
+
+  it("collapses one recurring-series edit into a single Calendar activity built from the master", async () => {
     const instances = Array.from({ length: 40 }, (_, index) => ({
       ...calendarEvent(`standup_2026090${index % 10}T170000Z`, "Weekly standup", `etag-${index}`),
       updated: "2026-09-02T09:15:00Z",
@@ -505,13 +545,13 @@ describe("connectors", () => {
       start: { dateTime: `2026-09-0${index % 10}T10:00:00-07:00` },
       end: { dateTime: `2026-09-0${index % 10}T10:30:00-07:00` }
     }));
-    const fetcher: typeof fetch = async (input) => {
-      const url = requestUrl(input);
+    const masterReads: URL[] = [];
+    const fetcher = calendarFetcher((url) => {
       if (url.searchParams.get("pageToken") === "calendar-page-2") {
         return googleJson({ items: instances.slice(20), nextSyncToken: "calendar-sync-new" });
       }
       return googleJson({ items: instances.slice(0, 20), nextPageToken: "calendar-page-2" });
-    };
+    }, { standup: standupMaster() }, masterReads);
     const adapter = googleAdapter(fetcher);
     const result = await adapter.poll!(
       googleConnection(["calendar.read"], { calendar: { syncToken: "calendar-sync-old" } }),
@@ -522,53 +562,108 @@ describe("connectors", () => {
       eventType: "calendar.event_changed",
       providerResourceId: "standup",
       title: "Recurring event changed: Weekly standup",
-      summary: "Every occurrence of this recurring event changed",
+      summary: "Every occurrence of this recurring event changed · first occurrence 2026-08-24T10:00:00-07:00",
+      textSnippet: "Weekly standup · Room 4",
       occurredAt: "2026-09-02T09:15:00.000Z",
+      subject: {
+        start: { dateTime: "2026-08-24T10:00:00-07:00", timeZone: "America/Los_Angeles" },
+        end: { dateTime: "2026-08-24T10:30:00-07:00", timeZone: "America/Los_Angeles" }
+      },
       entityKeys: ["google:calendar:primary:event:standup"],
-      metadata: { seriesChange: true, recurringEventId: "standup", htmlLink: null }
+      metadata: {
+        seriesChange: true,
+        recurringEventId: "standup",
+        htmlLink: "https://calendar.google.com/event?eid=standup",
+        recurrence: ["RRULE:FREQ=WEEKLY;BYDAY=MO"]
+      }
     });
-    // Keyed on the master and the edit rather than on an instance's etag, so
-    // the pages and later polls the same burst spreads over repeat one identity
-    // the workspace already holds.
+    // Keyed on the master and its own `updated` rather than on an instance's
+    // etag, so the pages and later polls the same burst spreads over repeat one
+    // identity the workspace already holds.
     expect(result.activities[0]?.dedupeKey).toBe("calendar:primary:standup:series:2026-09-02T09:15:00.000Z");
+    // The guest's RSVP is the series-level one from the master, not an
+    // occurrence's, so it can travel.
+    expect(result.activities[0]?.externalPeople).toContainEqual(
+      expect.objectContaining({ email: "dana@example.com", role: "attendee" })
+    );
+    expect(
+      result.activities[0]?.externalPeople?.find((person) => person.role === "attendee")?.sourceText
+    ).toContain('"responseStatus":"accepted"');
+    // One master read for the whole poll, however many pages the burst spans.
+    expect(masterReads).toHaveLength(1);
+    expect(masterReads[0]?.searchParams.get("fields")).toContain("recurrence");
     expectNormalized(result.activities);
   });
 
   it("collapses a cancelled recurring series that arrives as stripped instances", async () => {
-    const fetcher: typeof fetch = async () =>
-      googleJson({
-        items: Array.from({ length: 12 }, (_, index) => ({
-          id: `offsite_2026100${index % 10}T160000Z`,
-          etag: `cancel-etag-${index}`,
-          status: "cancelled",
-          updated: "2026-09-02T11:00:00Z"
-        })),
-        nextSyncToken: "calendar-sync-new"
-      });
+    const stripped = Array.from({ length: 12 }, (_, index) => ({
+      id: `offsite_2026100${index % 10}T160000Z`,
+      etag: `cancel-etag-${index}`,
+      status: "cancelled",
+      updated: "2026-09-02T11:00:00Z"
+    }));
+    const fetcher = calendarFetcher(
+      () => googleJson({ items: stripped, nextSyncToken: "calendar-sync-new" }),
+      { offsite: standupMaster({ id: "offsite", status: "cancelled", updated: "2026-09-02T11:00:00Z", summary: "Offsite" }) }
+    );
     const adapter = googleAdapter(fetcher);
     const result = await adapter.poll!(
       googleConnection(["calendar.read"], { calendar: { syncToken: "calendar-sync-old" } }),
       neverAborts()
     );
     expect(result.activities).toHaveLength(1);
+    // The instances arrive without a title; the master still has one.
     expect(result.activities[0]).toMatchObject({
       providerResourceId: "offsite",
-      title: "Recurring event cancelled: Untitled event",
-      summary: "Every occurrence of this recurring event was cancelled",
+      title: "Recurring event cancelled: Offsite",
+      summary: "Every occurrence of this recurring event was cancelled · first occurrence 2026-08-24T10:00:00-07:00",
       metadata: { seriesChange: true, recurringEventId: "offsite", status: "cancelled" }
     });
     expect(result.activities[0]?.dedupeKey).toBe("calendar:primary:offsite:series:2026-09-02T11:00:00.000Z");
     expectNormalized(result.activities);
   });
 
+  it("falls back to what every instance agrees on when the master cannot be read", async () => {
+    const stripped = Array.from({ length: 12 }, (_, index) => ({
+      id: `offsite_2026100${index % 10}T160000Z`,
+      etag: `cancel-etag-${index}`,
+      status: "cancelled",
+      updated: "2026-09-02T11:00:00Z"
+    }));
+    const fetcher = calendarFetcher(
+      () => googleJson({ items: stripped, nextSyncToken: "calendar-sync-new" }),
+      { offsite: 404 }
+    );
+    const adapter = googleAdapter(fetcher);
+    const result = await adapter.poll!(
+      googleConnection(["calendar.read"], { calendar: { syncToken: "calendar-sync-old" } }),
+      neverAborts()
+    );
+    // Still one activity, keyed on the edit the instances record, and carrying
+    // nothing that varies between them: the same payload from any chunk.
+    expect(result.activities).toHaveLength(1);
+    expect(result.activities[0]).toMatchObject({
+      providerResourceId: "offsite",
+      title: "Recurring event cancelled: Untitled event",
+      summary: "Every occurrence of this recurring event was cancelled",
+      subject: { start: {}, end: {} },
+      metadata: { seriesChange: true, recurringEventId: "offsite", status: "cancelled", htmlLink: null }
+    });
+    expect(result.activities[0]?.dedupeKey).toBe("calendar:primary:offsite:series:2026-09-02T11:00:00.000Z");
+    expect(result.activities[0]?.metadata).not.toHaveProperty("recurrence");
+    expectNormalized(result.activities);
+  });
+
   it("keeps an occurrence edited on its own apart from the series-wide edit", async () => {
-    const fetcher: typeof fetch = async () =>
-      googleJson({
+    const fetcher = calendarFetcher(
+      () => googleJson({
         items: [
           {
             ...calendarEvent("standup_20260904T170000Z", "Weekly standup", "exception-etag"),
             updated: "2026-09-02T09:20:00Z",
-            recurringEventId: "standup"
+            recurringEventId: "standup",
+            start: { dateTime: "2026-09-04T11:00:00-07:00" },
+            end: { dateTime: "2026-09-04T11:30:00-07:00" }
           },
           {
             ...calendarEvent("standup_20260905T170000Z", "Weekly standup", "series-etag-1"),
@@ -582,18 +677,26 @@ describe("connectors", () => {
           }
         ],
         nextSyncToken: "calendar-sync-new"
-      });
+      }),
+      { standup: standupMaster() }
+    );
     const adapter = googleAdapter(fetcher);
     const result = await adapter.poll!(
       googleConnection(["calendar.read"], { calendar: { syncToken: "calendar-sync-old" } }),
       neverAborts()
     );
-    // Two edits of one series, so two activities — the occurrence's own edit is
-    // not folded into the series-wide one, and neither is reported per instance.
+    // The occurrence's `updated` is after the master's, so it was edited on its
+    // own: reported as that occurrence, with its real times, on its own etag.
+    // The other two belong to the edit the master records.
     expect(result.activities.map((activity) => activity.dedupeKey)).toEqual([
-      "calendar:primary:standup:series:2026-09-02T09:20:00.000Z",
+      "calendar:primary:standup_20260904T170000Z:exception-etag",
       "calendar:primary:standup:series:2026-09-02T09:15:00.000Z"
     ]);
+    expect(result.activities[0]).toMatchObject({
+      title: "Calendar event changed: Weekly standup",
+      summary: "Starts 2026-09-04T11:00:00-07:00",
+      metadata: { seriesChange: false, recurringEventId: "standup" }
+    });
     expectNormalized(result.activities);
   });
 
@@ -602,11 +705,14 @@ describe("connectors", () => {
       ...calendarEvent(id, "Weekly standup", `etag-${id}`),
       updated: "2026-09-02T09:15:00Z",
       recurringEventId: "standup",
-      location: "Room 4",
+      location: "Room 9",
       attendees: [{ email: "dana@example.com", displayName: "Dana", responseStatus }]
     });
     const pollOnce = async (items: Record<string, unknown>[]) => {
-      const adapter = googleAdapter(async () => googleJson({ items, nextSyncToken: "calendar-sync-new" }));
+      const adapter = googleAdapter(calendarFetcher(
+        () => googleJson({ items, nextSyncToken: "calendar-sync-new" }),
+        { standup: standupMaster() }
+      ));
       const result = await adapter.poll!(
         googleConnection(["calendar.read"], { calendar: { syncToken: "calendar-sync-old" } }),
         neverAborts()
@@ -627,15 +733,46 @@ describe("connectors", () => {
     expect(chunk).toHaveLength(1);
     expect(tail).toHaveLength(1);
     // Identical but for delivery time: the workspace refuses a repeated identity
-    // whose payload changed, so a chunk boundary or a per-occurrence RSVP must
-    // not reach the series payload.
+    // whose payload changed, so the content comes from the master, never from
+    // whichever instances a chunk held. Room 9 and the declined Tuesday are
+    // the instances'; Room 4 and the accepted RSVP are the series'.
     expect({ ...tail[0], receivedAt: "" }).toEqual({ ...chunk[0], receivedAt: "" });
     expect(tail[0]?.dedupeKey).toBe("calendar:primary:standup:series:2026-09-02T09:15:00.000Z");
-    expect(tail[0]?.externalPeople).toContainEqual(
-      expect.objectContaining({ email: "dana@example.com", role: "attendee" })
-    );
-    expect(JSON.stringify(tail[0]?.externalPeople)).not.toContain("responseStatus");
+    expect(tail[0]?.textSnippet).toBe("Weekly standup · Room 4");
+    const guest = tail[0]?.externalPeople?.find((person) => person.role === "attendee")?.sourceText;
+    expect(guest).toContain('"responseStatus":"accepted"');
+    expect(guest).not.toContain("declined");
     expectNormalized(tail);
+  });
+
+  it("reports a stale chunk of an older edit against the master as it now stands", async () => {
+    // The series was edited again at 09:30 while the 09:15 burst was still
+    // arriving. This trailing chunk of the 09:15 edit is reported under the
+    // 09:30 identity with the 09:30 content — the same activity the 09:30
+    // burst's own chunks produce, so the workspace holds one of them.
+    const fetcher = calendarFetcher(
+      () => googleJson({
+        items: [{
+          ...calendarEvent("standup_20260908T170000Z", "Weekly standup", "old-etag"),
+          updated: "2026-09-02T09:15:00Z",
+          recurringEventId: "standup"
+        }],
+        nextSyncToken: "calendar-sync-new"
+      }),
+      { standup: standupMaster({ updated: "2026-09-02T09:30:00Z", summary: "Weekly standup (moved)" }) }
+    );
+    const adapter = googleAdapter(fetcher);
+    const result = await adapter.poll!(
+      googleConnection(["calendar.read"], { calendar: { syncToken: "calendar-sync-old" } }),
+      neverAborts()
+    );
+    expect(result.activities).toHaveLength(1);
+    expect(result.activities[0]).toMatchObject({
+      title: "Recurring event changed: Weekly standup (moved)",
+      occurredAt: "2026-09-02T09:30:00.000Z",
+      dedupeKey: "calendar:primary:standup:series:2026-09-02T09:30:00.000Z"
+    });
+    expectNormalized(result.activities);
   });
 
   it("does not invent a series for a one-off event whose id looks like an instance", async () => {

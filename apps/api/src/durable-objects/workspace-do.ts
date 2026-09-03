@@ -2408,6 +2408,18 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
       WHEN OLD.hostname_stub IS NOT NULL AND NEW.hostname_stub IS NOT OLD.hostname_stub
       BEGIN SELECT RAISE(ABORT, 'artifact_hostname_stub_immutable'); END`,
   ],
+}, {
+  version: 30,
+  description: "park a ranking request that arrives while a pass is in flight",
+  statements: [
+    // Where a member's ranking request waits while a pass holds the lease.
+    // `due_at` is that pass's own claim time until it settles, so a request
+    // that took `MIN` against it inherited a time already past and ran the
+    // moment the pass ended — under continuous admissions, back to back,
+    // whatever the debounce said. `settleRanking` re-arms `due_at` from here.
+    `ALTER TABLE suggested_work_sets ADD COLUMN pending_due_at INTEGER
+      CHECK (pending_due_at IS NULL OR pending_due_at >= 0)`,
+  ],
 }];
 
 function compareProjectionCoordinate(
