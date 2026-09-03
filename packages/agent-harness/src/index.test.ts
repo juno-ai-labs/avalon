@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import {
   TRANSPORT_RETRY_MAX_DELAY_MS,
+  classifyProviderFailure,
   platformLimitRefusal,
   transportRetryDelayMs,
 } from "./bind-runtime";
@@ -825,6 +826,38 @@ describe("agent harness", () => {
     });
   });
 
+  it("routes a non-JSON refusal by its status, which the double read used to lose", async () => {
+    // Reading the body twice threw `Body is unusable`, a TypeError, and Bind
+    // classifies a TypeError as `network`: blanket-retriable, status discarded.
+    // Keeping the status is therefore a routing change and not only a legibility
+    // one — a non-JSON 429 now honours `retry-after` instead of being retried on
+    // Bind's own schedule, and a non-JSON 4xx stops being retried at all.
+    const fetcher = vi.fn(async () => new Response("upstream is rate limiting you", {
+      status: 429,
+      headers: { "content-type": "text/plain", "retry-after": "3" },
+    })) as unknown as typeof fetch;
+    const client = new AzureOpenAIClient({
+      endpoint: "https://resource.services.ai.azure.com",
+      apiKey: "azure-key",
+      fetch: fetcher,
+    });
+
+    const rejection = await client.stream({
+      model: "gpt-5.6-sol",
+      messages: [{ role: "user", content: "test" }],
+    }, () => {}).catch((error: unknown) => error);
+
+    expect(classifyProviderFailure(rejection)).toEqual({
+      kind: "rate_limit",
+      statusCode: 429,
+      retryAfterMs: 3_000,
+    });
+    // The shape the old double read produced, kept beside it so the difference
+    // is legible: no status to route on, and nothing to wait for.
+    expect(classifyProviderFailure(new TypeError("Body is unusable: Body has already been read")))
+      .toEqual({ kind: "network", statusCode: null, retryAfterMs: null });
+  });
+
   it("keeps a non-JSON rejection body, which a classification cannot represent", async () => {
     const fetcher = vi.fn(async () => new Response("<html>upstream gateway refused</html>", {
       status: 400,
@@ -862,6 +895,7 @@ describe("agent harness", () => {
     // Nothing to say is not a rejection: an empty or blank body would record a
     // field that reads as evidence and holds none.
     expect(openRouterProviderError({})).toBeUndefined();
+    expect(openRouterProviderError([])).toBeUndefined();
     expect(openRouterProviderError("   ")).toBeUndefined();
     expect(openRouterProviderError(null)).toBeUndefined();
     expect(openRouterProviderError(undefined)).toBeUndefined();
