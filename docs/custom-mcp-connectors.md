@@ -160,7 +160,8 @@ watches, or work-stream origins.
 | --- | --- |
 | A header-authenticated server refuses or cannot be reached at creation | The request fails with `custom_mcp_unreachable` and the row is removed; nothing is left in Connections. |
 | An authorized server refuses or cannot be reached at the callback | The attempt fails with `custom_mcp_unreachable` and the desktop says so; the connection is kept, marked `error` with the reason, and can be reconnected or removed. |
-| The server offers no tool this connection may use | The same refusal on both paths — including a `read_only_tools` connection to a server that annotates nothing as read-only, which advertises tools and can call none of them. |
+| The server offers no tool this connection may use | The same refusal on both paths — including a `read_only_tools` connection to a server that annotates nothing as read-only, which advertises tools and can call none of them. Discovery says which of the two it is, so the answer ("choose All tools") is in the message. |
+| A policy change would leave nothing callable | Refused with `custom_mcp_policy_admits_nothing` and the same message; the stored policy does not change. A server that cannot be reached does not block the change, because a belief about a third party is not evidence. |
 | The server becomes unreachable later | The settings pane reports the catalog as unreadable and still shows the endpoint and policy; the model's plugin fails to load with `plugin_tools_unavailable`. |
 | More than 16 headers, or a header value over 8,192 characters | The create request is refused before anything is written. Set by the team on 2026-09-03. |
 | A header value carries a newline, or names a transport header | Refused at the contract, so a configured value can neither split a request nor override what Rally negotiated. |
@@ -231,11 +232,23 @@ the endpoint and the header are one decision and are captured together.
 ## Open questions
 
 - **A person cannot tell two custom MCP plugins apart from the model's side.**
-  The plugin descriptor is code-authored and may not carry a connection label, so
-  every custom server presents the same trusted prose to the model and is
-  distinguished only by its plugin id. Naming them properly needs a way to admit
-  workspace-supplied text into a descriptor without making it instruction, which
-  is a decision about the plugin catalog rather than about this connector.
+  `connectorPluginPresentation` falls back to the adapter's own descriptor for
+  every connector but Google, so two connections produce two catalog entries
+  with the same display name, description, and search aliases, distinguished
+  only by `plugin_custom_mcp` and `plugin_custom_mcp_2`. The descriptor's own
+  instruction — load this when a request names that server's work — is then not
+  answerable from the catalog, and because this is the first connector built for
+  many connections per workspace, that is the ordinary state rather than an edge
+  one.
+
+  The general problem is a plugin-catalog decision: workspace-supplied prose in
+  a descriptor is untrusted text presented to the model as trusted. A narrower
+  follow-up would not need that decision — the connection's display name alone,
+  already bounded to 180 characters and already rendered to people, stripped of
+  control characters, into `displayName` and `searchAliases` only, with the
+  description and system message left exactly as authored here. That admits no
+  new prose into the instruction surface while making the entries
+  distinguishable.
 - **Editing a connection is add-and-remove.** There is no route to change an
   endpoint, replace headers, or rename a server; a change means a new connection
   and deleting the old one.
