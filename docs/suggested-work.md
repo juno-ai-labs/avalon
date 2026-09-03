@@ -48,18 +48,21 @@ route should not also be offered as new work.
 
 Some activity is never a candidate, decided by event type in
 `enqueueActivityOpportunity` before any window is opened for it:
-`github.check_run.*`, `github.workflow_run.*`, and `calendar.event_changed`. A
-check run is the status of a commit and a workflow run is the same status a
-level up; a recurring-series edit on Google Calendar arrives as one
-`calendar.event_changed` per expanded instance, so one change to a standing
-meeting is ~730 candidates per attendee. Together those were 42,000 of the
-50,000 events one workspace admitted on 2026-09-02, at a frontier-model call
-each, and the answer was `ignore`. The list is an exclusion rather than an
+`github.check_run.*` and `github.workflow_run.*`. A check run is the status of
+a commit and a workflow run is the same status a level up. They were 24,000 of
+the 50,000 events one workspace admitted on 2026-09-02, at a frontier-model
+call each, and the answer was `ignore`. The list is an exclusion rather than an
 inclusion so that a new connector's activity is offered until somebody finds a
 reason not to, and it withholds only this surface: excluded activity is still
 logged, still routes to watches and automations, and still reaches the feed.
-`calendar.event_completed` stays admitted — a meeting that just ended is the
-kind of thing that produces work.
+
+Calendar changes are deliberately not on it. The other 18,000 events that day
+were `calendar.event_changed`, and that was a connector defect rather than a
+property of the activity: one edit to a recurring series arrived as one
+activity per expanded instance, ~730 per attendee. [`connectors.md`](connectors.md)
+records the fix (2026-09-02 — one edit to a recurring series is one activity),
+after which a moved or cancelled meeting is one candidate per connection, and
+that is the kind of thing that produces work.
 
 Admission may add a distinct opportunity, improve an existing opportunity, or
 ignore the evidence. Existing work streams are supplied only as context for
@@ -385,9 +388,8 @@ value.
 ### 2026-09-03 — Suggested Work stops paying a frontier model to ignore CI
 
 **What changed:** Three bounds on the same pipeline. `enqueueActivityOpportunity`
-withholds `github.check_run.*`, `github.workflow_run.*`, and
-`calendar.event_changed` from candidacy before a window is opened
-(`isSuggestedWorkCandidateEventType`). The admission call runs at `low`
+withholds `github.check_run.*` and `github.workflow_run.*` from candidacy
+before a window is opened (`isSuggestedWorkCandidateEventType`). The admission call runs at `low`
 reasoning effort and sees at most `ADMISSION_CONTEXT_REASONING_CHARACTERS` (600)
 of each existing opportunity's reasoning rather than 4,000. `DUE_DEBOUNCE_MS`
 is 30 minutes rather than 2.
@@ -409,24 +411,26 @@ admission output tokens.
 **Considered and rejected:** Moving only the Flagship model. That is the largest
 single lever and is being done separately, but a cheaper model asked the same
 useless questions at the same rate is still the same design, and the next
-model change would bring the cost straight back. Collapsing calendar instances
-at the connector instead of excluding the event type here: the right fix for the
-feed too, but a connector change with its own checkpoint semantics, and this
-surface needed to stop bleeding today. An inclusion list of candidate event
-types: it would silently withhold every connector added later. Making the
-debounce depend on whether the member is currently looking: the scheduler
-already declines dormant members, and the tiering is where attention belongs.
+model change would bring the cost straight back. Excluding
+`calendar.event_changed` alongside the CI types: an earlier draft of this
+change did, but the calendar volume was the connector expanding one series
+edit into every instance, and that was fixed at the connector the same day
+([`connectors.md`](connectors.md), 2026-09-02). With one activity per edit, a
+moved or cancelled meeting is exactly the kind of candidate this surface
+exists for, so withholding it here would have been treating a symptom after
+its cause was gone. An inclusion list of candidate event types: it would
+silently withhold every connector added later. Making the debounce depend on
+whether the member is currently looking: the scheduler already declines
+dormant members, and the tiering is where attention belongs.
 
-**Consequences:** A check run, a workflow run, or a calendar change can no longer
-become a suggestion, however meaningful; a meeting that produces work is still
-offered through `calendar.event_completed`. A member's set can now be up to
+**Consequences:** A check run or a workflow run can no longer become a
+suggestion, however meaningful. A member's set can now be up to
 thirty minutes behind the admissions that changed it, unless one of the
 immediate triggers fires (a suggestion naming them, a dismissal, a start). An
 existing opportunity's rationale reaches the next admission truncated, so a
 duplicate that is only recognisable from the tail of a long memo may be admitted
 twice. The 600-character cap and the thirty minutes are starting points chosen
 for cost, not measured optima; `__workOpportunityTesting.limits` exposes both.
-The calendar expansion itself is a connector defect and is still open.
 
 ### 2026-08-30 — Admission can no longer route into an existing work stream
 
