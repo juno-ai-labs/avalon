@@ -135,7 +135,22 @@ export function createCustomMcpConnector(config: CustomMcpConnectorConfig): Conn
     capabilities: [CustomMcpCapabilities.tools],
     connectionScopes: ["personal", "workspace"],
     capabilityForConnection: () => CustomMcpCapabilities.tools,
-    selectTools: (tools, connection) => selectCustomMcpTools(tools, customMcpToolPolicy(connection)),
+    selectTools: (tools, connection) => {
+      const policy = customMcpToolPolicy(connection);
+      const selected = selectCustomMcpTools(tools, policy);
+      // Said here rather than left to the empty-catalog error the conversion
+      // raises next, because the two failures need different answers from a
+      // person: an empty catalog is the server's problem, while this one is
+      // solved by choosing "All tools". Discovery is the one place that knows
+      // both the policy and what the server actually offered.
+      if (selected.length === 0 && tools.length > 0) {
+        throw new ConnectorError(
+          "unsupported_capability",
+          "This MCP server marks none of its tools read-only, so a read-only connection could call nothing",
+        );
+      }
+      return selected;
+    },
     withRequestAuth: (connection, signal, operation) => withCustomMcpAuth(connection, signal, operation),
     oauth: {
       redirectUri: config.redirectUri,

@@ -202,7 +202,13 @@ describe("custom MCP connections", () => {
       serverUrl: SERVER_URL,
       requestHeaders: { "X-Api-Key": "secret-value" },
       toolPolicy: "read_only_tools",
-    })).rejects.toMatchObject({ status: 422, code: "custom_mcp_unreachable" });
+    })).rejects.toMatchObject({
+      status: 422,
+      code: "custom_mcp_unreachable",
+      // The message a person can act on: choose "All tools". The generic
+      // empty-catalog wording would leave them guessing at their own server.
+      message: expect.stringContaining("marks none of its tools read-only"),
+    });
     expect(database.prepare("SELECT count(*) AS count FROM connector_connections").get())
       .toEqual({ count: 0 });
 
@@ -214,6 +220,32 @@ describe("custom MCP connections", () => {
       requestHeaders: { "X-Api-Key": "secret-value" },
       toolPolicy: "all_tools",
     })).resolves.toMatchObject({ connection: { displayName: "Acme docs" } });
+  });
+
+  it("refuses a policy change that would leave the connection able to call nothing", async () => {
+    const { auth, env } = fixture();
+    stubMcpServer([WRITE_TOOL]);
+    const service = new ConnectionService(env, auth);
+    const { connection } = await service.createCustomMcp({
+      displayName: "Acme docs",
+      scope: "workspace",
+      serverUrl: SERVER_URL,
+      requestHeaders: { "X-Api-Key": "secret-value" },
+      toolPolicy: "all_tools",
+    });
+
+    // Narrowing this to read-only would leave the plugin unloadable, which
+    // creation already refuses; arriving there by a settings change is the
+    // same outcome with nothing to tell the person why.
+    await expect(service.updateCustomMcpToolPolicy(connection.id, "read_only_tools"))
+      .rejects.toMatchObject({ status: 422, code: "custom_mcp_policy_admits_nothing" });
+    expect((await service.getCustomMcpSettings(connection.id)).toolPolicy).toBe("all_tools");
+
+    // A server that cannot be reached is not evidence about the policy, so it
+    // does not block the change.
+    vi.stubGlobal("fetch", async () => new Response("gone", { status: 503 }));
+    await expect(service.updateCustomMcpToolPolicy(connection.id, "read_only_tools"))
+      .resolves.toMatchObject({ toolPolicy: "read_only_tools" });
   });
 
   it("does not offer a member a policy control their change would be refused by", async () => {
