@@ -5,7 +5,11 @@ import {
   ConnectionSchema,
   ConnectorOAuthAttemptSchema,
   ConnectorOAuthStartSchema,
+  CreateCustomMcpConnectionRequestSchema,
   CreateWebhookConnectionRequestSchema,
+  CustomMcpConnectionSettingsSchema,
+  StartCustomMcpConnectionRequestSchema,
+  UpdateCustomMcpToolPolicyRequestSchema,
   GitHubRepositoryAccessSettingsSchema,
   IdSchema,
   ScopeSchema,
@@ -241,6 +245,39 @@ connectionRoutes.post("/slack/start", zValidator("json", slackStart), async (c) 
     }),
   )));
 });
+/**
+ * A configured MCP server, header-authenticated. Written and proved reachable
+ * before it is returned, so a typo in a URL or a header is answered here rather
+ * than inside somebody's run three days later.
+ */
+connectionRoutes.post("/custom-mcp", zValidator("json", CreateCustomMcpConnectionRequestSchema), async (c) =>
+  c.json(CreatedConnectionSchema.parse(
+    await new ConnectionService(c.env, getAuth(c)).createCustomMcp(c.req.valid("json"))), 201),
+);
+connectionRoutes.post("/custom-mcp/start", zValidator("json", StartCustomMcpConnectionRequestSchema), async (c) => {
+  const service = new ConnectionService(c.env, getAuth(c));
+  return c.json(ConnectorOAuthStartSchema.parse(await bindConnectorTelemetry(
+    c, service, await service.beginCustomMcp({
+      ...c.req.valid("json"), desktopHandoffVersion: desktopHandoffVersion(c),
+    }),
+  )));
+});
+connectionRoutes.get("/:id/custom-mcp/tools", zValidator("param", idParam), async (c) =>
+  c.json(CustomMcpConnectionSettingsSchema.parse(
+    await new ConnectionService(c.env, getAuth(c)).getCustomMcpSettings(c.req.valid("param").id),
+  )),
+);
+connectionRoutes.put(
+  "/:id/custom-mcp/tool-policy",
+  zValidator("param", idParam),
+  zValidator("json", UpdateCustomMcpToolPolicyRequestSchema),
+  async (c) => c.json(CustomMcpConnectionSettingsSchema.parse(
+    await new ConnectionService(c.env, getAuth(c)).updateCustomMcpToolPolicy(
+      c.req.valid("param").id,
+      c.req.valid("json").toolPolicy,
+    ),
+  )),
+);
 connectionRoutes.post("/x", zValidator("json", xCreate), async (c) =>
   c.json(CreatedConnectionSchema.parse(await new ConnectionService(c.env, getAuth(c)).createX(c.req.valid("json"))), 201),
 );
@@ -416,6 +453,11 @@ connectionCallbackRoutes.get("/notion/callback", zValidator("query", googleCallb
     );
     return c.redirect(desktopHandoffUrl(c.env, target), 302);
   }
+});
+connectionCallbackRoutes.get("/custom-mcp/callback", zValidator("query", googleCallback), async (c) => {
+  const query = c.req.valid("query");
+  return connectorCallback(c, "custom_mcp", query, (service, code, state) =>
+    service.completeProvider("custom_mcp", code, state));
 });
 connectionCallbackRoutes.get("/granola/callback", zValidator("query", googleCallback), async (c) => {
   const query = c.req.valid("query");

@@ -1,5 +1,6 @@
 import {
   createConnectorRegistry,
+  type CustomMcpConnectorConfig,
   type GranolaConnectorConfig,
   type GitHubConnectorConfig,
   type LinearConnectorConfig,
@@ -27,6 +28,17 @@ export function githubConnectorConfig(env: Env): GitHubConnectorConfig | null {
     webhookSecret: env.GITHUB_WEBHOOK_SECRET,
     redirectUri: new URL("/connections/github/callback", env.PUBLIC_API_BASE_URL).toString(),
     ...(env.GITHUB_APP_SLUG ? { appSlug: env.GITHUB_APP_SLUG } : {}),
+  };
+}
+
+/**
+ * Every region serves custom MCP servers; there is no Rally-side application to
+ * register. The redirect URI is the only thing the connector needs, and a
+ * server's dynamic client registration is what binds a client to it.
+ */
+export function customMcpConnectorConfig(env: Env): CustomMcpConnectorConfig {
+  return {
+    redirectUri: new URL("/connections/custom-mcp/callback", env.PUBLIC_API_BASE_URL).toString(),
   };
 }
 
@@ -139,6 +151,7 @@ export function connectorSupportsResourceHydration(
 }
 
 function buildConnectorRegistry(env: Env) {
+  const customMcp = customMcpConnectorConfig(env);
   const granola = granolaConnectorConfig(env);
   const github = githubConnectorConfig(env);
   const linear = linearConnectorConfig(env);
@@ -148,6 +161,7 @@ function buildConnectorRegistry(env: Env) {
   const x = xConnectorConfig(env);
   return createConnectorRegistry({
     observer: (level, event, fields) => logStructuredEvent(env, level, event, fields),
+    customMcp,
     granola,
     ...(google ? { google } : {}),
     ...(github ? { github } : {}),

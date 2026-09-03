@@ -2337,12 +2337,16 @@ pre {
 .settings-connection-empty-row .empty-state { min-height: 94px; }
 .settings-icon-tooltip-trigger { display: inline-flex; }
 .settings-connection-tooltip { max-width: 280px; text-align: center; }
-.settings-github-pane { max-width: 760px; }
-.settings-github-connection { margin-bottom: 18px; max-width: 360px; }
+.settings-github-pane,
+.settings-custom-mcp-pane { max-width: 760px; }
+.settings-github-connection,
+.settings-custom-mcp-connection { margin-bottom: 18px; max-width: 360px; }
 .settings-github-policy { margin-bottom: 22px; }
 .settings-github-policy .settings-preference-row > select,
 .settings-github-repository-row > select,
-.settings-github-connection > select {
+.settings-github-connection > select,
+.settings-custom-mcp-pane .settings-preference-row > select,
+.settings-custom-mcp-connection > select {
   background: var(--av-sys-color-surface-subtle);
   border: 1px solid var(--av-ref-color-line-4);
   border-radius: var(--av-sys-size-radius-md);
@@ -2350,19 +2354,25 @@ pre {
   min-height: 32px;
   padding: 0 28px 0 9px;
 }
-.settings-github-repository-heading {
+.settings-github-repository-heading,
+.settings-custom-mcp-tool-heading {
   align-items: flex-end;
   display: flex;
   gap: 18px;
   justify-content: space-between;
   margin-bottom: 10px;
 }
-.settings-github-repository-heading > div { display: grid; gap: 3px; }
-.settings-github-repository-heading strong { font-size: 12px; }
-.settings-github-repository-heading small { color: var(--av-sys-color-text-muted); font-size: 10.5px; }
+.settings-github-repository-heading > div,
+.settings-custom-mcp-tool-heading > div { display: grid; gap: 3px; }
+.settings-github-repository-heading strong,
+.settings-custom-mcp-tool-heading strong { font-size: 12px; }
+.settings-github-repository-heading small,
+.settings-custom-mcp-tool-heading small { color: var(--av-sys-color-text-muted); font-size: 10.5px; }
 .settings-github-search { flex: 0 1 280px; margin: 0; }
-.settings-github-repository-list { max-height: 390px; overflow-y: auto; }
-.settings-github-repository-row {
+.settings-github-repository-list,
+.settings-custom-mcp-tool-list { max-height: 390px; overflow-y: auto; }
+.settings-github-repository-row,
+.settings-custom-mcp-tool-row {
   align-items: center;
   border-bottom: 1px solid var(--av-ref-color-line-3);
   display: grid;
@@ -2371,12 +2381,31 @@ pre {
   min-height: 58px;
   padding: 9px 12px;
 }
-.settings-github-repository-row:last-child { border-bottom: 0; }
-.settings-github-repository-row > span { display: grid; gap: 2px; min-width: 0; }
-.settings-github-repository-row strong { font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.settings-github-repository-row small { color: var(--av-sys-color-text-muted); font-size: 10px; }
+.settings-github-repository-row:last-child,
+.settings-custom-mcp-tool-row:last-child { border-bottom: 0; }
+.settings-github-repository-row > span,
+.settings-custom-mcp-tool-row > span { display: grid; gap: 2px; min-width: 0; }
+.settings-github-repository-row strong,
+.settings-custom-mcp-tool-row strong { font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.settings-github-repository-row small,
+.settings-custom-mcp-tool-row small { color: var(--av-sys-color-text-muted); font-size: 10px; }
 .settings-github-repository-row .button { min-height: 30px; padding: 4px 9px; }
-.settings-github-footnote { margin-top: 12px; }
+.settings-github-footnote,
+.settings-custom-mcp-footnote { margin-top: 12px; }
+/* A tool's own description wraps: a server writes a sentence there, and the
+   single ellipsized line the repository rows use would hide what a person
+   opened this pane to read. */
+.settings-custom-mcp-tool-row small { white-space: normal; }
+/* Name, value, and the control that removes the pair. The value is the wide
+   one — a token is long and a header name is not. */
+.settings-custom-mcp-headers { display: grid; gap: 9px; padding: 12px; }
+.settings-custom-mcp-header-row {
+  align-items: center;
+  display: grid;
+  gap: 9px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr) auto;
+}
+.settings-custom-mcp-header-row .form-field { margin: 0; }
 .connection-provider-dot { background: var(--av-ref-color-neutral-7); border-radius: 50%; height: 7px; width: 7px; }
 .connection-provider-dot.healthy { background: var(--av-sys-color-success-base); }
 .connection-provider-dot.reconnect_required { background: var(--av-sys-color-warning-base); }
