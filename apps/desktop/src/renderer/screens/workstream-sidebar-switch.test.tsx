@@ -8,8 +8,7 @@ const api = vi.hoisted(() => ({
   clientFeatureFlags: vi.fn(),
   getConnections: vi.fn(),
   getWorkspaceMembers: vi.fn(),
-  getWorkstream: vi.fn(),
-  getWorkstreamContext: vi.fn(),
+  getConversation: vi.fn(),
 }));
 const retainedSocket = vi.hoisted(() => vi.fn());
 
@@ -68,7 +67,6 @@ function boot(id: string, title: string): WorkstreamBoot {
     id,
     title,
     titleStatus: 'settled',
-    origin: 'ad_hoc',
     harnessStatus: 'completed',
     scope: 'personal',
     lastActivityAt: '2026-08-26T14:00:00.000Z',
@@ -89,7 +87,6 @@ function boot(id: string, title: string): WorkstreamBoot {
     connections: [],
     backgroundTasks: [],
     openElicitations: [],
-    automationRuns: [],
     transcript: {
       snapshotId: `snapshot-${id}`,
       snapshotThrough: 0,
@@ -154,7 +151,6 @@ describe('the right sidebar does not follow a work-stream switch', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     useUiStore.setState({ railOpen: false, railVariant: 'context', inspector: null });
-    api.getWorkstreamContext.mockResolvedValue({ backgroundTasks: [], automationRuns: [] });
     api.getWorkspaceMembers.mockResolvedValue([]);
     api.getConnections.mockResolvedValue([]);
     retainedSocket.mockReturnValue({

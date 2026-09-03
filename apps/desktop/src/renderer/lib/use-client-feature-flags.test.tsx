@@ -18,7 +18,6 @@ describe('useClientFeatureFlags', () => {
       developerSettings: false,
       meetingRecordingEnabled: true,
       suggestedWorkEnabled: true,
-      automationWorkspaceTemplatesEnabled: true,
       multipleWorkspacesEnabled: true,
       liveArtifactsEnabled: true,
       digestsEnabled: true,

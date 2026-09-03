@@ -13,6 +13,7 @@ function automation(id: string): AutomationSummary {
   return {
     id,
     name: 'Weekly changelog',
+    description: 'What shipped this week.',
     scope: 'workspace',
     status: 'active',
     updatedAt: '2026-08-22T18:00:00.000Z',

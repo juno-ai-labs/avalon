@@ -4,7 +4,6 @@ import type { ElicitationData, Message, MessageMention, PluginActivityData, Thou
 import { pluginGroup } from './plugin-groups';
 import {
   AutomationDraftProposedV1Schema,
-  AutomationPrincipalUnavailableV1Schema,
   ElicitationSchema,
   type TranscriptActivity,
   type PendingTranscriptInput,
@@ -418,7 +417,6 @@ export function orderedTranscriptMessages(
             ...(structured['kind'] === 'suggested_work_expansion' && typeof structured['label'] === 'string'
               ? { contextLabel: structured['label'] }
               : {}),
-            ...principalUnavailableFields(structured),
             ...draftProposedFields(structured),
             ...(elicitation.success ? { elicitation: normalizeElicitation(elicitation.data) } : {}),
           };
@@ -2020,29 +2018,6 @@ export function collapseSettledWorkIntoAccordion(messages: readonly Message[]): 
     }
   }
   return rows.map((message, index) => ({ ...message, sequenceNumber: index + 1 }));
-}
-
-/**
- * The automation-principal card's fields, or nothing.
- *
- * Parsed rather than trusted: this row is written by the server, but a client
- * that rendered a half-formed card would show an action leading nowhere, and
- * the row is one the room is being asked to act on.
- */
-function principalUnavailableFields(
-  structured: Record<string, unknown>,
-): Pick<Message, 'principalUnavailable'> | Record<string, never> {
-  if (structured['type'] !== 'automation_principal_unavailable') return {};
-  const parsed = AutomationPrincipalUnavailableV1Schema.safeParse(structured);
-  if (!parsed.success) return {};
-  return {
-    principalUnavailable: {
-      automationId: parsed.data.automationId,
-      automationName: parsed.data.automationName,
-      outgoingUserName: parsed.data.outgoingUserName,
-      unreachableProviders: parsed.data.unreachableProviders,
-    },
-  };
 }
 
 /**

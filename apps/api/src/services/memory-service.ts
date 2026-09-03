@@ -333,6 +333,15 @@ export async function resolveMemoryAccess(
   // container's own row says nothing more. This used to be decided by a
   // subscription id on the run plus the identity root's `origin_type`, the
   // second of which was a weaker copy of the first and has no writer now.
+  if (input.executionPrincipal.type === "user") {
+    scopes.push(await ensureScope(
+      env,
+      input.workspaceId,
+      "user",
+      input.executionPrincipal.userId,
+      true,
+    ));
+  }
   scopes.push(await ensureScope(
     env,
     input.workspaceId,

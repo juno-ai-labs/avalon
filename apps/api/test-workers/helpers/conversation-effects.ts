@@ -141,3 +141,61 @@ export async function deliverEffectsToWorkspace(
   }
   return { child: childEnvelopes, parent: parentEnvelopes };
 }
+
+function parentDrainRank(kind: ParentEffectEnvelope["effect"]["kind"]): number {
+  if (kind === "directory_common") return 0;
+  if (kind === "directory_user" || kind === "directory_automation") return 1;
+  return 2;
+}
+
+/**
+ * Parent outbox → consumer → WorkspaceDO, one message at a time, in the order
+ * the parent's own drain sends them: common rows, then viewer rows, then the
+ * rest.
+ *
+ * The Queue promises no order, and the workspace refuses a viewer row for a
+ * work stream it has not seen yet (the row references the directory row), so
+ * in production that message waits for its redelivery. `deliverParentEffects`
+ * consumes a batch concurrently and reports that redelivery as a failure,
+ * which is right for a test about one effect and wrong for one that walks a
+ * whole creation through: the common row and its viewer rows leave the parent
+ * together, and which one the consumer finishes first is a coin toss.
+ */
+export async function deliverParentEffectsInOrder(
+  env: Env,
+  parent: DurableObjectStub,
+): Promise<ParentEffectEnvelope[]> {
+  const rows = await pendingRows(parent, "parent_effect");
+  const ordered = rows
+    .map((row) => ({ row, envelope: ParentEffectEnvelopeSchema.parse(JSON.parse(row.payload_json)) }))
+    .sort((left, right) => parentDrainRank(left.envelope.effect.kind) - parentDrainRank(right.envelope.effect.kind));
+  const delivered: ParentEffectEnvelope[] = [];
+  for (const { row, envelope } of ordered) {
+    const result = await consumeEffectBodies(env, [envelope]);
+    if (result.retried > 0) {
+      throw new Error(`parent effect delivery retried ${envelope.effect.kind} ${envelope.messageId}`);
+    }
+    await deleteRows(parent, [row]);
+    delivered.push(envelope);
+  }
+  return delivered;
+}
+
+/** `deliverEffectsToWorkspace`, with the parent leg walked in the parent's own order. */
+export async function deliverEffectsToWorkspaceInOrder(
+  env: Env,
+  child: DurableObjectStub,
+  region: "global" | "eu" = "global",
+): Promise<{ child: ConversationEffectEnvelope[]; parent: ParentEffectEnvelope[] }> {
+  const childEnvelopes = await deliverChildEffects(env, child);
+  const parents = new Map<string, DurableObjectStub>();
+  for (const envelope of childEnvelopes) {
+    const key = `${envelope.parentKind}:${envelope.parentId}`;
+    if (!parents.has(key)) parents.set(key, parentStubFor(env, region, envelope));
+  }
+  const parentEnvelopes: ParentEffectEnvelope[] = [];
+  for (const parent of parents.values()) {
+    parentEnvelopes.push(...await deliverParentEffectsInOrder(env, parent));
+  }
+  return { child: childEnvelopes, parent: parentEnvelopes };
+}

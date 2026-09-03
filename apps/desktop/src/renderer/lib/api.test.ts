@@ -20,9 +20,7 @@ const connectionId = '00000000-0000-7000-8000-000000000004';
 const messageId = '00000000-0000-7000-8000-000000000005';
 const resourceId = '00000000-0000-7000-8000-000000000006';
 const automationId = '00000000-0000-7000-8000-000000000008';
-const templateId = '00000000-0000-7000-8000-000000000009';
-const currentVersionId = '00000000-0000-7000-8000-000000000010';
-const nextVersionId = '00000000-0000-7000-8000-000000000011';
+const runId = '00000000-0000-7000-8000-000000000009';
 const taskId = '00000000-0000-7000-8000-000000000013';
 const noteId = '00000000-0000-7000-8000-000000000014';
 
@@ -42,12 +40,7 @@ const detail = {
   titleStatus: 'settled' as const,
   objective: 'Find the cause.',
   emailAddress: 'luminous-tidal-structured-curie@automation.rallywith.ai',
-  originType: 'ad_hoc' as const,
-  originLabel: null,
   createdByUserId: userId,
-  automationSubscriptionId: null,
-  automationRunId: null,
-  plannedFor: null,
   harnessStatus: 'idle' as const,
   lastActivityAt: timestamp,
   latestAttentionSequenceNumber: 4,
@@ -144,27 +137,46 @@ const wireAutomationDetail = {
   description: 'Check a blog for new posts.',
   emailAddress: null,
   scope: 'personal' as const,
-  status: 'active' as const,
+  owningWorkstreamId: null,
+  status: 'draft' as const,
   nextRunAt: null,
   lastRunAt: null,
   updatedAt: timestamp,
-  updateAvailable: false,
-  templateId,
-  templateVersionId: currentVersionId,
-  versionNumber: 1,
-  instructions: 'Check the configured blog and report new posts.',
-  overview: 'Checks the configured blog every day.',
-  triggers: [{ type: 'interval' as const, intervalSeconds: 86_400, summary: 'Every 24 hours' }],
-  requiredCapabilities: [],
-  expectedOutputs: ['New post summary'],
-  executionPrincipal: { type: 'user', userId },
-  recommendedPlugins: [],
-  memoryTables: [],
-  defaultPluginIds: [],
-  activitySourcePluginIds: {},
-  templateUpdate: null,
-  nextPlannedWorkstream: null,
+  lifecycle: 'draft' as const,
+  authorUserId: userId,
+  runAsUserId: userId,
+  currentDefinition: {
+    name: 'Blog monitor',
+    description: 'Check a blog for new posts.',
+    overview: 'Checks the configured blog every day.',
+    instructions: 'Check the configured blog and report new posts.',
+    triggers: [{ type: 'interval' as const, intervalSeconds: 86_400, summary: 'Every 24 hours' }],
+    requiredCapabilities: [],
+    expectedOutputs: ['New post summary'],
+    defaultBehavior: {},
+    recommendedPlugins: [],
+    memoryTables: [],
+    suggestedScope: 'personal' as const,
+    followUpQuestion: null,
+    elicitation: null,
+    ready: true,
+  },
+  currentDefinitionRevision: 1,
+  acceptedDefinitionRevision: null,
+  connectorBindings: {},
   recentRuns: [],
+};
+
+const wireAutomationRun = {
+  id: runId,
+  automationId,
+  triggerType: 'schedule' as const,
+  plannedFor: timestamp,
+  startedAt: timestamp,
+  completedAt: '2026-07-31T20:00:12.000Z',
+  status: 'completed' as const,
+  resultSummary: 'Two new posts.',
+  createdAt: timestamp,
 };
 
 function json(value: unknown, init: ResponseInit = {}): Response {
@@ -181,20 +193,71 @@ afterEach(() => {
 });
 
 describe('Rally API wire adapter', () => {
-  it('carries an automation’s attention reason from the wire to the screen', async () => {
-    // The reason is what the screen turns into a sentence. Dropped here it is a
-    // status dot with nothing behind it, which is the state this fixed.
+  it('maps an automation detail: scope, lifecycle, revisions, trigger lines and runs', async () => {
+    // The header reads the two revisions to decide whether Create may be
+    // pressed, so both have to survive the mapping exactly as the wire says
+    // them; the trigger lines are rendered here rather than in the header.
     vi.stubGlobal('fetch', vi.fn(async () => json({
       ...wireAutomationDetail,
-      status: 'paused',
-      attention: 'unsupported_trigger',
+      scope: 'workstream',
+      owningWorkstreamId: workstreamId,
+      status: 'active',
+      lifecycle: 'active',
+      acceptedDefinitionRevision: 1,
+      recentRuns: [wireAutomationRun],
     })));
     const api = new RallyApi('https://api.rally.test', session);
 
     await expect(api.getAutomation(automationId)).resolves.toMatchObject({
-      status: 'paused',
-      attention: 'unsupported_trigger',
+      id: automationId,
+      scope: 'workstream',
+      owningWorkstreamId: workstreamId,
+      status: 'active',
+      lifecycle: 'active',
+      currentDefinitionRevision: 1,
+      acceptedDefinitionRevision: 1,
+      currentDefinition: expect.objectContaining({ ready: true }),
+      triggerSummaries: ['Every 24 hours'],
+      recentRuns: [expect.objectContaining({
+        id: runId,
+        triggerType: 'schedule',
+        status: 'completed',
+        resultSummary: 'Two new posts.',
+        durationMs: 12_000,
+      })],
     });
+  });
+
+  it('creates an automation with no body and hands back the id its route opens', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      void input;
+      void init;
+      return json({ automationId }, { status: 201 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new RallyApi('https://api.rally.test', session);
+
+    await expect(api.createAutomation()).resolves.toEqual({ automationId });
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe('https://api.rally.test/automations');
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: 'POST' });
+    expect(fetchMock.mock.calls[0]?.[1]?.body).toBeUndefined();
+  });
+
+  it('applies the current revision with no body and lists runs from their own route', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(json({ ...wireAutomationDetail, lifecycle: 'active', status: 'active', acceptedDefinitionRevision: 1 }))
+      .mockResolvedValueOnce(json({ items: [wireAutomationRun] }));
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new RallyApi('https://api.rally.test', session);
+
+    await expect(api.acceptAutomation(automationId)).resolves.toMatchObject({ acceptedDefinitionRevision: 1 });
+    await expect(api.getAutomationRuns(automationId)).resolves.toEqual([expect.objectContaining({ id: runId })]);
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(`https://api.rally.test/automations/${automationId}/accept`);
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: 'POST' });
+    expect(fetchMock.mock.calls[0]?.[1]?.body).toBeUndefined();
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe(`https://api.rally.test/automations/${automationId}/runs`);
   });
 
   it('tells the person to restart Rally when a plain response does not match its schema', async () => {
@@ -220,7 +283,6 @@ describe('Rally API wire adapter', () => {
   it('maps representative work-stream and resource wire records into renderer models', () => {
     expect(mapWorkstreamDetail(detail)).toMatchObject({
       id: workstreamId,
-      origin: 'ad_hoc',
       emailAddress: 'luminous-tidal-structured-curie@automation.rallywith.ai',
       harnessStatus: 'completed',
       participants: [{ id: userId, role: 'creator' }],
@@ -308,23 +370,6 @@ describe('Rally API wire adapter', () => {
     })).toMatchObject({
       backgroundTasks: [{ id: taskId, type: 'agent', durationMs: 12_000, tokenCount: 1_250, toolUses: 3 }],
     });
-  });
-
-  it('asks for nothing when a work stream has no automation behind it', async () => {
-    // `/context` is gone. Its only field was `backgroundTasks`, which rides on
-    // the work-stream detail, so the deferred rail now makes no request at all
-    // unless there is an automation to describe — and that is a different
-    // resource with its own endpoint.
-    const workstreamId = '00000000-0000-7000-8000-000000000012';
-    const fetchMock = vi.fn(async () => json({}));
-    vi.stubGlobal('fetch', fetchMock);
-    const api = new RallyApi('https://api.rally.test', session);
-
-    await expect(api.getWorkstreamContext(workstreamId)).resolves.toEqual({
-      backgroundTasks: [],
-      automationRuns: [],
-    });
-    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('surfaces nested service errors with their code and details', async () => {
@@ -446,12 +491,7 @@ describe('Rally API wire adapter', () => {
   it('reuses the run-now idempotency key until the server confirms the run', async () => {
     const fetchMock = vi.fn()
       .mockRejectedValueOnce(new TypeError('connection reset'))
-      .mockResolvedValueOnce(json({
-        runId: '00000000-0000-7000-8000-000000000006',
-        workstreamId,
-        harnessRunId: '00000000-0000-7000-8000-000000000007',
-        reused: true,
-      }));
+      .mockResolvedValueOnce(json({ runId, reused: true }));
     vi.stubGlobal('fetch', fetchMock);
     const api = new RallyApi('https://api.rally.test', session);
 
@@ -461,7 +501,7 @@ describe('Rally API wire adapter', () => {
       expect.objectContaining({ code: 'network_error', status: 0 }),
       'network_error',
     );
-    await expect(api.runAutomation('automation-1')).resolves.toMatchObject({ id: workstreamId });
+    await expect(api.runAutomation('automation-1')).resolves.toEqual({ runId, reused: true });
 
     const firstHeaders = new Headers(fetchMock.mock.calls[0]?.[1]?.headers);
     const secondHeaders = new Headers(fetchMock.mock.calls[1]?.[1]?.headers);
@@ -670,129 +710,29 @@ describe('Rally API wire adapter', () => {
     expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({ method: 'POST' });
   });
 
-  it('uses the template, watch, and detach service contracts without inventing response fields', async () => {
+  it('uses the watch, attach, and detach service contracts without inventing response fields', async () => {
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(json({ templateId: '00000000-0000-7000-8000-000000000007' }, { status: 201 }))
       .mockResolvedValueOnce(json({ watchEnabled: true }))
       .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(json({ ...resource, relationshipType: 'attachment', direction: 'source' }, { status: 201 }))
+      .mockResolvedValueOnce(json(detail))
       .mockResolvedValueOnce(new Response(null, { status: 204 }));
     vi.stubGlobal('fetch', fetchMock);
     const api = new RallyApi('https://api.rally.test', session);
 
-    await expect(api.shareAutomation('00000000-0000-7000-8000-000000000008')).resolves.toEqual({
-      templateId: '00000000-0000-7000-8000-000000000007',
-    });
     await expect(api.setResourceWatch(workstreamId, resourceId, true)).resolves.toEqual({ enabled: true });
     await expect(api.setResourceWatch(workstreamId, resourceId, false)).resolves.toEqual({ enabled: false });
+    await expect(api.attachResource(workstreamId, resourceId)).resolves.toMatchObject({ id: workstreamId });
     await expect(api.detachResource(workstreamId, resourceId)).resolves.toBeUndefined();
 
-    expect(String(fetchMock.mock.calls[0]?.[0])).toBe('https://api.rally.test/automation-templates');
-    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
-      automationSubscriptionId: '00000000-0000-7000-8000-000000000008',
-    });
-    expect(String(fetchMock.mock.calls[1]?.[0])).toBe(`https://api.rally.test/resources/${resourceId}/watch`);
-    expect(String(fetchMock.mock.calls[2]?.[0])).toContain(`workstreamId=${workstreamId}`);
-    expect(String(fetchMock.mock.calls[3]?.[0])).toBe(`https://api.rally.test/workstreams/${workstreamId}/resources/${resourceId}`);
-  });
-
-  it('previews a template update and adopts only the selected immutable version', async () => {
-    const current = {
-      id: automationId,
-      name: 'Weekly brief',
-      emailAddress: 'luminous-tidal-structured-curie@automation.rallywith.ai',
-      description: 'A concise weekly status brief.',
-      scope: 'personal' as const,
-      status: 'active' as const,
-      nextRunAt: null,
-      lastRunAt: null,
-      updatedAt: '2026-08-01T09:00:00.000Z',
-      updateAvailable: true,
-      templateId,
-      templateVersionId: currentVersionId,
-      versionNumber: 1,
-      overview: 'A concise weekly status brief.',
-      instructions: 'Summarize changes.',
-      triggers: [{
-        type: 'calendar' as const,
-        rrule: 'FREQ=WEEKLY;BYDAY=FR',
-        timezone: 'America/Los_Angeles',
-        summary: 'Every Friday',
-      }],
-      requiredCapabilities: ['gmail.read'],
-      expectedOutputs: ['A concise weekly brief'],
-      executionPrincipal: { type: 'user', userId },
-      recommendedPlugins: [],
-      defaultPluginIds: [],
-      templateUpdate: {
-        versionId: nextVersionId,
-        versionNumber: 2,
-        overview: 'A concise weekly brief of changes and decisions.',
-        instructions: 'Summarize changes and decisions.',
-        triggers: [{
-          type: 'calendar' as const,
-          rrule: 'FREQ=WEEKLY;BYDAY=MO',
-          timezone: 'America/Los_Angeles',
-          summary: 'Every Monday',
-        }],
-        requiredCapabilities: ['gmail.read'],
-        expectedOutputs: ['A concise weekly brief'],
-        recommendedPlugins: [],
-      },
-      nextPlannedWorkstream: null,
-      recentRuns: [{
-        id: '00000000-0000-7000-8000-000000000012',
-        automationSubscriptionId: automationId,
-        workstreamId,
-        triggerType: 'calendar',
-        plannedFor: timestamp,
-        startedAt: timestamp,
-        completedAt: timestamp,
-        status: 'completed' as const,
-        resultSummary: null,
-        createdAt: timestamp,
-      }],
-    };
-    const adopted = {
-      ...current,
-      updateAvailable: false,
-      templateVersionId: nextVersionId,
-      versionNumber: 2,
-      instructions: current.templateUpdate.instructions,
-      triggers: current.templateUpdate.triggers,
-      templateUpdate: null,
-    };
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(json(current))
-      .mockResolvedValueOnce(json(adopted));
-    vi.stubGlobal('fetch', fetchMock);
-    const api = new RallyApi('https://api.rally.test', session);
-
-    await expect(api.getAutomation(automationId)).resolves.toMatchObject({
-      emailAddress: 'luminous-tidal-structured-curie@automation.rallywith.ai',
-      versionNumber: 1,
-      statusMessage: 'Update available',
-      templateUpdate: {
-        versionId: nextVersionId,
-        versionNumber: 2,
-        overview: 'A concise weekly brief of changes and decisions.',
-        instructions: 'Summarize changes and decisions.',
-        triggerSummary: 'Every Monday',
-        capabilities: ['gmail.read'],
-        expectedOutputs: ['A concise weekly brief'],
-        recommendedPlugins: [],
-      },
-      runs: [expect.objectContaining({ triggerType: 'scheduled' })],
-    });
-    await expect(api.adoptAutomationUpdate(automationId, nextVersionId)).resolves.toMatchObject({
-      versionNumber: 2,
-      instructions: 'Summarize changes and decisions.',
-    });
-
-    expect(String(fetchMock.mock.calls[1]?.[0])).toBe(
-      `https://api.rally.test/automation-subscriptions/${automationId}/adopt-version`,
-    );
-    expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({ method: 'POST' });
-    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({ versionId: nextVersionId });
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(`https://api.rally.test/resources/${resourceId}/watch`);
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain(`workstreamId=${workstreamId}`);
+    // Resources hang off the conversation, whichever kind of parent it has,
+    // and the attach re-reads the boot from the same place.
+    expect(String(fetchMock.mock.calls[2]?.[0])).toBe(`https://api.rally.test/conversations/${workstreamId}/resources`);
+    expect(String(fetchMock.mock.calls[3]?.[0])).toBe(`https://api.rally.test/conversations/${workstreamId}`);
+    expect(String(fetchMock.mock.calls[4]?.[0])).toBe(`https://api.rally.test/conversations/${workstreamId}/resources/${resourceId}`);
+    expect(fetchMock.mock.calls[4]?.[1]).toMatchObject({ method: 'DELETE' });
   });
 
   it('starts and reconciles a durable connector OAuth attempt', async () => {
@@ -962,7 +902,11 @@ describe('socket ticket transport', () => {
     await expect(api.getSocketTicket(workstreamId, '0', undefined, 42)).resolves.toMatchObject({
       subscriptionBootstrap: true,
     });
-    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('afterSequence=42');
+    // The ticket is issued under the conversation, not the work stream: the
+    // same route serves an automation's feed.
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      `https://api.rally.test/conversations/${workstreamId}/substreams/0/socket?afterSequence=42`,
+    );
   });
 
   it('labels a hover feed ticket as speculative', async () => {
@@ -1031,8 +975,8 @@ describe('request correlation', () => {
     }));
     const api = new RallyApi('https://api.rally.test', session);
 
-    await api.getWorkstream(workstreamId);
-    await api.getWorkstream(workstreamId);
+    await api.getConversation(workstreamId);
+    await api.getConversation(workstreamId);
 
     const ids = sent.map((init) => new Headers(init?.headers).get('x-request-id'));
     // Without one the service mints its own, which no client-side trace line
@@ -1062,15 +1006,17 @@ describe('request correlation', () => {
 
   it('correlates work-stream detail attempts separately from each request and socket start', async () => {
     const sent: Array<RequestInit | undefined> = [];
+    const urls: string[] = [];
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       sent.push(init);
+      urls.push(String(input));
       return String(input).endsWith('/control-socket')
         ? json({ url: 'wss://api.rally.test/control', ticket: 'ticket' })
         : json(detail);
     }));
     const api = new RallyApi('https://api.rally.test', session);
 
-    await api.getWorkstream(workstreamId, undefined, 'feed-visible-operation');
+    await api.getConversation(workstreamId, undefined, 'feed-visible-operation');
     await api.getWorkstreamControlSocketTicket(workstreamId, 'control-start-operation');
 
     const requestIds = sent.map((init) => new Headers(init?.headers).get('x-request-id'));
@@ -1080,6 +1026,12 @@ describe('request correlation', () => {
     expect(sent.map((init) => new Headers(init?.headers).get('x-rally-operation-id'))).toEqual([
       'feed-visible-operation',
       null,
+    ]);
+    // The boot moved to the parent-agnostic route; the control socket did not,
+    // because only a work stream has one.
+    expect(urls).toEqual([
+      `https://api.rally.test/conversations/${workstreamId}`,
+      `https://api.rally.test/workstreams/${workstreamId}/control-socket`,
     ]);
   });
 });

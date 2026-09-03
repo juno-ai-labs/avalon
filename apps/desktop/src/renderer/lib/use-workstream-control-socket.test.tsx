@@ -75,7 +75,6 @@ function summary(overrides: Partial<WorkstreamSummary> = {}): WorkstreamSummary 
     id: workstreamId,
     title: 'Before sync',
     titleStatus: 'settled',
-    origin: 'ad_hoc',
     harnessStatus: 'completed',
     latestAttentionSequenceNumber: 0,
     readThroughSequenceNumber: 0,
@@ -109,11 +108,7 @@ function metadata(revision: number, overrides: Partial<WorkstreamControlMetadata
     description: 'Authoritative description',
     preview: 'Preview',
     emailAddress: 'workstream@automation.rallywith.ai',
-    originType: 'ad_hoc',
     createdByUserId: '00000000-0000-7000-8000-000000000013',
-    automationSubscriptionId: null,
-    automationRunId: null,
-    plannedFor: null,
     titleStatus: 'settled',
     exactState: 'running',
     harnessStatus: 'running',
@@ -170,7 +165,6 @@ describe('useWorkstreamControlSocket', () => {
     const queryClient = new QueryClient();
     setCachedWorkstreams(queryClient, [summary({
       emailAddress: 'stale@example.com',
-      automationRunId: '00000000-0000-7000-8000-000000000099',
       systemKind: 'digest',
     })]);
     const getWorkstreamControlSocketTicket = vi.fn(async () => ({
@@ -205,14 +199,12 @@ describe('useWorkstreamControlSocket', () => {
     act(() => socket.message(metadata(5, {
       emailAddress: null,
       createdByUserId: null,
-      automationRunId: null,
       archivedAt: null,
       systemKind: null,
     })));
     const cleared = queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0];
     expect(cleared).not.toHaveProperty('emailAddress', 'stale@example.com');
     expect(cleared?.emailAddress).toBeUndefined();
-    expect(cleared?.automationRunId).toBeUndefined();
     expect(cleared?.systemKind).toBeUndefined();
 
     act(() => socket.close(1008));

@@ -668,8 +668,9 @@ export class ResendRegionalEmailService {
     // fetching again.
     const email = normalizeReceivedEmail(await this.retrieveReceivedEmail(input.resendEmailId));
     const senderMailbox = mailboxAddress(email.from);
-    const senderUserId = null;
-    void senderMailbox;
+    const senderUserId = senderMailbox
+      ? await this.activeWorkspaceMemberForEmail(input.workspaceId, senderMailbox)
+      : null;
     const payloadRef = `workspaces/${input.workspaceId}/inbound-email/${input.resendEmailId}.json`;
     await this.env.PAYLOADS.put(payloadRef, JSON.stringify({
       version: 1,

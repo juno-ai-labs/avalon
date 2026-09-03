@@ -15,7 +15,6 @@ function summary(overrides: Partial<WorkstreamSummary> = {}): WorkstreamSummary 
     id,
     title: 'Initial',
     titleStatus: 'settled',
-    origin: 'ad_hoc',
     scope: 'workspace',
     harnessStatus: 'running',
     latestAttentionSequenceNumber: 1,
