@@ -30,6 +30,7 @@ import {
 } from "./identifiers";
 import type { BlockIdSchema } from "./identifiers";
 
+import type { AutomationSetEvaluatorRulesInputV1 } from "./automation-evaluators";
 export * from "./automation-evaluators";
 export * from "./automation-agent";
 export * from "./identifiers";
@@ -1337,9 +1338,21 @@ export const TriggerDefinitionSchema = z.discriminatedUnion("type", [
  * the union it discriminates so a kind added there is one file away from the
  * question of whether it needs an evaluator.
  */
+/**
+ * The trigger kinds that arrive from outside Rally, and so bind to a connector.
+ *
+ * Written as a type predicate rather than a `boolean` so a caller that has
+ * filtered on it can read `sourceBindingKey` and `suggestedSourcePluginId`
+ * without re-narrowing. Those two fields exist only on this side of the union,
+ * which is the whole reason the predicate is worth having.
+ */
+export type ExternalEventTrigger = Extract<
+  z.infer<typeof TriggerDefinitionSchema>,
+  { type: "connector_activity" | "semantic_activity" | "webhook" }
+>;
 export function isExternalEventTrigger(
   trigger: z.infer<typeof TriggerDefinitionSchema>,
-): boolean {
+): trigger is ExternalEventTrigger {
   return trigger.type === "connector_activity"
     || trigger.type === "semantic_activity"
     || trigger.type === "webhook";
@@ -1459,6 +1472,106 @@ export const AutomationDraftSchema = z.object({
     sourceBindings.set(trigger.sourceBindingKey, { connectorType, pluginId: trigger.suggestedSourcePluginId });
   });
 });
+
+/**
+ * The delivery channels an accepted automation can actually be given.
+ *
+ * `requestedDelivery` records what the drafting conversation was asked for, in
+ * a vocabulary wider than acceptance can express: `slack_agent_dm` resolves to
+ * a target that names a specific Slack connection, and `channel` has no target
+ * shape at all. Neither is derivable from a draft, which deliberately carries
+ * no IDs. Only `email` is, because it resolves from the author's own user row
+ * and needs nothing chosen.
+ */
+const DERIVABLE_REQUESTED_DELIVERY = new Set(["email"]);
+
+/**
+ * Everything acceptance needs that the draft has already decided.
+ *
+ * Acceptance used to take these as request fields, because the wizard that
+ * preceded the proposal card asked a member to choose them. That wizard is
+ * gone, and the drafting loop answers the same questions earlier and with more
+ * evidence: a ready draft's activity trigger names its own binding key and the
+ * plugin the model loaded and inspected against a live connection activation,
+ * and its recommended plugins were held to the same rule. Reading them back off
+ * the definition is therefore not a fallback for a missing request field, it is
+ * the only source that was ever authoritative.
+ *
+ * Derivation alone proves nothing about the present: a connection can be
+ * revoked between drafting and Create, so acceptance still resolves each plugin
+ * against the workspace's connections. That check is what the request field's
+ * absence exposes rather than hides.
+ */
+export function automationAcceptanceSelections(draft: AutomationDraft): {
+  activitySourcePluginIds: Record<string, string>;
+  defaultPluginIds: string[];
+  deliveryTargets: z.infer<typeof AutomationDeliveryTargetSetSchema>;
+} {
+  const activitySourcePluginIds: Record<string, string> = {};
+  for (const trigger of draft.triggers) {
+    if (!isExternalEventTrigger(trigger)) continue;
+    if (!trigger.sourceBindingKey || !trigger.suggestedSourcePluginId) continue;
+    activitySourcePluginIds[trigger.sourceBindingKey] = trigger.suggestedSourcePluginId;
+  }
+  return {
+    activitySourcePluginIds,
+    defaultPluginIds: [...new Set(draft.recommendedPlugins.map((plugin) => plugin.pluginId))],
+    deliveryTargets: draft.requestedDelivery.includes("email") ? [{ type: "email" }] : [],
+  };
+}
+
+/** Why a draft could not be accepted as written, in the object's own vocabulary. */
+export type AutomationDraftAcceptanceBlocker =
+  | "automation_evaluator_rules_required"
+  | "automation_activity_source_unbound"
+  | "automation_delivery_channel_unsupported"
+  | "automation_personal_delivery_required";
+
+/**
+ * What would stop this draft being accepted, decided from the draft alone.
+ *
+ * Submission and acceptance both call this, which is the whole point: a draft
+ * the first admits as `ready` and the second refuses reaches a person as a
+ * proposal card whose Create button cannot work, with nothing on it to act on.
+ * `evaluatorRulesMissing` was the first field to be shared this way after
+ * exactly that defect; every check here is one that used to be enforced only at
+ * the far end, or not at all.
+ *
+ * It answers only what a draft can settle for itself. Whether a named plugin
+ * still resolves to a healthy connection the caller may bind is not knowable
+ * here and is deliberately left to acceptance, where it is a refusal about the
+ * present rather than about the draft.
+ */
+export function automationDraftAcceptanceBlocker(
+  draft: AutomationDraft,
+  rules: AutomationSetEvaluatorRulesInputV1 | null,
+): AutomationDraftAcceptanceBlocker | null {
+  const external = draft.triggers.filter(isExternalEventTrigger);
+  if (external.length > 0 && (rules?.evaluators.length ?? 0) === 0) {
+    return "automation_evaluator_rules_required";
+  }
+  // Every evaluator has to name a binding the triggers actually declare.
+  // Triggers and rules are written by two separate tool calls, so this is the
+  // one place their agreement is checked directly rather than inferred from a
+  // request field that happened to carry both.
+  const { activitySourcePluginIds } = automationAcceptanceSelections(draft);
+  for (const evaluator of rules?.evaluators ?? []) {
+    const bound = activitySourcePluginIds[evaluator.source.sourceBindingKey];
+    if (!bound || bound !== evaluator.source.suggestedSourcePluginId) {
+      return "automation_activity_source_unbound";
+    }
+  }
+  if (draft.requestedDelivery.some((channel) => !DERIVABLE_REQUESTED_DELIVERY.has(channel))) {
+    return "automation_delivery_channel_unsupported";
+  }
+  // Acceptance refuses delivery outside a personal automation. The draft's own
+  // refinement only forbids it for `workstream`, so a `workspace` draft could be
+  // submitted ready and then refused; both ends now answer the same question.
+  if (draft.requestedDelivery.length > 0 && draft.suggestedScope !== "personal") {
+    return "automation_personal_delivery_required";
+  }
+  return null;
+}
 
 export const AutomationDraftStreamEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("started") }),
@@ -1984,37 +2097,6 @@ export const AnswerElicitationRequestSchema = z.union([
     skipped: z.literal(true)
   })
 ]);
-export const CreateAutomationRequestSchema = z.object({
-  /**
-   * The draft this automation was built from. Creating promotes that row in
-   * place — same id, same sidebar position — instead of leaving the draft
-   * behind beside the automation it became. Absent only when an automation is
-   * created without ever having been a draft.
-   */
-  draftId: IdSchema.optional(),
-  draft: AutomationDraftSchema,
-  /**
-   * `workstream` carries no room: the request cannot name one, because a body
-   * that could would let a caller give any room an automation. The room comes
-   * from where the draft was written, which is the only one reachable from an
-   * authoring loop anyway.
-   */
-  scope: AutomationScopeSchema,
-  defaultPluginIds: z.array(ModelPluginIdSchema).default([]),
-  activitySourcePluginIds: ActivitySourcePluginIdsSchema.default({}),
-  resourceIds: z.array(IdSchema).max(20).default([]),
-  deliveryTargets: AutomationDeliveryTargetSetSchema.default([]),
-  /**
-   * Pins the work stream each run of this automation creates to one OpenRouter
-   * model. Same developer-mode selector as a new work stream, held on the
-   * subscription because the runs it applies to do not exist yet.
-   */
-  modelOverride: AgentModelOverrideSchema.optional(),
-}).superRefine((input, context) => {
-  if (input.deliveryTargets.length > 0 && input.scope !== "personal") {
-    context.addIssue({ code: z.ZodIssueCode.custom, path: ["deliveryTargets"], message: "Result delivery outside Avalon requires a personal automation" });
-  }
-});
 export const CompileAutomationRequestSchema = z.object({
   /**
    * The draft subscription this conversation is already writing to. Absent on

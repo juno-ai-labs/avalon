@@ -985,9 +985,11 @@ export class RallyApi {
   /**
    * Create the automation a proposal card names.
    *
-   * No body: the draft is on the server and the card holds only what it shows.
-   * The standalone screen's `createAutomation` echoes its client-held draft
-   * back as a staleness check; there is no client-held draft here to check.
+   * No body, and no longer any alternative: this is the only way an automation
+   * is created. The draft is on the server, the card holds only what it shows,
+   * and everything creating one needs — its connector bindings, its plugins,
+   * its delivery — is derived there from the stored definition rather than
+   * restated by a client that never held it.
    */
   async acceptProposedAutomation(id: string): Promise<AutomationDetail> {
     const raw = await this.request(`/automations/${encodeURIComponent(id)}/accept`, {

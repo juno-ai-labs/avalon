@@ -116,22 +116,34 @@ not archived into a second draft store.
 
 ### Acceptance
 
-Acceptance has two doors onto one `acceptDraft`. `POST /automations` carries the
-draft the caller is looking at. `POST /automations/:id/accept` — the proposal
-card's **Create this automation**, which holds nothing but the summary it
-displays — carries only the id, and `acceptAuthoredDraft` builds the same create
-request server-side out of the stored definition. Both re-read the object's
-snapshot, refuse unless the submitted draft is byte-identical to that definition
-(`automation_definition_revision_stale`), and call `acceptDraft`.
+`POST /automations/:id/accept` is the only way an automation is created. It
+carries an ID and nothing else: `acceptAuthoredDraft` reads the stored
+definition, checks it is `ready`, resolves the owning room and the caller's
+participation in it, and calls `acceptDraft`.
 
-That comparison is a staleness check on a draft the *caller* held while
-reviewing it, so it means what it says only for `POST /automations`. The id-only
-door has no client-held draft: it reads the snapshot itself and `accept` reads
-it a second time, so the comparison is vacuous — except under the race between
-those two reads, where a compiler revision landing in the gap makes the card
-refuse itself with a sentence written for somebody else's stale review. Narrow,
-and cheaper to leave than to special-case the shared path around, but it is why
-the refusal can reach a member who never reviewed anything.
+Everything acceptance needs beyond that is **derived from the definition** by
+`automationAcceptanceSelections`, never taken from a request:
+
+| Derived | From |
+| --- | --- |
+| `activitySourcePluginIds` | each external-event trigger's `sourceBindingKey` and `suggestedSourcePluginId` |
+| `defaultPluginIds` | `recommendedPlugins[].pluginId` |
+| `deliveryTargets` | `requestedDelivery`, which only `email` can satisfy |
+
+That inversion is the point. These were request fields because a create wizard
+asked a member to choose them, and that wizard was deleted on 2026-09-01 along
+with the last caller that could answer. The drafting loop settles the same
+questions earlier and with more evidence: a ready draft's activity trigger names
+the plugin the model loaded and inspected against a live connection activation,
+and its recommended plugins were held to the same rule. The draft was always the
+authoritative source; the request was a copy of it that the surviving caller
+could not make.
+
+What derivation deliberately does **not** settle is the present. A connection
+can be revoked, disabled, or become another member's between drafting and
+Create, so acceptance still resolves every derived plugin against the
+workspace's own connections. Those refusals are the legitimate residue of the
+time gap, and each has a table row so it reaches a member as an instruction.
 
 Acceptance is two phases around one durable acceptance row, so an interrupted
 activation resumes rather than restarting:
@@ -382,18 +394,24 @@ telemetry storage — not a product-state fallback.
   refusal wearing the one status a client retries, logged beside real faults.
   `withAutomationErrors` is for calls that can *refuse*; a call whose failures
   are all faults keeps its 500 rather than being dressed as a conflict.
-- **A create request the service builds for itself is typed as the create
-  schema's own input.** `acceptAuthoredDraft` constructs one and hands it to
-  `accept`, which re-parses it, so a field the schema rejects is nobody's bad
-  request: it is a `ZodError` between two pieces of our own code, and it reaches
-  the boundary as the same 500 the invariant above is about — with no member
-  input that could have avoided it, on every press of every card. The annotation
-  catches the *structural* half of that: a wrong type, a `null` where the field
-  is optional rather than nullable, a required field left out. It does not catch
-  what `CreateAutomationRequestSchema` only checks while parsing — `resourceIds`'
-  `.max(20)`, and the `superRefine` refusing delivery targets outside a personal
-  scope — which typecheck and then throw. Those stay the caller's to satisfy by
-  construction, and both are literals here.
+- **Acceptance derives what the draft decided; it never takes it in a request.**
+  The bindings, plugins and delivery an automation is created with come from the
+  stored definition through `automationAcceptanceSelections`. A request field
+  restating any of them is a second source of truth for a fact the draft already
+  settled, and the way this failed is instructive rather than hypothetical: the
+  fields outlived the wizard that filled them, the one surviving caller sent
+  empty values, and acceptance read those as decisions. Two of the four failed
+  loudly and two silently, which is why "it errors" is not the test — an
+  automation created successfully and doing less than the card described is the
+  worse outcome.
+- **A `ready` draft is one acceptance will not refuse for anything the draft
+  itself settles.** `automationDraftAcceptanceBlocker` is called by
+  `admitAuthoredDraft` and again by `prepareAcceptance`; a check either end
+  applies alone will drift, and what drift looks like here is a proposal card
+  whose Create button cannot work, with nothing on it for the person to act on.
+  Anything about the *present* — whether a named plugin still resolves to a
+  healthy connection the caller may bind — is deliberately not in that
+  predicate, because a draft cannot answer it and acceptance must.
 - **A directory row locates; it never authorizes.** `automation_directory` holds
   no definition, no instructions, and no run content, and every content read goes
   through the agent, which re-checks the author or asks WorkspaceDO to authorize
@@ -477,19 +495,22 @@ email is addressed and rendered
   `applyAutomationProjection`, whose worst case is two writers disagreeing about
   a coordinate the directory already holds — is deliberately left unwrapped
   rather than given a 409 a client will retry.
-- **The proposal card cannot create an external-event draft.** `acceptAuthoredDraft`
-  sends an empty `activitySourcePluginIds`, so a ready draft carrying a
-  `connector_activity`, `semantic_activity` or `webhook` trigger — which is ready
-  only if it has evaluators — fails `prepareAcceptance`'s first binding check
-  with `automation_evaluator_source_binding_mismatch`. That code has no row in
-  the error table, so it reaches the member as the generic 409 rather than a
-  sentence. Passing the triggers' own `suggestedSourcePluginId` map would move
-  the refusal rather than remove it: `automation_evaluator_connection_missing`
-  is equally untabled, and the scope rules on a resolved connection are next.
-  Making this card work end to end is a connector-binding decision — whether a
-  plugin the drafting conversation proposed is one the member has agreed to bind,
-  or one the card must show and ask about — plus the error-table rows to make
-  whatever it refuses with legible. Timer-only and manual drafts are unaffected.
+- **A derived plugin whose connection has gone** refuses the create:
+  `automation_plugin_unavailable` when the workspace has no healthy connection
+  for it, `automation_workspace_connection_required` when a workspace-scoped
+  automation would bind a personal one, `automation_evaluator_connection_missing`
+  for an event source in the same state. These are the legitimate residue of the
+  gap between drafting and Create, they cannot be moved earlier, and each has a
+  table row so it reaches a member as an instruction rather than as the generic
+  conflict every untabled code used to produce.
+- **A draft asking for a delivery channel that cannot be bound** is refused with
+  `automation_delivery_channel_unsupported`, at submission and again at
+  acceptance. Only `email` is derivable, because it resolves from the author's
+  own user row and names no connection; `slack_agent_dm` needs a connection ID a
+  draft does not carry, and `channel` has no delivery-target shape at all. Both
+  are set after creation through `PATCH /automations/:id`, which is where a
+  member can choose the connection. The model's own tool schema no longer offers
+  either, so a draft carrying one predates this change.
 - **The compiler fails or is interrupted.** The run settles as `failed` and stays
   the visible outcome until another turn is admitted — hiding it made a failure
   look like a successful idle reconnect. **Retry** re-arms the dispatch alarm for
@@ -541,7 +562,7 @@ email is addressed and rendered
 
 | Suite | Command | Covers |
 | --- | --- | --- |
-| `apps/api/test-workers/automation-agent.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd: identity plus the first turn plus one compiler admission committed before dispatch; evaluator replacement and its receipt in one transaction; an event-driven authored submission refused when its rules are absent or empty, exempted while the draft is not ready, and admitted through to acceptance once they are set; acceptance in place deleting only the draft conversation; generation-fenced memory with replayed write receipts; a memory table keeping its identity across revisions; the REST boundary's own three create refusals answering their statuses rather than a 500, the proposal card's id-only accept creating the automation the object holds, a directory membership refusal answering 403, an `ApiError` raised inside the object surviving the RPC hop with its own status, and workspace abandonment retiring compiler, schedule, run, and outbox lanes before external work. |
+| `apps/api/test-workers/automation-agent.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd: identity plus the first turn plus one compiler admission committed before dispatch; evaluator replacement and its receipt in one transaction; an event-driven authored submission refused when its rules are absent or empty, exempted while the draft is not ready, and admitted through to acceptance once they are set; acceptance in place deleting only the draft conversation; generation-fenced memory with replayed write receipts; a memory table keeping its identity across revisions; the id-only accept creating the automation the object holds for a manual draft and for an external-event one whose source binding comes only from the draft, binding the plugins a draft recommends, giving it the email delivery its draft asked for, refusing a recommended plugin with no connection and a delivery channel that cannot be bound, a directory membership refusal answering 403, an `ApiError` raised inside the object surviving the RPC hop with its own status, and workspace abandonment retiring compiler, schedule, run, and outbox lanes before external work. |
 | `apps/api/test-workers/automation-delivery-targets.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd, with `connector_connections` and `slack_user_links` in WorkspaceDO and deliberately absent from D1: saving and removing a Slack destination; each refusal separately — no connection, a disabled one, another person's personal one, no Slack link, a link belonging to someone else, an inactive link; binding a connector plugin at acceptance, including when a disabled row still holds the same plugin id; and the service answering a detail rather than an unmapped 500. Its first test asserts the two tables are absent from D1, because that absence is what makes the rest evidence. |
 | `apps/api/test-workers/automation-cutover.test.ts` | `pnpm --filter @rally/api test:workers` | A fresh WorkspaceDO reaching the final schema with no legacy lifecycle tables, and an import that discards audited drafts and replays cleanup safely. |
 | `apps/api/test-workers/external-event-routing.test.ts` | `pnpm --filter @rally/api test:workers` | One accepted event and one matcher serving an automation and two watched work streams. |
@@ -644,6 +665,81 @@ workspace found holding legacy state is to run the script again, which is
 idempotent per workspace.
 
 ## Changelog
+
+### 2026-09-03 — Acceptance takes an ID, and derives the rest from the draft
+
+**What changed:** `POST /automations`, `AutomationAgentService.accept` and
+`CreateAutomationRequestSchema` are deleted. `POST /automations/:id/accept` is
+the only way an automation is created, and `acceptDraft` no longer accepts
+`defaultPluginIds`, `activitySourcePluginIds` or `deliveryTargets`:
+`automationAcceptanceSelections` reads all three off the stored definition.
+`automationDraftAcceptanceBlocker` is one predicate called by
+`admitAuthoredDraft` and again by `prepareAcceptance`. Five previously untabled
+codes gained rows. The model's `requestedDelivery` vocabulary narrows to
+`email`. `isExternalEventTrigger` becomes a type predicate.
+
+**Why:** the create wizard was deleted on 2026-09-01, and the request schema it
+was shaped for outlived it. Every field in that schema was a question only the
+wizard could answer, and the one caller left — the proposal card, which holds
+nothing but the summary it displays — sent empty values that acceptance read as
+decisions. Four fields, four defects, of which
+[the previous entry](#2026-09-03--the-proposal-cards-create-stops-answering-500)
+fixed one:
+
+| Field | Card sent | Result |
+| --- | --- | --- |
+| `modelOverride` | `null` | 500 on every card, fixed 2026-09-03 |
+| `activitySourcePluginIds` | `{}` | every external-event draft refused, untabled, generic 409 |
+| `deliveryTargets` | `[]` | **silent** — a draft asking for emailed results created delivering nothing |
+| `defaultPluginIds` | `[]` | **silent** — an automation ran without the connectors its own overview named |
+| `resourceIds` | `[]` | parsed and never read by anything |
+
+Two loud and two silent, and the silent pair is the worse half: an automation
+created successfully that does less than the card described. Patching each field
+would have left the shape that produced them, so the fix is the inversion. The
+draft is not a fallback source for these facts, it is the only one that was ever
+authoritative — a ready draft's activity trigger names the plugin the model
+loaded and inspected against a live connection activation, and its recommended
+plugins were held to the same rule by the authoring tools.
+
+**Why one predicate:** the
+[2026-09-01 entry](#2026-09-01--an-event-driven-draft-must-carry-its-rules-to-be-submitted)
+fixed this same shape once, for evaluator rules, by making submission and
+acceptance share `evaluatorRulesMissing` — a draft one admits and the other
+refuses reaches a person as a card whose button cannot work. That was one field
+of a class. `ready` now means "acceptance will not refuse this for anything the
+draft itself settles", and the questions only the present can answer — whether a
+named plugin still resolves to a healthy connection the caller may bind — are
+deliberately left where they were.
+
+**Why delivery narrowed:** only `email` is derivable, because it resolves from
+the author's own user row and names no connection. `slack_agent_dm` needs a
+connection ID a draft deliberately does not carry, and `channel` has no
+delivery-target shape at all. Both used to pre-tick a box on the wizard where a
+member supplied what was missing; with it gone they were recorded and dropped.
+Narrowing the tool schema means the drafting conversation offers what can
+actually be delivered, and both remain settable afterwards through
+`PATCH /automations/:id`, which is where a connection can be chosen.
+`AutomationRequestedDeliverySchema` stays wide so drafts already stored still
+parse; they refuse with a sentence instead of being silently dropped.
+
+**How it is proved:** `apps/api/test-workers/automation-agent.test.ts` on real
+workerd, one test per derived field plus both ends of the predicate. Each was
+broken in the production code and watched to fail for the reason its name
+claims, then reverted: emptying the activity-source map, the recommended-plugin
+list and the delivery list, and removing the trigger/evaluator agreement check
+and the delivery-channel check. The two silent defects are the ones this
+mattered most for, since nothing about them ever failed before.
+
+**Considered and rejected:** *passing `suggestedActivitySourcePluginIds` at the
+call site*, which fixes the loud symptom and leaves the shape, the two silent
+defects, and the second source of truth. *Keeping the fields as optional
+overrides*, which keeps a schema nobody fills and invites the next empty value
+to be read as a decision. *Refusing `slack_agent_dm` at acceptance only*, which
+puts the refusal after the drafting conversation has ended, where the person has
+nothing to act on — the same defect this entry is about, one field over.
+
+**What a future change has to respect:** recorded above as two invariants.
 
 ### 2026-09-03 — The proposal card's Create stops answering 500
 

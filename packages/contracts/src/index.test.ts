@@ -18,7 +18,7 @@ import {
   CompileAutomationRequestSchema,
   ConnectorOAuthProviderSchema,
   ConnectorOAuthProviders,
-  CreateAutomationRequestSchema,
+  automationAcceptanceSelections,
   CreateWorkstreamRequestSchema,
   CreateWorkspaceInvitationRequestSchema,
   GenerateNoteNotesRequestSchema,
@@ -732,13 +732,11 @@ describe("boundary contracts", () => {
     });
 
     expect(draft.recommendedPlugins).toHaveLength(25);
-    const request = CreateAutomationRequestSchema.parse({
-      draft,
-      scope: "workspace",
-      defaultPluginIds: recommendations.map((plugin) => plugin.pluginId),
-    });
-    expect(request.defaultPluginIds).toHaveLength(25);
-    expect(request.resourceIds).toEqual([]);
+    // Every recommendation the draft carries is what acceptance will bind.
+    // Derived rather than restated by a caller: the request field that used to
+    // carry them had no caller left able to fill it, so it arrived empty and
+    // the accepted automation ran with none of its own recommended connectors.
+    expect(automationAcceptanceSelections(draft).defaultPluginIds).toHaveLength(25);
     // A row is attributed to the one plugin that owns its tool, never to a set.
     const activity = AutomationDraftStreamEventSchema.parse({
       type: "tool",
