@@ -377,8 +377,13 @@ telemetry storage — not a product-state fallback.
   `accept`, which re-parses it, so a field the schema rejects is nobody's bad
   request: it is a `ZodError` between two pieces of our own code, and it reaches
   the boundary as the same 500 the invariant above is about — with no member
-  input that could have avoided it, on every press of every card. The
-  annotation is what makes that a `pnpm typecheck` failure instead.
+  input that could have avoided it, on every press of every card. The annotation
+  catches the *structural* half of that: a wrong type, a `null` where the field
+  is optional rather than nullable, a required field left out. It does not catch
+  what `CreateAutomationRequestSchema` only checks while parsing — `resourceIds`'
+  `.max(20)`, and the `superRefine` refusing delivery targets outside a personal
+  scope — which typecheck and then throw. Those stay the caller's to satisfy by
+  construction, and both are literals here.
 - **A directory row locates; it never authorizes.** `automation_directory` holds
   no definition, no instructions, and no run content, and every content read goes
   through the agent, which re-checks the author or asks WorkspaceDO to authorize
@@ -626,8 +631,11 @@ is not an `ApiError` and matches no row of the error table — the boundary
 answered `500 internal_error` / "An unexpected error occurred". The field is
 gone (absent is how the schema spells "no override", and `accept` already
 coalesces it to the `null` the object stores), and the request is now annotated
-`z.input<typeof CreateAutomationRequestSchema>` so the next field that disagrees
-with the schema is a typecheck failure rather than a runtime fault.
+`z.input<typeof CreateAutomationRequestSchema>` so a field whose *type* the
+schema cannot accept is a typecheck failure rather than a runtime fault. The
+schema's parse-time-only constraints — `resourceIds`' `.max(20)` and the
+`superRefine` over `deliveryTargets` and `scope` — are outside what an
+annotation can prove, and are recorded as such in the invariant.
 
 **Why:** the card was the only way to create an automation drafted in a work
 stream, and it had never worked. There was no member input that could avoid it

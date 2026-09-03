@@ -84,7 +84,11 @@ export class AutomationAgentService {
     // "An unexpected error occurred". That is what `modelOverride: null` did
     // here: the field is an `optional()` enum, so `null` is not one of its
     // values, and every press of a proposal card's Create failed on it. The
-    // annotation makes the next such field a typecheck failure instead.
+    // annotation catches that shape — a type the schema cannot accept — at
+    // `pnpm typecheck`. It cannot catch what the schema only checks while
+    // parsing (`resourceIds`' `.max(20)`, the `superRefine` refusing delivery
+    // targets outside a personal scope); those are satisfied by construction
+    // below, where both are empty literals.
     //
     // The card names no model, so the request carries no `modelOverride` at
     // all — absent is how this schema spells "no override", and `accept`
