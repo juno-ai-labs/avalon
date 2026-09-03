@@ -353,6 +353,8 @@ interface MarkdownRewriteNode {
   type: string;
   value?: string;
   children?: MarkdownRewriteNode[];
+  /** Where this node came from in the source, which is how an escape is told from what it decoded to. */
+  position?: { start?: { offset?: number }; end?: { offset?: number } };
   data?: {
     hName?: string;
     hProperties?: Record<string, unknown>;
@@ -435,84 +437,143 @@ function pendingCitationNode(): MarkdownRewriteNode {
  * half-arrived `[^ava`, and letting that grow a character at a time in front
  * of the reader is the same raw markup by a slower route. Everywhere else the
  * text has settled, and a trailing `[^` is a bracket a model wrote.
+ *
+ * Both variants read the source through {@link undecodedPrefixLength} rather
+ * than trusting the decoded value, because `\[^avalon]` and `&#91;^avalon]`
+ * both decode to the same characters as the real thing.
  */
 function remarkPendingCitations() {
-  return (tree: unknown) => {
-    rewriteFootnoteReferences(tree as MarkdownRewriteNode);
+  return (tree: unknown, file: unknown) => {
+    rewriteFootnoteReferences(tree as MarkdownRewriteNode, String(file));
   };
 }
 
 /** The same rewrite at the open end of the stream. */
 function remarkPendingTailCitations() {
-  return (tree: unknown) => {
+  return (tree: unknown, file: unknown) => {
     const root = tree as MarkdownRewriteNode;
-    rewriteFootnoteReferences(root);
-    rewriteOpenFootnoteReference(root);
+    const source = String(file);
+    rewriteFootnoteReferences(root, source);
+    rewriteOpenFootnoteReference(root, source);
   };
 }
 
-function rewriteFootnoteReferences(node: MarkdownRewriteNode): void {
+/**
+ * How much of a text run is still the characters the author actually typed.
+ *
+ * A text node is the *decoded* run: `\[^avalon]` and `&#91;^avalon]` both
+ * reach a plugin as `[^avalon]`, indistinguishable from a real unresolved
+ * reference, because micromark consumes the escape and the entity before any
+ * transformer runs. A rewrite that trusted the value would put a skeleton over
+ * syntax somebody escaped precisely in order to *show* — and then take it away
+ * at settle, when the source is re-parsed and the escape is honoured.
+ *
+ * So the run is compared against its own source span, and what is returned is
+ * the length of their common prefix: the point up to which nothing has been
+ * decoded. A match that ends at or before it came from literal characters. A
+ * match reaching past it might not have, and is left alone.
+ *
+ * A prefix rather than a whole-run verdict, and rather than an offset mapping.
+ * A verdict on the run would lose a real citation's skeleton because an escape
+ * appeared *later in the same paragraph* — and, while streaming, lose it
+ * halfway through, so the skeleton would appear and then revert to raw
+ * `[^avalon]` as the escape arrived. A prefix cannot do that: whether a match
+ * qualifies depends only on the text before it, which has already arrived and
+ * will not change, so a skeleton drawn once is never taken back. Mapping a
+ * decoded offset back through an escape would be exact in both directions, but
+ * it needs a running correspondence between two strings of different lengths —
+ * a second decoder to keep in step with micromark's, to buy the case where an
+ * escape precedes a real citation in one run.
+ */
+function undecodedPrefixLength(node: MarkdownRewriteNode, source: string): number {
+  const start = node.position?.start?.offset;
+  const end = node.position?.end?.offset;
+  const value = node.value;
+  // A synthesized node has no span to check against, so nothing in it counts
+  // as source this may read a reference out of.
+  if (start === undefined || end === undefined || value === undefined) return 0;
+  const raw = source.slice(start, end);
+  let index = 0;
+  while (index < raw.length && index < value.length && raw[index] === value[index]) index += 1;
+  return index;
+}
+
+function rewriteFootnoteReferences(node: MarkdownRewriteNode, source: string): void {
   const children = node.children;
   if (children === undefined) return;
   let rebuilt: MarkdownRewriteNode[] | undefined;
   for (let index = 0; index < children.length; index += 1) {
     const child = children[index]!;
     const split = child.type === 'text' && child.value !== undefined
-      ? splitFootnoteReferences(child.value)
+      ? splitFootnoteReferences(child.value, undecodedPrefixLength(child, source))
       : undefined;
     if (split !== undefined) {
       rebuilt ??= children.slice(0, index);
       rebuilt.push(...split);
       continue;
     }
-    rewriteFootnoteReferences(child);
+    rewriteFootnoteReferences(child, source);
     rebuilt?.push(child);
   }
   if (rebuilt !== undefined) node.children = rebuilt;
 }
 
-/** The pieces of a text node with its unresolved references lifted out, or `undefined` for text with none. */
-function splitFootnoteReferences(value: string): MarkdownRewriteNode[] | undefined {
+/**
+ * The pieces of a text node with its unresolved references lifted out, or
+ * `undefined` for text with none to lift — which includes text whose only
+ * matches reach past `literalUpTo` into decoded characters.
+ */
+function splitFootnoteReferences(value: string, literalUpTo: number): MarkdownRewriteNode[] | undefined {
   const pattern = footnoteReferencePattern();
-  let match = pattern.exec(value);
-  if (match === null) return undefined;
   const pieces: MarkdownRewriteNode[] = [];
   let consumed = 0;
-  while (match !== null) {
+  for (let match = pattern.exec(value); match !== null; match = pattern.exec(value)) {
+    if (match.index + match[0].length > literalUpTo) break;
     if (match.index > consumed) pieces.push({ type: 'text', value: value.slice(consumed, match.index) });
     pieces.push(pendingCitationNode());
     consumed = match.index + match[0].length;
-    match = pattern.exec(value);
   }
+  if (pieces.length === 0) return undefined;
   if (consumed < value.length) pieces.push({ type: 'text', value: value.slice(consumed) });
   return pieces;
 }
 
 /**
- * The one reference that is still being typed: the document's last leaf, when
- * it is text ending in an opener whose bracket has not closed.
+ * The reference that is still being typed: the document's last leaf, when it
+ * is text ending in a marker whose bracket has not closed.
  *
  * Descending to the last leaf rather than scanning is what keeps an open
  * fence out of it — a code node holds its source as a value and is not text —
  * and what keeps this from firing on a `[^` in the middle of settled prose.
+ *
+ * A bare trailing `[` is dropped rather than covered. One character in, the
+ * stream has not said what it is: `[^1]`, `[Title](…)`, a task list's `[ ]`,
+ * or a bracket in prose. A skeleton there would flash a pill in front of every
+ * link, and leaving it would put the opening bracket of a citation on screen —
+ * which is the whole thing this rewrite exists to prevent. Showing nothing for
+ * the one frame before the next character decides it is the only answer that
+ * is right whichever it turns out to be.
  */
-function rewriteOpenFootnoteReference(node: MarkdownRewriteNode): void {
+function rewriteOpenFootnoteReference(node: MarkdownRewriteNode, source: string): void {
   const children = node.children;
   if (children === undefined || children.length === 0) return;
   const last = children[children.length - 1]!;
   if (last.children !== undefined && last.children.length > 0) {
-    rewriteOpenFootnoteReference(last);
+    rewriteOpenFootnoteReference(last, source);
     return;
   }
   if (last.type !== 'text' || last.value === undefined) return;
   const match = openFootnoteReferencePattern().exec(last.value);
-  if (match === null) return;
+  // The open marker runs to the end of the text, so it qualifies only when
+  // nothing in the run was decoded on the way to it.
+  if (match === null || last.value.length > undecodedPrefixLength(last, source)) return;
   const before = last.value.slice(0, match.index);
   children.splice(
     children.length - 1,
     1,
     ...(before ? [{ type: 'text', value: before }] : []),
-    pendingCitationNode(),
+    // `[` alone is not yet a citation, so it waits rather than wearing a pill.
+    ...(match[0] === '[' ? [] : [pendingCitationNode()]),
   );
 }
 

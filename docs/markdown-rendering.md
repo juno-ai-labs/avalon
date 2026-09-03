@@ -505,6 +505,37 @@ footnote syntax grows no skeletons. Where the pill actually resolves *before*
 settle is the collapse path below, which copies definitions onto the fragments
 that do not carry them; that is the path the main transcript takes.
 
+**A text node is the decoded run, so the rewrite checks it against its own
+source span before believing it.** `\[^avalon]` and `&#91;^avalon]` both reach
+a plugin as the characters `[^avalon]` — micromark consumes the escape and the
+entity before any transformer runs — and covering those would put a skeleton
+over syntax somebody escaped in order to *show*, then take it away at settle
+when the whole source is re-parsed and the escape is honoured.
+`undecodedPrefixLength` compares the node's characters against
+`source.slice(start, end)` and returns the length of their common prefix: the
+point up to which nothing has been decoded. A match ending at or before it came
+from literal characters; a match reaching past it is left alone.
+
+**A prefix, not a verdict on the run** — and the difference is a flicker, not a
+nicety. A run-level verdict drops a real citation's skeleton because an escape
+appears *later in the same paragraph*, which while streaming means the skeleton
+is drawn and then reverts to raw `[^avalon]` as the escape arrives behind it.
+With a prefix, whether a match qualifies depends only on the text before it,
+which has already arrived and cannot change, so a skeleton drawn once is never
+taken back. What a prefix gives up is the case where an escape *precedes* a real
+citation in one run: everything after the escape keeps its literal marker.
+Buying that back means mapping a decoded offset through the escape, which is a
+second decoder to keep in step with micromark's.
+
+**The bare `[` at the end of the tail is dropped, not covered.** One character
+in, the stream has not said whether it opens a citation, a link, a task list's
+box, or nothing; a skeleton there would flash a pill in front of every link,
+and leaving it puts a citation's opening bracket on screen for a frame. Showing
+nothing until the next character decides is the only answer that is right
+whichever it turns out to be, which is why `openFootnoteReferencePattern`
+matches the bracket alone and the caller — not the pattern — decides that a
+bare one draws nothing.
+
 When collapse is on, that whole-document re-parse cannot happen — each
 section is still its own mount after settle — so definitions are copied
 onto fragments that do not already contain them. A reference whose
@@ -747,6 +778,11 @@ needs it should parse rather than widen the pattern again.
   turn is still streaming the same marker is a pending pill instead, on the bet
   that a definition is still coming; the commit that ends the stream is what
   turns an unkept promise back into text.
+- **An escaped or entity-written marker** — `\[^1]`, `&#91;^1]` — renders
+  literally in both, streaming included. So does a real reference that *follows*
+  one in the same text run, which is the deliberate cost of the prefix rule; it
+  is the rendering that surface had before the pending pill existed, not a new
+  degradation. A real reference *before* the escape keeps its skeleton.
 - **A same-length fence nested inside another cuts the outer block while it
   streams.** The shared close rule closes a block on any run of the opener's
   character at least as long, info string or not, where this splitter used to
@@ -830,6 +866,25 @@ ones; and letting the plugin consult the message's definitions, which would have
 made both lists per-render closures and re-parsed every settled segment each
 time a definition arrived. The parser already answers the question — a reference
 it resolved is not a text node — so the rewrite needs no knowledge of its own.
+
+**Follow-up in the same change (bot review):** the first version trusted the
+text node's value, which is the *decoded* run — so `\[^1]` and `&#91;^1]`, both
+of which reach a plugin as bare `[^1]`, grew a skeleton over syntax that had
+been escaped in order to be shown, and lost it again at settle. Each run is now
+compared against its own source span. The open-tail pattern also grew the bare
+`[`: it previously began matching at `^`, so the opening bracket of every
+citation appeared for one frame, against this change's own claim. A bare bracket
+draws nothing rather than a pill, because at one character it could equally be a
+link or prose.
+
+**Follow-up, second round:** that source check started as a verdict on the whole
+run, and a live window showed what the tests had not — a real citation's
+skeleton appearing and then *vanishing* mid-turn as an escaped marker streamed
+in behind it in the same paragraph, which is the original defect arriving by the
+other door. The check is now the length of the undecoded prefix, so a match is
+judged only on text that has already arrived and a skeleton once drawn is never
+taken back. The remaining give is a real citation that follows an escape in one
+run; it keeps the literal marker that surface had before this feature.
 
 **What a future change has to respect:** the skeleton is streaming-only. A
 settled reference nothing ever defined must stay literal text, because a
