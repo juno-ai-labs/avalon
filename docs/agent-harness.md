@@ -546,10 +546,10 @@ Inference defaults that belong to a model rather than to one task live in the
 harness's canonical-model defaults registry. Models absent from that registry
 send no reasoning control and therefore retain the provider default. Omission
 accepts the registry setting when present; an explicit task/run effort,
-including structured inference's `none`, overrides it. `x-ai/grok-4.6`
-currently defaults to `low` everywhere: routed work-stream turns and direct
-structured or streaming OpenRouter calls all resolve the setting after the
-actual primary or fallback model is selected. Tool-bearing Chat Completions
+including structured inference's `none`, overrides it. `x-ai/grok-4.6` and
+`google/gemini-3.8-flash` currently default to `low` everywhere: routed
+work-stream turns and direct structured or streaming OpenRouter calls all
+resolve the setting after the actual primary or fallback model is selected. Tool-bearing Chat Completions
 requests also opt in to parallel tool calls on both OpenRouter and Azure;
 requests with no tools omit the field.
 
@@ -1240,6 +1240,29 @@ Nothing pins `breakerScope`, so deleting that one property from `routePlan` woul
 silently return every test to the shared key while each still passes alone.
 
 ## Changelog
+
+### 2026-09-03 — Gemini 3.8 Flash defaults to low reasoning
+
+**What changed:** `google/gemini-3.8-flash` joined `x-ai/grok-4.6` in the
+canonical-model defaults registry with `reasoningEffort: "low"`. Every path
+that resolves an omitted effort through the registry — routed Bind turns and
+the direct structured and streaming OpenRouter clients — now sends
+`reasoning: { effort: "low" }` for that model unless the caller sets an effort
+explicitly. Gemini 3.8 Flash has no Azure binding, so the OpenRouter transport,
+which declares every capability, is the only candidate the added
+`reasoning_effort` requirement is checked against.
+
+**Why:** The request was for Gemini 3.8 Flash to run at `low`, the same policy
+Grok 4.6 already has. The reasoning behind that preference was not recorded
+beyond the request itself.
+
+**Considered and rejected:** Setting the effort per Flagship role, for the same
+reason the Grok entry rejected it: the setting is a property of the model, and a
+per-role value misses a Gemini fallback selected after another model failed.
+
+**Consequences:** A caller that wants Gemini 3.8 Flash at a different effort
+must ask for it explicitly, exactly as for Grok 4.6. Older Gemini Flash models
+are not in the registry and continue to send no reasoning field.
 
 ### 2026-09-03 — A rejection keeps the body it came in
 
