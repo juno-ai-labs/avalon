@@ -167,12 +167,42 @@ const id = { type: "string", minLength: 1 };
 const optionalId = { type: ["string", "null"], minLength: 1 };
 const query = { type: "string", minLength: 1 };
 const boundedLimit = { type: "integer", minimum: 1, maximum: 100 };
+/**
+ * The page cursor every paginated Slack tool takes, as the model reads it.
+ *
+ * The description says where the value comes from and the `anyOf` spelling
+ * makes "no cursor" a value the caller can send; `GOOGLE_PAGE_TOKEN_SCHEMA` in
+ * [`index.ts`](index.ts) has why neither half works alone, and why the flat
+ * `type: ["string", "null"]` these used to carry never reached the model.
+ *
+ * `optionalId` cannot carry any of it. It also stands in for channel and user
+ * ids, which come from somewhere else entirely, so a cursor's wording on it
+ * would be wrong everywhere else it is used.
+ *
+ * The last page is stated as "no `next_cursor`" because these tools emit two
+ * shapes for it: the conversation reads set it to `null` explicitly, while the
+ * two searches pass Slack's own result through, where the key is simply absent.
+ * Naming one of those would contradict what a caller sees on the other.
+ *
+ * Two constants rather than one because the two searches bound the string at
+ * 2,000 characters and the conversation reads never did. Preserving that is not
+ * an endorsement of either; it keeps this change to the spelling and the prose,
+ * and leaves an absent bound to whoever decides the number.
+ */
+const optionalCursor = {
+  anyOf: [{ type: "string", minLength: 1 }, { type: "null" }],
+  description: "Send `null` for the first page. To continue an earlier call, pass back the exact `next_cursor` string a previous call to this tool returned, with that call's other arguments unchanged. It is an opaque cursor: a long provider-generated string, not a page number, an offset, or an index. Never construct, guess, shorten, or increment this token; when you have no token from a previous call, the value is `null`. A result with no `next_cursor` is the last page: stop there rather than calling again.",
+} as const;
+const boundedCursor = {
+  anyOf: [{ type: "string", minLength: 1, maxLength: 2_000 }, { type: "null" }],
+  description: "Send `null` for the first page. To continue an earlier call, pass back the exact `next_cursor` string a previous call to this tool returned, with that call's other arguments unchanged. It is an opaque cursor: a long provider-generated string, not a page number, an offset, or an index. Never construct, guess, shorten, or increment this token; when you have no token from a previous call, the value is `null`. A result with no `next_cursor` is the last page: stop there rather than calling again.",
+} as const;
 
 export const slackTools: ToolDefinition[] = [
   tool("search", "Search Slack messages, files, channels, and users visible to the authorized principal. Prefer search_messages when only messages are needed.", SlackCapabilities.search, "read", {
     query,
     limit: { type: "integer", minimum: 1, maximum: 20 },
-    cursor: { type: ["string", "null"], minLength: 1, maxLength: 2_000 },
+    cursor: boundedCursor,
   }, ["query"]),
   tool("search_messages", "Search Slack messages relevant to a query. Workspace-bot search is limited by Slack to a user-initiated event and public-channel access.", SlackCapabilities.search, "read", {
     query,
@@ -184,7 +214,7 @@ export const slackTools: ToolDefinition[] = [
     sort_dir: { type: "string", enum: ["asc", "desc"] },
     include_bots: { type: "boolean" },
     limit: { type: "integer", minimum: 1, maximum: 20 },
-    cursor: { type: ["string", "null"], minLength: 1, maxLength: 2_000 },
+    cursor: boundedCursor,
   }, ["query"]),
   tool("find_users", "Find Slack users by name, display name, real name, email address, or user ID.", SlackCapabilities.usersRead, "read", {
     query,
@@ -202,14 +232,14 @@ export const slackTools: ToolDefinition[] = [
     before: { type: "integer", minimum: 0, maximum: 50 },
     after: { type: "integer", minimum: 0, maximum: 50 },
   }, ["channel_id", "message_ts"]),
-  tool("read_channel", "Read messages from a Slack conversation.", SlackCapabilities.messagesRead, "read", { channel_id: id, limit: boundedLimit, cursor: optionalId }, ["channel_id"]),
-  tool("read_thread", "Read a Slack message thread.", SlackCapabilities.messagesRead, "read", { channel_id: id, thread_ts: id, limit: boundedLimit, cursor: optionalId }, ["channel_id", "thread_ts"]),
+  tool("read_channel", "Read messages from a Slack conversation.", SlackCapabilities.messagesRead, "read", { channel_id: id, limit: boundedLimit, cursor: optionalCursor }, ["channel_id"]),
+  tool("read_thread", "Read a Slack message thread.", SlackCapabilities.messagesRead, "read", { channel_id: id, thread_ts: id, limit: boundedLimit, cursor: optionalCursor }, ["channel_id", "thread_ts"]),
   tool("read_file", "Read metadata and bounded textual content for a Slack file.", SlackCapabilities.filesRead, "read", { file_id: id }, ["file_id"]),
   tool("send_message", "Send a Slack message as the connected user or installed workspace bot.", SlackCapabilities.messagesWrite, "write", { channel_id: id, text: { type: "string", minLength: 1, maxLength: 40_000 }, thread_ts: optionalId }, ["channel_id", "text"]),
   tool("create_conversation", "Create a Slack channel, group DM, or direct message as the connected user or installed workspace bot.", SlackCapabilities.conversationsWrite, "write", { name: { type: ["string", "null"], minLength: 1, maxLength: 80, pattern: "^[a-z0-9_-]+$" }, user_ids: { type: "array", minItems: 1, maxItems: 8, items: id }, is_private: { type: "boolean" } }),
   tool("add_reaction", "Add an emoji reaction to a Slack message as the connected user or installed workspace bot.", SlackCapabilities.reactionsWrite, "write", { channel_id: id, timestamp: id, name: { type: "string", minLength: 1, maxLength: 100, pattern: "^[a-zA-Z0-9_+-]+$" } }, ["channel_id", "timestamp", "name"]),
   tool("read_user_profile", "Read a Slack user profile.", SlackCapabilities.usersRead, "read", { user_id: id }, ["user_id"]),
-  tool("list_channel_members", "List members of a Slack conversation.", SlackCapabilities.usersRead, "read", { channel_id: id, limit: { type: "integer", minimum: 1, maximum: 200 }, cursor: optionalId }, ["channel_id"]),
+  tool("list_channel_members", "List members of a Slack conversation.", SlackCapabilities.usersRead, "read", { channel_id: id, limit: { type: "integer", minimum: 1, maximum: 200 }, cursor: optionalCursor }, ["channel_id"]),
 ];
 
 export const SlackAgentPluginDescriptor = defineConnectorAgentPlugin({

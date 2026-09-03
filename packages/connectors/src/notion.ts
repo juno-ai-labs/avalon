@@ -67,6 +67,20 @@ export const NotionCapabilitySettings = {
   [NotionCapabilities.commentInsert]: ["insert_comments"],
 } as const;
 
+/**
+ * The one page cursor every paginated Notion tool takes, as the model reads it.
+ *
+ * The description says where the value comes from and the `anyOf` spelling
+ * makes "no cursor" a value the caller can send; `GOOGLE_PAGE_TOKEN_SCHEMA` in
+ * [`index.ts`](index.ts) has why neither half works alone, and why the flat
+ * `type: ["string", "null"]` this used to carry never reached the model.
+ */
+const NOTION_CURSOR_SCHEMA = {
+  anyOf: [{ type: "string", minLength: 1, maxLength: 500 }, { type: "null" }],
+  description:
+    "Send `null` for the first page. To continue an earlier call, pass back the exact `next_cursor` string a previous call to this tool returned, with that call's other arguments unchanged. It is an opaque cursor: a long provider-generated string, not a page number, an offset, or an index. Never construct, guess, shorten, or increment this token; when you have no token from a previous call, the value is `null`. A result whose `has_more` is false is the last page: stop there rather than calling again.",
+} as const;
+
 export const notionTools: ToolDefinition[] = [
   {
     name: "search",
@@ -81,7 +95,7 @@ export const notionTools: ToolDefinition[] = [
         query: { type: "string", minLength: 1, maxLength: 500 },
         object: { type: "string", enum: ["page", "data_source"] },
         pageSize: { type: "integer", minimum: 1, maximum: 25 },
-        startCursor: { type: ["string", "null"], minLength: 1, maxLength: 500 },
+        startCursor: NOTION_CURSOR_SCHEMA,
       },
       required: ["query"],
     },
@@ -114,7 +128,7 @@ export const notionTools: ToolDefinition[] = [
       properties: {
         dataSourceId: { type: "string", minLength: 1, maxLength: 200 },
         pageSize: { type: "integer", minimum: 1, maximum: 25 },
-        startCursor: { type: ["string", "null"], minLength: 1, maxLength: 500 },
+        startCursor: NOTION_CURSOR_SCHEMA,
       },
       required: ["dataSourceId"],
     },
@@ -194,7 +208,7 @@ export const notionTools: ToolDefinition[] = [
       properties: {
         blockId: { type: "string", minLength: 1, maxLength: 200 },
         pageSize: { type: "integer", minimum: 1, maximum: 25 },
-        startCursor: { type: ["string", "null"], minLength: 1, maxLength: 500 },
+        startCursor: NOTION_CURSOR_SCHEMA,
       },
       required: ["blockId"],
     },

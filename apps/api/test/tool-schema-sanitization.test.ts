@@ -9,7 +9,7 @@ import {
   nonObjectRootUnionBranches,
   weakenedCompositionBranches,
 } from "@rally/agent-harness";
-import type { WorkstreamWorkflowInput } from "@rally/contracts";
+import type { ToolDefinition, WorkstreamWorkflowInput } from "@rally/contracts";
 import { __integrationTesting } from "../src/services/integrations";
 import { TERMINAL_TOOL_DEFINITIONS } from "../src/services/terminal/contract";
 import { createTestEnv } from "./helpers/cloudflare-test";
@@ -145,28 +145,35 @@ describe("tool schema sanitization", () => {
     expect(rejected).toEqual([]);
   });
 
-  it("delivers the null branch every Google cursor authors, in the one spelling that survives", () => {
-    // The fix these four carry is that "no cursor" is expressible as a value.
-    // It is expressible only if the null branch reaches the model, and the
-    // sanitizer collapses `type: ["string", "null"]` to `type: "string"`,
-    // moving the nullability into the description — a schema forbidding the
-    // value beside prose permitting it, which is the conflict the fix exists to
-    // end. Written as an assertion because two automated reviews read the two
-    // spellings as equivalent, which is what a reviewer's head is bad at and a
-    // test is good at.
-    const google = createTestConnectorRegistry().get("google");
-    const paginated = google.agentPlugin.tools.filter((tool) => (
-      Object.hasOwn((tool.inputSchema as { properties?: Record<string, unknown> }).properties ?? {}, "pageToken")
-    ));
-    expect(paginated.map((tool) => tool.name)).toEqual([
-      "gmail.search",
-      "calendar.list_calendars",
-      "calendar.list_events",
-      "drive.search",
-    ]);
-    expect(paginated.flatMap((tool) => droppedNullableBranches(
+  it("delivers the null branch every connector cursor authors, in the one spelling that survives", () => {
+    // The fix these carry is that "no cursor" is expressible as a value. It is
+    // expressible only if the null branch reaches the model, and the sanitizer
+    // collapses `type: ["string", "null"]` to `type: "string"`, moving the
+    // nullability into the description — a schema forbidding the value beside
+    // prose permitting it, which is the conflict the fix exists to end. Written
+    // as an assertion because two automated reviews read the two spellings as
+    // equivalent, which is what a reviewer's head is bad at and a test is good
+    // at.
+    //
+    // Every connector, not Google's four: a cursor is a cursor whichever
+    // adapter serves it, and the assertion this widened from could pass while
+    // fifteen cursors on six other connectors stayed collapsed.
+    const cursors = everyConnectorCursor();
+    // A floor, not a total, so adding a paginated tool does not edit this line
+    // while removing every cursor cannot pass it silently.
+    expect(cursors.length).toBeGreaterThanOrEqual(19);
+    // Filtered to the cursor itself. `droppedNullableBranches` reports every
+    // collapsed property on the schema, and a tool that takes a cursor usually
+    // also takes flat-nullable ids and filters that are still collapsed —
+    // Slack's `search_messages` alone carries four. Those are the backlog the
+    // Google entry in `connectors.md` counts at 46 across five connectors, and
+    // converting them is a change per parameter with its own reasoning about
+    // what absence means there. Asserting over them here would fail for work
+    // this guard is not about.
+    expect(cursors.flatMap(({ connector, tool, cursor }) => droppedNullableBranches(
       tool.inputSchema as Record<string, unknown>,
-    ).map((finding) => `${tool.name}.${finding}`))).toEqual([]);
+    ).filter((finding) => finding.startsWith(`${cursor}: `))
+      .map((finding) => `${connector}.${tool.name}.${finding}`))).toEqual([]);
   });
 
   it("leaves no tool with a composition branch the sanitizer strips a constraint from", () => {
@@ -176,6 +183,44 @@ describe("tool schema sanitization", () => {
     expect(weakened).toEqual([]);
   });
 });
+
+/** Every registered connector tool that takes a pagination cursor, with the cursor's name. */
+function everyConnectorCursor(): Array<{ connector: string; tool: ToolDefinition; cursor: string }> {
+  const registry = createTestConnectorRegistry();
+  return registry.list().flatMap((manifest) =>
+    manifest.tools.flatMap((tool) => {
+      const properties = (tool.inputSchema as { properties?: Record<string, unknown> }).properties ?? {};
+      return CURSOR_PARAMETERS
+        .filter((cursor) => admitsString(properties[cursor]))
+        .map((cursor) => ({ connector: manifest.type, tool, cursor }));
+    }));
+}
+
+/**
+ * Whether a declaration is a string one, in either spelling.
+ *
+ * The name alone is not enough: `after` is also Slack's name for two numeric
+ * timestamp filters on `search_messages`, and reading those as cursors puts a
+ * parameter this change never touched into the assertion above. The sibling
+ * check in `tool-argument-empty-strings.test.ts` matches on the declared type
+ * for the same reason.
+ */
+function admitsString(declaration: unknown): boolean {
+  if (!declaration || typeof declaration !== "object" || Array.isArray(declaration)) return false;
+  const schema = declaration as Record<string, unknown>;
+  const declared = Array.isArray(schema.type) ? schema.type : [schema.type];
+  if (declared.includes("string")) return true;
+  const branches = Array.isArray(schema.anyOf) ? schema.anyOf : Array.isArray(schema.oneOf) ? schema.oneOf : [];
+  return branches.some((branch) => admitsString(branch));
+}
+
+/**
+ * Kept in step with the set of the same name in
+ * `tool-argument-empty-strings.test.ts`, which guards the other half of the
+ * cursor contract. Two short lists beat one shared export that would tie a
+ * blank-argument suite to a sanitization one.
+ */
+const CURSOR_PARAMETERS = ["after", "cursor", "startCursor", "pageToken"] as const;
 
 /**
  * The schemas Avalon does not author, and the only ones a build-time guard can
