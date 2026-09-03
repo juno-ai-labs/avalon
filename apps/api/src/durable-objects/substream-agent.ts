@@ -14,6 +14,7 @@ import {
   MESSAGE_TOO_LONG_MESSAGE,
   PersonalSocketEventSchema,
   ResourceRelationshipTypeSchema,
+  SubstreamSocketMutationTypeSchema,
   SubstreamIdSchema,
   TranscriptTurnIdSchema,
   UserIdSchema,
@@ -84,9 +85,11 @@ import {
   identityAttributes,
   inDurableObjectPhase,
   inFlowSpan,
+  inSpan,
   noFlowSpan,
   type FlowSpan,
   type PerfFlow,
+  type TracedSpan,
 } from "../observability/tracing";
 import { latestMigrationVersion } from "./migration-reporting";
 import {
@@ -108,12 +111,8 @@ import {
   runWorkstreamHarness,
   type WorkstreamHarnessResult,
 } from "../services/integrations";
-import { deliverFrozenAutomationResultEmail } from "../services/automation-email-service";
 import { settleDigestRun } from "../services/digest-run-settlement";
-import {
-  canonicalExternalResultText,
-  deliverCanonicalExternalResult,
-} from "../services/external-result-delivery";
+import { canonicalExternalResultText } from "../services/external-result-delivery";
 import { SlackAgentService } from "../services/slack-agent-service";
 import { refreshWorkstreamDescription } from "../services/workstream-description-service";
 import { refreshWorkstreamName } from "../services/workstream-naming-service";
@@ -396,13 +395,6 @@ const ProductRequestSchema = z.discriminatedUnion("operation", [
   z.strictObject({ operation: z.literal("detach_resource"), auth: ProductAuthSchema, resourceId: IdSchema }),
   z.strictObject({ operation: z.literal("answer_elicitation"), auth: ProductAuthSchema,
     elicitationId: IdSchema, input: AnswerElicitationRequestSchema }),
-  z.strictObject({
-    operation: z.literal("reorder_pending_inputs"),
-    auth: ProductAuthSchema,
-    inputIds: z.array(IdSchema),
-  }),
-  z.strictObject({ operation: z.literal("stop"), auth: ProductAuthSchema }),
-  z.strictObject({ operation: z.literal("retry"), auth: ProductAuthSchema }),
 ]);
 /**
  * The flow a product operation belongs to. An operation outside the three
@@ -591,21 +583,48 @@ const BLOCK_DASHBOARD_REFRESH_EVENT_TYPES = new Set([
 type SocketAttachment = z.infer<typeof SocketAttachmentSchema>;
 
 function recognizableSocketCreateMessage(decoded: unknown): {
+  operationId: string;
   clientMessageId: string;
   overLong: boolean;
 } | null {
   if (decoded === null || typeof decoded !== "object") return null;
-  const frame = decoded as { type?: unknown; payload?: unknown };
+  const frame = decoded as { type?: unknown; operationId?: unknown; payload?: unknown };
   if (frame.type !== "create_message" || frame.payload === null || typeof frame.payload !== "object") {
     return null;
   }
+  const operationId = IdSchema.safeParse(frame.operationId);
+  if (!operationId.success) return null;
   const payload = frame.payload as { text?: unknown; clientMessageId?: unknown };
   if (typeof payload.clientMessageId !== "string"
     || payload.clientMessageId.length < 1
     || payload.clientMessageId.length > 120) return null;
   return {
+    operationId: operationId.data,
     clientMessageId: payload.clientMessageId,
     overLong: typeof payload.text === "string" && payload.text.length > MESSAGE_MAX_CHARACTERS,
+  };
+}
+
+function recognizableSocketMutation(decoded: unknown): {
+  command: z.infer<typeof SubstreamSocketMutationTypeSchema>;
+  operationId: string;
+  clientMessageId?: string;
+} | null {
+  if (decoded === null || typeof decoded !== "object") return null;
+  const frame = decoded as { type?: unknown; operationId?: unknown; payload?: unknown };
+  const command = SubstreamSocketMutationTypeSchema.safeParse(frame.type);
+  const operationId = IdSchema.safeParse(frame.operationId);
+  if (!command.success || !operationId.success) return null;
+  const clientMessageId = frame.payload !== null && typeof frame.payload === "object"
+    ? (frame.payload as { clientMessageId?: unknown }).clientMessageId
+    : undefined;
+  return {
+    command: command.data,
+    operationId: operationId.data,
+    ...(typeof clientMessageId === "string"
+      && clientMessageId.length >= 1 && clientMessageId.length <= 120
+      ? { clientMessageId }
+      : {}),
   };
 }
 
@@ -991,6 +1010,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         env,
         this.transcript,
         this.loop,
+        () => this.externalSubstreamId(),
       );
       this.terminal = new WorkstreamTerminalStorage(state.storage);
       this.toolReceipts = new WorkstreamToolReceiptStorage(state.storage);
@@ -2925,6 +2945,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         // before anything reads it back.
         if (typeof request.input?.archived === "boolean") {
           await this.applyArchiveToOwnedAutomations(identity, request.input.archived);
+          if (!request.input.archived) await this.armNextAlarm();
         }
         return jsonResponse(result.workstream);
       }
@@ -2972,29 +2993,38 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           request.input,
         );
         if (result.activationRequest) {
-          await this.requestPersistentLoopActivation(result.activationRequest);
+          try {
+            await this.requestPersistentLoopActivation(result.activationRequest);
+          } catch (error) {
+            logWarn(this.env, "substream_elicitation_activation_wakeup_failed", {
+              workspace_id: current.workspaceId,
+              workstream_id: identity.workstreamId,
+              substream_id: this.externalSubstreamId(),
+              elicitation_id: request.elicitationId,
+              reason: diagnosticErrorCode(error, "activation_wakeup_failed"),
+            });
+          }
         }
-        if (result.elicitation) {
-          await this.publishLocalProductEvent(identity, {
-            type: "elicitation_answered",
-            elicitation: result.elicitation,
-          });
+        if (result.inserted && result.elicitation) {
+          try {
+            await this.publishLocalProductEvent(identity, {
+              type: "elicitation_answered",
+              elicitation: result.elicitation,
+            });
+          } catch (error) {
+            logWarn(this.env, "substream_elicitation_publication_failed_after_commit", {
+              workspace_id: current.workspaceId,
+              workstream_id: identity.workstreamId,
+              substream_id: this.externalSubstreamId(),
+              elicitation_id: request.elicitationId,
+              reason: diagnosticErrorCode(error, "elicitation_publication_failed"),
+            });
+          }
         }
         await this.flushSemanticRealtimeOutboxBestEffort();
         return jsonResponse({ elicitation: result.elicitation });
       }
-      if (request.operation === "reorder_pending_inputs") {
-        const result = await this.product.reorderPendingInputs(current, request.inputIds);
-        await this.flushSemanticRealtimeOutboxBestEffort();
-        return jsonResponse(result);
-      }
-      if (request.operation === "stop") {
-        await this.product.stop(current);
-        return jsonResponse({ ok: true });
-      }
-      const result = await this.product.retry(current);
-      await this.requestPersistentLoopActivation(result.activationRequest);
-      return jsonResponse({ harnessRunId: result.harnessRunId });
+      throw new Error("substream_product_operation_unhandled");
     } catch (error) {
       const safe = error instanceof ApiError
         ? error
@@ -3178,6 +3208,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     execution: { runId: string; leaseOwner: string; executionEpoch: number };
   } | null> {
     const now = Date.now();
+    const authority = this.state.storage.sql.exec<{ archived_at: number | null }>(
+      `SELECT archived_at FROM workstream WHERE id = 1`,
+    ).toArray()[0];
+    if (authority && authority.archived_at !== null) return null;
     let loop = this.ensurePersistentLoop();
     if (loop.status === "executing") {
       if (loop.lease_expires_at === null || loop.active_execution_id === null
@@ -4459,7 +4493,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     input: WorkstreamWorkflowInput,
     outcome: AgentTerminalOutcome,
   ): Promise<string | null> {
-    const workspaceEnv = withWorkspaceRuntimeDatabase(this.env, input.workspaceId);
     const finalMessage = outcome.finalTurnId
       ? await this.product.messageForRuntime(outcome.finalTurnId)
       : null;
@@ -4543,71 +4576,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         result: text,
       }));
     const failures: unknown[] = [];
-    for (const target of frozen.deliveryTargets) {
-      const targetKey = target.type === "email"
-        ? `email:${target.emailAddress.toLocaleLowerCase()}`
-        : `slack_agent_dm:${target.connectionId}:${target.slackTeamId}:${target.slackUserId}`;
-      try {
-        const state = disposition.disposition === "done"
-          ? "skipped" as const
-          : await deliverCanonicalExternalResult(text, (savedText) => target.type === "email"
-          ? deliverFrozenAutomationResultEmail(workspaceEnv, {
-              workspaceId: input.workspaceId,
-              automationSubscriptionId: frozen.automationId,
-              automationRunId: frozen.runId,
-              workstreamId: input.workstreamId,
-              recipientEmail: target.emailAddress,
-              recipientUserId: frozen.executionPrincipal.userId,
-              title: frozen.definition.name,
-              text: savedText,
-              outcomeStatus: outcome.status,
-            })
-          : slack.deliverFrozenAutomationResult({
-              workspaceId: input.workspaceId,
-              automationId: frozen.automationId,
-              automationRunId: frozen.runId,
-              workstreamId: input.workstreamId,
-              recipientUserId: frozen.executionPrincipal.userId,
-              connectionId: target.connectionId,
-              slackTeamId: target.slackTeamId,
-              slackUserId: target.slackUserId,
-              title: frozen.definition.name,
-              text: savedText,
-              outcomeStatus: outcome.status,
-            }));
-        await automation.recordDeliveryReceipt({
-          schemaVersion: 1,
-          automationId: frozen.automationId,
-          workspaceId: input.workspaceId,
-          runId: frozen.runId,
-          workstreamId: input.workstreamId,
-          targetKey,
-          payloadHash,
-          state: state === "skipped" ? "skipped" : "delivered",
-          // The reason rides on the receipt so the run history says *why* a
-          // destination got nothing, in the classifier's own words, rather than
-          // leaving a bare `skipped` to be interpreted.
-          outcomeCode: state !== "skipped"
-            ? "delivery_completed"
-            : disposition.disposition === "done"
-              ? withheldOutcomeCode(disposition.reason)
-              : "delivery_suppressed",
-        });
-      } catch (failure) {
-        failures.push(failure);
-        await automation.recordDeliveryReceipt({
-          schemaVersion: 1,
-          automationId: frozen.automationId,
-          workspaceId: input.workspaceId,
-          runId: frozen.runId,
-          workstreamId: input.workstreamId,
-          targetKey,
-          payloadHash,
-          state: "failed",
-          outcomeCode: "delivery_failed",
-        }).catch(() => undefined);
-      }
-    }
     // Before anything is decided about the result: if this occurrence ran
     // without the personal connections it was built on, the room needs to know
     // that and to be offered the takeover, whatever the result turned out to
@@ -4660,9 +4628,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       }
     }
     // The room that owns this automation, woken with the result as a message.
-    // Not one of `deliveryTargets`: those are destinations somebody chose, and
-    // this one follows from ownership. It is also the only "delivery" that
-    // starts a run rather than writing to somewhere outside Rally.
+    // The only destination an automation has. It used to sit beside a set of
+    // chosen ones — email, a Slack DM — and it outlived them because it was
+    // never chosen: it follows from ownership. Everything outside Rally is now
+    // the run's own to send, with its own tools, inside the loop; this is the
+    // one delivery that starts a run rather than writing somewhere outside.
     if (frozen.owningWorkstreamId !== null && text !== null) {
       const owningWorkstreamId = frozen.owningWorkstreamId;
       const targetKey = `workstream:${owningWorkstreamId}`;
@@ -4979,24 +4949,29 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
 
     const recognizableCreate = recognizableSocketCreateMessage(decoded);
     if (recognizableCreate?.overLong) {
-      socket.send(JSON.stringify(WorkstreamSocketCommandResultSchema.parse({
+      this.sendSocketCommandResult(socket, {
         type: "client_command_failed",
         command: "create_message",
+        operationId: recognizableCreate.operationId,
         clientMessageId: recognizableCreate.clientMessageId,
         error: { status: 400, code: "message_too_long", message: MESSAGE_TOO_LONG_MESSAGE },
-      })));
+      });
       return;
     }
 
     const parsed = ClientSocketEventSchema.safeParse(decoded);
     if (!parsed.success) {
-      if (recognizableCreate) {
-        socket.send(JSON.stringify(WorkstreamSocketCommandResultSchema.parse({
+      const recognizableMutation = recognizableSocketMutation(decoded);
+      if (recognizableMutation) {
+        this.sendSocketCommandResult(socket, {
           type: "client_command_failed",
-          command: "create_message",
-          clientMessageId: recognizableCreate.clientMessageId,
+          command: recognizableMutation.command,
+          operationId: recognizableMutation.operationId,
+          ...(recognizableMutation.clientMessageId
+            ? { clientMessageId: recognizableMutation.clientMessageId }
+            : {}),
           error: { status: 400, code: "invalid_event", message: "The socket event is not valid." },
-        })));
+        });
         return;
       }
       this.sendError(socket, "invalid_event", "The socket event is not valid.");
@@ -5082,14 +5057,169 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       await this.createSocketMessage(socket, attachment, parsed.data);
       return;
     }
+    await this.mutateSocketSubstream(socket, attachment, parsed.data);
+  }
 
-    // Product mutations are intentionally persisted and authorized through the
-    // REST service before their resulting canonical event is published here.
-    this.sendError(
-      socket,
-      "rest_required",
-      "Persist this action through the work-stream API before publishing it."
-    );
+  private async mutateSocketSubstream(
+    socket: WebSocket,
+    attachment: SocketAttachment,
+    command: Exclude<z.infer<typeof ClientSocketEventSchema>,
+      { type: "subscribe" | "mark_opened" | "request_snapshot" | "load_transcript_range" | "create_message" }>,
+  ): Promise<void> {
+    await inSpan("workstream.room.substream_command", {
+      "rally.component": "substream_do",
+      ...identityAttributes({
+        workspaceId: attachment.workspaceId,
+        workstreamId: attachment.workstreamId,
+        substreamId: attachment.substreamId,
+        userId: attachment.userId,
+        sessionId: attachment.sessionId,
+      }),
+      "rally.transport": "substream_socket",
+      "rally.socket.connection_id": attachment.connectionId,
+      "rally.socket.command": command.type,
+      "rally.socket.operation_id": command.operationId,
+    }, async (span) => this.mutateSocketSubstreamInSpan(socket, attachment, command, span));
+  }
+
+  private async mutateSocketSubstreamInSpan(
+    socket: WebSocket,
+    attachment: SocketAttachment,
+    command: Exclude<z.infer<typeof ClientSocketEventSchema>,
+      { type: "subscribe" | "mark_opened" | "request_snapshot" | "load_transcript_range" | "create_message" }>,
+    span: TracedSpan,
+  ): Promise<void> {
+    try {
+      if (!this.objectStore.isRealtimeWritable()) {
+        throw new ApiError(503, "workstream_maintenance", "Work streams are temporarily unavailable");
+      }
+      const auth = await this.socketViewerAuth(attachment);
+      if (!auth) {
+        disconnect(socket, 1012, "Reconnect for substream commands");
+        return;
+      }
+      const identity = this.objectStore.identity();
+      if (!identity) throw new ApiError(404, "workstream_not_found", "Work stream not found");
+
+      if (command.type === "answer_elicitation") {
+        const result = await this.product.answerElicitationForAdmittedSocket(
+          auth,
+          command.elicitationId,
+          command.payload,
+        );
+        if (result.activationRequest) {
+          try {
+            await this.requestPersistentLoopActivation(result.activationRequest);
+          } catch (error) {
+            logWarn(this.env, "substream_elicitation_activation_wakeup_failed", {
+              workspace_id: attachment.workspaceId,
+              workstream_id: attachment.workstreamId,
+              substream_id: attachment.substreamId,
+              elicitation_id: command.elicitationId,
+              reason: diagnosticErrorCode(error, "activation_wakeup_failed"),
+            });
+          }
+        }
+        if (result.inserted && result.elicitation) {
+          try {
+            await this.publishLocalProductEvent(identity, {
+              type: "elicitation_answered",
+              elicitation: result.elicitation,
+            });
+          } catch (error) {
+            logWarn(this.env, "substream_elicitation_publication_failed_after_commit", {
+              workspace_id: attachment.workspaceId,
+              workstream_id: attachment.workstreamId,
+              substream_id: attachment.substreamId,
+              elicitation_id: command.elicitationId,
+              reason: diagnosticErrorCode(error, "elicitation_publication_failed"),
+            });
+          }
+        }
+        await this.flushSemanticRealtimeOutboxBestEffort();
+        this.sendSocketCommandResult(socket, {
+          type: "client_command_succeeded",
+          command: command.type,
+          operationId: command.operationId,
+          ...(result.elicitation ? { elicitation: result.elicitation } : {}),
+        });
+        return;
+      }
+      if (command.type === "reorder_pending_inputs") {
+        const result = await this.product.reorderPendingInputsForAdmittedSocket(
+          auth,
+          command.operationId,
+          command.inputIds,
+        );
+        await this.flushSemanticRealtimeOutboxBestEffort();
+        this.sendSocketCommandResult(socket, {
+          type: "client_command_succeeded",
+          command: command.type,
+          operationId: command.operationId,
+          pendingInputs: result.pendingInputs,
+        });
+        return;
+      }
+      if (command.type === "stop_harness") {
+        await this.product.stopForAdmittedSocket(auth, command.operationId);
+        this.sendSocketCommandResult(socket, {
+          type: "client_command_succeeded",
+          command: command.type,
+          operationId: command.operationId,
+        });
+        return;
+      }
+
+      const result = await this.product.retryForAdmittedSocket(
+        auth,
+        asHarnessRunId(command.operationId),
+      );
+      try {
+        await this.requestPersistentLoopActivation(result.activationRequest);
+      } catch (error) {
+        logWarn(this.env, "substream_retry_activation_wakeup_failed", {
+          workspace_id: attachment.workspaceId,
+          workstream_id: attachment.workstreamId,
+          substream_id: attachment.substreamId,
+          harness_run_id: result.harnessRunId,
+          reason: diagnosticErrorCode(error, "activation_wakeup_failed"),
+        });
+      }
+      this.sendSocketCommandResult(socket, {
+        type: "client_command_succeeded",
+        command: command.type,
+        operationId: command.operationId,
+        harnessRunId: result.harnessRunId,
+      });
+    } catch (error) {
+      const safe = error instanceof ApiError
+        ? error
+        : new ApiError(500, "substream_command_failed", "The substream command could not be completed");
+      this.sendSocketCommandResult(socket, {
+        type: "client_command_failed",
+        command: command.type,
+        operationId: command.operationId,
+        error: {
+          status: safe.status,
+          code: safe.code,
+          message: safe.message,
+          ...(safe.details ? { details: safe.details } : {}),
+        },
+      });
+      if (!(error instanceof ApiError)) {
+        logWarn(this.env, "substream_socket_command_failed", {
+          workspace_id: attachment.workspaceId,
+          workstream_id: attachment.workstreamId,
+          substream_id: attachment.substreamId,
+          user_id: attachment.userId,
+          command: command.type,
+          operation_id: command.operationId,
+          reason: error instanceof Error ? error.message : "unknown",
+        });
+      }
+      span.setError(safe.code, safe.message);
+      span.setAttributes({ "http.response.status_code": safe.status });
+    }
   }
 
   private async createSocketMessage(
@@ -5140,21 +5270,23 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           ...command.payload,
           telemetryOperationId: command.operationId,
         }, span, true);
-        socket.send(JSON.stringify(WorkstreamSocketCommandResultSchema.parse({
+        this.sendSocketCommandResult(socket, {
           type: "client_command_succeeded",
           command: "create_message",
+          operationId: command.operationId,
           clientMessageId: command.payload.clientMessageId,
           turn: result.turn,
           deliveryState: result.deliveryState,
-        })));
+        });
         span.mark("workstream.room.create_message.respond");
       } catch (error) {
         const safe = error instanceof ApiError
           ? error
           : new ApiError(500, "message_write_failed", "The message could not be sent");
-        socket.send(JSON.stringify(WorkstreamSocketCommandResultSchema.parse({
+        this.sendSocketCommandResult(socket, {
           type: "client_command_failed",
           command: "create_message",
+          operationId: command.operationId,
           clientMessageId: command.payload.clientMessageId,
           error: {
             status: safe.status,
@@ -5162,7 +5294,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
             message: safe.message,
             ...(safe.details ? { details: safe.details } : {}),
           },
-        })));
+        });
         if (!(error instanceof ApiError)) {
           logWarn(this.env, "substream_socket_create_message_failed", {
             workspace_id: attachment.workspaceId,
@@ -6010,6 +6142,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         workspaceId: identity.data.workspaceId,
         workstreamId: identity.data.workstreamId,
       }, this.env.AVALON_REGION);
+      this.ensurePersistentLoop();
     } catch (error) {
       if (error instanceof Error && error.message === "workstream_object_identity_mismatch") {
         span.setError("room_identity_mismatch");
@@ -6401,6 +6534,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     // migration. The receipt scan below must run either way: deriving the next
     // alarm only when the singleton exists is how a claimed run stops
     // contributing a due time and stalls with nothing left to rediscover it.
+    const authority = this.state.storage.sql.exec<{ archived_at: number | null }>(
+      `SELECT archived_at FROM workstream WHERE id = 1`,
+    ).toArray()[0];
+    if (authority && authority.archived_at !== null) return null;
     const loop = this.loop.loop();
     if (loop?.status === "executing") return loop.lease_expires_at;
     if (loop && this.loop.pendingInputs().length > 0) return now;
@@ -6976,7 +7113,24 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       message,
       requestId
     });
-    socket.send(JSON.stringify(event));
+    this.sendSocketFrame(socket, JSON.stringify(event));
+  }
+
+  /** A closed socket is a delivery miss, not a second command failure. */
+  private sendSocketFrame(socket: WebSocket, encoded: string): boolean {
+    try {
+      socket.send(encoded);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private sendSocketCommandResult(socket: WebSocket, result: unknown): boolean {
+    return this.sendSocketFrame(
+      socket,
+      JSON.stringify(WorkstreamSocketCommandResultSchema.parse(result)),
+    );
   }
 
   /**

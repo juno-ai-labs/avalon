@@ -97,7 +97,11 @@ import { type SocketState, type WorkstreamMessageDeliveryMode } from '../lib/use
 import { useRetainedWorkstreamSocket, useWorkstreamSocketOpenContext } from '../lib/workstream-socket-pool';
 import { useWorkspaceSocket } from '../lib/workspace-socket';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
-import { setCachedWorkstreams } from '../lib/workstreams-cache';
+import {
+  evictCachedWorkstream,
+  invalidateCachedWorkstreamDetails,
+  setCachedWorkstreams,
+} from '../lib/workstreams-cache';
 import type { ElicitationData, HarnessRunMetadata, HarnessStatus, BlockDashboard, BlockDashboardPreference, Message, Participant, ResourceVersion, WorkspaceMember, WorkstreamBoot, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import { AgentCompactionIndicator, AgentWorkTiming, type AgentWorkTimingProps } from '../components/agent-work-timing';
 import { InspectorRail } from '../components/inspector-rail';
@@ -1609,7 +1613,7 @@ export function WorkstreamScreen(): React.JSX.Element {
       void queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
       if (member.id === session?.user.id && previous?.scope === 'personal') {
         setParticipantDialogOpen(false);
-        queryClient.removeQueries({ queryKey: ['workstream', id], exact: true });
+        evictCachedWorkstream(queryClient, id);
         void navigate('/workstreams/new', { replace: true });
       }
     },
@@ -1714,7 +1718,7 @@ export function WorkstreamScreen(): React.JSX.Element {
   useEffect(() => () => setBlockDashboardOpen(false), [setBlockDashboardOpen]);
 
   const stop = useMutation({
-    mutationFn: () => api!.stopHarness(id),
+    mutationFn: () => socketConnection.stopHarness(),
     onSuccess: () => {
       queryClient.setQueryData<WorkstreamDetail>(['workstream', id], (current) =>
         current ? { ...current, stopRequested: true } : current);
@@ -1724,7 +1728,7 @@ export function WorkstreamScreen(): React.JSX.Element {
   });
 
   const retry = useMutation({
-    mutationFn: () => api!.retryHarness(id),
+    mutationFn: () => socketConnection.retryHarness(),
     onSuccess: async () => {
       requestSocketSnapshot();
       await Promise.all([
@@ -1806,7 +1810,7 @@ export function WorkstreamScreen(): React.JSX.Element {
     mutationFn: (automationId: string) => api!.claimAutomationExecutionPrincipal(automationId),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['workstream-automations', id] });
-      void queryClient.invalidateQueries({ queryKey: ['workstream', id] });
+      void invalidateCachedWorkstreamDetails(queryClient, id);
     },
   });
 
@@ -1894,7 +1898,7 @@ export function WorkstreamScreen(): React.JSX.Element {
           }
         : overlay));
     try {
-      await api!.answerElicitation(id, elicitationId, answer, customResponse);
+      await socketConnection.answerElicitation(elicitationId, answer, customResponse);
       requestSocketSnapshot();
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY }),
@@ -2062,14 +2066,13 @@ export function WorkstreamScreen(): React.JSX.Element {
   };
 
   const reorderQueue = async (inputIds: string[]): Promise<void> => {
-    if (!api) throw new Error('This work stream is not ready to reorder queued messages.');
     const previous = queryClient.getQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(id));
     queryClient.setQueryData<TranscriptOverlay[]>(
       transcriptOverlaysQueryKey(id),
       (current) => applyPendingInputQueueOrder(current, inputIds),
     );
     try {
-      const result = await api.reorderPendingLoopInputs(id, inputIds);
+      const result = await socketConnection.reorderPendingInputs(inputIds);
       queryClient.setQueryData<TranscriptOverlay[]>(
         transcriptOverlaysQueryKey(id),
         (current) => assignPendingInputQueueSequences(current, result.pendingInputs),

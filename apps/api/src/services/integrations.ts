@@ -4377,9 +4377,6 @@ async function createInlineChildHarnessSurface(options: {
     // anything, so its parent's wake-ups are context it can neither use nor act
     // on. The write half is already excluded by the read-only filter above.
     .filter((tool) => !tool.definition.capability.startsWith("workstream.wakeup."))
-    .filter((tool) =>
-      options.parentInput.reason !== "inbound_email"
-      || !tool.definition.capability.startsWith("web."))
     .map((tool): HarnessTool => ({
       definition: tool.definition,
       ...(tool.validateInput ? { validateInput: tool.validateInput } : {}),
@@ -5348,6 +5345,12 @@ async function loadRunPromptContext(
   additionalMessages: ModelMessage[];
   memoryContextHash: string | null;
 }> {
+  // An automation the room does not own sends its own result outward, so its
+  // result is read wherever it sent it, not in Rally, and nothing sends its
+  // final message for it. Decided from the owning room directly rather than
+  // from the shape of `resultDelivery`, which now names only that room and so
+  // would answer this exactly backwards.
+  let automationSendsOutward = false;
   let automationContext:
     | {
         name: string;
@@ -5355,7 +5358,7 @@ async function loadRunPromptContext(
         instructions: string;
         expectedOutputs: string[];
         resultDelivery: Array<{
-          channel: "email" | "slack_agent_dm" | "workstream";
+          channel: "workstream";
           destination: string;
         }>;
         authoringOrigin: AutomationRunContextV1["authoringOrigin"];
@@ -5387,30 +5390,22 @@ async function loadRunPromptContext(
     AutomationMemoryTableSchema.array().parse(frozen.definition.memoryTables);
     const durableTables = (await readAutomationMemoryBootstrapForRun(env, input)).tables;
     type ResultDestination = {
-      channel: "email" | "slack_agent_dm" | "workstream";
+      channel: "workstream";
       destination: string;
     };
-    const resultDelivery: ResultDestination[] = frozen.deliveryTargets.flatMap<ResultDestination>((target) => {
-      // Match the sender's production guard. In development and tests no email
-      // leaves Rally, so claiming that it will would suppress the model's own
-      // requested delivery and leave the result nowhere.
-      if (target.type === "email") {
-        return env.APP_ENV === "production"
-          ? [{ channel: "email", destination: target.emailAddress }]
-          : [];
-      }
-      return [{ channel: "slack_agent_dm", destination: target.slackUserId }];
-    }).sort((left, right) => left.channel.localeCompare(right.channel)
-      || left.destination.localeCompare(right.destination));
-    // The owning room is a destination Rally delivers to, and it is the one
-    // `deliveryTargets` never contains — nobody chose it, it follows from what
-    // the automation belongs to. Left out, a room-owned automation authored in
-    // a Slack channel got the origin section telling it where "here" is and no
-    // section telling it Rally already posts the result, which is the
-    // duplicate-send this section exists to prevent.
-    if (frozen.owningWorkstreamId !== null) {
-      resultDelivery.push({ channel: "workstream", destination: frozen.owningWorkstreamId });
-    }
+    // What Rally delivers on the run's behalf, which is now only the room a
+    // work-stream automation belongs to. Chosen destinations are gone: an
+    // automation that wants to reach somewhere outside Rally sends there itself,
+    // with the connector tools it was bound, as part of doing the work.
+    //
+    // This section exists to prevent a duplicate send, so it has to stay
+    // accurate in both directions. Naming the room stops the run posting the
+    // result there a second time; naming nothing, for every other scope, is
+    // what tells the run that nobody will send this for it.
+    const resultDelivery: ResultDestination[] = frozen.owningWorkstreamId !== null
+      ? [{ channel: "workstream", destination: frozen.owningWorkstreamId }]
+      : [];
+    automationSendsOutward = frozen.owningWorkstreamId === null;
     automationContext = {
       name: frozen.definition.name,
       versionNumber: frozen.definitionRevision,
@@ -5570,9 +5565,10 @@ async function loadRunPromptContext(
         : input.reason === "inbound_email"
           || Boolean(input.digestDeliveryId)
           || Boolean(input.slackOrigin)
-          || (automationContext?.resultDelivery.length ?? 0) > 0
           ? "external_delivery"
-          : "workstream",
+          : automationSendsOutward
+            ? "self_delivery"
+            : "workstream",
       ...(input.slackOrigin ? { slackOrigin: input.slackOrigin } : {}),
       ...(automationContext ? { automation: automationContext } : {}),
     }),
@@ -6068,10 +6064,6 @@ async function loadHarnessTools(
       definition: ToolDefinition,
       includeStaticInputValidator = false,
     ): HarnessTool | null => {
-      // A mailbox From header is not a strong authentication primitive. Email-
-      // triggered automations may inspect bound connector data, but external
-      // connector writes require a subsequent human-started run.
-      if (input.reason === "inbound_email" && definition.mode === "write") return null;
       if (!grantedScopes.includes(definition.capability)) return null;
       if (!connectorCapabilitySupportsScope(adapter, definition.capability, scope)) return null;
       const tool: HarnessTool = {
@@ -7896,12 +7888,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
       },
     },
   ];
-  // Inbound email is untrusted external data. It may use explicitly bound
-  // connector reads, but it cannot open an outbound channel that could be
-  // abused to exfiltrate those private results through a query or URL.
-  if (input.reason !== "inbound_email") {
-    tools.splice(2, 0, ...createFirecrawlWebTools(env));
-  }
+  tools.splice(2, 0, ...createFirecrawlWebTools(env));
   tools.push(...createMemoryTools(env, input));
   tools.push(...createMemoryTableTools(env, input));
   return tools;

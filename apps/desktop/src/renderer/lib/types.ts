@@ -723,12 +723,6 @@ export interface AutomationDetail extends AutomationSummary {
   defaultPluginIds: string[];
   activitySourcePluginIds: Record<string, string>;
   activitySources: AutomationActivitySource[];
-  deliveryTargets?: Array<{
-    type: AutomationDeliveryTargetType;
-    connectionId: string | null;
-    displayName: string;
-    status: 'active' | 'needs_input' | 'disabled';
-  }>;
   executionScope: 'You' | 'Workspace';
   owner?: WorkspaceMember;
   runs: AutomationRunSummary[];

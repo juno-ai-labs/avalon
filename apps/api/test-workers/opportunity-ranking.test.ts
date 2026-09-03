@@ -164,6 +164,7 @@ async function candidateIds(userId = MEMBER): Promise<string[]> {
 /** Read the raw set row, for the columns no RPC projects. */
 async function storedSet(userId = MEMBER): Promise<{
   due_at: number | null;
+  pending_due_at: number | null;
   request_seq: number;
   lease_id: string | null;
   last_ranked_at: number | null;
@@ -172,12 +173,13 @@ async function storedSet(userId = MEMBER): Promise<{
   return runInDurableObject(workspace(), (_instance, state) => (
     state.storage.sql.exec<{
       due_at: number | null;
+      pending_due_at: number | null;
       request_seq: number;
       lease_id: string | null;
       last_ranked_at: number | null;
       status: string;
     }>(
-      `SELECT due_at, request_seq, lease_id, last_ranked_at, status
+      `SELECT due_at, pending_due_at, request_seq, lease_id, last_ranked_at, status
          FROM suggested_work_sets WHERE user_id = ?`,
       userId,
     ).toArray()[0]
@@ -363,6 +365,62 @@ describe("the ranking pipeline the workspace object owns", () => {
       const set = await storedSet();
       expect(set?.due_at).not.toBeNull();
       expect(set?.lease_id).toBeNull();
+    });
+
+    it("parks a delayed request that arrives mid-pass and re-arms it at its own time", async () => {
+      const leaseId = await lease(4);
+      const delay = 30 * 60_000;
+      const before = Date.now();
+
+      // An admission landed while the tournament was running and asked for a
+      // ranking thirty minutes out. `due_at` is the pass's own claim time —
+      // already past — so `MIN` against it would keep the past and run the
+      // moment this pass settles, back to back, whatever the delay said.
+      await workspace().markOpportunityRankingDue(WORKSPACE_ID, [MEMBER], delay);
+      const midPass = await storedSet();
+      expect(midPass?.request_seq).toBe(5);
+      expect(midPass?.pending_due_at).toBeGreaterThanOrEqual(before + delay);
+      // The in-flight pass's claim time is untouched while it holds the lease.
+      expect(midPass?.due_at).toBeLessThanOrEqual(before);
+
+      await workspace().settleOpportunityRanking({
+        workspaceId: WORKSPACE_ID,
+        userId: MEMBER,
+        leaseId,
+        requestSeq: 4,
+        outcome: "completed",
+        retryAt: null,
+      });
+
+      const set = await storedSet();
+      expect(set?.lease_id).toBeNull();
+      expect(set?.pending_due_at).toBeNull();
+      expect(set?.due_at).toBeGreaterThanOrEqual(before + delay);
+    });
+
+    it("lets an immediate request made mid-pass win over a parked delayed one", async () => {
+      const leaseId = await lease(4);
+      const before = Date.now();
+
+      // An admission parks thirty minutes out, then the member dismisses a
+      // suggestion: the dismissal is immediate, and `MIN` among the requests
+      // that arrived during the pass is what the settled row carries.
+      await workspace().markOpportunityRankingDue(WORKSPACE_ID, [MEMBER], 30 * 60_000);
+      await workspace().markOpportunityRankingDue(WORKSPACE_ID, [MEMBER], 0);
+
+      await workspace().settleOpportunityRanking({
+        workspaceId: WORKSPACE_ID,
+        userId: MEMBER,
+        leaseId,
+        requestSeq: 4,
+        outcome: "completed",
+        retryAt: null,
+      });
+
+      const set = await storedSet();
+      expect(set?.request_seq).toBe(6);
+      expect(set?.due_at).toBeGreaterThanOrEqual(before);
+      expect(set?.due_at).toBeLessThanOrEqual(Date.now());
     });
 
     it("re-arms a failed pass at the retry instant it was given", async () => {

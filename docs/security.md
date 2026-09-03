@@ -492,10 +492,12 @@ merely because the From address resembles a workspace member. Friendly addresses
 are immutable and permanently reserved so a stale sender can never reach a
 different work stream.
 
-Automation email may start a read-only run, but the sender match remains defense
-in depth rather than authenticated identity. Those runs receive no external
-connector writes and no outbound web tools, and an atomic per-address hourly
-budget bounds model spend if an address leaks or a sender is spoofed.
+Automation email may start a run, and the sender match against active
+membership is the only control on it: since 2026-09-03 such a run holds the same
+connector and web tools as every other automation run, for the reasons the
+changelog entry of that date records, so a From address that passes the screen
+steers a run that can write and send. An atomic per-address hourly budget bounds
+model spend if an address leaks or a sender is spoofed.
 
 Audit events cover sign-in and session changes, membership, connector
 authorization and revocation, external writes, automation changes, suggestion
@@ -637,8 +639,12 @@ bound it on the thing a placeholder cannot fake, and add the bound to
   stores, or queues it.**
 - **A tool call is a proposal, never an instruction.** Name, schema, principal,
   capability, limits, and idempotency state are all checked before execution.
-- **An inbound email address is a routing identifier, never an authenticator.** A
-  From address that resembles a member buys a read-only run and nothing more.
+- **An inbound email address is a routing identifier, never an authenticator.** The
+  From match against active workspace membership is the only control on a
+  mail-started run: since 2026-09-03 such a run holds the same connector and web
+  tools as every other automation run, so a spoofed From that passes the screen
+  steers a run that can write and send. The changelog entry of that date records
+  why the tool filter came out and what stands in its place.
 - **An invitation token exists in D1 only as a SHA-256 hash**, and never in a query
   string, log, audit event, or Resend tag.
 - **A Gitleaks exception is a bounded pattern**, never a path exemption or a
@@ -766,6 +772,42 @@ EU rotate independently. [`runbook.md`](runbook.md) owns the procedure and the
 incident response that may prompt it.
 
 ## Changelog
+
+### 2026-09-03 — An inbound-email run is no longer read-only
+
+**What changed:** The three `inbound_email` tool guards in
+`apps/api/src/services/integrations.ts` are gone: write-mode connector tools are
+no longer withheld from a mail-started run, the Firecrawl search and fetch tools
+are no longer omitted from one, and a child harness spawned by one keeps its web
+tools. The invariant above that said a spoofed From "buys a read-only run" is
+rewritten to say what is true now.
+
+**Why:** The filter named one trigger out of several that carry untrusted
+content. A `connector_activity` or `webhook` run reads equally untrusted
+third-party text while holding every write tool it was bound, so a boundary
+drawn around inbound email alone was not a boundary, and its presence in the
+document let a reader believe the exfiltration channel was closed when it was
+open for every other external trigger. The decision recorded in
+[`automation-lifecycle.md`](automation-lifecycle.md) is that trigger-content
+trust is decided once, for every external trigger, at the level that already
+screens who may start a run, rather than in a tool rule that knew only this one.
+
+**Considered and rejected:** *Keeping the guard until a general one exists*,
+which keeps a control that misdescribes itself as the protection and defers the
+general question indefinitely. *A per-run trust flag on the workflow input, gated
+at both tool-assembly sites*, which is the shape a general control would take and
+is the natural follow-up if one is wanted; it was not built here because no
+number or policy for it has been decided, and per the rule on defensive limits
+that decision is the team's, not a guess in a refactor.
+
+**Consequences:** Ingress screening carries the whole weight for mail: a sender
+must resolve to an active workspace member or the mail is refused before a run
+exists. A mail-started run's prompt is steered by the mail body the same way a
+connector-started run's is by the event payload, and the run may act on its
+connectors accordingly. Anyone re-tightening this should do it for every external
+trigger at once, and update this invariant and
+[`workstream-email-addresses.md`](workstream-email-addresses.md) in the same
+change.
 
 ### 2026-09-02 — A link to the active workspace uses the session in use
 

@@ -9,7 +9,7 @@ import { AppShell } from './components/app-shell';
 import { Button, EmptyState, LoadingState } from './components/primitives';
 import { SpeechPlaybackProvider } from './components/speech-playback';
 import { ApiError, isSessionRejection } from './lib/api';
-import { AppSessionProvider, useAppSession, type AppSessionValue } from './lib/app-session';
+import { AppSessionProvider, useAppSession, type AppSessionValue, FINISH_SIGN_IN_IN_BROWSER } from './lib/app-session';
 import {
   abandonPendingWorkstreamFeedOpen,
   abandonWorkstreamFeedOpenOutsideRoute,
@@ -96,7 +96,7 @@ function ServiceSetupState({
         <h1>{isNetwork ? 'Rally cannot reach this region' : 'The regional service is not ready'}</h1>
         <p>{error.message}</p>
         <dl>
-          <div><dt>Region</dt><dd>{displayRegion === 'eu' ? 'European Union' : 'Global'}</dd></div>
+          <div><dt>Region</dt><dd>{displayRegion === 'eu' ? 'European Union' : 'United States'}</dd></div>
           <div><dt>API endpoint</dt><dd className="mono">{targetApiBaseUrl ?? api?.baseUrl}</dd></div>
         </dl>
         <div className="setup-guidance">
@@ -275,6 +275,10 @@ function WorkspaceOnboardingGate(): React.JSX.Element {
   } = useAppSession();
   const [activatingWorkspaceId, setActivatingWorkspaceId] = useState<string | null>(null);
   const [activationError, setActivationError] = useState<Error | null>(null);
+  // The stored identity can be refused for good on this very activation, in
+  // which case it signs in through the browser like any other; the opening
+  // state says so rather than leaving a browser window unexplained.
+  const [activationSigningIn, setActivationSigningIn] = useState(false);
   const onboarding = useQuery({
     queryKey: ['workspace-onboarding', session?.user.id],
     queryFn: getOnboardingState,
@@ -294,7 +298,11 @@ function WorkspaceOnboardingGate(): React.JSX.Element {
     });
     setActivatingWorkspaceId(workspace.id);
     setActivationError(null);
-    void activateWorkspace(workspace.region, workspace.id, operationId).catch((error: unknown) => {
+    setActivationSigningIn(false);
+    void activateWorkspace(workspace.region, workspace.id, operationId, {
+      onSignInRequired: () => setActivationSigningIn(true),
+    }).catch((error: unknown) => {
+      setActivationSigningIn(false);
       setActivationError(error instanceof Error ? error : new Error('Rally could not open this workspace.'));
     });
   }, [activateWorkspace, activatingWorkspaceId, onboarding.data?.workspace]);
@@ -341,7 +349,11 @@ function WorkspaceOnboardingGate(): React.JSX.Element {
         />
       );
     }
-    return <LoadingState label={`Opening ${onboarding.data.workspace.name}…`} />;
+    return (
+      <LoadingState
+        label={activationSigningIn ? FINISH_SIGN_IN_IN_BROWSER : `Opening ${onboarding.data.workspace.name}…`}
+      />
+    );
   }
   if (onboarding.data.invitations.length > 0) {
     return (

@@ -30,6 +30,7 @@ import {
 } from "./identifiers";
 import type { BlockIdSchema } from "./identifiers";
 
+import type { AutomationSetEvaluatorRulesInputV1 } from "./automation-evaluators";
 export * from "./automation-evaluators";
 export * from "./automation-agent";
 export * from "./identifiers";
@@ -977,38 +978,6 @@ export const AutomationPluginRecommendationSchema = z.object({
   reason: z.string().min(1).max(800),
 });
 
-export const AutomationDeliveryTargetInputSchema = z.discriminatedUnion("type", [
-  z.strictObject({ type: z.literal("slack_agent_dm"), connectionId: IdSchema }),
-  z.strictObject({ type: z.literal("email") }),
-]);
-
-/**
- * The whole destination set an automation delivers its result to, as a client
- * states it.
- *
- * One schema rather than a bound repeated per route, because the rule it
- * carries is the table's: `automation_delivery_targets` is unique on
- * `(automation_subscription_id, target_type)`, so a set naming a type twice has
- * no valid persisted form. Stated as a `.max()` alone it reads as "at most two
- * of anything", which admits two of the same kind and leaves the unique index
- * as the only thing refusing them — reached after validation has passed, so the
- * caller gets a 500 where they should have got a 422. `create` carried the
- * refinement and `PATCH` re-declared the array without it; sharing the schema is
- * what stops that happening a third time.
- */
-export const AutomationDeliveryTargetSetSchema = z.array(AutomationDeliveryTargetInputSchema)
-  .max(2)
-  .superRefine((targets, context) => {
-    const types = new Set<string>();
-    for (const target of targets) {
-      if (types.has(target.type)) {
-        context.addIssue({ code: z.ZodIssueCode.custom, message: "Each delivery destination can be chosen once" });
-        return;
-      }
-      types.add(target.type);
-    }
-  });
-
 export const MemoryTableColumnTypeSchema = z.enum([
   "string",
   "url",
@@ -1337,32 +1306,26 @@ export const TriggerDefinitionSchema = z.discriminatedUnion("type", [
  * the union it discriminates so a kind added there is one file away from the
  * question of whether it needs an evaluator.
  */
+/**
+ * The trigger kinds that arrive from outside Rally, and so bind to a connector.
+ *
+ * Written as a type predicate rather than a `boolean` so a caller that has
+ * filtered on it can read `sourceBindingKey` and `suggestedSourcePluginId`
+ * without re-narrowing. Those two fields exist only on this side of the union,
+ * which is the whole reason the predicate is worth having.
+ */
+export type ExternalEventTrigger = Extract<
+  z.infer<typeof TriggerDefinitionSchema>,
+  { type: "connector_activity" | "semantic_activity" | "webhook" }
+>;
 export function isExternalEventTrigger(
   trigger: z.infer<typeof TriggerDefinitionSchema>,
-): boolean {
+): trigger is ExternalEventTrigger {
   return trigger.type === "connector_activity"
     || trigger.type === "semantic_activity"
     || trigger.type === "webhook";
 }
 
-/**
- * Where the person asked for the result to go, as the compiler understood it.
- *
- * A *request*, not a destination: the destinations are chosen on the create
- * screen and changed afterwards from the automation. This exists so that choice
- * starts from what was actually asked for rather than from a regex over the
- * draft's prose — the compiler is the one thing in the system that already
- * parsed the sentence.
- */
-/**
- * Where a draft asks to be delivered.
- *
- * `channel` is not a second shape: a workspace automation reaches people by
- * acting with its connector tools, and this says the person asked for a channel
- * rather than naming one. Which channel is decided when the automation runs,
- * from where it was authored — nothing here carries an ID.
- */
-export const AutomationRequestedDeliverySchema = z.enum(["email", "slack_agent_dm", "channel"]);
 export const AutomationDraftSchema = z.object({
   name: z.string().min(1).max(140),
   description: z.string().min(1).max(1200),
@@ -1371,8 +1334,6 @@ export const AutomationDraftSchema = z.object({
   triggers: z.array(TriggerDefinitionSchema).min(1),
   requiredCapabilities: z.array(z.string()).default([]),
   expectedOutputs: z.array(z.string()).default([]),
-  /** Defaulted, so a draft saved before this field existed still parses. */
-  requestedDelivery: z.array(AutomationRequestedDeliverySchema).max(2).default([]),
   defaultBehavior: z.record(z.string(), z.unknown()).default({}),
   recommendedPlugins: z.array(AutomationPluginRecommendationSchema).default([]),
   memoryTables: z.array(AutomationMemoryTableSchema).default([]),
@@ -1387,17 +1348,6 @@ export const AutomationDraftSchema = z.object({
   elicitation: AutomationDraftElicitationSchema.nullable().default(null),
   ready: z.boolean()
 }).superRefine((draft, context) => {
-  // Scope is the destination for a room's automation: its results land in the
-  // room that owns it, and there is nothing else for it to ask for. A draft
-  // that named one anyway would be asking for two destinations, one of which
-  // nobody chose.
-  if (draft.suggestedScope === "workstream" && draft.requestedDelivery.length > 0) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["requestedDelivery"],
-      message: "A work-stream automation delivers to its work stream, so it requests no delivery",
-    });
-  }
   const names = new Set<string>();
   draft.memoryTables.forEach((table, index) => {
     const normalized = table.name.toLocaleLowerCase();
@@ -1459,6 +1409,97 @@ export const AutomationDraftSchema = z.object({
     sourceBindings.set(trigger.sourceBindingKey, { connectorType, pluginId: trigger.suggestedSourcePluginId });
   });
 });
+
+/**
+ * Everything acceptance needs that the draft has already decided.
+ *
+ * Acceptance used to take these as request fields, because the wizard that
+ * preceded the proposal card asked a member to choose them. That wizard is
+ * gone, and the drafting loop answers the same questions earlier and with more
+ * evidence: a ready draft's activity trigger names its own binding key and the
+ * plugin the model loaded and inspected against a live connection activation,
+ * and its recommended plugins were held to the same rule. Reading them back off
+ * the definition is therefore not a fallback for a missing request field, it is
+ * the only source that was ever authoritative.
+ *
+ * Derivation alone proves nothing about the present: a connection can be
+ * revoked between drafting and Create, so acceptance still resolves each plugin
+ * against the workspace's connections. That check is what the request field's
+ * absence exposes rather than hides.
+ */
+/**
+ * Each binding key the triggers declare, mapped to the plugin its trigger
+ * suggested. A trigger that has not yet named both is not a source anything can
+ * bind to and is left out.
+ *
+ * The one definition of that map: acceptance, the template catalog, and the
+ * drafting tools all used to spell it out by hand, with filters that had begun
+ * to drift, and a trigger kind added to `isExternalEventTrigger` would have had
+ * to be added to each of them.
+ */
+export function automationActivitySourcePluginIds(
+  triggers: ReadonlyArray<AutomationDraft["triggers"][number]>,
+): Record<string, string> {
+  const activitySourcePluginIds: Record<string, string> = {};
+  for (const trigger of triggers) {
+    if (!isExternalEventTrigger(trigger)) continue;
+    if (!trigger.sourceBindingKey || !trigger.suggestedSourcePluginId) continue;
+    activitySourcePluginIds[trigger.sourceBindingKey] = trigger.suggestedSourcePluginId;
+  }
+  return activitySourcePluginIds;
+}
+
+export function automationAcceptanceSelections(draft: AutomationDraft): {
+  activitySourcePluginIds: Record<string, string>;
+  defaultPluginIds: string[];
+} {
+  return {
+    activitySourcePluginIds: automationActivitySourcePluginIds(draft.triggers),
+    defaultPluginIds: [...new Set(draft.recommendedPlugins.map((plugin) => plugin.pluginId))],
+  };
+}
+
+/** Why a draft could not be accepted as written, in the object's own vocabulary. */
+export type AutomationDraftAcceptanceBlocker =
+  | "automation_evaluator_rules_required"
+  | "automation_activity_source_unbound";
+
+/**
+ * What would stop this draft being accepted, decided from the draft alone.
+ *
+ * Submission and acceptance both call this, which is the whole point: a draft
+ * the first admits as `ready` and the second refuses reaches a person as a
+ * proposal card whose Create button cannot work, with nothing on it to act on.
+ * `evaluatorRulesMissing` was the first field to be shared this way after
+ * exactly that defect; every check here is one that used to be enforced only at
+ * the far end, or not at all.
+ *
+ * It answers only what a draft can settle for itself. Whether a named plugin
+ * still resolves to a healthy connection the caller may bind is not knowable
+ * here and is deliberately left to acceptance, where it is a refusal about the
+ * present rather than about the draft.
+ */
+export function automationDraftAcceptanceBlocker(
+  draft: AutomationDraft,
+  rules: AutomationSetEvaluatorRulesInputV1 | null,
+): AutomationDraftAcceptanceBlocker | null {
+  const external = draft.triggers.filter(isExternalEventTrigger);
+  if (external.length > 0 && (rules?.evaluators.length ?? 0) === 0) {
+    return "automation_evaluator_rules_required";
+  }
+  // Every evaluator has to name a binding the triggers actually declare.
+  // Triggers and rules are written by two separate tool calls, so this is the
+  // one place their agreement is checked directly rather than inferred from a
+  // request field that happened to carry both.
+  const { activitySourcePluginIds } = automationAcceptanceSelections(draft);
+  for (const evaluator of rules?.evaluators ?? []) {
+    const bound = activitySourcePluginIds[evaluator.source.sourceBindingKey];
+    if (!bound || bound !== evaluator.source.suggestedSourcePluginId) {
+      return "automation_activity_source_unbound";
+    }
+  }
+  return null;
+}
 
 export const AutomationDraftStreamEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("started") }),
@@ -1631,12 +1672,6 @@ export const AutomationDetailSchema = AutomationSummarySchema.extend({
   memoryTables: z.array(AutomationMemoryTableSchema).default([]),
   defaultPluginIds: z.array(ModelPluginIdSchema).default([]),
   activitySourcePluginIds: ActivitySourcePluginIdsSchema.default({}),
-  deliveryTargets: z.array(z.object({
-    type: AutomationDeliveryTargetTypeSchema,
-    connectionId: IdSchema.nullable().default(null),
-    displayName: z.string().min(1).max(320),
-    status: z.enum(["active", "needs_input", "disabled"]),
-  })).default([]),
   templateUpdate: AutomationTemplateUpdateSchema.nullable().default(null),
   nextPlannedWorkstream: WorkstreamSchema.nullable(),
   recentRuns: z.array(AutomationRunSchema)
@@ -1934,25 +1969,7 @@ export const ReorderWorkstreamPinsRequestSchema = z.object({
   workstreamIds: z.array(IdSchema),
 });
 
-/**
- * The visible pending-input queue in its new promotion order, not a move of
- * one row.
- *
- * A drag produces a complete arrangement. Sending that arrangement lets the
- * object permute the existing `input_sequence` values without inferring a
- * gap from a list state the client may no longer share. Ids that have
- * already been delivered are ignored rather than rejected, and visible
- * pending inputs the caller does not name keep their relative order behind
- * the ones it did.
- *
- * Deliberately unbounded. Nothing limits how many messages may wait on a
- * loop, so any count this array could be capped at would refuse a drag and
- * leave the queue unreorderable for as long as the person stayed above it.
- */
-export const ReorderPendingLoopInputsRequestSchema = z.object({
-  inputIds: z.array(IdSchema),
-});
-
+/** The authoritative visible pending-input queue after a reorder command. */
 export const ReorderPendingLoopInputsResultSchema = z.object({
   pendingInputs: z.array(PendingTranscriptInputSchema),
 });
@@ -1984,37 +2001,6 @@ export const AnswerElicitationRequestSchema = z.union([
     skipped: z.literal(true)
   })
 ]);
-export const CreateAutomationRequestSchema = z.object({
-  /**
-   * The draft this automation was built from. Creating promotes that row in
-   * place — same id, same sidebar position — instead of leaving the draft
-   * behind beside the automation it became. Absent only when an automation is
-   * created without ever having been a draft.
-   */
-  draftId: IdSchema.optional(),
-  draft: AutomationDraftSchema,
-  /**
-   * `workstream` carries no room: the request cannot name one, because a body
-   * that could would let a caller give any room an automation. The room comes
-   * from where the draft was written, which is the only one reachable from an
-   * authoring loop anyway.
-   */
-  scope: AutomationScopeSchema,
-  defaultPluginIds: z.array(ModelPluginIdSchema).default([]),
-  activitySourcePluginIds: ActivitySourcePluginIdsSchema.default({}),
-  resourceIds: z.array(IdSchema).max(20).default([]),
-  deliveryTargets: AutomationDeliveryTargetSetSchema.default([]),
-  /**
-   * Pins the work stream each run of this automation creates to one OpenRouter
-   * model. Same developer-mode selector as a new work stream, held on the
-   * subscription because the runs it applies to do not exist yet.
-   */
-  modelOverride: AgentModelOverrideSchema.optional(),
-}).superRefine((input, context) => {
-  if (input.deliveryTargets.length > 0 && input.scope !== "personal") {
-    context.addIssue({ code: z.ZodIssueCode.custom, path: ["deliveryTargets"], message: "Result delivery outside Avalon requires a personal automation" });
-  }
-});
 export const CompileAutomationRequestSchema = z.object({
   /**
    * The draft subscription this conversation is already writing to. Absent on
@@ -2060,6 +2046,14 @@ export const WorkstreamBootSchema = WorkstreamDetailSchema.extend({
 
 export const WORKSTREAM_REALTIME_MAX_FRAME_BYTES = 1_000_000;
 
+export const SubstreamSocketMutationTypeSchema = z.enum([
+  "create_message",
+  "answer_elicitation",
+  "reorder_pending_inputs",
+  "stop_harness",
+  "retry_harness",
+]);
+
 export const ClientSocketEventSchema = z.discriminatedUnion("type", [
   z.strictObject({
     type: z.literal("subscribe"),
@@ -2093,12 +2087,21 @@ export const ClientSocketEventSchema = z.discriminatedUnion("type", [
     operationId: IdSchema,
     payload: CreateMessageRequestSchema,
   }),
-  z.object({ type: z.literal("stop_harness") }),
-  z.object({ type: z.literal("answer_elicitation"), elicitationId: IdSchema, payload: AnswerElicitationRequestSchema }),
-  z.object({ type: z.literal("add_participant"), userId: IdSchema }),
-  z.object({ type: z.literal("remove_participant"), userId: IdSchema }),
-  z.object({ type: z.literal("attach_resource"), resourceId: IdSchema }),
-  z.object({ type: z.literal("detach_resource"), resourceId: IdSchema })
+  z.strictObject({
+    type: z.literal("answer_elicitation"),
+    operationId: IdSchema,
+    elicitationId: IdSchema,
+    payload: AnswerElicitationRequestSchema,
+  }),
+  z.strictObject({
+    type: z.literal("reorder_pending_inputs"),
+    operationId: IdSchema,
+    // The whole visible order, not one move. Intentionally unbounded because
+    // the durable queue itself has no count ceiling.
+    inputIds: z.array(IdSchema),
+  }),
+  z.strictObject({ type: z.literal("stop_harness"), operationId: IdSchema }),
+  z.strictObject({ type: z.literal("retry_harness"), operationId: IdSchema }),
 ]);
 
 /** Workspace-owned query surfaces kept coherent by the one WorkspaceDO socket. */
@@ -2150,13 +2153,6 @@ export const WorkspaceSocketClientEventSchema = z.discriminatedUnion("type", [
     revision: z.number().int().positive(),
     applicationState: z.enum(["foreground", "background"]),
     foregroundWorkstreamId: WorkstreamIdSchema.nullable(),
-  }),
-  z.strictObject({
-    type: z.literal("create_message"),
-    workstreamId: IdSchema,
-    substreamId: z.union([z.literal("0"), IdSchema]),
-    operationId: IdSchema,
-    payload: CreateMessageRequestSchema,
   }),
   z.strictObject({
     type: z.literal("list_workstreams"),
@@ -2552,7 +2548,7 @@ export type WorkstreamControlSocketEvent = z.infer<typeof WorkstreamControlSocke
  * event sequence: the canonical transcript-turn upsert is replayable and
  * broadcast, while this receipt is private to the socket that submitted it.
  * Reconnecting clients resend the same `clientMessageId` and receive the same
- * accepted turn through the idempotent write path.
+ * private receipt through the command's idempotent write path.
  */
 export const WorkstreamMessageDeliveryStateSchema = z.enum(["canonical", "pending"]);
 export const WorkstreamMessageAdmissionReceiptSchema = z.strictObject({
@@ -2564,23 +2560,50 @@ export const WorkstreamMessageAdmissionReceiptSchema = z.strictObject({
   deliveryState: WorkstreamMessageDeliveryStateSchema,
 });
 
-export const WorkstreamSocketCommandResultSchema = z.discriminatedUnion("type", [
+const WorkstreamSocketCommandErrorSchema = z.strictObject({
+  status: z.number().int().min(0).max(599),
+  code: z.string().min(1).max(160),
+  message: z.string().min(1).max(1_000),
+  details: z.record(z.string(), z.unknown()).optional(),
+});
+
+export const WorkstreamSocketCommandResultSchema = z.union([
   z.strictObject({
     type: z.literal("client_command_succeeded"),
     command: z.literal("create_message"),
+    operationId: IdSchema,
     clientMessageId: z.string().min(1).max(120),
     ...WorkstreamMessageAdmissionReceiptSchema.shape,
   }),
   z.strictObject({
+    type: z.literal("client_command_succeeded"),
+    command: z.literal("answer_elicitation"),
+    operationId: IdSchema,
+    elicitation: ElicitationSchema.optional(),
+  }),
+  z.strictObject({
+    type: z.literal("client_command_succeeded"),
+    command: z.literal("reorder_pending_inputs"),
+    operationId: IdSchema,
+    ...ReorderPendingLoopInputsResultSchema.shape,
+  }),
+  z.strictObject({
+    type: z.literal("client_command_succeeded"),
+    command: z.literal("stop_harness"),
+    operationId: IdSchema,
+  }),
+  z.strictObject({
+    type: z.literal("client_command_succeeded"),
+    command: z.literal("retry_harness"),
+    operationId: IdSchema,
+    harnessRunId: IdSchema,
+  }),
+  z.strictObject({
     type: z.literal("client_command_failed"),
-    command: z.literal("create_message"),
-    clientMessageId: z.string().min(1).max(120),
-    error: z.strictObject({
-      status: z.number().int().min(0).max(599),
-      code: z.string().min(1).max(160),
-      message: z.string().min(1).max(1_000),
-      details: z.record(z.string(), z.unknown()).optional(),
-    }),
+    command: SubstreamSocketMutationTypeSchema,
+    operationId: IdSchema,
+    clientMessageId: z.string().min(1).max(120).optional(),
+    error: WorkstreamSocketCommandErrorSchema,
   }),
 ]);
 
@@ -3558,6 +3581,7 @@ export type ConnectorOAuthAttemptStatus = z.infer<typeof ConnectorOAuthAttemptSt
 export type ConnectorOAuthStart = z.infer<typeof ConnectorOAuthStartSchema>;
 export type ConnectorOAuthAttempt = z.infer<typeof ConnectorOAuthAttemptSchema>;
 export type ClientSocketEvent = z.infer<typeof ClientSocketEventSchema>;
+export type SubstreamSocketMutationType = z.infer<typeof SubstreamSocketMutationTypeSchema>;
 export type WorkstreamSocketCommandResult = z.infer<typeof WorkstreamSocketCommandResultSchema>;
 export type WorkstreamMessageDeliveryState = z.infer<typeof WorkstreamMessageDeliveryStateSchema>;
 export type WorkstreamMessageAdmissionReceipt = z.infer<typeof WorkstreamMessageAdmissionReceiptSchema>;

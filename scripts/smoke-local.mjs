@@ -1,21 +1,9 @@
-import WebSocket from "ws";
-
-// Inlined rather than imported: this script runs from the repository root with
-// plain Node, which resolves no workspace package and would not run the
-// TypeScript source behind one. `scripts/socket-ticket-transport.test.mjs`
-// fails if these drift from `packages/contracts/src/socket-tickets.ts`.
-const SOCKET_TICKET_SUBPROTOCOL = "rally.ticket.v1";
-const SOCKET_TICKET_QUERY_PARAM = "ticket";
-
-function socketTicketProtocols(ticket) {
-  return [SOCKET_TICKET_SUBPROTOCOL, ticket];
-}
-
-function socketUrlWithoutTicket(url) {
-  const parsed = new URL(url);
-  parsed.searchParams.delete(SOCKET_TICKET_QUERY_PARAM);
-  return parsed.toString();
-}
+import {
+  SOCKET_TICKET_SUBPROTOCOL,
+  openSubstreamSocket,
+  socketTicketProtocols,
+  socketUrlWithoutTicket,
+} from "./substream-socket-client.mjs";
 
 const baseUrl = process.env.AVALON_SMOKE_BASE_URL ?? "http://127.0.0.1:8787";
 const otherBaseUrl = process.env.AVALON_SMOKE_OTHER_BASE_URL;
@@ -30,67 +18,6 @@ async function jsonRequest(path, options = {}, origin = baseUrl) {
   const response = await fetch(new URL(path, origin), options);
   const body = await response.json().catch(() => null);
   return { response, body };
-}
-
-async function openSocket(url, { expectOpen, protocols }) {
-  return new Promise((resolve, reject) => {
-    const socket = new WebSocket(url, protocols ?? [], { origin: "app://rallywithai" });
-    const timeout = setTimeout(() => {
-      socket.close();
-      reject(new Error(`Realtime check timed out (${expectOpen ? "open" : "replay"})`));
-    }, 5_000);
-
-    const finish = (result) => {
-      clearTimeout(timeout);
-      resolve(result);
-    };
-
-    socket.addEventListener("message", (event) => {
-      if (!expectOpen) return;
-      try {
-        const payload = JSON.parse(String(event.data));
-        if (payload.type === "snapshot") {
-          const negotiated = socket.protocol;
-          socket.close(1000, "Smoke check complete");
-          finish({ opened: true, snapshot: true, negotiated });
-        }
-      } catch (error) {
-        clearTimeout(timeout);
-        socket.close();
-        reject(error);
-      }
-    });
-    socket.addEventListener("open", () => {
-      if (!expectOpen) {
-        clearTimeout(timeout);
-        socket.close();
-        reject(new Error("A consumed realtime ticket was accepted"));
-        return;
-      }
-      socket.send(JSON.stringify({ type: "subscribe", afterSequence: 0 }));
-    });
-    // `ws` reports the handshake response before erroring, which is the only
-    // place the rejection's status is visible. A replay that arrives as a 500
-    // satisfies "did not open" exactly as well as a clean 401 does, so the
-    // status is the assertion that means something.
-    socket.on("unexpected-response", (_request, response) => {
-      clearTimeout(timeout);
-      socket.terminate();
-      if (expectOpen) reject(new Error(`Realtime handshake returned ${response.statusCode}`));
-      else finish({ opened: false, snapshot: false, status: response.statusCode });
-    });
-    socket.addEventListener("error", () => {
-      if (expectOpen) {
-        clearTimeout(timeout);
-        reject(new Error("Realtime connection failed before the snapshot"));
-      } else {
-        finish({ opened: false, snapshot: false });
-      }
-    });
-    socket.addEventListener("close", () => {
-      if (!expectOpen) finish({ opened: false, snapshot: false });
-    });
-  });
 }
 
 const health = await jsonRequest("/health");
@@ -184,42 +111,62 @@ assert(detail.response.ok, "Seeded work-stream detail is unavailable; run pnpm d
 assert(detail.body?.resources?.length > 0, "The right-rail resource fixture is missing");
 assert(detail.body?.connections?.length > 0, "The right-rail connection fixture is missing");
 
-const messages = await jsonRequest(`/workstreams/${seedWorkstreamId}/messages?limit=200`, { headers: authHeaders });
-assert(messages.response.ok && messages.body?.items?.length >= 5, "The background-task transcript fixture is incomplete");
-assert(messages.body.items.some((message) => message.messageType === "tool"), "Persisted tool events are missing");
+const transcriptTurns = [
+  ...(detail.body?.transcript?.ranges ?? []).flatMap((range) => range.turns ?? []),
+  ...(detail.body?.transcript?.activeTurns ?? []),
+];
+assert(transcriptTurns.length >= 5, "The background-task transcript fixture is incomplete");
+assert(
+  transcriptTurns.some((turn) => turn.blocks?.some((block) => block.type === "tool")),
+  "Persisted tool events are missing",
+);
 
-const replayedMessage = await jsonRequest(`/workstreams/${seedWorkstreamId}/messages`, {
-  method: "POST",
-  headers: authHeaders,
-  body: JSON.stringify({
-    text: "Investigate ENG-142 and summarize the evidence before proposing a fix.",
-    clientMessageId: "seed-eng-1",
-    mentions: [],
-    confirmedParticipantUserIds: [],
-  }),
-});
-assert(replayedMessage.response.status === 201, "Message idempotency replay failed");
-assert(replayedMessage.body?.turn?.turnId === "00000000-0000-7000-8000-000000000032", "Message replay created a duplicate");
-assert(replayedMessage.body?.deliveryState === "canonical", "Message replay did not report its canonical durable state");
-
-const ticket = await jsonRequest(`/workstreams/${seedWorkstreamId}/socket`, { headers: authHeaders });
+const ticket = await jsonRequest(
+  `/workstreams/${seedWorkstreamId}/substreams/0/socket`,
+  { headers: authHeaders },
+);
 assert(ticket.response.ok && ticket.body?.url && ticket.body?.ticket, "Realtime ticket creation failed");
 // The desktop presents its ticket the way the renderer does: through the
 // handshake subprotocol, with the deprecated query ticket stripped from the URL.
 const handshakeUrl = socketUrlWithoutTicket(ticket.body.url);
 assert(!handshakeUrl.includes("ticket="), "The handshake URL still carries the ticket");
-const firstSocket = await openSocket(handshakeUrl, {
+const firstSocket = await openSubstreamSocket(handshakeUrl, {
   expectOpen: true,
   protocols: socketTicketProtocols(ticket.body.ticket),
+  subscriptionBootstrap: ticket.body.subscriptionBootstrap ?? false,
+  timeoutMs: 5_000,
+  command: {
+    type: "create_message",
+    operationId: crypto.randomUUID(),
+    payload: {
+      text: "Investigate ENG-142 and summarize the evidence before proposing a fix.",
+      clientMessageId: "seed-eng-1",
+      mentions: [],
+      confirmedParticipantUserIds: [],
+      attachmentIds: [],
+    },
+  },
 });
 assert(firstSocket.snapshot, "Realtime connection did not provide a snapshot");
 assert(
   firstSocket.negotiated === SOCKET_TICKET_SUBPROTOCOL,
   `The server selected ${firstSocket.negotiated || "no subprotocol"} rather than the sentinel`,
 );
-const replaySocket = await openSocket(handshakeUrl, {
+assert(firstSocket.commandResult?.type === "client_command_succeeded", "Message idempotency replay failed");
+assert(
+  firstSocket.commandResult?.turn?.turnId === "00000000-0000-7000-8000-000000000032",
+  "Message replay created a duplicate",
+);
+assert(
+  firstSocket.commandResult?.deliveryState === "canonical",
+  "Message replay did not report its canonical durable state",
+);
+
+const replaySocket = await openSubstreamSocket(handshakeUrl, {
   expectOpen: false,
   protocols: socketTicketProtocols(ticket.body.ticket),
+  subscriptionBootstrap: ticket.body.subscriptionBootstrap ?? false,
+  timeoutMs: 5_000,
 });
 assert(!replaySocket.opened, "Realtime ticket replay was accepted");
 assert(
@@ -230,7 +177,11 @@ assert(
 // The deprecated query transport stays covered while builds that use it exist.
 const legacyTicket = await jsonRequest(`/workstreams/${seedWorkstreamId}/socket`, { headers: authHeaders });
 assert(legacyTicket.response.ok && legacyTicket.body?.url, "Realtime ticket creation failed");
-const legacySocket = await openSocket(legacyTicket.body.url, { expectOpen: true });
+const legacySocket = await openSubstreamSocket(legacyTicket.body.url, {
+  expectOpen: true,
+  subscriptionBootstrap: legacyTicket.body.subscriptionBootstrap ?? false,
+  timeoutMs: 5_000,
+});
 assert(legacySocket.snapshot, "The deprecated query ticket stopped working");
 
 console.log(JSON.stringify({

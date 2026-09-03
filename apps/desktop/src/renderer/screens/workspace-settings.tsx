@@ -48,6 +48,7 @@ import { ThemePicker } from '../components/theme-picker';
 import { DigestSettings } from '../components/digest-settings';
 import { SLACK_PERSONAL_CAPABILITIES } from '../lib/slack-personal-capabilities';
 import { useAppSession } from '../lib/app-session';
+import { invalidateCachedWorkstreamDetails } from '../lib/workstreams-cache';
 import { ApiError } from '../lib/api';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { desktopBridge } from '../lib/platform';
@@ -1002,7 +1003,7 @@ export function WorkspaceSettingsScreen({
           setConnectorOAuthMessage(`${providerName} is connected.`);
           void Promise.all([
             queryClient.invalidateQueries({ queryKey: ['connections'] }),
-            queryClient.invalidateQueries({ queryKey: ['workstream'] }),
+            invalidateCachedWorkstreamDetails(queryClient),
             queryClient.invalidateQueries({ queryKey: ['automation'] }),
           ]);
           return;
@@ -1197,7 +1198,7 @@ export function WorkspaceSettingsScreen({
                       <small>All workspace data, sessions, and requests remain pinned to this regional service.</small>
                     </span>
                     <span className="settings-row-value">
-                      <strong>{workspace.region === 'eu' ? 'European Union' : 'Global'}</strong>
+                      <strong>{workspace.region === 'eu' ? 'European Union' : 'United States'}</strong>
                       <Badge>Locked</Badge>
                     </span>
                   </div>
@@ -2028,7 +2029,7 @@ export function WorkspaceSettingsScreen({
                             <dt>{entry.name}</dt>
                             <dd>
                               {entry.propertyNames.join(', ') || 'No properties'}
-                              <small>{entry.route === 'eu' ? 'EU' : 'Global'} · {entry.validation} · {entry.queueState}</small>
+                              <small>{entry.route === 'eu' ? 'EU' : 'US'} · {entry.validation} · {entry.queueState}</small>
                             </dd>
                           </div>
                         ))}

@@ -1,3 +1,4 @@
+import { AutomationSetEvaluatorRulesInputV1Schema } from "@rally/contracts";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -37,7 +38,6 @@ const eventDrivenDraft = {
   }],
   requiredCapabilities: [],
   expectedOutputs: [],
-  requestedDelivery: [],
   defaultBehavior: {},
   recommendedPlugins: [],
   memoryTables: [],
@@ -174,6 +174,34 @@ describe("submitting a draft that needs evaluator rules", () => {
     // not satisfy the requirement either.
     await expect(toolNamed(tools, "submit_draft").execute(eventDrivenDraft, toolContext))
       .rejects.toThrow(/Call set_evaluator_rules/u);
+  });
+
+  it("names the disagreement when a rule binds a source the triggers do not declare", async () => {
+    const state = readyHost();
+    // Rules staged for a binding key the draft's trigger does not carry: the
+    // object refuses this as a bare `automation_activity_source_unbound`, the
+    // second code the pre-check exists to phrase. The sentence has to name the
+    // tool and the repair, or the model resubmits the same draft. Staged on
+    // the host directly, as `set_evaluator_rules` leaves them: that tool also
+    // validates the rule against the inspected plugin's vocabulary, which is
+    // its own test and not the disagreement under test here.
+    state.draftState.evaluatorRules = AutomationSetEvaluatorRulesInputV1Schema.parse({
+      schemaVersion: 1,
+      evaluators: [{
+        evaluatorKey: "page_created",
+        source: {
+          sourceBindingKey: "notion_pages",
+          suggestedSourcePluginId: "plugin_notion",
+          event: { kind: "event_type", eventType: "notion.page.created" },
+        },
+        when: { kind: "always" },
+      }],
+    });
+    const tools = createAutomationsPlugin(state).tools;
+
+    await expect(toolNamed(tools, "submit_draft").execute(eventDrivenDraft, toolContext))
+      .rejects.toThrow(/sourceBindingKey and suggestedSourcePluginId must match .* Call set_evaluator_rules again/u);
+    expect(state.draftState.submitted).toBeNull();
   });
 
   it("leaves a partial draft and a draft with no event trigger alone", async () => {

@@ -10,9 +10,7 @@ import {
   WorkspaceWorkstreamPageEventSchema,
   WorkspaceWorkstreamStateEventSchema,
   WorkstreamIdSchema,
-  WorkstreamSocketCommandResultSchema,
   type WorkstreamId,
-  type WorkstreamMessageAdmissionReceipt,
   type WorkspaceSidebar,
   type WorkspaceSocketClientEvent,
   type WorkspaceSyncTopic,
@@ -47,7 +45,6 @@ import {
 import { realtimeSocketTelemetry } from './socket-telemetry';
 import { mergeCachedWorkstreamPage, setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 
-type CreateMessageCommand = Extract<WorkspaceSocketClientEvent, { type: 'create_message' }>;
 type ListWorkstreamsCommand = Extract<WorkspaceSocketClientEvent, { type: 'list_workstreams' }>;
 type WorkspaceSocketApi = Pick<RallyApi, 'getWorkspaceSocketTicket'>;
 export type WorkspaceSocketState = 'connecting' | 'connected' | 'reconnecting' | 'unavailable';
@@ -73,16 +70,6 @@ export interface SidebarConnect {
   notesNextCursor: string | null;
 }
 
-interface PendingCommand {
-  command: CreateMessageCommand;
-  resolve: (turn: AcceptedWorkstreamTurn) => void;
-  reject: (error: Error) => void;
-  timeout: number | null;
-}
-
-export type AcceptedWorkstreamTurn = WorkstreamMessageAdmissionReceipt['turn']
-  & Pick<WorkstreamMessageAdmissionReceipt, 'deliveryState'>;
-
 /**
  * A correlated directory page awaiting its answer.
  *
@@ -102,7 +89,6 @@ interface WorkspaceSocketContextValue {
   topicWaterlines: Readonly<Partial<Record<WorkspaceSyncTopic, number>>>;
   presenceUserIdsByWorkstream: Readonly<Record<string, readonly string[]>>;
   setForegroundWorkstreamId(workstreamId: string | null): void;
-  createMessage(command: CreateMessageCommand): Promise<AcceptedWorkstreamTurn>;
   listWorkstreams(input: {
     limit: number;
     before?: string;
@@ -208,13 +194,6 @@ export function WorkspaceSocketProvider({
   const [presenceUserIdsByWorkstream, setPresenceUserIdsByWorkstream] = useState<Record<string, readonly string[]>>({});
   const foregroundWorkstreamIdRef = useRef<WorkstreamId | null>(null);
   const reportPresenceRef = useRef<() => void>(() => undefined);
-  const createMessageRef = useRef<(command: CreateMessageCommand) => Promise<AcceptedWorkstreamTurn>>(
-    () => Promise.reject(new ApiError(
-      'The workspace is not connected.',
-      409,
-      'workspace_socket_unavailable',
-    )),
-  );
   const listWorkstreamsRef = useRef<WorkspaceSocketContextValue['listWorkstreams']>(
     () => Promise.reject(new ApiError(
       'The workspace is not connected.',
@@ -236,7 +215,6 @@ export function WorkspaceSocketProvider({
     const isOffline = (): boolean => navigator.onLine === false;
     let lastWaterline = -1;
     let presenceRevision = 0;
-    const pending = new Map<string, PendingCommand>();
     const pendingDirectoryRequests = new Map<string, PendingDirectoryRequest>();
     let subscribed = false;
     let applicationForegrounded = false;
@@ -349,9 +327,8 @@ export function WorkspaceSocketProvider({
       }));
       return unaccountedFor && !wholeDirectory;
     };
-    const sendPending = (): void => {
+    const sendPendingDirectoryRequests = (): void => {
       if (socket?.readyState !== WebSocket.OPEN) return;
-      for (const entry of pending.values()) socket.send(JSON.stringify(entry.command));
       for (const entry of pendingDirectoryRequests.values()) socket.send(JSON.stringify(entry.command));
     };
     const rejectPendingDirectoryRequests = (error: Error): void => {
@@ -360,14 +337,6 @@ export function WorkspaceSocketProvider({
         entry.reject(error);
       }
       pendingDirectoryRequests.clear();
-    };
-    const rejectPending = (error: Error): void => {
-      for (const entry of pending.values()) {
-        if (entry.timeout !== null) window.clearTimeout(entry.timeout);
-        entry.reject(error);
-      }
-      pending.clear();
-      rejectPendingDirectoryRequests(error);
     };
     const scheduleReconnect = (): void => {
       if (stopped || permanentlyClosed || reconnectTimer !== null) return;
@@ -419,7 +388,7 @@ export function WorkspaceSocketProvider({
           // No directory invalidation here: subscribing is answered with the
           // whole sidebar, so a reconnect reconverges from that payload rather
           // than from a refetch the client has to ask for.
-          sendPending();
+          sendPendingDirectoryRequests();
           scheduleHeartbeat(next);
         });
         next.addEventListener('message', (messageEvent) => {
@@ -548,22 +517,6 @@ export function WorkspaceSocketProvider({
             applyVersionedProjectSnapshot(queryClient, projectSnapshot.data.projects);
             return;
           }
-          const result = WorkstreamSocketCommandResultSchema.safeParse(decoded);
-          if (!result.success) return;
-          const entry = pending.get(result.data.clientMessageId);
-          if (!entry) return;
-          pending.delete(result.data.clientMessageId);
-          if (entry.timeout !== null) window.clearTimeout(entry.timeout);
-          if (result.data.type === 'client_command_succeeded') {
-            entry.resolve({ ...result.data.turn, deliveryState: result.data.deliveryState });
-          } else {
-            entry.reject(new ApiError(
-              result.data.error.message,
-              result.data.error.status,
-              result.data.error.code,
-              result.data.error.details,
-            ));
-          }
         });
         next.addEventListener('close', (event) => {
           if (socket !== next) return;
@@ -604,7 +557,7 @@ export function WorkspaceSocketProvider({
               socketTelemetry.disconnected({ attempts: attempt, retrying: false });
             }
             setState('unavailable');
-            rejectPending(permanentError);
+            rejectPendingDirectoryRequests(permanentError);
             return;
           }
           if (!stopped) {
@@ -633,15 +586,6 @@ export function WorkspaceSocketProvider({
       }
     };
 
-    createMessageRef.current = (command): Promise<AcceptedWorkstreamTurn> => new Promise((resolve, reject) => {
-      const clientMessageId = command.payload.clientMessageId;
-      // The command is idempotent by clientMessageId and remains owned by this
-      // queue across reconnects. Timing it out would turn an ambiguous accepted
-      // send into a new client identity on retry and duplicate the message.
-      pending.set(clientMessageId, { command, resolve, reject, timeout: null });
-      sendPending();
-      void connect();
-    });
     listWorkstreamsRef.current = (input) => new Promise((resolve, reject) => {
       const requestId = uuidV7();
       const command: ListWorkstreamsCommand = {
@@ -660,7 +604,7 @@ export function WorkspaceSocketProvider({
         ));
       }, COMMAND_TIMEOUT_MS);
       pendingDirectoryRequests.set(requestId, { command, resolve, reject, timeout });
-      sendPending();
+      sendPendingDirectoryRequests();
       void connect();
     });
 
@@ -686,18 +630,13 @@ export function WorkspaceSocketProvider({
     void connect();
     return () => {
       stopped = true;
-      createMessageRef.current = () => Promise.reject(new ApiError(
-        'The workspace is no longer connected.',
-        409,
-        'workspace_socket_closed',
-      ));
       listWorkstreamsRef.current = () => Promise.reject(new ApiError(
         'The workspace is no longer connected.',
         409,
         'workspace_socket_closed',
       ));
-      rejectPending(new ApiError(
-        'The workspace closed before the message was confirmed.',
+      rejectPendingDirectoryRequests(new ApiError(
+        'The workspace closed while loading the directory.',
         409,
         'workspace_socket_closed',
       ));
@@ -715,10 +654,6 @@ export function WorkspaceSocketProvider({
     };
   }, [api, onAccessRevoked, queryClient, workspaceId]);
 
-  const createMessage = useCallback(
-    (command: CreateMessageCommand): Promise<AcceptedWorkstreamTurn> => createMessageRef.current(command),
-    [],
-  );
   const listWorkstreams = useCallback<WorkspaceSocketContextValue['listWorkstreams']>(
     (input) => listWorkstreamsRef.current(input),
     [],
@@ -740,12 +675,10 @@ export function WorkspaceSocketProvider({
       topicWaterlines,
       presenceUserIdsByWorkstream,
       setForegroundWorkstreamId,
-      createMessage,
       listWorkstreams,
       sidebarConnect,
     }),
     [
-      createMessage,
       listWorkstreams,
       presenceUserIdsByWorkstream,
       setForegroundWorkstreamId,

@@ -162,7 +162,6 @@ const wireAutomationDetail = {
   memoryTables: [],
   defaultPluginIds: [],
   activitySourcePluginIds: {},
-  deliveryTargets: [],
   templateUpdate: null,
   nextPlannedWorkstream: null,
   recentRuns: [],
@@ -347,16 +346,10 @@ describe('Rally API wire adapter', () => {
     await expect(api.getWorkspace()).rejects.toMatchObject(expected);
   });
 
-  it('accepts successful 204 responses for command endpoints', async () => {
+  it('accepts successful 204 responses for note archive endpoints', async () => {
     const fetchMock = vi.fn(async () => new Response(null, { status: 204 }));
     vi.stubGlobal('fetch', fetchMock);
     const api = new RallyApi('https://api.rally.test', session);
-
-    await expect(api.stopHarness(workstreamId)).resolves.toBeUndefined();
-    expect(fetchMock).toHaveBeenCalledWith(
-      `https://api.rally.test/workstreams/${workstreamId}/stop`,
-      expect.objectContaining({ method: 'POST' }),
-    );
 
     await expect(api.archiveNote(noteId)).resolves.toBeUndefined();
     expect(fetchMock).toHaveBeenLastCalledWith(
@@ -1331,7 +1324,7 @@ describe('expired access-token recovery', () => {
       .toBe('/auth/invitations/preview?token');
     expect(redactQuery('/resources?limit=50&q=quarterly%20revenue'))
       .toBe('/resources?limit,q');
-    expect(redactQuery('/workstreams/abc/messages')).toBe('/workstreams/abc/messages');
+    expect(redactQuery('/workstreams/abc/participants')).toBe('/workstreams/abc/participants');
   });
 
   it('returns the authenticated speech body without buffering it', async () => {

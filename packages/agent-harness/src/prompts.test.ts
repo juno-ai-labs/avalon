@@ -33,7 +33,6 @@ const currentDraft: AutomationDraft = {
   recommendedPlugins: [],
   memoryTables: [],
   expectedOutputs: ["Engineering brief"],
-  requestedDelivery: [],
   defaultBehavior: { noChanges: "Record a concise no-change result" },
   suggestedScope: "workspace",
   followUpQuestion: null,
@@ -46,7 +45,7 @@ const workstreamAutomation = {
   versionNumber: 3,
   instructions: currentDraft.instructions,
   expectedOutputs: currentDraft.expectedOutputs,
-  resultDelivery: [{ channel: "email" as const, destination: "owner@example.com" }],
+  resultDelivery: [{ channel: "workstream" as const, destination: "00000000-0000-7000-8000-0000000000aa" }],
   defaultBehavior: currentDraft.defaultBehavior,
   overrides: { tone: "concise" },
   durableTables: [],
@@ -94,7 +93,7 @@ describe("prompt renderers", () => {
           objective: "Produce the scheduled weekly engineering brief.",
           automation: workstreamAutomation,
         }),
-        hash: "a0ef73a417326765031a6c345743d431608ba330949e2d1d1d9edd9821a28ac2",
+        hash: "b80be0deda1ee6ba4f2a4884d77f840342106f68cd9d5c47e272a3d4b9ec22ab",
       },
       semanticTrigger: {
         actual: renderSemanticTriggerMessages({
@@ -192,6 +191,23 @@ describe("prompt renderers", () => {
     expect(prompt).not.toMatch(/terminal_[a-z_]+/u);
   });
 
+  it("tells a self-delivering run that its sends are the only delivery", () => {
+    // The surface an automation no room owns runs on. It shares the outside
+    // reader with external delivery and must not share its claim: that
+    // section says the final message is delivered, which here would license
+    // the run to leave the result in its final message and send nothing.
+    const prompt = renderWorkstreamSystemPrompt({
+      title: "Weekly engineering brief",
+      objective: "Write the weekly engineering brief.",
+      outputSurface: "self_delivery",
+    });
+
+    expect(prompt).toContain("# Sending the result yourself");
+    expect(prompt).toContain("Nothing sends this run's final message anywhere");
+    expect(prompt).toContain("recipients cannot open Rally resource embeds");
+    expect(prompt).not.toContain("# External delivery output");
+  });
+
   it("keeps the complete body on external delivery surfaces", () => {
     const prompt = renderWorkstreamSystemPrompt({
       title: "Weekly engineering brief",
@@ -230,31 +246,43 @@ describe("prompt renderers", () => {
       automation: workstreamAutomation,
     });
 
-    expect(prompt).toContain('"destination": "owner@example.com"');
+    expect(prompt).toContain('"destination": "00000000-0000-7000-8000-0000000000aa"');
     expect(prompt).toContain("# Result delivery");
     expect(prompt).toContain("Rally sends this run's final message to every destination in the task context's automation.resultDelivery");
-    // A recipient list to filter, rather than a category to reason about: the
-    // case that produced the duplicate is an automation whose own instructions
-    // name the very address Avalon delivers to.
-    expect(prompt).toContain("drop every recipient — to, cc, channel, or DM target — that matches one of those destinations");
+    // The room is the only destination Rally delivers to now, and the one this
+    // section most needs to name: a room-owned automation whose instructions
+    // say "post it here" would otherwise post the result a second time.
+    expect(prompt).toContain("A `workstream` destination is this room");
   });
 
-  it("charges the delivery rule to nobody it does not apply to", () => {
-    const interactive = renderWorkstreamSystemPrompt({
-      title: "Investigate checkout failures",
-      objective: "Find the cause and create a concise incident note.",
-    });
+  it("tells an automation with no destination that sending is its own work", () => {
+    // The other arm, and the one that carries the new model. An automation
+    // has no destinations of its own beyond the room that owns it; a personal
+    // or workspace one has none at all, and nothing sends its result after the
+    // run. Left silent, a run that *describes* emailing the summary has not
+    // emailed it, and the person who asked gets nothing with no error anywhere.
     const undelivered = renderWorkstreamSystemPrompt({
       title: "Weekly engineering brief: 2026-08-07",
       objective: "Produce the scheduled weekly engineering brief.",
       automation: { ...workstreamAutomation, resultDelivery: [] },
     });
 
+    expect(undelivered).toContain("# Result delivery");
+    expect(undelivered).toContain("Rally sends this run's result nowhere");
+    expect(undelivered).toContain("sending it is part of doing the work, with your own tools, inside this run");
+    expect(undelivered).not.toContain("Rally sends this run's final message to every destination");
+  });
+
+  it("charges the delivery rule to no interactive run", () => {
     // An interactive run asked to "email this to Bob" must not meet a rule
     // about a list its context does not carry, and reading it as applying is
     // how a requested send becomes a description of one.
+    const interactive = renderWorkstreamSystemPrompt({
+      title: "Investigate checkout failures",
+      objective: "Find the cause and create a concise incident note.",
+    });
+
     expect(interactive).not.toContain("# Result delivery");
-    expect(undelivered).not.toContain("# Result delivery");
   });
 
   it("names the channel an automation was set up in, without it being in the instructions", () => {
