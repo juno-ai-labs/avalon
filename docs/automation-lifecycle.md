@@ -122,9 +122,19 @@ card's **Create this automation**, which holds nothing but the summary it
 displays — carries only the id, and `acceptAuthoredDraft` builds the same create
 request server-side out of the stored definition. Both re-read the object's
 snapshot, refuse unless the submitted draft is byte-identical to that definition
-(`automation_definition_revision_stale`), and call `acceptDraft`. Acceptance is
-two phases around one durable acceptance row, so an interrupted activation
-resumes rather than restarting:
+(`automation_definition_revision_stale`), and call `acceptDraft`.
+
+That comparison is a staleness check on a draft the *caller* held while
+reviewing it, so it means what it says only for `POST /automations`. The id-only
+door has no client-held draft: it reads the snapshot itself and `accept` reads
+it a second time, so the comparison is vacuous — except under the race between
+those two reads, where a compiler revision landing in the gap makes the card
+refuse itself with a sentence written for somebody else's stale review. Narrow,
+and cheaper to leave than to special-case the shared path around, but it is why
+the refusal can reach a member who never reviewed anything.
+
+Acceptance is two phases around one durable acceptance row, so an interrupted
+activation resumes rather than restarting:
 
 1. **Freeze.** Under one transaction: check the definition is `ready`, the
    revision matches, and no elicitation is pending; resolve connector bindings,
@@ -467,6 +477,19 @@ email is addressed and rendered
   `applyAutomationProjection`, whose worst case is two writers disagreeing about
   a coordinate the directory already holds — is deliberately left unwrapped
   rather than given a 409 a client will retry.
+- **The proposal card cannot create an external-event draft.** `acceptAuthoredDraft`
+  sends an empty `activitySourcePluginIds`, so a ready draft carrying a
+  `connector_activity`, `semantic_activity` or `webhook` trigger — which is ready
+  only if it has evaluators — fails `prepareAcceptance`'s first binding check
+  with `automation_evaluator_source_binding_mismatch`. That code has no row in
+  the error table, so it reaches the member as the generic 409 rather than a
+  sentence. Passing the triggers' own `suggestedSourcePluginId` map would move
+  the refusal rather than remove it: `automation_evaluator_connection_missing`
+  is equally untabled, and the scope rules on a resolved connection are next.
+  Making this card work end to end is a connector-binding decision — whether a
+  plugin the drafting conversation proposed is one the member has agreed to bind,
+  or one the card must show and ask about — plus the error-table rows to make
+  whatever it refuses with legible. Timer-only and manual drafts are unaffected.
 - **The compiler fails or is interrupted.** The run settles as `failed` and stays
   the visible outcome until another turn is admitted — hiding it made a failure
   look like a successful idle reconnect. **Retry** re-arms the dispatch alarm for
