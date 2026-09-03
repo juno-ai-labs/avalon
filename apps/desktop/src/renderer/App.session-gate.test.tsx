@@ -30,6 +30,7 @@ const sessionState = vi.hoisted(() => ({
 vi.mock('./lib/app-session', () => ({
   AppSessionProvider: ({ children }: { children: React.ReactNode }) => children,
   useAppSession: () => sessionState,
+  FINISH_SIGN_IN_IN_BROWSER: 'Finish signing in to Rally in your browser',
 }));
 vi.mock('./lib/workspace-socket', () => ({
   WorkspaceSocketProvider: ({ children }: { children: React.ReactNode }) => children,
@@ -214,6 +215,37 @@ describe('SessionGate identity-first ordering', () => {
       'eu',
       'workspace-eu',
       expect.stringMatching(/^[0-9a-f-]{36}$/u),
+      { onSignInRequired: expect.any(Function) },
     ));
+  });
+
+  it('says where the person is expected when the startup activation has to sign the account in', async () => {
+    sessionState.session = identitySession;
+    sessionState.getOnboardingState.mockResolvedValue({ identity: 'connected',
+      workspace: {
+        id: 'workspace-eu',
+        name: 'European Research',
+        slug: 'european-research',
+        region: 'eu',
+        role: 'member',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+      invitations: [],
+    });
+    let rejectActivation: ((error: Error) => void) | null = null;
+    sessionState.activateWorkspace.mockImplementation((
+      _region: string, _workspaceId: string, _operationId: string, progress: { onSignInRequired: () => void },
+    ) => new Promise<void>((_resolve, reject) => {
+      rejectActivation = reject;
+      progress.onSignInRequired();
+    }));
+    renderGate();
+
+    expect(await screen.findByText('Finish signing in to Rally in your browser')).toBeVisible();
+    expect(screen.queryByText('Opening European Research…')).not.toBeInTheDocument();
+
+    // A sign-in that does not complete lands as the setup failure it is, with its retry.
+    act(() => rejectActivation!(new Error('Sign in could not be completed: access denied')));
+    expect(await screen.findByText('Sign in could not be completed: access denied')).toBeVisible();
   });
 });

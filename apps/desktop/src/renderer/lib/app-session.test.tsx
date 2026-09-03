@@ -35,6 +35,7 @@ let sessionListener: ((session: DesktopSession | null) => void) | null = null;
 let observedApi: RallyApi | null = null;
 let observedSignOutIfCleared: (() => Promise<void>) | null = null;
 let observedReconnectAccount: (() => Promise<void>) | null = null;
+let observedAbandonAccountSignIn: (() => void) | null = null;
 let observedSurrenderActiveWorkspace: (() => Promise<void>) | null = null;
 let observedActivateWorkspace: AppSessionValue['activateWorkspace'] | null = null;
 let observedLeaveWorkspace: ((
@@ -104,6 +105,7 @@ function SessionProbe(): React.JSX.Element {
   observedApi = api;
   observedSignOutIfCleared = context.signOutIfCredentialCleared;
   observedReconnectAccount = context.reconnectAccountIdentity;
+  observedAbandonAccountSignIn = context.abandonAccountSignIn;
   observedSurrenderActiveWorkspace = context.surrenderActiveWorkspace;
   observedActivateWorkspace = context.activateWorkspace;
   observedLeaveWorkspace = context.leaveWorkspace;
@@ -188,6 +190,8 @@ function resetDesktopBridge(): void {
   // the provider blanks the session; resolving the same object it already
   // holds is a no-op re-render instead.
   bridge.refreshSession.mockResolvedValue(expiredIdentitySession);
+  // The preload answers a cancellation with a promise; the seam must too.
+  bridge.cancelDesktopAuthAttempt.mockResolvedValue(undefined);
   bridge.consumePendingDeepLinks.mockResolvedValue([]);
   bridge.reportTelemetryProductIntent.mockResolvedValue(undefined);
   bridge.onDeepLink.mockImplementation((listener: (navigation: DesktopDeepLinkNavigation) => void) => {
@@ -390,6 +394,9 @@ describe('single-platform desktop identity routing', () => {
   it('stands an earlier sign-in waiter down when a newer sign-in is started', async () => {
     bridge.getSession.mockResolvedValue(euSession);
     bridge.exchangeDesktopTicket.mockResolvedValue(euSession);
+    bridge.createDesktopAuthAttempt
+      .mockResolvedValueOnce({ attemptId: 'a'.repeat(43), codeChallenge: 'challenge' })
+      .mockResolvedValueOnce({ attemptId: 'b'.repeat(43), codeChallenge: 'challenge' });
     vi.spyOn(RallyApi.prototype, 'beginGoogleLogin')
       .mockResolvedValue('https://accounts.google.com/o/oauth2/v2/auth?state=opaque');
     renderProvider();
@@ -401,9 +408,177 @@ describe('single-platform desktop identity routing', () => {
     await expect(first).rejects.toBeInstanceOf(AccountSignInSupersededError);
     await waitFor(() => expect(bridge.openExternal).toHaveBeenCalledTimes(2));
 
-    await dispatchDeepLink(ticketCallback);
+    await dispatchDeepLink(`rallywithai://auth/complete?ticket=single-use-ticket-long-enough&region=global&attempt=${'b'.repeat(43)}`);
 
     await expect(second).resolves.toBeUndefined();
+  });
+
+  it('lets a callback from a superseded attempt say nothing to the sign-in now waiting', async () => {
+    bridge.getSession.mockResolvedValue(euSession);
+    bridge.createDesktopAuthAttempt
+      .mockResolvedValueOnce({ attemptId: 'a'.repeat(43), codeChallenge: 'challenge' })
+      .mockResolvedValueOnce({ attemptId: 'b'.repeat(43), codeChallenge: 'challenge' });
+    // Main honours only the newest attempt: the earlier tab's ticket is refused.
+    bridge.exchangeDesktopTicket.mockImplementation(async ({ attemptId }: { attemptId: string }) => {
+      if (attemptId !== 'b'.repeat(43)) throw new Error('This sign-in attempt expired. Start sign-in again.');
+      return euSession;
+    });
+    vi.spyOn(RallyApi.prototype, 'beginGoogleLogin')
+      .mockResolvedValue('https://accounts.google.com/o/oauth2/v2/auth?state=opaque');
+    renderProvider();
+    expect(await screen.findByText('eu:European Research')).toBeVisible();
+
+    const first = observedReconnectAccount!();
+    await waitFor(() => expect(bridge.openExternal).toHaveBeenCalledTimes(1));
+    const second = observedReconnectAccount!();
+    await expect(first).rejects.toBeInstanceOf(AccountSignInSupersededError);
+    await waitFor(() => expect(bridge.openExternal).toHaveBeenCalledTimes(2));
+    let settled: 'resolved' | 'rejected' | null = null;
+    void second.then(() => { settled = 'resolved'; }, () => { settled = 'rejected'; });
+
+    // The earlier tab reports a failure, then hands in its ticket anyway.
+    await dispatchDeepLink(`rallywithai://auth/complete?error=access_denied&region=global&attempt=${'a'.repeat(43)}`);
+    await dispatchDeepLink(`rallywithai://auth/complete?ticket=single-use-ticket-long-enough&region=global&attempt=${'a'.repeat(43)}`);
+    await act(async () => { await Promise.resolve(); });
+    expect(settled).toBeNull();
+    expect(bridge.showDeepLinkError).not.toHaveBeenCalled();
+
+    await dispatchDeepLink(`rallywithai://auth/complete?ticket=single-use-ticket-long-enough&region=global&attempt=${'b'.repeat(43)}`);
+    await expect(second).resolves.toBeUndefined();
+  });
+
+  it('stands the earlier waiter down as soon as main honours a newer attempt, even when the browser never opens', async () => {
+    bridge.getSession.mockResolvedValue(euSession);
+    bridge.createDesktopAuthAttempt
+      .mockResolvedValueOnce({ attemptId: 'a'.repeat(43), codeChallenge: 'challenge' })
+      .mockResolvedValueOnce({ attemptId: 'b'.repeat(43), codeChallenge: 'challenge' });
+    vi.spyOn(RallyApi.prototype, 'beginGoogleLogin')
+      .mockResolvedValueOnce('https://accounts.google.com/o/oauth2/v2/auth?state=opaque')
+      .mockRejectedValueOnce(new Error('Google authentication is not configured'));
+    renderProvider();
+    expect(await screen.findByText('eu:European Research')).toBeVisible();
+
+    const first = observedReconnectAccount!();
+    await waitFor(() => expect(bridge.openExternal).toHaveBeenCalledTimes(1));
+    const second = observedReconnectAccount!();
+
+    // Nothing is left parked on an attempt main has already retired.
+    await expect(first).rejects.toBeInstanceOf(AccountSignInSupersededError);
+    await expect(second).rejects.toThrow('Google authentication is not configured');
+    expect(bridge.cancelDesktopAuthAttempt).toHaveBeenCalledWith('b'.repeat(43));
+    expect(bridge.openExternal).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the newer activation\'s mark when the earlier one it superseded unwinds', async () => {
+    const workspaceGlobal = 'workspace-global';
+    const activated: DesktopSession = {
+      ...euSession,
+      apiBaseUrl: 'https://api.rallywith.ai',
+      workspace: { ...euSession.workspace!, id: workspaceGlobal, name: 'Global Studio', region: 'global' },
+    };
+    const record = {
+      id: workspaceGlobal, name: 'Global Studio', region: 'global' as const, timezone: 'America/New_York',
+      currentUser: { id: 'user-1', email: 'invitee@example.com', name: 'Invitee', timezone: 'America/New_York', role: 'member' as const },
+    };
+    let resolveRecord!: (value: typeof record) => void;
+    const getWorkspace = vi.spyOn(RallyApi.prototype, 'getWorkspace').mockImplementation(
+      () => new Promise((resolve) => { resolveRecord = resolve; }),
+    );
+    bridge.getSession.mockResolvedValue(euSession);
+    bridge.exchangeDesktopTicket.mockResolvedValue(euSession);
+    bridge.createDesktopAuthAttempt
+      .mockResolvedValueOnce({ attemptId: 'a'.repeat(43), codeChallenge: 'challenge' })
+      .mockResolvedValueOnce({ attemptId: 'b'.repeat(43), codeChallenge: 'challenge' });
+    // Both attempts find the identity missing; the one whose sign-in lands
+    // activates, and main announces that session before the IPC reply.
+    bridge.activateWorkspace
+      .mockRejectedValueOnce(missingIdentity())
+      .mockRejectedValueOnce(missingIdentity())
+      .mockImplementationOnce(async () => {
+        sessionListener?.(activated);
+        return activated;
+      });
+    vi.spyOn(RallyApi.prototype, 'beginGoogleLogin')
+      .mockResolvedValue('https://accounts.google.com/o/oauth2/v2/auth?state=opaque');
+    renderProvider();
+    expect(await screen.findByText('eu:European Research')).toBeVisible();
+
+    const first = observedActivateWorkspace!('global', workspaceGlobal, undefined, { onSignInRequired: vi.fn() })
+      .then(() => null, (error: unknown) => error);
+    await waitFor(() => expect(bridge.openExternal).toHaveBeenCalledTimes(1));
+    let second!: Promise<void>;
+    await act(async () => {
+      second = observedActivateWorkspace!('global', workspaceGlobal, undefined, { onSignInRequired: vi.fn() });
+      await Promise.resolve();
+    });
+    expect(await first).toBeInstanceOf(AccountSignInSupersededError);
+    await waitFor(() => expect(bridge.openExternal).toHaveBeenCalledTimes(2));
+
+    await dispatchDeepLink(`rallywithai://auth/complete?ticket=single-use-ticket-long-enough&region=global&attempt=${'b'.repeat(43)}`);
+    await waitFor(() => expect(getWorkspace).toHaveBeenCalledTimes(1));
+    // The early announcement did not take the previous workspace down: the
+    // superseded attempt's unwinding left the newer attempt's mark in place.
+    expect(screen.getByText('eu:European Research')).toBeVisible();
+    await act(async () => { resolveRecord(record); await second; });
+
+    expect(await screen.findByText('global:Global Studio')).toBeVisible();
+    getWorkspace.mockRestore();
+  });
+
+  it('signs in in place for an addressed link into another workspace, and opens it once the sign-in lands', async () => {
+    const workspaceGlobal = '00000000-0000-7000-8000-000000000030';
+    const activated: DesktopSession = {
+      ...euSession,
+      apiBaseUrl: 'https://api.rallywith.ai',
+      workspace: { ...euSession.workspace!, id: workspaceGlobal, name: 'Global Studio', region: 'global' },
+    };
+    bridge.getSession.mockResolvedValue(euSession);
+    bridge.exchangeDesktopTicket.mockResolvedValue(euSession);
+    bridge.activateWorkspace.mockRejectedValueOnce(missingIdentity()).mockResolvedValueOnce(activated);
+    vi.spyOn(RallyApi.prototype, 'beginGoogleLogin')
+      .mockResolvedValue('https://accounts.google.com/o/oauth2/v2/auth?state=opaque');
+    renderProvider();
+    expect(await screen.findByText('eu:European Research')).toBeVisible();
+
+    await dispatchDeepLink(`rallywithai://workspace/global/${workspaceGlobal}/workstreams/00000000-0000-7000-8000-000000000031`);
+    await waitFor(() => expect(bridge.openExternal).toHaveBeenCalledOnce());
+    expect(bridge.showDeepLinkError).not.toHaveBeenCalled();
+    expect(window.location.hash).toBe('');
+
+    // The callback is itself a deep link: the queue the link came through must be free to take it.
+    await dispatchDeepLink(ticketCallback);
+
+    await waitFor(() => expect(bridge.activateWorkspace).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(window.location.hash).toBe('#/workstreams/00000000-0000-7000-8000-000000000031'));
+    expect(await screen.findByText('global:Global Studio')).toBeVisible();
+    expect(bridge.showDeepLinkError).not.toHaveBeenCalled();
+  });
+
+  it('abandons the action waiting on a sign-in, and still keeps the sign-in that then lands', async () => {
+    bridge.getSession.mockResolvedValue(euSession);
+    bridge.exchangeDesktopTicket.mockResolvedValue(euSession);
+    bridge.activateWorkspace.mockRejectedValueOnce(missingIdentity());
+    vi.spyOn(RallyApi.prototype, 'beginGoogleLogin')
+      .mockResolvedValue('https://accounts.google.com/o/oauth2/v2/auth?state=opaque');
+    const client = renderProvider();
+    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    client.setQueryData(WORKSPACE_ACCOUNT_DIRECTORY_QUERY_KEY, { identity: 'reconnect_required' });
+
+    const activation = observedActivateWorkspace!('global', 'workspace-global', undefined, { onSignInRequired: vi.fn() })
+      .then(() => null, (error: unknown) => error);
+    await waitFor(() => expect(bridge.openExternal).toHaveBeenCalledOnce());
+    act(() => observedAbandonAccountSignIn!());
+
+    expect(await activation).toBeInstanceOf(AccountSignInSupersededError);
+    expect(bridge.cancelDesktopAuthAttempt).not.toHaveBeenCalled();
+
+    await dispatchDeepLink(ticketCallback);
+
+    // The credential is back and the menu is told; the switch does not happen.
+    expect(bridge.exchangeDesktopTicket).toHaveBeenCalledOnce();
+    expect(client.getQueryState(WORKSPACE_ACCOUNT_DIRECTORY_QUERY_KEY)?.isInvalidated).toBe(true);
+    expect(bridge.activateWorkspace).toHaveBeenCalledTimes(1);
+    expect(bridge.showDeepLinkError).not.toHaveBeenCalled();
   });
 
   it('moves to the next stored workspace after active membership is revoked', async () => {

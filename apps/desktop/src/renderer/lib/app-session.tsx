@@ -72,13 +72,18 @@ export interface AccountActionProgress {
   onSignInRequired: () => void;
 }
 
+/** Where the person is expected while an action that needed the account
+ * identity waits for the sign-in it started: under the row, in the dialog,
+ * or in place of the opening state. */
+export const FINISH_SIGN_IN_IN_BROWSER = 'Finish signing in to Rally in your browser';
+
 /** A newer browser sign-in was started from this device; it carries the
  * person's current intent, and whoever waited on the earlier one stands down. */
 export class AccountSignInSupersededError extends Error {
   override readonly name = 'AccountSignInSupersededError';
 
-  constructor() {
-    super('A newer sign-in replaced this one');
+  constructor(message = 'A newer sign-in replaced this one') {
+    super(message);
   }
 }
 
@@ -116,6 +121,9 @@ export interface AppSessionValue {
   /** Opens the browser for an account sign-in and resolves once its callback
    * has been exchanged for the identity credential on this device. */
   reconnectAccountIdentity: () => Promise<void>;
+  /** Stands the action waiting on a browser sign-in down without cancelling
+   * the sign-in: one that still lands restores the credential all the same. */
+  abandonAccountSignIn: () => void;
   leaveWorkspace: (workspaceId: string, expectedOutcome: WorkspaceDepartureOutcome) => Promise<WorkspaceDeparture>;
   createDevelopmentSession: () => Promise<void>;
   finishWorkspaceSetup: (
@@ -205,8 +213,12 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
   sessionRef.current = session;
   /** The workspace a menu switch is in the middle of landing; see the session-changed listener. */
   const pendingActivationRef = useRef<{ region: Region; workspaceId: string } | null>(null);
-  /** Whoever is waiting on the browser sign-in this renderer last started. */
-  const pendingAccountSignInRef = useRef<{ resolve: () => void; reject: (error: Error) => void } | null>(null);
+  /** Whoever is waiting on the browser sign-in this renderer last started, and the attempt it is waiting on. */
+  const pendingAccountSignInRef = useRef<{
+    attemptId: string;
+    resolve: () => void;
+    reject: (error: Error) => void;
+  } | null>(null);
   const bridge = useMemo<AppSessionDesktopBridge>(() => desktopBridge(), []);
   const queryClient = useQueryClient();
 
@@ -366,15 +378,37 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     [bridge],
   );
 
+  /**
+   * Hand a sign-in's outcome to the action waiting on that attempt. A callback
+   * from any other attempt is stale — its tab was superseded by a newer one —
+   * and is not the current waiter's to hear; `null` settles whichever attempt
+   * is waiting. False when nothing was settled.
+   */
+  const settleAccountSignIn = useCallback((attemptId: string | null, failure: Error | null): boolean => {
+    const pending = pendingAccountSignInRef.current;
+    if (!pending || (attemptId !== null && pending.attemptId !== attemptId)) return false;
+    pendingAccountSignInRef.current = null;
+    if (failure) pending.reject(failure);
+    else pending.resolve();
+    return true;
+  }, []);
+
+  const abandonAccountSignIn = useCallback((): void => {
+    settleAccountSignIn(null, new AccountSignInSupersededError('The sign-in was cancelled'));
+  }, [settleAccountSignIn]);
+
   const reconnectAccountIdentity = useCallback(async (): Promise<void> => {
     if (!runtime) throw new Error('Rally is still loading its identity service.');
-    let attemptId: string | null = null;
+    const authAttempt = await bridge.createDesktopAuthAttempt({
+      apiBaseUrl: runtime.api.global,
+      region: 'global',
+    });
+    // Main honours only this attempt from here on, so whoever waited on an
+    // earlier one stands down now — before the browser opens, so that a
+    // launch which fails below leaves nothing parked on an attempt main has
+    // already retired.
+    settleAccountSignIn(null, new AccountSignInSupersededError());
     try {
-      const authAttempt = await bridge.createDesktopAuthAttempt({
-        apiBaseUrl: runtime.api.global,
-        region: 'global',
-      });
-      attemptId = authAttempt.attemptId;
       const identityApi = new RallyApi(runtime.api.global, null);
       const url = await identityApi.beginGoogleLogin(
         'global',
@@ -383,17 +417,15 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       );
       await bridge.openExternal(url);
     } catch (error) {
-      if (attemptId) await bridge.cancelDesktopAuthAttempt(attemptId).catch(() => undefined);
+      await bridge.cancelDesktopAuthAttempt(authAttempt.attemptId).catch(() => undefined);
       throw error;
     }
-    // The rest happens in the browser. Its callback arrives as a deep link,
-    // and the exchange there settles this; main has already made the newest
-    // attempt the only one it will honour, so an earlier waiter stands down.
+    // The rest happens in the browser. Its callback arrives as a deep link
+    // naming this attempt, and the exchange there settles this.
     return new Promise<void>((resolve, reject) => {
-      pendingAccountSignInRef.current?.reject(new AccountSignInSupersededError());
-      pendingAccountSignInRef.current = { resolve, reject };
+      pendingAccountSignInRef.current = { attemptId: authAttempt.attemptId, resolve, reject };
     });
-  }, [bridge, runtime]);
+  }, [bridge, runtime, settleAccountSignIn]);
 
   /**
    * Run an action that needs the account identity. When main answers that
@@ -466,7 +498,8 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     progress?: AccountActionProgress,
   ): Promise<void> => {
     const previous = sessionRef.current;
-    pendingActivationRef.current = { region: selectedRegion, workspaceId };
+    const activation = { region: selectedRegion, workspaceId };
+    pendingActivationRef.current = activation;
     try {
       const nextSession = await withAccountIdentity(
         () => bridge.activateWorkspace({ region: selectedRegion, workspaceId, operationId }),
@@ -474,7 +507,10 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       );
       await applyActivatedSession(nextSession, previous);
     } finally {
-      pendingActivationRef.current = null;
+      // Only this attempt's own mark comes down. A newer attempt at the same
+      // row may have installed its own while this one waited on the browser,
+      // and that one is still counting on it when its activation lands.
+      if (pendingActivationRef.current === activation) pendingActivationRef.current = null;
     }
   }, [applyActivatedSession, bridge, withAccountIdentity]);
 
@@ -646,14 +682,16 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
      * renders it, so the failure is reported rather than swallowed: silence
      * here is the surface not appearing at all.
      */
-    /** Hand a sign-in's outcome to the action waiting on it; false when nothing is. */
-    const settleAccountSignIn = (failure: Error | null): boolean => {
-      const pending = pendingAccountSignInRef.current;
-      if (!pending) return false;
-      pendingAccountSignInRef.current = null;
-      if (failure) pending.reject(failure);
-      else pending.resolve();
-      return true;
+    /**
+     * A sign-in failure goes to the action waiting on that attempt, which
+     * shows it where the person started. A callback from an attempt that was
+     * since superseded is stale and says nothing about the one now waiting.
+     * The window speaks up only when nothing else will.
+     */
+    const reportAccountSignInFailure = (attemptId: string | null, message: string): void => {
+      if (settleAccountSignIn(attemptId, new AccountSignInFailedError(message))) return;
+      if (pendingAccountSignInRef.current) return;
+      reportDeepLinkFailure(message);
     };
     const reportDeepLinkFailure = (message: string): void => {
       if (sessionRef.current === null) {
@@ -727,7 +765,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       target: WorkspaceTarget,
       action: (targetApi: RallyApi) => void | Promise<void>,
     ): Promise<void> => {
-      try {
+      const open = async (): Promise<void> => {
         const entered = await enterDeepLinkWorkspace(target);
         // A changed workspace must never leave a resource route from the old
         // workspace behind it. Resource actions below immediately replace this
@@ -736,21 +774,48 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
           window.location.hash = '/workstreams/new';
         }
         await action(entered.api);
+      };
+      try {
+        await open();
       } catch (error: unknown) {
+        if (accountReconnectRequired(error)) {
+          // A device with no identity credential signs in through the browser
+          // here as a menu switch would, and the link opens once that lands.
+          // The wait happens outside this queue: the sign-in's own callback
+          // is a deep link, and it has to be free to come through. There is
+          // no in-window note for it — the only surface a link has is the
+          // notice window, whose title reads as a failure and which the main
+          // window cannot take down once the link has opened — so the browser
+          // showing Rally's sign-in page is the cue.
+          void reconnectAccountIdentity().then(open).catch(reportDeepLinkWorkspaceFailure);
+          return;
+        }
+        reportDeepLinkWorkspaceFailure(error);
+      }
+    };
+    function reportDeepLinkWorkspaceFailure(error: unknown): void {
+        // A newer sign-in took this link's place; whoever started it is told.
+        if (error instanceof AccountSignInSupersededError) return;
         const message = error instanceof Error ? error.message : '';
         const activationFailure = workspaceActivationFailureCode(error);
+        // Coded failures first: their detail is prose too, and must not be
+        // read by the prose tests below as if it were a sentence for the window.
         reportDeepLinkFailure(
-          /sign in/iu.test(message)
-            ? message
+          error instanceof AccountSignInFailedError
+            ? error.message
+            : activationFailure === 'account_reconnect_required'
+              ? 'Sign in to Rally again, then reopen this link.'
             : activationFailure === 'workspace_access_denied'
               ? 'Rally could not access the workspace this link belongs to.'
             : activationFailure === 'workspace_activation_unavailable'
-              || /reach|network|offline|timeout|unavailable/iu.test(message)
+              ? 'Rally could not reach that workspace. Check your connection, then reopen this link.'
+            : /sign in/iu.test(message)
+              ? message
+            : /reach|network|offline|timeout|unavailable/iu.test(message)
               ? 'Rally could not reach that workspace. Check your connection, then reopen this link.'
               : 'Rally could not access the workspace this link belongs to.',
         );
-      }
-    };
+    }
     const handleDeepLink = async (navigation: DesktopDeepLinkNavigation): Promise<void> => {
       const intent = parseDesktopDeepLinkIntent(navigation.url);
       if (!intent) {
@@ -918,10 +983,10 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       }
       if (intent.status === 'failed') {
         if (intent.attemptId) await bridge.cancelDesktopAuthAttempt(intent.attemptId);
-        const message = `Sign in could not be completed: ${intent.errorCode?.replace(/[_-]+/gu, ' ') ?? 'unknown error'}`;
-        // An action waiting on this sign-in shows the failure where it was
-        // started; the window only speaks up when nothing else will.
-        if (!settleAccountSignIn(new AccountSignInFailedError(message))) reportDeepLinkFailure(message);
+        reportAccountSignInFailure(
+          intent.attemptId,
+          `Sign in could not be completed: ${intent.errorCode?.replace(/[_-]+/gu, ' ') ?? 'unknown error'}`,
+        );
         return;
       }
       setDeviceSelectedRegion('global');
@@ -940,10 +1005,12 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         // last heard about it — a reconnect it thought was still needed — is
         // stale the moment this lands, not the next time it happens to ask.
         void queryClient.invalidateQueries({ queryKey: WORKSPACE_ACCOUNT_DIRECTORY_QUERY_KEY });
-        settleAccountSignIn(null);
+        settleAccountSignIn(intent.attemptId!, null);
       } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : 'Sign in could not be completed.';
-        if (!settleAccountSignIn(new AccountSignInFailedError(message))) reportDeepLinkFailure(message);
+        reportAccountSignInFailure(
+          intent.attemptId!,
+          error instanceof Error ? error.message : 'Sign in could not be completed.',
+        );
       } finally {
         setExchangingTicket(false);
       }
@@ -989,7 +1056,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       active = false;
       unsubscribe();
     };
-  }, [applySession, bridge, queryClient, runtime]);
+  }, [applySession, bridge, queryClient, reconnectAccountIdentity, runtime, settleAccountSignIn]);
 
   useEffect(() => {
     if (!session) return;
@@ -1061,12 +1128,14 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       finishWorkspaceSetup,
       refreshSession,
       reconnectAccountIdentity,
+      abandonAccountSignIn,
       signOut,
       signOutIfCredentialCleared,
       surrenderActiveWorkspace,
       clearDeepLinkError: () => setDeepLinkError(null),
     }),
     [
+      abandonAccountSignIn,
       api,
       acceptInvitation,
       activateWorkspace,

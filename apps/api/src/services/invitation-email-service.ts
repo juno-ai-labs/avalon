@@ -38,7 +38,7 @@ export async function sendWorkspaceInvitationEmail(
   request: typeof fetch = fetch,
 ): Promise<InvitationEmailDelivery> {
   const roleLabel = invitation.role === "admin" ? "an administrator" : "a member";
-  const regionLabel = invitation.region === "eu" ? "European Union" : "Global";
+  const regionLabel = invitation.region === "eu" ? "European Union" : "United States";
   const expiration = new Intl.DateTimeFormat("en-US", {
     year: "numeric",
     month: "long",
@@ -88,7 +88,7 @@ export async function sendWorkspaceInvitationResolutionEmail(
   const workspaceName = singleLine(invitation.workspaceName);
   const verb = invitation.outcome === "accepted" ? "accepted" : "declined";
   const roleLabel = invitation.role === "admin" ? "an administrator" : "a member";
-  const regionLabel = invitation.region === "eu" ? "European Union" : "Global";
+  const regionLabel = invitation.region === "eu" ? "European Union" : "United States";
   const desktopTarget = addWorkspaceTarget(new URL("rallywithai://settings/workspace"), {
     region: invitation.region,
     workspaceId: invitation.workspaceId,
