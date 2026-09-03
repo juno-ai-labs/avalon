@@ -75,12 +75,8 @@ export function backgroundRealtimeWorkstreamIds(
 
 /**
  * Whether the screen at this route is showing the named automation, and would
- * therefore be stranded once it stops being served.
- *
- * There are two lifecycle views behind this route: an accepted automation is
- * read on its overview and a draft in the builder. Missing the second leaves the builder on a
- * conversation the API will not serve again — and with a Create button that
- * would insert a second automation instead of promoting this one.
+ * therefore be stranded once it stops being served. A draft and an accepted
+ * automation share the one route, so this covers both.
  */
 export function showsAutomation(pathname: string, automationId: string): boolean {
   return pathname === `/automations/${automationId}`;
@@ -127,10 +123,6 @@ export function workstreamMatchesBatchFilter(
   workstream: WorkstreamSummary,
   filter: WorkstreamBatchFilter,
 ): boolean {
-  // An automation's run work stream is kept out of the sidebar, so a grouping
-  // action never selects one — and this route, reached from the automation's
-  // own screen rather than from a heading, must not leave as though it had.
-  if (workstream.origin === 'automation') return false;
   if (!filter.includeSystem && workstream.systemKind != null) return false;
   if (filter.pinned !== undefined && (workstream.pinPosition !== null) !== filter.pinned) return false;
   const activityAt = Date.parse(workstream.lastActivityAt);
@@ -722,9 +714,11 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         }}
         onRunAutomation={async (automation) => {
           if (!api) return;
-          const workstream = await api.runAutomation(automation.id);
-          await queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
-          void navigate(`/workstreams/${workstream.id}`);
+          await api.runAutomation(automation.id);
+          // A run is a substream of the automation, listed on its screen, so
+          // that is where a person who asked for one lands.
+          await queryClient.invalidateQueries({ queryKey: ['automation-runs', automation.id] });
+          void navigate(`/automations/${automation.id}`);
         }}
         onOpenMeetingNotes={() => desktopBridge().openMeetingNotes()}
         onPreviewWorkstreamBatch={async (filter) => {

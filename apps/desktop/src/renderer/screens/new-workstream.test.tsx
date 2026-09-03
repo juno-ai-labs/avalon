@@ -92,7 +92,6 @@ function workstream(
     id,
     title,
     titleStatus: 'settled',
-    origin: 'ad_hoc',
     harnessStatus,
     scope: 'workspace',
     lastActivityAt: '2026-07-31T20:00:00.000Z',

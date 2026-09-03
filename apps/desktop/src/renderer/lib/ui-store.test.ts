@@ -45,11 +45,11 @@ describe('context rail state', () => {
 
   it('opens the requested contextual variant and resets stale detail state', () => {
     useUiStore.getState().inspect({ type: 'resource', id: 'old-resource' });
-    useUiStore.getState().openRail('runs');
+    useUiStore.getState().openRail('context');
 
     expect(useUiStore.getState()).toMatchObject({
       railOpen: true,
-      railVariant: 'runs',
+      railVariant: 'context',
       inspector: null,
     });
   });

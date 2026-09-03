@@ -36,7 +36,6 @@ const workstream: WorkstreamDetail = {
   id: 'workstream-1',
   title: 'Investigate the release',
   titleStatus: 'settled' as const,
-  origin: 'ad_hoc',
   harnessStatus: 'completed',
   scope: 'workspace' as const,
   lastActivityAt: '2026-07-31T20:00:00.000Z',
@@ -56,7 +55,6 @@ const workstream: WorkstreamDetail = {
   resources: [],
   connections: [],
   backgroundTasks: [],
-  automationRuns: [],
 };
 
 function renderComposer(

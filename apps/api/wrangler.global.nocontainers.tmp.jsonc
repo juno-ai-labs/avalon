@@ -1,0 +1,363 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "avalon-api-global",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-31",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "vars": {
+    "APP_ENV": "production",
+    "APP_VERSION": "0.24.0",
+    "AVALON_REGION": "global",
+    "RALLY_DEV_AUTH": "false",
+    "PUBLIC_API_BASE_URL": "https://api.rallywith.ai",
+    "EU_PUBLIC_API_BASE_URL": "https://eu.api.rallywith.ai",
+    "PUBLIC_WEB_BASE_URL": "https://rallywith.ai",
+    "ARTIFACT_SERVING_DOMAIN": "rallyusercontent.com",
+    "GITHUB_INGRESS_BASE_URL": "https://github.rallywith.ai",
+    "LINEAR_INGRESS_BASE_URL": "https://linear.rallywith.ai",
+    "NOTION_INGRESS_BASE_URL": "https://notion.rallywith.ai",
+    "SLACK_INGRESS_BASE_URL": "https://slack.rallywith.ai",
+    "POSTHOG_HOST": "https://us.i.posthog.com",
+    "DAYTONA_API_URL": "https://app.daytona.io/api",
+    "DAYTONA_TARGET": "us",
+    "DAYTONA_TERMINAL_SNAPSHOT": "daytona-small",
+    "TERMINAL_REGION_CAPABILITY": "supported",
+    "TERMINAL_EMERGENCY_DISABLED": "false",
+    "LINEAR_NATIVE_AGENT_ENABLED": "false",
+    "ALLOWED_ORIGINS": "app://rallywithai,app://avalon,https://rallywith.ai,https://www.rallywith.ai,https://with-avalon.com,https://www.with-avalon.com",
+    "DESKTOP_DEEP_LINK_URI": "rallywithai://auth/complete",
+    "OPENROUTER_PRIMARY_MODEL": "x-ai/grok-4.3",
+    "OPENROUTER_FALLBACK_MODELS": "google/gemini-3.6-flash",
+    "OPENROUTER_CLASSIFIER_MODEL": "google/gemini-2.5-flash-lite",
+    "OPENROUTER_STRUCTURED_MODEL": "google/gemini-2.5-flash-lite",
+    "RESEND_FROM_EMAIL": "Rally <invites@rallywith.ai>",
+    "RESEND_NOTIFICATION_FROM_EMAIL": "Rally <notifications@rallywith.ai>",
+    "WORKSTREAM_EMAIL_DOMAIN": "automation.rallywith.ai",
+    "CONNECTOR_CREDENTIALS_KEY_VERSION": "1",
+    "HARNESS_MAX_PLUGIN_CATALOG_TOKENS": "2500",
+    "HARNESS_CHILD_MAX_MODEL_ITERATIONS": "4",
+    "HARNESS_CHILD_MAX_TOOL_CALLS": "8",
+    "HARNESS_CHILD_MAX_WALL_CLOCK_MS": "90000",
+    "HARNESS_CHILD_MAX_COST_CENTS": "100",
+    "HARNESS_CHILD_MAX_CHAIN_RUNS": "4",
+    "HARNESS_CHILD_MAX_DEPTH": "1",
+    "HARNESS_REQUEST_ESTABLISHMENT_TIMEOUT_MS": "20000",
+    "HARNESS_TTFT_TIMEOUT_MS": "45000",
+    "HARNESS_STREAM_IDLE_TIMEOUT_MS": "30000",
+    "HARNESS_TRANSPORT_RETRIES": "1",
+    "TOOL_DEFAULT_TIMEOUT_MS": "30000",
+    "CONNECTOR_POLL_TIMEOUT_MS": "20000",
+    "WEB_SEARCH_MAX_RESULTS": "8",
+    "WEB_FETCH_MAX_BYTES": "2000000",
+    "MAX_ATTACHMENT_BYTES": "25000000",
+    "WEBHOOK_REPLAY_WINDOW_SECONDS": "300",
+    "PROVIDER_WEBHOOK_MAX_BYTES": "2000000",
+    "INBOUND_EMAIL_MAX_BYTES": "5000000",
+    "INBOUND_EMAIL_PROCESSING_LEASE_SECONDS": "300",
+    "LOG_LEVEL": "info"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "avalon-global",
+      "database_id": "3802fdab-e21c-4313-beb2-c1defb37f253",
+      "migrations_dir": "../../packages/db/migrations"
+    },
+    {
+      "binding": "PLATFORM_DB",
+      "database_name": "rally-platform",
+      "database_id": "39b6800c-7945-4c5b-80cb-e7cdd73af14a"
+    }
+  ],
+  "ai": { "binding": "AI" },
+  // Agent model routing; see docs/feature-flags.md. Both regions bind the one
+  // `avalon-api` app; a rollout is staged per region by targeting `region`.
+  "flagship": [
+    { "binding": "FLAGS", "app_id": "bec01d3a-d6b6-4d8c-b89a-37440ed63b8c", "remote": true }
+  ],
+  "vectorize": [
+    { "binding": "MEMORY_INDEX", "index_name": "avalon-global-memory" }
+  ],
+  // Both zones are served at once. The Rally hostnames are canonical — every
+  // URL this Worker mints uses them — while the Avalon ones stay attached
+  // because a hostname is not something we control the callers of: provider
+  // webhooks are registered one at a time by hand, and shipped desktop builds
+  // carry whichever API host they were compiled with. An Avalon route is
+  // removed only once nothing is observed arriving on it.
+  "routes": [
+    { "pattern": "api.rallywith.ai", "custom_domain": true },
+    { "pattern": "github.rallywith.ai", "custom_domain": true },
+    { "pattern": "linear.rallywith.ai", "custom_domain": true },
+    { "pattern": "notion.rallywith.ai", "custom_domain": true },
+    { "pattern": "slack.rallywith.ai", "custom_domain": true },
+    { "pattern": "api.with-avalon.com", "custom_domain": true },
+    { "pattern": "github.with-avalon.com", "custom_domain": true },
+    { "pattern": "linear.with-avalon.com", "custom_domain": true },
+    { "pattern": "notion.with-avalon.com", "custom_domain": true },
+    { "pattern": "slack.with-avalon.com", "custom_domain": true }
+  ],
+  // Back to the steady cadence. The every-minute schedule was temporary
+  // throughput for the authority import campaign, and it outlived its welcome:
+  // once the campaign reached the activation scrub, a tick's cost rose from a
+  // handful of D1 queries to several hundred, and running that every sixty
+  // seconds kept the database shedding requests with 7429 — including the ones
+  // the deployment pipeline itself needs.
+  "triggers": { "crons": ["*/5 * * * *"] },
+  "services": [
+    {
+      "binding": "DOCUMENT_PROCESSOR",
+      "service": "avalon-api-documents-global"
+    },
+    {
+      "binding": "TERMINAL_PROVIDER",
+      "service": "avalon-api-terminal-global"
+    },
+    {
+      "binding": "TELEMETRY_DELIVERY",
+      "service": "avalon-api-telemetry-delivery-global"
+    },
+    {
+      "binding": "EU_IDENTITY_BRIDGE",
+      "service": "avalon-api-eu",
+      "entrypoint": "RegionalIdentityBridge"
+    },
+    {
+      "binding": "EU_GITHUB_BRIDGE",
+      "service": "avalon-api-eu",
+      "entrypoint": "GitHubRegionalBridge"
+    },
+    {
+      "binding": "EU_INBOUND_EMAIL_BRIDGE",
+      "service": "avalon-api-eu",
+      "entrypoint": "InboundEmailRegionalBridge"
+    },
+    {
+      "binding": "EU_LINEAR_BRIDGE",
+      "service": "avalon-api-eu",
+      "entrypoint": "LinearRegionalBridge"
+    },
+    {
+      "binding": "EU_NOTION_BRIDGE",
+      "service": "avalon-api-eu",
+      "entrypoint": "NotionRegionalBridge"
+    },
+    {
+      "binding": "EU_SLACK_BRIDGE",
+      "service": "avalon-api-eu",
+      "entrypoint": "SlackRegionalBridge"
+    },
+    {
+      "binding": "EU_TELEMETRY_BRIDGE",
+      "service": "avalon-api-eu",
+      "entrypoint": "TelemetryRegionalBridge"
+    }
+  ],
+  // These are one-time hosted resources: Wrangler deploy validates the binding
+  // shape but does not create the buckets. The deployment preflight reads this
+  // list and proves every named bucket exists before migrations or deployment.
+  "r2_buckets": [
+    { "binding": "PAYLOADS", "bucket_name": "avalon-global-payloads" },
+    { "binding": "TELEMETRY_PAYLOADS", "bucket_name": "avalon-global-telemetry" }
+  ],
+  "kv_namespaces": [
+    { "binding": "INFERENCE_PRICING_CACHE", "id": "ea2442c2ee744decbad3d1ca03fce728" }
+  ],
+  "analytics_engine_datasets": [
+    { "binding": "RUN_ANALYTICS", "dataset": "avalon_agent_runs" },
+    { "binding": "TERMINAL_ANALYTICS", "dataset": "avalon_terminal_operations" }
+  ],
+  "images": { "binding": "IMAGES" },
+  // Cloudflare's Worker Loader, which materializes model-authored artifact code
+  // at request time in a fresh isolate. Declared on this Worker because the
+  // stateful path runs the model's class as a facet of ArtifactHostDO, which is
+  // deployed here; the artifact serving Worker declares its own for the
+  // stateless path.
+  "worker_loaders": [{ "binding": "ARTIFACT_LOADER" }],
+  "durable_objects": {
+    "bindings": [
+      { "name": "SUBSTREAM_AGENTS", "class_name": "SubstreamAgent" },
+      { "name": "AUTOMATION_DOS", "class_name": "AutomationDO" },
+      { "name": "WORKSTREAM_DOS", "class_name": "WorkstreamDO" },
+      { "name": "WORKSPACE_DOS", "class_name": "WorkspaceDO" },
+      { "name": "CRASH_SYMBOLICATOR", "class_name": "CrashSymbolicatorContainer" },
+      { "name": "SLACK_REACTION_TICKERS", "class_name": "SlackReactionTicker" },
+      { "name": "ARTIFACT_HOSTS", "class_name": "ArtifactHostDO" }
+    ]
+  },
+  // Append-only once deployed: v1/v2 are live history and must stay
+  // byte-stable. v3 renames the room class so every existing per-workstream
+  // object keeps its SQLite database (the SubstreamAgent migration runner
+  // inherits the WorkstreamRoom ledger verbatim), and introduces only the
+  // classes production has never seen. v4 deletes the per-workspace scheduler:
+  // WorkspaceDO now holds the alarm for every target that object used to fire,
+  // so the class has no code left. Deleting a class is how its objects and
+  // their storage are actually released — leaving the binding behind would
+  // keep a namespace of empty objects alive forever — and it is irreversible,
+  // which is why it is its own tag rather than an edit to v1. v5 adds the
+  // per-session Slack reaction ticker, whose alarm is per Slack thread rather
+  // than per workspace and so does not belong on WorkspaceDO. v7 adds the live
+  // web artifact supervisor: one object per published artifact, named by the
+  // artifact id its hostname carries, which is what lets the artifact serving
+  // Worker reach it holding nothing but a Host header. Its facet classes are
+  // dynamic and deliberately absent from this list — only Rally's own classes
+  // are ever migrated here. v8 irreversibly deletes the retired HyperSight
+  // class and all objects in its namespace; rollback cannot restore that state.
+  // v9 irreversibly deletes the first automation object, whose thirteen released
+  // migrations built a drafting substrate that no longer exists, and adds
+  // AutomationDO with a fresh ledger: an automation is now a parent of
+  // conversation objects, like WorkstreamDO, and its schema starts at what that
+  // needs. Every automation that existed before v9 is gone with the class;
+  // there were no users, only dogfood, and they are recreated by chatting.
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["WorkstreamRoom", "WorkspaceScheduler"] },
+    { "tag": "v2", "new_sqlite_classes": ["CrashSymbolicatorContainer"] },
+    {
+      "tag": "v3",
+      "renamed_classes": [{ "from": "WorkstreamRoom", "to": "SubstreamAgent" }],
+      "new_sqlite_classes": ["BlockDashboardAgent", "WorkstreamDO", "WorkspaceDO"]
+    },
+    { "tag": "v4", "deleted_classes": ["WorkspaceScheduler"] },
+    { "tag": "v5", "new_sqlite_classes": ["SlackReactionTicker"] },
+    { "tag": "v6", "new_sqlite_classes": ["AutomationAgent"] },
+    { "tag": "v7", "new_sqlite_classes": ["ArtifactHostDO"] },
+    { "tag": "v8", "deleted_classes": ["BlockDashboardAgent"] },
+    { "tag": "v9", "deleted_classes": ["AutomationAgent"], "new_sqlite_classes": ["AutomationDO"] }
+  ],
+  "queues": {
+    "producers": [
+      { "binding": "ACTIVITY_QUEUE", "queue": "avalon-global-activities" },
+      // Every inference request and terminal attempt is staged in the regional
+      // payload bucket, then this queue carries only its content-addressed
+      // pointer to the regional Pipeline consumer. The queue keeps provider
+      // execution independent of lakehouse availability.
+      { "binding": "INFERENCE_LAKEHOUSE_QUEUE", "queue": "avalon-global-inference-lakehouse" },
+      // Backend and client events already converge at the typed regional
+      // collector. Its Global D1 acceptance row is the durable outbox; this
+      // queue carries only an event ID and hash to the analytical projection.
+      { "binding": "ANALYTICS_LAKEHOUSE_QUEUE", "queue": "avalon-global-analytics-events-lakehouse" },
+      // Access retractions on their way to open sockets. A queue rather
+      // than RPC from the route that wrote the fact: the fan-out walks the
+      // whole object hierarchy, nothing waits on its outcome, and a
+      // membership removal must not fail because one object was busy. Split
+      // per region because the payload names a workspace and only that
+      // region's objects hold its sockets. See docs/access-revocation.md.
+      { "binding": "ACCESS_REVOCATION_QUEUE", "queue": "avalon-global-access-revocations" },
+      // Durable Object migration reports. A queue rather than a service
+      // binding to the tracker: the whole fleet converges on one registry
+      // object, nothing waits on the outcome, and a queue is a resource both
+      // sides bind to, so neither Worker's deploy depends on the other's
+      // script existing. See docs/choosing-queues-or-rpc.md.
+      //
+      // Deliberately not region-prefixed, unlike every other queue here. The
+      // activity queues are per-region because their payloads must be handled
+      // in region; a migration report is the opposite case — both regions'
+      // reports converge on one account-wide registry object by design, so a
+      // second queue would split the transport without splitting the
+      // destination. The region travels in the message body.
+      { "binding": "MIGRATION_REPORT_QUEUE", "queue": "avalon-migration-reports" }
+    ],
+    "consumers": [
+      {
+        "queue": "avalon-global-activities",
+        "max_batch_size": 10,
+        // The consumer handles every message independently
+        // (`consumeActivityQueue` is a bare `Promise.all` over the batch), so a
+        // batch buys fewer invocations and nothing else — no coalescing, no
+        // shared statement, no merged provider call. At Avalon's volume the
+        // batch almost never fills, so the timeout was the whole latency: a
+        // Slack `link_shared` waited the full five seconds before anything ran,
+        // and an unfurl that took a second to build appeared six seconds after
+        // the message was posted. One second is the smallest wait that still
+        // groups a genuine burst.
+        "max_batch_timeout": 1,
+        "max_retries": 5,
+        "dead_letter_queue": "avalon-global-activities-dead-letter"
+      },
+      {
+        "queue": "avalon-global-inference-lakehouse",
+        // Cloudflare's platform defaults (10 records, 5 seconds, 3 retries)
+        // are sufficient: this is invisible analytical work with one Pipeline
+        // send per record. The DLQ is the zero-setup signal that ingestion is
+        // not converging; see docs/inference-lakehouse.md.
+        "dead_letter_queue": "avalon-global-inference-lakehouse-dead-letter"
+      },
+      {
+        "queue": "avalon-global-analytics-events-lakehouse",
+        // Invisible analytical work, one independently idempotent pointer per
+        // event. Platform batching/retry defaults are sufficient; the DLQ is
+        // the intentionally simple signal that delivery is not converging.
+        "dead_letter_queue": "avalon-global-analytics-events-lakehouse-dead-letter"
+      },
+      {
+        "queue": "avalon-global-access-revocations",
+        // One message is one person losing access, and each is handled
+        // independently, so a batch buys fewer invocations and nothing else.
+        // The short timeout matters here: the message is the only thing
+        // standing between a revoked session and an open socket.
+        "max_batch_size": 10,
+        "max_batch_timeout": 1,
+        "max_retries": 5,
+        "dead_letter_queue": "avalon-global-access-revocations-dead-letter"
+      },
+      {
+        "queue": "avalon-global-product-feature-flags",
+        "max_batch_size": 100,
+        "max_batch_timeout": 1,
+        "max_retries": 5,
+        "dead_letter_queue": "avalon-global-product-feature-flags-dead-letter"
+      },
+      {
+        "queue": "avalon-global-migration-commands",
+        // Operator-initiated forced migrations, one message per Durable Object.
+        // The batch is the maximum and the wait is long on purpose, and neither
+        // is about latency: each message wakes one object, so a batch is a
+        // hundred cold starts this Worker takes on at once, and a full ten
+        // seconds of gathering is what keeps a fan-out over a whole class
+        // arriving as paced batches rather than as a herd. Nobody is watching
+        // an individual object land — the tracker's own page is the progress
+        // display, and it is fed by the reports the objects send.
+        //
+        // Five retries and a dead-letter queue: a migration that throws is
+        // retried, and the objects that never come good end up counted in the
+        // dead-letter queue, which is the tally of how many are stuck.
+        "max_batch_size": 100,
+        "max_batch_timeout": 10,
+        "max_retries": 5,
+        "dead_letter_queue": "avalon-global-migration-commands-dead-letter"
+      }
+    ]
+  },
+  "workflows": [
+    { "name": "avalon-global-connector-poll", "binding": "CONNECTOR_POLL_WORKFLOW", "class_name": "ConnectorPollWorkflow" },
+    { "name": "avalon-global-connector-event", "binding": "CONNECTOR_EVENT_WORKFLOW", "class_name": "ConnectorEventWorkflow" },
+    { "name": "avalon-global-work-opportunity", "binding": "WORK_OPPORTUNITY_WORKFLOW", "class_name": "WorkOpportunityWorkflow" }
+  ],
+  // `enabled`/`head_sampling_rate` cover Workers Logs only; automatic tracing
+  // has to be asked for separately.
+  //
+  // `destinations` names an account-level OTLP destination configured outside
+  // this repository; the credential for it lives there, never here. Only the
+  // opt-in is repository configuration, and that is what keeps this Global-only
+  // — the EU Worker's config deliberately names no destination. See
+  // docs/telemetry.md and docs/performance-tracing.md.
+  //
+  // `persist` is left at its default so the Cloudflare copy stays: an export is
+  // an addition, and `persist: false` would leave the third party holding the
+  // only copy.
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+    "logs": { "enabled": true, "destinations": ["posthog-logs"] },
+    // Traces carry message content and go to PostHog anyway — a decision taken
+    // deliberately on 2026-08-20, recorded with its reasoning in
+    // docs/telemetry.md. The platform's automatic Durable Object SQL spans
+    // carry `cloudflare.durable_object.query.bindings`, which for Avalon means
+    // message text, and Cloudflare offers no attribute redaction. Sampling is
+    // left at 1 because sampling reduces how many traces carry that content,
+    // not what any one of them carries; there is no privacy to buy by lowering
+    // it, only diagnostic value to lose.
+    "traces": { "enabled": true, "head_sampling_rate": 1, "destinations": ["posthog-traces"] }
+  }
+}

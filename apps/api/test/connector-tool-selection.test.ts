@@ -1,5 +1,5 @@
-import { asHarnessRunId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
-import type { WorkstreamWorkflowInput } from "@rally/contracts";
+import { asAutomationId, asHarnessRunId, asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import type { AutomationRunDefinitionV1, WorkstreamWorkflowInput } from "@rally/contracts";
 import { runHarness, type HarnessEvent } from "@rally/agent-harness";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -27,7 +27,8 @@ const OTHER_USER_ID = "00000000-0000-4000-8000-000000000005";
 const WORKSPACE_CONNECTION_ID = "00000000-0000-4000-8000-000000000006";
 const OWNER_CONNECTION_ID = "00000000-0000-4000-8000-000000000007";
 const OTHER_CONNECTION_ID = "00000000-0000-4000-8000-000000000008";
-const SUBSCRIPTION_ID = "00000000-0000-4000-8000-000000000009";
+const AUTOMATION_ID = asAutomationId("00000000-0000-4000-8000-000000000009");
+const RUN_ID = "00000000-0000-4000-8000-000000000014";
 const CHILD_HARNESS_RUN_ID = asHarnessRunId("00000000-0000-4000-8000-000000000012");
 const AUTOMATION_RESOURCE_ID = "00000000-0000-4000-8000-000000000013";
 
@@ -80,13 +81,18 @@ interface ConnectionRow extends Record<string, unknown> {
 class ToolSelectionDatabase {
   readonly binding: D1Database;
   readonly connections: ConnectionRow[];
-  readonly admittedAutomationDrafts: Array<Record<string, unknown>> = [];
+  /** Every `submitDefinition` request the automations plugin sent, in order. */
+  readonly submittedDefinitions: Array<Record<string, unknown>> = [];
+  /** The plugin defaults the automation's definition names; see {@link runDefinition}. */
+  defaultPluginIds: string[] = [];
+  readonly runDefinitionReads: Array<Record<string, unknown>> = [];
   readonly proposedDraftCards: Array<Record<string, unknown>> = [];
   readonly replayOutputs = new Map<string, unknown>();
   memberStatus = "active";
 
   constructor(
     connections: ConnectionRow[],
+    /** The definition's connector bindings, capability to connection; see {@link runDefinition}. */
     readonly automationBindings: Array<{ capability: string; connection_id: string }> = [],
     readonly attachedConnectionIds: string[] = [],
   ) {
@@ -151,10 +157,7 @@ class ToolSelectionStatement {
   async all<T>(): Promise<D1Result<T>> {
     const sql = this.sql.replace(/\s+/gu, " ").trim();
     let results: unknown[];
-    if (sql.includes("json_each(s.connector_bindings_json)")) {
-      expect(this.values).toEqual([SUBSCRIPTION_ID, WORKSPACE_ID]);
-      results = this.database.automationBindings;
-    } else if (sql.includes("SELECT DISTINCT connection_id FROM resources")) {
+    if (sql.includes("SELECT DISTINCT connection_id FROM resources")) {
       const requested = new Set(this.values.slice(1).map(String));
       results = this.database.attachedConnectionIds
         .filter((connectionId) => requested.has(resourceFor(connectionId)))
@@ -181,22 +184,6 @@ class ToolSelectionStatement {
     if (sql.includes("FROM workspace_members wm")) {
       expect(this.values).toEqual([WORKSPACE_ID, USER_ID]);
       return { status: this.database.memberStatus } as T;
-    }
-    if (sql.includes("FROM workstreams") && sql.includes("automation_subscription_id")) {
-      expect(this.values).toEqual([WORKSTREAM_ID, WORKSPACE_ID]);
-      return {
-        archived_at: null,
-        automation_subscription_id: null,
-        automation_run_id: null,
-      } as T;
-    }
-    if (sql.includes("SELECT default_plugins_json FROM automation_subscriptions")) {
-      expect(this.values).toEqual([SUBSCRIPTION_ID, WORKSPACE_ID]);
-      const pluginIds = [...new Set(this.database.automationBindings.map((binding) => {
-        const row = this.database.connections.find((connectionRow) => connectionRow.id === binding.connection_id);
-        return row?.model_plugin_id;
-      }).filter((pluginId): pluginId is string => Boolean(pluginId)))];
-      return { default_plugins_json: JSON.stringify(pluginIds) } as T;
     }
     if (sql.includes("FROM connector_connections") && sql.includes("WHERE id = ? AND workspace_id = ?")) {
       const [connectionId, workspaceId] = this.values;
@@ -255,9 +242,21 @@ function env(database: ToolSelectionDatabase): Env {
     SUBSTREAM_AGENTS: database.agents,
     AUTOMATION_DOS: testSubstreamAgentsBinding(database.objectStore, {
       extra: {
-        admitAuthoredDraft: vi.fn(async (request: Record<string, unknown>) => {
-          database.admittedAutomationDrafts.push(request);
+        // Answered as already existing, so the Worker does not go on to
+        // provision the automation's own conversation: creating an automation
+        // from a room is `test-workers/automation-do.test.ts`'s subject, and
+        // what this file proves about a submission is what reaches
+        // `submitDefinition`.
+        create: vi.fn(async () => ({ created: false })),
+        submitDefinition: vi.fn(async (request: Record<string, unknown>) => {
+          database.submittedDefinitions.push(request);
           return { definitionRevision: 1 };
+        }),
+        // A run reads its definition from its automation by revision when it
+        // starts; the plugin defaults it preloads come from there.
+        readRunDefinition: vi.fn(async (request: Record<string, unknown>) => {
+          database.runDefinitionReads.push(request);
+          return runDefinition(database);
         }),
       },
     }),
@@ -269,7 +268,7 @@ function env(database: ToolSelectionDatabase): Env {
   });
 }
 
-function workflowInput(automationSubscriptionId: string | null = null): WorkstreamWorkflowInput {
+function workflowInput(): WorkstreamWorkflowInput {
   return {
     region: "global",
     workspaceId: WORKSPACE_ID,
@@ -278,10 +277,70 @@ function workflowInput(automationSubscriptionId: string | null = null): Workstre
     loopId: `workstream:${WORKSTREAM_ID}:substream:0:loop`,
     harnessRunId: HARNESS_RUN_ID,
     triggerMessageId: null,
-    automationSubscriptionId,
     activityId: null,
     executionPrincipal: { type: "user", userId: USER_ID },
-    reason: automationSubscriptionId ? "Automation test" : "Ad-hoc test",
+    reason: "Ad-hoc test",
+  };
+}
+
+/**
+ * A run under an automation: the automation is the parent, the run its child
+ * substream, and the loop carries a reference to the definition rather than a
+ * copy of it.
+ */
+function automationRunInput(reason = "Automation test"): WorkstreamWorkflowInput {
+  return {
+    region: "global",
+    workspaceId: WORKSPACE_ID,
+    parentKind: "automation",
+    parentId: AUTOMATION_ID,
+    substreamId: asSubstreamId(RUN_ID),
+    loopId: `workstream:${AUTOMATION_ID}:substream:${RUN_ID}:loop`,
+    harnessRunId: HARNESS_RUN_ID,
+    triggerMessageId: null,
+    activityId: null,
+    executionPrincipal: { type: "user", userId: USER_ID },
+    reason,
+    automationRun: {
+      schemaVersion: 1,
+      automationId: AUTOMATION_ID,
+      runId: RUN_ID,
+      definitionRevision: 1,
+      trigger: { kind: "manual", requestedByUserId: USER_ID },
+    },
+  };
+}
+
+/** The definition the automation answers a run's read with. */
+function runDefinition(database: ToolSelectionDatabase): AutomationRunDefinitionV1 {
+  return {
+    schemaVersion: 1,
+    automationId: AUTOMATION_ID,
+    runId: RUN_ID,
+    definitionRevision: 1,
+    definition: {
+      name: "Drive digest",
+      description: "Summarize new files.",
+      overview: "Watch Drive and summarize what is new.",
+      instructions: "Summarize the new files.",
+      requiredCapabilities: [],
+      expectedOutputs: [],
+      defaultBehavior: {},
+      recommendedPlugins: [],
+      memoryTables: [],
+    },
+    defaultPluginIds: database.defaultPluginIds,
+    activitySourcePluginIds: {},
+    connectorBindings: Object.fromEntries(
+      database.automationBindings.map((binding) => [binding.capability, binding.connection_id]),
+    ),
+    scope: "personal",
+    owningWorkstreamId: null,
+    runAsUserId: USER_ID,
+    modelOverride: null,
+    trigger: { kind: "manual", requestedByUserId: USER_ID },
+    opening: null,
+    state: "running",
   };
 }
 
@@ -838,8 +897,8 @@ describe("connector tools selected for harness runs", () => {
     )).resolves.toMatchObject({ output: { accepted: true } });
     await expect(submit.execute(readyDraft, { toolCallId: "submit-after-load" } as never))
       .resolves.toMatchObject({ output: { accepted: true } });
-    expect(database.admittedAutomationDrafts).toHaveLength(1);
-    expect(database.admittedAutomationDrafts[0]).toMatchObject({
+    expect(database.submittedDefinitions).toHaveLength(1);
+    expect(database.submittedDefinitions[0]).toMatchObject({
       automationId: HARNESS_RUN_ID,
       evaluatorRules,
     });
@@ -871,7 +930,7 @@ describe("connector tools selected for harness runs", () => {
       readyDraft,
       { toolCallId: "submit-after-eviction" } as never,
     )).resolves.toMatchObject({ output: { accepted: true } });
-    expect(database.admittedAutomationDrafts.map((draft) => draft.automationId))
+    expect(database.submittedDefinitions.map((draft) => draft.automationId))
       .toEqual([HARNESS_RUN_ID, HARNESS_RUN_ID]);
     expect(database.proposedDraftCards).toHaveLength(2);
   });
@@ -1196,9 +1255,15 @@ describe("connector tools selected for harness runs", () => {
       ],
     );
 
-    const automationInput = workflowInput(SUBSCRIPTION_ID);
-    automationInput.automationRunContext = { defaultPluginIds: ["plugin_google"] } as never;
-    const selected = await __integrationTesting.loadHarnessTools(env(database), automationInput);
+    database.defaultPluginIds = ["plugin_google"];
+    const selected = await __integrationTesting.loadHarnessTools(env(database), automationRunInput());
+
+    // Read from the automation for this run, by the reference the loop carries.
+    expect(database.runDefinitionReads).toEqual([{
+      workspaceId: WORKSPACE_ID,
+      automationId: AUTOMATION_ID,
+      runId: RUN_ID,
+    }]);
 
     expect(googleToolNames(selected.tools)).toEqual(GOOGLE_WORKSPACE_TOOLS);
     expect(new Set(selected.connectionByTool.values())).toEqual(new Set([WORKSPACE_CONNECTION_ID]));
@@ -1220,7 +1285,7 @@ describe("connector tools selected for harness runs", () => {
 
     const selected = await __integrationTesting.loadHarnessTools(
       env(database),
-      workflowInput(SUBSCRIPTION_ID),
+      automationRunInput(),
     );
 
     expect(googleToolNames(selected.tools)).toEqual(GOOGLE_WORKSPACE_TOOLS);
@@ -1246,8 +1311,7 @@ describe("connector tools selected for harness runs", () => {
         { capability: "sheets.write", connection_id: WORKSPACE_CONNECTION_ID },
       ],
     );
-    const input = workflowInput(SUBSCRIPTION_ID);
-    input.reason = "inbound_email";
+    const input = automationRunInput("inbound_email");
 
     const selected = await __integrationTesting.loadHarnessTools(env(database), input);
 

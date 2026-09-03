@@ -38,7 +38,6 @@ function summary(id: string, title: string): WorkstreamSummary {
     id,
     title,
     titleStatus: 'settled',
-    origin: 'ad_hoc',
     scope: 'workspace',
     harnessStatus: 'completed',
     latestAttentionSequenceNumber: 0,

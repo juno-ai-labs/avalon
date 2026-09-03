@@ -2036,66 +2036,6 @@ describe('an automation result in the room', () => {
   });
 });
 
-describe('the card for an automation that lost its principal', () => {
-  const card = {
-    ...baseMessage,
-    id: 'message-principal',
-    authorType: 'system' as const,
-    author: undefined,
-    messageType: 'system' as const,
-    text: 'Candidate intake cannot reach Gmail.',
-    principalUnavailable: {
-      automationId: 'automation-1',
-      automationName: 'Candidate intake',
-      outgoingUserName: 'Dana Reeve',
-      unreachableProviders: ['Gmail'],
-    },
-  };
-
-  it('says what broke, who it ran as, and what still works', () => {
-    render(<MessageBlock {...actions} message={card} />);
-
-    const group = screen.getByRole('group');
-    expect(group.textContent).toContain('Candidate intake');
-    expect(group.textContent).toContain('Gmail');
-    expect(group.textContent).toContain('Dana Reeve');
-    // The reassurance is the point of naming it: a room reading "cannot reach
-    // Gmail" would otherwise assume the whole automation has stopped, when
-    // everything on the workspace's own connections is still running.
-    expect(group.textContent).toContain('workspace’s own connections is unaffected');
-  });
-
-  it('offers the takeover to the reader, and to nobody else', () => {
-    const onClaimExecutionPrincipal = vi.fn();
-    render(
-      <MessageBlock {...actions} message={card} onClaimExecutionPrincipal={onClaimExecutionPrincipal} />,
-    );
-
-    // "me", with no argument but the automation: nobody can lend a colleague's
-    // credentials to a standing automation on their behalf.
-    fireEvent.click(screen.getByRole('button', { name: 'Run these as me' }));
-
-    expect(onClaimExecutionPrincipal).toHaveBeenCalledExactlyOnceWith('automation-1');
-  });
-
-  it('is a card rather than a clamped note, so the action is not buried', () => {
-    const { container } = render(<MessageBlock {...actions} message={card} />);
-
-    // The system row it would otherwise be clamps to five lines and offers a
-    // "show more" toggle; this row's only control has to be the takeover.
-    expect(container.querySelector('.principal-unavailable-card')).not.toBeNull();
-    expect(screen.queryByRole('button', { name: 'Show this note in full' })).toBeNull();
-  });
-
-  it('explains itself even where nothing can act on it', () => {
-    render(<MessageBlock {...actions} message={card} />);
-
-    // No API session on this surface. The room is still better off knowing.
-    expect(screen.getByRole('button', { name: 'Run these as me' })).toBeDisabled();
-    expect(screen.getByRole('group').textContent).toContain('Candidate intake');
-  });
-});
-
 describe('the card proposing an automation drafted in this room', () => {
   const proposal = {
     ...baseMessage,
@@ -2143,6 +2083,15 @@ describe('the card proposing an automation drafted in this room', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Create this automation' }));
 
     expect(onAcceptDraft).toHaveBeenCalledExactlyOnceWith('automation-7');
+  });
+
+  it('links to the automation, where the draft is reviewed and applied', () => {
+    render(<MessageBlock {...actions} message={proposal} />);
+
+    // A hash link rather than a router link: the card also renders on
+    // surfaces that mount no router, and the app routes by hash.
+    expect(screen.getByRole('link', { name: 'Open automation' }))
+      .toHaveAttribute('href', '#/automations/automation-7');
   });
 
   it('offers no accept while the agent is still asking', () => {

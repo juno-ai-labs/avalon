@@ -1010,7 +1010,7 @@ export function useWorkstreamSocket(
       const trace = startPerfTrace('workstream_message_send', {
         traceId: input.clientId,
         operationId,
-        parentId,
+        workstreamId: parentId,
       });
       trace.annotate({
         clientMessageId: input.clientId,
@@ -1426,13 +1426,6 @@ export function useWorkstreamSocket(
           ),
         );
         queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
-        // Only when this snapshot answers a reconciliation. The context query
-        // is not part of a snapshot, so refreshing it is a side effect of
-        // repairing drift rather than of receiving canonical state — and doing
-        // it on the initial subscription would put a second context read on the
-        // open path, which already makes one.
-        if (answersSnapshotRequest) {
-        }
       } else if (event.type === 'loop_input_upserted') {
         queryClient.setQueryData<TranscriptOverlay[]>(
           overlaysQueryKey,
@@ -1593,7 +1586,7 @@ export function useWorkstreamSocket(
           const message = createToolEventMessage({
             id: messageId,
             transcriptTurnId: event.invocation.toolCallId.replace(/:tool:\d+$/u, ''),
-            parentId,
+            workstreamId: parentId,
             sequenceNumber: 0,
             authorType: 'agent',
             createdAt: existing?.message.createdAt ?? event.occurredAt,
@@ -1623,7 +1616,7 @@ export function useWorkstreamSocket(
           }
           const message = createElicitationMessage({
             id: messageId,
-            parentId,
+            workstreamId: parentId,
             sequenceNumber: 0,
             authorType: 'agent',
             createdAt: event.elicitation.createdAt,
@@ -1794,7 +1787,7 @@ export function useWorkstreamSocket(
       // ticket call itself. Replaced per attempt: a reconnect is a new open.
       const openingAttemptId = workstreamFeedOpenAttemptId(parentId);
       const trace = startPerfTrace('workstream_open', {
-        parentId,
+        workstreamId: parentId,
         ...(openingAttemptId ? { operationId: openingAttemptId } : {}),
         report: openingAttemptId !== undefined,
       });

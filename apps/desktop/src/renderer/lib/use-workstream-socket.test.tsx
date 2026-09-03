@@ -167,7 +167,7 @@ function socketApiWith(overrides: Partial<WorkstreamSocketApi>): WorkstreamSocke
     viewerUserId: null,
     getSocketTicket: vi.fn(unexpected),
     getWorkstreamControlSocketTicket: vi.fn(unexpected),
-    getWorkstream: vi.fn(unexpected),
+    getConversation: vi.fn(unexpected),
     messageMentionPayload: vi.fn(async () => []),
     ...overrides,
   } satisfies WorkstreamSocketApi;
@@ -178,7 +178,6 @@ function workstreamSummary(overrides: Partial<WorkstreamSummary> = {}): Workstre
     id: '00000000-0000-7000-8000-000000000001',
     title: 'Canonical work stream',
     titleStatus: 'settled',
-    origin: 'ad_hoc',
     harnessStatus: 'completed',
     scope: 'workspace',
     latestAttentionSequenceNumber: 0,
@@ -205,7 +204,6 @@ function workstreamDetail(overrides: Partial<WorkstreamDetail> = {}): Workstream
     resources: [],
     connections: [],
     backgroundTasks: [],
-    automationRuns: [],
     ...overrides,
   };
 }
@@ -268,7 +266,7 @@ function pendingInput(sequence: number, text: string): PendingTranscriptInput {
   };
 }
 
-/** `getWorkstream` is the complete REST recovery twin of a socket snapshot. */
+/** `getConversation` is the complete REST recovery twin of a socket snapshot. */
 function workstreamBoot(overrides: Partial<WorkstreamDetail> = {}): WorkstreamBoot {
   return {
     ...workstreamDetail(overrides),
@@ -289,12 +287,7 @@ function wireWorkstreamDetail(overrides: Record<string, unknown> = {}): Record<s
     workspaceId: '00000000-0000-7000-8000-000000000001',
     title: 'Wire work stream',
     objective: 'Wire objective',
-    originType: 'ad_hoc',
-    originLabel: null,
     createdByUserId: null,
-    automationSubscriptionId: null,
-    automationRunId: null,
-    plannedFor: null,
     harnessStatus: 'completed',
     latestAttentionSequenceNumber: 0,
     readThroughSequenceNumber: 0,
@@ -612,7 +605,7 @@ describe('useWorkstreamSocket', () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const workstreamId = '00000000-0000-7000-8000-00000000073d';
     let resyncSignal: AbortSignal | undefined;
-    const getWorkstream = vi.fn((_id: string, signal?: AbortSignal) =>
+    const getConversation = vi.fn((_id: string, signal?: AbortSignal) =>
       new Promise<WorkstreamBoot>((_resolve, reject) => {
         resyncSignal = signal;
         signal?.addEventListener('abort', () => {
@@ -625,7 +618,7 @@ describe('useWorkstreamSocket', () => {
         ticket: 'socket-ticket',
         protocols: socketTicketProtocols('socket-ticket'),
       })),
-      getWorkstream,
+      getConversation,
     });
     const { result } = renderHook(() => useWorkstreamSocket(api, workstreamId, true), {
       wrapper: createWrapper(),
@@ -646,7 +639,7 @@ describe('useWorkstreamSocket', () => {
       });
     });
     await act(async () => vi.advanceTimersByTimeAsync(750));
-    expect(getWorkstream).toHaveBeenCalledOnce();
+    expect(getConversation).toHaveBeenCalledOnce();
     expect(resyncSignal?.aborted).toBe(false);
     await act(async () => vi.advanceTimersByTimeAsync(10_000));
 
@@ -1064,8 +1057,8 @@ describe('useWorkstreamSocket', () => {
         protocols: socketTicketProtocols('socket-ticket'),
       });
     });
-    const getWorkstream = vi.fn(async () => workstreamBoot({ id: workstreamId }));
-    const api = socketApiWith({ getSocketTicket, getWorkstream });
+    const getConversation = vi.fn(async () => workstreamBoot({ id: workstreamId }));
+    const api = socketApiWith({ getSocketTicket, getConversation });
     const { result } = renderHook(() => useWorkstreamSocket(
       api,
       workstreamId,
@@ -1116,7 +1109,7 @@ describe('useWorkstreamSocket', () => {
     await act(async () => vi.advanceTimersByTimeAsync(750));
     await flushPromises();
 
-    expect(getWorkstream).not.toHaveBeenCalled();
+    expect(getConversation).not.toHaveBeenCalled();
     expect(getSocketTicket).toHaveBeenCalledTimes(2);
     expect(getSocketTicket.mock.calls[1]?.[1]).toBe(substreamId);
     expect(getSocketTicket.mock.calls[1]?.[3]).toBe(0);
@@ -3047,7 +3040,7 @@ describe('useWorkstreamSocket', () => {
     });
     const api = socketApiWith({
       getSocketTicket,
-      getWorkstream: vi.fn(async () => workstreamBoot({ id: workstreamId, harnessStatus: 'completed' })),
+      getConversation: vi.fn(async () => workstreamBoot({ id: workstreamId, harnessStatus: 'completed' })),
     });
     const openAttemptId = markWorkstreamFeedOpenStarted(workstreamId, 'recent', 'cold', 0);
     renderHook(
@@ -3195,7 +3188,7 @@ describe('useWorkstreamSocket', () => {
         ticket: 'socket-ticket',
         protocols: socketTicketProtocols('socket-ticket'),
       })),
-      getWorkstream: vi.fn(async () => workstreamBoot({ id: workstreamId, harnessStatus: 'needs_input' })),
+      getConversation: vi.fn(async () => workstreamBoot({ id: workstreamId, harnessStatus: 'needs_input' })),
     });
     renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
 
@@ -3430,7 +3423,7 @@ describe('useWorkstreamSocket', () => {
         ticket: 'socket-ticket',
         protocols: socketTicketProtocols('socket-ticket'),
       })),
-      getWorkstream: vi.fn(async (workstreamId: string) => workstreamBoot({
+      getConversation: vi.fn(async (workstreamId: string) => workstreamBoot({
         id: workstreamId,
         harnessStatus: 'running',
       })),
@@ -3646,7 +3639,7 @@ describe('useWorkstreamSocket', () => {
     }));
     const api = socketApiWith({
       getSocketTicket,
-      getWorkstream: vi.fn(async () => workstreamBoot({ id: 'workstream-one' })),
+      getConversation: vi.fn(async () => workstreamBoot({ id: 'workstream-one' })),
     });
     renderHook(() => useWorkstreamSocket(api, 'workstream-one', true), { wrapper: createWrapper() });
 
@@ -3748,7 +3741,7 @@ describe('useWorkstreamSocket', () => {
         url: 'wss://api.rally.test/workstreams/workstream-one',
         ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket'),
       })),
-      getWorkstream: vi.fn(async () => workstreamBoot({ id: 'workstream-one' })),
+      getConversation: vi.fn(async () => workstreamBoot({ id: 'workstream-one' })),
     });
     const { result } = renderHook(
       () => useWorkstreamSocket(api, 'workstream-one', true),
@@ -3926,7 +3919,7 @@ describe('useWorkstreamSocket', () => {
     }));
     const api = socketApiWith({
       getSocketTicket,
-      getWorkstream: vi.fn(async () => workstreamBoot({ id: 'workstream-one' })),
+      getConversation: vi.fn(async () => workstreamBoot({ id: 'workstream-one' })),
     });
     renderHook(() => useWorkstreamSocket(api, 'workstream-one', true), { wrapper: createWrapper() });
 
