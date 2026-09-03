@@ -474,6 +474,15 @@ export const GoogleFileWriteAuthorizationGuidance =
  * convention the strict structured-output dialects settle on for the same
  * reason: every property present, absence spelled as a value.
  *
+ * Spelled `anyOf` rather than the flat `type: ["string", "null"]` Slack's
+ * cursors use, and that is not a style preference. Bind's `sanitizeToolSchema`
+ * collapses the flat form to `type: "string"` and appends "Accepts string or
+ * null." to the description — so the caller is shown a schema that forbids the
+ * value while prose beside it says the value is fine, which is the exact
+ * conflict this change exists to end. The union survives the sanitizer whole.
+ * Anyone tempted to make these two connectors match should change Slack's
+ * shape, not this one.
+ *
  * `minLength: 1` stays on the string branch. It is what makes the harness drop
  * a blanked argument rather than forward `""`, which is the repair the Linear
  * `after: ""` incident bought on 2026-09-02, and lowering it would buy that

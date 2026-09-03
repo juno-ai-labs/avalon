@@ -2556,26 +2556,39 @@ describe("connectors", () => {
     });
   });
 
-  it("reads a null cursor as the first page rather than sending it to Google", async () => {
+  // Every one of the four, because the parse that turns `null` into absence is
+  // written out per tool rather than shared: covering `drive.search` alone
+  // proves one copy of four.
+  it.each([
+    ["gmail.search", { query: "unread" }, ["gmail.read"], { messages: [] }],
+    ["calendar.list_calendars", {}, ["calendar.read"], { items: [] }],
+    [
+      "calendar.list_events",
+      { calendarId: "primary", timeMin: "2026-01-01T00:00:00Z", timeMax: "2026-01-02T00:00:00Z" },
+      ["calendar.read"],
+      { items: [] },
+    ],
+    ["drive.search", { query: "portfolio" }, ["drive.read"], { files: [] }],
+  ] as const)("reads a null cursor as the first page for %s", async (tool, args, scopes, body) => {
     const requested: string[] = [];
     const fetcher: typeof fetch = async (input) => {
-      const url = requestUrl(input);
-      requested.push(url.toString());
-      return googleJson({ files: [{ id: "file-1", name: "Portfolio", mimeType: "application/pdf" }] });
+      requested.push(requestUrl(input).toString());
+      return googleJson(body);
     };
-    const result = await googleAdapter(fetcher).executeTool(
-      "drive.search",
-      { query: "portfolio", pageToken: null },
+    await googleAdapter(fetcher).executeTool(
+      tool,
+      { ...args, pageToken: null },
       {
-        connection: googleConnection(["drive.read"]),
+        connection: googleConnection([...scopes]),
         principal: { type: "user", userId: TEST_USER_ID },
         signal: neverAborts(),
       }
     );
-    expect(result.output).toMatchObject({ items: [{ id: "file-1" }] });
-    // The search runs, and Google is never handed the caller's `null`.
-    expect(requested).toHaveLength(1);
-    expect(requested[0]).not.toContain("pageToken");
+    // The call runs, and Google is never handed the caller's `null`. Asserted
+    // over every request rather than a single one, because a tool may resolve
+    // a calendar or hydrate a hit before it gets to the listing.
+    expect(requested.length).toBeGreaterThan(0);
+    expect(requested.filter((url) => url.includes("pageToken"))).toEqual([]);
   });
 
   it("refuses to name an argument the tool would itself reject", async () => {
