@@ -30,6 +30,10 @@ const GOOGLE_FILES: CatalogEntry & { readonly capabilityPrefixes: readonly strin
 };
 
 const CATALOG: Readonly<Record<string, CatalogEntry>> = {
+  custom_mcp: {
+    name: 'Custom MCP server',
+    description: 'Tools served live by a Model Context Protocol server you point Rally at.',
+  },
   github: {
     name: 'GitHub',
     description: 'Repositories, issues, pull requests, checks, and development events.',

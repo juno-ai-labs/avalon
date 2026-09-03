@@ -64,6 +64,16 @@ objects today.
   every previously shipped version. A fresh-schema test is not enough.
 - Never edit an already shipped migration. Add the next version so existing and
   newly created objects converge on the same schema.
+- **Do not rely on `foreignKeys: "disabled_during_rebuild"` for a new
+  migration.** `PRAGMA foreign_keys = OFF` is silently a no-op once anything in
+  the same object event has touched SQLite, which by the time the runner reaches
+  a group is always. A parent rebuild written against it therefore runs with
+  enforcement *on*, and `DROP TABLE` then fires every `ON DELETE CASCADE`
+  beneath it for real. To replace a referenced parent, copy each dependent into
+  a scratch table, replace the parent, delete and re-insert the dependents from
+  their copies, and drop the copies — all with enforcement on. WorkspaceDO
+  migration 31 is the worked example, and it never restates a dependent's
+  schema, which is the other way a rebuild loses something.
 
 The migration runner and fleet visibility are documented in
 [`durable-object-migration-tracking.md`](durable-object-migration-tracking.md).
@@ -322,6 +332,33 @@ mandatory review target. Do not silence the rule or cast a Promise-shaped result
 to make it pass—make the prepare/commit split explicit instead.
 
 ## Changelog
+
+### 2026-09-03 — Disabling foreign keys for a rebuild does not work
+
+**What changed:** The schema guidance above now tells a new migration not to
+reach for `foreignKeys: "disabled_during_rebuild"`, and gives the hold-and-
+restore recipe for replacing a referenced parent with enforcement left on.
+
+**Why:** A first draft of WorkspaceDO migration 31 replaced
+`connector_connections` under that mode and lost a workspace's webhook receipts.
+`PRAGMA foreign_keys` is documented as a no-op inside a transaction, and a
+Durable Object event holds one implicitly from its first statement onwards — so
+the pragma the runner issues before the group flips nothing, and the parent's
+drop cascades. Measured directly in workerd: the pragma reads back `0` as the
+first statement of an event and `1` once any SQL has run.
+
+**Considered and rejected:** Making the runner assert the pragma took effect and
+fail loudly. That turns a silent data loss into a loud failure, which is better,
+but it leaves no way to perform the rebuild at all — and there is one that does
+not need the pragma. The released migrations that carry the mode are left alone:
+their statements are hashed into every deployed object's receipt.
+
+**Consequences:** The mode still exists for those released migrations and must
+not be used again. Any rebuild of a referenced parent needs a populated workerd
+upgrade test that asserts a dependent's rows *survive*, because a fresh-schema
+test passes either way — which is exactly how this was found.
+
+
 
 ### 2026-08-30 — Document the operator-only raw-SQL exception
 

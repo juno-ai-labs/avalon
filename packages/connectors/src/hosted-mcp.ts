@@ -4,7 +4,6 @@ import { z } from "zod";
 import {
   base64,
   isRecord,
-  jsonHeaders,
   providerJson,
   readResponseBytes,
   stringValue,
@@ -23,7 +22,9 @@ export const HOSTED_MCP_PROTOCOL_VERSION = "2025-06-18";
 const HOSTED_MCP_CLIENT_NAME = "Rally";
 const HOSTED_MCP_CLIENT_VERSION = "1.0.0";
 const HOSTED_MCP_DEFAULT_TOOL_TIMEOUT_MS = 30_000;
-const DEFAULT_RESPONSE_BYTES = 2_000_000;
+/** The shared hosted-MCP response ceiling, for callers reading a catalog directly. */
+export const HOSTED_MCP_DEFAULT_RESPONSE_BYTES = 2_000_000;
+const DEFAULT_RESPONSE_BYTES = HOSTED_MCP_DEFAULT_RESPONSE_BYTES;
 const MAX_TOOL_COUNT = 128;
 const MAX_TOOL_PAGES = 20;
 const MAX_SCHEMA_BYTES = 100_000;
@@ -117,24 +118,58 @@ export interface HostedMcpOAuthConfig {
   clientUri?: string;
   /** Exact origins trusted to receive OAuth requests and client credentials. */
   allowedAuthorizationOrigins?: readonly string[];
+  /**
+   * Admit whichever authorization server the MCP resource itself advertises.
+   *
+   * A code-authored provider names its origins above, because Rally knows them
+   * and a server that suddenly points somewhere else is a compromise rather
+   * than a deployment. A server somebody typed into Rally has no such list to
+   * check against: the URL is the trust anchor the person supplied, and RFC 9728
+   * exists precisely so that resource can name its own authorization server.
+   * Every endpoint must still be HTTPS and share that advertised origin.
+   */
+  trustAdvertisedAuthorizationServer?: boolean;
   /** Extra scopes Rally requires even when protected-resource metadata omits them. */
   additionalScopes?: readonly string[];
   fetch?: FetchLike;
   maxResponseBytes?: number;
 }
 
-export interface HostedMcpPassthroughConfig {
+/**
+ * The exact headers one hosted-MCP request authenticates with.
+ *
+ * A bearer token is the common case and `hostedMcpBearerAuth` builds it, but a
+ * server somebody configured in Rally may authenticate with headers of its own,
+ * and those cannot be represented as a token.
+ */
+export type HostedMcpRequestAuth = Readonly<Record<string, string>>;
+
+export function hostedMcpBearerAuth(accessToken: string): HostedMcpRequestAuth {
+  return { authorization: `Bearer ${accessToken}` };
+}
+
+interface HostedMcpPassthroughBaseConfig {
   providerName: string;
-  serverUrl: string;
+  /**
+   * The MCP endpoint, or a resolver that reads it from the connection for a
+   * connector whose server is configured per connection rather than in source.
+   */
+  serverUrl: string | ((connection: AuthorizedConnectorConnection) => string);
   capabilities: readonly string[];
   connectionScopes: ConnectorDynamicAgentTools["connectionScopes"];
   /** Select the capability written into this connection's discovered tools. */
   capabilityForConnection(connection: AuthorizedConnectorConnection): string;
-  withAccessToken<T>(
+  /**
+   * Narrow the server's own catalog before Rally converts it.
+   *
+   * Applied at discovery and again to the fresh catalog read before every
+   * `tools/call`, so a tool this rejects is unreachable rather than merely
+   * unadvertised — an activation that predates a narrowing cannot spend it.
+   */
+  selectTools?(
+    tools: readonly HostedMcpTool[],
     connection: AuthorizedConnectorConnection,
-    signal: AbortSignal,
-    operation: (accessToken: string) => Promise<T>,
-  ): Promise<T>;
+  ): readonly HostedMcpTool[];
   /** Enable the shared protected-resource discovery, DCR, and PKCE flow. */
   oauth?: Omit<HostedMcpOAuthConfig, "providerName" | "serverUrl" | "fetch" | "maxResponseBytes">;
   /** Rally-authored deadlines keyed by the exact provider operation name. */
@@ -143,8 +178,40 @@ export interface HostedMcpPassthroughConfig {
   maxResponseBytes?: number;
 }
 
+/**
+ * How a declaration authenticates, as exactly one of two shapes rather than two
+ * optional callbacks: a provider holding a bearer token, or a connection
+ * carrying its own request headers. Offering both would leave which one wins to
+ * the order of two `??` at a call site nobody reads.
+ */
+interface HostedMcpBearerAccess {
+  withAccessToken<T>(
+    connection: AuthorizedConnectorConnection,
+    signal: AbortSignal,
+    operation: (accessToken: string) => Promise<T>,
+  ): Promise<T>;
+  withRequestAuth?: never;
+}
+
+interface HostedMcpHeaderAccess {
+  withRequestAuth<T>(
+    connection: AuthorizedConnectorConnection,
+    signal: AbortSignal,
+    operation: (auth: HostedMcpRequestAuth) => Promise<T>,
+  ): Promise<T>;
+  withAccessToken?: never;
+}
+
+export type HostedMcpPassthroughConfig =
+  HostedMcpPassthroughBaseConfig & (HostedMcpBearerAccess | HostedMcpHeaderAccess);
+
 export interface HostedMcpAuthorization {
-  begin(input: { state: string; codeChallenge: string }): Promise<{ url: string; state: HostedMcpOAuthState }>;
+  /** `serverUrl` names the resource when the declaration resolves one per connection. */
+  begin(input: {
+    state: string;
+    codeChallenge: string;
+    serverUrl?: string;
+  }): Promise<{ url: string; state: HostedMcpOAuthState }>;
   exchangeCode(
     state: HostedMcpOAuthState,
     input: { code: string; codeVerifier: string },
@@ -195,9 +262,36 @@ export function createHostedMcpPassthrough(
 export function createHostedMcpPassthrough(config: HostedMcpPassthroughConfig): HostedMcpPassthrough;
 export function createHostedMcpPassthrough(config: HostedMcpPassthroughConfig): HostedMcpPassthrough {
   const fetcher = config.fetch ?? globalThis.fetch;
-  const serverUrl = normalizeHttpsUrl(config.serverUrl);
+  const declaredServerUrl = typeof config.serverUrl === "string" ? normalizeHttpsUrl(config.serverUrl) : null;
   const maxResponseBytes = config.maxResponseBytes ?? DEFAULT_RESPONSE_BYTES;
 
+  /** The adapter-level endpoint, for the paths that have no connection to read. */
+  const requireDeclaredServerUrl = (): string => {
+    if (!declaredServerUrl) {
+      throw new ConnectorError(
+        "invalid_configuration",
+        `${config.providerName} MCP resolves its server per connection and has no adapter-level endpoint`,
+      );
+    }
+    return declaredServerUrl;
+  };
+  const serverUrlFor = (connection: AuthorizedConnectorConnection): string => (
+    declaredServerUrl ?? normalizeHttpsUrl((config.serverUrl as (
+      value: AuthorizedConnectorConnection,
+    ) => string)(connection))
+  );
+  const withAuth = <T>(
+    connection: AuthorizedConnectorConnection,
+    signal: AbortSignal,
+    operation: (auth: HostedMcpRequestAuth) => Promise<T>,
+  ): Promise<T> => (config.withRequestAuth
+    ? config.withRequestAuth(connection, signal, operation)
+    : config.withAccessToken(
+        connection,
+        signal,
+        (accessToken) => operation(hostedMcpBearerAuth(accessToken)),
+      ));
+  const selectTools = config.selectTools;
   const authorizedCapability = (connection: AuthorizedConnectorConnection): string => {
     const capability = config.capabilityForConnection(connection);
     if (!config.capabilities.includes(capability) || !connection.grantedScopes.includes(capability)) {
@@ -212,8 +306,8 @@ export function createHostedMcpPassthrough(config: HostedMcpPassthroughConfig): 
     signal: AbortSignal,
   ): Promise<{ output: unknown; tool: HostedMcpTool }> => callHostedMcpTool({
     providerName: config.providerName,
-    serverUrl,
-    accessToken,
+    serverUrl: requireDeclaredServerUrl(),
+    auth: hostedMcpBearerAuth(accessToken),
     name,
     args,
     signal,
@@ -225,38 +319,47 @@ export function createHostedMcpPassthrough(config: HostedMcpPassthroughConfig): 
     signal: AbortSignal,
   ): Promise<readonly ToolDefinition[]> => {
     const capability = authorizedCapability(connection);
-    return config.withAccessToken(
+    const serverUrl = serverUrlFor(connection);
+    return withAuth(
       connection,
       signal,
-      async (accessToken) => hostedMcpToolDefinitions(
-        await listHostedMcpTools({
+      async (auth) => {
+        const listed = await listHostedMcpTools({
           providerName: config.providerName,
           serverUrl,
-          accessToken,
+          auth,
           signal,
           fetch: fetcher,
           maxResponseBytes,
-        }),
-        capability,
-        config.toolTimeoutMsByName,
-      ),
+        });
+        return hostedMcpToolDefinitions(
+          selectTools ? selectTools(listed, connection) : listed,
+          capability,
+          config.toolTimeoutMsByName,
+        );
+      },
     );
   };
-  const oauthConfig: HostedMcpOAuthConfig | null = config.oauth
+  const oauthConfigFor = (serverUrl: string): HostedMcpOAuthConfig => ({
+    ...config.oauth!,
+    providerName: config.providerName,
+    serverUrl,
+    fetch: fetcher,
+    maxResponseBytes,
+  });
+  const authorization: HostedMcpAuthorization | null = config.oauth
     ? {
-        ...config.oauth,
-        providerName: config.providerName,
-        serverUrl,
-        fetch: fetcher,
-        maxResponseBytes,
-      }
-    : null;
-  const authorization: HostedMcpAuthorization | null = oauthConfig
-    ? {
-        begin: (input) => beginHostedMcpAuthorization(oauthConfig, input),
-        exchangeCode: (state, input) => exchangeHostedMcpAuthorizationCode(oauthConfig, state, input),
+        begin: (input) => beginHostedMcpAuthorization(
+          oauthConfigFor(input.serverUrl ?? requireDeclaredServerUrl()),
+          input,
+        ),
+        exchangeCode: (state, input) => exchangeHostedMcpAuthorizationCode(
+          oauthConfigFor(state.resource),
+          state,
+          input,
+        ),
         refresh: (state, refreshToken, signal) => refreshHostedMcpAuthorization(
-          oauthConfig,
+          oauthConfigFor(state.resource),
           state,
           refreshToken,
           signal,
@@ -278,9 +381,18 @@ export function createHostedMcpPassthrough(config: HostedMcpPassthroughConfig): 
         throw new ConnectorError("invalid_payload", `${config.providerName} MCP tool arguments must be an object`);
       }
       authorizedCapability(connection);
-      const invoked = await config.withAccessToken(connection, signal, (accessToken) => (
-        call(accessToken, name, rawArgs, signal)
-      ));
+      const serverUrl = serverUrlFor(connection);
+      const invoked = await withAuth(connection, signal, (auth) => callHostedMcpTool({
+        providerName: config.providerName,
+        serverUrl,
+        auth,
+        name,
+        args: rawArgs,
+        signal,
+        fetch: fetcher,
+        maxResponseBytes,
+        ...(selectTools ? { selectTools: (tools) => selectTools(tools, connection) } : {}),
+      }));
       return {
         output: boundHostedMcpValue(invoked.output),
         summary: `Used ${config.providerName} MCP tool ${name}`,
@@ -357,6 +469,11 @@ export async function beginHostedMcpAuthorization(
     throw new ConnectorError("invalid_configuration", `${config.providerName} MCP advertised an unexpected protected resource`);
   }
   const authorizationServer = normalizeHttpsUrl(protectedMetadata.authorization_servers[0]!);
+  // A server Rally names in source is checked against the origins Rally knows.
+  // A server somebody configured has no such list, so the resource it typed is
+  // allowed to name its own authorization server — and that origin, once
+  // admitted, still has to cover every endpoint below.
+  if (config.trustAdvertisedAuthorizationServer) allowedOrigins.add(normalizeHttpsOrigin(authorizationServer));
   if (!allowedOrigins.has(new URL(authorizationServer).origin)) {
     throw new ConnectorError("invalid_configuration", `${config.providerName} MCP advertised an untrusted authorization server`);
   }
@@ -509,15 +626,22 @@ export async function listHostedMcpTools(input: HostedMcpRequestInput): Promise<
 }
 
 export async function callHostedMcpTool(
-  input: HostedMcpRequestInput & { name: string; args: Record<string, unknown> },
+  input: HostedMcpRequestInput & {
+    name: string;
+    args: Record<string, unknown>;
+    /** The same narrowing discovery applied, re-run against the fresh catalog. */
+    selectTools?: (tools: readonly HostedMcpTool[]) => readonly HostedMcpTool[];
+  },
 ): Promise<{ output: unknown; tool: HostedMcpTool }> {
   return withHostedMcpSession(input, async (session) => {
-    const tools = await listSessionTools(input, session);
+    const listed = await listSessionTools(input, session);
     // Re-run the activation-time collision checks against the fresh catalog.
     // The caller supplies the exact provider operation captured at activation;
     // a different remote tool that happens to equal its Rally alias must never
-    // inherit the already-confirmed call.
-    hostedMcpToolDefinitions(tools, "hosted_mcp.execution");
+    // inherit the already-confirmed call. The collision check reads the whole
+    // catalog rather than the narrowed one: a name a policy hid still collides.
+    hostedMcpToolDefinitions(listed, "hosted_mcp.execution");
+    const tools = input.selectTools ? input.selectTools(listed) : listed;
     const tool = tools.find((candidate) => candidate.name === input.name);
     if (!tool) {
       throw new ConnectorError("unsupported_capability", `${input.providerName} MCP no longer exposes ${input.name}`);
@@ -539,7 +663,7 @@ export async function callHostedMcpTool(
 export interface HostedMcpRequestInput {
   providerName: string;
   serverUrl: string;
-  accessToken: string;
+  auth: HostedMcpRequestAuth;
   signal: AbortSignal;
   fetch: FetchLike;
   maxResponseBytes: number;
@@ -637,8 +761,9 @@ async function fetchMcp(
   request: Record<string, unknown> | null,
   initialized: boolean,
 ): Promise<Response> {
-  const headers = jsonHeaders(input.accessToken);
+  const headers = new Headers(input.auth);
   headers.set("accept", "application/json, text/event-stream");
+  headers.set("content-type", "application/json");
   if (initialized) headers.set("mcp-protocol-version", HOSTED_MCP_PROTOCOL_VERSION);
   if (session.id) headers.set("mcp-session-id", session.id);
   let response: Response;
@@ -648,10 +773,25 @@ async function fetchMcp(
       headers,
       ...(request ? { body: JSON.stringify(request) } : {}),
       signal: input.signal,
+      // Every request here carries a credential — a bearer token, or the
+      // headers a person configured on the connection. A followed redirect
+      // re-sends them to whatever host the response names, so a server that
+      // answers `302 https://collector.example` would be handed them. The
+      // runtime follows redirects by default, so this has to be said, and a
+      // 3xx is then an answer rather than a step.
+      redirect: "manual",
     });
   } catch (error) {
     if (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError")) throw error;
     throw new ConnectorError("provider_error", `${input.providerName} MCP request could not be completed`, error);
+  }
+  if (response.status >= 300 && response.status < 400) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new ConnectorError(
+      "provider_error",
+      `${input.providerName} MCP redirected the request; configure the endpoint it redirects to instead`,
+      { status: response.status },
+    );
   }
   session.id = response.headers.get("mcp-session-id") ?? session.id;
   if (!response.ok) {
