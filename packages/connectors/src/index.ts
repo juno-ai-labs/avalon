@@ -507,6 +507,16 @@ const GOOGLE_PAGE_TOKEN_SCHEMA = {
     "Send `null` for the first page. To continue an earlier search, pass back the exact `nextPageToken` string a previous call to this tool returned, with that call's other arguments unchanged. It is an opaque cursor — a long provider-generated string, not a page number, an offset, or an index. Never construct, guess, shorten, or increment this token; when you have no token from a previous call, the value is `null`. A result whose `nextPageToken` is `null` is the last page: stop there rather than calling again.",
 } as const;
 
+/**
+ * The executor's half of {@link GOOGLE_PAGE_TOKEN_SCHEMA}, shared for the same
+ * reason the schema is: the bounds have to agree with what the caller was told,
+ * and four hand-written copies are four chances for them to drift. `null` and
+ * an absent key both become `undefined`, which every call site already treats
+ * as "no cursor" through a plain truthiness guard.
+ */
+const GOOGLE_PAGE_TOKEN_ARGUMENT = z.string().min(1).max(2_000).nullish()
+  .transform((value) => value ?? undefined);
+
 export const googleTools: ToolDefinition[] = [
   {
     name: "gmail.read_profile",
@@ -2275,7 +2285,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         const args = z.strictObject({
           query: z.string().min(1).max(2_000),
           maxResults: z.number().int().min(1).max(25).default(10),
-          pageToken: z.string().min(1).max(2_000).nullish().transform((value) => value ?? undefined)
+          pageToken: GOOGLE_PAGE_TOKEN_ARGUMENT
         }).parse(rawArgs);
         const url = new URL("https://gmail.googleapis.com/gmail/v1/users/me/messages");
         url.searchParams.set("q", args.query);
@@ -2446,7 +2456,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       if (name === "calendar.list_calendars") {
         const args = z.strictObject({
           maxResults: z.number().int().min(1).max(250).default(100),
-          pageToken: z.string().min(1).max(2_000).nullish().transform((value) => value ?? undefined)
+          pageToken: GOOGLE_PAGE_TOKEN_ARGUMENT
         }).parse(rawArgs);
         const url = new URL("https://www.googleapis.com/calendar/v3/users/me/calendarList");
         url.searchParams.set("maxResults", String(args.maxResults));
@@ -2475,7 +2485,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
             timeMax: z.string().datetime({ offset: true }),
             query: z.string().min(1).max(2_000).optional(),
             maxResults: z.number().int().min(1).max(100).default(25),
-            pageToken: z.string().min(1).max(2_000).nullish().transform((value) => value ?? undefined)
+            pageToken: GOOGLE_PAGE_TOKEN_ARGUMENT
           })
           .parse(rawArgs);
         const calendarId = await resolveGoogleCalendarId(context, args.calendarId);
@@ -2801,7 +2811,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
           modifiedAfter: z.string().datetime({ offset: true }).optional(),
           orderBy: z.enum(["relevance", "modified"]).default("relevance"),
           maxResults: z.number().int().min(1).max(100).default(25),
-          pageToken: z.string().min(1).max(2_000).nullish().transform((value) => value ?? undefined)
+          pageToken: GOOGLE_PAGE_TOKEN_ARGUMENT
         }).parse(rawArgs);
         const url = new URL("https://www.googleapis.com/drive/v3/files");
         // Names *and* contents. Matching names alone made a search for what a
