@@ -303,13 +303,6 @@ export class SubstreamLoopStorage {
    * is left alone: an in-flight execution's fence must not move because
    * someone dragged the queue.
    */
-  reorderPendingInputs(input: {
-    inputIds: readonly string[];
-    now: number;
-  }): PendingLoopInputRow[] {
-    return this.storage.transactionSync(() => this.reorderPendingInputsInTransaction(input));
-  }
-
   /** The caller owns the surrounding transaction and may add its own receipt. */
   reorderPendingInputsInTransaction(input: {
     inputIds: readonly string[];
@@ -385,7 +378,8 @@ export class SubstreamLoopStorage {
       if (existing) {
         if (existing.loop_id !== input.loopId
           || existing.client_message_id !== input.clientMessageId
-          || existing.preparation_kind !== input.preparationKind) {
+          || existing.preparation_kind !== input.preparationKind
+          || (existing.state === "preparing" && existing.envelope_json !== input.envelopeJson)) {
           throw new Error("pending_input_preparation_replay_mismatch");
         }
         return { outcome: "reused", preparation: existing };
@@ -875,10 +869,6 @@ export class SubstreamLoopStorage {
         input.newExecutionEpoch, input.leaseOwner, input.leaseExpiresAt);
       return { outcome: "recovered", loop: this.#requiredLoop(loop.loop_id) };
     });
-  }
-
-  requestStop(input: ExecutionFence & { reason: string; now: number }): SubstreamLoopRow {
-    return this.storage.transactionSync(() => this.requestStopInTransaction(input));
   }
 
   /** The caller owns the surrounding transaction and may add its own receipt. */

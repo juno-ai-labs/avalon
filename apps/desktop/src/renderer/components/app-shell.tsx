@@ -15,7 +15,11 @@ import { useNotesQuery } from '../lib/use-notes-query';
 import { useWorkspaceSocket } from '../lib/workspace-socket';
 import { WorkstreamSocketPool } from '../lib/workstream-socket-pool';
 import { WORKSTREAMS_QUERY_KEY, useWorkstreamsQuery } from '../lib/use-workstreams-query';
-import { setCachedWorkstreams } from '../lib/workstreams-cache';
+import {
+  evictCachedWorkstream,
+  invalidateCachedWorkstreamDetails,
+  setCachedWorkstreams,
+} from '../lib/workstreams-cache';
 import type { AutomationSummary, NoteDetail, NoteSummary, Workspace, WorkspaceMember, WorkstreamDetail, WorkstreamSummary } from '../lib/types';
 import { ThemeBackdrop } from './theme-backdrop';
 import { Sidebar } from './sidebar';
@@ -533,7 +537,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
           // socket event to shake it loose. The note list itself is not here —
           // the write to `notes` pushes it.
           await Promise.all([
-            queryClient.invalidateQueries({ queryKey: ['workstream'] }),
+            invalidateCachedWorkstreamDetails(queryClient),
             queryClient.invalidateQueries({ queryKey: ['workstream-context'] }),
             queryClient.invalidateQueries({ queryKey: ['resources'] }),
           ]);
@@ -572,7 +576,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
           // API now refuses. Idempotent with the tombstone, which removes the
           // same key, and safe against a later frame: the state store only
           // merges a detail entry `if (detail)`.
-          queryClient.removeQueries({ queryKey: ['workstream', workstream.id], exact: true });
+          evictCachedWorkstream(queryClient, workstream.id);
           if (openWorkstreamId(location.pathname) === workstream.id) {
             void navigate('/workstreams/new', { replace: true });
           }
@@ -584,7 +588,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
             ? undefined
             : workstreams.data?.find((workstream) => workstream.id === activeWorkstreamId);
           if (update.kind === 'archive' && selected && workstreamMatchesBatchFilter(selected, filter)) {
-            queryClient.removeQueries({ queryKey: ['workstream', selected.id], exact: true });
+            evictCachedWorkstream(queryClient, selected.id);
             void navigate('/workstreams/new', { replace: true });
           }
           if (accepted.archivedNoteCount > 0) {
@@ -605,7 +609,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
             // refreshes under the reader.
             await Promise.all([
               queryClient.invalidateQueries({ queryKey: ['note'] }),
-              queryClient.invalidateQueries({ queryKey: ['workstream'] }),
+              invalidateCachedWorkstreamDetails(queryClient),
               queryClient.invalidateQueries({ queryKey: ['workstream-context'] }),
               queryClient.invalidateQueries({ queryKey: ['resources'] }),
             ]);

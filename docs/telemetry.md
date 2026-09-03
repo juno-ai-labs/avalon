@@ -686,6 +686,23 @@ signals, never by weakening policy or deadline tests.
 
 ## Changelog
 
+### 2026-09-03 — Every substream mutation keeps a named server span
+
+**What changed:** Answer, reorder, stop, and retry commands share the
+`workstream.room.substream_command` span with content-free command, operation,
+connection, transport, and object identity attributes. Failures set the span
+error and response status even when the private receipt cannot be delivered.
+
+**Why:** Moving these commands from HTTP to the substream socket removed their
+route spans and otherwise left successful command latency invisible.
+
+**Considered and rejected:** Logs only cover unexpected failures and cannot
+describe successful latency. One span name with a command dimension preserves
+the common operation without multiplying the registry.
+
+**Consequences:** The socket cutover keeps request-equivalent server timing and
+error evidence without recording command contents.
+
 ### 2026-09-02 — Send readiness follows the addressed substream command socket
 
 **What changed:** The send-ready description now names the addressed
