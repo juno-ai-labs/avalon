@@ -940,10 +940,16 @@ cursors use, because Bind's `sanitizeToolSchema` collapses the flat form to
 `type: "string"` and appends "Accepts string or null." to the description. That
 hands a caller a schema forbidding the value and prose permitting it — the
 conflict this change exists to end — so the flat form would have been inert.
-The union passes through whole. It follows that **Slack's own null cursors are
-already being flattened this way** and its callers cannot spell absence either;
-that is a separate connector and a separate change, noted here so it is not
-lost.
+The union passes through whole.
+
+Measured across the whole registry with `droppedNullableBranches`, **46
+authored null branches are collapsed this way** — Linear 17, Slack 11, Granola
+9, Notion 5, X 4, of which 19 are cursors — so those callers cannot spell
+absence either. Google's four are the only ones that survive. Converting the
+rest is a change per connector and is not attempted here; the rule now lives in
+[`agent-tools.md`](agent-tools.md), which owns tool authoring, and the
+sanitization suite asserts over Google's four so a fifth paginated Google tool
+joins the guard rather than quietly missing it.
 
 **Considered and rejected:** Lowering or dropping `minLength`. It re-buys the
 Linear `after: ""` failure of 2026-09-02 — the harness drops a blanked optional
