@@ -1869,10 +1869,19 @@ function decodeJson(text: string): unknown {
   }
 }
 
-/** An envelope as text, and nothing for the empty bodies that say nothing. */
+/**
+ * An envelope as text, and nothing for the empty bodies that say nothing.
+ *
+ * `{}` and `[]` are deliberately dropped rather than recorded as `"{}"`: a body
+ * with no members is a body with no evidence in it, and a `detail` that reads
+ * as evidence and holds none is worse than an absent one. The array arm is
+ * explicit because `Object.keys([]).length` is also `0`, so the object test
+ * alone would have looked like it covered a case it happened to cover by
+ * accident.
+ */
 function jsonText(value: unknown): string | undefined {
   if (typeof value !== "object" || value === null) return undefined;
-  if (Object.keys(value).length === 0) return undefined;
+  if (Array.isArray(value) ? value.length === 0 : Object.keys(value).length === 0) return undefined;
   try {
     return JSON.stringify(value);
   } catch {

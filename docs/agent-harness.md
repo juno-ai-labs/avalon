@@ -1271,10 +1271,21 @@ HTML 502. And `readJsonResponse`, which serves the two non-streaming paths,
 returned `null` for a body it could not parse and dropped the text with it. Both
 now read once and keep the bytes beside the parse.
 
+**That fix moves routing, not just legibility, and it is the part to review as
+behavior.** `Body is unusable` is a `TypeError`, and `classifyProviderFailure`
+maps a `TypeError` to `network` — Bind's blanket-retriable arm, with the status
+thrown away. Carrying the status instead puts the same refusal on the status
+branch: a non-JSON 429 now honours its `Retry-After` rather than Bind's own
+backoff, a non-JSON 5xx stays retriable, and a non-JSON 400/401/403 becomes
+request-shaped or credential and stops being retried across providers, which is
+the intended reading of those codes and was previously unreachable for a body
+that failed to parse. `index.test.ts` pins the 429 case against the shape the
+double read used to produce.
+
 **Why:** on 2 September a work stream pinned to `openai/gpt-5.6-sol` failed its
 opening run. Azure answered 400 `invalid_function_parameters`, which says a tool
 schema was refused and cannot say which of the twenty-eight in that request it
-was. That code was all four surfaces retained — the run row, the
+was. That code was all that four surfaces retained — the run row, the
 `inference_attempts` ledger, the log, and the archived attempt record — because
 the sentence naming the tool was read into `details` and dropped at the
 transport. Pinning made it terminal rather than merely slow: `pinnedModelRouting`
@@ -1305,13 +1316,20 @@ would otherwise have left as it found it. It now carries `providerError` like th
 streaming and structured paths, and `embedding_inference` logs the same three
 fields the other two events do.
 
-**Both regions, deliberately.** The reason travels on the regional structured
+**Both regions, not identically.** The reason travels on the regional structured
 log rather than only in the Global archive, so EU — whose inference is
-[never archived](inference-lakehouse.md) — has the same account of a refusal
-that Global does, in the same field, from the same code. A test in
-`agent-inference-logging.test.ts` pins that: the EU-shaped environment archives
-nothing and still logs the body. Anything that later moves this reasoning back
-into a Global-only surface takes EU's only copy with it.
+[never archived](inference-lakehouse.md) — gets a refusal's body in the same
+field, from the same code, truncated at the logger's 2,000-character field limit
+and with no archived copy behind it. Global has both: the clipped log row and
+the whole body in the archive. A test in `agent-inference-logging.test.ts` pins
+the EU half — the EU-shaped environment archives nothing and still logs the body
+— and anything that later moves this reasoning back into a Global-only surface
+takes EU's only copy with it.
+
+The cut lands with an irony worth stating: the rejection that motivated this is
+a few hundred characters and survives whole, while the bodies long enough to
+reach 2,000 are the ones quoting our request back — so the case the old
+exclusion existed for is now cut mid-echo rather than excluded.
 
 **What a reader has to keep true:** the body is provider-controlled text that
 quotes our own request back often enough to be assumed to. It is evidence,

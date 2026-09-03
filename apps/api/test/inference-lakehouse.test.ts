@@ -252,6 +252,44 @@ describe("inference lakehouse", () => {
     });
   });
 
+  it("archives the rejection body on the structured branch too", async () => {
+    const { env, objects, pointers } = fixture();
+
+    await captureStructuredInferenceDiagnostic(env, {
+      source: "workstream_naming",
+      workspaceId: "workspace-1",
+    }, {
+      stage: "complete",
+      schemaName: "name",
+      model: "structured/model",
+      attempt: 0,
+      fallbackAttempt: 0,
+      repairAttempt: 0,
+      inferenceRequestId: "structured-rejection",
+      success: false,
+      failureKind: "provider_error",
+      providerError: {
+        code: 400,
+        providerName: "Google",
+        detail: '{"error":{"code":400,"message":"response_format is not supported"}}',
+      },
+    });
+
+    // The streaming and structured captures write `error` through separate call
+    // sites; the test that used to cover this one asserted the old contract and
+    // went with it, leaving the branch green under any change.
+    const archived = JSON.parse(objects.get(
+      (pointers[0] as { objectKey: string }).objectKey,
+    )!) as InferenceLakehouseRecord;
+    expect(archived.error).toEqual({
+      providerError: {
+        code: 400,
+        providerName: "Google",
+        detail: '{"error":{"code":400,"message":"response_format is not supported"}}',
+      },
+    });
+  });
+
   it("archives an unclassifiable rejection body on its own", async () => {
     const { env, objects, pointers } = fixture();
 
