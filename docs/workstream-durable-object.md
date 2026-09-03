@@ -1576,6 +1576,39 @@ field every future reader has to know to ignore. Proved in
 `apps/api/test/workstream-object-schema.test.ts` by storing a pre-v37 receipt,
 applying the schema, and parsing the row through `WorkstreamWorkflowInputSchema`.
 
+### 2026-09-03 — Socket replay and archive state are enforced by the owning substream
+
+**What changed:** A socket admitted to a `SubstreamAgent` now performs all five
+conversation mutations against the object's local participant authority rather
+than repeating the regional membership read. Message ids are durably bound to
+the author and complete request, elicitation replays are bound to the responder
+and answer, and retry ids are bound to the requesting principal and rechecked
+inside the insertion transaction. Post-commit wake or publication failure no
+longer turns a durable elicitation answer or retry into a false failure receipt.
+Archiving commits an executing-loop stop and prevents both alarm scheduling and
+execution claims while the room is archived; unarchiving re-derives the alarm.
+
+Socket-command and message-admission receipts are intentionally retained for
+the object's lifetime. A stale operation id must remain unable to mutate newer
+state. No time window was added because its value is a product decision under
+[`adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md),
+not an implementation constant to guess. Their growth remains explicit follow-up
+work if the team chooses a bounded replay horizon.
+
+**Why:** Review found that the first socket cutover still re-read D1 for four
+commands, could acknowledge a committed mutation as failed, allowed ambiguous
+ids to converge on another request, and let an admitted retry begin after its
+room became unreadable.
+
+**Considered and rejected:** Restoring REST or treating the workspace database
+as the command authority would split admission from the object that owns the
+rows. Cancelling every admitted run on archive would make archive destructive;
+the reversible fence keeps it dormant and lets unarchive resume it.
+
+**Consequences:** Live admitted sockets survive a regional membership-read
+outage until the revocation plane closes them. Exact replays converge, changed
+replays return a conflict, and an archived room cannot spend or call tools.
+
 ### 2026-09-02 — Child identity and ambiguous command replay are fenced end to end
 
 **What changed:** SubstreamAgent derives its singleton Bind loop and workflow

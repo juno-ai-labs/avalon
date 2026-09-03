@@ -727,6 +727,29 @@ what that leaves exposed.
 
 ## Changelog
 
+### 2026-09-03 — A durable command is acknowledged independently of its socket
+
+**What changed:** Substream mutation handlers use the identity already admitted
+on the hibernating socket, emit a named `workstream.room.substream_command` span,
+and guard every private receipt send against a concurrently closed connection.
+Elicitation and retry wake/publication work after the commit is best-effort;
+failure is logged for alarm/outbox recovery while the client still receives the
+truth about the durable write. The desktop retains a command across a send race
+for reconnect replay and rejects all waiting commands if the bounded socket-open
+sequence reaches its terminal state.
+
+**Why:** A disconnect or wake-up failure after commit could previously escape
+the handler or report failure for state which was already durable, causing the
+renderer to retire the one replay key that could recover it.
+
+**Considered and rejected:** A second per-command wall-clock timeout would race
+the existing heartbeat/reconnect owner and require an ungrounded new limit.
+Command liveness remains the socket lifecycle's responsibility.
+
+**Consequences:** A lost receipt is a delivery miss, not a second mutation
+outcome. Reconnect resends the same operation id, while terminal inability to
+open rejects the queue instead of leaving promises pending forever.
+
 ### 2026-09-02 — Child feed recovery stays inside the addressed SubstreamAgent
 
 **What changed:** renderer detail, transcript, overlay, feed-source, and

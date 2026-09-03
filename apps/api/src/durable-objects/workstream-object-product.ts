@@ -363,6 +363,7 @@ export interface WorkstreamObjectAnswerElicitationResult {
   elicitation: Elicitation | undefined;
   responsePartId: string;
   activationRequest: WorkstreamLoopActivationRequest | null;
+  inserted: boolean;
 }
 
 export interface WorkstreamObjectRetryResult {
@@ -462,7 +463,6 @@ export class WorkstreamObjectProductService {
     sql: SqlStorage,
     auth: AuthContext,
     operationId: string,
-    command: "reorder_pending_inputs" | "stop_harness",
     requestHash: string,
   ): "new" | "replayed" {
     const sourceId = `user:${auth.userId}`;
@@ -484,6 +484,19 @@ export class WorkstreamObjectProductService {
       }
       return "replayed";
     }
+    return "new";
+  }
+
+  private recordSocketCommandReceipt(
+    sql: SqlStorage,
+    auth: AuthContext,
+    operationId: string,
+    command: "reorder_pending_inputs" | "stop_harness",
+    requestHash: string,
+    resultHash: string,
+    now: number,
+  ): void {
+    const sourceId = `user:${auth.userId}`;
     sql.exec(
       `INSERT INTO durable_inbox_receipts
          (channel, source_kind, source_id, source_generation, message_id,
@@ -495,10 +508,77 @@ export class WorkstreamObjectProductService {
       operationId,
       `${this.externalSubstreamId()}:${command}`,
       requestHash,
-      requestHash,
-      Date.now(),
+      resultHash,
+      now,
     );
-    return "new";
+  }
+
+  /** Bind a client message id to the exact author and request it first admitted. */
+  private messageAdmissionReceipt(
+    sql: SqlStorage,
+    clientMessageId: string,
+    requestHash: string,
+    conflict: {
+      code: string;
+      message: string;
+    } = {
+      code: "substream_message_idempotency_conflict",
+      message: "This client message id was already used for another message",
+    },
+  ): "new" | "replayed" {
+    const sourceId = `substream:${this.externalSubstreamId()}`;
+    const receipt = first(sql.exec<{ request_hash: string }>(
+      `SELECT request_hash FROM durable_inbox_receipts
+        WHERE channel = 'substream_message_admission'
+          AND source_kind = 'regional_service' AND source_id = ?
+          AND source_generation = 1 AND message_id = ?`,
+      sourceId,
+      clientMessageId,
+    ));
+    if (!receipt) return "new";
+    if (receipt.request_hash !== requestHash) {
+      throw new ApiError(
+        409,
+        conflict.code,
+        conflict.message,
+      );
+    }
+    return "replayed";
+  }
+
+  private recordMessageAdmissionReceipt(
+    sql: SqlStorage,
+    clientMessageId: string,
+    requestHash: string,
+    now: number,
+  ): void {
+    sql.exec(
+      `INSERT INTO durable_inbox_receipts
+         (channel, source_kind, source_id, source_generation, message_id,
+          partition_key, source_version, source_epoch, request_hash,
+          result_code, result_hash, received_at)
+       VALUES ('substream_message_admission', 'regional_service', ?, 1, ?,
+               ?, 1, 0, ?, 'succeeded', ?, ?)`,
+      `substream:${this.externalSubstreamId()}`,
+      clientMessageId,
+      this.externalSubstreamId(),
+      requestHash,
+      requestHash,
+      now,
+    );
+  }
+
+  /** Fence the active loop in the same commit which makes its room unreadable. */
+  private requestArchiveStopInTransaction(sql: SqlStorage, now: number): void {
+    sql.exec(
+      `UPDATE substream_loops
+          SET stop_requested_at = ?, stop_after_step_ordinal = step_ordinal,
+              stop_reason = 'workstream_archived', revision = revision + 1,
+              updated_at = ?
+        WHERE id = 1 AND status = 'executing' AND stop_requested_at IS NULL`,
+      now,
+      now,
+    );
   }
 
   private beginInputPreparation(inputId: string, now: number): void {
@@ -1594,15 +1674,7 @@ export class WorkstreamObjectProductService {
           // Archiving removes the interactive surface that can issue a stop.
           // Commit the stop request with the archive so no client-side request
           // ordering can strand an executing loop behind an unreadable room.
-          sql.exec(
-            `UPDATE substream_loops
-                SET stop_requested_at = ?, stop_after_step_ordinal = step_ordinal,
-                    stop_reason = 'workstream_archived', revision = revision + 1,
-                    updated_at = ?
-              WHERE id = 1 AND status = 'executing' AND stop_requested_at IS NULL`,
-            now,
-            now,
-          );
+          this.requestArchiveStopInTransaction(sql, now);
         }
         sql.exec(
           `UPDATE workstream SET
@@ -1797,15 +1869,7 @@ export class WorkstreamObjectProductService {
             now,
           );
         } else if (before.archived_at === null) {
-          sql.exec(
-            `UPDATE substream_loops
-                SET stop_requested_at = ?, stop_after_step_ordinal = step_ordinal,
-                    stop_reason = 'workstream_archived', revision = revision + 1,
-                    updated_at = ?
-              WHERE id = 1 AND status = 'executing' AND stop_requested_at IS NULL`,
-            now,
-            now,
-          );
+          this.requestArchiveStopInTransaction(sql, now);
           sql.exec(
             `UPDATE workstream SET archived_at = ?, exact_state = 'archived',
                     listing_epoch = listing_epoch + 1, updated_at = ?
@@ -3716,10 +3780,20 @@ export class WorkstreamObjectProductService {
     reauthorizeWorkspaceMembership: boolean,
   ): Promise<WorkstreamObjectCreateMessageResult> {
     const input = WorkstreamObjectCreateMessageInputSchema.parse(rawInput);
+    const requestHash = workstreamImportHash({
+      command: "create_message",
+      authorUserId: auth.userId,
+      input,
+    });
     const authorizedRoot = () => reauthorizeWorkspaceMembership
       ? this.authorize(auth)
       : Promise.resolve(this.locallyAuthorizedRoot(auth));
     const localRoot = this.locallyAuthorizedRoot(auth);
+    this.messageAdmissionReceipt(
+      this.storage.sql,
+      input.clientMessageId,
+      requestHash,
+    );
     const existing = first(this.storage.sql.exec<{
       id: string; created_at: number;
     } & Record<string, SqlStorageValue>>(
@@ -3928,6 +4002,11 @@ export class WorkstreamObjectProductService {
         endOffset: mention.endOffset,
       }));
       const admitted = this.storage.transactionSync(() => {
+        const receipt = this.messageAdmissionReceipt(
+          this.storage.sql,
+          input.clientMessageId,
+          requestHash,
+        );
         const concurrentCanonical = first(this.storage.sql.exec<{
           id: string;
           created_at: number;
@@ -3944,6 +4023,9 @@ export class WorkstreamObjectProductService {
         const concurrentPending = this.loops.inputByClientMessageId(input.clientMessageId);
         if (concurrentPending) {
           return { kind: "pending" as const, input: concurrentPending, inserted: false };
+        }
+        if (receipt === "replayed") {
+          throw new Error("substream_message_receipt_without_projection");
         }
         const currentLoop = this.loops.loop();
         if (!currentLoop || currentLoop.loop_id !== loop.loop_id) {
@@ -4009,6 +4091,12 @@ export class WorkstreamObjectProductService {
           mentionsJson: JSON.stringify(mentions),
           now,
         });
+        this.recordMessageAdmissionReceipt(
+          this.storage.sql,
+          input.clientMessageId,
+          requestHash,
+          now,
+        );
         return {
           kind: "pending" as const,
           input: result.input,
@@ -4023,6 +4111,11 @@ export class WorkstreamObjectProductService {
     const affectedUsers = [...new Set([auth.userId, ...personIds, ...confirmedParticipantUserIds])];
     const committed = await this.objectStore.commitWithRegionalEffects<LocalMessageWrite>(
       (sql) => {
+        const receipt = this.messageAdmissionReceipt(
+          sql,
+          input.clientMessageId,
+          requestHash,
+        );
         const current = first(sql.exec<RootRow>(`SELECT * FROM workstream WHERE id = 1`));
         if (!current) throw new ApiError(404, "workstream_not_found", "Work stream not found");
         const replay = first(sql.exec<{
@@ -4045,6 +4138,9 @@ export class WorkstreamObjectProductService {
             createdAt: replay.created_at,
             inserted: false,
           };
+        }
+        if (receipt === "replayed") {
+          throw new Error("substream_message_receipt_without_projection");
         }
         const sequence = current.next_sequence_number;
         const attention = current.next_attention_ordinal;
@@ -4165,6 +4261,12 @@ export class WorkstreamObjectProductService {
         );
         this.markAttachmentReleaseOwnedByProjection(preparation.input_id);
         this.loops.discardInputPreparation({ inputId: preparation.input_id, now });
+        this.recordMessageAdmissionReceipt(
+          sql,
+          input.clientMessageId,
+          requestHash,
+          now,
+        );
         return {
           messageId,
           sequenceNumber: transcriptSequence,
@@ -4245,8 +4347,55 @@ export class WorkstreamObjectProductService {
     elicitationId: string,
     rawInput: WorkstreamObjectAnswerElicitationInput,
   ): Promise<WorkstreamObjectAnswerElicitationResult> {
+    return this.answerElicitationWithAuthority(auth, elicitationId, rawInput, true);
+  }
+
+  /** Answer from a room socket whose hibernation attachment already admitted this identity. */
+  async answerElicitationForAdmittedSocket(
+    auth: AuthContext,
+    elicitationId: string,
+    rawInput: WorkstreamObjectAnswerElicitationInput,
+  ): Promise<WorkstreamObjectAnswerElicitationResult> {
+    return this.answerElicitationWithAuthority(auth, elicitationId, rawInput, false);
+  }
+
+  private async answerElicitationWithAuthority(
+    auth: AuthContext,
+    elicitationId: string,
+    rawInput: WorkstreamObjectAnswerElicitationInput,
+    reauthorizeWorkspaceMembership: boolean,
+  ): Promise<WorkstreamObjectAnswerElicitationResult> {
     const input = AnswerElicitationRequestSchema.parse(rawInput);
+    const requestHash = workstreamImportHash({
+      command: "answer_elicitation",
+      elicitationId,
+      authorUserId: auth.userId,
+      input,
+    });
+    const authorizedRoot = () => reauthorizeWorkspaceMembership
+      ? this.authorize(auth)
+      : Promise.resolve(this.locallyAuthorizedRoot(auth));
+    const replayedElicitation = (): Elicitation | undefined => {
+      const elicitation = this.elicitationsIncludingResolved().find((entry) => entry.id === elicitationId);
+      if (!elicitation) return undefined;
+      const skipped = "skipped" in input && input.skipped;
+      const sameAnswer = skipped
+        ? elicitation.answer === null
+        : JSON.stringify(elicitation.answer) === JSON.stringify(input.answer);
+      if (elicitation.answeredByUserId !== auth.userId || !sameAnswer) {
+        throw new ApiError(
+          409,
+          "elicitation_response_idempotency_conflict",
+          "This question was already answered with another response",
+        );
+      }
+      return elicitation;
+    };
     const clientMessageId = `elicitation-response:${elicitationId}`;
+    this.messageAdmissionReceipt(this.storage.sql, clientMessageId, requestHash, {
+      code: "elicitation_response_idempotency_conflict",
+      message: "This question was already answered with another response",
+    });
     const canonicalReplay = first(this.storage.sql.exec<{
       id: string;
     } & Record<string, SqlStorageValue>>(
@@ -4254,23 +4403,24 @@ export class WorkstreamObjectProductService {
       clientMessageId,
     ));
     if (canonicalReplay) {
-      await this.authorize(auth);
+      await authorizedRoot();
       return {
-        elicitation: this.elicitationsIncludingResolved().find((entry) => entry.id === elicitationId),
+        elicitation: replayedElicitation(),
         responsePartId: canonicalReplay.id,
         activationRequest: null,
+        inserted: false,
       };
     }
     const replay = this.loops.inputByClientMessageId(clientMessageId);
     if (replay) {
-      const root = await this.authorize(auth);
+      const root = await authorizedRoot();
       const loop = this.loops.loop();
       if (!loop || loop.loop_id !== replay.loop_id
         || loop.loop_id !== this.conversationLoopId(root)) {
         throw new Error("substream_loop_identity_mismatch");
       }
       return {
-        elicitation: this.elicitationsIncludingResolved().find((entry) => entry.id === elicitationId),
+        elicitation: replayedElicitation(),
         responsePartId: replay.prepared_turn_id,
         activationRequest: loop.status === "idle" ? {
           kind: "activate_substream_loop",
@@ -4278,6 +4428,7 @@ export class WorkstreamObjectProductService {
           cause: "pending_input",
           inputId: replay.input_id,
         } : null,
+        inserted: false,
       };
     }
     const localRoot = this.locallyAuthorizedRoot(auth);
@@ -4291,7 +4442,7 @@ export class WorkstreamObjectProductService {
       now: reservationNow,
     });
     return this.runInputPreparation(preparation, async () => {
-    const root = await this.authorize(auth);
+    const root = await authorizedRoot();
     const row = first(this.storage.sql.exec<{
       elicitation_id: string; run_id: string; prompt: string; response_type: string;
       options_json: string; minimum_selections: number; maximum_selections: number | null;
@@ -4380,7 +4531,7 @@ export class WorkstreamObjectProductService {
       remaining = Number(first(sql.exec<{ count: number }>(
         `SELECT COUNT(*) AS count FROM elicitation_requests WHERE status = 'pending'`,
       ))?.count ?? 0);
-      return this.loops.completeInputPreparation({
+      const completed = this.loops.completeInputPreparation({
         inputId: responsePartId,
         preparedTurnId: responsePartId,
         mode: "steer",
@@ -4424,6 +4575,8 @@ export class WorkstreamObjectProductService {
         mentionsJson: "[]",
         now,
       });
+      this.recordMessageAdmissionReceipt(sql, clientMessageId, requestHash, now);
+      return completed;
     });
     const answered = this.elicitationsIncludingResolved().find((entry) => entry.id === elicitationId);
     const after = this.loops.loop();
@@ -4437,6 +4590,7 @@ export class WorkstreamObjectProductService {
         cause: "pending_input",
         inputId: admitted.input.input_id,
       } : null,
+      inserted: true,
     };
     });
   }
@@ -4483,14 +4637,32 @@ export class WorkstreamObjectProductService {
     operationId: string,
     inputIds: readonly string[],
   ): Promise<{ pendingInputs: PendingTranscriptInput[] }> {
-    const root = await this.authorize(auth);
+    return this.reorderPendingInputsWithAuthority(auth, operationId, inputIds, true);
+  }
+
+  async reorderPendingInputsForAdmittedSocket(
+    auth: AuthContext,
+    operationId: string,
+    inputIds: readonly string[],
+  ): Promise<{ pendingInputs: PendingTranscriptInput[] }> {
+    return this.reorderPendingInputsWithAuthority(auth, operationId, inputIds, false);
+  }
+
+  private async reorderPendingInputsWithAuthority(
+    auth: AuthContext,
+    operationId: string,
+    inputIds: readonly string[],
+    reauthorizeWorkspaceMembership: boolean,
+  ): Promise<{ pendingInputs: PendingTranscriptInput[] }> {
+    const root = reauthorizeWorkspaceMembership
+      ? await this.authorize(auth)
+      : this.locallyAuthorizedRoot(auth);
     const requestHash = workstreamImportHash({ command: "reorder_pending_inputs", inputIds });
     return this.storage.transactionSync(() => {
       const replay = this.socketCommandReceipt(
         this.storage.sql,
         auth,
         operationId,
-        "reorder_pending_inputs",
         requestHash,
       );
       if (replay === "new") {
@@ -4501,19 +4673,44 @@ export class WorkstreamObjectProductService {
         }
         this.loops.reorderPendingInputsInTransaction({ inputIds, now: Date.now() });
       }
-      return { pendingInputs: this.transcript.pendingTranscriptInputs() };
+      const result = { pendingInputs: this.transcript.pendingTranscriptInputs() };
+      if (replay === "new") {
+        this.recordSocketCommandReceipt(
+          this.storage.sql,
+          auth,
+          operationId,
+          "reorder_pending_inputs",
+          requestHash,
+          workstreamImportHash(result),
+          Date.now(),
+        );
+      }
+      return result;
     });
   }
 
   async stop(auth: AuthContext, operationId: string): Promise<void> {
-    const root = await this.authorize(auth);
+    return this.stopWithAuthority(auth, operationId, true);
+  }
+
+  async stopForAdmittedSocket(auth: AuthContext, operationId: string): Promise<void> {
+    return this.stopWithAuthority(auth, operationId, false);
+  }
+
+  private async stopWithAuthority(
+    auth: AuthContext,
+    operationId: string,
+    reauthorizeWorkspaceMembership: boolean,
+  ): Promise<void> {
+    const root = reauthorizeWorkspaceMembership
+      ? await this.authorize(auth)
+      : this.locallyAuthorizedRoot(auth);
     const requestHash = workstreamImportHash({ command: "stop_harness" });
     this.storage.transactionSync(() => {
       const replay = this.socketCommandReceipt(
         this.storage.sql,
         auth,
         operationId,
-        "stop_harness",
         requestHash,
       );
       if (replay === "replayed") return;
@@ -4522,33 +4719,73 @@ export class WorkstreamObjectProductService {
       if (loop.loop_id !== this.conversationLoopId(root)) {
         throw new Error("substream_loop_identity_mismatch");
       }
-      if (loop.status === "idle") return;
-      if (loop.active_execution_id === null || loop.active_execution_epoch === null
-        || loop.lease_owner === null) throw new Error("substream_loop_execution_fence_missing");
-      this.loops.requestStopInTransaction({
-        executionId: loop.active_execution_id,
-        executionEpoch: loop.active_execution_epoch,
-        leaseOwner: loop.lease_owner,
-        expectedLoopRevision: loop.revision,
-        reason: "stopped_by_user",
-        now: Date.now(),
-      });
+      if (loop.status !== "idle") {
+        if (loop.active_execution_id === null || loop.active_execution_epoch === null
+          || loop.lease_owner === null) throw new Error("substream_loop_execution_fence_missing");
+        this.loops.requestStopInTransaction({
+          executionId: loop.active_execution_id,
+          executionEpoch: loop.active_execution_epoch,
+          leaseOwner: loop.lease_owner,
+          expectedLoopRevision: loop.revision,
+          reason: "stopped_by_user",
+          now: Date.now(),
+        });
+      }
+      this.recordSocketCommandReceipt(
+        this.storage.sql,
+        auth,
+        operationId,
+        "stop_harness",
+        requestHash,
+        workstreamImportHash({ stopped: loop.status !== "idle" }),
+        Date.now(),
+      );
     });
   }
 
   async retry(auth: AuthContext, runId: HarnessRunId): Promise<WorkstreamObjectRetryResult> {
-    const root = await this.authorize(auth);
+    return this.retryWithAuthority(auth, runId, true);
+  }
+
+  async retryForAdmittedSocket(
+    auth: AuthContext,
+    runId: HarnessRunId,
+  ): Promise<WorkstreamObjectRetryResult> {
+    return this.retryWithAuthority(auth, runId, false);
+  }
+
+  private async retryWithAuthority(
+    auth: AuthContext,
+    runId: HarnessRunId,
+    reauthorizeWorkspaceMembership: boolean,
+  ): Promise<WorkstreamObjectRetryResult> {
+    const root = reauthorizeWorkspaceMembership
+      ? await this.authorize(auth)
+      : this.locallyAuthorizedRoot(auth);
     const loop = this.loops.loop();
     if (!loop) throw new Error("substream_loop_not_initialized");
     if (loop.loop_id !== this.conversationLoopId(root)) {
       throw new Error("substream_loop_identity_mismatch");
     }
-    const replay = first(this.storage.sql.exec<{ execution_context_json: string | null }>(
-      `SELECT execution_context_json FROM runs
-        WHERE run_id = ? AND substream_id = '0' AND origin = 'manual_retry'`,
+    const replay = first(this.storage.sql.exec<{
+      origin: string;
+      execution_context_json: string | null;
+      execution_principal_json: string;
+    }>(
+      `SELECT origin, execution_context_json, execution_principal_json FROM runs
+        WHERE run_id = ? AND substream_id = '0'`,
       runId,
     ));
     if (replay) {
+      const principal = JSON.parse(replay.execution_principal_json) as { type?: unknown; userId?: unknown };
+      if (replay.origin !== "manual_retry"
+        || principal.type !== "user" || principal.userId !== auth.userId) {
+        throw new ApiError(
+          409,
+          "substream_command_idempotency_conflict",
+          "This substream command id was already used for another run",
+        );
+      }
       if (replay.execution_context_json === null) {
         throw new Error("substream_retry_replay_context_missing");
       }
@@ -4607,8 +4844,39 @@ export class WorkstreamObjectProductService {
       reason: "manual_retry",
     });
     const model = latest.model ?? await this.model(root);
-    await this.objectStore.commitWithRegionalEffects(
+    const committed = await this.objectStore.commitWithRegionalEffects(
       (sql) => {
+        const concurrentReplay = first(sql.exec<{
+          origin: string;
+          execution_context_json: string | null;
+          execution_principal_json: string;
+        }>(
+          `SELECT origin, execution_context_json, execution_principal_json FROM runs
+            WHERE run_id = ? AND substream_id = '0'`,
+          runId,
+        ));
+        if (concurrentReplay) {
+          const principal = JSON.parse(concurrentReplay.execution_principal_json) as {
+            type?: unknown; userId?: unknown;
+          };
+          if (concurrentReplay.origin !== "manual_retry"
+            || principal.type !== "user" || principal.userId !== auth.userId) {
+            throw new ApiError(
+              409,
+              "substream_command_idempotency_conflict",
+              "This substream command id was already used for another run",
+            );
+          }
+          if (concurrentReplay.execution_context_json === null) {
+            throw new Error("substream_retry_replay_context_missing");
+          }
+          return {
+            inserted: false,
+            workflowInput: WorkstreamWorkflowInputSchema.parse(
+              JSON.parse(concurrentReplay.execution_context_json),
+            ),
+          };
+        }
         const currentLoop = this.loops.loop();
         if (!currentLoop || currentLoop.loop_id !== loop.loop_id
           || currentLoop.revision !== loop.revision || currentLoop.status !== "idle") {
@@ -4651,9 +4919,13 @@ export class WorkstreamObjectProductService {
           now,
           now,
         );
+        return { inserted: true, workflowInput };
       },
-      () => [{ partitionKey: "common", effect: this.commonEffect(this.root()) }],
+      (_sql, result) => result.inserted
+        ? [{ partitionKey: "common", effect: this.commonEffect(this.root()) }]
+        : [],
     );
+    const committedWorkflowInput = committed.result.workflowInput;
     return {
       harnessRunId: runId,
       activationRequest: {
@@ -4662,7 +4934,7 @@ export class WorkstreamObjectProductService {
         cause: "manual_retry",
         inputId: null,
         receiptRunId: runId,
-        workflowInput,
+        workflowInput: committedWorkflowInput,
       },
     };
   }

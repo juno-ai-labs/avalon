@@ -2,7 +2,7 @@ import type { WorkstreamStateVersion } from '@rally/contracts';
 import type { QueryClient } from '@tanstack/react-query';
 
 import type { WorkstreamDetail, WorkstreamSummary } from './types';
-import { setCachedWorkstreams } from './workstreams-cache';
+import { evictCachedWorkstream, setCachedWorkstreams } from './workstreams-cache';
 
 export const WORKSTREAM_STATE_WATERLINES_KEY = ['workstream-state-waterlines'] as const;
 export const WORKSPACE_DIRECTORY_WATERLINES_KEY = ['workspace-directory-waterlines'] as const;
@@ -146,8 +146,7 @@ export function applyVersionedWorkstreamState(
   );
 
   if (!input.visible) {
-    setCachedWorkstreams(queryClient, (items) => items?.filter((item) => item.id !== input.workstreamId));
-    queryClient.removeQueries({ queryKey: ['workstream', input.workstreamId], exact: true });
+    evictCachedWorkstream(queryClient, input.workstreamId);
     return { commonApplied, viewerApplied };
   }
 
