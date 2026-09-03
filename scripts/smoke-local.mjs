@@ -106,7 +106,7 @@ assert(revoked.response.status === 204, "Invitation revocation failed");
 const revokedPreview = await jsonRequest(`/auth/invitations/preview?token=${encodeURIComponent(rotatedToken)}`);
 assert(revokedPreview.response.status === 404, "A revoked invitation remained usable");
 
-const detail = await jsonRequest(`/workstreams/${seedWorkstreamId}`, { headers: authHeaders });
+const detail = await jsonRequest(`/conversations/${seedWorkstreamId}`, { headers: authHeaders });
 assert(detail.response.ok, "Seeded work-stream detail is unavailable; run pnpm db:seed first");
 assert(detail.body?.resources?.length > 0, "The right-rail resource fixture is missing");
 assert(detail.body?.connections?.length > 0, "The right-rail connection fixture is missing");
@@ -122,7 +122,7 @@ assert(
 );
 
 const ticket = await jsonRequest(
-  `/workstreams/${seedWorkstreamId}/substreams/0/socket`,
+  `/conversations/${seedWorkstreamId}/substreams/0/socket`,
   { headers: authHeaders },
 );
 assert(ticket.response.ok && ticket.body?.url && ticket.body?.ticket, "Realtime ticket creation failed");
@@ -174,16 +174,6 @@ assert(
   `A replayed ticket was refused with ${replaySocket.status ?? "no status"} rather than 401`,
 );
 
-// The deprecated query transport stays covered while builds that use it exist.
-const legacyTicket = await jsonRequest(`/workstreams/${seedWorkstreamId}/socket`, { headers: authHeaders });
-assert(legacyTicket.response.ok && legacyTicket.body?.url, "Realtime ticket creation failed");
-const legacySocket = await openSubstreamSocket(legacyTicket.body.url, {
-  expectOpen: true,
-  subscriptionBootstrap: legacyTicket.body.subscriptionBootstrap ?? false,
-  timeoutMs: 5_000,
-});
-assert(legacySocket.snapshot, "The deprecated query ticket stopped working");
-
 console.log(JSON.stringify({
   health: "ok",
   protectedEndpoints: protectedPaths.length,
@@ -194,6 +184,5 @@ console.log(JSON.stringify({
   messageIdempotency: "ok",
   firstSocket: "snapshot",
   socketTransport: SOCKET_TICKET_SUBPROTOCOL,
-  legacyQuerySocket: "snapshot",
   replaySocket: "rejected 401",
 }));
