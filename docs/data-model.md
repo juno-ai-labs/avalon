@@ -893,6 +893,33 @@ perform the regional audit/control write explicitly through
 
 ## Changelog
 
+### 2026-09-03 — The connector vocabularies admit a configured MCP server
+
+**What changed:** WorkspaceDO migration 31 rebuilds `connector_connections` and
+`connector_oauth_attempts` so their `connector_type` and `provider` CHECKs admit
+`custom_mcp`. The rebuild holds each of the parent's thirteen dependents in a
+scratch table, replaces the parent, and puts the rows back.
+
+**Why:** SQLite cannot widen a CHECK in place, and `DROP TABLE` on a parent runs
+an implicit delete that fires every `ON DELETE CASCADE` beneath it — a
+workspace's Slack sessions, unfurls, ingress jobs, and webhook receipts. The
+released escape from that is `foreignKeys: "disabled_during_rebuild"`, and it
+does not work: `PRAGMA foreign_keys = OFF` is silently a no-op once an object
+event has touched SQLite, which a populated workerd test caught by watching a
+receipt disappear.
+
+**Considered and rejected:** Rebuilding all thirteen dependents child-first, as
+the guide's foreign-key-enforced recipe describes. Each would have had to restate
+a schema that later migrations have already altered, and nothing in the test
+suite would notice a column quietly not carried across. Holding rows instead
+means the migration never names a dependent's shape at all.
+
+**Consequences:** A future change to `connector_connections`' own shape should
+copy this recipe rather than the disabled-foreign-keys mode, and
+`CONNECTOR_CONNECTION_DEPENDENTS` in `workspace-do.ts` is the list it depends on
+— a new table referencing `connector_connections` has to be added there or its
+rows will be lost by the next such rebuild.
+
 ### 2026-09-03 — Stored automation state carries no delivery targets
 
 **What changed:** The automation bullet above no longer describes a frozen

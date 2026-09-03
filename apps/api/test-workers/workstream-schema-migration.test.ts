@@ -637,4 +637,124 @@ describe("workspace schema migration in workerd", () => {
       expect(state.storage.sql.exec(`PRAGMA foreign_key_check`).toArray()).toEqual([]);
     });
   });
+
+  it("widens the connector vocabularies on a populated object without cascading its children away", async () => {
+    // The rebuild replaces `connector_connections`, which fourteen tables
+    // reference with `ON DELETE CASCADE`. A fresh-schema test cannot see what
+    // that costs: only an object that already holds a connection and rows
+    // hanging off it shows whether the drop took them with it.
+    const stub = env.MIGRATION_PROBE_DO!.getByName("populated-v30-connector-upgrade");
+    await stub.ping();
+    await runInDurableObject(stub, (_instance, state) => {
+      applyDurableObjectSqliteMigrations({
+        storage: state.storage,
+        migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 30),
+        component: "workspace_do",
+        workerVersionId: "worker-v30",
+        now: 1_000,
+      });
+      state.storage.sql.exec(
+        `INSERT INTO workspace_identity
+           (id, workspace_id, region, placement_affinity, created_at, updated_at)
+         VALUES (1, 'workspace-1', 'global', 'wnam', 1, 1)`,
+      );
+      state.storage.sql.exec(
+        `INSERT INTO connector_connections
+           (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+            display_name, granted_scopes_json, model_plugin_id, status, cursor_json,
+            config_json, created_at, updated_at)
+         VALUES ('connection-1', 'workspace-1', 'slack', 'workspace', NULL, 'T123',
+                 'Slack workspace', '["slack.agent"]', 'plugin_slack', 'healthy', '{}',
+                 '{"region":"global"}', '2026-09-03T00:00:00.000Z', '2026-09-03T00:00:00.000Z')`,
+      );
+      state.storage.sql.exec(
+        `INSERT INTO webhook_receipts
+           (id, workspace_id, connection_id, signature_hash, received_at, expires_at)
+         VALUES ('receipt-1', 'workspace-1', 'connection-1', 'hash-1',
+                 '2026-09-03T00:00:00.000Z', '2026-09-04T00:00:00.000Z')`,
+      );
+      state.storage.sql.exec(
+        `INSERT INTO connector_oauth_attempts
+           (id, region, provider, user_id, workspace_id, status, connection_id,
+            expires_at, created_at, updated_at)
+         VALUES ('attempt-1', 'global', 'slack', 'user-1', 'workspace-1', 'succeeded',
+                 'connection-1', '2026-09-03T01:00:00.000Z',
+                 '2026-09-03T00:00:00.000Z', '2026-09-03T00:00:00.000Z')`,
+      );
+
+      applyDurableObjectSqliteMigrations({
+        storage: state.storage,
+        migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS,
+        component: "workspace_do",
+        workerVersionId: "worker-current",
+        now: 2_000,
+      });
+
+      // The connection survived its own replacement, and so did the rows that
+      // cascade from it — the failure this migration's mode exists to avoid.
+      expect(state.storage.sql.exec<{ display_name: string; config_json: string }>(
+        `SELECT display_name, config_json FROM connector_connections WHERE id = 'connection-1'`,
+      ).one()).toEqual({ display_name: "Slack workspace", config_json: '{"region":"global"}' });
+      expect(state.storage.sql.exec(
+        `SELECT COUNT(*) AS count FROM webhook_receipts WHERE connection_id = 'connection-1'`,
+      ).one()).toEqual({ count: 1 });
+      expect(state.storage.sql.exec<{ connection_id: string | null; provider: string }>(
+        `SELECT connection_id, provider FROM connector_oauth_attempts WHERE id = 'attempt-1'`,
+      ).one()).toEqual({ connection_id: "connection-1", provider: "slack" });
+
+      // What the widening was for, on both tables.
+      state.storage.sql.exec(
+        `INSERT INTO connector_connections
+           (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+            display_name, granted_scopes_json, model_plugin_id, status, cursor_json,
+            config_json, created_at, updated_at)
+         VALUES ('connection-2', 'workspace-1', 'custom_mcp', 'workspace', NULL,
+                 'https://mcp.example.test/mcp', 'Acme docs', '["custom_mcp.tools"]',
+                 'plugin_custom_mcp', 'healthy', '{}',
+                 '{"serverUrl":"https://mcp.example.test/mcp"}',
+                 '2026-09-03T00:00:00.000Z', '2026-09-03T00:00:00.000Z')`,
+      );
+      state.storage.sql.exec(
+        `INSERT INTO connector_oauth_attempts
+           (id, region, provider, user_id, workspace_id, status, expires_at, created_at, updated_at)
+         VALUES ('attempt-2', 'global', 'custom_mcp', 'user-1', 'workspace-1', 'pending',
+                 '2026-09-03T01:00:00.000Z', '2026-09-03T00:00:00.000Z', '2026-09-03T00:00:00.000Z')`,
+      );
+      // Still closed vocabularies: a rebuild that dropped the CHECKs would pass
+      // every assertion above.
+      expect(() => state.storage.sql.exec(
+        `INSERT INTO connector_connections
+           (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+            display_name, granted_scopes_json, model_plugin_id, status, cursor_json,
+            config_json, created_at, updated_at)
+         VALUES ('connection-3', 'workspace-1', 'invented', 'workspace', NULL, NULL,
+                 'Invented', '[]', 'plugin_invented', 'healthy', '{}', '{}',
+                 '2026-09-03T00:00:00.000Z', '2026-09-03T00:00:00.000Z')`,
+      )).toThrow();
+      // And the fences come back with the tables, not just their indexes:
+      // without them a row from another workspace could reach this object.
+      expect(() => state.storage.sql.exec(
+        `UPDATE connector_connections SET workspace_id = 'workspace-2' WHERE id = 'connection-2'`,
+      )).toThrow();
+      expect(() => state.storage.sql.exec(
+        `UPDATE connector_oauth_attempts SET workspace_id = 'workspace-2' WHERE id = 'attempt-2'`,
+      )).toThrow();
+      // The unique model-plugin index is back too; two live plugins with one
+      // name is what makes a run refuse to build its catalog at all.
+      expect(() => state.storage.sql.exec(
+        `INSERT INTO connector_connections
+           (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+            display_name, granted_scopes_json, model_plugin_id, status, cursor_json,
+            config_json, created_at, updated_at)
+         VALUES ('connection-4', 'workspace-1', 'custom_mcp', 'workspace', NULL, NULL,
+                 'Duplicate', '[]', 'plugin_custom_mcp', 'healthy', '{}', '{}',
+                 '2026-09-03T00:00:00.000Z', '2026-09-03T00:00:00.000Z')`,
+      )).toThrow();
+      expect(state.storage.sql.exec(
+        `SELECT COUNT(*) AS count FROM sqlite_schema WHERE name LIKE '%_v31'`,
+      ).one()).toEqual({ count: 0 });
+      expect(state.storage.sql.exec(`PRAGMA foreign_key_check`).toArray()).toEqual([]);
+      expect(state.storage.sql.exec(`PRAGMA foreign_keys`).one()).toEqual({ foreign_keys: 1 });
+    });
+  });
 });

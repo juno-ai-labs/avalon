@@ -905,6 +905,37 @@ fixture table instead, where it is reviewable.
 
 ## Changelog
 
+### 2026-09-03 — A connection can name a connector Rally did not ship
+
+**What changed:** A `custom_mcp` connector type whose connections each carry
+their own MCP endpoint, their own credential — configured request headers or an
+OAuth grant — and, for a workspace connection, their own policy about how much
+of that server's catalog Rally may call. `beginProvider` carries that
+configuration through the sealed OAuth state to `completeProvider`, which writes
+it into `config_json` and takes the person's own name as the connection's
+display name rather than the usual `<Provider> · <account>`. WorkspaceDO
+migration 31 widened the `connector_type` and `connector_oauth_attempts.provider`
+vocabularies. The module document is
+[`custom-mcp-connectors.md`](custom-mcp-connectors.md).
+
+**Why:** Which providers Rally can reach was a property of Rally's release, so a
+workspace with an internal MCP server, or any of the servers now published, had
+no way in. The hosted-MCP module already owned the hard parts; what was missing
+was a connection, rather than a declaration, being allowed to say which server it
+meant.
+
+**Considered and rejected:** Holding configured servers outside
+`connector_connections`. It would have avoided a table rebuild and given up
+credential refresh, plugin construction, the connections screen, receipts,
+audit, and disable — every rule this document describes.
+
+**Consequences:** `connector_type` is no longer a closed set of providers
+somebody here wrote code for, and anything reading it must accept a value whose
+behaviour is decided per connection. `provider_account_id` for such a row is the
+server's own URL rather than an account at a provider, which is what a reconnect
+is matched against. And a connector may now be registered in a region with no
+credentials configured at all: the custom MCP adapter needs only a callback URI.
+
 ### 2026-09-03 — A series activity is built from its master
 
 **What changed:** `pollCalendarChanges` reads the series master once per
