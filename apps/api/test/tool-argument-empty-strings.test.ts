@@ -120,6 +120,26 @@ describe("blanked tool arguments", () => {
     expect(permissive).toEqual([]);
   });
 
+  it("leaves no connector paginating on a cursor whose schema never says where it comes from", () => {
+    // Declaring `minLength: 1` moved a model off `""` and onto an invented
+    // token (`"/"`, `"1"`, `"next"` on Google's `pageToken`), which no
+    // normalizer can recognize as the omission it meant. A cursor is opaque, so
+    // the only thing that stops the invention is the schema saying which field
+    // produced the value and what to send when there is none.
+    //
+    // Read off the property rather than the string branch `stringCursorSchema`
+    // returns: under the `anyOf` spelling the description sits on the property
+    // and the constraints sit on the branch, and a check against the branch
+    // would report every converted cursor as undescribed.
+    const undocumented = connectorTools().flatMap(({ connector, tool }) =>
+      [...CURSOR_PARAMETERS]
+        .filter((name) => stringCursorSchema(tool, name) !== null)
+        .filter((name) => typeof propertySchema(tool, name)?.description !== "string")
+        .map((name) => `${connector}.${tool.name}.${name}`));
+
+    expect(undocumented).toEqual([]);
+  });
+
   it("drops a blanked cursor from every connector tool that takes one", () => {
     const surviving = connectorTools().flatMap(({ connector, tool }) =>
       [...CURSOR_PARAMETERS]

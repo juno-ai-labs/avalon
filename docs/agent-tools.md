@@ -384,6 +384,27 @@ tools as one protocol:
   the whole operation on one conflict. Its error identifies the conflicting
   paths without supplying replacement tokens.
 
+A pagination cursor is the same protocol with one tool on both ends, and it
+fails the same way when the description is left off. A model that has not paged
+yet holds no cursor, so an undescribed `pageToken`, `after`, `cursor`, or
+`startCursor` reads as a field to fill in, gets filled with something invented,
+and the provider rejects the whole call. Four things belong in that description
+and none can be inferred from the parameter's name and bounds: which field of
+this tool's own result produces the value, that it is opaque and must never be
+constructed, guessed, shortened or incremented, that the rest of the call is
+held unchanged when it is passed, and what the last page looks like. That third
+one is not pedantry: a cursor is a position within the query it was issued for,
+so pairing one with changed filters is not a defined continuation of either.
+Google is the measured case, and it resumes the old search rather than running
+the new one, which reaches the caller as a wrong answer instead of an error.
+
+The description is half of it. Say what to send when there is no cursor, and say
+it in the spelling Principle 1 requires — `anyOf` with a `null` branch, never a
+type array — or the schema goes on forbidding the value the prose recommends,
+and the caller resolves that contradiction in favour of the schema. Two walks in
+`tool-argument-empty-strings.test.ts` and `tool-schema-sanitization.test.ts`
+hold the two halves across every registered connector.
+
 Also identify mutation paths that do not participate in the protocol. If a
 general shell can write the same files, say so and serialize it with typed
 mutations; do not claim that `expectedRevision` protects writes that bypass the
@@ -834,6 +855,31 @@ future agent tool or plugin, not just this family.
   system messages that tell the model when to reach for a tool.
 - [`security.md`](security.md) — trust boundaries and what is treated as
   untrusted.
+
+## Changelog
+
+### 2026-09-03 — The cursor rule is both halves, and it holds across every connector
+
+**What changed:** Principle 9 now covers pagination cursors, and says the
+description and the `null` branch are one rule rather than two. The
+`droppedNullableBranches` assertion below widens from Google's four cursors to
+every cursor on every registered connector, and
+`tool-argument-empty-strings.test.ts` gains the matching sweep for a cursor
+carrying no description.
+
+**Why:** The entry below converted Google's four and recorded that 46 authored
+null branches across five connectors were still collapsed, 19 of them cursors,
+"which is a change per connector rather than a line in this one". Those cursors
+are now converted, so the assertion can be widened as that entry anticipated.
+Splitting the rule across two documents was the risk worth closing: an author
+reading Principle 9 for a cursor's prose would not have reached Principle 1 for
+its spelling, and prose alone was already measured not to work.
+
+**Consequences:** The remaining 35 collapsed branches are ids and filters rather
+than cursors and are unaffected; the widened assertion filters to the cursor
+property so it does not fail for them. An author who needs `null` on one of
+those still gets the rule from Principle 1; what is enforced automatically is
+the cursor case.
 
 ## Changelog
 

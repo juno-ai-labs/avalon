@@ -42,11 +42,21 @@ const idInputSchema = {
   description: "The numeric X ID.",
 } as const;
 
+/**
+ * X's page cursor. `anyOf` rather than `type: ["string", "null"]` because Bind's
+ * `sanitizeToolSchema` collapses the flat form to `type: "string"`, leaving a
+ * caller with no cursor a `minLength: 1` floor and no way to say "none";
+ * `GOOGLE_PAGE_TOKEN_SCHEMA` in [`index.ts`](index.ts) has what a caller does
+ * with that.
+ *
+ * The last page is `next_cursor: null` because these tools normalize X's own
+ * `""` to `null` on the way out, which is the repair that stopped a model
+ * reading a falsy cursor as another page and paging back to page one forever.
+ */
 const cursorInputSchema = {
-  type: ["string", "null"],
-  minLength: 1,
-  maxLength: 2_048,
-  description: "An optional cursor returned by the preceding page.",
+  anyOf: [{ type: "string", minLength: 1, maxLength: 2_048 }, { type: "null" }],
+  description:
+    "Send `null` for the first page. To continue an earlier call, pass back the exact `next_cursor` string a previous call to this tool returned, with that call's other arguments unchanged. It is an opaque cursor: a long provider-generated string, not a page number, an offset, or an index. Never construct, guess, shorten, or increment this token; when you have no token from a previous call, the value is `null`. A result whose `next_cursor` is `null` is the last page: stop there rather than calling again.",
 } as const;
 
 const userNameInputSchema = {
