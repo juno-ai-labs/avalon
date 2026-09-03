@@ -2903,8 +2903,22 @@ export const WorkstreamWorkflowInputSchema = z.object({
    * at launch rather than at projection time so a replayed attempt reads the
    * same window. Optional rather than nullable so every existing producer keeps
    * parsing unchanged.
+   *
+   * A transcript turn id, not an entity id, which is why this is
+   * `TranscriptTurnIdSchema` and not `IdSchema` like the trigger above it. A
+   * trigger is always an input — a participant message or an external one — and
+   * those carry UUIDs, but the *newest* turn is whatever the transcript ends
+   * with, and an assistant turn's id is `<loopId>:turn:<ordinal>`. Held as a
+   * UUID, this field rejected every fence resolved after a run that spoke
+   * before it died, which is every failed run a person has watched: the retry
+   * threw a `ZodError` before it reached its own guards, and the socket
+   * reported the generic `substream_command_failed` rather than anything about
+   * a fence. Both producers resolve it from
+   * `canonical_conversation_turn_details.id` and the consumer in
+   * `integrations.ts` looks it up as a turn id, so the turn key was always the
+   * shape being passed; only the contract disagreed.
    */
-  transcriptFenceMessageId: IdSchema.nullable().optional(),
+  transcriptFenceMessageId: TranscriptTurnIdSchema.nullable().optional(),
   automationSubscriptionId: IdSchema.nullable(),
   /**
    * The occurrence snapshot frozen by AutomationAgent before the child exists.

@@ -994,6 +994,7 @@ misrouted product statement now fails because the table or column is absent.
 - **A SubstreamAgent cold wake separates storage readiness from runtime recovery.** Schema, repositories, and durable identity gate socket admission. Lease repair and alarm re-arming begin immediately under `waitUntil` and have their own trace phase, but an accepted read socket does not await them. Any operation that can mutate or run agent work still waits for full initialization. A failed recovery attempt is not cached forever: that caller sees the failure and the next mutation retries the idempotent recovery.
 - **A product request names its auth principal, and each is verified against the fact that owns it.** (An *auth* principal — who is asking — is distinct from the run's `ExecutionPrincipal`, which names whose authority a run spends.) A login session (`principal` absent) is re-verified against its `sessions` row joined to membership, which is what makes a revoked login stop working mid-flight. A connector principal (`principal: "connector"`, connector ingress only) has no session row — its standing authority is the connector link, verified by the Worker on the very message being delivered — so the object re-checks membership alone (`connectorPrincipalAuth`) and refuses staleness as `connector_member_revoked`. Sockets never carry a connector principal; tickets are issued to login sessions only.
 - **Participant removal leaves an active reader.** Any authorized current reader may remove themself or another participant, but the target check, active count, and state change share one object-local transaction. A client-side disabled action is only presentation; without the authority check, two racing removals could leave a private work stream nobody can open.
+- **A transcript turn id is an opaque key, not an entity id.** A participant turn carries the client message UUID, while an assistant turn's id is derived as `<loopId>:turn:<ordinal>`. Anything that reads a turn id out of `canonical_conversation_turn_details` and passes it on — the manual retry's `transcriptFenceMessageId` above all — validates it as `TranscriptTurnIdSchema`; typed as a UUID it accepts exactly the turns a person did not write and rejects every one the agent did.
 - **Legacy D1 product rows do not exist and are never a fallback.** Fallback would silently split authority after an object failure.
 
 ## Boundary
@@ -1035,6 +1036,7 @@ does not migrate unrelated agent loops to `SubstreamAgent`.
 | A synchronous transaction callback returns a Promise | The callback finishes before the Promise continuation, so SQLite can commit an incomplete state transition and later writes can escape the transaction. Prepare all yielding work first; the commit callback performs only synchronous SQLite and revalidates its fences. |
 | WorkspaceDO, parent, or Queue unavailable | The source outbox remains pending and alarms retry with bounded backoff. User transcript commits are not rolled back. |
 | Crash between `initialize`'s root commit and its effect commit | The work stream exists and the retry replays it, but the invited participants' activity event and notification are lost permanently — the replay re-enqueues directory effects only, and a hand-add of somebody already active is a no-op, so nothing recovers them. Deliberate: the alternative wedges the create. |
+| A socket command throws something that is not an `ApiError` | The person gets one flat `substream_command_failed`, so `substream_socket_command_failed` is the only account of the cause. A validation failure is logged as `reason: "schema_validation_failed"` with `validation_issues` (`path`/`code` pairs only) rather than as the `ZodError`'s multi-line JSON message, and every entry carries `frames` naming the call site. |
 | D1 unavailable during a user command | Command fails closed before mutation because current session/membership cannot be established. |
 | Model/tool wait exceeds the attempt lease | Heartbeats extend an owned attempt; after genuine abandonment a new executor waits for expiry and replays through receipts. |
 | Substream child not provisioned | No feed ticket should be issued; the object must not bootstrap product authority from an untrusted socket route. |
@@ -1081,7 +1083,13 @@ range revocation, compaction recovery, socket revocation across all current role
 obsolete queued run coalescing and stale-arrival rejection,
 ticket replay, and retired message-page refusal. Direct child message admission,
 its private receipt, and hibernation resend are covered in
-`test-workers/message-to-output-pipeline.test.ts`.
+`test-workers/message-to-output-pipeline.test.ts`, as is the manual retry:
+one case scripts a run that answers, calls a tool, and dies on the next step, so
+the newest conversation turn is the assistant turn it failed on rather than the
+member message that started it — the shape every other retry case here misses,
+and the one that held the fence contract wrong for as long as it did. Two more
+cover a retry across runs that share a `created_at` and the diagnostics a socket
+command leaves behind when it throws something that is not an `ApiError`.
 `test-workers/participant-notification.test.ts` covers what seating somebody
 enqueues, on both the create and the add-afterwards paths, plus identity-bearing
 mentions and attachment descriptors in an opening message, and member-authored
@@ -1399,6 +1407,50 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-09-03 — Retry resolves a transcript turn, so it stops rejecting its own fence
+
+**What changed:** `WorkstreamWorkflowInputSchema.transcriptFenceMessageId` is a
+`TranscriptTurnIdSchema` instead of an `IdSchema`. The retry's pre-transaction
+read of the latest run gained the `run_id` tie-break its in-transaction re-read
+already had. `substream_socket_command_failed` lifts a `ZodError`'s issues out
+as `path`/`code` pairs, logs a grouping `reason` in place of the message blob,
+and carries `frames`.
+
+**Why:** The manual retry resolves its transcript fence from the newest
+canonical turn and passed that turn's id in a field typed as a UUID. Only
+participant turns carry UUIDs; an assistant turn's id is
+`<loopId>:turn:<ordinal>`, which is what the newest turn is after any run that
+spoke before it died — that is, after every failure a person watches happen.
+The retry therefore threw a `ZodError` before reaching any of its own guards,
+the socket flattened it to `substream_command_failed`, and the button in front
+of the person did nothing and explained nothing. Widening the field rather than
+narrowing the producer, because a turn key is what both producers resolve and
+what the consumer in `integrations.ts` looks up: only the contract disagreed,
+and coercing the fence to `null` instead would have parsed while quietly
+replaying against the trigger's own window, losing everything said after the
+failure. `TranscriptTurnIdSchema` already existed and already carried this rule
+in its own doc comment, which is the strongest evidence available that the rule
+needs to be an invariant rather than a comment; it is now one, above.
+
+The other two are what let it live: the tie-break because the two "latest run"
+reads could resolve a same-millisecond tie differently and refuse a retry that
+was in fact retryable, and the log because a `ZodError`'s `message` is
+multi-line JSON, so logging it as `reason` produced a blob that grouped with
+nothing and buried the failing field inside itself. Issue paths and codes are
+schema shape rather than member data — the treatment `request_failed` already
+gives a validation failure on the HTTP side — so they are safe to record where
+the values would not be.
+
+**Consequences:** A stored fence is now a turn key, so nothing downstream may
+assume `transcriptFenceMessageId` parses as a UUID. Any future field that
+carries a turn id takes `TranscriptTurnIdSchema`. The two `ORDER BY` clauses in
+`retryWithAuthority` have to stay identical; a tie-break added to one is a bug
+in the other. Proved in `test-workers/message-to-output-pipeline.test.ts`: a
+scripted run answers, calls a tool, and dies on the next step so its own
+assistant turn is newest; two runs share a `created_at`; and a stored context
+stripped of a required field drives the socket command into the log assertion.
+Each was proved to fail with its fix reverted.
 
 ### 2026-09-03 — HyperSight is removed from the durable hierarchy
 
