@@ -18,7 +18,7 @@ import { env } from "cloudflare:workers";
 import { reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { asAutomationId, asUserId, asWorkspaceId, asWorkstreamId, type AutomationScope } from "@rally/contracts";
+import { asAutomationId, asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId, type AutomationScope } from "@rally/contracts";
 
 import { automationDOName, workspaceDOName, workstreamDOName } from "../src/durable-objects/names";
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
@@ -86,7 +86,7 @@ async function seedRoom(): Promise<void> {
   await room.reserveChild({
     workspaceId: WORKSPACE_ID,
     parentId: ROOM_ID,
-    substreamId: "0",
+    substreamId: asSubstreamId("0"),
     kind: "main",
     createdByUserId: AUTHOR_ID,
     authorityGeneration: 1,
