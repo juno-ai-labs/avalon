@@ -528,7 +528,10 @@ describe("a message queued behind a live run", () => {
         clientMessageId: "queue-stop-1",
       });
       await runInDurableObject(stub, async (instance) => {
-        await (instance as unknown as { product: WorkstreamObjectProductService }).product.stop(AUTH);
+        await (instance as unknown as { product: WorkstreamObjectProductService }).product.stop(
+          AUTH,
+          "00000000-0000-7000-8000-0000000004ff",
+        );
       });
 
       await openProviderGate(stub);
@@ -612,7 +615,11 @@ describe("a message queued behind a live run", () => {
 
       const reordered = await runInDurableObject(stub, async (instance) => {
         return (instance as unknown as { product: WorkstreamObjectProductService })
-          .product.reorderPendingInputs(AUTH, [second.turnId, first.turnId]);
+          .product.reorderPendingInputs(
+            AUTH,
+            "00000000-0000-7000-8000-0000000004fe",
+            [second.turnId, first.turnId],
+          );
       });
       expect(reordered.pendingInputs.map((input) => input.inputId))
         .toEqual([second.turnId, first.turnId]);

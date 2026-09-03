@@ -888,11 +888,16 @@ describe('useWorkstreamSocket', () => {
     const substreamId = '00000000-0000-7000-8000-000000000622';
     const elicitationId = '00000000-0000-7000-8000-000000000623';
     const retryRunId = '00000000-0000-7000-8000-000000000624';
-    const getSocketTicket = vi.fn(async () => ({
-      url: `wss://api.rally.test/workstreams/${workstreamId}/substreams/${substreamId}`,
-      ticket: 'socket-ticket',
-      protocols: socketTicketProtocols('socket-ticket'),
-    }));
+    const getSocketTicket = vi.fn(async (
+      ...args: Parameters<WorkstreamSocketApi['getSocketTicket']>
+    ) => {
+      void args;
+      return {
+        url: `wss://api.rally.test/workstreams/${workstreamId}/substreams/${substreamId}`,
+        ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
+      };
+    });
     const api = socketApiWith({ getSocketTicket });
     const { result } = renderHook(() => useWorkstreamSocket(
       api,
@@ -973,6 +978,77 @@ describe('useWorkstreamSocket', () => {
       harnessRunId: retryRunId,
     }));
     await expect(retry).resolves.toEqual({ harnessRunId: retryRunId });
+  });
+
+  it('isolates a child feed from the main cache and recovers it through its own socket', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const workstreamId = '00000000-0000-7000-8000-000000000625';
+    const substreamId = '00000000-0000-7000-8000-000000000626';
+    const mainDetail = workstreamDetail({ id: workstreamId, title: 'Main conversation' });
+    const mainTranscript = emptyTranscriptSnapshot();
+    queryClient.setQueryData(['workstream', workstreamId], mainDetail);
+    queryClient.setQueryData(['ordered-transcript', workstreamId], mainTranscript);
+    queryClient.setQueryData(['transcript-overlays', workstreamId], [{ main: true }]);
+    const getSocketTicket = vi.fn((
+      ...args: Parameters<WorkstreamSocketApi['getSocketTicket']>
+    ) => {
+      void args;
+      return Promise.resolve({
+        url: `wss://api.rally.test/workstreams/${workstreamId}/substreams/${substreamId}`,
+        ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
+      });
+    });
+    const getWorkstream = vi.fn(async () => workstreamBoot({ id: workstreamId }));
+    const api = socketApiWith({ getSocketTicket, getWorkstream });
+    renderHook(() => useWorkstreamSocket(
+      api,
+      workstreamId,
+      true,
+      false,
+      'active_workstream',
+      undefined,
+      true,
+      substreamId,
+    ), { wrapper: createWrapper(queryClient) });
+
+    await flushPromises();
+    const first = FakeWebSocket.instances[0]!;
+    act(() => {
+      first.open();
+      first.message(snapshotFrame({
+        sequence: 5,
+        workstream: { id: workstreamId, title: 'Child conversation' },
+      }));
+    });
+
+    expect(queryClient.getQueryData(['workstream', workstreamId])).toBe(mainDetail);
+    expect(queryClient.getQueryData(['ordered-transcript', workstreamId])).toBe(mainTranscript);
+    expect(queryClient.getQueryData(['transcript-overlays', workstreamId])).toEqual([{ main: true }]);
+    expect(queryClient.getQueryData(['substream-workstream', workstreamId, substreamId]))
+      .toMatchObject({ title: 'Child conversation' });
+    expect(queryClient.getQueryData(['substream-ordered-transcript', workstreamId, substreamId]))
+      .toEqual(emptyTranscriptSnapshot());
+
+    act(() => first.message({
+      type: 'resync_required',
+      sequence: 6,
+      latestSequence: 6,
+      occurredAt: '2026-07-31T20:00:00.000Z',
+      reason: 'history_unavailable',
+      activeStreams: [],
+      activeCompaction: null,
+    }));
+    await act(async () => vi.advanceTimersByTimeAsync(750));
+    await flushPromises();
+
+    expect(getWorkstream).not.toHaveBeenCalled();
+    expect(getSocketTicket).toHaveBeenCalledTimes(2);
+    expect(getSocketTicket.mock.calls[1]?.[1]).toBe(substreamId);
+    expect(getSocketTicket.mock.calls[1]?.[3]).toBe(0);
   });
 
   it('rejects a pending message when an older worker returns an uncorrelated command error', async () => {

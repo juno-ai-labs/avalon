@@ -33,6 +33,7 @@ import {
   MESSAGE_TOO_LONG_MESSAGE,
   WorkstreamWorkflowInputSchema,
   asHarnessRunId,
+  asSubstreamId,
   asUserId,
   asWorkspaceId,
   asWorkstreamId,
@@ -401,13 +402,14 @@ function nextSocketCommandOutcome(socket: WebSocket): Promise<SocketFrame> {
 async function openSubscribedSocket(
   stub: DurableObjectStub,
   ticketId: string,
+  substreamId = "0",
 ): Promise<{ socket: WebSocket; initial: SocketFrame }> {
   const response = await stub.fetch("https://substream.test/socket", {
     headers: {
       Upgrade: "websocket",
       "x-rally-workspace-id": WORKSPACE_ID,
       "x-rally-workstream-id": WORKSTREAM_ID,
-      "x-rally-substream-id": "0",
+      "x-rally-substream-id": substreamId,
       "x-rally-user-id": USER_ID,
       "x-rally-session-id": SESSION_ID,
       "x-rally-socket-ticket-id": ticketId,
@@ -1456,7 +1458,7 @@ describe("a member's message travels the whole pipeline", () => {
         now: logicalNow,
       }).loop;
 
-      await productService.stop(AUTH);
+      await productService.stop(AUTH, "00000000-0000-7000-8000-0000000005cf");
       const stopped = loops.loop()!;
       expect(stopped).toMatchObject({
         loop_id: substreamLoopId(WORKSTREAM_ID),
@@ -1904,6 +1906,78 @@ describe("a member's message travels the whole pipeline", () => {
     socket.close(1000, "done");
   });
 
+  it("admits a message through a non-main child using its external loop identity", async () => {
+    const substreamId = asSubstreamId("00000000-0000-7000-8000-0000000005d0");
+    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID, substreamId),
+    ));
+    const child = stub as unknown as {
+      bootstrapRuntime(input: Record<string, unknown>): Promise<{ status: number }>;
+      executeIdentityOperation(input: Record<string, unknown>): Promise<{ status: number }>;
+    };
+    expect((await child.bootstrapRuntime({
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      generation: 1,
+    })).status).toBe(200);
+    expect((await child.executeIdentityOperation({
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      operation: "provision",
+      args: [{
+        title: "Child conversation",
+        objective: "Exercise one independently owned conversation.",
+        scope: "workspace",
+        originType: "ad_hoc",
+        createdByUserId: USER_ID,
+        participantUserIds: [USER_ID],
+        harnessStatus: "idle",
+        emailAddress: null,
+        emailRouteStatus: null,
+        systemKind: null,
+        automationSubscriptionId: null,
+        automationRunId: null,
+        plannedFor: null,
+        modelOverride: null,
+        now: Date.now(),
+      }],
+    })).status).toBe(200);
+
+    const { socket } = await openSubscribedSocket(
+      stub,
+      "00000000-0000-7000-8000-0000000005d1",
+      substreamId,
+    );
+    const operationId = "00000000-0000-7000-8000-0000000005d2";
+    const receipt = nextSocketCommandOutcome(socket);
+    socket.send(JSON.stringify({
+      type: "create_message",
+      operationId,
+      payload: {
+        text: "child-local message",
+        clientMessageId: "pipeline-child-socket-1",
+        mentions: [],
+        confirmedParticipantUserIds: [],
+        attachmentIds: [],
+      },
+    }));
+    expect(await receipt).toMatchObject({
+      type: "client_command_succeeded",
+      command: "create_message",
+      operationId,
+      clientMessageId: "pipeline-child-socket-1",
+    });
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec<{ loop_id: string }>(
+        `SELECT loop_id FROM substream_loops WHERE id = 1`,
+      ).one().loop_id).toBe(substreamLoopId(WORKSTREAM_ID, substreamId));
+      expect(state.storage.sql.exec<{ id: string }>(
+        `SELECT id FROM substreams ORDER BY id`,
+      ).one().id).toBe("0");
+    });
+    socket.close(1000, "done");
+  });
+
   it("correlates a malformed create command to the pending client message", async () => {
     const stub = agentStub();
     await initializeWorkstream(stub, "first message");
@@ -2034,7 +2108,7 @@ describe("a member's message travels the whole pipeline", () => {
     socket.close(1000, "done");
   });
 
-  it("reorders pending inputs through the substream socket", async () => {
+  it("does not replay an old reorder command over newer queue state", async () => {
     const stub = agentStub();
     const opened = await initializeWorkstream(stub, "first message");
     await settledRun(stub, opened.body.harnessRunId as string);
@@ -2042,6 +2116,9 @@ describe("a member's message travels the whole pipeline", () => {
       stub,
       "00000000-0000-7000-8000-0000000005c0",
     );
+    await runInDurableObject(stub, (_instance, state) => {
+      holdLoopExecuting(state, { loopId: substreamLoopId(WORKSTREAM_ID) });
+    });
     const enqueue = async (operationId: string, clientMessageId: string) => {
       const receipt = nextSocketCommandOutcome(socket);
       socket.send(JSON.stringify({
@@ -2070,21 +2147,104 @@ describe("a member's message travels the whole pipeline", () => {
     expect(second.deliveryState).toBe("pending");
     const firstTurn = first.turn as { turnId: string };
     const secondTurn = second.turn as { turnId: string };
-    const operationId = "00000000-0000-7000-8000-0000000005c3";
-    const receipt = nextSocketCommandOutcome(socket);
-    socket.send(JSON.stringify({
+    const firstOperationId = "00000000-0000-7000-8000-0000000005c3";
+    const firstReceipt = nextSocketCommandOutcome(socket);
+    const firstCommand = {
       type: "reorder_pending_inputs",
-      operationId,
+      operationId: firstOperationId,
       inputIds: [secondTurn.turnId, firstTurn.turnId],
-    }));
-    expect(await receipt).toMatchObject({
+    };
+    socket.send(JSON.stringify(firstCommand));
+    expect(await firstReceipt).toMatchObject({
       type: "client_command_succeeded",
       command: "reorder_pending_inputs",
-      operationId,
+      operationId: firstOperationId,
       pendingInputs: [
+        { clientMessageId: "socket-reorder-second" },
+        { clientMessageId: "socket-reorder-first" },
+      ],
+    });
+
+    const secondOperationId = "00000000-0000-7000-8000-0000000005c7";
+    const secondReceipt = nextSocketCommandOutcome(socket);
+    socket.send(JSON.stringify({
+      type: "reorder_pending_inputs",
+      operationId: secondOperationId,
+      inputIds: [firstTurn.turnId, secondTurn.turnId],
+    }));
+    expect(await secondReceipt).toMatchObject({
+      type: "client_command_succeeded",
+      pendingInputs: [
+        { clientMessageId: "socket-reorder-first" },
         { clientMessageId: "socket-reorder-second" },
       ],
     });
+
+    const replayReceipt = nextSocketCommandOutcome(socket);
+    socket.send(JSON.stringify(firstCommand));
+    expect(await replayReceipt).toMatchObject({
+      type: "client_command_succeeded",
+      operationId: firstOperationId,
+      pendingInputs: [
+        { clientMessageId: "socket-reorder-first" },
+        { clientMessageId: "socket-reorder-second" },
+      ],
+    });
+    expect(await runInDurableObject(stub, (_instance, state) =>
+      state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM durable_inbox_receipts
+          WHERE channel = 'substream_socket_command'`,
+      ).one().count)).toBe(2);
+    socket.close(1000, "done");
+  });
+
+  it("does not replay an old stop command against a newer execution", async () => {
+    const stub = agentStub();
+    const opened = await initializeWorkstream(stub, "first message");
+    await settledRun(stub, opened.body.harnessRunId as string);
+    await runInDurableObject(stub, (_instance, state) => {
+      holdLoopExecuting(state, { loopId: substreamLoopId(WORKSTREAM_ID) });
+    });
+    const { socket } = await openSubscribedSocket(
+      stub,
+      "00000000-0000-7000-8000-0000000005c8",
+    );
+    const command = {
+      type: "stop_harness",
+      operationId: "00000000-0000-7000-8000-0000000005c9",
+    };
+    const firstReceipt = nextSocketCommandOutcome(socket);
+    socket.send(JSON.stringify(command));
+    expect(await firstReceipt).toMatchObject({
+      type: "client_command_succeeded",
+      operationId: command.operationId,
+    });
+    await runInDurableObject(stub, (_instance, state) => {
+      const now = Date.now();
+      state.storage.sql.exec(
+        `UPDATE substream_loops
+            SET status = 'executing', active_execution_id = 'newer-execution',
+                active_execution_epoch = 2, lease_owner = 'newer-owner',
+                lease_expires_at = ?, stop_requested_at = NULL,
+                stop_after_step_ordinal = NULL, stop_reason = NULL,
+                revision = revision + 1, updated_at = MAX(updated_at, ?)
+          WHERE id = 1`,
+        now + 60_000,
+        now,
+      );
+    });
+
+    await evictDurableObject(stub);
+    const replayReceipt = nextSocketCommandOutcome(socket);
+    socket.send(JSON.stringify(command));
+    expect(await replayReceipt).toMatchObject({
+      type: "client_command_succeeded",
+      operationId: command.operationId,
+    });
+    expect(await runInDurableObject(stub, (_instance, state) =>
+      state.storage.sql.exec<{ active_execution_id: string; stop_requested_at: number | null }>(
+        `SELECT active_execution_id, stop_requested_at FROM substream_loops WHERE id = 1`,
+      ).one())).toEqual({ active_execution_id: "newer-execution", stop_requested_at: null });
     socket.close(1000, "done");
   });
 

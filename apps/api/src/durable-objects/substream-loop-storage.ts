@@ -307,55 +307,61 @@ export class SubstreamLoopStorage {
     inputIds: readonly string[];
     now: number;
   }): PendingLoopInputRow[] {
-    return this.storage.transactionSync(() => {
-      const loop = this.loop();
-      if (!loop) throw new Error("substream_loop_not_found");
-      const current = this.pendingInputs();
-      const byId = new Map(current.map((pending) => [pending.input_id, pending]));
-      const named = input.inputIds.flatMap((inputId) => {
-        const pending = byId.get(inputId);
-        return pending ? [pending] : [];
-      });
-      const namedIds = new Set(named.map((pending) => pending.input_id));
-      const unnamed = current.filter((pending) => !namedIds.has(pending.input_id));
-      const ordered = [...named, ...unnamed];
-      if (ordered.length === 0
-        || ordered.every((pending, index) => pending.input_id === current[index]?.input_id)) {
-        return current;
-      }
-      const sequences = current.map((pending) => Number(pending.input_sequence));
-      const tempBase = loop.next_input_sequence;
-      for (const [index, pending] of ordered.entries()) {
-        this.sql.exec(
-          `UPDATE pending_loop_inputs
-              SET input_sequence = ?, updated_at = MAX(updated_at, ?)
-            WHERE input_id = ?`,
-          tempBase + index,
-          input.now,
-          pending.input_id,
-        );
-      }
-      for (const [index, pending] of ordered.entries()) {
-        const sequence = sequences[index];
-        if (sequence === undefined) throw new Error("pending_input_reorder_sequence_missing");
-        this.sql.exec(
-          `UPDATE pending_loop_inputs
-              SET input_sequence = ?, updated_at = MAX(updated_at, ?)
-            WHERE input_id = ?`,
-          sequence,
-          input.now,
-          pending.input_id,
-        );
-      }
-      for (const pending of ordered) {
-        enqueueSemanticRealtimeReference(
-          this.sql,
-          { kind: "loop_input_upserted", inputId: pending.input_id },
-          input.now,
-        );
-      }
-      return this.pendingInputs();
+    return this.storage.transactionSync(() => this.reorderPendingInputsInTransaction(input));
+  }
+
+  /** The caller owns the surrounding transaction and may add its own receipt. */
+  reorderPendingInputsInTransaction(input: {
+    inputIds: readonly string[];
+    now: number;
+  }): PendingLoopInputRow[] {
+    const loop = this.loop();
+    if (!loop) throw new Error("substream_loop_not_found");
+    const current = this.pendingInputs();
+    const byId = new Map(current.map((pending) => [pending.input_id, pending]));
+    const named = input.inputIds.flatMap((inputId) => {
+      const pending = byId.get(inputId);
+      return pending ? [pending] : [];
     });
+    const namedIds = new Set(named.map((pending) => pending.input_id));
+    const unnamed = current.filter((pending) => !namedIds.has(pending.input_id));
+    const ordered = [...named, ...unnamed];
+    if (ordered.length === 0
+      || ordered.every((pending, index) => pending.input_id === current[index]?.input_id)) {
+      return current;
+    }
+    const sequences = current.map((pending) => Number(pending.input_sequence));
+    const tempBase = loop.next_input_sequence;
+    for (const [index, pending] of ordered.entries()) {
+      this.sql.exec(
+        `UPDATE pending_loop_inputs
+            SET input_sequence = ?, updated_at = MAX(updated_at, ?)
+          WHERE input_id = ?`,
+        tempBase + index,
+        input.now,
+        pending.input_id,
+      );
+    }
+    for (const [index, pending] of ordered.entries()) {
+      const sequence = sequences[index];
+      if (sequence === undefined) throw new Error("pending_input_reorder_sequence_missing");
+      this.sql.exec(
+        `UPDATE pending_loop_inputs
+            SET input_sequence = ?, updated_at = MAX(updated_at, ?)
+          WHERE input_id = ?`,
+        sequence,
+        input.now,
+        pending.input_id,
+      );
+    }
+    for (const pending of ordered) {
+      enqueueSemanticRealtimeReference(
+        this.sql,
+        { kind: "loop_input_upserted", inputId: pending.input_id },
+        input.now,
+      );
+    }
+    return this.pendingInputs();
   }
 
   reserveInputPreparation(input: {
@@ -872,14 +878,17 @@ export class SubstreamLoopStorage {
   }
 
   requestStop(input: ExecutionFence & { reason: string; now: number }): SubstreamLoopRow {
-    return this.storage.transactionSync(() => {
-      const loop = this.#requiredExecution(input);
-      if (loop.stop_requested_at !== null) return loop;
-      this.#bumpLoop(loop.revision, input.now,
-        "stop_requested_at = ?, stop_after_step_ordinal = step_ordinal, stop_reason = ?",
-        input.now, input.reason);
-      return this.#requiredLoop(loop.loop_id);
-    });
+    return this.storage.transactionSync(() => this.requestStopInTransaction(input));
+  }
+
+  /** The caller owns the surrounding transaction and may add its own receipt. */
+  requestStopInTransaction(input: ExecutionFence & { reason: string; now: number }): SubstreamLoopRow {
+    const loop = this.#requiredExecution(input);
+    if (loop.stop_requested_at !== null) return loop;
+    this.#bumpLoop(loop.revision, input.now,
+      "stop_requested_at = ?, stop_after_step_ordinal = step_ordinal, stop_reason = ?",
+      input.now, input.reason);
+    return this.#requiredLoop(loop.loop_id);
   }
 
   reservation(turnId: string): AssistantTurnReservationRow | undefined {

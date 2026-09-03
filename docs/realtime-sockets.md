@@ -727,6 +727,30 @@ what that leaves exposed.
 
 ## Changelog
 
+### 2026-09-02 — Child feed recovery stays inside the addressed SubstreamAgent
+
+**What changed:** renderer detail, transcript, overlay, feed-source, and
+snapshot-generation caches now include a non-main substream ID. A child's
+`resync_required` reconnects that socket from sequence zero for a canonical
+child snapshot; only main child `0` can use the work-stream REST recovery boot.
+Reorder and stop receipts are committed with their mutations so reconnect
+resends cannot act on newer child state.
+
+**Why:** a work-stream ID identifies the parent, not one of its conversations.
+Sharing its cache keys made child frames overwrite main-feed state, while a
+parent REST recovery could never reconstruct the child's transcript. A private
+receipt sent without durable mutation fencing also acknowledged an old command
+after applying it to a newer queue or execution.
+
+**Considered and rejected:** adding a child REST boot, because the owning socket
+already supplies the canonical snapshot and another read path would duplicate
+authority; and dropping ambiguous commands on disconnect, because the caller
+would lose read-your-write certainty.
+
+**What a future change has to respect:** feed identity is the full parent-plus-
+child address. Child recovery remains on the child transport, and every
+retriable mutation needs a durable fence at the transaction it changes.
+
 ### 2026-09-02 — The substream socket becomes the child command plane
 
 **What changed:** one operation-ID protocol now carries message admission,
