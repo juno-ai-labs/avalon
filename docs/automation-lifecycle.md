@@ -116,11 +116,25 @@ not archived into a second draft store.
 
 ### Acceptance
 
-`POST /automations` re-reads the object's snapshot, refuses unless the caller's
-submitted draft is byte-identical to the stored definition
-(`automation_definition_revision_stale`), and calls `acceptDraft`. Acceptance is
-two phases around one durable acceptance row, so an interrupted activation
-resumes rather than restarting:
+Acceptance has two doors onto one `acceptDraft`. `POST /automations` carries the
+draft the caller is looking at. `POST /automations/:id/accept` — the proposal
+card's **Create this automation**, which holds nothing but the summary it
+displays — carries only the id, and `acceptAuthoredDraft` builds the same create
+request server-side out of the stored definition. Both re-read the object's
+snapshot, refuse unless the submitted draft is byte-identical to that definition
+(`automation_definition_revision_stale`), and call `acceptDraft`.
+
+That comparison is a staleness check on a draft the *caller* held while
+reviewing it, so it means what it says only for `POST /automations`. The id-only
+door has no client-held draft: it reads the snapshot itself and `accept` reads
+it a second time, so the comparison is vacuous — except under the race between
+those two reads, where a compiler revision landing in the gap makes the card
+refuse itself with a sentence written for somebody else's stale review. Narrow,
+and cheaper to leave than to special-case the shared path around, but it is why
+the refusal can reach a member who never reviewed anything.
+
+Acceptance is two phases around one durable acceptance row, so an interrupted
+activation resumes rather than restarting:
 
 1. **Freeze.** Under one transaction: check the definition is `ready`, the
    revision matches, and no elicitation is pending; resolve connector bindings,
@@ -368,6 +382,18 @@ telemetry storage — not a product-state fallback.
   refusal wearing the one status a client retries, logged beside real faults.
   `withAutomationErrors` is for calls that can *refuse*; a call whose failures
   are all faults keeps its 500 rather than being dressed as a conflict.
+- **A create request the service builds for itself is typed as the create
+  schema's own input.** `acceptAuthoredDraft` constructs one and hands it to
+  `accept`, which re-parses it, so a field the schema rejects is nobody's bad
+  request: it is a `ZodError` between two pieces of our own code, and it reaches
+  the boundary as the same 500 the invariant above is about — with no member
+  input that could have avoided it, on every press of every card. The annotation
+  catches the *structural* half of that: a wrong type, a `null` where the field
+  is optional rather than nullable, a required field left out. It does not catch
+  what `CreateAutomationRequestSchema` only checks while parsing — `resourceIds`'
+  `.max(20)`, and the `superRefine` refusing delivery targets outside a personal
+  scope — which typecheck and then throw. Those stay the caller's to satisfy by
+  construction, and both are literals here.
 - **A directory row locates; it never authorizes.** `automation_directory` holds
   no definition, no instructions, and no run content, and every content read goes
   through the agent, which re-checks the author or asks WorkspaceDO to authorize
@@ -451,6 +477,19 @@ email is addressed and rendered
   `applyAutomationProjection`, whose worst case is two writers disagreeing about
   a coordinate the directory already holds — is deliberately left unwrapped
   rather than given a 409 a client will retry.
+- **The proposal card cannot create an external-event draft.** `acceptAuthoredDraft`
+  sends an empty `activitySourcePluginIds`, so a ready draft carrying a
+  `connector_activity`, `semantic_activity` or `webhook` trigger — which is ready
+  only if it has evaluators — fails `prepareAcceptance`'s first binding check
+  with `automation_evaluator_source_binding_mismatch`. That code has no row in
+  the error table, so it reaches the member as the generic 409 rather than a
+  sentence. Passing the triggers' own `suggestedSourcePluginId` map would move
+  the refusal rather than remove it: `automation_evaluator_connection_missing`
+  is equally untabled, and the scope rules on a resolved connection are next.
+  Making this card work end to end is a connector-binding decision — whether a
+  plugin the drafting conversation proposed is one the member has agreed to bind,
+  or one the card must show and ask about — plus the error-table rows to make
+  whatever it refuses with legible. Timer-only and manual drafts are unaffected.
 - **The compiler fails or is interrupted.** The run settles as `failed` and stays
   the visible outcome until another turn is admitted — hiding it made a failure
   look like a successful idle reconnect. **Retry** re-arms the dispatch alarm for
@@ -502,7 +541,7 @@ email is addressed and rendered
 
 | Suite | Command | Covers |
 | --- | --- | --- |
-| `apps/api/test-workers/automation-agent.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd: identity plus the first turn plus one compiler admission committed before dispatch; evaluator replacement and its receipt in one transaction; an event-driven authored submission refused when its rules are absent or empty, exempted while the draft is not ready, and admitted through to acceptance once they are set; acceptance in place deleting only the draft conversation; generation-fenced memory with replayed write receipts; a memory table keeping its identity across revisions; the REST boundary's own three create refusals answering their statuses rather than a 500, a directory membership refusal answering 403, an `ApiError` raised inside the object surviving the RPC hop with its own status, and workspace abandonment retiring compiler, schedule, run, and outbox lanes before external work. |
+| `apps/api/test-workers/automation-agent.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd: identity plus the first turn plus one compiler admission committed before dispatch; evaluator replacement and its receipt in one transaction; an event-driven authored submission refused when its rules are absent or empty, exempted while the draft is not ready, and admitted through to acceptance once they are set; acceptance in place deleting only the draft conversation; generation-fenced memory with replayed write receipts; a memory table keeping its identity across revisions; the REST boundary's own three create refusals answering their statuses rather than a 500, the proposal card's id-only accept creating the automation the object holds, a directory membership refusal answering 403, an `ApiError` raised inside the object surviving the RPC hop with its own status, and workspace abandonment retiring compiler, schedule, run, and outbox lanes before external work. |
 | `apps/api/test-workers/automation-delivery-targets.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd, with `connector_connections` and `slack_user_links` in WorkspaceDO and deliberately absent from D1: saving and removing a Slack destination; each refusal separately — no connection, a disabled one, another person's personal one, no Slack link, a link belonging to someone else, an inactive link; binding a connector plugin at acceptance, including when a disabled row still holds the same plugin id; and the service answering a detail rather than an unmapped 500. Its first test asserts the two tables are absent from D1, because that absence is what makes the rest evidence. |
 | `apps/api/test-workers/automation-cutover.test.ts` | `pnpm --filter @rally/api test:workers` | A fresh WorkspaceDO reaching the final schema with no legacy lifecycle tables, and an import that discards audited drafts and replays cleanup safely. |
 | `apps/api/test-workers/external-event-routing.test.ts` | `pnpm --filter @rally/api test:workers` | One accepted event and one matcher serving an automation and two watched work streams. |
@@ -605,6 +644,57 @@ workspace found holding legacy state is to run the script again, which is
 idempotent per workspace.
 
 ## Changelog
+
+### 2026-09-03 — The proposal card's Create stops answering 500
+
+**What changed:** `AutomationAgentService.acceptAuthoredDraft` built its create
+request with `modelOverride: null`. `CreateAutomationRequestSchema` declares that
+field as an `optional()` enum, so `accept`'s re-parse threw a `ZodError`, which
+is not an `ApiError` and matches no row of the error table — the boundary
+answered `500 internal_error` / "An unexpected error occurred". The field is
+gone (absent is how the schema spells "no override", and `accept` already
+coalesces it to the `null` the object stores), and the request is now annotated
+`z.input<typeof CreateAutomationRequestSchema>` so a field whose *type* the
+schema cannot accept is a typecheck failure rather than a runtime fault. The
+schema's parse-time-only constraints — `resourceIds`' `.max(20)` and the
+`superRefine` over `deliveryTargets` and `scope` — are outside what an
+annotation can prove, and are recorded as such in the invariant.
+
+**Why:** the card was the only way to create an automation drafted in a work
+stream, and it had never worked. There was no member input that could avoid it
+and nothing on screen to act on: the card offered a sentence with no next step
+under it and the same button again. Nor was there a bad request to blame — the
+service composed the rejected object itself, one function above the parse that
+rejected it, which is why the type system had every fact it needed and was never
+asked. `accept` takes `unknown` because it is a REST boundary; the internal
+caller was inheriting that looseness for free.
+
+**How it was found:** `POST /automations/:id/accept 500 internal_error` in the
+Global Worker logs, with `error_name: ZodError`, `route: /automations/:id/accept`
+and `validation_issues: [{ path: "modelOverride", code: "invalid_value" }]` —
+the fields the
+[2026-08-31 entry](#2026-08-31--the-create-boundarys-own-refusals-stop-answering-500)
+added to `errorHandler` for exactly this, since without them the line says only
+"internal_error" and names neither the field nor the route.
+
+**How it is proved:** `apps/api/test-workers/automation-agent.test.ts` accepts a
+seeded ready draft through `acceptAuthoredDraft` against a real AutomationAgent
+and asserts the automation comes back `active`. Restoring `modelOverride: null`
+fails it on the `ZodError`. It is asserted through the service rather than
+against the schema because what failed was the request the service constructs; a
+schema test would restate the literal beside it and survive the break.
+
+**What a future change has to respect:** recorded above as an invariant, beside
+the one about refusals raised outside the error table — this is the same 500
+reached by a different route, and a changelog is not where a future change is
+checked.
+
+**Considered and rejected:** widening `CreateAutomationRequestSchema` to
+`.nullish()`. It fixes this call and leaves the wire contract with two spellings
+of "no override" for every client, and it fixes nothing about the seam that
+allowed it — the next mismatched field would be another 500. Also rejected:
+`modelOverride: undefined` for explicitness, which `exactOptionalPropertyTypes`
+rejects outright.
 
 ### 2026-09-02 — Work-stream authoring recognizes real plugin loads and elicitation receipts
 

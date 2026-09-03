@@ -131,14 +131,20 @@ function assertPersistedRunStatus(status: string): asserts status is PersistedRu
  * Every one of these writes was a routed `INSERT … SELECT … FROM harness_runs
  * WHERE lease_owner = ?` followed by a diagnostic read, because the insert's
  * own `meta.changes` could not distinguish "already written by me" from "I no
- * longer hold the run". These four states are that distinction, made once.
+ * longer hold the run". These three states are that distinction, made once.
  */
 export type FencedWriteOutcome =
   | { outcome: "persisted" }
-  /** The same attempt already wrote this exact row. A retry, not a conflict. */
+  /**
+   * The run already carries this row, so the write is a no-op.
+   *
+   * Deliberately not conditioned on the incoming value matching the stored one.
+   * These rows are written once at admission and read back afterwards; a later
+   * attempt of the same run recomputes what it would have written from the code
+   * it is running, which is not the same thing as the run's recorded state. See
+   * `persistScope`.
+   */
   | { outcome: "reused" }
-  /** A different value is already recorded, and these rows are immutable. */
-  | { outcome: "mismatch" }
   | { outcome: "ownership_lost" };
 
 export interface ScopeRow extends Record<string, SqlStorageValue> {
@@ -714,19 +720,36 @@ export class WorkstreamHarnessRunStorage {
   }
 
   /**
-   * Freeze this attempt's scope, or say why the frozen one is not it.
+   * Record this run's scope once, at admission. A later attempt reuses it.
    *
    * The routed version was the plainest example of the fence being a join:
    * `INSERT INTO harness_run_scopes … SELECT … FROM harness_runs WHERE
    * lease_owner = ?`, so a row was written only if the writer still held the
-   * run — and a zero-change result meant either "already frozen by this same
-   * attempt" or "lost the run", which took a second statement to tell apart.
-   * Here the fence is read, the existing row is read, and the answer names
-   * which of the three it is.
+   * run — and a zero-change result meant either "already recorded" or "lost the
+   * run", which took a second statement to tell apart. Here the fence is read,
+   * the existing row is read, and the answer names which of the two it is.
    *
-   * `mismatch` is not an ownership problem and must not be retried as one: it
-   * means this run already has a *different* frozen scope, which is a defect in
-   * the caller rather than a race.
+   * **An existing row is reused whatever the caller passes.** This used to
+   * compare the incoming `scopeHash` against the stored one and answer
+   * `mismatch`, which the runtime turned into a bare `immutable_run_scope_mismatch`
+   * and, through the uncoded-exception path, a terminal `harness_execution_failed`
+   * telling the member not to retry. The comparison was unsound, because the
+   * two sides are not the same kind of value: the stored hash is what the run
+   * was admitted with, while the incoming one is recomputed from whatever code
+   * the *current* attempt is running. Cloudflare resets a Durable Object when
+   * the Worker is deployed, so a run in flight across any deploy resumes on a
+   * new bundle — and `scopeHash` mixes the deployed build (tool-surface hash,
+   * prompt version, routing policy version, limits) into the authority it was
+   * meant to be about. On 2026-09-02 a connector schema edit no larger than
+   * adding `minLength: 1` to a Linear cursor killed a live run this way, after
+   * its own recovery had already repaired it twice and was about to succeed.
+   *
+   * So a resumed attempt now simply restarts the loop against the recorded
+   * scope. The residual is real and accepted: nothing here re-checks that a
+   * later attempt's authority did not widen between attempts. Live
+   * revalidation before every tool call still applies, and the child path in
+   * `persistInlineChildScope` still binds a subagent to its parent, because
+   * that comparison is stored-against-stored rather than recomputed.
    */
   persistScope(input: AttemptFence & {
     scopeHash: string;
@@ -742,18 +765,21 @@ export class WorkstreamHarnessRunStorage {
     limitsJson: string;
   }): FencedWriteOutcome {
     return this.storage.transactionSync(() => {
-      const existing = first(this.sql.exec<{ attempt_id: string; scope_hash: string } & Record<string, SqlStorageValue>>(
-        `SELECT attempt_id, scope_hash FROM run_scopes WHERE run_id = ?`,
-        input.runId,
-      ));
-      if (existing) {
-        return existing.attempt_id === input.attemptId && existing.scope_hash === input.scopeHash
-          ? { outcome: "reused" as const }
-          : { outcome: "mismatch" as const };
-      }
+      // The fence comes first, and covers the reuse path as well as the insert.
+      // While the old comparison stood it was doing this job by accident: a
+      // stale executor carries a different `attemptId`, so it fell to
+      // `mismatch` and threw. Reusing on the row alone would have answered it
+      // with success and let it keep setting up against a run it no longer
+      // holds. A legitimate replacement attempt has claimed the lease and
+      // passes here.
       if (this.attemptOwnership(input).outcome !== "owned") {
         return { outcome: "ownership_lost" as const };
       }
+      const existing = first(this.sql.exec<{ attempt_id: string } & Record<string, SqlStorageValue>>(
+        `SELECT attempt_id FROM run_scopes WHERE run_id = ?`,
+        input.runId,
+      ));
+      if (existing) return { outcome: "reused" as const };
       this.sql.exec(
         `INSERT INTO run_scopes
            (run_id, attempt_id, execution_principal_json, eligible_connection_ids_json,
@@ -785,31 +811,37 @@ export class WorkstreamHarnessRunStorage {
    *
    * `persistScope`'s shape on a different table, and for the same reason: the
    * routed version fenced the insert by selecting from `harness_runs`, then
-   * re-read the row to tell a replay from a lost run. An activation is
-   * immutable per `(run, plugin)` — a second one with a different tool surface
-   * means the surface changed under a frozen scope, which the caller must not
-   * paper over.
+   * re-read the row to tell a replay from a lost run.
+   *
+   * An activation is recorded once per `(run, plugin)`, and a later attempt
+   * reuses it. This used to answer `mismatch` when the incoming
+   * `toolSurfaceHash` differed from the stored one, on the reading that the
+   * surface had moved under a frozen scope. That is the same unsound
+   * comparison `persistScope` carried, on the same value and with the same
+   * blast radius: the stored hash belongs to the bundle the run was admitted
+   * on, the incoming one to the bundle the current attempt is running, and a
+   * deploy makes them differ for every in-flight run. It is a second landmine
+   * on the same boundary — during the 2026-09-02 incident this threw too, and
+   * fixing only `persistScope` would have moved the next deploy's failure here.
    */
   persistPluginActivation(input: AttemptFence & {
     pluginId: string;
     toolSurfaceHash: string;
   }): FencedWriteOutcome {
     return this.storage.transactionSync(() => {
-      const existing = first(this.sql.exec<{ attempt_id: string; tool_surface_hash: string } & Record<string, SqlStorageValue>>(
-        `SELECT attempt_id, tool_surface_hash FROM run_plugin_activations
+      // Fenced before the reuse path, for the reason given in `persistScope`:
+      // an executor that has lost its lease must not be told its activation is
+      // durable and go on preparing the plugin.
+      if (this.attemptOwnership(input).outcome !== "owned") {
+        return { outcome: "ownership_lost" as const };
+      }
+      const existing = first(this.sql.exec<{ attempt_id: string } & Record<string, SqlStorageValue>>(
+        `SELECT attempt_id FROM run_plugin_activations
           WHERE run_id = ? AND plugin_id = ?`,
         input.runId,
         input.pluginId,
       ));
-      if (existing) {
-        return existing.attempt_id === input.attemptId
-          && existing.tool_surface_hash === input.toolSurfaceHash
-          ? { outcome: "reused" as const }
-          : { outcome: "mismatch" as const };
-      }
-      if (this.attemptOwnership(input).outcome !== "owned") {
-        return { outcome: "ownership_lost" as const };
-      }
+      if (existing) return { outcome: "reused" as const };
       this.sql.exec(
         `INSERT INTO run_plugin_activations
            (run_id, attempt_id, plugin_id, tool_surface_hash, authorized_at, activated_at)

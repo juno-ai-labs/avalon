@@ -207,7 +207,52 @@ describe("inference lakehouse", () => {
     ]));
   });
 
-  it("drops provider-controlled prose before archiving an error classification", async () => {
+  it("archives the rejection body a classification code cannot describe", async () => {
+    const { env, objects, pointers } = fixture();
+    // The 2 September Sol failure. `invalid_function_parameters` reached every
+    // surface production has; nothing anywhere said which tool schema earned it.
+    const rejection = {
+      error: {
+        message: "Invalid schema for function 'table_query': unsupported keyword.",
+        type: "invalid_request_error",
+        param: "tools[13].parameters",
+        code: "invalid_function_parameters",
+      },
+    };
+
+    await captureStreamingInferenceAttempt(env, {
+      source: "workstream",
+      workspaceId: "workspace-1",
+      workstreamId: "workstream-1",
+    }, {
+      inferenceRequestId: "azure-rejection",
+      success: false,
+      turnId: "run-1:turn:1",
+      model: "openai/gpt-5.6-sol",
+      provider: "azure",
+      providerInvocationModel: "gpt-5.6-sol",
+      cursor: { structuredOutputAttempt: 0, stageIndex: 0, candidateIndex: 0, endpointAttempt: 0 },
+      latencyMs: 1386,
+      disposition: "fallback",
+      failureKind: "http",
+      providerError: {
+        code: "invalid_function_parameters",
+        detail: JSON.stringify(rejection),
+      },
+    });
+
+    const archived = JSON.parse(objects.get(
+      (pointers[0] as { objectKey: string }).objectKey,
+    )!) as InferenceLakehouseRecord;
+    expect(archived.error).toEqual({
+      providerError: {
+        code: "invalid_function_parameters",
+        detail: JSON.stringify(rejection),
+      },
+    });
+  });
+
+  it("archives the rejection body on the structured branch too", async () => {
     const { env, objects, pointers } = fixture();
 
     await captureStructuredInferenceDiagnostic(env, {
@@ -220,23 +265,59 @@ describe("inference lakehouse", () => {
       attempt: 0,
       fallbackAttempt: 0,
       repairAttempt: 0,
-      inferenceRequestId: "failed-request",
+      inferenceRequestId: "structured-rejection",
       success: false,
       failureKind: "provider_error",
       providerError: {
         code: 400,
         providerName: "Google",
-        message: "verbatim echo of the rejected prompt",
-      } as never,
+        detail: '{"error":{"code":400,"message":"response_format is not supported"}}',
+      },
     });
 
+    // The streaming and structured captures write `error` through separate call
+    // sites; the test that used to cover this one asserted the old contract and
+    // went with it, leaving the branch green under any change.
     const archived = JSON.parse(objects.get(
       (pointers[0] as { objectKey: string }).objectKey,
     )!) as InferenceLakehouseRecord;
     expect(archived.error).toEqual({
-      providerError: { code: 400, providerName: "Google" },
+      providerError: {
+        code: 400,
+        providerName: "Google",
+        detail: '{"error":{"code":400,"message":"response_format is not supported"}}',
+      },
     });
-    expect(JSON.stringify(archived)).not.toContain("verbatim echo");
+  });
+
+  it("archives an unclassifiable rejection body on its own", async () => {
+    const { env, objects, pointers } = fixture();
+
+    await captureStreamingInferenceAttempt(env, {
+      source: "workstream",
+      workspaceId: "workspace-1",
+    }, {
+      inferenceRequestId: "gateway-rejection",
+      success: false,
+      turnId: "run-1:turn:1",
+      model: "openai/gpt-5.6-sol",
+      provider: "azure",
+      providerInvocationModel: "gpt-5.6-sol",
+      cursor: { structuredOutputAttempt: 0, stageIndex: 0, candidateIndex: 0, endpointAttempt: 0 },
+      latencyMs: 120,
+      disposition: "failed",
+      failureKind: "http",
+      providerError: { detail: "<html>upstream gateway refused</html>" },
+    });
+
+    // No classification to pair it with is precisely when the body is the only
+    // evidence there is, so it must not be dropped for arriving alone.
+    const archived = JSON.parse(objects.get(
+      (pointers[0] as { objectKey: string }).objectKey,
+    )!) as InferenceLakehouseRecord;
+    expect(archived.error).toEqual({
+      providerError: { detail: "<html>upstream gateway refused</html>" },
+    });
   });
 
   it("uses the canonical main substream for workstream inference without an explicit identity", async () => {

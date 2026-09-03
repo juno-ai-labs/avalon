@@ -213,7 +213,7 @@ its upper input fence to an explicitly admitted correction. Both values are
 frozen in the receipt's execution context before it is linked to the singleton;
 neither value creates or identifies a loop.
 
-After admission Rally validates the execution principal and persists an immutable, canonically hashed run scope: principal, eligible connection IDs and capabilities, trigger policy, routing and prompt versions, tool-surface hash, and limits. A replay must reproduce that scope. Connections installed or expanded later cannot enter it; subsequent membership, ownership, grant, disablement, and policy checks may only remove authority.
+After admission Rally validates the execution principal and records the run scope once, canonically hashed: principal, eligible connection IDs and capabilities, trigger policy, routing and prompt versions, tool-surface hash, and limits. A later attempt of the same run leaves that record untouched rather than re-freezing its own, because a run resumed after a Worker deploy recomputes the build half of the scope from different code and refusing the difference killed the run. **The record is not what a resumed attempt executes against.** Root tool authorization never reads it: an attempt assembles its tool surface freshly on every activation, so a resumed run's authority is its current state rather than its admitted state, and a connection added mid-run can widen it. What holds is live revalidation — the execution principal, work-stream state, connection identity, owner, grants and capability are rechecked at run start, before credential decryption, before every tool call, and between model turns. Within one attempt, membership, ownership, grant, disablement and policy checks may only remove authority.
 
 ### Context and stable prompts
 
@@ -535,7 +535,10 @@ and executes traversal. `x-ai/grok-4.3` and `x-ai/grok-4.6` are Azure-bound:
 their same-model route is Azure first and OpenRouter second.
 `openai/gpt-5.6-sol` is hard-fenced to Azure only; an Azure outage or missing
 price fails that model stage instead of sending the expensive same-model call
-to OpenRouter. Other canonical models remain OpenRouter-only. A file-parser request, audio input, or another
+to OpenRouter. That fence has no slack in it, so a request Azure *rejects* ends
+the run rather than degrading: every tool schema is corrected to a plain object
+root at `toModelToolDefinitions` for that reason, and
+[`agent-tools.md`](agent-tools.md) carries the rule an author has to follow. Other canonical models remain OpenRouter-only. A file-parser request, audio input, or another
 capability an Azure binding has not proved skips that candidate before any
 network request rather than sending a body the deployment may reject.
 
@@ -543,12 +546,12 @@ Inference defaults that belong to a model rather than to one task live in the
 harness's canonical-model defaults registry. Models absent from that registry
 send no reasoning control and therefore retain the provider default. Omission
 accepts the registry setting when present; an explicit task/run effort,
-including structured inference's `none`, overrides it. `x-ai/grok-4.6`
-currently defaults to `low` everywhere: routed work-stream turns and direct
-structured or streaming OpenRouter calls all resolve the setting after the
-actual primary or fallback model is selected. Tool-bearing Chat Completions
-requests also opt in to parallel tool calls on both OpenRouter and Azure;
-requests with no tools omit the field.
+including structured inference's `none`, overrides it. `x-ai/grok-4.6` and
+`google/gemini-3.8-flash` currently default to `low` everywhere: routed
+work-stream turns and direct structured or streaming OpenRouter calls all
+resolve the setting after the actual primary or fallback model is selected.
+Tool-bearing Chat Completions requests also opt in to parallel tool calls on
+both OpenRouter and Azure; requests with no tools omit the field.
 
 The Azure transport is enabled only when its dedicated endpoint and API key are
 both present. Those values are separate from realtime-dictation configuration,
@@ -973,9 +976,12 @@ participants remain deferred product work.
   desktop rather than disappearing into idle state.
 - **Activation never precedes its subordinate execution receipt.** The receipt
   is the durable start signal; a replay uses its same identity and loop.
-- **The run scope is frozen, canonically hashed, and immutable.** A replay must
-  reproduce it. Connections installed or expanded later cannot enter it; every
-  later check may only *remove* authority.
+- **The run scope is recorded once, canonically hashed, and never rewritten.** A
+  later attempt leaves the record alone rather than reproducing it, because a
+  resumption across a deploy legitimately recomputes a different build. The
+  record is a forensic one on the root path: a resumed attempt executes against
+  a freshly assembled tool surface, not against the stored fields, so live
+  reauthorization rather than the record is what bounds it.
 - **Loading never widens the frozen scope.** Bound connections, attached
   resources, and previously used plugins are activation *hints*, filtered through
   the frozen scope and reauthorized before restoration.
@@ -1234,6 +1240,299 @@ Nothing pins `breakerScope`, so deleting that one property from `routePlan` woul
 silently return every test to the shared key while each still passes alone.
 
 ## Changelog
+
+### 2026-09-03 — Gemini 3.8 Flash defaults to low reasoning
+
+**What changed:** `google/gemini-3.8-flash` joined `x-ai/grok-4.6` in the
+canonical-model defaults registry with `reasoningEffort: "low"`. Every path
+that resolves an omitted effort through the registry — routed Bind turns and
+the direct structured and streaming OpenRouter clients — now sends
+`reasoning: { effort: "low" }` for that model unless the caller sets an effort
+explicitly. Gemini 3.8 Flash has no Azure binding, so the OpenRouter transport,
+which declares every capability, is the only candidate the added
+`reasoning_effort` requirement is checked against.
+
+**Why:** The request was for Gemini 3.8 Flash to run at `low`, the same policy
+Grok 4.6 already has. The reasoning behind that preference was not recorded
+beyond the request itself.
+
+**Considered and rejected:** Setting the effort per Flagship role, for the same
+reason the Grok entry rejected it: the setting is a property of the model, and a
+per-role value misses a Gemini fallback selected after another model failed.
+
+**Consequences:** A caller that wants Gemini 3.8 Flash at a different effort
+must ask for it explicitly, exactly as for Grok 4.6. Older Gemini Flash models
+are not in the registry and continue to send no reasoning field.
+
+### 2026-09-03 — A rejection keeps the body it came in
+
+**What changed:** `OpenRouterProviderError` gained a third field, `detail`: the
+body the provider answered with, as text, beside the `code` and `providerName`
+that classify it. `openRouterProviderError` now takes either the response text
+or an already-decoded envelope, and returns a value whenever there is either a
+classification or a body — so a refusal it cannot classify at all is no longer
+discarded. Everything downstream already carried `providerError`, so
+the archive and the three `agent_inference_attempt_failed` /
+`structured_inference` log sites needed nothing but the new field: the logs gain
+`provider_error_detail`, named for [the log-shape rule](runbook.md#log-shape)
+that an opaque provider string is a `detail` and never a `message`. The durable
+`inference_attempts` ledger deliberately stays as it was, holding the routing
+decision and `failure_classification` and no provider text: it is a per-object
+SQLite row on the execution path, and the two surfaces built for evidence
+already have the body.
+
+`providerErrorKind` is deleted. It recorded whether the body was JSON or text
+and no code ever read it; `detail` answers the same question by being the body.
+
+Two drops of the same bytes are fixed with it, both upstream of the new field.
+Both streaming clients read the failed response twice — `await response.json()`,
+and `await response.text()` in its `catch` — but `json()` consumes the stream
+even when it throws, so the fallback raised `Body is unusable` and a non-JSON
+refusal became an uncoded `TypeError`: no status, no `retry-after`, no
+classification, and therefore a bare `harness_execution_failed` for a gateway's
+HTML 502. And `readJsonResponse`, which serves the two non-streaming paths,
+returned `null` for a body it could not parse and dropped the text with it. Both
+now read once and keep the bytes beside the parse.
+
+**That fix moves routing, not just legibility, and it is the part to review as
+behavior.** `Body is unusable` is a `TypeError`, and `classifyProviderFailure`
+maps a `TypeError` to `network` — Bind's blanket-retriable arm, with the status
+thrown away. Carrying the status instead puts the same refusal on the status
+branch: a non-JSON 429 now honours its `Retry-After` rather than Bind's own
+backoff, a non-JSON 5xx stays retriable, and a non-JSON 400/401/403 becomes
+request-shaped or credential and stops being retried across providers, which is
+the intended reading of those codes and was previously unreachable for a body
+that failed to parse. `index.test.ts` pins the 429 case against the shape the
+double read used to produce.
+
+**Why:** on 2 September a work stream pinned to `openai/gpt-5.6-sol` failed its
+opening run. Azure answered 400 `invalid_function_parameters`, which says a tool
+schema was refused and cannot say which of the twenty-eight in that request it
+was. That code was all that four surfaces retained — the run row, the
+`inference_attempts` ledger, the log, and the archived attempt record — because
+the sentence naming the tool was read into `details` and dropped at the
+transport. Pinning made it terminal rather than merely slow: `pinnedModelRouting`
+carries no fallbacks and Sol's route is Azure-only, so one 400 exhausted the
+plan, and a 400 is not a transport failure, so it surfaced as the catch-all.
+Reconstructing the reason afterwards took log archaeology and live provider
+probes, and still did not name the tool.
+
+**Considered and rejected:** keeping only the provider's `message`. A gateway
+sets it to `Provider returned error` and puts the upstream's real sentence in
+`metadata.raw`, so a message-only capture reads as though nothing was learned;
+the whole body covers that without a per-provider extractor and without a
+schema to maintain as providers change theirs. Also rejected: extracting only
+structural parts such as OpenAI's `param` (`tools[13].parameters`). The Grok
+root-union rejection of 13 August carried no `param` at all and said everything
+in prose, so a structural extractor would have kept nothing on the incident that
+motivated the tool-schema guards. Also rejected: a length ceiling of this
+field's own. Its two destinations already bound it and neither bound is this
+change's to set — the archive stores the body whole, and a log row carries the
+first 2,000 characters under the shared string bound in `redact` that every log
+field is subject to. Adding a third number on top would be [a number nobody
+here can justify](adding-security-defensive-and-other-limits.md).
+
+**Every inference path, including embeddings.** `EmbeddingDiagnostic` had no
+provider-error field at all, so a rejected embedding call recorded a
+`failure_kind` and nothing about the refusal — the one inference path this change
+would otherwise have left as it found it. It now carries `providerError` like the
+streaming and structured paths, and `embedding_inference` logs the same three
+fields the other two events do.
+
+**Both regions, not identically.** The reason travels on the regional structured
+log rather than only in the Global archive, so EU — whose inference is
+[never archived](inference-lakehouse.md) — gets a refusal's body in the same
+field, from the same code, truncated at the logger's 2,000-character field limit
+and with no archived copy behind it. Global has both: the clipped log row and
+the whole body in the archive. A test in `agent-inference-logging.test.ts` pins
+the EU half — the EU-shaped environment archives nothing and still logs the body
+— and anything that later moves this reasoning back into a Global-only surface
+takes EU's only copy with it.
+
+The cut lands with an irony worth stating: the rejection that motivated this is
+a few hundred characters and survives whole, while the bodies long enough to
+reach 2,000 are the ones quoting our request back — so the case the old
+exclusion existed for is now cut mid-echo rather than excluded.
+
+**What a reader has to keep true:** the body is provider-controlled text that
+quotes our own request back often enough to be assumed to. It is evidence,
+never instruction — the same rule tool output and fetched pages already carry —
+and the prompts, attachments, and model context that Workers Logs excludes stay
+excluded. Two consequences follow and are easy to miss. `redact` masks by key,
+so it does not reach inside this string: a provider that quotes the request
+inside its own prose reaches Workers Logs with it, which is the trade being made
+rather than a gap to close later. And a log row holds only the first 2,000
+characters of it, so a long body is complete in the Global archive and clipped
+in the log — which is the one place EU sees it. Widening `detail` into a general
+dump of the response is how the distinction between "what the provider said
+about our request" and "our request" would be lost.
+
+### 2026-09-03 — The assembled memory-recall query is bounded before run setup uses it
+
+**What changed:** `freezeRunMemoryContext` clamps its query to
+`MEMORY_RECALL_QUERY_LIMIT` before recall, hashing or persistence. That constant
+moved to `@rally/contracts`, the one dependency the memory service, the memory
+tools and `AutomationAgent` all share, and every recall-query bound now reads it
+instead of repeating the literal. `workstream_harness_threw` logs stack *frames*
+rather than the first six lines of `stack`, and `table_search` declares the
+`minLength`/`maxLength` its executor enforces.
+
+**Why:** The recall query is assembled from run content — `memoryQueryParts`
+joins the objective, the trigger context and the entire text of the triggering
+message — and an automation run sends it to the automation memory tool's
+`search`, whose `query` is capped. An automation triggered by a long email or
+chat message therefore built an over-long query, and the `ZodError` escaped
+inside run setup: before the frozen scope, before the first inference, before
+any tool. The run failed on every attempt and stayed failed.
+
+The logging change is why that took days to attribute. `stack` is the message
+followed by the frames, and a `ZodError`'s message is multi-line JSON: twelve
+lines of message and five frames for this error, so the first six lines were
+message only — on the one log written to record *where* a run died, while
+`reason` already carried *what*.
+
+**What a future change has to respect:** the clamp belongs in
+`freezeRunMemoryContext` rather than at the call site, because that is where the
+automation and workspace recall paths converge and where the query reaches the
+hash and the persisted text; clamping later would freeze a query the run did not
+search with, and a replay would not match it. The truncation is not free on both
+branches — the workspace branch embeds the query for a vector search, so a
+prefix retrieves differently — and it is accepted because `memoryQueryParts`
+appends the objective first and the triggering message last, so what is dropped
+is the tail of a long message rather than the objective. Reordering those parts
+would change what truncation costs.
+
+### 2026-09-02 — A deploy no longer kills the runs it interrupts
+
+**What changed:** `persistScope` and `persistPluginActivation` reuse an existing
+row for the run whatever the caller passes, instead of comparing the incoming
+`scopeHash` / `toolSurfaceHash` against the stored one and answering `mismatch`.
+The `mismatch` outcome is gone from `FencedWriteOutcome`, and with it the
+`immutable_run_scope_mismatch` and `plugin_activation_mismatch` throws in
+`harness-run-runtime.ts`. A run whose Durable Object is reset now simply
+restarts its loop against the scope it was admitted with.
+
+**Why:** Production, 2026-09-02. A work-stream run was mid-flight when the
+deploy promoting `1543508` landed. Cloudflare resets a Durable Object when the
+Worker's code is updated, which killed the in-flight provider request for model
+turn 12 and then killed the first recovery attempt. Recovery itself worked: the
+dangling assistant reservation was settled honestly as
+`assistant_turn_interrupted`, and the loop re-entered twice. The third
+resumption ran on the new bundle and died in `persistImmutableRunScope`, because
+the scope hash mixes the deployed build — tool-surface hash, prompt version,
+routing policy version, limits — into the authority it was meant to be about,
+and `stableRunToolSurfaceHash` hashes every tool's `inputSchema` verbatim. The
+deployed diff added `minLength: 1` to some Linear and X cursor properties. That
+was the whole distance from a JSON-schema tweak to a terminal
+`harness_execution_failed`, whose member copy reads *"Retrying is unlikely to
+help"* when retrying was precisely what worked. The comparison was unsound
+rather than merely unlucky: the stored hash is what the run was admitted with,
+the incoming one is recomputed from whatever code the current attempt runs, and
+those are only equal when no deploy intervened. The team already knew half of
+this — the `WORKSTREAM_PROMPT_VERSION` entry below declines to bump a constant
+for exactly this reason — but a version constant can be withheld and a
+connector's `inputSchema` cannot.
+
+**Considered and rejected:** Splitting the hash into an authority half that
+stays frozen and a build half that is only recorded, which keeps a real check on
+a resumed attempt widening its connection set — rejected as more machinery than
+this earns right now; live per-tool-call reauthorization already refuses a
+connection the workspace has since revoked, and the widening case was only ever
+caught by killing the run. Keeping the freeze and re-admitting a fresh run on
+mismatch — rejected because it still pays a full restart and a duplicate model
+spend on every deploy. Minting a new attempt ID on restart — rejected because
+tool receipts are keyed to `(run_id, attempt_epoch, tool_position)` and plugin
+activations to the attempt, so a fresh identity re-runs external writes the dead
+instance already made; the resumption path already restarts the loop without
+that cost.
+
+Raised in review and also rejected: *filtering* the freshly assembled tool
+surface against the stored eligible connection and capability fields. It is
+strictly better than the two rejected checks above — it restores the admitted
+bound without reinstating any comparison, so a run still restarts rather than
+dying — and it was declined anyway, deliberately. Rally is one product with one
+authorization path, and that path is live: the principal, work-stream state,
+connection identity, owner, grants and capability are rechecked before every
+tool call. A second bound derived from a snapshot would be a parallel model to
+keep correct, and the case it uniquely catches — a connection added between two
+attempts of one run, in the seconds a Durable Object takes to restart — is
+narrow enough not to earn one. Revisit this if resumed runs ever become
+long-lived enough for workspace state to move underneath them routinely.
+
+**Consequences:** Nothing re-checks that a resumed attempt's authority did not
+widen between attempts, so a connection added mid-run can widen the resumed
+surface. That bound now rests entirely on live revalidation before every tool
+call, which is where the enforcement already was: the stored `run_scopes` row is
+read in only two places, both on the inline-child path, and never to authorize a
+tool. **This is the intended model rather than a gap awaiting a follow-up**: a
+resumed run's authority is its current state, and live revalidation is what
+bounds it. Anyone reading this as an oversight should change it deliberately,
+not patch it.
+
+**A third site of the same shape survives, one step downstream, and this change
+is what makes it reachable.** The tool-receipt path compares a recomputed
+per-plugin `toolSurfaceHash` against a stored one in `storedToolPolicyMatches`
+(`integrations.ts`) and compares a recomputed `execution_plan_hash` against a
+stored one in `admit` (`workstream-tool-receipt-storage.ts`); the plan hash folds
+in that same surface hash, and receipt coordinates are deterministic, so a
+resumed attempt re-issues the same coordinate and both comparisons go false
+after a deploy. `compatiblePriorPlanHashes` covers only the legacy
+canonical-name variant. The consequence is not a killed run on the root path but
+a worse answer on a narrower one: a completed tool call is not replayed from its
+durable receipt, cannot be rebound, and `admit` reports
+`ambiguous_external_write` for a call that definitively completed — and on the
+inline-child path `integrations.ts` throws `tool_receipt_execution_plan_mismatch`,
+which is uncoded and becomes the same terminal `harness_execution_failed` this
+entry set out to remove. So read this entry's title narrowly: a deploy no longer
+kills an interrupted run *through the scope and activation writes*. Fixing the
+receipt path was deliberately left out of this change because it moves what
+counts as "the same plan" for replay, which is the machinery that keeps a
+completed external write from being re-sent, and that deserves its own change
+and its own tests. The rule below is what it needs: compare stored against
+stored, or exclude the build fields.
+
+The removed value comparison was also doing a second job by accident. Because a
+stale executor carries a different attempt ID, it fell to `mismatch` and threw,
+which fenced it; `persistPluginActivation` had no other ownership assertion at
+all, since `persistRunPluginActivation` does not call
+`assertHarnessAttemptOwned`. Reusing on the row alone would have handed a
+zombie executor a false success and let it keep building context against a run
+it no longer holds. Both writes therefore run `attemptOwnership` *before* the
+reuse path, which keeps the deploy fix and still reports a lost lease. The child binding is untouched and still has teeth,
+because `persistInlineChildScope` compares the child's `inherited_scope_hash`
+against the parent's *stored* hash — two stored values, neither recomputed, so a
+deploy cannot separate them. `run_scopes.scope_hash` and
+`run_plugin_activations.tool_surface_hash` survive as a forensic record of the
+build a run was admitted on; no migration was needed and none of the columns
+moved. Anyone reinstating a comparison here must compare stored against stored,
+or exclude the build fields, or it will fail every run that outlives a deploy.
+
+### 2026-09-02 — Every tool schema is corrected to a plain object root at the wire
+
+**What changed:** `toModelToolDefinitions` now runs
+`repairRootSchemaForProviders` over each tool's `parameters` on the way to the
+provider. It was previously applied at one call site, over dynamic connector
+tools only, and it deleted the root union rather than merging it.
+[`agent-tools.md`](agent-tools.md#changelog) carries the measured rule, the two
+Azure error strings behind it, and the authoring consequence.
+
+**Why:** A root-level combinator on a tool's `parameters` fails the whole
+request on Azure OpenAI, every tool in it, and `openai/gpt-5.6-sol` is fenced to
+Azure with no second candidate to fall back to — so the first production run to
+choose it died before its first turn. Tool schemas reach this function from four
+independent places: this repository, a connector adapter, a hosted MCP server,
+and a skill. Only two of those are visible to a build-time test, and a rule that
+four sets of authors have to remember is one that will be forgotten. The single
+chokepoint every tool already passes through is the only place a guarantee can
+actually be made.
+
+**What a future change has to respect:** the correction belongs here rather than
+at the sources, and the build-time gate in
+`apps/api/test/tool-schema-sanitization.test.ts` stays anyway. They are not
+redundant — the corrector keeps a third-party schema from taking down a run, and
+the gate keeps this repository's own tools from silently depending on the
+corrector to be shippable. Removing either one leaves a gap the other does not
+cover.
 
 ### 2026-09-02 — A blanked optional argument is normalized to an omission
 
@@ -2302,8 +2601,11 @@ the deploy is the rollout and the revert is the rollback; an admission-consulted
 flag is the recorded escalation if staged rollout is later wanted.
 
 **Consequences:** `WORKSTREAM_PROMPT_VERSION` is deliberately not bumped. It is
-hashed into the immutable run scope, so bumping it fails every in-flight run
-resuming across the deploy with `immutable_run_scope_mismatch`. The section
+hashed into the recorded run scope, and at the time of this change bumping it
+failed every in-flight run resuming across the deploy with
+`immutable_run_scope_mismatch`. That hazard is gone as of *A deploy no longer
+kills the runs it interrupts* above, which stopped comparing a recomputed scope
+against the recorded one; the reasoning that follows stands on its own. The section
 grants no capability and moves no authority — eligible capabilities and the tool
 surface hash are unchanged — and its flag derives from environment and run input
 already frozen for the run, so a resumed attempt's scope is the same scope. A

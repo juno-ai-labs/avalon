@@ -2,7 +2,7 @@ import type {
   MemoryTableColumnType,
   WorkstreamWorkflowInput,
 } from "@rally/contracts";
-import { AutomationMemoryTableSchema, asWorkspaceId } from "@rally/contracts";
+import { AutomationMemoryTableSchema, asWorkspaceId, MEMORY_RECALL_QUERY_LIMIT } from "@rally/contracts";
 import { nowIso } from "@rally/db";
 import type { HarnessTool, HarnessToolResult } from "@rally/agent-harness";
 import { z } from "zod";
@@ -151,7 +151,7 @@ function memoryTableRevisionConflict(code = "memory_table_revision_conflict"): M
   );
 }
 
-const SearchSchema = z.strictObject({ query: z.string().trim().min(1).max(2_000) });
+const SearchSchema = z.strictObject({ query: z.string().trim().min(1).max(MEMORY_RECALL_QUERY_LIMIT) });
 const DescribeSchema = z.strictObject({ memoryTableId: z.string().min(1) });
 
 /** The WorkspaceDO that owns this workspace's durable-table storage. */
@@ -1072,11 +1072,32 @@ export function createMemoryTableTools(env: Env, input: WorkstreamWorkflowInput)
     {
       definition: {
         name: "search",
-        description: "Find structured durable-memory tables across every scope authorized by the host. Scope selectors are not accepted.",
+        description: "Find structured durable-memory tables across every scope authorized by the host. Scope selectors are not accepted. query is 1 to 2000 characters.",
         capability: "table.search",
         mode: "read",
         idempotency: "safe",
-        inputSchema: { type: "object", additionalProperties: false, properties: { query: { type: "string" } }, required: ["query"] },
+        // The bounds are declared, not just enforced. `SearchSchema` has always
+        // rejected a query outside 1..2000, and the schema the model was shown
+        // said only `string` — so the one argument this tool takes could be
+        // built out of a long transcript excerpt, pass everything the model
+        // could see, and be refused by a bound nothing had told it about.
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: { query: { type: "string", minLength: 1, maxLength: MEMORY_RECALL_QUERY_LIMIT } },
+          required: ["query"],
+        },
+      },
+      // Not for the length — the declared bound above covers that, and the
+      // runtime's own `validateToolArguments` reads it. This is for `.trim()`,
+      // which JSON Schema cannot express: `{ query: "   " }` satisfies
+      // `minLength: 1` and is refused only by `SearchSchema`. Without the hook
+      // the runtime reads that refusal as the tool's own data being bad and
+      // tells the model to retry *without changing its arguments*. Item 12 in
+      // `docs/agent-tools.md` is the rule.
+      validateInput: (raw) => {
+        const result = SearchSchema.safeParse(raw);
+        return result.success ? null : result.error;
       },
       execute: async (raw) => {
         const args = SearchSchema.parse(raw);

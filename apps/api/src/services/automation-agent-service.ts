@@ -79,7 +79,21 @@ export class AutomationAgentService {
     if (snapshot.definition === null) automationRefusal("automation_definition_not_ready");
     const draft = AutomationDraftSchema.parse(snapshot.definition);
     if (!draft.ready) automationRefusal("automation_definition_not_ready");
-    return this.accept({
+    // Typed as the request schema's own input, because `accept` re-parses this
+    // and a field it rejects leaves the boundary as `500 internal_error` /
+    // "An unexpected error occurred". That is what `modelOverride: null` did
+    // here: the field is an `optional()` enum, so `null` is not one of its
+    // values, and every press of a proposal card's Create failed on it. The
+    // annotation catches that shape — a type the schema cannot accept — at
+    // `pnpm typecheck`. It cannot catch what the schema only checks while
+    // parsing (`resourceIds`' `.max(20)`, the `superRefine` refusing delivery
+    // targets outside a personal scope); those are satisfied by construction
+    // below, where both are empty literals.
+    //
+    // The card names no model, so the request carries no `modelOverride` at
+    // all — absent is how this schema spells "no override", and `accept`
+    // coalesces it to the `null` the object stores.
+    const request: z.input<typeof CreateAutomationRequestSchema> = {
       draftId: id,
       draft,
       scope: draft.suggestedScope,
@@ -89,8 +103,8 @@ export class AutomationAgentService {
       activitySourcePluginIds: {},
       resourceIds: [],
       deliveryTargets: [],
-      modelOverride: null,
-    });
+    };
+    return this.accept(request);
   }
 
   async accept(rawInput: unknown): Promise<AutomationDetail> {

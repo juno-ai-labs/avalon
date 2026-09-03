@@ -302,6 +302,15 @@ and on no request at all. The client's `subscribe` frame names no collection, no
 filter and no page size; it carries a waterline, which is where that client got
 to, not what it would like.
 
+The automation slice is deliberately limited to the two scopes the top-level
+sidebar renders: every `workspace` automation and the viewer's own `personal`
+automations. A `workstream` automation belongs only on its owning room's
+automation rail, even when the viewer authored it. This is a positive scope
+allowlist at the SQLite read, not an ownership inference after the read: the
+whole subscribe answer is schema-checked as one value, so admitting a third
+scope into that slice prevents the work-stream, note, project, and automation
+lists from being sent at all.
+
 Every subscribe carries it, cold or resuming. A resume where no topic moved
 still gets one, under `reason: "resume"` with an empty topic list — the one
 event shape allowed to name no topics, because it exists to hand over state
@@ -717,6 +726,35 @@ the provider's redirect and cannot move; [`security.md`](security.md) records
 what that leaves exposed.
 
 ## Changelog
+
+### 2026-09-02 — A room-owned automation cannot block the whole sidebar snapshot
+
+**What changed:** WorkspaceDO's top-level automation read now admits only
+`personal` and `workspace` rows before applying its existing viewer rule. A real
+workerd regression test projects a third, `workstream`-scoped automation owned
+by the opening room and proves a fresh workspace subscription still receives
+the complete sidebar with only the ordinary automation in its top-level list.
+
+**Why:** The work-stream automation migration expanded
+`automation_directory.scope`, but the older sidebar query selected every row
+authored by the viewer. Once a viewer authored a room-owned automation, that
+row reached `WorkspaceSidebarSchema`, whose top-level automation contract
+correctly accepts only `personal` and `workspace`. The resulting `ZodError`
+happened before `workspace_sync` was sent, leaving every sidebar section in its
+loading state. A Worker deploy made the latent incompatibility visible by
+restarting sockets and forcing a fresh subscription; the deployed change did
+not itself alter the sidebar path.
+
+**Considered and rejected:** filtering only on
+`owning_workstream_id IS NULL`. The schema pairs that column with today's
+`workstream` scope, but a positive allowlist makes the top-level wire contract
+explicit and keeps a future scope expansion from entering this payload by
+accident.
+
+**Consequences:** Room-owned automations remain in the room rail and continue
+to advance the automation-directory waterline, but never enter the top-level
+summary array. A future top-level scope requires an intentional contract,
+query, client, and regression-test change together.
 
 ### 2026-09-02 — Ticket transit prepares admission and the initial feed frame
 

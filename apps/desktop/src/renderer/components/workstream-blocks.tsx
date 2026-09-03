@@ -1658,9 +1658,10 @@ function WorkAccordionRow({ message }: { message: Message }): React.JSX.Element 
  * when the drawer opens. A reader has already learned that chevron on the
  * answer below — every agent message folds its sections with it — and a second
  * collapse affordance drawn a second way, a few pixels above the first, would
- * read as a different kind of thing. It sits in this column's own glyph gutter
- * rather than the heading's negative offset, so it lands in the marks' column
- * and the total lands in their labels'; `.work-accordion-chevron` has why.
+ * read as a different kind of thing. It hangs in the gutter the same way too —
+ * outdented into the margin, so the total starts on the transcript's own left
+ * edge and the chevron is the only thing outside it; `.work-accordion-chevron`
+ * has why.
  *
  * The open flag comes from the feed where there is one, because this row is
  * exactly the shape the virtualizer mismeasures: it grows by a run's worth of
