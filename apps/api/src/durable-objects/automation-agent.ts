@@ -1272,9 +1272,22 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
     delete hashedInput.actorRole;
     const requestHash = await sha256(JSON.stringify(hashedInput));
     const existingAcceptance = this.acceptance();
-    if (existingAcceptance && existingAcceptance.request_hash !== requestHash) {
-      throw new Error("automation_acceptance_conflict");
-    }
+    // A retry has to be the same acceptance, and "the same" is judged on the
+    // facts the row stores — revision, scope, owning room — rather than on the
+    // stored hash matching this request's. The hash is a digest of the request
+    // shape, and that shape has changed once already (the id-only door dropped
+    // three fields): an object left `activating` by a pre-deploy request would
+    // otherwise refuse every retry from the new shape and stay stuck for good.
+    // The stored hash is kept as the fence the activation step checks below,
+    // so a row replaced mid-activation is still caught.
+    if (
+      existingAcceptance && (
+        existingAcceptance.definition_revision !== input.definitionRevision
+        || existingAcceptance.scope !== input.scope
+        || existingAcceptance.owning_workstream_id !== input.owningWorkstreamId
+      )
+    ) throw new Error("automation_acceptance_conflict");
+    const acceptanceHash = existingAcceptance?.request_hash ?? requestHash;
     const lifecycle = this.lifecycle();
     if (lifecycle === "active" || lifecycle === "paused") return this.detailUnchecked();
     if (lifecycle !== "draft" && lifecycle !== "activating") throw new Error("automation_not_acceptable");
@@ -1305,7 +1318,7 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
               evaluator_source_hash, accepted_at)
            VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           input.definitionRevision,
-          requestHash,
+          acceptanceHash,
           input.scope,
           input.owningWorkstreamId,
           JSON.stringify(prepared.selections.defaultPluginIds),
@@ -1385,7 +1398,7 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
     }
     this.state.storage.transactionSync(() => {
       const current = this.acceptance();
-      if (!current || current.request_hash !== requestHash) throw new Error("automation_acceptance_lost");
+      if (!current || current.request_hash !== acceptanceHash) throw new Error("automation_acceptance_lost");
       this.state.storage.sql.exec(
         `UPDATE automation_acceptance
             SET effective_after_event_sequence = ?, activated_at = ? WHERE id = 1`,

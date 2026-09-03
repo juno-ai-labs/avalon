@@ -412,10 +412,13 @@ export const AUTOMATIONS_PLUGIN_ID = "rally:automations";
 export const AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE = [
   "Automations you draft are proposals. A person accepts them; you never activate one.",
   "Ask which scope before you submit, because it cannot be changed afterwards:",
-  "\"personal\" belongs to the person who asked and delivers to their own inbox or DM,",
+  "\"personal\" belongs to the person who asked and acts with their own connections,",
   "\"workspace\" belongs to the admins and acts with the workspace's own connections,",
   "and \"workstream\" belongs to this work stream — everyone in the room can manage it,",
-  "its results land here, and it outlives whoever asked for it.",
+  "Rally posts its results here, and it outlives whoever asked for it.",
+  "Nothing else is delivered for an automation: if its result should reach an inbox, a channel, a DM, or a document,",
+  "write that send and its recipient into the instructions as a step, because the run performs it with its own tools",
+  "and a result the instructions do not send goes nowhere.",
   "An automation can never deliver into a different work stream, so do not offer to send results to one.",
 ].join(" ");
 

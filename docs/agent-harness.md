@@ -1264,11 +1264,24 @@ alternatives are recorded in [`automation-lifecycle.md`](automation-lifecycle.md
 and [`security.md`](security.md); this entry records that the harness body above
 now describes them.
 
+Two corrections landed on review before this merged. `outputSurface` gained a
+fourth value, `self_delivery`, for an automation run no room owns: the
+`external_delivery` section says the final message *is delivered* outside the
+work stream, which for a run whose delivery section says nothing sends for it
+would license leaving the result in the final message; the new section keeps
+the outside-reader guidance and says the run's own sends are the only delivery.
+And the automations plugin's system message and the submit-draft scope
+description stopped promising that a personal automation "delivers to their own
+inbox or DM": they now say Rally posts a result only to an owning room, and
+that any other send must be written into the instructions as a step.
+
 **What a future change has to respect:** the empty arm is load-bearing and must
 stay accurate in both directions; a destination Rally sends to must appear in
 the list and nothing else may. The submission pre-check must keep applying the
 object's own predicate rather than a copy of it, or the two drift and a refusal
-reaches the model as a bare code again.
+reaches the model as a bare code again. The authoring text and the run prompt
+describe the same contract from two ends, so a change to where results go edits
+both.
 
 ### 2026-09-03 — Gemini 3.8 Flash defaults to low reasoning
 

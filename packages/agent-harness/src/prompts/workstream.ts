@@ -60,7 +60,14 @@ export interface WorkstreamPromptContext {
   title: string;
   objective: string;
   executionAuthority?: "user" | "workspace";
-  outputSurface?: "workstream" | "external_delivery" | "block_dashboard";
+  /**
+   * Where the final message is read. `external_delivery` is a surface Rally
+   * itself sends the final message to; `self_delivery` is an automation run
+   * that no room owns, whose result reaches anyone only through the sends the
+   * run makes with its own tools. The two want the same care for a reader
+   * outside Rally and opposite claims about who does the sending.
+   */
+  outputSurface?: "workstream" | "external_delivery" | "self_delivery" | "block_dashboard";
   slackOrigin?: SlackOriginContext;
   automation?: WorkstreamAutomationPromptContext;
 }
@@ -106,6 +113,9 @@ export function renderWorkstreamSystemPrompt(input: WorkstreamPromptContext): st
   const outputSurfaceSection = input.outputSurface === "external_delivery"
     ? `# External delivery output
 - This run's final message is delivered outside the work stream, where recipients cannot open Rally resource embeds. For a document-shaped request, put the complete usable result in the final message. You may publish a resource too, but never replace the delivered body with only an embed, title, or invitation to open Rally.`
+    : input.outputSurface === "self_delivery"
+      ? `# Sending the result yourself
+- Nothing sends this run's final message anywhere. Whatever this run produces reaches its reader only through the sends you make with your own tools, outside the work stream, where recipients cannot open Rally resource embeds. Put the complete usable result in what you send. You may publish a resource too, but never send only an embed, title, or invitation to open Rally.`
     : input.outputSurface === "block_dashboard"
       ? `# HyperSight block output
 - This run produces a HyperSight block. The document-publishing workflow does not apply: do not write or publish a document. Submit the finished Markdown through the block submission tool; ordinary assistant text is discarded.`

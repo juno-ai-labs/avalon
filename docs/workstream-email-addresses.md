@@ -360,40 +360,10 @@ sunbird, terrapin, waxbill
   prompt context as `resultDelivery`, and the `# Result delivery` section tells
   the run not to post the result there itself. For every other automation the
   list is empty and the same section says that sending is the run's own work.
-- **`resultDelivery` mirrors each sender's own predicate, not a third one.** Email
-  delivers from `active` and only in production; Slack deliberately delivers from
-  `needs_input` too and skips a member who turned that notification off. A
-  convenient single predicate gets one of them wrong, and being wrong here is
-  either a duplicate delivery or a result delivered nowhere. The loader and the
-  two senders change together.
-- **Outside production, an automation's result is not emailed at all** —
-  `sendResendEmail` refuses to send transactional mail from a developer's machine
-  or a staging Worker. That is why `resultDelivery` names no email destination
-  there: a run told Rally has the email covered suppresses its own send, and
-  since the compiler no longer writes a provider send either, a staging
-  automation that used to mail through the connector would otherwise go quiet
-  with nothing to explain it. If a staging automation stops emailing, this is the
-  reason and it is working as intended.
-- **A destination whose owner lost workspace membership is still listed.**
-  `deliverAutomationResultEmail` re-checks membership against regional D1 and
-  skips, so that result reaches nobody — the run stood down for a delivery that
-  did not happen. It is left this way deliberately: mirroring the check would put
-  a cross-region read on every automation run start for a case that is rare and
-  self-correcting once the membership row is repaired. A future change that makes
-  the destination set richer should reconsider it.
-- **Its order is fixed.** The rows are rendered into the system prefix, which is
-  re-rendered every turn and must be byte-identical across a retry; nothing
-  constrains the order two rows come back in.
-- **The result email carries a canonical HTTPS link, never `rallywithai://`.** Mail
-  clients do not linkify a custom scheme, and most readers of a briefing are on a
-  phone with no desktop app — see [`workstream-links.md`](workstream-links.md).
-- **The outbound email destination is the literal address frozen when the target
-  was created**, so a later account change cannot silently redirect results. The
-  *set* of destinations is not frozen — an owner may turn one on or off from the
-  automation — but a destination that survives an edit keeps its row, and with it
-  the per-run fence that stops a workflow retry mailing the same result twice.
-- **Every run lands in its own Rally work stream**, and that destination cannot be
-  turned off — the copies are additions to the canonical record, never replacements.
+- **Every run lands in its own Rally work stream**, and that cannot be turned
+  off; a room-owned automation's result is additionally posted to the owning
+  room by the child's wake. Anything the run sends elsewhere is its own tool
+  call, and nothing in this module sends on its behalf.
 
 ## Boundary
 
