@@ -3,7 +3,10 @@ import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AuthContext, Env } from "../src/env";
 import { __workOpportunityTesting, WorkOpportunityService } from "../src/services/work-opportunity-service";
-import { enqueueActivityOpportunity } from "../src/services/work-opportunity-batching";
+import {
+  enqueueActivityOpportunity,
+  isSuggestedWorkCandidateEventType,
+} from "../src/services/work-opportunity-batching";
 import { WorkstreamService } from "../src/services/workstream-service";
 import { createCloudflareTestBinding, createTestD1PreparedStatement, createTestEnv } from "./helpers/cloudflare-test";
 import { openWorkstreamAuthorityForTest, testSubstreamAgentsBinding } from "./helpers/durable-authority";
@@ -196,6 +199,83 @@ describe("suggested-work aggregation", () => {
         sourceId: activityId,
       }),
     ]);
+  });
+
+  it("withholds CI status and calendar-instance activity from every admission window", async () => {
+    const database = migratedDatabase();
+    seed(database);
+    const activityId = "00000000-0000-7000-8000-000000000121";
+    const enqueueOpportunitySource = vi.fn(async (input: Record<string, unknown>) => {
+      void input;
+    });
+    const connectorEvent = vi.fn(async () => ({
+      connectorType: "github",
+      activity: {
+        id: activityId,
+        workspaceId,
+        region: "global",
+        connectionId: "00000000-0000-7000-8000-000000000011",
+        connectionScope: "workspace",
+        connectionOwnerUserId: null,
+        provider: "github",
+        providerEventId: "check-run-event",
+        eventType: "github.check_run.completed",
+        resourceType: "github_check_run",
+        providerResourceId: "juno-ai-labs/avalon/check-runs/1",
+        actor: {},
+        subject: {},
+        occurredAt: "2026-08-07T00:00:00.000Z",
+        receivedAt: "2026-08-07T00:00:01.000Z",
+        title: "CI passed",
+        summary: "A commit status, not work for a person",
+        textSnippet: "lint: success",
+        payloadRef: null,
+        visibility: {},
+        targetUserIds: [],
+        entityKeys: ["github:check_run:1"],
+        dedupeKey: "github:check-run-event",
+        rawContentHash: null,
+        metadata: {},
+        externalPeople: [],
+      },
+    }));
+    const workspaces = createCloudflareTestBinding<Env["WORKSPACE_DOS"]>({
+      idFromName: vi.fn().mockReturnValue({}),
+      get: vi.fn().mockReturnValue({ connectorEvent, enqueueOpportunitySource }),
+    });
+
+    await enqueueActivityOpportunity(
+      environment(database, { WORKSPACE_DOS: workspaces }),
+      activityId,
+      workspaceId,
+    );
+
+    // The activity was read — the decision needs its event type — and then
+    // nothing was opened for it, for either member.
+    expect(connectorEvent).toHaveBeenCalledTimes(1);
+    expect(enqueueOpportunitySource).not.toHaveBeenCalled();
+
+    // The families the gate names, and the neighbours it must keep admitting.
+    for (const excluded of [
+      "github.check_run.created",
+      "github.check_run.completed",
+      "github.workflow_run.requested",
+      "github.workflow_run.in_progress",
+      "github.workflow_run.completed",
+      "calendar.event_changed",
+    ]) {
+      expect(isSuggestedWorkCandidateEventType(excluded), excluded).toBe(false);
+    }
+    for (const admitted of [
+      "github.pull_request.opened",
+      "github.pull_request_review.submitted",
+      "github.push",
+      "calendar.event_completed",
+      "email.received",
+      "linear.issue.update",
+    ]) {
+      expect(isSuggestedWorkCandidateEventType(admitted), admitted).toBe(true);
+    }
   });
 
   // Two suites lived here and covered the D1 batching window: the debounce and
