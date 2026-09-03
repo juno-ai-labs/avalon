@@ -1297,6 +1297,14 @@ bodies, so a cap of Rally's own would be [a number nobody
 here can justify](adding-security-defensive-and-other-limits.md) guarding
 against a cost the platform already bounds.
 
+**Both regions, deliberately.** The reason travels on the regional structured
+log rather than only in the Global archive, so EU — whose inference is
+[never archived](inference-lakehouse.md) — has the same account of a refusal
+that Global does, in the same field, from the same code. A test in
+`agent-inference-logging.test.ts` pins that: the EU-shaped environment archives
+nothing and still logs the body. Anything that later moves this reasoning back
+into a Global-only surface takes EU's only copy with it.
+
 **What a reader has to keep true:** the body is provider-controlled text that
 quotes our own request back often enough to be assumed to. It is evidence,
 never instruction — the same rule tool output and fetched pages already carry —
