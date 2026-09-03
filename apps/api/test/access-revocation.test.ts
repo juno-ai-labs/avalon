@@ -585,13 +585,12 @@ describe("carrying one revocation to the objects", () => {
     workstreamIds?: string[];
     automationIds?: string[];
     substreamIds?: string[];
-    blockIds?: string[];
     failAt?: boolean;
   } = {}) {
     const visits: Visit[] = [];
     const sent: Published[] = [];
     /**
-     * One double serves all five namespaces: the consumer only ever calls
+     * One double serves all four namespaces: the consumer only ever calls
      * `revokeSocketAccess`, and what each object answers with is the whole
      * difference between the hops.
      */
@@ -619,10 +618,8 @@ describe("carrying one revocation to the objects", () => {
       })),
       WORKSTREAM_DOS: namespace(() => ({
         substreamIds: options.substreamIds ?? [],
-        blockIds: options.blockIds ?? [],
       })),
       SUBSTREAM_AGENTS: namespace(() => undefined),
-      BLOCK_DASHBOARD_AGENTS: namespace(() => undefined),
       AUTOMATION_AGENTS: namespace(() => undefined),
       ACCESS_REVOCATION_QUEUE: {
         send: async (body: unknown) => { sent.push({ body }); },
@@ -633,7 +630,6 @@ describe("carrying one revocation to the objects", () => {
   }
 
   const WORKSTREAM = "00000000-0000-7000-8000-0000000000a1";
-  const BLOCK = "00000000-0000-7000-8000-0000000000b1";
   const SUBSTREAM = "00000000-0000-7000-8000-0000000000c1";
 
   function message(target: AccessRevocationMessage["target"]): AccessRevocationMessage {
@@ -689,14 +685,13 @@ describe("carrying one revocation to the objects", () => {
     expect(sent).toEqual([]);
   });
 
-  it("publishes a message for every substream and block a work stream names", async () => {
-    const { env, sent } = fanOut({ substreamIds: ["0", SUBSTREAM], blockIds: [BLOCK] });
+  it("publishes a message for every substream a work stream names", async () => {
+    const { env, sent } = fanOut({ substreamIds: ["0", SUBSTREAM] });
     await applyAccessRevocation(env, message({ scope: "workstream", workstreamId: WORKSTREAM }));
 
     expect(targetsOf(sent)).toEqual([
       { scope: "substream", workstreamId: WORKSTREAM, substreamId: "0" },
       { scope: "substream", workstreamId: WORKSTREAM, substreamId: SUBSTREAM },
-      { scope: "block", workstreamId: WORKSTREAM, blockId: BLOCK },
     ]);
   });
 
@@ -705,10 +700,7 @@ describe("carrying one revocation to the objects", () => {
     await applyAccessRevocation(env, message({
       scope: "substream", workstreamId: WORKSTREAM, substreamId: SUBSTREAM,
     }));
-    await applyAccessRevocation(env, message({
-      scope: "block", workstreamId: WORKSTREAM, blockId: BLOCK,
-    }));
-    expect(visits).toHaveLength(2);
+    expect(visits).toHaveLength(1);
     expect(sent).toEqual([]);
   });
 

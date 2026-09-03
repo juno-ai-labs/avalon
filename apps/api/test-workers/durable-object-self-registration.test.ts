@@ -18,12 +18,11 @@
  */
 import { env } from "cloudflare:workers";
 import type { DurableObject as RpcDurableObject } from "cloudflare:workers";
-import { asBlockId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import { asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import { reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import {
-  blockDashboardAgentName,
   substreamAgentName,
   workspaceDOName,
   workstreamDOName,
@@ -37,7 +36,6 @@ import {
 } from "./helpers/substream-fixture";
 
 const OTHER_WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-0000000004b1");
-const BLOCK_ID = asBlockId("00000000-0000-7000-8000-0000000004b2");
 
 /**
  * The internals these tests read on purpose.
@@ -167,26 +165,4 @@ describe("a Durable Object's registration of its own identity", () => {
     });
   });
 
-  it("lets a BlockDashboardAgent recognize itself with or without its block identity", async () => {
-    const name = blockDashboardAgentName("global", WORKSPACE_ID, WORKSTREAM_ID, BLOCK_ID);
-    const stub = env.BLOCK_DASHBOARD_AGENTS.get(env.BLOCK_DASHBOARD_AGENTS.idFromName(name));
-    await boot(stub);
-
-    await runInDurableObject(stub, (instance, state) => {
-      const held = internals(instance);
-      expect(selfFor(held.env, env.BLOCK_DASHBOARD_AGENTS, name)).not.toBeNull();
-
-      state.storage.sql.exec(
-        `INSERT INTO block_dashboard_block_identity
-           (id, workspace_id, workstream_id, block_id, region, created_at)
-         VALUES (1, ?, ?, ?, 'global', 1)`,
-        WORKSPACE_ID,
-        WORKSTREAM_ID,
-        BLOCK_ID,
-      );
-
-      expect(selfFor(held.env, env.BLOCK_DASHBOARD_AGENTS, name)).not.toBeNull();
-      expect(selfFor(held.env, env.WORKSTREAM_DOS, name)).toBeNull();
-    });
-  });
 });

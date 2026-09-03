@@ -79,7 +79,7 @@ files carry the `app_id`; [the feature-flag
 document](feature-flags.md#provisioning) has the commands for rebuilding them in
 a fresh account. Each model flag is seeded with the ids already in the
 `OPENROUTER_*` variables. Ace automatically ensures the
-`hypersight-enabled`, `meeting-recording-enabled`, `suggested-work-enabled`, and
+`meeting-recording-enabled`, `suggested-work-enabled`, and
 `automation-workspace-templates-enabled` flags exist with an off default on
 every merge that deploys it. Changing their targeting happens in Ace rather
 than the Flagship dashboard so connected clients receive the Queue push.
@@ -1210,7 +1210,7 @@ Both regional Workers must use `PUBLIC_WEB_BASE_URL=https://rallywith.ai` so ide
 
 ## Realtime operations and cost controls
 
-- Use deterministic region/workspace IDs for `WorkspaceDO`, region/workspace/work-stream IDs for model-free `WorkstreamDO`, append the external substream ID for each independently provisioned `SubstreamAgent`, and append `block-dashboard:<stable-block-id>` for each configured `BlockDashboardAgent`. Never allocate an object per socket, user, turn, tool call, or retry.
+- Use deterministic region/workspace IDs for `WorkspaceDO`, region/workspace/work-stream IDs for model-free `WorkstreamDO`, and append the external substream ID for each independently provisioned `SubstreamAgent`. Never allocate an object per socket, user, turn, tool call, or retry.
 - Respect the authority boundary. REST reads the selected `SubstreamAgent`, its
   parent holds aggregate metadata/outbox, and D1 contains only authority
   routing plus unrelated relational workspace data;
@@ -1222,8 +1222,8 @@ Both regional Workers must use `PUBLIC_WEB_BASE_URL=https://rallywith.ai` so ide
 - Every object constructor applies only bounded, append-only SQL migrations under `blockConcurrencyWhile()`. Diagnose failures through `_sql_schema_migrations`; a hash mismatch means history was edited, `schema_ahead` means the Worker is older than the object, and a foreign-key violation requires quarantine. Product data never moves through a hidden KV importer.
 - Keep `acceptWebSocket` and serialized attachments. Replacing them with the standard WebSocket API prevents Durable Object hibernation.
 - Keep exact text `ping`/`pong` in `setWebSocketAutoResponse`. The
-  SubstreamAgent feed jitters its heartbeat across 45–55 seconds; WorkspaceDO,
-  WorkstreamDO control, and BlockDashboardAgent sockets use a fixed 50-second
+  SubstreamAgent feed jitters its heartbeat across 45–55 seconds; WorkspaceDO
+  and WorkstreamDO control sockets use a fixed 50-second
   heartbeat. Every role waits 15 seconds for `pong` and reconnects with
   equal-jitter exponential backoff capped at 30 seconds. Auto-responses must not
   perform application work.
@@ -1237,12 +1237,6 @@ Both regional Workers must use `PUBLIC_WEB_BASE_URL=https://rallywith.ai` so ide
   foreground presence rather than socket counts. Brokered frames are limited to
   1 MB, and a failed managed-network attempt must follow Electron's remaining
   PAC directives in order rather than inventing a direct fallback.
-  While the HyperSight panel is visible, Electron also opens one direct
-  hibernating socket per configured `BlockDashboardAgent`; closing the panel
-  closes those block sockets, and reopening replaces from durable checkpoints.
-  WorkstreamDO remains the configuration/preference/terminal-result control
-  plane and never relays block token frames. An open idle block socket uses
-  hibernation and auto-response rather than billed application timers.
 - Verify foreground message ingress on the workspace socket: drop
   the connection after `create_message` but before its private receipt, confirm
   reconnect resends the same `clientMessageId`, and confirm exactly one
@@ -1487,7 +1481,7 @@ are never fields in these events.
 ### Root-run analytics
 
 Both API Workers bind `RUN_ANALYTICS` to the account-level Workers Analytics
-Engine dataset `avalon_agent_runs`. A root ordinary work-stream or HyperSight
+Engine dataset `avalon_agent_runs`. A root ordinary work-stream
 execution writes exactly one datapoint after the harness has produced its final
 result, the Workflow has rechecked durable cancellation, and D1 has committed
 the effective terminal status. It also emits the correlated
@@ -1511,9 +1505,9 @@ the schema grows:
 
 | Column | Meaning |
 | --- | --- |
-| `index1` | `<source>:<region>` sampling cohort, for example `block_dashboard:eu`; never a unique run ID |
+| `index1` | `<source>:<region>` sampling cohort, for example `workstream:eu`; never a unique run ID |
 | `blob1` | schema version (`harness_run_v1`) |
-| `blob2` | source (`workstream` or `block_dashboard`) |
+| `blob2` | source (`workstream`) |
 | `blob3` | terminal status |
 | `blob4` | final model ID |
 | `blob5` | terminal failure code or `none` |
@@ -1567,9 +1561,8 @@ For a dashboard, group the same weighted measures with
 `toStartOfInterval(timestamp, INTERVAL '1' HOUR)`. Use `count()` as a sample-size
 quality signal, not as the run count; `SUM(_sample_interval)` estimates events,
 and `quantileExactWeighted(..., _sample_interval)` is the supported percentile
-form. Filter on `index1 = 'block_dashboard:eu'` or
-`index1 = 'block_dashboard:global'` for the highest-resolution regional HyperSight
-view. Do not use this dataset for exact billing, deduplication, run lookup, or
+form. Filter on `index1 = 'workstream:eu'` or `index1 = 'workstream:global'` for
+a regional view. Do not use this dataset for exact billing, deduplication, run lookup, or
 crash recovery. End-to-end `double1`, calls, tokens, cost, and routed attempts
 remain usable on failed rows. Bind currently cannot return its detailed
 runToolLoop timing object after a thrown failed/stopped path, so filter
@@ -1969,7 +1962,7 @@ outcome and these delivery diagnostics do not exist:
   state committed and not that the row is already visible to R2 SQL.
 
 Keep this distinction during incident reconstruction: the owning
-`SubstreamAgent`/`BlockDashboardAgent` `inference_attempts` ledger is operational
+`SubstreamAgent` `inference_attempts` ledger is operational
 authority for attempt recovery, while the lakehouse is best-effort analytical
 evidence. Never repair product state from an analytical row.
 
@@ -2262,8 +2255,8 @@ procedures.
 ### OpenRouter unavailable
 
 The harness tries configured fallback models within its per-request and stream
-watchdogs plus the caller's run policy. Root ordinary work-stream and HyperSight
-runs allow 1,000 routed model attempts; durable child dispatch and attempt
+watchdogs plus the caller's run policy. Root ordinary work-stream runs allow
+1,000 routed model attempts; durable child dispatch and attempt
 leases recover long runs across eviction. Inline children and bounded one-shot
 callers retain their smaller wall-time and iteration ceilings. If all models fail, the run becomes `failed`
 and the work stream retains its persisted context. Check redacted structured

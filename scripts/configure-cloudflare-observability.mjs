@@ -114,7 +114,7 @@ export const SAVED_QUERY_DEFINITIONS = Object.freeze([
   ),
   savedQuery(
     "Avalon · Harness run outcomes",
-    "Terminal root-run summaries from ordinary work streams and HyperSight.",
+    "Terminal root-run summaries from ordinary work streams.",
     [filter("event", "eq", "string", "harness_run_finished")],
   ),
   savedQuery(

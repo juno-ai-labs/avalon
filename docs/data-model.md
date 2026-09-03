@@ -18,10 +18,7 @@ projections plus external-event registration and delivery receipts. See
 workspace product serving projection. Serving contract 1 makes each `SubstreamAgent` SQLite database the product authority for
 one independently ordered substream after the guarded regional generation opens;
 its non-agent `WorkstreamDO` parent owns aggregate work-stream metadata and the
-regional effect outbox plus HyperSight configuration/published results. Each
-stable HyperSight block has a separate `BlockDashboardAgent` execution ledger,
-while its fenced transcript and Bind runtime rows remain in main
-`SubstreamAgent("0")`. Legacy D1 workspace-product activity/opportunity rows are
+regional effect outbox. Legacy D1 workspace-product activity/opportunity rows are
 maintenance import input and are scrubbed before each verified WorkspaceDO route
 becomes active. Migration 0090 removes those sources, the per-work-stream source
 tables, and their writer fences after the authority is open. Neither family is a
@@ -31,10 +28,6 @@ rather than duplicating their DDL. Application
 contracts expose camel-cased TypeScript values; storage uses explicit
 snake-cased columns, and JSON only where provider- or model-shaped data is not
 relationally queried.
-
-The database vocabulary is intentionally `block_dashboard_*`; **HyperSight**
-is the product label rendered to users. No authoritative or compatibility table
-uses the product name after this unshipped cutover.
 
 Read it before adding a table, a column, or a migration, and before assuming that
 knowing an object's ID is enough to read it — it never is.
@@ -51,10 +44,9 @@ knowing an object's ID is enough to read it — it never is.
 | `apps/api/src/telemetry/` | The only services that interpret telemetry rows, deadlines, destination state, and EU analysis projections. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | The separate versioned authority schema local to one `SubstreamAgent`. |
 | `apps/api/src/durable-objects/workstream-transcript-storage.ts` | Canonical transcript fact ownership, participant and exact Bind projections, range snapshots, activities, and compaction checkpoints. |
-| `apps/api/src/durable-objects/workspace-do.ts`, `workspace-product-schema.ts`, `workspace-domain-schema.ts`, `workspace-product-storage.ts`, `workspace-runtime-sql.ts`, `workstream-do.ts` | SQL schemas and repositories for authoritative workspace product state, typed compatibility SQL, sync/command routing, bounded invalidation replay, non-agent child aggregation, HyperSight fan-out/results, and work-stream metadata sockets. |
+| `apps/api/src/durable-objects/workspace-do.ts`, `workspace-product-schema.ts`, `workspace-domain-schema.ts`, `workspace-product-storage.ts`, `workspace-runtime-sql.ts`, `workstream-do.ts` | SQL schemas and repositories for authoritative workspace product state, typed compatibility SQL, sync/command routing, bounded invalidation replay, non-agent child aggregation, and work-stream metadata sockets. |
 | `apps/api/src/services/workspace-runtime-database.ts` | D1-compatible routing port that sends an allowlisted workspace-product statement to typed WorkspaceDO RPC while leaving global/regional control SQL in D1; mixed-authority batches fail closed, and so does any single statement — read or write — naming both a WorkspaceDO table and a regional-only one. |
 | `apps/api/src/durable-objects/workspace-directory-protocol.ts` | Typed, runtime-validated cross-object query and effect contracts joining WorkstreamDO facts to WorkspaceDO serving state without cross-database SQL. |
-| `apps/api/src/durable-objects/block-dashboard-agent.ts` | Per-block SQL identity, socket receipt, durable execution/retry/result-settlement ledger, and full active-output checkpoint. |
 | `packages/contracts` | The camel-cased shapes the columns are mapped into. |
 
 ## How it works
@@ -162,15 +154,7 @@ plan, archive/system marker, or schedule rather than accidentally retain it.
 `SubstreamAgent` continues to own ordered parts, active output, and replay; token
 frames are never database joins or metadata patches.
 
-HyperSight is intentionally split by responsibility. WorkstreamDO's
-`block_dashboard_configuration_versions`, `block_dashboard_block_runs`, preferences,
-dispatch outbox, and result receipts are the product/control authority. A
-`BlockDashboardAgent.agent_run_dispatches` row owns the long-running executor.
-Its singleton `agent_stream_checkpoint` stores the complete currently visible
-derived output, revision, epoch, and sequence;
-`block_dashboard_socket_ticket_receipts` provides one-time admission for the block's
-direct socket. It stores neither a copy of the source transcript nor one row per
-token. Each `SubstreamAgent` instead owns one stable `substream_loops` row,
+Each `SubstreamAgent` owns one stable `substream_loops` row,
 not-yet-canonical `pending_loop_inputs` whose prepared content is immutable
 and whose `input_sequence` is the live promotion order, minimal immutable
 `delivered_loop_inputs` replay receipts, exact `assistant_turn_reservations`,
@@ -920,6 +904,20 @@ copy this recipe rather than the disabled-foreign-keys mode, and
 — a new table referencing `connector_connections` has to be added there or its
 rows will be lost by the next such rebuild.
 
+### 2026-09-03 — HyperSight storage is retired at every live authority
+
+**What changed:** WorkstreamDO schema v5 and SubstreamAgent schema v38 drop the
+dashboard configuration, run, preference, outbox, and receipt tables and remove
+the pending refresh job.
+
+**Why:** Disabling reads would leave feature data and retry work live inside
+Durable Objects. Complete removal requires a forward cleanup at each authority.
+
+**Consequences:** The older schema steps remain unchanged so existing objects
+can migrate deterministically before the cleanup step runs.
+
+Shipped in #541.
+
 ### 2026-09-03 — Stored automation state carries no delivery targets
 
 **What changed:** The automation bullet above no longer describes a frozen
@@ -938,6 +936,8 @@ retried. Rewriting stored state was chosen over tolerating the key on read
 because a tolerated key is a dead field every future reader has to know to
 ignore. The product reasoning is in
 [`automation-lifecycle.md`](automation-lifecycle.md).
+
+Shipped in #541.
 
 ### 2026-08-31 — Platform identity routes become plural and setup replay becomes durable
 

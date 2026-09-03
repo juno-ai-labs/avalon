@@ -3,11 +3,11 @@ import { z } from "zod";
 /**
  * The shape every typed object port shares.
  *
- * Four of these exist — receipts, the block dashboard, scheduling, the
- * transcript — and they were four copies of this file with the nouns changed.
+ * Three of these exist — receipts, scheduling, and the transcript — and they
+ * were copies of this file with the nouns changed.
  * What actually differs between them is a storage class, a list of operation
  * names, and an error code; everything else here was duplicated four times,
- * which meant a fix to the pattern had to be made four times and a divergence
+ * which meant a fix to the pattern had to be repeated and a divergence
  * between them was invisible.
  *
  * The pattern itself is unchanged: a port's surface is *derived* from its

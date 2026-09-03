@@ -390,10 +390,8 @@ function first<T>(cursor: SqlStorageCursor<T extends Record<string, SqlStorageVa
  * failure. A lease already expired without the marker remains the stale-run
  * reaper's authority and is not resumed.
  *
- * HyperSight roots are deliberately excluded: their executor is a separate
- * BlockDashboardAgent, so this object's restart says nothing about whether
- * that owner is alive. Descendants of a local root are included so the resumed
- * parent can reclaim the same child attempt when it reaches that tool call.
+ * Descendants of a local root are included so the resumed parent can reclaim
+ * the same child attempt when it reaches that tool call.
  */
 export function expireLocalAttemptLeasesFromPreviousInstance(
   storage: DurableObjectStorage,
@@ -407,7 +405,6 @@ export function expireLocalAttemptLeasesFromPreviousInstance(
       `SELECT run_id, legacy_attempt_id AS attempt_id
          FROM runs
         WHERE parent_tool_call_id IS NULL
-          AND origin != 'block_dashboard_block'
           AND terminalized_at IS NULL
           AND legacy_attempt_id IS NOT NULL
           AND lease_owner IS NOT NULL
@@ -432,7 +429,6 @@ export function expireLocalAttemptLeasesFromPreviousInstance(
             run_id IN (
               SELECT run_id FROM runs
                WHERE parent_tool_call_id IS NULL
-                 AND origin != 'block_dashboard_block'
                  AND terminalized_at IS NULL
                  AND legacy_attempt_id IS NOT NULL
                  AND lease_owner IS NOT NULL
@@ -444,7 +440,6 @@ export function expireLocalAttemptLeasesFromPreviousInstance(
             OR chain_root_run_id IN (
               SELECT run_id FROM runs
                WHERE parent_tool_call_id IS NULL
-                 AND origin != 'block_dashboard_block'
                  AND terminalized_at IS NULL
                  AND legacy_attempt_id IS NOT NULL
                  AND lease_owner IS NOT NULL
@@ -538,17 +533,13 @@ export class WorkstreamHarnessRunStorage {
             -- receipt holds a live attempt lease. The stable substream-loop
             -- lease is the lifecycle authority; this remains a subordinate
             -- provider/effect fence rather than a second loop identity.
-            AND (
-              origin = 'block_dashboard_block'
-              OR NOT EXISTS (
-                SELECT 1 FROM runs active
-                 WHERE active.run_id != ?1
-                   AND active.origin != 'block_dashboard_block'
-                   AND active.parent_tool_call_id IS NULL
-                   AND active.status IN ${BUSY_RUN_STATUSES}
-                   AND active.terminalized_at IS NULL
-                   AND active.lease_expires_at > ?5
-              )
+            AND NOT EXISTS (
+              SELECT 1 FROM runs active
+               WHERE active.run_id != ?1
+                 AND active.parent_tool_call_id IS NULL
+                 AND active.status IN ${BUSY_RUN_STATUSES}
+                 AND active.terminalized_at IS NULL
+                 AND active.lease_expires_at > ?5
             )`,
         input.runId,
         input.attemptId,
@@ -570,7 +561,7 @@ export class WorkstreamHarnessRunStorage {
         if (claimed.cancellation_requested_at !== null) return { outcome: "cancelled" as const };
         return {
           outcome: "busy" as const,
-          activeLeaseExpiresAt: this.activeLeaseExpiresAt(claimed.origin),
+          activeLeaseExpiresAt: this.activeLeaseExpiresAt(),
         };
       }
       this.recordLifecycleEvent({
@@ -583,7 +574,7 @@ export class WorkstreamHarnessRunStorage {
         memberSafePayloadJson: "{}",
         now: input.now,
       });
-      if (claimed.origin !== "block_dashboard_block") this.markWorkstreamRunning(input.now);
+      this.markWorkstreamRunning(input.now);
       return {
         outcome: "claimed" as const,
         attemptEpoch: claimed.attempt_epoch,
@@ -601,8 +592,7 @@ export class WorkstreamHarnessRunStorage {
    * retired view flattened to one `running`, and a claim must not demote an
    * `interrupting` work stream to plain `running` — the retired trigger did not
    * either, because it compared the view's projection on both sides before
-   * writing. A HyperSight block never reaches here: those runs are beside the
-   * work stream rather than holding it.
+   * writing.
    */
   private markWorkstreamRunning(now: number): void {
     this.sql.exec(
@@ -628,10 +618,6 @@ export class WorkstreamHarnessRunStorage {
   /**
    * When the run holding this work stream will let go, if one is.
    *
-   * A HyperSight block is never blocked by an interactive run and vice versa,
-   * so the question is asked against the same origin rule the claim itself
-   * uses.
-   *
    * **The contended run is deliberately not excluded.** A duplicate dispatch of
    * a run that is already being worked on is refused by the same `busy` branch
    * as a work stream held by someone else, and in that case the live lease this
@@ -642,13 +628,11 @@ export class WorkstreamHarnessRunStorage {
    * already exclude a run that is not holding anything, which is why the
    * routed version this replaces had no such exclusion either.
    */
-  private activeLeaseExpiresAt(origin: string): number | null {
+  private activeLeaseExpiresAt(): number | null {
     const row = first(this.sql.exec<{ lease_expires_at: number | null } & Record<string, SqlStorageValue>>(
       `SELECT MAX(lease_expires_at) AS lease_expires_at FROM runs
-        WHERE (? = 'block_dashboard_block' OR origin != 'block_dashboard_block')
-          AND parent_tool_call_id IS NULL
+        WHERE parent_tool_call_id IS NULL
           AND status IN ${BUSY_RUN_STATUSES} AND terminalized_at IS NULL`,
-      origin,
     ));
     return row?.lease_expires_at ?? null;
   }
@@ -911,17 +895,15 @@ export class WorkstreamHarnessRunStorage {
       if (launched?.run_id !== input.runId) {
         throw new Error("substream_loop_execution_receipt_changed");
       }
-      if (run.origin !== "block_dashboard_block") {
-        this.sql.exec(
-          `UPDATE workstream
-              SET exact_state = 'running',
-                  state_reason_code = 'runtime_running',
-                  state_changed_at = ?1,
-                  updated_at = ?1
-            WHERE id = 1 AND exact_state = 'scheduled'`,
-          input.now,
-        );
-      }
+      this.sql.exec(
+        `UPDATE workstream
+            SET exact_state = 'running',
+                state_reason_code = 'runtime_running',
+                state_changed_at = ?1,
+                updated_at = ?1
+          WHERE id = 1 AND exact_state = 'scheduled'`,
+        input.now,
+      );
       return { outcome: "launched" as const };
     });
   }
@@ -959,18 +941,11 @@ export class WorkstreamHarnessRunStorage {
     });
   }
 
-  /**
-   * The newest root run a member would recognise as "this conversation's".
-   *
-   * HyperSight blocks are excluded for the reason the claim excludes them: they
-   * run beside the conversation rather than being it. Three callers ask this —
-   * two to find the run they should be reconciling, and `admitRun` to decide
-   * whether the caller's view of "newest" is still true.
-   */
+  /** The newest root run a member would recognise as "this conversation's". */
   latestRootRun(): RunRow | undefined {
     return first(this.sql.exec<RunRow>(
       `SELECT ${RUN_COLUMNS} FROM runs
-        WHERE parent_tool_call_id IS NULL AND origin != 'block_dashboard_block'
+        WHERE parent_tool_call_id IS NULL
         ORDER BY created_at DESC, run_id DESC LIMIT 1`,
     ));
   }
@@ -1804,7 +1779,7 @@ export class WorkstreamHarnessRunStorage {
         input.usageJson,
         input.errorJson,
       );
-      if (run.origin !== "block_dashboard_block") this.settleWorkstreamState(input.runId, input.status, input.now);
+      this.settleWorkstreamState(input.runId, input.status, input.now);
       this.cancelDescendants({
         rootRunId: input.runId,
         reason: "parent_terminalized",
@@ -2049,7 +2024,6 @@ export class WorkstreamHarnessRunStorage {
    */
   residualRepairCandidates(input: {
     markerEventKey: string;
-    blockOnly: boolean;
     limit: number;
   }): ResidualRepairRow[] {
     return this.sql.exec<ResidualRepairRow>(
@@ -2076,12 +2050,11 @@ export class WorkstreamHarnessRunStorage {
           -- became universal have no marker either, so the walk backfills them
           -- a bounded page at a time. Each repaired row records its marker, so
           -- it is paid once rather than on every activation.
-          AND (?1 = 0 OR run.parent_tool_call_id IS NOT NULL OR run.origin = 'block_dashboard_block')
           AND NOT EXISTS (
             SELECT 1 FROM run_lifecycle_events settled
              WHERE settled.run_id = run.run_id
                AND settled.attempt_id = run.legacy_attempt_id
-               AND settled.event_key = ?2
+               AND settled.event_key = ?1
           )
         -- Newest first, for one reason: a card stranded minutes ago is the one
         -- a member is looking at, and it must not wait behind every historical
@@ -2097,8 +2070,7 @@ export class WorkstreamHarnessRunStorage {
         -- caller's onReceiptRepairFailure hook, and a wedged page is that
         -- warning repeating the same run id.
         ORDER BY run.terminalized_at DESC, run.run_id DESC
-        LIMIT ?3`,
-      input.blockOnly ? 1 : 0,
+        LIMIT ?2`,
       input.markerEventKey,
       input.limit,
     ).toArray();
@@ -2117,13 +2089,12 @@ export class WorkstreamHarnessRunStorage {
   // This pass is the only recovery for an executor that died without
   // terminalizing at all, and nothing schedules it: `reapStaleHarnessRuns` is
   // called from one place, immediately before a new attempt is claimed
-  // (`substream-agent.ts`, and its BlockDashboard twin). A work stream nobody
+  // (`substream-agent.ts`). A work stream nobody
   // sends another message to therefore keeps such a run `running` and its tool
   // card spinning indefinitely. Closing that needs the object to wake on its
   // own expired lease, which is a wake reason and belongs to
   // `docs/durable-object-alarms.md` rather than to this operation.
   staleLeaseRuns(input: {
-    blockOnly: boolean;
     now: number;
     limit: number;
   }): StaleRunRow[] {
@@ -2135,11 +2106,9 @@ export class WorkstreamHarnessRunStorage {
           AND parent_tool_call_id IS NULL
           AND legacy_attempt_id IS NOT NULL AND lease_expires_at IS NOT NULL
           AND lease_expires_at <= ?1
-          AND (?2 = 0 OR origin = 'block_dashboard_block')
         ORDER BY lease_expires_at ASC
-        LIMIT ?3`,
+        LIMIT ?2`,
       input.now,
-      input.blockOnly ? 1 : 0,
       input.limit,
     ).toArray();
   }
@@ -2189,9 +2158,7 @@ export class WorkstreamHarnessRunStorage {
         input.runId,
         input.now,
       );
-      if (run.origin !== "block_dashboard_block") {
-        this.settleWorkstreamState(input.runId, "failed", input.now);
-      }
+      this.settleWorkstreamState(input.runId, "failed", input.now);
       this.cancelDescendants({
         rootRunId: input.runId,
         reason: "parent_stale_run_reaped",
@@ -2378,7 +2345,7 @@ export class WorkstreamHarnessRunStorage {
         input.triggerPartId,
         input.now,
       );
-      if (input.status === "running" && input.origin !== "block_dashboard_block") {
+      if (input.status === "running") {
         this.markWorkstreamRunning(input.now);
       }
       return { outcome: "admitted" as const };
@@ -2501,9 +2468,7 @@ export class WorkstreamHarnessRunStorage {
         input.now,
         input.errorJson,
       );
-      if (run.origin !== "block_dashboard_block") {
-        this.settleWorkstreamState(input.runId, input.status, input.now);
-      }
+      this.settleWorkstreamState(input.runId, input.status, input.now);
       return { outcome: "terminalized" as const };
     });
   }
@@ -2522,7 +2487,6 @@ export class WorkstreamHarnessRunStorage {
     const stillBusy = first(this.sql.exec<{ count: number } & Record<string, SqlStorageValue>>(
       `SELECT COUNT(*) AS count FROM runs
         WHERE run_id != ?
-          AND origin != 'block_dashboard_block'
           AND parent_tool_call_id IS NULL
           AND status IN ('admitted', 'running')
           AND terminalized_at IS NULL

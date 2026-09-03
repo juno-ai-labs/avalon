@@ -1,7 +1,6 @@
 import {
   asArtifactId,
   asAutomationId,
-  asBlockId,
   asSubstreamId,
   asWorkspaceId,
   asWorkstreamId,
@@ -13,7 +12,6 @@ import { describe, expect, it } from "vitest";
 import {
   artifactHostDOName,
   automationAgentName,
-  blockDashboardAgentName,
   substreamAgentName,
   workspaceDOName,
   workstreamDOName,
@@ -22,7 +20,6 @@ import {
 const WORKSPACE = asWorkspaceId("3f2504e0-4f89-41d3-9a0c-0305e82c3301");
 const WORKSTREAM = asWorkstreamId("3f2504e0-4f89-41d3-9a0c-0305e82c3302");
 const SUBSTREAM = asSubstreamId("3f2504e0-4f89-41d3-9a0c-0305e82c3303");
-const BLOCK = asBlockId("3f2504e0-4f89-41d3-9a0c-0305e82c3304");
 const AUTOMATION = asAutomationId("3f2504e0-4f89-41d3-9a0c-0305e82c3305");
 const ARTIFACT = asArtifactId("3f2504e0-4f89-41d3-9a0c-0305e82c3306");
 
@@ -38,7 +35,6 @@ const EVERY_MINTED_NAME = (["global", "eu"] as const).flatMap((region) => [
   workstreamDOName(region, WORKSPACE, WORKSTREAM),
   substreamAgentName(region, WORKSPACE, WORKSTREAM),
   substreamAgentName(region, WORKSPACE, WORKSTREAM, SUBSTREAM),
-  blockDashboardAgentName(region, WORKSPACE, WORKSTREAM, BLOCK),
   automationAgentName(region, WORKSPACE, AUTOMATION),
   artifactHostDOName(region, ARTIFACT),
 ]);

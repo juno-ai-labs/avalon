@@ -220,9 +220,7 @@ describe("the windows a reader asks for", () => {
     const { storage } = open();
     await mixed(storage);
 
-    // The HyperSight context fence names a sequence number and needs the row
-    // that holds it, to prove the frozen boundary it was dispatched with still
-    // exists.
+    // Sequence-addressed reads need the exact row at the frozen boundary.
     expect(storage.messageAtSequence({ sequenceNumber: 2 })?.id).toBe("m2");
     expect(storage.messageAtSequence({ sequenceNumber: 99 })).toBeUndefined();
   });

@@ -26,7 +26,6 @@ test("rejects direct Durable Object namespace routing operations", () => {
     assert.match(messages[0].message, /durableObjectStubForWorkspace/u);
   }
   assert.equal(lint(`env.CRASH_SYMBOLICATOR.getByName(crashId)`).length, 1);
-  assert.equal(lint(`env.BLOCK_DASHBOARD_AGENTS.getByName(blockId)`).length, 1);
 });
 
 test("rejects computed, optional, aliased, and typed namespace routing", () => {

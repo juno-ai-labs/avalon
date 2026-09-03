@@ -164,7 +164,7 @@ the throw is an assertion and should say so.
 **Severity:** coverage-gap
 
 **Observed.** `test/ordinary-harness-run-selection.test.ts` asserted the SQL
-*text* of four queries that exclude inline children and HyperSight runs. It is
+*text* of four queries that exclude inline children. It is
 deleted; the rule is now asserted behaviourally, against a real object, in
 `test-workers/ordinary-harness-run-selection.test.ts` — but only for the reader
 that suite can reach, which is the work stream's own detail projection.
