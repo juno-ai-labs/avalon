@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-export type RailVariant = 'context' | 'runs';
+export type RailVariant = 'context';
 /** The panel occupying the right sidebar slot. */
 export interface RailInspector {
   type: 'resource' | 'connection' | 'task' | 'run';

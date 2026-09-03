@@ -15,7 +15,6 @@ function summary(): WorkstreamSummary {
     id: '00000000-0000-7000-8000-000000000001',
     title: 'Typed cache boundary',
     titleStatus: 'settled',
-    origin: 'ad_hoc',
     harnessStatus: 'completed',
     scope: 'workspace',
     latestAttentionSequenceNumber: 0,

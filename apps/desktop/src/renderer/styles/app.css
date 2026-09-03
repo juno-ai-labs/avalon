@@ -5444,3 +5444,27 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
     padding-right: 16px;
   }
 }
+
+/* The automation screen's header carries a second row (triggers and runs), so
+   its grid row is sized by content rather than the work stream's fixed 55px. */
+.workstream-screen.automation-screen { grid-template-rows: auto minmax(0, 1fr) auto; }
+.automation-header { align-items: stretch; flex-direction: column; gap: 6px; }
+.automation-header-row { align-items: center; display: flex; gap: 12px; justify-content: space-between; min-height: 43px; min-width: 0; }
+.automation-header .workstream-header-actions { gap: 6px; }
+.automation-header .workstream-subtitle > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.automation-header-email { flex: 0 0 auto; }
+.automation-lifecycle.is-draft { border-style: dashed; color: var(--av-sys-color-text-muted); }
+.automation-lifecycle.is-active { background: var(--av-sys-color-success-wash, transparent); color: var(--av-sys-color-success-base); }
+.automation-header-details { align-items: flex-start; display: flex; flex-wrap: wrap; gap: 8px 18px; padding: 0 0 4px; }
+.automation-header-triggers { color: var(--av-sys-color-text-muted); display: flex; flex-wrap: wrap; font-size: 11px; gap: 4px 14px; list-style: none; margin: 0; padding: 0; }
+.automation-header-triggers li::before { content: '\25CF'; font-size: 7px; margin-right: 6px; vertical-align: middle; }
+.automation-runs { font-size: 11px; min-width: 0; }
+.automation-runs > summary { color: var(--av-sys-color-text-muted); cursor: pointer; user-select: none; }
+.automation-runs-next { color: var(--av-sys-color-text-subtle); }
+.automation-runs-empty { color: var(--av-sys-color-text-muted); margin: 4px 0 0; }
+.automation-runs-list { display: flex; flex-direction: column; gap: 4px; list-style: none; margin: 6px 0 0; max-height: 132px; overflow-y: auto; padding: 0; }
+.automation-run-row { align-items: center; display: flex; gap: 8px; }
+.automation-run-copy { display: flex; flex-direction: column; min-width: 0; }
+.automation-run-copy small { color: var(--av-sys-color-text-muted); }
+.automation-draft-actions { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; }
+.automation-draft-link { text-decoration: none; }

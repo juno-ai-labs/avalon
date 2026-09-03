@@ -48,7 +48,9 @@ import {
   deliverParentEffects,
   pendingParentEffects,
 } from "./helpers/conversation-effects";
+import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
 import { useOpenRouterDouble } from "./helpers/openrouter-double";
+import { useSelectedModel } from "./helpers/selected-model";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 
 /** Its own workspace: object names are shared across files, storage is not. */
@@ -59,7 +61,7 @@ const SESSION_ID = "00000000-0000-7000-8000-00000000ad03";
 const SLACK_CONNECTION_ID = "00000000-0000-7000-8000-00000000ad04";
 const RESOURCE_ID = "00000000-0000-7000-8000-00000000ad05";
 const EMAIL_LOCAL_PART = "amber-cobalt-jade-brook";
-const EMAIL_ADDRESS = `${EMAIL_LOCAL_PART}@mail.rallywithai.com`;
+const EMAIL_ADDRESS = `${EMAIL_LOCAL_PART}@automation.rallywith.ai`;
 const NOW = "2026-08-29T10:00:00.000Z";
 const TEST_ENV: Env = env;
 const RUN_SETTLE_TIMEOUT_MS = 15_000;
@@ -90,6 +92,8 @@ const DEFINITION: AutomationDraft = {
 };
 
 const provider = useOpenRouterDouble(() => ({ say: "Done." }));
+useSelectedModel();
+useHeldEffectQueue();
 
 function actor(userId = AUTHOR_ID) {
   return { userId, actorRole: "member" as const, participantOfOwningWorkstream: false };
@@ -151,9 +155,13 @@ async function seedRegionalDatabase(): Promise<void> {
   ]);
 }
 
-/** The workspace half: the one Slack connection a draft can bind. */
-async function seedWorkspaceObject(): Promise<void> {
-  await workspaceStub().initializeWorkspace(WORKSPACE_ID, "wnam");
+/**
+ * The workspace half: one Slack connection a draft can bind, and one resource
+ * on it. Seeded by the tests that need it rather than by every test, because
+ * the run child's harness loads every connection in the workspace and the
+ * test Worker configures no Slack connector.
+ */
+async function seedSlackConnection(): Promise<void> {
   await runInDurableObject(workspaceStub(), (_instance, state) => {
     state.storage.sql.exec(
       `INSERT OR REPLACE INTO connector_connections
@@ -178,6 +186,46 @@ async function seedWorkspaceObject(): Promise<void> {
       NOW,
       NOW,
     );
+  });
+}
+
+/** One accepted Slack event in the workspace, which moves its event sequence. */
+async function ingestSlackEvent(eventId: string, providerEventId: string): Promise<void> {
+  await workspaceStub().ingestConnectorEvent({
+    workspaceId: WORKSPACE_ID,
+    ingressEventId: eventId,
+    payloadHash: `sha256:${"b".repeat(64)}`,
+    event: {
+      connectorType: "slack",
+      activity: {
+        id: eventId,
+        workspaceId: WORKSPACE_ID,
+        region: "global",
+        connectionId: SLACK_CONNECTION_ID,
+        connectionScope: "workspace",
+        connectionOwnerUserId: null,
+        provider: "slack",
+        providerEventId,
+        eventType: "slack.message.posted",
+        resourceType: "slack_channel",
+        providerResourceId: "C123",
+        actor: {},
+        subject: {},
+        occurredAt: NOW,
+        receivedAt: NOW,
+        title: "New message",
+        summary: "A channel message arrived",
+        textSnippet: "foobar",
+        payloadRef: null,
+        visibility: { kind: "workspace" },
+        targetUserIds: [],
+        entityKeys: [],
+        dedupeKey: `slack:${providerEventId}`,
+        rawContentHash: null,
+        metadata: { messageText: "foobar" },
+        externalPeople: [],
+      },
+    },
   });
 }
 
@@ -254,6 +302,15 @@ async function activeRegistrations(): Promise<number> {
     ).one().count);
 }
 
+/** The text of one protocol message, whichever shape the harness sent it in. */
+function promptText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content.map((part) => (
+    typeof part === "object" && part !== null && "text" in part ? String((part as { text: unknown }).text) : ""
+  )).join("\n");
+}
+
 /**
  * Let the run alarm provision the child and its loop run to a terminal state.
  * Forced first, then polled: an overdue alarm may already have fired on its
@@ -286,7 +343,7 @@ beforeEach(async () => {
   AUTOMATION_ID = asAutomationId(`00000000-0000-7000-8000-${String(automationOrdinal).padStart(4, "0")}00000ad0`);
   await reset();
   await seedRegionalDatabase();
-  await seedWorkspaceObject();
+  await workspaceStub().initializeWorkspace(WORKSPACE_ID, "wnam");
 });
 
 describe("AutomationDO", () => {
@@ -296,6 +353,7 @@ describe("AutomationDO", () => {
   });
 
   it("applies a ready revision: binds the workspace connection, reserves the address, activates", async () => {
+    await seedSlackConnection();
     await createDraft();
     expect((await automationRow()).lifecycle).toBe("draft");
     const submitted = await submit({
@@ -318,10 +376,11 @@ describe("AutomationDO", () => {
     const row = await automationRow();
     expect(JSON.parse(row.connector_bindings_json)).toEqual({ plugin_slack: SLACK_CONNECTION_ID });
     expect(row.effective_after_event_sequence).toBe(0);
-    // The parent outbox carries the sidebar row and nothing else.
+    // The parent outbox carries the sidebar row, one per change, and nothing else.
     const queued = await pendingParentEffects(automationStub());
-    expect(queued.map((envelope) => envelope.effect.kind)).toEqual(["directory_automation"]);
-    expect(queued[0]?.effect).toMatchObject({ lifecycle: "active", title: "Manual helper" });
+    expect(queued.length).toBeGreaterThanOrEqual(1);
+    expect(new Set(queued.map((envelope) => envelope.effect.kind))).toEqual(new Set(["directory_automation"]));
+    expect(queued.at(-1)?.effect).toMatchObject({ lifecycle: "active", title: "Manual helper" });
   });
 
   it("refuses to apply a revision naming a plugin the workspace has no connection for", async () => {
@@ -330,7 +389,7 @@ describe("AutomationDO", () => {
       ...DEFINITION,
       recommendedPlugins: [{ pluginId: "plugin_absent", recommendedTools: [], reason: "Needed" }],
     });
-    await expect(apply()).rejects.toThrow("automation_plugin_unavailable");
+    await expect(apply()).rejects.toMatchObject({ code: "automation_plugin_unavailable" });
     expect((await automationRow()).lifecycle).toBe("draft");
   });
 
@@ -440,10 +499,20 @@ describe("AutomationDO", () => {
   });
 
   it("admits an external event once, and refuses one from before the activation boundary", async () => {
-    await activeAutomation();
+    await seedSlackConnection();
+    await createDraft();
+    await submit();
+    // An event that arrived before the automation was applied: the boundary
+    // the apply records is the workspace's latest event sequence at that
+    // moment, and a rule that did not exist when the event arrived must not
+    // match it later.
+    const earlierEventId = "00000000-0000-7000-8000-00000000ad50";
+    await ingestSlackEvent(earlierEventId, "event-before-activation");
+    await apply();
+    expect((await automationRow()).effective_after_event_sequence).toBe(1);
     const event = {
-      id: "00000000-0000-7000-8000-00000000ad50",
-      eventSequence: 7,
+      id: "00000000-0000-7000-8000-00000000ad52",
+      eventSequence: 2,
       eventType: "slack.message.posted",
       title: "New message",
       summary: "A channel message arrived",
@@ -461,8 +530,10 @@ describe("AutomationDO", () => {
       .toEqual({ admitted: true, outcomeCode: "automation_occurrence_admitted" });
     expect(await automationStub().admitExternalEvent({ ...admission, event }))
       .toEqual({ admitted: true, outcomeCode: "automation_occurrence_replayed" });
-    expect(await automationStub().admitExternalEvent({ ...admission, event: { ...event, eventSequence: 0 } }))
-      .toEqual({ admitted: false, outcomeCode: "automation_event_before_activation_boundary" });
+    expect(await automationStub().admitExternalEvent({
+      ...admission,
+      event: { ...event, id: earlierEventId, eventSequence: 1 },
+    })).toEqual({ admitted: false, outcomeCode: "automation_event_before_activation_boundary" });
     expect((await runRows()).map((run) => run.occurrence_key)).toEqual([`external:${event.id}`]);
   });
 
@@ -515,7 +586,7 @@ describe("AutomationDO", () => {
 
     const run = await settledChildRun(started.runId);
 
-    expect(run.status).toBe("completed");
+    expect(run).toMatchObject({ status: "completed", error_json: null });
     expect(await automationStub().listChildren({ workspaceId: WORKSPACE_ID, parentId: AUTOMATION_ID }))
       .toEqual({ children: [
         { substreamId: "0", kind: "main", createdAt: expect.any(Number) },
@@ -524,7 +595,7 @@ describe("AutomationDO", () => {
     // The loop asked this object for revision 2 and put its instructions in
     // front of the model.
     expect(provider.calls.length).toBeGreaterThanOrEqual(1);
-    const systemPrompt = String(provider.calls[0]!.messages[0]?.content ?? "");
+    const systemPrompt = promptText(provider.calls[0]!.messages[0]?.content);
     expect(systemPrompt).toContain("Count the open pull requests and report the number.");
     expect(await automationStub().readRunDefinition({ ...addressed(), runId: started.runId })).toMatchObject({
       definitionRevision: 2,
@@ -540,7 +611,8 @@ describe("AutomationDO", () => {
     expect(await automationStub().readRunState({ ...addressed(), runId: started.runId }))
       .toEqual({ state: "completed", lifecycle: "active" });
     const parent = await deliverParentEffects(TEST_ENV, automationStub());
-    expect(parent.map((envelope) => envelope.effect.kind)).toEqual(["directory_automation"]);
+    expect(parent.length).toBeGreaterThanOrEqual(1);
+    expect(new Set(parent.map((envelope) => envelope.effect.kind))).toEqual(new Set(["directory_automation"]));
     const listed = await workspaceStub().listAutomationDirectory({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID });
     expect(listed.items.map((item) => [item.id, item.status])).toEqual([[AUTOMATION_ID, "active"]]);
 

@@ -23,7 +23,6 @@ import { MAX_RESOURCE_PREVIEW_WAIT_MS, readResourcePreviewText } from '../lib/re
 import { desktopBridge } from '../lib/platform';
 import { reportTelemetryProductIntent } from '../lib/telemetry';
 import type {
-  AutomationRunSummary,
   ResourceVersion,
   WorkstreamAutomationSummary,
   WorkstreamDetail,
@@ -32,7 +31,7 @@ import type {
 import { type RailInspector, type RailVariant, useUiStore } from '../lib/ui-store';
 import { useDebugEnabled } from '../lib/use-debug-enabled';
 import { ResourceIcon } from './markdown-citations';
-import { Avatar, Badge, Button, EmptyState, IconButton, InlineError, Modal, StatusDot } from './primitives';
+import { Avatar, Badge, Button, EmptyState, IconButton, InlineError, Modal } from './primitives';
 import { SiteResourceDetail, type SiteResourceDetailProps } from './site-resource-detail';
 import { MarkdownBody } from './workstream-blocks';
 import { RailSurface } from './rail-surface';
@@ -76,7 +75,12 @@ interface InspectorRailProps {
   workstreamAutomationsError?: string | undefined;
   /** Opens one in the automation surface. Absent where there is nowhere to go. */
   onOpenWorkstreamAutomation?: (automationId: string) => void;
-  runs?: AutomationRunSummary[];
+  /**
+   * Whether the context lists the automations this parent owns. Only a work
+   * stream owns any; an automation's own conversation shows no such section
+   * rather than an empty one.
+   */
+  automationsSection?: boolean;
   onAddParticipant?: () => void;
   onAddResource?: () => void;
   onDetachResource?: (resource: WorkstreamResource) => void | Promise<void>;
@@ -101,7 +105,6 @@ interface InspectorRailProps {
   ) => void;
   onRefreshResource?: (resource: WorkstreamResource) => void;
   refreshingResourceId?: string | null;
-  onOpenRun?: (run: AutomationRunSummary) => void;
   /** True while the inspector is fading out. */
   leaving?: boolean;
   dropTarget?: {
@@ -168,16 +171,13 @@ function WorkstreamAutomations({
 }
 
 /**
- * What this automation is doing, in one line.
- *
- * The attention reason wins over the status: an automation whose trigger cannot
- * fire still reads "Active", and that is the row somebody needs to look at.
+ * What this automation is doing, in one line. A draft is labelled as one: it
+ * is listed here so the room can find the conversation it is being written
+ * in, not because it runs.
  */
 function automationStatusLine(automation: WorkstreamAutomationSummary): string {
-  if (automation.attention) return 'Needs attention';
   if (automation.status === 'paused') return 'Paused';
   if (automation.status === 'draft') return 'Draft';
-  if (automation.status === 'error') return 'Needs attention';
   return automation.nextRunAt
     ? `Next ${new Date(automation.nextRunAt).toLocaleString(undefined, {
         month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
@@ -239,6 +239,7 @@ function ContextContent({
   workstreamAutomations,
   workstreamAutomationsError,
   onOpenWorkstreamAutomation,
+  automationsSection = true,
   onAddParticipant,
   onAddResource,
   onToggleWatch,
@@ -247,6 +248,7 @@ function ContextContent({
   | 'workstreamAutomations'
   | 'workstreamAutomationsError'
   | 'onOpenWorkstreamAutomation'
+  | 'automationsSection'
   | 'onAddParticipant'
   | 'onAddResource'
   | 'onToggleWatch'
@@ -337,13 +339,15 @@ function ContextContent({
 
       {/* Between Artifacts and Details: what the room owns sits with the rest of
           its context, above the metadata nobody scrolls to. */}
-      <Section title="Automations">
-        <WorkstreamAutomations
-          automations={workstreamAutomations}
-          error={workstreamAutomationsError}
-          {...(onOpenWorkstreamAutomation ? { onOpen: onOpenWorkstreamAutomation } : {})}
-        />
-      </Section>
+      {automationsSection && (
+        <Section title="Automations">
+          <WorkstreamAutomations
+            automations={workstreamAutomations}
+            error={workstreamAutomationsError}
+            {...(onOpenWorkstreamAutomation ? { onOpen: onOpenWorkstreamAutomation } : {})}
+          />
+        </Section>
+      )}
 
       <Section title="Details">
         <dl className="detail-list">
@@ -392,20 +396,6 @@ function ContextContent({
               Debug enabled. */}
           {debugEnabled && (
             <>
-              <div><dt>Origin</dt><dd>{workstream.origin === 'automation' ? workstream.automationName ?? 'Automation' : 'Ad hoc'}</dd></div>
-              {workstream.automationSubscription && (
-                <>
-                  <div><dt>Automation</dt><dd>{workstream.automationSubscription.name}</dd></div>
-                  <div><dt>Subscription scope</dt><dd>{workstream.automationSubscription.scope === 'you' ? 'You' : 'Workspace'}</dd></div>
-                  <div><dt>Subscription status</dt><dd>{workstream.automationSubscription.status}</dd></div>
-                  <div><dt>Trigger</dt><dd>{workstream.automationSubscription.triggerSummary}</dd></div>
-                  <div><dt>Execution</dt><dd>{workstream.automationSubscription.executionScope}</dd></div>
-                  <div><dt>Subscription ID</dt><dd className="mono">{workstream.automationSubscription.id}</dd></div>
-                </>
-              )}
-              {!workstream.automationSubscription && workstream.automationSubscriptionId && <div><dt>Automation subscription</dt><dd className="mono">{workstream.automationSubscriptionId}</dd></div>}
-              {workstream.plannedFor && <div><dt>Planned for</dt><dd>{formatDateTime(workstream.plannedFor)}</dd></div>}
-              {workstream.automationRunId && <div><dt>Automation run</dt><dd className="mono">{workstream.automationRunId}</dd></div>}
               {workstream.latestHarnessRun && (
                 <>
                   <div><dt>Harness status</dt><dd>{workstream.latestHarnessRun.status.replace('_', ' ')}</dd></div>
@@ -435,41 +425,6 @@ function ContextContent({
           )}
         </dl>
       </Section>
-    </div>
-  );
-}
-
-function RunsContent({ runs = [], onOpenRun }: Pick<InspectorRailProps, 'runs' | 'onOpenRun'>): React.JSX.Element {
-  const [filter, setFilter] = useState<'all' | 'scheduled' | 'manual'>('all');
-  const filtered = runs.filter((run) => filter === 'all' || (filter === 'scheduled' ? run.triggerType === 'scheduled' : run.triggerType === 'manual'));
-  return (
-    <div className="rail-variant-body">
-      <div className="rail-toolbar" role="group" aria-label="Run filter">
-        {(['all', 'scheduled', 'manual'] as const).map((value) => (
-          <button aria-pressed={filter === value} className={filter === value ? 'is-selected' : ''} key={value} onClick={() => setFilter(value)} type="button">
-            {value[0]!.toUpperCase() + value.slice(1)}
-          </button>
-        ))}
-      </div>
-      {filtered.length === 0 ? (
-        <EmptyState title="No runs yet" description="Scheduled, manual, activity, and webhook runs appear here." />
-      ) : (
-        <ul className="run-rail-list">
-          {filtered.map((run) => (
-            <li key={run.id}>
-              <button className="run-rail-row" onClick={() => onOpenRun?.(run)} type="button">
-                <StatusDot compact status={run.status} />
-                <span className="run-rail-copy">
-                  <strong>{run.title}</strong>
-                  <small>{run.resultSummary ?? (run.status === 'running' ? `Running ${formatRelative(run.triggerTime)}` : formatRelative(run.triggerTime))}</small>
-                </span>
-                <Badge>{run.triggerType.toUpperCase()}</Badge>
-                <ChevronRight aria-hidden="true" size={14} />
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
     </div>
   );
 }
@@ -803,7 +758,6 @@ function inspectedResource(
 
 const railTitle: Record<RailVariant, string> = {
   context: 'Work stream',
-  runs: 'Runs',
 };
 
 export function InspectorRail(props: InspectorRailProps): React.JSX.Element | null {
@@ -814,7 +768,6 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
   const closeRail = useUiStore((state) => state.closeRail);
   const setRailWidth = useUiStore((state) => state.setRailWidth);
   const inspect = useUiStore((state) => state.inspect);
-  const runs = props.runs ?? props.workstream?.automationRuns ?? [];
   const resource = inspectedResource(inspector, props.workstream);
   const [archiveTarget, setArchiveTarget] = useState<WorkstreamResource | null>(null);
   const [archiving, setArchiving] = useState(false);
@@ -926,10 +879,8 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
             {...(props.siteArtifacts ? { siteArtifacts: props.siteArtifacts } : {})}
             workstream={props.workstream}
           />
-        ) : railVariant === 'context' ? (
-          <ContextContent {...props} />
         ) : (
-          <RunsContent onOpenRun={props.onOpenRun} runs={runs} />
+          <ContextContent {...props} />
         )}
       </div>
       <Modal

@@ -1,687 +1,613 @@
 # Durable automation lifecycle
 
-An automation is one named `AutomationAgent` Durable Object. It is created when
-the first authoring turn is admitted, holds the draft conversation while the
-architect compiles a definition, becomes the accepted runtime authority in place,
-and then owns every trigger occurrence, generated run, schedule, memory mutation,
-inbound-email receipt, and result-delivery receipt for the rest of its life.
-Draft and active are lifecycle states of one object: promotion mints no second
-ID and copies no state to a second authority.
+An automation is one `AutomationDO` Durable Object and one conversation. The
+object is a conversation parent, like `WorkstreamDO`: its substream `0` is the
+automation's own chat, where the automation is drafted, created, and later
+edited, and every run is a child substream under it. The object holds the
+automation itself (lifecycle, immutable definition revisions, schedules, runs,
+inbound-email receipts) and the shared parent tables its conversations report
+into. Draft and active are lifecycle states of one object; applying a revision
+mints no second id and copies no state anywhere.
 
-`WorkspaceDO` keeps a content-free `automation_directory` row so the sidebar can
-find that object, plus the typed external-event registrations and delivery
-receipts that fan a connector event out to it. A projection can locate an
-automation; it can never authorize reading one.
+`WorkspaceDO` keeps a content-free `automation_directory` row per automation,
+published by the object through the same outbox its children's aggregates
+travel through, plus the typed external-event registrations that fan a
+connector event out to it. A directory row can locate an automation; it never
+authorizes reading one.
 
-Read this before changing automation routes, the architect's tools, triggers,
-schedules, runs, memory, the workspace projection, or the one-shot cutover.
-[`automation-drafts.md`](automation-drafts.md) is the historical record of the
-retired WorkspaceDO subscription-row design and is not implementation guidance.
+Read this before changing automation routes, the drafting plugin, triggers,
+schedules, runs, the result tool, or the sidebar row. The hierarchy an
+`AutomationDO` sits in, the conversation-parent contract it implements, and the
+effect pipeline its children use are owned by
+[`workstream-durable-object.md`](workstream-durable-object.md).
 
 ## Where the code lives
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/api/src/durable-objects/automation-agent.ts` | The product authority: schema, socket room, draft admission, compiler dispatch, acceptance, schedules, occurrences, run provisioning, memory RPC, delivery receipts, and the projection outbox. |
-| `apps/api/src/durable-objects/automation-agent-memory.ts` | Automation-owned memory items and tables, and the generation-fenced tool executor generated runs reach them through. |
-| `apps/api/src/durable-objects/automation-cutover.ts` | The one-shot WorkspaceDO import: the legacy witness and its hash, the per-automation import, and `removeLegacyAutomationSchema`. |
-| `apps/api/src/durable-objects/ordered-transcript-sqlite/` | The shared ordered-transcript schema and canonical JSON the draft conversation is stored in — see [`ordered-transcript-sqlite.md`](ordered-transcript-sqlite.md). |
-| `apps/api/src/services/automation-agent-service.ts` | The single REST boundary. Claims an automation ID, addresses the named object, and wraps each RPC in `withAutomationErrors` so the object's thrown code becomes an HTTP answer. Each call site wraps itself deliberately: a `Proxy` over the stub is shorter and does not work — its `get` trap hands the stub's own method the proxy as `this`, which a brand-checking stub rejects with a `TypeError`, and an RPC returns a pipelining thenable rather than a native `Promise`, so an `instanceof Promise` branch never attaches the mapping. Both failures are invisible until a request reaches a real object. |
-| `apps/api/src/services/automation-agent-errors.ts` | The one table mapping an AutomationAgent error code to a status and a sentence a person reads, and the only place a refusal decided at the REST boundary is raised (`automationRefusal`, keyed on the table so a misspelled code is a type error). It also rebuilds an `ApiError` a collaborator threw inside the object, whose class does not survive the RPC hop. |
-| `apps/api/src/services/automation-service.ts` | What is left of the old service: the shared **template** catalog, publishing, and version validation. It starts no runs. |
-| `apps/api/src/services/external-event-evaluator.ts` | The pure DNF predicate evaluator WorkspaceDO matches registrations with. |
-| `packages/contracts/src/automation-agent.ts` | Lifecycle, admission, snapshot, and `AutomationRunContextV1` contracts. |
-| `packages/contracts/src/automation-evaluators.ts` | The strict, versioned external-event evaluator grammar. |
-| `packages/agent-harness/src/prompts/automation-compiler.ts` | The architect's standing policy and its draft-only tool surface. |
-| `apps/api/src/durable-objects/workspace-do.ts` | Migration 22: `automation_creation_claims`, `automation_directory`, `workspace_external_event_registrations`, `workspace_external_event_deliveries`, `automation_cutover_campaign` — plus the matcher and the delivery lease. |
-| `apps/api/src/queues/activity-consumer.ts` | Carries a canonical event into matching and each ID-only delivery out to its destination object. |
-| `apps/api/src/services/resend-inbound-email-service.ts` | Screens inbound mail against the agent before storing anything, then admits it. |
-| `apps/desktop/src/renderer/screens/automation.tsx` | The stable `/automations/:id` route; `new-automation.tsx` is its draft adapter and `automation-overview.tsx` its accepted one. |
-| `apps/desktop/src/renderer/lib/use-automation-agent-socket.ts` | The draft feed: ticket, snapshot, compiler stream, heartbeat, and reconnect. |
-| `scripts/cutover-automation-agents.mjs` | The one-shot authority cutover, now an operator tool rather than a deploy step — see the changelog for 2026-08-29. Idempotent per workspace. |
+| `apps/api/src/durable-objects/automation-do.ts` | The object: its v1 schema, `create`, `submitDefinition`, `apply`, `pause`, `resume`, `remove`, `setOwningRoomArchived`, `runNow`, `admitExternalEvent`, `admitInboundEmail`, `readRunDefinition`, `readRunState`, `readDetail`, `listRuns`, `claimExecutionPrincipal`, the parent contract, the schedule and run-provisioning alarms, and the sidebar row it enqueues. |
+| `apps/api/src/durable-objects/automation-do-protocol.ts` | The request schemas the Worker and the Queue consumer send it, and the two alarm kinds `automation_schedule` and `automation_run`. |
+| `apps/api/src/durable-objects/conversation-parent-object.ts` | The parent half it inherits: child registry, projections, receipts, aggregation, the outbox and its drain. See [`workstream-durable-object.md`](workstream-durable-object.md). |
+| `apps/api/src/services/automation-service.ts` | `createAutomation`, the one way an automation comes into existence with its conversation open, used by `POST /automations` and by a room's first draft; and `AutomationService`, the Worker-side access every route goes through, which resolves whether the caller is in the owning room before asking the object. |
+| `apps/api/src/routes/automations.ts` | `GET /`, `POST /`, `GET /workstream/:workstreamId`, `GET /:id`, `POST /:id/run`, `POST /:id/accept`, `POST /:id/execution-principal`, `POST /:id/pause`, `POST /:id/resume`, `DELETE /:id`, `GET /:id/runs`. The conversation itself is reached through `/conversations/:automationId`. |
+| `apps/api/src/services/integrations.ts` | `createAvalonAutomationsPlugin`: the drafting plugin's host, which creates a room's automation on its first submission and posts the proposal card; `readAutomationRunDefinition` and `assertRunAuthorityStillValid`, the two reads a run makes of its parent; `createAutomationPostResultPlugin`, the `automation_post_result` tool; and the run prompt context built from the definition. |
+| `packages/agent-harness/src/automation-creator-tools.ts` | The `rally:automations` plugin: the draft schema's tools, `AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE`, and the submission pre-check. |
+| `packages/contracts/src/automation-agent.ts` | `AutomationScopeSchema`, `AutomationLifecycleStateSchema`, the run trigger, `AutomationRunReferenceV1` (what a run's loop input carries), `AutomationActivationV1` (the row a result becomes), and `AutomationDraftProposedV1` (the card). |
+| `packages/contracts/src/index.ts` | `AutomationDraftSchema`, `AutomationRunDefinitionV1Schema` (the `readRunDefinition` answer), `AutomationSummarySchema`, `WorkstreamAutomationSummarySchema`, `AutomationRunSchema`, `AutomationDetailSchema`. |
+| `packages/contracts/src/automation-evaluators.ts` | The strict external-event evaluator grammar (`always`, or `all` over leaves) and the delivery message the matcher emits. |
+| `apps/api/src/services/external-event-evaluator.ts` | The pure predicate evaluator WorkspaceDO matches registrations with. |
+| `apps/api/src/durable-objects/workspace-do.ts` | Migration 31: `automation_directory` and `workspace_external_event_registrations`; `applyAutomationDirectory`, `listAutomationDirectory`, `listWorkstreamAutomations`, `automationOwner`, `workstreamParticipant`, `applyExternalEventRegistrations`, `matchExternalEventDestinations`, and the owning-room archive fan-out `notifyOwningRoomArchival`. |
+| `apps/api/src/queues/activity-consumer.ts` | Delivers a matched event to `admitExternalEvent`, and a run child's effects to the object through the shared effect leg. |
+| `apps/api/src/services/resend-inbound-email-service.ts` | `ingestAutomation`: resolves the sender, stores the message, and calls `admitInboundEmail` once. |
+| `apps/api/src/services/memory-service.ts` | `resolveMemoryAccess`: a conversation whose parent is an automation resolves the workspace scope and the automation's own `automation` scope. |
+| `apps/desktop/src/renderer/screens/automation.tsx`, `components/inspector-rail.tsx`, `components/sidebar.tsx` | The `/automations/:id` route host, the room rail's automation grouping, and the sidebar rows. |
 
 ## How it works
 
-### Authoring
+### Two entry points, two homes
 
-Selecting **New automation** navigates to `/automations/new` and creates no
-server state. Composer text and staged attachments use the same draft-cache
-primitives as a new work stream.
+An automation is created empty and drafted in its own conversation. Two things
+create one:
 
-The first send is `POST /automations/agent/draft/turn` carrying a client creation
-key and a client message ID. The Worker asks `WorkspaceDO.claimAutomationDraft`
-to mint one automation ID against that creation key — the claim table is keyed on
-`(workspace_id, author_user_id, client_creation_key)`, so a retried first send
-resolves to the same automation rather than a second one. It then admits the turn
-on the named object, which durably reserves the human turn and one compiler run
-before any provider work, and seeds the directory row itself so the sidebar has
-something to show before the outbox drains. The route answers `202` immediately.
-`/automations/:id` then adopts that ID without remounting the conversation.
+- **`POST /automations`**, the sidebar's "New automation". It takes no body:
+  `AutomationService.create` calls `createAutomation` with `scope: "personal"`
+  and no owning work stream, and answers `{automationId}`, which the client
+  opens at `/automations/:id`. The draft is written in the conversation that
+  page shows.
+- **A room's agent submitting a draft.** The `rally:automations` plugin is
+  loadable in every conversation (deferred, discovered through `list_plugins`
+  and loaded with `load_plugin`) except a run's. In a work stream, its first
+  `automation_submit_draft` calls `createAutomation` with `scope: "workstream"`,
+  `owningWorkstreamId` the room, and the harness run id as the automation id,
+  so a second submission from the same authoring loop refines the first
+  rather than creating another; it then submits the definition and appends an
+  `automation_draft_proposed` card to the room's feed, keyed on the automation
+  and the revision so a retry replays the card. In an automation's own
+  conversation the plugin submits to that automation and posts no card.
 
-The draft feed is the ordered participant transcript, rendered through the same
-feed rows, composer, attachment presentation, follow controller, and **Jump to
-latest** control work streams use; its adapter omits participant, unread,
-resource, and run controls and adds template, review, acceptance, stop, and
-compiler-retry controls. Live state arrives on the automation's own WebSocket
-(below); the client also re-reads `GET /automations/:id/agent/draft` after every
-durable event, one request at a time.
+`createAutomation` creates the object first (`AutomationDO.create`: the
+automation row in `draft`, its `"0"` child registered, its sidebar row
+enqueued), then bootstraps the conversation the way a work stream's is
+(`bootstrapWorkstreamRuntimeEnvironment` with `parentKind: "automation"`, which
+writes the D1 anchor and route keyed by the automation id, and
+`provisionWorkstreamObject` with the author as the one participant and the
+placeholder title "New automation"). The object exists before its conversation
+does, so the conversation's parent always answers.
 
-One compiler run is admitted at a time — a second send while one is running is
-refused with `automation_compiler_busy`. Dispatch is a stored alarm entry, not an
-in-flight promise, so an evicted object picks the run back up. Every architect
-mutation is staged in the object's own SQLite inside the run, keyed by the
-provider's tool-call ID and an input hash: replaying the same call returns the
-prior result, and a changed canonical input creates a later definition revision.
+Where an automation appears follows from how it was made. The left sidebar
+lists the automations `listAutomationDirectory` returns: every `workspace`
+automation and the viewer's own `personal` ones, drafts included, and never a
+room's (`owning_workstream_id IS NULL`). A room's automation appears only in
+that room's rail, through `GET /automations/workstream/:workstreamId`
+(`listWorkstreamAutomations`, gated on participation in the room), drafts
+included. Scope is chosen in the automation's own chat, between `personal` and
+`workspace`, and only while the automation is still a draft; a room's
+automation is the room's from the start and stays so.
 
-A picked-up run re-enters the compiler from the stored conversation, not from a
-persisted Bind projection: the object installs the shared `bind_loop_*` tables
-but writes nothing to them. The staged mutations and tool receipts are what make
-that cheap and safe rather than free — a repeated tool call is answered from its
-receipt, but the model turn itself is issued again.
+### Drafting in the conversation
 
-The architect may search and inspect people, resources, and connector
-capabilities but cannot execute provider writes. Resource search is scoped to
-connections the author may actually use — workspace connections plus their own
-personal ones — so another member's personal connector titles cannot reach the
-draft. Its three state-changing tools are:
+The conversation is an ordinary `SubstreamAgent` under the automation, with the
+author seated and the same feed, composer, and plugin catalog a work stream
+has. What the drafting plugin's tools write is a **definition revision**:
+`automation_submit_draft` calls `AutomationDO.submitDefinition({draft,
+evaluatorRules, submittedByRunId})`, which appends an immutable row to
+`definition_revisions` (the draft JSON, its hash, the evaluator rules the
+loop's `automation_set_evaluator_rules` had buffered, and `ready` from the
+draft), bumps `current_definition_revision`, follows the draft's name and
+description onto the automation so the sidebar row names it, and enqueues the
+row. A draft that is not `ready` (the agent asked a clarifying question) is
+still a revision; apply refuses it until a ready one lands. A deleted
+automation refuses submissions.
 
-- `automation_set_evaluator_rules`, which replaces the staged, strictly parsed
-  external-event evaluator set;
-- `automation_submit_draft`, which stages the next compiled definition and
-  references the staged evaluator keys;
-- `core_request_elicitation`, which records one structured unresolved question
-  for a definition that is not ready. Its provider-key receipt is also the
-  durable question identity, so replay converges on the existing elicitation.
+Nothing about drafting is fenced by a generation or a claim. The conversation
+is the automation's for its whole life, so an edit after acceptance is another
+turn in the same chat and another revision; applying it is the same action as
+the first apply.
 
-An external-event definition must set evaluators before submission. Timer-only
-and manual-only definitions clear staged event rules rather than calling the
-evaluator tool with an empty array.
+### Applying a revision
 
-`admitAuthoredDraft` enforces that, on the rules themselves rather than on
-whether the tool was called: a **ready** draft carrying a `connector_activity`,
-`semantic_activity` or `webhook` trigger is refused when its staged set is
-absent **or** empty. It is not merely the same condition `prepareAcceptance`
-applies but literally the same predicate — `evaluatorRulesMissing`, over
-`externalEventTriggers` — so a new trigger kind reaches both boundaries or
-neither. A
-draft that is not ready is exempt — a partial submission paired with a
-clarifying question has not chosen its rules yet, and acceptance refuses it on
-`ready` alone. Submission is the last point at which missing rules are the
-drafting loop's problem to fix; past it the refusal has nowhere to land but a
-proposal card whose Create button never works.
+`POST /automations/:id/accept` is `AutomationDO.apply`. It is the first-time
+Create and every later re-apply alike, takes no body, and reads everything
+from the object: the current revision must be `ready`, and an active
+automation whose accepted revision is already the current one answers its
+detail without doing anything.
 
-Deleting a draft bumps the authority generation, cancels any live compiler run,
-marks the object `deleted`, and projects that lifecycle to the directory. It is
-not archived into a second draft store.
+Everything read from outside the object happens first, in `prepareApplication`:
 
-### Acceptance
+- **Bindings** come from the definition. `automationAcceptanceSelections`
+  derives the default plugins from `recommendedPlugins` and the activity
+  sources from each external trigger's binding key and suggested plugin; each
+  selected plugin resolves against `connector_connections` read through the
+  workspace runtime port (a WorkspaceDO table; regional D1 has not had it since
+  migration 0090). A plugin with no connection refuses with
+  `automation_plugin_unavailable`; a `workspace` automation may bind only
+  workspace connections (`automation_workspace_connection_required`); anybody
+  else's personal connection refuses with
+  `automation_personal_connection_access_denied`, because a room's automation
+  outlives whoever wrote it and binding a colleague's credentials would lend
+  them to a standing automation they never agreed to.
+- **Evaluators** are validated against the connector manifests: each rule
+  names an inspected plugin, its `all` leaves may name people (resolved against
+  active members) and resources (which must belong to the bound connection),
+  and `validateDraftEvaluatorRules` expands event families into one registration
+  per event type. `automationDraftAcceptanceBlocker` runs here too, the same
+  predicate the drafting tool's pre-check applies, so a `ready` draft is one
+  apply will not refuse for anything the draft itself settles.
+- **Schedules** are computed from the triggers: an interval from now, a calendar
+  from its RRULE in the trigger's timezone or, when it names none, the run-as
+  user's timezone for a personal automation and the workspace's otherwise
+  (`automation_timezone_invalid` when the runtime cannot format it,
+  `automation_recurrence_has_no_future` when the rule never fires again).
+- The **email address** is reserved in the Global registry
+  (`reserveAutomation`, idempotent per automation).
 
-`POST /automations/:id/accept` is the only way an automation is created. It
-carries an ID and nothing else: `acceptAuthoredDraft` reads the stored
-definition, checks it is `ready`, resolves the owning room and the caller's
-participation in it, and calls `acceptDraft`.
+Then one transaction replaces `schedules`, writes the bindings, plugin ids,
+evaluator projection, and address onto the row, sets `lifecycle = 'active'`,
+clears `paused_by`, records the accepted revision, and enqueues the sidebar
+row. After it, the object cancels the previous schedules' alarm entries and
+arms one `automation_schedule` entry per new schedule, then replaces the
+workspace's registrations for this destination
+(`WorkspaceDO.applyExternalEventRegistrations`, a complete replacement with no
+coordinate or hash) and stores the `effectiveAfterEventSequence` it answers
+with. A failure anywhere throws to the caller as an `ApiError` (the class
+survives the RPC hop) and the caller applies again; the registration replacement
+is idempotent, so a repeat converges.
 
-Everything acceptance needs beyond that is **derived from the definition** by
-`automationAcceptanceSelections`, never taken from a request:
+The definition's `memoryTables` travel to each run in `readRunDefinition` and
+nothing materializes them at apply time. A run creates the table it needs with
+the memory tables plugin's `create` tool, under the automation's memory scope,
+the first time it needs one; the next run finds it there.
 
-| Derived | From |
-| --- | --- |
-| `activitySourcePluginIds` | each external-event trigger's `sourceBindingKey` and `suggestedSourcePluginId` |
-| `defaultPluginIds` | `recommendedPlugins[].pluginId` |
+### Triggers and occurrences
 
-That inversion is the point. These were request fields because a create wizard
-asked a member to choose them, and that wizard was deleted on 2026-09-01 along
-with the last caller that could answer. The drafting loop settles the same
-questions earlier and with more evidence: a ready draft's activity trigger names
-the plugin the model loaded and inspected against a live connection activation,
-and its recommended plugins were held to the same rule. The draft was always the
-authoritative source; the request was a copy of it that the surviving caller
-could not make.
+Every trigger ends in `admitOccurrence(occurrenceKey, trigger, opening)`, which
+inserts one `runs` row in state `pending` with `INSERT OR IGNORE` on the unique
+`occurrence_key`, returns `{runId, reused}`, and arms one `automation_run` alarm
+entry for the run. A repeated admission of the same occurrence answers with the
+run it already made. The object must hold an accepted revision
+(`automation_not_active` otherwise), and the run is pinned to that revision.
 
-**An automation has no destinations of its own.** The one place a result goes
-because of what the automation *is* rather than what a run *does* is the room
-that owns a `workstream`-scoped one, and that follows from ownership, not from
-anybody choosing it. Everything outside Rally — an inbox, a channel, a DM, a
-document — is the run's to send, inside the loop, with the connector tools it
-was bound, as part of doing the work. The run is told so: the system prompt's
-result-delivery section names the room when there is one, so the run does not
-post there twice, and says outright that nothing sends for it when there is
-not, so a run that only describes an email has not sent one. What a run
-chooses to send is therefore inside the loop and steered by whatever steers
-the loop; the classifier below still decides whether the room hears from it.
+| Trigger | Entry | Occurrence key | Refusals |
+| --- | --- | --- | --- |
+| **Manual** | `POST /automations/:id/run` with an `idempotency-key` header; `runNow` | `manual:<idempotencyKey>` | `automation_not_active` unless `active`; `automation_forbidden` unless the caller may manage it |
+| **Schedule** | the `automation_schedule` alarm for one schedule row; `executeSchedule` | `schedule:<scheduleId>:<plannedFor>` | skipped silently unless `active`; the next occurrence is computed from now and re-armed |
+| **Connector event** | the Queue consumer's `admitExternalEvent`, one message per matched registration | `external:<workspaceEventId>` | `automation_<lifecycle>` unless `active`; `automation_event_before_activation_boundary` when the event's sequence is at or below `effective_after_event_sequence` |
+| **Inbound email** | `resend-inbound-email-service.ts` calling `admitInboundEmail` once per delivery | `inbound_email:<resendEmailId>` | see below; the refusal is written to `inbound_email_receipts` |
 
-What derivation deliberately does **not** settle is the present. A connection
-can be revoked, disabled, or become another member's between drafting and
-Create, so acceptance still resolves every derived plugin against the
-workspace's own connections. Those refusals are the legitimate residue of the
-time gap, and each has a table row so it reaches a member as an instruction.
+**Connector events** follow one regional path. The regional activity Queue
+hands a normalized event to `WorkspaceDO.ingestConnectorEvent`; a second,
+ID-only delivery claims it for processing and calls
+`matchExternalEventDestinations`, which selects active registrations by
+connection, connector type, event type, and
+`effective_after_event_sequence`, applies the audience rule (a restricted
+activity never reaches a `workspace` automation and reaches a `personal` one
+only when its author is inside the audience), evaluates each registration's
+predicate with no model inference, and returns one complete
+`workspace_external_event_delivery_v1` message per match carrying the
+registration, the destination, and the event. There is no delivery ledger and
+no lease: the consumer sends each message to the Queue, and the destination is
+idempotent on the event id, which is all a lease ever guaranteed. A redelivery
+answers `automation_occurrence_replayed`. Registrations for an automation and
+for a watched work-stream resource share one candidate index; a watched work
+stream sends no evaluator object, while an automation needs predicates because
+it selects event families, content, people, and provider fields.
 
-Acceptance is two phases around one durable acceptance row, so an interrupted
-activation resumes rather than restarting:
+An evaluator rule is one AND group: `when` is `{kind: "always"}` or
+`{kind: "all", allOf: [leaf, ...]}` over the manifest's declared attributes.
+Unknown keys, operators, attributes, plugin/event pairs, duplicate ids, empty
+groups, non-finite numbers, and wrong scalar kinds are rejected at every
+boundary; missing fields make positive and negative predicates false and only
+`presence.not_exists` matches absence; matching is case-sensitive with no
+coercion. A rule that needs OR is two rules.
 
-1. **Freeze.** Under one transaction: check the definition is `ready`, the
-   revision matches, and no elicitation is pending; resolve connector bindings
-   and the acceptance timezone; write
-   `automation_acceptance` with a hash of the request; write the schedules
-   paused; materialize the definition's memory tables; move the lifecycle to
-   `activating`. A second acceptance is refused with
-   `automation_acceptance_conflict` when it names a different definition
-   revision, scope, or owning room than the row holds; one that names the same
-   three is the same acceptance retried, whatever the shape of the request that
-   first wrote the row. The stored hash is the fence the activation step checks,
-   not the test a retry is held to: the request shape has changed once already,
-   and a retry judged on the hash would strand any object a deploy caught
-   `activating`.
-2. **Install and commit.** Register the evaluators with WorkspaceDO, which
-   answers with an `effectiveAfterEventSequence`; arm one alarm entry per
-   schedule; reserve the automation's permanent email address in the Global
-   registry. Then, in one transaction: record that sequence boundary, unpause the
-   schedules, store the address, promote any event held during activation, delete
-   the draft conversation, reset the realtime cursor, move the lifecycle to
-   `active`, and enqueue the activation projection.
+**Inbound email** arrives at the automation's permanent address
+([`workstream-email-addresses.md`](workstream-email-addresses.md)). The regional
+ingress fetches the message, resolves the sender to an active member, stores
+the payload in R2 and the email as a resource, and then calls
+`admitInboundEmail` once. The object answers a retry from
+`inbound_email_receipts` by Resend email id before deciding anything; a new
+message is refused with `automation_not_active`,
+`automation_email_route_mismatch` (the address is not this automation's), or
+`email_sender_not_authorized` (no member matched, or a `personal` automation's
+sender is neither its author nor its run-as principal), and the refusal is the
+receipt. An admitted message stores its text, structured content, and resource
+id as the run's `opening`. There is no pre-fetch screen and no hourly window.
 
-Between the two phases the object re-checks its own lifecycle and authority
-generation and throws `automation_activation_fenced` if either moved, cancelling
-the schedule entries it armed. Acceptance is therefore all-or-pause: a failure
-leaves a recoverable automation with its last coherent definition rather than a
-half-installed one.
+### Runs
 
-**Acceptance deletes the draft conversation.** The accepted definition revision
-survives; the turns, blocks, transcript facts, Bind loop rows, compiler runs,
-tool receipts, staged submissions, and superseded revisions are dropped. An
-accepted automation has a run history, not a conversation.
+The `automation_run` alarm provisions a run (`provisionRun`). Every step is
+idempotent so a retry after a partial failure resumes rather than provisioning
+twice:
 
-`pause` and `resume` each bump the authority generation. Pausing withdraws the
-evaluator registrations, cancels the schedule entries, and refuses any event
-being held for activation; resuming re-registers, recomputes each schedule's next
-occurrence from now — a paused automation does not fire the occurrences it slept
-through — and takes a fresh sequence boundary. Deleting an accepted automation
-pauses it first, then projects `deleted` and queues one archive effect per
-generated child work stream.
+1. A run whose automation is no longer `active` is marked `stopped` instead.
+2. The run's definition is read by its revision (`readRunDefinition`), the run
+   is registered as a `child` of the automation, and the child conversation is
+   bootstrapped and provisioned as substream `<runId>` under the automation:
+   title from the definition's name, objective from its instructions,
+   `scope: "personal"` with the run-as principal as its only participant,
+   `harnessStatus: "scheduled"`, and the automation's model override.
+3. For a mail-started run, the email resource is attached to the run's
+   conversation as `inbound_email` and the opening text is appended there as a
+   `system` message, which becomes the loop's trigger message.
+4. The model is the automation's pin (`automationModelOverride`, dropped back
+   to the flag when the pinned id has since been retired) or
+   `scheduledWorkstreamModel`. A harness run is admitted with origin
+   `automation_run` and the run-as user as execution principal, and
+   `activateWorkstreamLoop` starts the run's own persistent loop with
+   `parentKind: "automation"`, `parentId` the automation, `substreamId` the run,
+   and `automationRun: {schemaVersion: 1, automationId, runId,
+   definitionRevision, trigger}`.
+5. `runs.state` moves to `running`.
 
-### Triggers
+The loop input carries a reference, not a copy. At loop start
+`readAutomationRunDefinition` asks the parent for `AutomationRunDefinitionV1`
+(the definition minus its triggers, the bindings and plugin ids, scope, owning
+work stream, run-as principal, model override, trigger, opening, and state),
+which builds the prompt context and decides which connector plugins preload.
+Before every provider write, `assertRunAuthorityStillValid` asks the parent
+`readRunState`; a run the automation no longer knows, or whose automation is not
+`active`, refuses with `ConnectorError("unauthorized")`, so a run that outlives
+a pause or a delete stops rather than finishing on stale consent. The
+`rally:automations` drafting plugin is withheld from a run.
 
-**Timers** are stored alarm entries owned entirely by AutomationAgent under the
-`automation_schedule` kind. Calendar and interval arithmetic, daylight-saving
-behavior, pause/resume reconciliation, and missed-occurrence policy are local to
-the object; WorkspaceDO's `schedules` table no longer carries automations at all.
+The run reports its state the way every conversation does: its
+`directory_common` effect reaches the parent through the child effect leg, and
+`AutomationDO.onChildCommonAggregate` maps the conversation state onto
+`runs.state` forward only (`RUN_STATE_FROM_CONVERSATION_STATE`: `completed`,
+`failed`/`error`/`budget_exhausted` to `failed`, `needs_input`,
+`stopped`/`cancelled` to `stopped`, every live state to `running`) and copies
+the preview onto `summary`; a terminal run keeps its state. Nothing a run says
+leaves the object: `forwardsChildEffect` is false, so a run produces no sidebar
+row, no activity, and no notification.
 
-Before compiler or provider dispatch, schedule work, child-run provisioning, or
-outbox delivery, AutomationAgent reads its regional workspace row. A non-null
-`abandoned_at` is a terminal authority fence: schedules pause, live compiler
-runs fail, claimed occurrences and pending outbox effects fail, and no provider
-or collaborator call begins. Route admission alone is insufficient because an
-already-addressed Durable Object can wake from its own alarm after membership
-has ended.
+### Posting a result
 
-**Connector events** follow one regional path:
+A run of a room's automation holds one extra plugin, `rally:automation-result`,
+preloaded, with the tool `automation_post_result`. It is offered only when
+`readRunDefinition().owningWorkstreamId` is not null, so a personal or
+workspace automation cannot post into a room at all. The tool asks
+`WorkstreamDO.authority` for the room's generation and archive state, refuses an
+archived or missing room as the tool's error, and calls the room's substream
+`0` `appendAutomationActivation` with `deliveryId = runId`, which appends one
+`automation_activation` message authored by "Automation" (or answers
+`replayed` for a second call). The run's `# Result delivery` prompt section
+names that room as the one destination; every other destination the
+instructions name is the run's own work with its connector tools.
 
-1. A connector adapter validates and normalizes a provider event against its
-   manifest, and the regional activity Queue hands it to
-   `WorkspaceDO.ingestConnectorEvent`, which commits one canonical event and its
-   ingress receipt.
-2. A second, ID-only Queue delivery claims that event for processing. After the
-   product step runs, the consumer calls
-   `WorkspaceDO.matchExternalEventDestinations`.
-3. The matcher selects active registrations by connection, connector type, event
-   type, and `effective_after_event_sequence`, applies the audience rule, and
-   evaluates each registration's typed DNF predicate with no model inference. A
-   restricted activity — a private Slack channel arriving on the workspace
-   connection — can never reach a workspace automation, and reaches a personal
-   one only when its author is inside the audience.
-4. Each match inserts one `workspace_external_event_deliveries` row, unique on
-   `(event, registration, generation, destination)`, and produces one
-   identifiers-and-hashes-only Queue message.
-5. The consumer claims that delivery under a lease, and calls
-   `AutomationAgent.admitExternalEvent` for an automation or
-   `SubstreamAgent.appendWatchedResourceEvent` for a watched work stream. The
-   destination rechecks its own generation and lifecycle and admits one
-   occurrence, holding it instead if it is still `activating`, and refusing it if
-   it arrived at or below the activation boundary.
-6. WorkspaceDO records the terminal acknowledgement under the same lease.
-   Duplicate, reordered, or stale wakes are harmless: the destination keeps a
-   receipt per canonical event ID and answers a replay with
-   `automation_occurrence_replayed`.
+### Lifecycle
 
-Automation registrations and watched-resource registrations use one candidate
-index, one delivery table, and one receipt state machine. A watched work stream
-sends no evaluator object — its canonical resource link already means an exact
-resource-identity match — while an automation needs predicates because it selects
-event families, content, people, and provider fields. Both converge only after
-the destination has authorized the event itself.
+| Transition | Who | What |
+| --- | --- | --- |
+| `pause` | a manager | `runs` in `pending`, `running`, or `needs_input` become `stopped`; `lifecycle = 'paused'`, `paused_by = 'person'`; schedule and run alarm entries cancelled; the workspace's registrations replaced with `[]`; sidebar row enqueued |
+| `resume` | a manager | each schedule's next due instant recomputed from now (a paused automation does not fire what it slept through), `lifecycle = 'active'`, `paused_by` cleared, alarms re-armed, the accepted evaluator projection re-registered with a fresh sequence boundary; refused with `automation_room_archived` while the owning room is archived |
+| `remove` (`DELETE`) | a manager | open runs stopped, `lifecycle = 'deleted'`, alarms cancelled, registrations replaced with `[]`; the object is kept, and `authorizeViewer` answers unauthorized and archived from then on |
+| `setOwningRoomArchived` | `WorkspaceDO`, from a directory effect that archived or unarchived the owning room | archiving pauses an `active` automation with `paused_by = 'room_archive'`; unarchiving resumes only an automation the archive paused, so a person's pause is never undone by somebody unarchiving the room. The Worker's viewer decision reports `archived` while the room is, which makes the automation's conversation and runs read-only |
 
-Evaluator documents are versioned, strict, and branded after parsing. They bind
-one declared connector connection and event type to DNF predicates over that
-event manifest's allowed attributes. Unknown keys, operators, attributes,
-plugin/event pairs, duplicate IDs or keys, non-finite numbers, empty values and
-groups, and wrong scalar kinds are rejected at every boundary. Missing fields
-make ordinary positive and negative predicates false; only `presence.not_exists`
-matches absence. Matching is case-sensitive and performs no coercion. Connector
-manifests, not evaluator code, own the allowed event and attribute vocabulary, so
-adding a connector grows declarations and fixtures rather than adding another
-execution substrate.
+Who may manage (`assertManager`): the author or the run-as principal; for a
+`workspace` automation also an owner or admin; for a room's automation only a
+participant of the room, because authorship is not a share in the room's
+automation. Who may view (`assertViewer`, and `authorizeViewer` for the
+conversation): a `workspace` automation by any member, otherwise the author,
+the run-as principal, or a participant of the owning room.
+`claimExecutionPrincipal` lets a manager take over `run_as_user_id` and rebinds
+every binding the last principal took with them to the claimant's own or a
+workspace connection, reporting what it could not rebind.
 
-**Inbound email** arrives at the automation's permanent address (see
-[`workstream-email-addresses.md`](workstream-email-addresses.md)). The regional
-ingress screens it against the agent *before* fetching the message — replay,
-lifecycle, and address are decidable from the webhook alone — and again once the
-sender has been resolved, and only then stores the payload and creates the
-resource. The address is a routing identifier every member can see, so screening
-first is what stops a stranger's mail from making Rally store unbounded
-attacker-titled objects. `admitInboundEmail` then re-runs every check inside the
-transaction that consumes the hourly budget and writes the receipt.
+### The directory row
 
-**Manual runs** come from `POST /automations/:id/run` with an `idempotency-key`
-header; the agent reuses the run and work stream a repeated key already claimed.
+Every change enqueues the automation's own `directory_automation` effect
+(`enqueueDirectory`) under the projection key `automation`: id, author,
+lifecycle, scope, owning work stream, title, description, next run. It travels
+the parent outbox and the Queue like a work stream's aggregate and lands in
+`WorkspaceDO.applyAutomationDirectory`, which accepts a strictly newer
+`sourceVersion`, ignores an older one, refuses an equal one with a different
+hash, bumps the `automations` sidebar waterline, and republishes the list. The
+row is content-free by design; `GET /automations/:id` reads the object.
 
-### Generated runs
+### Memory
 
-A claimed occurrence is provisioned by the object's own alarm lane. Provisioning
-bootstraps the work-stream runtime, creates the child work stream, appends the
-opening input where the trigger has one, admits a harness run, and activates the
-persistent loop with one immutable `AutomationRunContextV1`.
-
-Generated runs are private SubstreamAgent-backed work streams. They are absent
-from the work-stream sidebar and appear as content-free rows on the automation's
-own page. **Every generated run is `scope: "personal"` with the automation's
-author as its only participant, whatever the automation's own scope** — a child
-run is a nested execution record, not a workspace room.
-
-The child receives the frozen context and returns only a terminal receipt. It
-reads and mutates parent memory over generation-fenced RPC — the parent refuses a
-call whose harness run ID does not match the run it is addressed for — delivers
-its own result to the frozen destinations, and reports each destination through
-`recordDeliveryReceipt`.
-
-**Whether it delivers at all is decided once, by the parent.** Before the
-delivery loop runs, the child calls `resolveRunDisposition` with the result text;
-the parent classifies it on the `automation_result_disposition` model role and
-stores the answer on the run — `disposition`, `disposition_source`,
-`disposition_reason`, `disposition_at`. The decision lives with the automation
-because everything it reads is the parent's state: the definition, the trigger,
-and what the last three occurrences were judged to be. A `done` disposition
-withholds every destination and writes the classifier's own sentence into each
-`skipped` receipt, so the run history says why nobody was told rather than
-leaving a bare code to interpret. A classifier that cannot answer **delivers**,
-recorded as `default`: a spurious delivery is noise somebody can see, and a
-swallowed result is silence nobody knows to look for. The columns are the
-idempotency — a delivery retry after a crash reads the stored answer instead of
-judging the same occurrence twice. Provider writes inside a generated run additionally
-re-check the parent's *live* lifecycle and authority generation, so a run that
-outlives a pause or a delete stops rather than finishing on stale consent.
-
-### Projections and the socket
-
-Every lifecycle change enqueues a `workspace_projection` effect in the object's
-own outbox. The alarm delivers it to `WorkspaceDO.applyAutomationProjection`,
-which compares `(authorityGeneration, projectionVersion)` and discards anything
-not strictly newer; equal coordinates with a different payload hash are a
-conflict, not an overwrite. `projection_version` is a counter separate from the
-realtime `event_sequence`, because acceptance resets that cursor and a projection
-version that went backwards left the directory describing a live automation as an
-unfinished draft forever.
-
-An `attention_code` travels on the same projection and is the one thing the
-directory says about an automation that is *wrong* rather than merely paused. It
-is one of three reasons — `unsupported_trigger` for a legacy trigger the new
-grammar cannot express, `legacy_runtime_error` for an automation the old runtime
-had left in `error`, and `run_projection_integrity_conflict` for a run whose
-terminal receipt disagreed with what the parent already recorded. **The server
-sends the reason and never the sentence.** The words live in
-`apps/desktop/src/renderer/lib/automation-attention.ts`, beside the rest of the
-product's copy, so the wording can be rewritten without reprojecting every
-automation that already carries a reason — and so nothing a person reads was
-written for whoever was debugging the cutover. `unsupported_trigger` is the only
-one that says the automation will not run again; the other two are recoverable.
-
-The draft screen holds one WebSocket to the agent, admitted through the ordinary
-ticket flow (`GET /automations/:id/agent/socket`, then an upgrade at
-`/socket/automations/:id`). The room accepts through Cloudflare's hibernation
-API, consumes the ticket ID once in its own SQL, re-checks the session and
-membership against D1, and admits only the automation's **author**. It sends a
-snapshot on connect and rebroadcasts on every durable change.
-
-### The one-shot cutover
-
-**This ran on 2026-08-28 and the deploy steps that carried it are gone.** What
-follows is the record of what the cutover did, kept because the mechanism still
-governs any workspace that has to be cut over by hand; it is no longer a
-description of what a deploy does. An operator running it now invokes
-`scripts/cutover-automation-agents.mjs` directly with the Cloudflare credentials
-the deploy job used to assert — see
-[`runbook.md`](runbook.md#deployments-and-release-workflows) for the shared-queue
-hazard to check first.
-
-It shipped in one merge and one coordinated deployment, and the workflow refused
-to deploy a single region while the cutover was pending — a build whose authoring
-refuses in the region it skipped, and whose legacy timers never fire there again,
-is worse than no deploy.
-
-Inside that deploy job, before either Worker was replaced,
-`cutover-automation-agents.mjs --preflight` compared each region's D1 workspace
-inventory (read in keyset pages, because an unpaged D1 query silently truncates)
-against the Durable Object namespace listing, refused a mismatch, and woke every
-stored WorkspaceDO by opaque ID through the existing migration-command Queue.
-That established a historical migration ledger, which is how the new build tells
-a genuinely fresh object from a carried-over one.
-
-The workflow then deployed EU, deployed Global, applied Worker-first D1
-migrations, and checked both health endpoints. `--apply` sends one named,
-idempotent cutover command per workspace through the same Queues. Each WorkspaceDO witnesses and
-hashes every value the destructive half can remove, checks the draft inventory it
-was told to expect, imports each accepted automation into its named
-AutomationAgent, verifies the returned receipt hash, re-hashes the source to
-prove nothing moved underneath it, then drops the legacy schema and records
-completion in `automation_cutover_campaign` — a table outside the removed schema,
-so a retry rolls forward from durable receipts and an ordinary object wake can
-never perform cleanup. Legacy drafts are discarded rather than imported; a legacy
-`error` status becomes `paused` plus an attention code, and a trigger the new
-grammar cannot express becomes an `unsupported_trigger` attention code.
-
-The apply loop waits one poll interval before its first backlog read — Queue
-metrics are eventually consistent, and an immediate read can report the
-pre-dispatch count and "prove" a drain that never happened — and refuses any
-increase in either region's dead-letter queue. In the 2026-08-28 release a second
-two-region health check followed it; an operator running the script by hand
-checks regional health themselves.
-
-A workspace born on the new build still creates the legacy tables, because they
-live in WorkspaceDO's frozen migration 1 and a released migration is never
-edited. It drops them in the same statement that writes its identity row, and
-marks its campaign `completed` with source hash `fresh`, so only carried-over
-objects require the explicit import.
-
-D1 remains identity, membership, routing, migration control, audit, and
-telemetry storage — not a product-state fallback.
+`resolveMemoryAccess` gives a conversation whose parent is an automation two
+scopes: the workspace's, and the automation's own scope of kind `automation`
+keyed by the automation id, writable. The drafting chat and every run share it,
+so what a run learns is what the next run knows and what the person said while
+drafting is part of that. The person's own scope stays out, because a run acts
+for the automation rather than as the person, and a workspace automation's runs
+would otherwise write into whichever member happened to be its principal.
+Automation memory is ordinary WorkspaceDO memory; there is no separate engine.
 
 ## Invariants
 
-- **One automation is one object, for its whole life.** Acceptance changes a
-  lifecycle column in place. Anything that mints a second ID at promotion breaks
-  every run, receipt, memory row, and email claim keyed on the first.
-- **Every refusal an automation route answers goes through the error table.** A
-  refusal the object throws is mapped by `withAutomationErrors`; one the service
-  decides for itself is raised with `automationRefusal`; one a collaborator
-  raises as an `ApiError` inside the object is recognised by shape after the RPC
-  hop, because the class does not survive it. A bare `throw new Error(code)`
-  outside a wrapper, or an `ApiError` nobody re-reads on the other side of RPC,
-  is a `500 internal_error` and "An unexpected error occurred" — a permanent
-  refusal wearing the one status a client retries, logged beside real faults.
-  `withAutomationErrors` is for calls that can *refuse*; a call whose failures
-  are all faults keeps its 500 rather than being dressed as a conflict.
-- **Acceptance derives what the draft decided; it never takes it in a request.**
-  The bindings and plugins an automation is created with come from the stored
-  definition through `automationAcceptanceSelections`. A request field
-  restating any of them is a second source of truth for a fact the draft already
-  settled, and the way this failed is instructive rather than hypothetical: the
-  fields outlived the wizard that filled them, the one surviving caller sent
-  empty values, and acceptance read those as decisions. Two of the four failed
-  loudly and two silently, which is why "it errors" is not the test — an
-  automation created successfully and doing less than the card described is the
-  worse outcome.
-- **A `ready` draft is one acceptance will not refuse for anything the draft
-  itself settles.** `automationDraftAcceptanceBlocker` is called by
-  `admitAuthoredDraft` and again by `prepareAcceptance`; a check either end
-  applies alone will drift, and what drift looks like here is a proposal card
-  whose Create button cannot work, with nothing on it for the person to act on.
-  Anything about the *present* — whether a named plugin still resolves to a
-  healthy connection the caller may bind — is deliberately not in that
-  predicate, because a draft cannot answer it and acceptance must.
+- **One automation is one object and one conversation, for its whole life.**
+  Apply changes a lifecycle column in place and records which revision runs.
+  Anything that mints a second id, or a second conversation, breaks every run,
+  receipt, and email claim keyed on the first.
+- **A definition revision is immutable and a run is pinned to one.** A run
+  reads its definition from the parent by revision rather than carrying a copy,
+  which is why the loop input can be a four-field reference and why a later
+  field change never has to migrate stored run contexts. Editing a revision in
+  place would change what a run in flight was authorized to do.
+- **`occurrence_key` is the only admission fence.** Every trigger converges on
+  it with `INSERT OR IGNORE`, so a Queue redelivery, a provider retry, and a
+  repeated **Run now** each answer with the run they already made. A trigger
+  that admits without a key admits twice.
+- **A run stops when its automation no longer consents.** Pause and delete mark
+  the run rows and the lifecycle, and `assertRunAuthorityStillValid` reads the
+  live state before every provider write. There is no generation fence on this
+  object; the row is the fence.
 - **A directory row locates; it never authorizes.** `automation_directory` holds
-  no definition, no instructions, and no run content, and every content read goes
-  through the agent, which re-checks the author or asks WorkspaceDO to authorize
-  the viewer. Serving anything from the projection makes a stale row an access
-  decision.
-- **The authority generation is the fence for everything asynchronous.** Pause,
-  resume, and delete each bump it. An occurrence, a memory mutation, a delivery
-  receipt, or a provider write carrying an older generation is refused. Adding an
-  asynchronous path that does not carry it lets work from a withdrawn automation
-  land after it was withdrawn.
-- **A projection coordinate only ever increases.** Both writers — the Worker
-  seeding the first draft row and the object's outbox — draw the version from the
-  object's one monotonic counter. A second source of that number silently drops
-  updates, because WorkspaceDO's comparison is the only thing standing between a
-  reordered delivery and a wrong sidebar.
-- **An event is admitted once, by canonical event ID.** `automation_trigger_receipts`
-  is keyed on it, so a Queue redelivery, a lease expiry, and a duplicate match all
-  resolve to the same occurrence.
-- **Nothing crosses an object boundary except identifiers, generations, versions,
-  and hashes.** The delivery Queue message names a delivery, not an event body;
-  the child returns a receipt, not a result.
-- **Acceptance is idempotent on the facts the row stores.** Two acceptances
-  that differ in definition revision, scope, or owning room are a conflict;
-  ones that agree on all three are the same acceptance retried, across a change
-  in the request's shape.
-- **The socket is the author's.** A workspace-scoped automation is readable by
-  every member and manageable by owners and admins, but its live draft room
-  admits only `author_user_id`. Widening it would put an unaccepted draft's
-  conversation in front of people who cannot read it over REST.
-- **The cutover is one-shot and irreversible.** `removeLegacyAutomationSchema`
-  drops tables. There is no dual-write, no legacy fallback, and no rollback to
-  the previous authority; a failure is retried forward from the campaign ledger.
+  no definition and no run content; every content read goes to the object, which
+  re-derives authority from its own row, asking WorkspaceDO only whether a
+  viewer is in the owning room.
+- **`AutomationDO` forwards nothing its children say.** The workspace hears the
+  automation's row and nothing else; forwarding a run's aggregate would put
+  every run in the work-stream directory, which is the design this replaced.
+- **The one way a result reaches a room is `automation_post_result`.** Rally
+  posts nothing after a run; the run posts, once, when its instructions say the
+  room should hear it. A second delivery path is a duplicate the room reads
+  twice.
+- **Bindings are derived from the definition, never taken from a request.**
+  `apply` carries an id and nothing else; a request field restating what the
+  draft settled is a second source of truth for it.
+- **A room's automation is the room's.** Its scope is fixed at creation, its
+  managers are the room's participants, it is listed only in the room's rail,
+  and the room's archive pauses it. Authorship confers nothing on it.
 
 ## Boundary
 
-This module owns the whole automation: authoring, compilation, acceptance,
-lifecycle, schedules, occurrence admission, generated-run provisioning, run
-history, automation-owned memory, inbound-email admission, result-delivery
-receipts, and the workspace projection.
+This module owns the automation: creation, drafting, revisions, apply,
+lifecycle, schedules, occurrence admission, run provisioning, run state, the
+result tool, and the sidebar row.
 
-It depends on WorkspaceDO for four typed things: minting an automation ID against
-a creation key, holding the directory row, evaluating and fanning out connector
-events, and authorizing a non-author viewer — **and for every workspace-product
-table it reads**. That second half is not a list, because a list of it has now
-been wrong twice: `connector_connections`, `slack_user_links` and `resources` are
-each read through `withWorkspaceRuntimeDatabase`, and the whole compiler turn
-already runs on an env wrapped that way, whose reads reach `resources` joined to
-`connector_connections`. The invariant is what to remember: **any statement this
-object sends that names a `WORKSPACE_LOCAL_TABLES` table belongs to WorkspaceDO
-and goes through the port; regional D1 holds identity, membership and sessions,
-and nothing else.** Regional D1 has not had the product tables since migration
-0090. It depends on the Global `workstream_email_routes` registry for its
-address, on regional D1 for identity, membership, and sessions, and on
-SubstreamAgent for the execution of a generated run.
+It depends on the conversation hierarchy for its conversations and its runs
+(`SubstreamAgent`, the shared parent base, the effect legs;
+[`workstream-durable-object.md`](workstream-durable-object.md)); on WorkspaceDO
+for the directory row, the registrations and the matcher, the owning-room
+participation answer, and **every workspace-product table it reads**
+(`connector_connections`, `resources`, `users`' timezones through regional D1
+and the rest through `withWorkspaceRuntimeDatabase`); on the Global
+`workstream_email_routes` registry for its address; on regional D1 for identity
+and membership; and on the agent harness for what a run does
+([`agent-harness.md`](agent-harness.md)).
 
-It does not own: the shared template catalog (`automation-service.ts`, and the
-`automation_templates` rows survive the cutover); the connector manifests that
-define what an evaluator may name ([`connectors.md`](connectors.md)); the agent
-loop a generated run executes ([`agent-harness.md`](agent-harness.md)); the
-ordered-transcript schema its draft conversation is stored in
-([`ordered-transcript-sqlite.md`](ordered-transcript-sqlite.md)); the ticket and
-upgrade contract ([`realtime-sockets.md`](realtime-sockets.md)); or how a result
-email is addressed and rendered
-([`workstream-email-addresses.md`](workstream-email-addresses.md)).
+It does not own the connector manifests that define what an evaluator may name
+([`connectors.md`](connectors.md)), the socket admission and the
+`/conversations` routes ([`realtime-sockets.md`](realtime-sockets.md)), how mail
+reaches an address ([`workstream-email-addresses.md`](workstream-email-addresses.md)),
+or the memory store the automation scope lives in.
 
 ## Failure modes and limits
 
-- **A failure inside the object is a stable snake_case code, not a message.**
-  `automation-agent-errors.ts` maps each one to a status and a sentence — 403 for
-  an access or authority mismatch, 404 for an unknown automation, 409 for a busy
-  compiler or a stale draft, 422 for a schedule with no future or an unknown time
-  zone, 503 while a workspace is mid-cutover. An unmapped code that still looks
-  like one of ours answers 409 generically; anything else keeps its 500, because
-  a fault nobody has reasoned about must not be answered as a retryable
-  conflict. Two refusals are decided in `AutomationAgentService` before any RPC
-  is made — a create request with no draft id, and a submitted draft that no
-  longer matches the stored definition — and they read the same table through
-  `automationRefusal`. Raising either as a bare `Error` puts it outside the one
-  wrapper that consults the table, which is the whole difference between a
-  sentence and a 500. The table is a *refusal* table: its statuses are 403, 404,
-  409, 422 and 503, so a call whose failures are all faults — `WorkspaceDO`'s
-  `applyAutomationProjection`, whose worst case is two writers disagreeing about
-  a coordinate the directory already holds — is deliberately left unwrapped
-  rather than given a 409 a client will retry.
-- **A derived plugin whose connection has gone** refuses the create:
-  `automation_plugin_unavailable` when the workspace has no healthy connection
-  for it, whether a recommended plugin or an event source,
-  `automation_workspace_connection_required` when a workspace-scoped
-  automation would bind a personal one. These are the legitimate residue of the
-  gap between drafting and Create, they cannot be moved earlier, and each has a
-  table row so it reaches a member as an instruction rather than as the generic
-  conflict every untabled code used to produce.
-- **The compiler fails or is interrupted.** The run settles as `failed` and stays
-  the visible outcome until another turn is admitted — hiding it made a failure
-  look like a successful idle reconnect. **Retry** re-arms the dispatch alarm for
-  the same run; **Stop** cancels it.
-- **A run cannot be provisioned.** The alarm's two lanes — provisioning and the
-  projection outbox — each keep their own failure and the first is rethrown after
-  both have had a pass, so a disabled connector cannot stop the directory
-  projection or the child-archive effects a delete depends on. The run returns to
-  `claimed` and the entry retries behind the shared alarm backoff.
-- **An outbox effect fails.** It returns to `pending` with an incremented attempt
-  and the shared exponential delay. An effect kind nothing can deliver is marked
-  `failed` rather than retried forever ahead of the effects behind it.
-- **The regional workspace is abandoned.** The operational fence retires every
-  local execution lane before external work starts. If D1 cannot answer, the
-  object fails closed and leaves the alarm retryable; it does not infer that the
-  workspace is operational. Once abandonment is observed, pending local work is
-  terminalized rather than retried into a workspace that admission has closed.
-- **A delivery is claimed twice.** The second claim is answered `busy` with the
-  lease's expiry and retried after it; settlement is fenced by the lease token,
-  so an expired handler cannot overwrite its successor.
-- **Too much mail.** Each automation admits at most
-  `AUTOMATION_EMAIL_MAX_RUNS_PER_HOUR` inbound runs per clock hour, counted in
-  the same transaction that writes the receipt; over it, the message is receipted
-  as `email_rate_limit_exceeded` and no run is created.
-- **The cutover's drain wait is deliberately open.** `AUTOMATION_CUTOVER_DRAIN_TIMEOUT_MS`
-  in `scripts/cutover-automation-agents.mjs` is `+Infinity` and carries a
-  `LIMIT UNSET` marker: the guard exists and the number is the team's. Until it
-  is set, a drain that never completes hangs whoever ran the script — an
-  operator's terminal, not a release, since 2026-08-29. A deterministically
-  failing message is not what hangs it; the queues carry five retries and a
-  dead-letter queue and the loop already fails on any rise in that count. A slow
-  fleet-wide drain does, and so does a backlog held above zero by the migration
-  tracker's own fan-out into the same queue. See
-  [`adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md).
-- **A workspace has not been cut over yet.** Authoring answers 503
-  `automation_cutover_in_progress` rather than writing into an object whose
-  legacy source has not been imported.
-- **A run receipt whose hash disagrees with the recorded one** sets
-  `run_projection_integrity_conflict` on the object and broadcasts it to an open
-  socket, but does **not** enqueue a projection of its own. The directory picks
-  the code up on the next lifecycle change that projects — a pause, a resume, an
-  activation — so until then the sidebar row shows nothing wrong while the
-  automation's own page does. Every projection reads the code as the object
-  currently holds it rather than sending a constant, which is what stops a pause
-  from clearing an imported automation's marker; the gap is only in *when* the
-  first projection carrying it goes out.
+- **A failure inside the object is an `ApiError` with a stable snake_case
+  code**, thrown directly and surviving the RPC hop with its status: 403
+  `automation_forbidden`, 404 `automation_not_found` or
+  `automation_run_not_found`, 409 `automation_not_active`,
+  `automation_not_paused`, `automation_room_archived`, 422
+  `automation_definition_not_ready`, `automation_plugin_unavailable`,
+  `automation_workspace_connection_required`,
+  `automation_personal_connection_access_denied`, `automation_person_not_found`,
+  `automation_resource_not_found`, `automation_recurrence_has_no_future`,
+  `automation_timezone_invalid`, and the evaluator blocker codes. An identity
+  mismatch is a bare `Error`, deliberately, because it is a wiring fault and not
+  a refusal.
+- **Apply fails part-way.** The transaction either committed or did not; the
+  alarm re-arming and the registration replacement after it are idempotent, so
+  the caller applies again and converges. Nothing is fenced by generation.
+- **A run cannot be provisioned.** The `automation_run` alarm entry backs off
+  under the shared alarm gate and retries; every step is a replay on an opened
+  object. A run admitted while the automation was paused is marked `stopped`
+  when its alarm fires.
+- **The Queue redelivers a matched event.** `admitExternalEvent` answers
+  `automation_occurrence_replayed`; the consumer logs it and acks.
+- **A result cannot be posted.** `automation_post_result` throws
+  `automation_owning_room_archived`, `automation_owning_room_missing`, or
+  `automation_post_result_refused:<code>` (a stale generation or an archived
+  room decided inside the room's object); the run sees the tool error and says
+  so in its result.
+- **A run's parent is unreachable** when `readRunDefinition` or `readRunState`
+  is asked. The loop fails that turn and the harness's own retry applies; a run
+  never proceeds on a definition it could not read.
+- **The sidebar row lags.** The row travels two Queue legs; a person who just
+  submitted a draft sees the title update when the row lands, not when the
+  tool returned. `GET /automations/:id` reads the object and is never stale.
+- **Runs are listed to fifty and a detail's `recentRuns` to twenty.** Older
+  runs stay in the object; there is no paging yet.
 
 ## Testing
 
 | Suite | Command | Covers |
 | --- | --- | --- |
-| `apps/api/test-workers/automation-agent.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd: identity plus the first turn plus one compiler admission committed before dispatch; evaluator replacement and its receipt in one transaction; an event-driven authored submission refused when its rules are absent or empty, exempted while the draft is not ready, and admitted through to acceptance once they are set; acceptance in place deleting only the draft conversation; generation-fenced memory with replayed write receipts; a memory table keeping its identity across revisions; the id-only accept creating the automation the object holds for a manual draft and for an external-event one whose source binding comes only from the draft, binding the plugins a draft recommends, refusing a recommended plugin with no connection, a directory membership refusal answering 403, an `ApiError` raised inside the object surviving the RPC hop with its own status, and workspace abandonment retiring compiler, schedule, run, and outbox lanes before external work. |
-| `apps/api/test-workers/automation-acceptance-bindings.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd, with `connector_connections` in WorkspaceDO and deliberately absent from D1: binding the plugins a draft recommends at acceptance, refusing one the workspace has no connection for, binding the live connection when a disabled row still holds the same plugin id, and the service answering a detail rather than an unmapped 500. Its first test asserts the table is absent from D1, because that absence is what makes the rest evidence. |
-| `apps/api/test-workers/automation-cutover.test.ts` | `pnpm --filter @rally/api test:workers` | A fresh WorkspaceDO reaching the final schema with no legacy lifecycle tables, and an import that discards audited drafts and replays cleanup safely. |
-| `apps/api/test-workers/external-event-routing.test.ts` | `pnpm --filter @rally/api test:workers` | One accepted event and one matcher serving an automation and two watched work streams. |
+| `apps/api/test-workers/automation-do.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd, with `connector_connections` in WorkspaceDO and deliberately absent from D1: draft, `submitDefinition`, and `apply` binding a workspace connection, reserving the address, and activating; a missing connection refused; a second ready revision re-applied on an active automation; pause stopping the in-flight run and clearing registrations, resume re-arming; delete tombstoning the row and leaving the sidebar; management refused to a member who is neither author nor principal; `runNow` idempotent on its key; `admitExternalEvent` idempotent and refused before the boundary; `admitInboundEmail` answering a retry from its receipt and refusing a stranger; the run provisioned as a child substream whose loop reads its definition by revision, with `runs.state` following the child's state through the effect leg. |
+| `apps/api/test-workers/automation-post-result.test.ts` | `pnpm --filter @rally/api test:workers` | The result tool appending into the owning room's substream `0`, and refused for an archived room and a stale generation. |
+| `apps/api/test-workers/automation-directory.test.ts` | `pnpm --filter @rally/api test:workers` | `create` alone putting a draft row in the author's sidebar, a workspace row in everyone's, and a room's row only in `listWorkstreamAutomations`. |
+| `apps/api/test-workers/automation-acceptance-bindings.test.ts` | `pnpm --filter @rally/api test:workers` | The binding half in isolation: the table absent from D1, a recommended plugin bound from the workspace object's connections, a missing one refused, a disabled row skipped for the live one. |
+| `apps/api/test-workers/external-event-routing.test.ts` | `pnpm --filter @rally/api test:workers` | One accepted event and one matcher serving an automation and watched work streams; a redelivery admits once. |
+| `apps/api/test-workers/conversation-parent-contract.test.ts`, `conversation-effect-queue.test.ts` | `pnpm --filter @rally/api test:workers` | The parent contract through the real ticket route, and the effect legs an automation's children use, including a child effect producing no `parent_effect` row. Owned by [`workstream-durable-object.md`](workstream-durable-object.md#testing). |
 | `apps/api/test/external-event-evaluator.test.ts` | `pnpm --filter @rally/api test` | The pure predicate: legal and illegal documents, missing-field semantics, and the connector vocabulary. |
-| `apps/api/test/automation-run-context.test.ts`, `automation-connector-bindings.test.ts`, `run-authority-validity.test.ts` | `pnpm --filter @rally/api test` | The frozen run context and its destinations, connector binding validation, and the live-generation re-check before a provider write. |
-| `apps/api/test/resend-inbound-email.test.ts`, `workstream-email-routing.test.ts` | `pnpm --filter @rally/api test` | Pre-fetch and post-sender screening, admission receipts, and the address claim. |
-| `apps/api/test/access-revocation.test.ts` | `pnpm --filter @rally/api test` | The workspace fan-out reaching AutomationAgent. |
-| `apps/desktop/src/renderer/lib/use-automation-agent-socket.test.tsx`, `screens/new-automation.test.tsx`, `screens/automation-overview.test.tsx` | `pnpm --filter @rally/desktop test` | Snapshot fencing against the compiler stream, the stable route, and both adapters. |
-| `scripts/cutover-automation-agents.test.mjs` | `pnpm test:scripts` | Argument modes, paged inventory, the DLQ refusal, and the drain deadline (driven with a finite value, since the shipped one is open). |
+| `apps/api/test/run-authority-validity.test.ts` | `pnpm --filter @rally/api test` | A running run admitted, a paused or unknown one stopped, connector evidence not re-read after admission, and a run with no automation reference asking no automation. |
+| `apps/api/test/scoped-memory.test.ts` | `pnpm --filter @rally/api test` | An automation's conversation resolving the workspace scope and its own `automation` scope. |
+| `apps/api/test/resend-inbound-email.test.ts`, `workstream-email-routing.test.ts`, `workstream-email-address.test.ts` | `pnpm --filter @rally/api test` | The single admission call, its receipts, and the address claim. |
+| `apps/api/test/access-revocation.test.ts` | `pnpm --filter @rally/api test` | The workspace fan-out naming an automation and the consumer walking its children. |
+| `packages/agent-harness/src/automation-creator-tools.test.ts` | `pnpm --filter @rally/agent-harness test` | The drafting tools, the `all` evaluator shape, and the submission pre-check. |
 
-Traps worth knowing before writing one here. The `test-workers` D1 starts with no
-schema, so a test that exercises membership or sessions declares those tables
-itself; anything that depends on a checked-in migration belongs in the Node
-suite. That freedom cuts both ways — see the general warning in
-[`testing.md`](testing.md#declaring-a-table-the-region-does-not-have): declaring
-a WorkspaceDO table in the D1 fixture makes a mis-routed statement pass. The
-delivery-target file's first test asserts the absence rather than trusting a
-comment. And an automation alarm armed at `now + 1` can fire while a test is still
-arranging state — park it in the same `runInDurableObject` invocation that admits
-the work, as [`durable-object-alarms.md`](durable-object-alarms.md) describes;
-settling the compiler run in that same invocation is what makes a drain after an
-eviction a no-op rather than a real provider call. A test that reaches acceptance
-addresses WorkspaceDO, and an object never addressed refuses every caller with
-`workspace_object_identity_mismatch` — call `initializeWorkspace` first rather
-than patching the agent's `workspace()`, which only works from inside
-`runInDurableObject`.
+Traps worth knowing before writing one here. The `test-workers` D1 starts with
+no schema, so a test that exercises membership or sessions declares those tables
+itself, and it must not declare a WorkspaceDO table there
+([`testing.md`](testing.md#declaring-a-table-the-region-does-not-have)); the
+binding files assert the absence in their first test rather than trusting a
+comment. Every file uses its own workspace id, because two files sharing one would
+queue behind each other's WorkspaceDO. An `automation_run` alarm is armed for now the moment
+an occurrence is admitted, so a test that wants to inspect a `pending` run
+reads it in the same `runInDurableObject` invocation that admitted it, per
+[`durable-object-alarms.md`](durable-object-alarms.md). A test that reaches
+`apply` addresses WorkspaceDO, so call `initializeWorkspace` first. Effects
+between a run and its parent and between the parent and the workspace do not
+deliver themselves: drive them with `deliverEffectsToWorkspace` and its
+siblings in `test-workers/helpers/conversation-effects.ts`.
 
 ## Data model
 
-`AutomationAgent` SQLite, seven migrations:
+`AutomationDO` SQLite, one migration: `automation`, `definition_revisions`,
+`schedules`, `runs`, `inbound_email_receipts`, the shared parent tables, and
+`_internal_durable_alarms`. [`workstream-durable-object.md`](workstream-durable-object.md#automationdo)
+catalogs the columns; the occurrence keys and run states are in the tables
+above. `run_id` is the child substream id, and `harness_run_id` is unique per
+run.
 
-| Version | Adds |
-| --- | --- |
-| 1 | Identity and state, draft message metadata, compiler runs, definition revisions, pending and staged elicitations, staged submissions, draft evaluator sets, tool receipts, realtime events, schedules, acceptance, runs, trigger receipts, the effect outbox — plus `ORDERED_TRANSCRIPT_SCHEMA_V1` and the shared alarm table. |
-| 2 | Delivery receipts and automation-owned memory items, tables, columns, rows, and mutations. |
-| 3 | The one-shot legacy import receipt. |
-| 4 | The email route row and the preserved legacy memory records. |
-| 5 | Inbound-email receipts and hourly rate windows. |
-| 6 | Fenced memory items and complete mutation receipts. |
-| 7 | One-time socket ticket receipts, the monotonic `projection_version`, and the per-turn projection coordinate. |
-
-`WorkspaceDO` migration 22 adds `automation_creation_claims`,
-`automation_directory`, `workspace_external_event_registrations`,
-`workspace_external_event_deliveries`, and `automation_cutover_campaign`. The
-cutover then drops `automation_subscriptions`, `automation_runs`,
-`automation_delivery_targets`, `automation_resources`,
-`automation_email_receipts`, and `automation_email_rate_windows`, rebuilds
-`schedules` without its automation column, deletes private templates, and deletes
-`memory_scopes` of kind `automation`. Shared `automation_templates` and
-`automation_template_versions` survive. [`data-model.md`](data-model.md) is the
-map of both authorities.
+`WorkspaceDO` migration 31 rebuilt `automation_directory` (automation id,
+workspace, author, `source_version`, hash, lifecycle, scope, owning work stream,
+title, description, next run, projected time) and
+`workspace_external_event_registrations` (no generation, version, or hash; a
+complete replacement per destination keyed on `destination_key`, with
+`effective_after_event_sequence` as the cutoff), dropped
+`workspace_external_event_deliveries`, `automation_creation_claims`,
+`automation_cutover_campaign`, `automation_templates`, and
+`automation_template_versions`, and deleted every work-stream directory row an
+automation run had made. [`data-model.md`](data-model.md) is the map of both
+authorities.
 
 ## Regional impact
 
 Every object name is `<region>:<workspaceId>:automation:<automationId>` and the
 constructor asserts the object's jurisdiction against `AVALON_REGION`, so an
-automation cannot be addressed from the wrong region. Connector payloads, draft
-turns, memory, and run content stay in the workspace's region. The one
-cross-region call is the email-address reservation, which reaches the Global
-`workstream_email_routes` registry and carries the address and opaque owner IDs
-only. Queue messages between objects carry identifiers, generations, versions,
-and hashes.
+automation cannot be addressed from the wrong region. Its conversations are
+`SubstreamAgent`s in the same region, named by the automation id. Connector
+payloads, draft turns, memory, and run content stay in the workspace's region.
+The one cross-region call is the email-address reservation, which reaches the
+Global `workstream_email_routes` registry and carries the address and opaque
+owner ids only (the column is still named `automation_subscription_id`; D1
+migrations are immutable). Queue messages between objects carry the envelope
+inline and stay regional.
 
 ## Security and trust model
 
-An automation's socket, REST reads, and every RPC re-derive authority from the
-object's own identity row rather than from the caller's claim. Reads authorize
-the author directly or ask WorkspaceDO whether the viewer may see a
-workspace-scoped automation; management (`pause`, `resume`, `delete`,
-`PATCH`) additionally admits a workspace owner or admin, but only for a
-workspace-scoped automation — a personal one is its author's alone and an admin
-role does not reach into it. Creating a workspace-scoped automation requires
-owner or admin at acceptance.
+Every RPC re-derives authority from the object's own row rather than from the
+caller's claim. The Worker resolves one fact the object cannot see, whether the
+caller is a participant of the owning room, and sends it as
+`participantOfOwningWorkstream`; a failure to resolve it sends `false`, which
+only ever withholds the room's standing. Reads admit the author, the run-as
+principal, any member for a `workspace` automation, and the room's participants
+for a room's; management additionally admits a workspace owner or admin, but
+only for a `workspace` automation.
+
+The conversation's readers are the parent's decision, carried to the
+conversation object on the ticket and by seating the reader; a run's
+conversation seats only the run-as principal, and its state reaches nobody but
+the parent.
 
 Inbound mail is untrusted: the From header can be spoofed, so the sender must
-resolve to an active workspace member, and to the author for a personal
-automation. That screening is the whole control. An inbound-email run holds the
-same tools as any other trigger.
+resolve to an active workspace member, and to the author or principal for a
+personal automation. That screening is the whole control; an inbound-email run
+holds the same tools as any other run, a decision
+[`security.md`](security.md) records.
 
-It did not always. The run used to omit every connector write tool and the
-outbound web tools, which read like a boundary and was not one: a
-`connector_activity` run reading an equally untrusted third-party page kept both,
-so the rule hardened one channel out of several and described a protection the
-system did not have. Removing it is a deliberate acceptance of the residual
-risk, which is prompt injection in the body of mail a member legitimately sends
-or forwards. That risk is not new and is not specific to mail — it is the same
-risk any connector content carries — and it is now handled in one place for all
-of them rather than by a rule that named only this one.
+Binding is where credentials are lent: a personal connection may be bound only
+by its owner or the run-as principal, and a `workspace` automation binds only
+workspace connections. `claimExecutionPrincipal` is the one way a run-as
+principal changes, and the claimant is always the caller.
 
-Alarm failures log a `diagnosticErrorCode`, never the thrown message: an alarm
-lane runs the compiler and connector tools, so the error reaching the handler can
-quote a provider's prose and, through it, the workspace's own retrieved content.
-
-Losing access closes an open room. The room admits on a ticket and never
-re-authorizes, so the [access-revocation queue](access-revocation.md) is the only
-thing that ends a live automation feed; `WorkspaceDO.revokeSocketAccess` now
-returns the automation IDs alongside the work-stream IDs and the consumer fans
-out to both.
+Losing access closes an open conversation. The automation holds no socket of
+its own; the [access-revocation queue](access-revocation.md) reaches its
+conversations through `listChildren`.
 
 ## Operations
 
-The automation section of [`runbook.md`](runbook.md) owns the cutover and its DLQ
-handling. The cutover ran on 2026-08-28 and is no longer part of any deploy, so a
-failed preflight, cutover command, or rising dead-letter backlog is now an
-operator-run failure rather than a release failure — it stops the person who
-invoked the script, and nothing else. What has not changed is that there is no
-dual-write fallback and no rollback to legacy authority: the remedy for a
-workspace found holding legacy state is to run the script again, which is
-idempotent per workspace.
+A run's state, its trigger, and its summary are on `GET /automations/:id/runs`
+and in the object's `runs` table. A sidebar row that disagrees with the object
+is a Queue delivery that has not landed: read the object's `durable_outbox` and
+the regional activities dead-letter queue, per
+[`workstream-durable-object.md`](workstream-durable-object.md#operations). A
+missing scheduled run is a schedule row whose `next_due_at` is null or an
+alarm entry behind its backoff gate in `_internal_durable_alarms`;
+`automation_scheduled_alarm_failed` names the entry and the handler's code. A
+run refusing provider writes with "This automation run is no longer running"
+was paused or deleted after admission. [`runbook.md`](runbook.md) has the
+production inspection paths.
 
 ## Changelog
+
+### 2026-09-03: The automation is rebuilt as a conversation parent
+
+**What changed:** `AutomationAgent` is deleted (Wrangler tag `v9`) and
+`AutomationDO` created with a fresh one-migration schema: one automation row,
+immutable definition revisions, schedules, runs keyed by occurrence, and
+inbound-email receipts, plus the parent tables it shares with `WorkstreamDO`.
+An automation's substream `0` is its conversation for its whole life, where it
+is drafted, created, and edited through the `rally:automations` plugin; each
+run is a child substream named by the run id, reading its definition from the
+parent by revision and reporting its state through the same child-effect leg
+every conversation uses. `POST /automations` creates an automation and its
+conversation; a room's agent creates a room-scoped one on its first
+submission. Posting into the owning room is the run's own tool,
+`automation_post_result`. Inbound email is one `admitInboundEmail` call. A
+connector event reaches the object as one Queue message per matched
+registration, carrying the event, from a WorkspaceDO whose registrations have no
+coordinates and whose matcher holds no lease. Memory is the workspace store's
+`automation` scope.
+
+**Why:** The previous object was a distributed-systems design for a product
+with no users: about eleven thousand lines, thirty-two tables, a two-phase
+acceptance, a generation fence on every asynchronous path, a per-run
+classifier, and roughly a third of it left over from two deleted designs, the
+standalone draft compiler and the August cutover. Its runs were hidden work
+streams because nothing else could be the parent of a conversation; the parent
+role was `WorkstreamDO`'s by construction and could not be given to an
+automation. Making the parent explicit (the entry of this date in
+[`workstream-durable-object.md`](workstream-durable-object.md)) let the
+automation own its conversation and its runs directly, and everything that
+had compensated for not owning them, the origin type, the exposed flag, the
+run-context copy, the delivery receipts, the archive fan-out to run work
+streams, went with the hidden work streams. The effect pipeline it reports
+through changed at the same time and for the same reason: the opaque wake-up
+plus the load-back and acknowledge RPCs distrusted a Queue that already
+retries, and queues on every asynchronous hop is the repo's own default. There
+are no users yet, only dogfood, so there is no compatibility path; every
+automation that existed before is gone with its class and is recreated by
+chatting.
+
+**Considered and rejected:** Keeping `AutomationAgent` and pointing its runs at
+the new parent contract. Rejected because the object's size was the problem,
+not one feature in it; a migration of its thirteen released versions to the
+new shape would have cost more than the rewrite and kept the leftovers.
+Delivering a result by a classifier after the run, as before. Rejected
+because a tool the run calls with the text it wants the room to see is the
+instructions being followed, and a classifier judging the final message was a
+second model deciding what the first one meant.
+
+**Scope cut, deliberately, and what would have to be true to pick each back
+up:** the disposition classifier and its corpus (a result posts when the run
+posts it; bring it back only if runs prove to post noise); delivery receipts
+(the activation row keyed on the run id is the receipt); hidden run work
+streams and the exposed flag (runs are child substreams; nothing lists them);
+the inbound-email double screen and hourly rate window (one admission call
+writes one receipt; a rate limit is a decision for when mail volume exists,
+and the number would be the team's); DNF evaluator groups (one rule is one AND
+group, and a person who needs OR writes two rules); authority-generation
+fences on automations (the run row's state is the fence, and
+`assertRunAuthorityStillValid` reads it live); templates end to end (adopting
+a definition is pasting it into a chat); the standalone draft compiler
+substrate, its socket, and its transcript (drafting is a conversation); the
+cutover module, script, tables, and attention codes (the cutover ran once and
+nothing predates it now); the automation memory engine (the workspace store
+already had an `automation` scope kind); and definition-time memory-table
+materialization (a run creates the table it needs through the memory tables
+plugin's `create` tool under the automation scope; materializing at apply
+would return only if runs prove unable to agree on a table's shape).
+
+**Consequences:** A run is pinned to an immutable revision, so an edit applies
+to the next run and never to one in flight. The `occurrence_key` unique
+constraint is the only admission fence, and a new trigger kind has to derive
+one. `AutomationDO` forwards nothing its children say, so an automation's runs
+are invisible to the sidebar, the activity log, and notifications by
+construction. Where the plan this shipped from and the code differ, the code
+is described above: the drafting plugin is deferred in an automation's own
+conversation as well as in a room (loaded through `load_plugin`, never
+preloaded); `readRunState` refuses a run the automation no longer knows or
+whose automation is not `active`, rather than checking the run row's own state;
+and a mail-started run's opening is appended to the run's own conversation as a
+`system` message, which is what its loop reads as the trigger. The desktop
+surfaces this document names are the routes and lists the API serves; the
+renderer's own automation screens are being rebuilt against them in the same
+change and are not described here beyond the route host.
 
 ### 2026-09-03 — An automation has no destinations of its own
 

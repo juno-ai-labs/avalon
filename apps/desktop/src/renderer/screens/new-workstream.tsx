@@ -198,7 +198,6 @@ function launchedWorkstreamDetail(
     resources: [],
     connections: [],
     backgroundTasks: [],
-    automationRuns: [],
     openElicitations: [],
     // Without the run, the work timer the launch surface has been showing
     // disappears on arrival and only comes back when the refetch answers —
@@ -281,7 +280,7 @@ const WorkSuggestedPrompts = withSuggestedPrompts<{
 }));
 
 function AttentionWorkstreamRow({ projects, workstream }: { projects: ProjectSummary[]; workstream: WorkstreamSummary }): React.JSX.Element {
-  const summary = workstream.preview ?? workstream.objective ?? workstream.automationName;
+  const summary = workstream.preview ?? workstream.objective;
   return (
     <NavLink className="waiting-workstream-row" to={`/workstreams/${workstream.id}`}>
       {/* Read from the work stream rather than hard-coded, now that three states
@@ -296,9 +295,6 @@ function AttentionWorkstreamRow({ projects, workstream }: { projects: ProjectSum
         <strong>{workstream.title}</strong>
         {summary && <span>{summary}</span>}
       </span>
-      {workstream.origin === 'automation' && workstream.automationName && (
-        <span className="waiting-workstream-source">{workstream.automationName}</span>
-      )}
       <time dateTime={workstream.lastActivityAt}>{formatRelative(workstream.lastActivityAt)}</time>
       <ChevronRight aria-hidden="true" size={15} />
     </NavLink>
