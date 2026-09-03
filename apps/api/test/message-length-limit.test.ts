@@ -11,9 +11,9 @@
  * request that was creating one.
  *
  * Two boundaries disagreeing is the defect. These tests hold them together: one
- * constant bounds the message everywhere it travels, the description is derived
- * rather than inherited, and the refusal above the ceiling is the person's to
- * act on rather than the object's to describe.
+ * constant bounds opening and socket message contracts, the description is
+ * derived rather than inherited, and the refusal above the ceiling is the
+ * person's to act on rather than the object's to describe.
  */
 import {
   CreateMessageRequestSchema,
@@ -92,15 +92,7 @@ describe("the message ceiling", () => {
     expect(refused.message).toBe(MESSAGE_TOO_LONG_MESSAGE);
   });
 
-  it("refuses a message over the ceiling on the REST send path", async () => {
-    const refused = await post(`/workstreams/${workstreamId}/messages`, messageBody("x".repeat(MESSAGE_MAX_CHARACTERS + 1)));
-
-    expect(refused.status).toBe(400);
-    expect(refused.code).toBe("message_too_long");
-    expect(refused.message).toBe(MESSAGE_TOO_LONG_MESSAGE);
-  });
-
-  it("lets a message at exactly the ceiling through the guard, and leaves the body readable behind it", async () => {
+  it("lets an opening message at exactly the ceiling through the guard, and leaves the body readable behind it", async () => {
     // Two assertions in one request, and the second is the load-bearing one.
     //
     // `authentication_required` rather than merely "not message_too_long":
@@ -114,14 +106,10 @@ describe("the message ceiling", () => {
     // The first assertion is the off-by-one: a person told to shorten a message
     // that was never too long.
     const create = await post("/workstreams", createBody("x".repeat(MESSAGE_MAX_CHARACTERS)));
-    const send = await post(`/workstreams/${workstreamId}/messages`, messageBody("x".repeat(MESSAGE_MAX_CHARACTERS)));
 
-    // The two routes refuse for different reasons — the create reaches the
-    // session check, the send reaches the authority check that precedes it —
-    // and either is proof of the same thing: a handler ran, so the body was
-    // still there to be parsed.
+    // Reaching the session check proves the handler ran, so the body was still
+    // there to be parsed after the guard read it.
     expect(create.code).toBe("authentication_required");
-    expect(send.code).toBe("workstream_authority_not_open");
   });
 
   it("leaves a body it cannot read to the validator", async () => {
@@ -144,6 +132,27 @@ describe("the message ceiling", () => {
     expect(CreateWorkstreamRequestSchema.safeParse(createBody(overCeiling)).success).toBe(false);
     expect(CreateMessageRequestSchema.safeParse(messageBody(atCeiling)).success).toBe(true);
     expect(CreateMessageRequestSchema.safeParse(messageBody(overCeiling)).success).toBe(false);
+  });
+});
+
+describe("removed child-mutation REST routes", () => {
+  it.each([
+    ["POST", `/workstreams/${workstreamId}/messages`],
+    ["PUT", `/workstreams/${workstreamId}/pending-inputs`],
+    ["POST", `/workstreams/${workstreamId}/elicitations/${workstreamId}/answer`],
+    ["POST", `/workstreams/${workstreamId}/stop`],
+    ["POST", `/workstreams/${workstreamId}/retry`],
+  ])("does not expose %s %s", async (method, path) => {
+    const response = await routedApp().request(
+      `https://api.example.com${path}`,
+      {
+        method,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({}),
+      },
+      createTestEnv({ AVALON_REGION: "global", LOG_LEVEL: "error" }),
+    );
+    expect(response.status).toBe(404);
   });
 });
 

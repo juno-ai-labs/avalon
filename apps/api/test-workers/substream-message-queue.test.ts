@@ -527,7 +527,12 @@ describe("a message queued behind a live run", () => {
         text: "queued behind a stop",
         clientMessageId: "queue-stop-1",
       });
-      expect((await product(stub, { operation: "stop", auth: AUTH })).status).toBe(200);
+      await runInDurableObject(stub, async (instance) => {
+        await (instance as unknown as { product: WorkstreamObjectProductService }).product.stop(
+          AUTH,
+          "00000000-0000-7000-8000-0000000004ff",
+        );
+      });
 
       await openProviderGate(stub);
       // A durable stop consumes no pending input. The person stopped the run,
@@ -608,13 +613,15 @@ describe("a message queued behind a live run", () => {
       const first = await sendMessage(stub, { text: "arrived first", clientMessageId: "queue-order-1" });
       const second = await sendMessage(stub, { text: "arrived second", clientMessageId: "queue-order-2" });
 
-      const reordered = await product(stub, {
-        operation: "reorder_pending_inputs",
-        auth: AUTH,
-        inputIds: [second.turnId, first.turnId],
+      const reordered = await runInDurableObject(stub, async (instance) => {
+        return (instance as unknown as { product: WorkstreamObjectProductService })
+          .product.reorderPendingInputs(
+            AUTH,
+            "00000000-0000-7000-8000-0000000004fe",
+            [second.turnId, first.turnId],
+          );
       });
-      expect(reordered.status).toBe(200);
-      expect((reordered.body.pendingInputs as Array<{ inputId: string }>).map((input) => input.inputId))
+      expect(reordered.pendingInputs.map((input) => input.inputId))
         .toEqual([second.turnId, first.turnId]);
 
       await openProviderGate(stub);

@@ -47,7 +47,7 @@ serve workspace product state or transcripts after cutover.
 | `apps/api/src/workflows/work-opportunity.ts` | Retryable admission and ranking compute using fenced WorkspaceDO RPC inputs and settlements. |
 | `apps/api/src/durable-objects/workspace-directory-protocol.ts` | Runtime-validated typed RPC contracts for cross-work-stream lists, visibility, scheduling, resource lookup, routing, feedback, and child effect application. |
 | `apps/api/src/durable-objects/workstream-do.ts` | Non-agent aggregation of child directory/user effects, HyperSight configuration and refresh fan-out, complete metadata WebSocket snapshots, and the regional delivery outbox. |
-| `apps/api/src/durable-objects/substream-agent.ts` | Authoritative substream SQL, direct Bind loop, hibernating feed socket, streaming checkpoints, timers, pending-input delivery, and child-to-parent effect RPC. |
+| `apps/api/src/durable-objects/substream-agent.ts` | Authoritative substream SQL, direct Bind loop, hibernating feed and child-command socket, streaming checkpoints, timers, pending-input delivery, and child-to-parent effect RPC. |
 | `apps/api/src/durable-objects/substream-loop-storage.ts` | Singleton loop lifecycle, execution-epoch and lease fencing, prepared-input admission/delivery state, subordinate execution receipts, and exact assistant-turn sequence reservations. |
 | `apps/api/src/durable-objects/block-dashboard-agent.ts` | One durable Bind execution owner per stable HyperSight block, including dispatch recovery, keep-alive, fenced source-runtime access, resumable token checkpoints, hibernating block sockets, and result settlement. |
 | `apps/api/src/durable-objects/durable-agent-runtime.ts` | Shared reference-counted keep-alive and single-flight drain primitives used by both agent Durable Objects. |
@@ -295,8 +295,9 @@ one connection per active, pinned, recent-five, live-state, or retained work str
 one substream `0` connection for the same proactive and retained work-stream set
   <- SubstreamAgent snapshot / stream frames / product events
   <- direct download and reconnect feed for exactly one substream
-  -> create_message for that already-admitted substream
-  <- private correlated admission receipt
+  -> create_message / answer_elicitation / reorder_pending_inputs
+  -> stop_harness / retry_harness for that already-admitted substream
+  <- private correlated command receipt
 
 one connection per configured HyperSight block while its panel is visible
   <- BlockDashboardAgent run snapshot / stream checkpoint / result
@@ -317,12 +318,23 @@ event when the bounded log is available and otherwise invalidates every
 workspace query surface; intermediate invalidation states are not product data.
 Directory page requests and their cursors resume through that same socket;
 Electron does not fall back to a D1 work-stream list. Once a substream socket is
-admitted, it accepts `create_message` for only the substream fixed in its
-hibernation attachment. The private receipt is outside the replay sequence, and
-the desktop resends the same `clientMessageId` after an ambiguous disconnect.
-Access revocation closes the socket, so the message does not pay a parent hop or
-a second D1 session/membership read. WorkspaceDO retains its former command
-handler only so released desktop builds can drain during rollout.
+admitted, it accepts child-local commands only for the substream fixed in its
+hibernation attachment. Private receipts are outside the replay sequence, and
+the desktop resends the same operation after an ambiguous disconnect. Message
+admission keeps `clientMessageId` as its durable idempotency key; reorder and
+stop commit an operation receipt in the same SQLite transaction as their
+mutation; retry uses the operation ID as its run ID. That fencing means an old
+reorder or stop resent after reconnect cannot apply to newer queue or execution
+state. Access revocation closes the socket, so commands do not pay a parent hop
+or a second D1 session/membership read.
+
+Every renderer cache owned by the feed is keyed by the complete
+`(workstreamId, substreamId)` address: detail, canonical transcript, overlays,
+feed source, and snapshot generation. Main child `0` retains its existing keys
+for the work-stream UI. A non-main child's `resync_required` clears only that
+child's cursor and reconnects from sequence zero so the addressed
+SubstreamAgent supplies its own canonical snapshot; it never installs the
+parent work stream's REST boot into the child cache.
 
 The same persistent workspace socket carries explicit foreground presence. Each
 hibernation attachment records whether Rally itself is foregrounded and which
@@ -1563,6 +1575,90 @@ migration rather than a tolerant read, for the reason recorded in
 field every future reader has to know to ignore. Proved in
 `apps/api/test/workstream-object-schema.test.ts` by storing a pre-v37 receipt,
 applying the schema, and parsing the row through `WorkstreamWorkflowInputSchema`.
+
+### 2026-09-03 — Socket replay and archive state are enforced by the owning substream
+
+**What changed:** A socket admitted to a `SubstreamAgent` now performs all five
+conversation mutations against the object's local participant authority rather
+than repeating the regional membership read. Message ids are durably bound to
+the author and complete request, elicitation replays are bound to the responder
+and answer, and retry ids are bound to the requesting principal and rechecked
+inside the insertion transaction. Post-commit wake or publication failure no
+longer turns a durable elicitation answer or retry into a false failure receipt.
+Archiving commits an executing-loop stop and prevents both alarm scheduling and
+execution claims while the room is archived; unarchiving re-derives the alarm.
+
+Socket-command and message-admission receipts are intentionally retained for
+the object's lifetime. A stale operation id must remain unable to mutate newer
+state. No time window was added because its value is a product decision under
+[`adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md),
+not an implementation constant to guess. Their growth remains explicit follow-up
+work if the team chooses a bounded replay horizon.
+
+**Why:** Review found that the first socket cutover still re-read D1 for four
+commands, could acknowledge a committed mutation as failed, allowed ambiguous
+ids to converge on another request, and let an admitted retry begin after its
+room became unreadable.
+
+**Considered and rejected:** Restoring REST or treating the workspace database
+as the command authority would split admission from the object that owns the
+rows. Cancelling every admitted run on archive would make archive destructive;
+the reversible fence keeps it dormant and lets unarchive resume it.
+
+**Consequences:** Live admitted sockets survive a regional membership-read
+outage until the revocation plane closes them. Exact replays converge, changed
+replays return a conflict, and an archived room cannot spend or call tools.
+
+### 2026-09-02 — Child identity and ambiguous command replay are fenced end to end
+
+**What changed:** SubstreamAgent derives its singleton Bind loop and workflow
+input from the external child ID recorded in `substream_agent_identity`, while
+its private product tables retain local slot `0`. Reorder and stop now commit a
+durable operation receipt atomically with the mutation. The renderer keys every
+feed cache by both work-stream and child, and a non-main recovery reconnects to
+that child from sequence zero instead of fetching the parent REST boot. Local
+smoke and behavioral drivers now exercise message and stop mutations through
+the SubstreamAgent socket.
+
+**Why:** A child Durable Object owns one conversation. Treating its local SQL
+slot as the external address routed non-main work into the main loop; treating a
+work-stream-only query key or REST boot as child state overwrote the main feed;
+and replaying an old stop or reorder against current rows mutated work that did
+not exist when the person issued it.
+
+**Considered and rejected:** keeping a second REST mutation path for scripts,
+because it would leave the removed public contract alive in acceptance tests;
+and returning the original reorder result on replay, because the caller needs a
+read of current pending state without applying the old order again.
+
+**What a future change has to respect:** external child identity names loops,
+workflow input, socket attachments, and renderer caches. Local product slot `0`
+means "this object's conversation," not "the main work-stream child." A replay
+receipt must fence the mutation, not merely make its response repeatable.
+
+### 2026-09-02 — Child-local mutations enter through SubstreamAgent's socket
+
+**What changed:** message admission, elicitation answer, pending-input reorder,
+stop, and retry share one addressed socket command protocol. Public work-stream
+REST routes and the unused WorkspaceDO message relay are removed. Each command has a private
+operation receipt and reconnect resend; manual retry stores the operation ID as
+its run ID. Archiving requests an executing loop's stop in the same object
+transaction that hides the work stream.
+
+**Why:** these transactions are owned by the substream, and its admitted socket
+already fixes the complete child address and caller identity. Leaving REST in
+front of them would make the work-stream product the transport owner and block
+reusing the same SubstreamAgent under AutomationAgent without route aliases.
+
+**Considered and rejected:** a WorkstreamDO relay, because it adds a parent hop
+without a parent decision; compatibility REST, because there are no clients to
+migrate; and moving participants/resources, because their ownership is not
+child-local.
+
+**What a future change has to respect:** the parent supplies child discovery,
+ticket admission, and lifecycle. Once admitted, conversation commands go to the
+child authority and their shared consequences leave through its existing
+effect/publication paths.
 
 ### 2026-09-02 — Fenced scope and activation writes reuse rather than refuse
 

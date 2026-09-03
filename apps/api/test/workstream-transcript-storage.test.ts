@@ -468,6 +468,22 @@ describe("canonical ordered work-stream transcript", () => {
       envelopeJson: JSON.stringify({ input: { text: "first" } }),
       now: NOW + 1,
     });
+    expect(() => loop.reserveInputPreparation({
+      inputId: "00000000-0000-7000-8000-000000000203",
+      loopId: "persistent-loop",
+      clientMessageId: "mailbox-first",
+      preparationKind: "external_message",
+      envelopeJson: JSON.stringify({ input: { text: "changed replay" } }),
+      now: NOW + 2,
+    })).toThrow("pending_input_preparation_replay_mismatch");
+    expect(loop.reserveInputPreparation({
+      inputId: "00000000-0000-7000-8000-000000000204",
+      loopId: "persistent-loop",
+      clientMessageId: "mailbox-first",
+      preparationKind: "external_message",
+      envelopeJson: JSON.stringify({ input: { text: "first" } }),
+      now: NOW + 2,
+    })).toMatchObject({ outcome: "reused", preparation: { input_id: firstInputId } });
     const second = loop.reserveInputPreparation({
       inputId: secondInputId,
       loopId: "persistent-loop",
@@ -570,10 +586,10 @@ describe("canonical ordered work-stream transcript", () => {
       .toEqual([firstId, secondId, thirdId]);
     const beforeRefs = dueSemanticRealtimeReferences(sql, NOW + 20).length;
 
-    expect(loop.reorderPendingInputs({
+    expect(storage.transactionSync(() => loop.reorderPendingInputsInTransaction({
       inputIds: [thirdId, firstId, secondId],
       now: NOW + 21,
-    }).map((pending) => ({
+    })).map((pending) => ({
       inputId: pending.input_id,
       inputSequence: Number(pending.input_sequence),
     }))).toEqual([
@@ -592,10 +608,10 @@ describe("canonical ordered work-stream transcript", () => {
       { kind: "loop_input_upserted", inputId: secondId },
     ]);
 
-    expect(loop.reorderPendingInputs({
+    expect(storage.transactionSync(() => loop.reorderPendingInputsInTransaction({
       inputIds: [thirdId, firstId, secondId],
       now: NOW + 22,
-    }).map((pending) => pending.input_id)).toEqual([thirdId, firstId, secondId]);
+    })).map((pending) => pending.input_id)).toEqual([thirdId, firstId, secondId]);
     expect(dueSemanticRealtimeReferences(sql, NOW + 22).length).toBe(afterRefs.length);
     expect(loop.loop()!.revision).toBe(before.revision);
   });
@@ -629,10 +645,10 @@ describe("canonical ordered work-stream transcript", () => {
       text: "Charlie @Ada",
     });
     const loop = first.loop;
-    expect(loop.reorderPendingInputs({
+    expect(storage.transactionSync(() => loop.reorderPendingInputsInTransaction({
       inputIds: [thirdId],
       now: NOW + 30,
-    }).map((pending) => pending.input_id)).toEqual([thirdId, firstId, secondId]);
+    })).map((pending) => pending.input_id)).toEqual([thirdId, firstId, secondId]);
 
     loop.reserveInputPreparation({
       inputId: hiddenId,
@@ -668,10 +684,10 @@ describe("canonical ordered work-stream transcript", () => {
       hiddenId,
     ).one().input_sequence);
 
-    expect(loop.reorderPendingInputs({
+    expect(storage.transactionSync(() => loop.reorderPendingInputsInTransaction({
       inputIds: [secondId, thirdId, firstId],
       now: NOW + 34,
-    }).map((pending) => pending.input_id)).toEqual([secondId, thirdId, firstId]);
+    })).map((pending) => pending.input_id)).toEqual([secondId, thirdId, firstId]);
     expect(Number(sql.exec<{ input_sequence: number }>(
       `SELECT input_sequence FROM pending_loop_inputs WHERE input_id = ?`,
       laterId,
@@ -1688,14 +1704,14 @@ describe("canonical ordered work-stream transcript", () => {
     // Settlement has already captured and begun preparing this steer when the
     // stop commits. The safe boundary must let the stop win without returning
     // the uncommitted transition or consuming the pending input.
-    const requestedStop = first.loop.requestStop({
+    const requestedStop = storage.transactionSync(() => first.loop.requestStopInTransaction({
       executionId: activated.receiptRunId,
       executionEpoch: 1,
       leaseOwner: "lease-1",
       expectedLoopRevision: beforeStop.revision,
       reason: "member_requested",
       now: NOW + 14,
-    });
+    }));
     expect(requestedStop.stop_requested_at).toBe(NOW + 14);
     const stopped = await stoppedPromise;
     expect(stopped).toMatchObject({
