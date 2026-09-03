@@ -4635,6 +4635,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         if (!this.objectStore.isRealtimeWritable()) {
           throw new ApiError(503, "workstream_maintenance", "Work streams are temporarily unavailable");
         }
+        assertParentWritable(attachment);
         if (!attachment.sessionId || !attachment.role) {
           // A socket admitted before this command path existed has no role in
           // its hibernation attachment. A normal reconnect obtains a fresh
