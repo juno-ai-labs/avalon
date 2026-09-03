@@ -39,10 +39,11 @@ fails. Streaming requests carry the exact OpenRouter body; streaming attempts
 carry the complete normalized content, tool calls, usage, finish reason, and
 generation ID, including OpenRouter's opt-in routing metadata when returned.
 Structured calls carry the exact request body and the provider's
-complete successful JSON response envelope. Failed calls retain the bounded
-provider classification (`code` and provider name) only. Provider-controlled
-free text and arbitrary metadata are discarded because either may echo the
-rejected prompt under an unrecognized key.
+complete successful JSON response envelope. Failed calls retain the provider
+classification (`code` and provider name) and `detail`, the refusal body as the
+provider sent it. The body is kept because a classification routinely cannot say
+what was refused; it may echo the rejected request back, which is accepted here
+for the same reason the request itself is archived.
 
 The API turns each event into schema version 1. Core dimensions are columns:
 region, environment, build, source, invocation type, workspace/Broadcast-user/
