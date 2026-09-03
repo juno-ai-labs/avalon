@@ -26,10 +26,15 @@ a thing to argue for rather than a thing to preserve.
 - `apps/desktop/src/renderer/components/expanded-composer.tsx`,
   `use-draft-text.ts`, and `use-file-attachments.ts` provide the common composer
   shell, local text persistence, and staged-file lifecycle.
-- `apps/desktop/src/renderer/screens/workstream.tsx` adapts a SubstreamAgent feed,
-  and is the only adapter; `screens/automation.tsx` hosts the same feed for an
-  automation's conversation with the automation id as the parent. Tool rows are
-  not rendered one per call: they collapse into one row per plugin, which
+- `apps/desktop/src/renderer/screens/conversation-surface.tsx` is the one feed
+  composition: `ConversationSurface({parentKind, parentId, substreamId,
+  renderHeader})` owns the transcript, composer, attachments, and the socket
+  hooks for one conversation, keyed by the parent id and substream. Its
+  composer draft is `workstreamDraftKey` over the parent id, whichever kind of
+  parent that is. `screens/workstream.tsx` renders it for a work stream;
+  `screens/automation.tsx` renders `components/automation-header.tsx` through
+  `renderHeader` over it with `parentKind: "automation"` and `substreamId:
+  "0"`. Tool rows are not rendered one per call: they collapse into one row per plugin, which
   [`plugin-activity-rows.md`](plugin-activity-rows.md) owns entirely. The
   retired automation-draft adapter kept a row per call, which is the divergence
   that made the collapse a decision worth recording rather than an obvious one.
@@ -78,9 +83,13 @@ prove layout, focus, scroll position, or overlap.
 
 **What changed:** The conversation surface is addressed by its parent through
 `/conversations/:parentId` and the conversation feed socket, and an automation's
-own chat is that surface over substream `0` of the automation. There is no
-compiler, no narration stream, and no draft-specific feed state; the drafting
-tools are a plugin the ordinary loop loads.
+own chat is that surface over substream `0` of the automation. On the desktop,
+`screens/conversation-surface.tsx` is the one composition, taking `parentKind`,
+`parentId`, `substreamId`, and a `renderHeader` slot; the work-stream screen
+and the automation screen are hosts over it, and the automation screen's header
+carries the lifecycle controls. There is no compiler, no narration stream, and
+no draft-specific feed state; the drafting tools are a plugin the ordinary loop
+loads.
 
 **Why:** [`automation-lifecycle.md`](automation-lifecycle.md) records why the
 automation was rebuilt as a conversation parent. For this document the point

@@ -224,7 +224,7 @@ Every address, identifier, URL, name, date, and quoted fact in an outward-facing
 
 Interactive multi-round work starts with a short plan and reports meaningful phase changes. Headless runs skip progress narration. Completions lead with the outcome, evidence, and blockers; private reasoning is never emitted.
 
-A run of a room's automation posts its result into that room itself, once, through the `automation_post_result` tool of the preloaded `rally:automation-result` plugin, which is offered to no other run; the room is named as the single entry in the automation context's `resultDelivery`. Nothing posts after the run. When the list is empty, which it is for every personal and workspace automation, the `# Result delivery` section says so and tells the run that any sending its instructions ask for is its own work, done with its tools inside the run; left silent, a run that *describes* emailing a summary has not emailed it. The section is rendered only for automation runs. Its populated arm still reads as though Rally posts the final message and the run should not; the plugin's own system message is what names the tool, and reconciling the two sentences is open. [`automation-lifecycle.md`](automation-lifecycle.md) owns why an automation has no destinations of its own.
+A run of a room's automation posts its result into that room itself, once, through the `automation_post_result` tool of the preloaded `rally:automation-result` plugin, which is offered to no other run; the room is named as the single entry in the automation context's `resultDelivery`. Nothing posts after the run. When the list is empty, which it is for every personal and workspace automation, the `# Result delivery` section says so and tells the run that any sending its instructions ask for is its own work, done with its tools inside the run; left silent, a run that *describes* emailing a summary has not emailed it. The section is rendered only for automation runs, and its populated arm says the same thing the plugin's system message does: nothing posts there for the run, and `automation_post_result`, called once after the work is done, is the one way. [`automation-lifecycle.md`](automation-lifecycle.md) owns why an automation has no destinations of its own.
 
 A document-shaped request is written as a Markdown file in the work stream's terminal workspace and published as a generated resource, rather than streamed into the transcript (`DOCUMENT_GENERATION_POLICY`, `prompts/document-generation.ts`). The section carries the document-type trigger, the narration discipline, the same-path revision rule with its import recovery, the participant override in both directions, and the inline fallback when the workspace cannot be reached. It names no tool: the Terminal plugin's activated system message already carries the write-beneath-the-resource-directory-then-publish mechanics, and this section renders before that plugin loads. It is standing platform policy on every work-stream run, with an explicit output-surface tie-breaker: an externally delivered run includes the complete usable result in its final message because recipients cannot open Rally resource embeds. [`terminal-workspaces.md`](terminal-workspaces.md) owns the publish path the normal work-stream rule steers into.
 
@@ -1213,11 +1213,7 @@ both places, and this entry records the code. Picking it up means passing a
 `preload` decision through `createAvalonAutomationsPlugin` keyed on
 `parentKind`.
 
-**Consequences:** The `# Result delivery` section's populated arm still says
-Rally posts the final message and the run should not post it; the plugin's
-system message says to post with `automation_post_result`. Only the tool
-posts, so the prompt sentence is the one to change, and until it is a run of a
-room's automation reads two instructions about one act. The compiler-only
+**Consequences:** Both arms of `# Result delivery` and the result plugin's system message now say one thing: the tool posts, nothing else does. A future prompt edit has to keep the populated arm naming `automation_post_result` and no other path. The compiler-only
 `automation_*` attachment tools, narration frames, and the compiler's `tool`
 stream event are gone; a row's plugin comes from `tool_invocations` only. The
 retired memory rule about "a work stream an automation created" has no subject
