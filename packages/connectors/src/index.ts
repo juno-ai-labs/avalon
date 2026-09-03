@@ -2850,10 +2850,13 @@ function calendarEventsUrl(calendarId: string, syncToken?: string, pageToken?: s
 
 /**
  * Google mints a recurring instance's id as `<master id>_<instance start>`. The
- * master is matched greedily rather than by the base32hex alphabet the id
- * format documents, because an imported event's id can itself contain an
- * underscore and greedy matching splits `a_b_20260101T000000Z` at the last one,
- * where an alphabet-restricted master would refuse the id outright.
+ * suffix is a datetime stamp — `YYYYMMDD` for an all-day occurrence, otherwise
+ * `YYYYMMDDTHHMMSSZ` — and it is matched strictly, which is what makes the split
+ * trustworthy. Only the master half is drawn from the base32hex alphabet the id
+ * format documents, and it is matched greedily rather than against that alphabet
+ * because an imported event's id can carry an underscore of its own: greedy
+ * matching splits `a_b_20260101T000000Z` at the last underscore, where an
+ * alphabet-restricted master would refuse the id outright.
  */
 const CALENDAR_INSTANCE_ID = /^(?<master>.+)_(?<instanceStart>\d{8}(?:T\d{6}Z)?)$/u;
 
@@ -2914,6 +2917,8 @@ function collapseCalendarSeriesChanges(
       order.push({ event });
       continue;
     }
+    // A NUL joins the two halves because neither can contain one, so no pair of
+    // distinct series and timestamps can spell the same key.
     const groupKey = `${seriesId}\u0000${updatedAt}`;
     const group = groups.get(groupKey);
     if (group) {
@@ -2947,6 +2952,12 @@ function normalizeCalendarActivity(
   const now = new Date().toISOString();
   const status = readString(event, "status") ?? "confirmed";
   const title = truncateText(readString(event, "summary")?.trim() || "Untitled event", 300);
+  // The series identity embeds this, and the group key the caller built embeds
+  // its own reading of the same field. The two have to agree, which they do
+  // because `collapseCalendarSeriesChanges` passes a series id only for an
+  // event whose `updated` it already parsed: the `now` fallback below is
+  // unreachable on that path, and would otherwise mint an identity that no
+  // later poll could arrive at again.
   const updatedAt = timestampFromValue(readString(event, "updated")) ?? now;
   const start = seriesId ? sanitizeCalendarDateTime(null) : sanitizeCalendarDateTime(readRecord(event, "start"));
   const end = seriesId ? sanitizeCalendarDateTime(null) : sanitizeCalendarDateTime(readRecord(event, "end"));
