@@ -302,19 +302,16 @@ describe("automation_post_result", () => {
 
     // The room: the activation is its loop input, keyed by the run, and the
     // room's own loop ran on it.
-    const roomRuns = await settledRun(roomConversation(), 2);
-    expect(roomRuns.map((row) => row.status)).toEqual(["completed", "completed"]);
+    const [roomRun] = await settledRun(roomConversation());
+    expect(roomRun).toMatchObject({ status: "completed", error_json: null });
     expect(await activationTurns()).toEqual([{ client_message_id: `automation-activation:${started.runId}` }]);
     const acknowledged = provider.calls.filter((call) => !call.toolNames.some((name) => name.endsWith("automation_post_result")));
     expect(acknowledged.length).toBeGreaterThanOrEqual(1);
-    const summary = provider.calls.map((call) => ({
-      tools: call.toolNames.length,
-      post: call.toolNames.some((name) => name.endsWith("automation_post_result")),
-      roles: call.messages.map((message) => message.role),
-      mentionsResult: JSON.stringify(call.messages).includes(RESULT_TEXT),
-      lastUser: JSON.stringify(call.messages.filter((message) => message.role !== "system").slice(-1)).slice(0, 600),
-    }));
-    expect(summary).toEqual({ marker: "show" });
+    // What the room's model was asked carries the posted result, labelled as
+    // an automation's untrusted output, and nothing about the tool.
+    const roomAsked = acknowledged.find((call) => JSON.stringify(call.messages).includes(RESULT_TEXT));
+    expect(roomAsked).toBeDefined();
+    expect(roomAsked!.messages.map((message) => message.role)).toEqual(["system", "user"]);
 
     // A retry of the same delivery is a replay, not a second wake.
     const replay = await roomConversation().appendAutomationActivation({

@@ -1267,7 +1267,6 @@ export class AutomationDO extends ConversationParentDurableObject {
     const now = Date.now();
     const schedules = this.schedules().map((schedule) => schedule.schedule_id);
     this.state.storage.transactionSync(() => {
-      this.stopOpenRuns(now);
       this.state.storage.sql.exec(
         `UPDATE automation SET lifecycle = 'paused', paused_by = ?, updated_at = ? WHERE id = 1`,
         by,
