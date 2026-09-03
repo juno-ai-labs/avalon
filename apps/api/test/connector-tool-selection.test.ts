@@ -806,7 +806,6 @@ describe("connector tools selected for harness runs", () => {
       }],
       requiredCapabilities: [],
       expectedOutputs: [],
-      requestedDelivery: [],
       defaultBehavior: {},
       recommendedPlugins: [],
       memoryTables: [],
@@ -938,7 +937,7 @@ describe("connector tools selected for harness runs", () => {
     expect(__integrationTesting.builtinPluginAuthorization("rally:web", childTools)).toBe("authorized");
   });
 
-  it("does not give an inbound-email child an outbound Firecrawl channel", async () => {
+  it("gives an inbound-email child the same web tools as any other child", async () => {
     const database = new ToolSelectionDatabase([]);
     const parentInput = workflowInput();
     parentInput.reason = "inbound_email";
@@ -957,9 +956,15 @@ describe("connector tools selected for harness runs", () => {
       assertChildOwned: async () => undefined,
     });
 
+    // `search` and `fetch` are here now. The parent's trigger used to strip
+    // them from the child as well, on the same reasoning the parent's own strip
+    // used, and both are gone: a child inherits its parent's read-only surface
+    // and nothing narrows it further for one trigger kind.
     expect(childTools.coreTools.map((tool) => tool.definition.name)).toEqual([
       "list_resources",
       "read_resource",
+      "search",
+      "fetch",
       "search_resource",
       "view_resource",
       "summarize_resource",
@@ -969,12 +974,10 @@ describe("connector tools selected for harness runs", () => {
       "query_artifact_data",
       "current_time",
     ]);
-    expect(childTools.tools.map((tool) => tool.definition.name)).not.toContain("search");
-    expect(childTools.tools.map((tool) => tool.definition.name)).not.toContain("fetch");
-    // Stripping the tools leaves no web plugin to register, so authorization
-    // has to refuse a `load_plugin` for it rather than rely on the empty surface.
-    expect(childTools.builtinPluginIds).toEqual(new Set(["rally:workstream"]));
-    expect(__integrationTesting.builtinPluginAuthorization("rally:web", childTools)).toBe("denied");
+    // The web plugin registers now that its tools survive, so `load_plugin` for
+    // it is authorized rather than refused against an empty surface.
+    expect(childTools.builtinPluginIds).toEqual(new Set(["rally:workstream", "rally:web"]));
+    expect(__integrationTesting.builtinPluginAuthorization("rally:web", childTools)).toBe("authorized");
   });
 
   it("does not add plugin, schema, or result ceilings to child runs", () => {
@@ -1232,7 +1235,7 @@ describe("connector tools selected for harness runs", () => {
     });
   });
 
-  it("keeps connector reads but removes connector writes from inbound-email automations", async () => {
+  it("keeps connector writes on an inbound-email automation, like any other trigger", async () => {
     const database = new ToolSelectionDatabase(
       [connection(WORKSPACE_CONNECTION_ID, "workspace", null)],
       [
@@ -1247,21 +1250,28 @@ describe("connector tools selected for harness runs", () => {
 
     const selected = await __integrationTesting.loadHarnessTools(env(database), input);
 
+    // The write halves used to be stripped here. They are not any more: the
+    // trigger no longer decides the tool surface, and an automation that
+    // delivers its own result through its bound tools needs them whatever woke
+    // it. What still gates these is the grant — every name below is a
+    // capability this connection was actually given.
     expect(googleToolNames(selected.tools)).toEqual([
       "drive.search",
       "drive.get_metadata",
       "drive.download",
       "drive.export",
       "docs.read_document",
+      "docs.create_document",
+      "docs.append_text",
+      "docs.replace_text",
       "sheets.read_spreadsheet",
       "sheets.read_values",
+      "sheets.create_spreadsheet",
+      "sheets.update_values",
+      "sheets.append_values",
     ]);
-    expect(selected.tools
-      .filter((tool) => (GOOGLE_WORKSPACE_TOOLS as readonly string[]).includes(tool.definition.name))
-      .every((tool) => tool.definition.mode === "read"))
-      .toBe(true);
-    expect(selected.modeByTool.has("google_docs_create_document")).toBe(false);
-    expect(selected.connectionByTool.has("google_sheets_update_values")).toBe(false);
+    expect(selected.modeByTool.has("google_docs_create_document")).toBe(true);
+    expect(selected.connectionByTool.has("google_sheets_update_values")).toBe(true);
   });
 
   it.each([

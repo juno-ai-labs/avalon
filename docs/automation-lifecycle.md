@@ -116,35 +116,62 @@ not archived into a second draft store.
 
 ### Acceptance
 
-Acceptance has two doors onto one `acceptDraft`. `POST /automations` carries the
-draft the caller is looking at. `POST /automations/:id/accept` — the proposal
-card's **Create this automation**, which holds nothing but the summary it
-displays — carries only the id, and `acceptAuthoredDraft` builds the same create
-request server-side out of the stored definition. Both re-read the object's
-snapshot, refuse unless the submitted draft is byte-identical to that definition
-(`automation_definition_revision_stale`), and call `acceptDraft`.
+`POST /automations/:id/accept` is the only way an automation is created. It
+carries an ID and nothing else: `acceptAuthoredDraft` reads the stored
+definition, checks it is `ready`, resolves the owning room and the caller's
+participation in it, and calls `acceptDraft`.
 
-That comparison is a staleness check on a draft the *caller* held while
-reviewing it, so it means what it says only for `POST /automations`. The id-only
-door has no client-held draft: it reads the snapshot itself and `accept` reads
-it a second time, so the comparison is vacuous — except under the race between
-those two reads, where a compiler revision landing in the gap makes the card
-refuse itself with a sentence written for somebody else's stale review. Narrow,
-and cheaper to leave than to special-case the shared path around, but it is why
-the refusal can reach a member who never reviewed anything.
+Everything acceptance needs beyond that is **derived from the definition** by
+`automationAcceptanceSelections`, never taken from a request:
+
+| Derived | From |
+| --- | --- |
+| `activitySourcePluginIds` | each external-event trigger's `sourceBindingKey` and `suggestedSourcePluginId` |
+| `defaultPluginIds` | `recommendedPlugins[].pluginId` |
+
+That inversion is the point. These were request fields because a create wizard
+asked a member to choose them, and that wizard was deleted on 2026-09-01 along
+with the last caller that could answer. The drafting loop settles the same
+questions earlier and with more evidence: a ready draft's activity trigger names
+the plugin the model loaded and inspected against a live connection activation,
+and its recommended plugins were held to the same rule. The draft was always the
+authoritative source; the request was a copy of it that the surviving caller
+could not make.
+
+**An automation has no destinations of its own.** The one place a result goes
+because of what the automation *is* rather than what a run *does* is the room
+that owns a `workstream`-scoped one, and that follows from ownership, not from
+anybody choosing it. Everything outside Rally — an inbox, a channel, a DM, a
+document — is the run's to send, inside the loop, with the connector tools it
+was bound, as part of doing the work. The run is told so: the system prompt's
+result-delivery section names the room when there is one, so the run does not
+post there twice, and says outright that nothing sends for it when there is
+not, so a run that only describes an email has not sent one. What a run
+chooses to send is therefore inside the loop and steered by whatever steers
+the loop; the classifier below still decides whether the room hears from it.
+
+What derivation deliberately does **not** settle is the present. A connection
+can be revoked, disabled, or become another member's between drafting and
+Create, so acceptance still resolves every derived plugin against the
+workspace's own connections. Those refusals are the legitimate residue of the
+time gap, and each has a table row so it reaches a member as an instruction.
 
 Acceptance is two phases around one durable acceptance row, so an interrupted
 activation resumes rather than restarting:
 
 1. **Freeze.** Under one transaction: check the definition is `ready`, the
-   revision matches, and no elicitation is pending; resolve connector bindings,
-   delivery destinations, and the acceptance timezone; write
+   revision matches, and no elicitation is pending; resolve connector bindings
+   and the acceptance timezone; write
    `automation_acceptance` with a hash of the request; write the schedules
    paused; materialize the definition's memory tables; move the lifecycle to
-   `activating`. A second acceptance with a different request hash is refused
-   with `automation_acceptance_conflict`; an identical retry is idempotent, and
-   the authorizing role is deliberately excluded from the hash so a second admin
-   retrying is not treated as a different request.
+   `activating`. A second acceptance is refused with
+   `automation_acceptance_conflict` when it names a different definition
+   revision, scope, or owning room than the row holds; one that names the same
+   three is the same acceptance retried, whatever the shape of the request that
+   first wrote the row. The stored hash is the fence the activation step checks,
+   not the test a retry is held to: the request shape has changed once already,
+   and a retry judged on the hash would strand any object a deploy caught
+   `activating`.
 2. **Install and commit.** Register the evaluators with WorkspaceDO, which
    answers with an `effectiveAfterEventSequence`; arm one alarm entry per
    schedule; reserve the automation's permanent email address in the Global
@@ -382,18 +409,24 @@ telemetry storage — not a product-state fallback.
   refusal wearing the one status a client retries, logged beside real faults.
   `withAutomationErrors` is for calls that can *refuse*; a call whose failures
   are all faults keeps its 500 rather than being dressed as a conflict.
-- **A create request the service builds for itself is typed as the create
-  schema's own input.** `acceptAuthoredDraft` constructs one and hands it to
-  `accept`, which re-parses it, so a field the schema rejects is nobody's bad
-  request: it is a `ZodError` between two pieces of our own code, and it reaches
-  the boundary as the same 500 the invariant above is about — with no member
-  input that could have avoided it, on every press of every card. The annotation
-  catches the *structural* half of that: a wrong type, a `null` where the field
-  is optional rather than nullable, a required field left out. It does not catch
-  what `CreateAutomationRequestSchema` only checks while parsing — `resourceIds`'
-  `.max(20)`, and the `superRefine` refusing delivery targets outside a personal
-  scope — which typecheck and then throw. Those stay the caller's to satisfy by
-  construction, and both are literals here.
+- **Acceptance derives what the draft decided; it never takes it in a request.**
+  The bindings and plugins an automation is created with come from the stored
+  definition through `automationAcceptanceSelections`. A request field
+  restating any of them is a second source of truth for a fact the draft already
+  settled, and the way this failed is instructive rather than hypothetical: the
+  fields outlived the wizard that filled them, the one surviving caller sent
+  empty values, and acceptance read those as decisions. Two of the four failed
+  loudly and two silently, which is why "it errors" is not the test — an
+  automation created successfully and doing less than the card described is the
+  worse outcome.
+- **A `ready` draft is one acceptance will not refuse for anything the draft
+  itself settles.** `automationDraftAcceptanceBlocker` is called by
+  `admitAuthoredDraft` and again by `prepareAcceptance`; a check either end
+  applies alone will drift, and what drift looks like here is a proposal card
+  whose Create button cannot work, with nothing on it for the person to act on.
+  Anything about the *present* — whether a named plugin still resolves to a
+  healthy connection the caller may bind — is deliberately not in that
+  predicate, because a draft cannot answer it and acceptance must.
 - **A directory row locates; it never authorizes.** `automation_directory` holds
   no definition, no instructions, and no run content, and every content read goes
   through the agent, which re-checks the author or asks WorkspaceDO to authorize
@@ -415,9 +448,10 @@ telemetry storage — not a product-state fallback.
 - **Nothing crosses an object boundary except identifiers, generations, versions,
   and hashes.** The delivery Queue message names a delivery, not an event body;
   the child returns a receipt, not a result.
-- **Acceptance is idempotent on its request hash and nothing else.** Two
-  acceptances that differ in any hashed field are a conflict; identical ones are
-  the same acceptance retried.
+- **Acceptance is idempotent on the facts the row stores.** Two acceptances
+  that differ in definition revision, scope, or owning room are a conflict;
+  ones that agree on all three are the same acceptance retried, across a change
+  in the request's shape.
 - **The socket is the author's.** A workspace-scoped automation is readable by
   every member and manageable by owners and admins, but its live draft room
   admits only `author_user_id`. Widening it would put an unaccepted draft's
@@ -477,19 +511,14 @@ email is addressed and rendered
   `applyAutomationProjection`, whose worst case is two writers disagreeing about
   a coordinate the directory already holds — is deliberately left unwrapped
   rather than given a 409 a client will retry.
-- **The proposal card cannot create an external-event draft.** `acceptAuthoredDraft`
-  sends an empty `activitySourcePluginIds`, so a ready draft carrying a
-  `connector_activity`, `semantic_activity` or `webhook` trigger — which is ready
-  only if it has evaluators — fails `prepareAcceptance`'s first binding check
-  with `automation_evaluator_source_binding_mismatch`. That code has no row in
-  the error table, so it reaches the member as the generic 409 rather than a
-  sentence. Passing the triggers' own `suggestedSourcePluginId` map would move
-  the refusal rather than remove it: `automation_evaluator_connection_missing`
-  is equally untabled, and the scope rules on a resolved connection are next.
-  Making this card work end to end is a connector-binding decision — whether a
-  plugin the drafting conversation proposed is one the member has agreed to bind,
-  or one the card must show and ask about — plus the error-table rows to make
-  whatever it refuses with legible. Timer-only and manual drafts are unaffected.
+- **A derived plugin whose connection has gone** refuses the create:
+  `automation_plugin_unavailable` when the workspace has no healthy connection
+  for it, whether a recommended plugin or an event source,
+  `automation_workspace_connection_required` when a workspace-scoped
+  automation would bind a personal one. These are the legitimate residue of the
+  gap between drafting and Create, they cannot be moved earlier, and each has a
+  table row so it reaches a member as an instruction rather than as the generic
+  conflict every untabled code used to produce.
 - **The compiler fails or is interrupted.** The run settles as `failed` and stays
   the visible outcome until another turn is admitted — hiding it made a failure
   look like a successful idle reconnect. **Retry** re-arms the dispatch alarm for
@@ -541,8 +570,8 @@ email is addressed and rendered
 
 | Suite | Command | Covers |
 | --- | --- | --- |
-| `apps/api/test-workers/automation-agent.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd: identity plus the first turn plus one compiler admission committed before dispatch; evaluator replacement and its receipt in one transaction; an event-driven authored submission refused when its rules are absent or empty, exempted while the draft is not ready, and admitted through to acceptance once they are set; acceptance in place deleting only the draft conversation; generation-fenced memory with replayed write receipts; a memory table keeping its identity across revisions; the REST boundary's own three create refusals answering their statuses rather than a 500, the proposal card's id-only accept creating the automation the object holds, a directory membership refusal answering 403, an `ApiError` raised inside the object surviving the RPC hop with its own status, and workspace abandonment retiring compiler, schedule, run, and outbox lanes before external work. |
-| `apps/api/test-workers/automation-delivery-targets.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd, with `connector_connections` and `slack_user_links` in WorkspaceDO and deliberately absent from D1: saving and removing a Slack destination; each refusal separately — no connection, a disabled one, another person's personal one, no Slack link, a link belonging to someone else, an inactive link; binding a connector plugin at acceptance, including when a disabled row still holds the same plugin id; and the service answering a detail rather than an unmapped 500. Its first test asserts the two tables are absent from D1, because that absence is what makes the rest evidence. |
+| `apps/api/test-workers/automation-agent.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd: identity plus the first turn plus one compiler admission committed before dispatch; evaluator replacement and its receipt in one transaction; an event-driven authored submission refused when its rules are absent or empty, exempted while the draft is not ready, and admitted through to acceptance once they are set; acceptance in place deleting only the draft conversation; generation-fenced memory with replayed write receipts; a memory table keeping its identity across revisions; the id-only accept creating the automation the object holds for a manual draft and for an external-event one whose source binding comes only from the draft, binding the plugins a draft recommends, refusing a recommended plugin with no connection, a directory membership refusal answering 403, an `ApiError` raised inside the object surviving the RPC hop with its own status, and workspace abandonment retiring compiler, schedule, run, and outbox lanes before external work. |
+| `apps/api/test-workers/automation-acceptance-bindings.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd, with `connector_connections` in WorkspaceDO and deliberately absent from D1: binding the plugins a draft recommends at acceptance, refusing one the workspace has no connection for, binding the live connection when a disabled row still holds the same plugin id, and the service answering a detail rather than an unmapped 500. Its first test asserts the table is absent from D1, because that absence is what makes the rest evidence. |
 | `apps/api/test-workers/automation-cutover.test.ts` | `pnpm --filter @rally/api test:workers` | A fresh WorkspaceDO reaching the final schema with no legacy lifecycle tables, and an import that discards audited drafts and replays cleanup safely. |
 | `apps/api/test-workers/external-event-routing.test.ts` | `pnpm --filter @rally/api test:workers` | One accepted event and one matcher serving an automation and two watched work streams. |
 | `apps/api/test/external-event-evaluator.test.ts` | `pnpm --filter @rally/api test` | The pure predicate: legal and illegal documents, missing-field semantics, and the connector vocabulary. |
@@ -617,10 +646,19 @@ role does not reach into it. Creating a workspace-scoped automation requires
 owner or admin at acceptance.
 
 Inbound mail is untrusted: the From header can be spoofed, so the sender must
-resolve to an active workspace member (and to the author for a personal
-automation), and an inbound-email run additionally omits every connector write
-tool and the outbound web search and fetch tools so untrusted mail cannot be used
-as an exfiltration channel.
+resolve to an active workspace member, and to the author for a personal
+automation. That screening is the whole control. An inbound-email run holds the
+same tools as any other trigger.
+
+It did not always. The run used to omit every connector write tool and the
+outbound web tools, which read like a boundary and was not one: a
+`connector_activity` run reading an equally untrusted third-party page kept both,
+so the rule hardened one channel out of several and described a protection the
+system did not have. Removing it is a deliberate acceptance of the residual
+risk, which is prompt injection in the body of mail a member legitimately sends
+or forwards. That risk is not new and is not specific to mail — it is the same
+risk any connector content carries — and it is now handled in one place for all
+of them rather than by a rule that named only this one.
 
 Alarm failures log a `diagnosticErrorCode`, never the thrown message: an alarm
 lane runs the compiler and connector tools, so the error reaching the handler can
@@ -644,6 +682,214 @@ workspace found holding legacy state is to run the script again, which is
 idempotent per workspace.
 
 ## Changelog
+
+### 2026-09-03 — An automation has no destinations of its own
+
+**What changed:** Delivery targets are gone from automations end to end.
+`deliveryTargets` is off the frozen run context and `AutomationDetailSchema`;
+`requestedDelivery` is off the draft, its enum, and the model's tool schema;
+`AutomationDeliveryTargetInput/SetSchema` are deleted; `resolveDeliveryTargets`,
+`updateDeliveryTargets`, `PATCH /automations/:id`, the desktop delivery editor,
+the child's external delivery loop, and five error-table rows are removed.
+AutomationAgent schema v13 strips `$.deliveryTargets` from stored run contexts
+and rebuilds `automation_acceptance` without `delivery_targets_json`; work-stream
+object schema v37 strips the same key from the child's verbatim copy in
+`runs.execution_context_json`, which is never cleared and is read back through
+the same strict schema on claim, recovery, settlement and retry. The
+classifier's `reach.canDeliver` is now `owningWorkstreamId !== null`. The
+system prompt's result-delivery section gained a second arm that tells a run
+with no destination that sending is its own work. Separately and first, the
+inbound-email tool filtering came out (previous entry). Digest delivery is a
+different system and is untouched.
+
+**Why:** Delivery was modelled as deterministic infrastructure decided at
+creation — a two-element enum of destinations, resolved to IDs, frozen into the
+run context, sent by a loop after the run ended. That shape could not express
+"email the finance team, and DM me only if it is urgent", it needed a member to
+pick a connection at a moment the product no longer had, and it is what
+produced the four-field defect the previous entry cleaned up. The judgement
+about *where* a result should go belongs with the judgement about *what* it
+should say, which is the loop's. So the automation knows nothing about
+delivery, and a run sends what its instructions ask for with the tools it was
+bound.
+
+**What survived, and why it is not delivery:** the room that owns a
+`workstream`-scoped automation is still woken with the result. That follows
+from ownership rather than from anybody choosing it, was already separate from
+`deliveryTargets` in the child (`substream-agent.ts`, the block that begins
+"The room that owns this automation"), and is the one case the disposition
+classifier was built for — a spurious result in a shared room. `delivery_state`,
+the receipt machinery, `resolveRunDisposition` and `expose_workstream` all keep
+their jobs against that one destination.
+
+**The security trade, stated once:** what a run chooses to send is now inside
+the loop, and the loop is steered by whatever steers the loop, including
+trigger content. Before this change that was already true of every
+`connector_activity` run, which held write tools while reading equally
+untrusted third-party pages; only inbound email was filtered, and the previous
+entry removed that filter on the grounds that a boundary drawn around one
+channel out of several is not a boundary. The control that remains is
+screening at ingress — a sender must resolve to an active workspace member —
+and it is now the same control for every trigger.
+
+**The migration:** `AutomationRunContextV1Schema` is `z.strictObject`, so a
+frozen context still carrying `deliveryTargets` would stop parsing the moment
+the field left the contract: every claimed-but-unexecuted run, and every
+historical row the detail path reads. v13 rewrites them with `json_remove`,
+guarded by `json_extract ... IS NOT NULL` so a resume after a failed later
+group is a no-op, and rebuilds `automation_acceptance` because SQLite refuses
+`DROP COLUMN` on a column named in a CHECK. It mirrors the v9 rebuild beside
+it, including the `owning_workstream_id` copy v9 had to null and this one
+preserves.
+
+**Considered and rejected:** *tolerating the key* as an optional ignored field.
+Lower risk for a run in flight at the moment of deploy, and it leaves a dead
+field in a frozen contract that every future reader has to know to ignore.
+*Keeping the deterministic path for untrusted triggers only.* That was the
+recommended shape before the inbound-email filter came out, and it stops
+making sense once no trigger is special: the split would have to be drawn on a
+distinction the codebase no longer makes anywhere else. *Removing the
+classifier.* Its most-cited case is the one that survives.
+
+**What a future change has to respect:** the room wake is not a delivery target
+and must not be modelled as one — the moment it becomes a chosen destination it
+becomes something a run could be steered to drop. And the prompt's empty arm is
+load-bearing: it is the only thing that tells a personal automation that nothing
+sends for it, and a run that reads silence as "Rally has it covered" is the
+silent-loss defect this whole sequence began with, in its final form.
+
+### 2026-09-03 — An inbound-email run holds the same tools as any other run
+
+**What changed:** The three `inbound_email` guards in
+`apps/api/src/services/integrations.ts` are gone: `loadHarnessTools` no longer
+withholds write-mode connector tools from a mail-started run, `createAvalonTools`
+no longer omits the Firecrawl search and fetch tools from one, and a child
+harness spawned by one keeps its `web.` capabilities. `triggerPolicy.inboundEmail`
+is still recorded on the run; nothing narrows on it.
+
+**Why:** The filter named one trigger out of several that carry untrusted
+content into the loop. A `connector_activity`, `semantic_activity` or `webhook`
+run reads third-party text that is exactly as untrusted as a mail body, and held
+every write tool it was bound while doing so; a control that applied to inbound
+email alone was not a boundary, and its existence let two documents claim a
+protection that did not exist for the other channels. Filtering on trigger
+provenance is done at ingress, where a sender must resolve to an active
+workspace member before a run exists, and where the same question can be asked
+of every trigger at once.
+
+**Considered and rejected:** *Leaving the guard in place until a general control
+replaces it*, which keeps a rule that misdescribes itself and defers the general
+question with no owner. *Generalizing the guard now into a trust flag on the
+workflow input gated at both tool-assembly sites*, which is the right shape if
+the team decides trigger content should narrow tools; it needs a policy for
+which triggers and which tools, and that policy is a decision to be made, not a
+default to be typed into a refactor.
+
+**Consequences:** A mail-started run may write to its bound connectors and fetch
+the web, and the prompt's empty delivery arm tells it to send results itself
+when its instructions say so, so a forwarded mail that passes the sender screen
+can steer sends as well as reads. [`security.md`](security.md) carries the
+rewritten invariant and the same reasoning from the threat-model side. Anyone
+reintroducing a narrowing must do it for every external trigger, and the tests
+that proved the omissions (`connector-tool-selection.test.ts`,
+`firecrawl-web-tools.test.ts`) were inverted to assert the tools are present.
+
+### 2026-09-03 — Acceptance takes an ID, and derives the rest from the draft
+
+**What changed:** `POST /automations`, `AutomationAgentService.accept` and
+`CreateAutomationRequestSchema` are deleted. `POST /automations/:id/accept` is
+the only way an automation is created, and `acceptDraft` no longer accepts
+`defaultPluginIds`, `activitySourcePluginIds` or `deliveryTargets`:
+`automationAcceptanceSelections` reads all three off the stored definition.
+`automationDraftAcceptanceBlocker` is one predicate called by
+`admitAuthoredDraft` and again by `prepareAcceptance`. Five previously untabled
+codes gained rows, as this entry first landed; two of them,
+`automation_evaluator_source_binding_mismatch` and
+`automation_evaluator_connection_missing`, were removed again the same day once
+the predicate made them unreachable, and `requestedDelivery`, which this entry
+first narrowed to `email`, left the draft entirely in the entry above, so
+neither of those two changes survives on `main`. `isExternalEventTrigger`
+becomes a type predicate.
+
+**Why:** the create wizard was deleted on 2026-09-01, and the request schema it
+was shaped for outlived it. Every field in that schema was a question only the
+wizard could answer, and the one caller left — the proposal card, which holds
+nothing but the summary it displays — sent empty values that acceptance read as
+decisions. Four fields, four defects, of which
+[the previous entry](#2026-09-03--the-proposal-cards-create-stops-answering-500)
+fixed one:
+
+| Field | Card sent | Result |
+| --- | --- | --- |
+| `modelOverride` | `null` | 500 on every card, fixed 2026-09-03 |
+| `activitySourcePluginIds` | `{}` | every external-event draft refused, untabled, generic 409 |
+| `deliveryTargets` | `[]` | **silent** — a draft asking for emailed results created delivering nothing |
+| `defaultPluginIds` | `[]` | **silent** — an automation ran without the connectors its own overview named |
+| `resourceIds` | `[]` | parsed and never read by anything |
+
+Two loud and two silent, and the silent pair is the worse half: an automation
+created successfully that does less than the card described. Patching each field
+would have left the shape that produced them, so the fix is the inversion. The
+draft is not a fallback source for these facts, it is the only one that was ever
+authoritative — a ready draft's activity trigger names the plugin the model
+loaded and inspected against a live connection activation, and its recommended
+plugins were held to the same rule by the authoring tools.
+
+**Why one predicate:** the
+[2026-09-01 entry](#2026-09-01--an-event-driven-draft-must-carry-its-rules-to-be-submitted)
+fixed this same shape once, for evaluator rules, by making submission and
+acceptance share `evaluatorRulesMissing` — a draft one admits and the other
+refuses reaches a person as a card whose button cannot work. That was one field
+of a class. `ready` now means "acceptance will not refuse this for anything the
+draft itself settles", and the questions only the present can answer — whether a
+named plugin still resolves to a healthy connection the caller may bind — are
+deliberately left where they were.
+
+**Why delivery narrowed:** only `email` is derivable, because it resolves from
+the author's own user row and names no connection. `slack_agent_dm` needs a
+connection ID a draft deliberately does not carry, and `channel` has no
+delivery-target shape at all. Both used to pre-tick a box on the wizard where a
+member supplied what was missing; with it gone they were recorded and dropped.
+Narrowing the tool schema means the drafting conversation offers what can
+actually be delivered, and both remain settable afterwards through
+`PATCH /automations/:id`, which is where a connection can be chosen.
+`AutomationRequestedDeliverySchema` stays wide so drafts already stored still
+parse; they refuse with a sentence instead of being silently dropped.
+
+**How it is proved:** `apps/api/test-workers/automation-agent.test.ts` on real
+workerd, one test per derived field plus both ends of the predicate. Each was
+broken in the production code and watched to fail for the reason its name
+claims, then reverted: emptying the activity-source map and the recommended-plugin
+list, and removing the trigger/evaluator agreement check. The two silent defects
+are the ones this mattered most for, since nothing about them ever failed before.
+(The delivery list and the delivery-channel check this entry first covered were
+removed the same day by the entry above.)
+
+**Considered and rejected:** *passing `suggestedActivitySourcePluginIds` at the
+call site*, which fixes the loud symptom and leaves the shape, the two silent
+defects, and the second source of truth. *Keeping the fields as optional
+overrides*, which keeps a schema nobody fills and invites the next empty value
+to be read as a decision. *Refusing `slack_agent_dm` at acceptance only*, which
+puts the refusal after the drafting conversation has ended, where the person has
+nothing to act on — the same defect this entry is about, one field over.
+
+**What a future change has to respect:** recorded above as two invariants.
+Two refusals this entry first tabled, `automation_evaluator_source_binding_mismatch`
+and `automation_evaluator_connection_missing`, turned out to be unreachable once
+the predicate ran first: it returns `automation_activity_source_unbound` for the
+first condition, and the binding loop refuses `automation_plugin_unavailable` for
+the second. Their throws and rows are gone; the evaluator loop now only looks the
+connection up. One consequence to know about: the card's Create used to bind nothing, and now
+binds every plugin the draft recommends, holding each to the object's own rule
+that a personal connection is bound only by its owner. A room draft whose
+drafting loop recommended the author's personal connection is therefore created
+by the author and refused, legibly, for anyone else in the room
+(`automation_personal_connection_access_denied`), and a workspace-scoped draft
+recommending any personal connection is refused for everyone
+(`automation_workspace_connection_required`). Both are the rule working as
+written; if a room should be able to create such a draft, the change is for the
+drafting tools to stop recommending personal plugins for room and workspace
+scopes, not for acceptance to skip the check.
 
 ### 2026-09-03 — The proposal card's Create stops answering 500
 
@@ -787,7 +1033,9 @@ itself. It also caught a stale claim in the pull request description — copy
 quoted from a file the drafting-stack deletion had already removed — and noted
 what this does not close: `automation_evaluator_source_binding_mismatch`,
 `automation_evaluator_connection_missing` and `automation_plugin_unavailable`
-still refuse at Create in the same dead-end shape. Those depend on the accepting
+still refuse at Create in the same dead-end shape (the first two were made
+unreachable by the shared predicate and removed on 2026-09-03; only the third
+remains). Those depend on the accepting
 person's chosen connections rather than on the submitted draft, so they cannot
 move to submission the way this one could; the class is narrowed, not closed.
 

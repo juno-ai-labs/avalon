@@ -1,6 +1,5 @@
 import {
   AutomationDraftSchema,
-  CreateAutomationRequestSchema,
   IdSchema,
   asAutomationId,
   type AutomationAgentSnapshot,
@@ -12,7 +11,6 @@ import { automationAgentName, workspaceDOName } from "../durable-objects/names";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { AutomationService } from "./automation-service";
 import { automationRefusal, withAutomationErrors } from "./automation-agent-errors";
-import { logWarn } from "../observability/logger";
 
 export const AutomationDraftTurnRequestSchema = z.strictObject({
   clientCreationKey: IdSchema.optional(),
@@ -24,24 +22,6 @@ export const AutomationDraftTurnRequestSchema = z.strictObject({
 
 export type AutomationDraftTurnRequest = z.infer<typeof AutomationDraftTurnRequestSchema>;
 
-/**
- * The top-level draft fields whose serialized values disagree.
- *
- * Names only, and only the ones `AutomationDraftSchema` declares — a draft's
- * values are the member's own prose. A field the caller omitted entirely shows
- * up here too, which is the shape a client built against an older copy of the
- * contract produces.
- */
-function differingDraftFields(canonical: unknown, submitted: unknown): string[] {
-  if (canonical === null || typeof canonical !== "object") return ["(root)"];
-  const submittedRecord = submitted !== null && typeof submitted === "object"
-    ? submitted as Record<string, unknown>
-    : {};
-  return Object.keys(canonical as Record<string, unknown>).filter((key) => (
-    JSON.stringify((canonical as Record<string, unknown>)[key]) !== JSON.stringify(submittedRecord[key])
-  ));
-}
-
 export class AutomationAgentService {
   constructor(
     private readonly env: Env,
@@ -51,22 +31,20 @@ export class AutomationAgentService {
   /**
    * Accept the draft an agent proposed in a work stream, by its id alone.
    *
-   * The other entry point takes the draft in the request because the standalone
-   * screen holds it client-side and echoes it back as a staleness check. A feed
-   * card holds nothing: the draft lives on the object, the card carries only
-   * what it displays, and re-sending a copy the client never had would be
-   * inventing a check rather than making one.
-   *
-   * Same authority underneath — one `acceptDraft`, two ways in.
+   * The only way an automation is created. Its twin took the draft in the
+   * request body because a create wizard held one client-side and echoed it
+   * back; that wizard was deleted on 2026-09-01, and with it the last caller
+   * that could answer what the request asked for. What is left holds nothing
+   * but the summary on a card, so everything acceptance needs is read off the
+   * definition the object already stores.
    */
   async acceptAuthoredDraft(automationId: string): Promise<AutomationDetail> {
     const id = asAutomationId(automationId);
     const agent = await this.agent(id);
-    // One read, in `accept`. This used to read here as a participant and then
-    // delegate to an `accept` that read again as the author — so the card still
-    // refused everyone but its author, and the participation check below it
-    // never ran. The card is the room's to press, so the room's read is the
-    // only one.
+    // Read as a participant, not as the author. A proposal card is the room's
+    // to decide, so the person pressing it is usually not whoever typed the
+    // request — and an author-only read here is what made the card refuse
+    // everyone else while the participation check further down never ran.
     const participantOfAuthoringWorkstream = await this.participantOfAuthoringRoom(agent);
     const snapshot: AutomationAgentSnapshot = await withAutomationErrors(
       () => agent.readAuthoredSnapshot({
@@ -76,112 +54,54 @@ export class AutomationAgentService {
         participantOfAuthoringWorkstream,
       }),
     );
+    // A draft whose compiler run never settled has no definition row at all, so
+    // this is reachable, and parsing `null` here threw a `ZodError` that left
+    // the boundary as a 500. A definition present but failing the schema is
+    // left to fault: the server wrote something it can no longer read, which is
+    // not a refusal.
     if (snapshot.definition === null) automationRefusal("automation_definition_not_ready");
     const draft = AutomationDraftSchema.parse(snapshot.definition);
     if (!draft.ready) automationRefusal("automation_definition_not_ready");
-    // Typed as the request schema's own input, because `accept` re-parses this
-    // and a field it rejects leaves the boundary as `500 internal_error` /
-    // "An unexpected error occurred". That is what `modelOverride: null` did
-    // here: the field is an `optional()` enum, so `null` is not one of its
-    // values, and every press of a proposal card's Create failed on it. The
-    // annotation catches that shape — a type the schema cannot accept — at
-    // `pnpm typecheck`. It cannot catch what the schema only checks while
-    // parsing (`resourceIds`' `.max(20)`, the `superRefine` refusing delivery
-    // targets outside a personal scope); those are satisfied by construction
-    // below, where both are empty literals.
-    //
-    // The card names no model, so the request carries no `modelOverride` at
-    // all — absent is how this schema spells "no override", and `accept`
-    // coalesces it to the `null` the object stores.
-    const request: z.input<typeof CreateAutomationRequestSchema> = {
-      draftId: id,
-      draft,
-      scope: draft.suggestedScope,
-      // Whatever the drafting conversation recommended, and nothing more: a
-      // plugin nobody chose is a connection nobody agreed to bind.
-      defaultPluginIds: [],
-      activitySourcePluginIds: {},
-      resourceIds: [],
-      deliveryTargets: [],
-    };
-    return this.accept(request);
-  }
-
-  async accept(rawInput: unknown): Promise<AutomationDetail> {
-    const input = CreateAutomationRequestSchema.parse(rawInput);
-    if (!input.draftId) automationRefusal("automation_draft_id_required");
-    const automationId = asAutomationId(input.draftId);
-    const agent = await this.agent(automationId);
-    // Read as a participant, not as the author. A proposal card is the room's
-    // to decide, so the person pressing it is usually not whoever typed the
-    // request — and an author-only read here is what made the card refuse
-    // everyone else while the participation check further down never ran.
-    const participantOfAuthoringWorkstream = await this.participantOfAuthoringRoom(agent);
-    const snapshot: AutomationAgentSnapshot = await withAutomationErrors(() =>
-      agent.readAuthoredSnapshot({
-        automationId,
-        workspaceId: this.auth.workspaceId,
-        userId: this.auth.userId,
-        participantOfAuthoringWorkstream,
-      }));
-    // A draft whose compiler run never settled has no definition row at all, so
-    // this is reachable, and parsing `null` here threw the exact
-    // `ZodError`-to-500 this branch exists to remove, one line above the fix.
-    // A definition that is present but fails the schema is left to fault: the
-    // server wrote something it can no longer read, which is not a refusal.
-    if (snapshot.definition === null) automationRefusal("automation_definition_not_ready");
-    const canonicalDraft = AutomationDraftSchema.parse(snapshot.definition);
-    if (JSON.stringify(canonicalDraft) !== JSON.stringify(input.draft)) {
-      // Which fields disagree, before refusing. The refusal is written for one
-      // cause — a compiler turn settling while somebody reviewed the summary —
-      // and reads as transient. It fires for a second cause that is neither
-      // transient nor the caller's fault: a desktop build whose bundled
-      // `AutomationDraftSchema` differs from this one strips or defaults a
-      // field on its way back, so every attempt from that build refuses
-      // forever. The two are indistinguishable in the response and were
-      // indistinguishable in the log; the field names separate them, and they
-      // are schema shape rather than member content, so they are safe to
-      // record where the values would not be.
-      logWarn(this.env, "automation_definition_revision_stale", {
-        automation_id: automationId,
-        definition_revision: snapshot.definitionRevision,
-        differing_fields: differingDraftFields(canonicalDraft, input.draft),
-      });
-      automationRefusal("automation_definition_revision_stale");
-    }
-    // The room comes from where the draft was written, never from the request:
-    // a body naming one would let a caller give any room an automation, and no
+    // The room comes from where the draft was written, never from a request: a
+    // body naming one would let a caller give any room an automation, and no
     // other room is reachable from an authoring loop anyway.
-    const owningWorkstreamId = input.scope === "workstream"
+    const owningWorkstreamId = draft.suggestedScope === "workstream"
       ? await withAutomationErrors(() => agent.authoredInWorkstreamId())
       : null;
-    if (input.scope === "workstream" && !owningWorkstreamId) {
+    if (draft.suggestedScope === "workstream" && !owningWorkstreamId) {
       automationRefusal("automation_workstream_scope_requires_authoring_room");
     }
-    // Asked once, here, and used for both the refusal and the authority the
-    // object checks. Re-asked at acceptance rather than inherited from the
-    // draft: writing the proposal card proved participation at that moment, and
-    // somebody who has left the room in between would otherwise activate a
-    // standing automation in it — and bind their own credentials to it — after
-    // losing access. Authorship does not expire, so it cannot stand in for this.
+    // Asked at acceptance rather than inherited from the draft: writing the
+    // proposal card proved participation at that moment, and somebody who has
+    // left the room in between would otherwise activate a standing automation
+    // in it — and bind their own credentials to it — after losing access.
+    // Authorship does not expire, so it cannot stand in for this.
     const participantOfOwningWorkstream = owningWorkstreamId !== null
       && await this.participantOfWorkstream(owningWorkstreamId);
     if (owningWorkstreamId && !participantOfOwningWorkstream) {
       automationRefusal("automation_workstream_participation_required");
     }
+    // No staleness comparison. The one this replaced compared a draft the
+    // *caller* held against the stored definition, which is a real check for a
+    // client that reviewed one and a self-inflicted race for a caller that had
+    // just read it: two reads of the same object, refusing each other when a
+    // compiler turn landed between them, with a sentence about a review nobody
+    // performed. The definition read here is the one accepted, and
+    // `definitionRevision` travels with it, so what that comparison protected
+    // is now structural.
     return withAutomationErrors(() => agent.acceptDraft({
       schemaVersion: 1,
-      automationId,
+      automationId: id,
       workspaceId: this.auth.workspaceId,
       authorUserId: this.auth.userId,
       definitionRevision: snapshot.definitionRevision,
-      scope: input.scope,
+      scope: draft.suggestedScope,
       owningWorkstreamId,
       participantOfOwningWorkstream,
-      defaultPluginIds: input.defaultPluginIds,
-      activitySourcePluginIds: input.activitySourcePluginIds,
-      deliveryTargets: input.deliveryTargets,
-      modelOverride: input.modelOverride ?? null,
+      // The card names no model. Absent is not expressible here — the object's
+      // own contract spells "no override" as `null` — so this is the one place
+      // the two vocabularies are bridged, deliberately and in one direction.
+      modelOverride: null,
       actorRole: this.auth.role,
     }));
   }
@@ -225,20 +145,6 @@ export class AutomationAgentService {
       userId: this.auth.userId,
       actorRole: this.auth.role,
       participantOfOwningWorkstream: participant,
-    }));
-  }
-
-  async updateDeliveryTargets(automationId: string, deliveryTargets: unknown): Promise<AutomationDetail> {
-    const id = asAutomationId(automationId);
-    const agent = await this.agent(id);
-    const participant = await this.participantOfOwningWorkstream(id);
-    return withAutomationErrors(() => agent.updateDeliveryTargets({
-      automationId: id,
-      workspaceId: this.auth.workspaceId,
-      userId: this.auth.userId,
-      actorRole: this.auth.role,
-      participantOfOwningWorkstream: participant,
-      deliveryTargets,
     }));
   }
 

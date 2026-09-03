@@ -63,14 +63,18 @@ export function WorkstreamSocketResumeProvider({
  * background subscriber. The local registry preserves the old standalone-hook
  * behavior for isolated consumers and unit tests.
  */
-export function useWorkstreamSocketResumeState(workstreamId: string): WorkstreamSocketResumeState {
+export function useWorkstreamSocketResumeState(
+  workstreamId: string,
+  substreamId = '0',
+): WorkstreamSocketResumeState {
   const sharedRegistry = useContext(WorkstreamSocketResumeContext);
   const localRegistry = useRef<WorkstreamSocketResumeRegistry>(new Map());
   const registry = sharedRegistry ?? localRegistry.current;
-  let resumeState = registry.get(workstreamId);
+  const key = `${workstreamId}:${substreamId}`;
+  let resumeState = registry.get(key);
   if (!resumeState) {
     resumeState = { lastSequence: 0, streamCursors: new Map() };
-    registry.set(workstreamId, resumeState);
+    registry.set(key, resumeState);
   }
   return resumeState;
 }

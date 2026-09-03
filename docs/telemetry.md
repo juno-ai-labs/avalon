@@ -160,10 +160,10 @@ detail request keeps a unique
 as `x-rally-operation-id`; the Worker's `workstream.detail.read` span records both.
 The independently timed `workstream_send_ready` event reuses the opening-attempt
 operation ID and fires after the committed composer has crossed a paint with its
-work-stream-specific send handler installed. It records the workspace command
+work-stream-specific send handler installed. It records the addressed substream
 socket state at that point. `connecting` and `reconnecting` are ready states for
-this client milestone because the workspace socket queues idempotent message
-commands; the event does not claim that transport delivery or server
+this client milestone because that socket queues idempotent message commands;
+the event does not claim that transport delivery or server
 acknowledgement has completed.
 
 Every mounted pooled socket owner has a UUIDv7 socket-lease ID shared by its
@@ -685,6 +685,38 @@ the dry-run evidence; change batching or sampling only after measuring those
 signals, never by weakening policy or deadline tests.
 
 ## Changelog
+
+### 2026-09-03 — Every substream mutation keeps a named server span
+
+**What changed:** Answer, reorder, stop, and retry commands share the
+`workstream.room.substream_command` span with content-free command, operation,
+connection, transport, and object identity attributes. Failures set the span
+error and response status even when the private receipt cannot be delivered.
+
+**Why:** Moving these commands from HTTP to the substream socket removed their
+route spans and otherwise left successful command latency invisible.
+
+**Considered and rejected:** Logs only cover unexpected failures and cannot
+describe successful latency. One span name with a command dimension preserves
+the common operation without multiplying the registry.
+
+**Consequences:** The socket cutover keeps request-equivalent server timing and
+error evidence without recording command contents.
+
+### 2026-09-02 — Send readiness follows the addressed substream command socket
+
+**What changed:** The send-ready description now names the addressed
+SubstreamAgent socket, which owns message admission and the other child-local
+commands. The obsolete WorkspaceDO message relay and its REST alternatives are
+gone.
+
+**Why:** Readiness telemetry must describe the transport the composer will
+actually use; otherwise a healthy parent directory socket can make child input
+look sendable when the owning substream is unavailable.
+
+**Consequences:** `workstream_send_ready` still measures handler installation,
+not server acknowledgement. Connecting and reconnecting remain ready because
+the renderer retains and replays the exact idempotent child command.
 
 ### 2026-09-01 — Renderer socket diagnostics describe clicks, not retained lifetime
 

@@ -14,11 +14,9 @@ import {
   type WorkstreamSocketOpenContext,
 } from './workstream-socket-pool';
 
-const workspaceCreateMessage = vi.hoisted(() => vi.fn());
 vi.mock('./workspace-socket', () => ({
   useWorkspaceSocket: () => ({
     state: 'connected',
-    createMessage: workspaceCreateMessage,
   }),
 }));
 
@@ -135,7 +133,6 @@ afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
-  workspaceCreateMessage.mockReset();
   FakeWebSocket.instances = [];
 });
 

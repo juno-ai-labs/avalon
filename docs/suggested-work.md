@@ -46,6 +46,43 @@ An activity only becomes a candidate if no resource watch or matching automation
 claimed it. The gate remains exclusive: work already handled by a deterministic
 route should not also be offered as new work.
 
+Some activity is never a candidate, decided by event type in
+`enqueueActivityOpportunity` before any window is opened for it:
+`github.check_run.*` and `github.workflow_run.*`. A check run is the status of
+a commit and a workflow run is the same status a level up. They were 24,000 of
+the 50,000 events one workspace admitted on 2026-09-02, at a frontier-model
+call each, and the answer was `ignore`. The list is an exclusion rather than an
+inclusion so that a new connector's activity is offered until somebody finds a
+reason not to, and it withholds only this surface: excluded activity is still
+logged, still routes to watches and automations, and still reaches the feed.
+
+**This is not the digest's partition, and must not become it.** Every connector
+manifest already sorts its event types into `digestible` and `operational`
+([`connector-digestibility.md`](connector-digestibility.md)), and 142 of the 205
+declared types are operational. Admission withholds five. The two questions are
+different, and the gap between them is where a suggestion lives: "would a person
+want this read back to them on a schedule" is No for `drive.file_changed` and
+`linear.comment.update`, while "is there work here" may well be Yes.
+`activity-consumer.ts` records that boundary, and inheriting the partition
+would withhold all 142.
+
+What admission does borrow is the **floor**. A type this gate withholds must be
+one its own connector already declined to call news, so this can never be the
+stricter of the two, and it cannot end up contradicting a manifest that later
+reclassifies a type. `work-opportunity-batching.test.ts` binds that to the
+registry: it fails if the gate withholds a digestible type, if the five it
+withholds change, or if a prefix stops matching any declared type at all —
+which is how a family renamed at the connector surfaces here rather than as a
+bill.
+
+Calendar changes are deliberately not on it. The other 18,000 events that day
+were `calendar.event_changed`, and that was a connector defect rather than a
+property of the activity: one edit to a recurring series arrived as one
+activity per expanded instance, ~730 per attendee. [`connectors.md`](connectors.md)
+records the fix (2026-09-02 — one edit to a recurring series is one activity),
+after which a moved or cancelled meeting is one candidate per connection, and
+that is the kind of thing that produces work.
+
 Admission may add a distinct opportunity, improve an existing opportunity, or
 ignore the evidence. Existing work streams are supplied only as context for
 recognizing duplicates; admission cannot route activity into one or create a
@@ -64,7 +101,16 @@ Admission itself is a model decision (`work_opportunity_admission`) and is biase
 toward `ignore`. It resolves the people named in the evidence against verified
 external identities, and it never lets an inference widen access: for a personal
 audience, a link may explain a suggestion but can only ever target the audience
-member.
+member. It runs at low reasoning effort, like the ranking's elimination rounds:
+it is a coarse gate asked tens of thousands of times a day.
+
+The context every admission call carries — up to 250 members with their
+verified aliases, the 20 most recent work streams the audience may see, and up
+to 12 existing opportunities — is bounded per opportunity by
+`ADMISSION_CONTEXT_REASONING_CHARACTERS`, because at the previous 4,000-character
+cap the prior admission reasoning alone was about half of every prompt while the
+evidence being judged was four activities. The model needs enough of the
+rationale to recognise a duplicate, not the whole memo.
 
 Audience is decided by the batch window's partition. A personal connector's
 activity enters `personal:<owner>`. Restricted activity enters one personal
@@ -115,12 +161,12 @@ anything.
 
 | Trigger | Delay | Who |
 | --- | --- | --- |
-| Opportunity admitted or revised | `DUE_DEBOUNCE_MS` (2 min) | The window's audience — one member, or every active member |
+| Opportunity admitted or revised | `DUE_DEBOUNCE_MS` (30 min) | The window's audience — one member, or every active member |
 | Opportunity names a member | none | That member |
 | Member dismisses or starts a suggestion | none | That member |
 | Impressions, at most hourly | none | That member |
 | Read finds eligible candidates the stored set does not account for | none | That member |
-| Read finds a ranked suggestion no longer showable | `DUE_DEBOUNCE_MS` | That member |
+| Read finds a ranked suggestion no longer showable | `READ_REPAIR_DELAY_MS` (2 min) | That member |
 
 A workspace-scope admission marks **every** active member, set-based over
 `workspace_members` — not the member list admission was given, which is capped at
@@ -209,12 +255,18 @@ enter telemetry.
   increments the counter; the scheduler records the value it claimed and clears the
   request only if that value is still current. Comparing due times does not work,
   and the reason is subtle enough to be worth stating: an admission landing
-  mid-tournament debounces two minutes out, which is *later* than the request being
+  mid-tournament debounces `DUE_DEBOUNCE_MS` out, which is *later* than the request being
   ranked, so `MIN` keeps the existing value and the column does not move at all. A
   request that leaves the row byte-identical is indistinguishable from no request,
   and the completed run clears it on the way out — the member keeps a set that was
   out of date before it was written.
 - **Setting a due time never delays one already outstanding** — `MIN` wins.
+  While a pass holds the lease, `due_at` is that pass's own claim time, not an
+  outstanding request, so a request arriving mid-pass is parked in
+  `pending_due_at` (`MIN` among the requests that arrive during the pass) and
+  `settleRanking` re-arms `due_at` from it. Taking `MIN` against the claim time
+  kept a time already past, and under continuous admissions the next pass began
+  the moment the current one settled, whatever the debounce said.
 - **Clearing a due time matters as much as setting it.** One left behind is
   re-claimed on every pass forever.
 - **An inference never widens access.** For a personal audience a link may explain
@@ -336,7 +388,7 @@ on how long a pass took.
 | `work_opportunity_user_states` | Per-member impressions, dismissal, and what they started |
 | `opportunity_provenance_nodes` / `_edges` | The evidence graph, scoped by visibility |
 | `work_opportunity_snapshots` | What a member actually saw at the moment they started one |
-| `suggested_work_sets` | The stored ranking, its fingerprint, and its scheduling state |
+| `suggested_work_sets` | The stored ranking, its fingerprint, and its scheduling state — `due_at` for the outstanding request, `pending_due_at` for one that arrived while a pass held the lease |
 | `suggested_work_ranking_rounds` | Every tournament round, for explaining a ranking after the fact |
 | `opportunity_batch_windows` | The debounce window candidates accumulate in |
 
@@ -357,6 +409,70 @@ of how the last ranking ended — and `request_seq` against the scheduler's clai
 value.
 
 ## Changelog
+
+### 2026-09-03 — Suggested Work stops paying a frontier model to ignore CI
+
+**What changed:** Three bounds on the same pipeline. `enqueueActivityOpportunity`
+withholds `github.check_run.*` and `github.workflow_run.*` from candidacy
+before a window is opened (`isSuggestedWorkCandidateEventType`), and returns
+what became of the activity so the consumer's terminal log records
+`opportunity_enqueued` truthfully rather than as "unclaimed". The admission
+call runs at `low` reasoning effort and sees at most `ADMISSION_CONTEXT_REASONING_CHARACTERS` (600)
+of each existing opportunity's reasoning rather than 4,000. `DUE_DEBOUNCE_MS`
+is 30 minutes rather than 2, and governs only the admission paths: the read
+path's repair keeps its own two minutes as `READ_REPAIR_DELAY_MS`. For the
+debounce to hold, `suggested_work_sets` gained `pending_due_at` (WorkspaceDO
+schema v30): a request arriving while a pass holds the lease is parked there
+and re-armed at its own time when the pass settles.
+
+**Why:** The OpenRouter bill. In the week to 2026-09-03 the admission and
+ranking prompts made 59,500 calls on `openai/gpt-5.6-terra` (the Flagship
+choice since 2026-08-27), consuming a billion input tokens, 95 percent of them
+from one three-member workspace. Three multipliers stacked: 42,000 of that
+workspace's 50,000 candidates on 2026-09-02 were CI check runs, workflow-run
+status transitions, and calendar instances (one recurring-series edit expands
+to ~730 `calendar.event_changed` activities per attendee, because the poll asks
+Google for `singleEvents`); each admission call was ~18,800 input tokens of
+which the evidence was ~6,000 and the rest repeated context, half of it prior
+admission reasoning; and every admission marked its members due two minutes
+out, so with activity flowing the object ran 1,970 tournaments (8,590 rounds)
+for three people in one day. Reasoning at `high` was a further quarter of the
+admission output tokens.
+
+**Considered and rejected:** Moving only the Flagship model. That is the largest
+single lever and is being done separately, but a cheaper model asked the same
+useless questions at the same rate is still the same design, and the next
+model change would bring the cost straight back. Excluding
+`calendar.event_changed` alongside the CI types: an earlier draft of this
+change did, but the calendar volume was the connector expanding one series
+edit into every instance, and that was fixed at the connector the same day
+([`connectors.md`](connectors.md), 2026-09-02). With one activity per edit, a
+moved or cancelled meeting is exactly the kind of candidate this surface
+exists for, so withholding it here would have been treating a symptom after
+its cause was gone. An inclusion list of candidate event types: it would
+silently withhold every connector added later. Making the debounce depend on
+whether the member is currently looking: the scheduler already declines
+dormant members, and the tiering is where attention belongs.
+
+**Consequences:** A check run or a workflow run can no longer become a
+suggestion, however meaningful. The gate is bound to the connector manifests as
+a floor rather than copied from them, so it cannot silently disagree with a
+connector's own classification; review asked whether the exclusion duplicated
+the digest partition, and the answer recorded above is that it deliberately
+withholds five where that partition withholds 142. A member's set can now be up to
+thirty minutes behind the admissions that changed it, unless one of the
+immediate triggers fires (a suggestion naming them, a dismissal, a start) or
+they open the home screen to an unranked or holed set, which repairs in two
+minutes as before — review found the first draft had moved that member-present
+path to thirty minutes too, which is a new member's first impression, so the
+read repair got its own constant. Review also found the debounce did not hold
+while a tournament was running: `markRankingDue` took `MIN` against the
+in-flight pass's claim time, so under continuous admissions the next pass began
+the moment the current one settled. That is why the parking column exists. An
+existing opportunity's rationale reaches the next admission truncated, so a
+duplicate that is only recognisable from the tail of a long memo may be admitted
+twice. The 600-character cap and the thirty minutes are starting points chosen
+for cost, not measured optima; `__workOpportunityTesting.limits` exposes both.
 
 ### 2026-08-30 — Admission can no longer route into an existing work stream
 

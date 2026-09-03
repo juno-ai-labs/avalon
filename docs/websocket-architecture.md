@@ -266,9 +266,10 @@ open transport as success.
 - **Main owns transport, not product state.** Moving caches, replay, or protocol
   decisions into main would create two application state machines and make
   browser development behave differently from Electron.
-- **The workspace socket remains the message-command path.** Treating feed-ready
-  or control-ready as delivery acknowledgement would confuse feed visibility
-  with command admission and server persistence.
+- **The addressed substream socket owns child conversation commands.** Treating
+  feed-ready as delivery acknowledgement would confuse feed visibility with
+  command admission and server persistence. WorkspaceDO remains the directory
+  and presence authority; it does not relay child messages.
 - **The renderer cannot turn the broker into a general network client.** Main
   must continue to validate the configured regional origin, exact route shape,
   declared kind, clean URL, and constrained ticket subprotocol offer, and must
@@ -448,6 +449,22 @@ rows while intentionally leaving pins and active runs uncapped because those are
 explicit product states rather than speculative guesses.
 
 ## Changelog
+
+### 2026-09-02 — Child mutations move onto their owning substream socket
+
+**What changed:** An addressed SubstreamAgent connection now carries message
+creation, elicitation answers, pending-input reorder, stop, and retry. Each
+command has a durable operation ID and a private correlated receipt. The public
+REST mutations and WorkspaceDO message relay were removed in the same cutover.
+
+**Why:** These operations mutate one child conversation. Sending them through a
+parent or a second transport split ordering, reconnect, and acknowledgement
+semantics across authorities.
+
+**Consequences:** WorkspaceDO still owns directory and presence traffic, while
+work-stream metadata and membership remain parent/product lifecycle requests.
+The renderer retains unacknowledged child commands and resends the identical
+operation after reconnection.
 
 ### 2026-09-02 — Feed tickets pre-pay room admission and snapshot detail
 

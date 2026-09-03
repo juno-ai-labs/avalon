@@ -56,12 +56,54 @@ export function evictCachedWorkstream(
     ['block-dashboard', workstreamId],
     ['block-dashboard-preference', workstreamId],
     ['terminal-workstream', workstreamId],
+    ['substream-workstream', workstreamId],
+    ['substream-ordered-transcript', workstreamId],
+    ['substream-transcript-overlays', workstreamId],
+    ['substream-workstream-feed-source', workstreamId],
+    ['substream-workstream-socket-snapshot-generation', workstreamId],
   ] as const;
   for (const queryKey of queryPrefixes) {
     queryClient.removeQueries({ queryKey });
   }
   setCachedWorkstreams(queryClient, (current) =>
     current?.filter((workstream) => workstream.id !== workstreamId));
+}
+
+/** Remove one independently addressed child without disturbing its parent. */
+export function evictCachedSubstream(
+  queryClient: QueryClient,
+  workstreamId: string,
+  substreamId: string,
+): void {
+  if (substreamId === '0') {
+    evictCachedWorkstream(queryClient, workstreamId);
+    return;
+  }
+  const queryKeys = [
+    ['substream-workstream', workstreamId, substreamId],
+    ['substream-ordered-transcript', workstreamId, substreamId],
+    ['substream-transcript-overlays', workstreamId, substreamId],
+    ['substream-workstream-feed-source', workstreamId, substreamId],
+    ['substream-workstream-socket-snapshot-generation', workstreamId, substreamId],
+  ] as const;
+  for (const queryKey of queryKeys) queryClient.removeQueries({ queryKey, exact: true });
+}
+
+/** Invalidate both main-room and independently addressed child detail rows. */
+export async function invalidateCachedWorkstreamDetails(
+  queryClient: QueryClient,
+  workstreamId?: string,
+): Promise<void> {
+  await Promise.all([
+    queryClient.invalidateQueries({
+      queryKey: workstreamId ? ['workstream', workstreamId] : ['workstream'],
+    }),
+    queryClient.invalidateQueries({
+      queryKey: workstreamId
+        ? ['substream-workstream', workstreamId]
+        : ['substream-workstream'],
+    }),
+  ]);
 }
 
 /** Refresh page-one rows without truncating pages or debug rows already loaded. */

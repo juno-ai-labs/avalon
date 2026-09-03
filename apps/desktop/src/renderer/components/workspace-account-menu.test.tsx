@@ -1,12 +1,12 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   UNREAD_ACTIVITY_DESCRIPTION,
-  WORKSPACE_NEEDS_ACCOUNT_RECONNECT,
   WorkspaceAccountMenu,
 } from './workspace-account-menu';
+import { AccountSignInSupersededError, FINISH_SIGN_IN_IN_BROWSER } from '../lib/app-session';
 import { desktopWorkspaceIdentityKey } from '../../common/desktop';
 
 const currentUser = { id: 'user-1', name: 'Ada', email: 'ada@example.com', timezone: 'America/New_York' };
@@ -35,7 +35,7 @@ function renderMenu(overrides: Partial<React.ComponentProps<typeof WorkspaceAcco
     onDeclineInvitation: vi.fn(async () => undefined),
     onInvitationPromptDismiss: vi.fn(),
     onMenuOpen: vi.fn(),
-    onReconnectAccount: vi.fn(async () => undefined),
+    onAbandonSignIn: vi.fn(),
     onOpenSettings: vi.fn(),
     onSignOut: vi.fn(),
     onSwitchWorkspace: vi.fn(async () => true),
@@ -62,8 +62,8 @@ describe('workspace account menu', () => {
 
     const menu = screen.getByRole('menu');
     expect(within(menu).getByText('Workspaces')).toBeVisible();
-    expect(within(menu).getByRole('menuitem', { name: /Global Studio.*Global.*Current/u })).toBeVisible();
-    const europe = within(menu).getByRole('menuitem', { name: /Europe Studio.*European Union.*3 mentions waiting for you/u });
+    expect(within(menu).getByRole('menuitem', { name: /Global Studio.*US.*Current/u })).toBeVisible();
+    const europe = within(menu).getByRole('menuitem', { name: /Europe Studio.*EU.*3 mentions waiting for you/u });
     // One dot for any activity, never a count.
     expect(europe.querySelector('.workspace-activity-dot')).toHaveAccessibleName('3 mentions waiting for you');
     expect(europe).not.toHaveTextContent('3');
@@ -128,8 +128,8 @@ describe('workspace account menu', () => {
 
     openMenu();
     const menu = screen.getByRole('menu');
-    expect(within(menu).getByRole('menuitem', { name: /Global Studio.*Global.*Current/u })).toBeVisible();
-    const europe = within(menu).getByRole('menuitem', { name: /Europe Studio.*European Union/u });
+    expect(within(menu).getByRole('menuitem', { name: /Global Studio.*US.*Current/u })).toBeVisible();
+    const europe = within(menu).getByRole('menuitem', { name: /Europe Studio.*EU/u });
     expect(europe).not.toHaveAccessibleName(/Current/u);
 
     fireEvent.click(europe);
@@ -156,40 +156,49 @@ describe('workspace account menu', () => {
     expect(screen.getByRole('menuitem', { name: 'Sign out' })).toBeVisible();
   });
 
-  it('offers an in-place account reconnect when a migrated session lacks platform identity', () => {
-    const props = renderMenu({ accountReconnectRequired: true });
-    openMenu();
-
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Reconnect account…' }));
-    expect(props.onReconnectAccount).toHaveBeenCalledOnce();
-  });
-
-  it('keeps every other workspace listed while the account needs reconnecting, outlined with the reason', async () => {
-    const props = renderMenu({ accountReconnectRequired: true, attention: {} });
+  it('names the active workspace\'s data region as US or EU under the account, and offers no reconnect item', () => {
+    renderMenu({ attention: {} });
     openMenu();
 
     const menu = screen.getByRole('menu');
-    const current = within(menu).getByRole('menuitem', { name: /Global Studio.*Current/u });
-    expect(current).not.toHaveClass('is-unavailable');
-    const europe = within(menu).getByRole('menuitem', { name: /Europe Studio/u });
-    expect(europe).toBeVisible();
-    expect(europe).toHaveClass('is-unavailable');
-    expect(within(europe).getByText('Reconnect your account to open')).toBeVisible();
-    expect(europe).toHaveAccessibleName(new RegExp(WORKSPACE_NEEDS_ACCOUNT_RECONNECT.slice(0, 40), 'u'));
+    expect(within(menu).getByText('US workspace')).toBeVisible();
+    expect(within(menu).queryByRole('menuitem', { name: /Reconnect/u })).not.toBeInTheDocument();
+    expect(within(menu).queryByText(/Reconnect your account/u)).not.toBeInTheDocument();
+  });
 
-    fireEvent.pointerMove(europe);
-    expect(await screen.findByRole('tooltip')).toHaveTextContent(WORKSPACE_NEEDS_ACCOUNT_RECONNECT);
+  it('says where the person is expected while a switch waits on the browser, and lets the row be chosen again', () => {
+    const euKey = desktopWorkspaceIdentityKey(eu.region, eu.id);
+    const onSwitchWorkspace = vi.fn(() => new Promise<boolean>(() => undefined));
+    renderMenu({ attention: {}, onSwitchWorkspace, signingInWorkspaceKey: euKey, switchingWorkspaceKey: euKey });
+    openMenu();
+
+    const europe = screen.getByRole('menuitem', { name: /Europe Studio/u });
+    expect(within(europe).getByText(FINISH_SIGN_IN_IN_BROWSER)).toBeVisible();
+    expect(europe).toHaveAccessibleName(new RegExp(FINISH_SIGN_IN_IN_BROWSER, 'u'));
+    expect(within(europe).getByLabelText('Waiting for sign-in')).toBeVisible();
+
+    // The person closed the browser without finishing: choosing the row again
+    // opens it again rather than doing nothing.
     fireEvent.click(europe);
-    expect(props.onSwitchWorkspace).toHaveBeenCalledWith(eu);
+    expect(onSwitchWorkspace).toHaveBeenCalledWith(eu);
+    expect(screen.getByRole('menu')).toBeVisible();
   });
 
-  it('does not outline any workspace while the account is connected', () => {
-    renderMenu({ accountReconnectRequired: false });
+  it('ignores a second choice of a row that is opening, and shows a failed sign-in under the row', () => {
+    const euKey = desktopWorkspaceIdentityKey(eu.region, eu.id);
+    const props = renderMenu({
+      attention: {},
+      switchingWorkspaceKey: euKey,
+      workspaceErrors: { [euKey]: 'Sign in could not be completed: access denied' },
+    });
     openMenu();
 
-    const menu = screen.getByRole('menu');
-    expect(within(menu).getByRole('menuitem', { name: /Europe Studio/u })).not.toHaveClass('is-unavailable');
-    expect(within(menu).queryByRole('menuitem', { name: 'Reconnect account…' })).not.toBeInTheDocument();
+    const europe = screen.getByRole('menuitem', { name: /Europe Studio/u });
+    expect(within(europe).getByText('Sign in could not be completed: access denied')).toBeVisible();
+    expect(within(europe).queryByText(FINISH_SIGN_IN_IN_BROWSER)).not.toBeInTheDocument();
+    expect(within(europe).getByLabelText('Opening workspace')).toBeVisible();
+    fireEvent.click(europe);
+    expect(props.onSwitchWorkspace).not.toHaveBeenCalled();
   });
 
   it('confirms an invitation and creates a workspace from the same menu', async () => {
@@ -216,8 +225,91 @@ describe('workspace account menu', () => {
     fireEvent.change(workspaceName, { target: { value: 'New Lab' } });
     fireEvent.click(within(create).getByRole('button', { name: 'Create workspace' }));
     expect(props.onCreateWorkspace).toHaveBeenCalledWith(
-      { name: 'New Lab', region: 'global' }, expect.any(String),
+      { name: 'New Lab', region: 'global' }, expect.any(String), { onSignInRequired: expect.any(Function) },
     );
+  });
+
+  it('notes the browser sign-in in the create dialog while creation waits on it', async () => {
+    let progress: { onSignInRequired: () => void } | null = null;
+    const onCreateWorkspace = vi.fn((
+      _input: { name: string; region: 'global' | 'eu' },
+      _operationId: string,
+      hooks: { onSignInRequired: () => void },
+    ) => new Promise<void>(() => { progress = hooks; }));
+    renderMenu({ onCreateWorkspace });
+    openMenu();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Create a workspace' }));
+    const create = await screen.findByRole('dialog', { name: 'Create a workspace' });
+    expect(within(create).getByText('United States')).toBeVisible();
+    fireEvent.change(within(create).getByLabelText('Workspace name'), { target: { value: 'New Lab' } });
+    fireEvent.click(within(create).getByRole('button', { name: 'Create workspace' }));
+    await waitFor(() => expect(progress).not.toBeNull());
+    expect(within(create).queryByText(FINISH_SIGN_IN_IN_BROWSER)).not.toBeInTheDocument();
+
+    act(() => progress!.onSignInRequired());
+
+    expect(within(create).getByText(FINISH_SIGN_IN_IN_BROWSER)).toBeVisible();
+    // The person may have closed the browser instead: both ways out stay open.
+    expect(within(create).getByRole('button', { name: 'Create workspace' })).toBeEnabled();
+    expect(within(create).getByRole('button', { name: 'Cancel' })).toBeEnabled();
+  });
+
+  it('lets a creation that waits on the browser be tried again, and drops the earlier attempt quietly', async () => {
+    let progress: { onSignInRequired: () => void } | null = null;
+    let rejectFirst: ((error: Error) => void) | null = null;
+    const onCreateWorkspace = vi.fn()
+      .mockImplementationOnce((
+        _input: { name: string; region: 'global' | 'eu' },
+        _operationId: string,
+        hooks: { onSignInRequired: () => void },
+      ) => new Promise<void>((_resolve, reject) => {
+        progress = hooks;
+        rejectFirst = reject;
+      }))
+      .mockImplementationOnce(() => new Promise<void>(() => undefined));
+    const props = renderMenu({ onCreateWorkspace });
+    openMenu();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Create a workspace' }));
+    const create = await screen.findByRole('dialog', { name: 'Create a workspace' });
+    fireEvent.change(within(create).getByLabelText('Workspace name'), { target: { value: 'Field Notes' } });
+    fireEvent.click(within(create).getByRole('button', { name: 'Create workspace' }));
+    await waitFor(() => expect(progress).not.toBeNull());
+    expect(within(create).getByRole('button', { name: 'Cancel' })).toBeDisabled();
+    act(() => progress!.onSignInRequired());
+    expect(await within(create).findByText(FINISH_SIGN_IN_IN_BROWSER)).toBeVisible();
+
+    fireEvent.click(within(create).getByRole('button', { name: 'Create workspace' }));
+    await waitFor(() => expect(onCreateWorkspace).toHaveBeenCalledTimes(2));
+    // The first attempt stands down as a newer sign-in supersedes it, and says
+    // nothing in the dialog the second attempt now owns.
+    act(() => rejectFirst!(new AccountSignInSupersededError()));
+    await act(async () => { await Promise.resolve(); });
+    expect(within(create).queryByText(/newer sign-in/u)).not.toBeInTheDocument();
+    expect(within(create).getByRole('button', { name: 'Cancel' })).toBeDisabled();
+    expect(props.onAbandonSignIn).not.toHaveBeenCalled();
+  });
+
+  it('abandons the creation, not the sign-in, when the dialog is closed while waiting on the browser', async () => {
+    let progress: { onSignInRequired: () => void } | null = null;
+    const onCreateWorkspace = vi.fn((
+      _input: { name: string; region: 'global' | 'eu' },
+      _operationId: string,
+      hooks: { onSignInRequired: () => void },
+    ) => new Promise<void>(() => { progress = hooks; }));
+    const props = renderMenu({ onCreateWorkspace });
+    openMenu();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Create a workspace' }));
+    const create = await screen.findByRole('dialog', { name: 'Create a workspace' });
+    fireEvent.change(within(create).getByLabelText('Workspace name'), { target: { value: 'Field Notes' } });
+    fireEvent.click(within(create).getByRole('button', { name: 'Create workspace' }));
+    await waitFor(() => expect(progress).not.toBeNull());
+    act(() => progress!.onSignInRequired());
+    expect(await within(create).findByText(FINISH_SIGN_IN_IN_BROWSER)).toBeVisible();
+
+    fireEvent.click(within(create).getByRole('button', { name: 'Cancel' }));
+
+    expect(props.onAbandonSignIn).toHaveBeenCalledOnce();
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Create a workspace' })).not.toBeInTheDocument());
   });
 
   it('submits workspace creation with Enter but leaves an IME composition alone', async () => {
@@ -233,7 +325,7 @@ describe('workspace account menu', () => {
     fireEvent.keyDown(workspaceName, { key: 'Enter' });
 
     await waitFor(() => expect(props.onCreateWorkspace).toHaveBeenCalledWith(
-      { name: 'New Lab', region: 'global' }, expect.any(String),
+      { name: 'New Lab', region: 'global' }, expect.any(String), { onSignInRequired: expect.any(Function) },
     ));
   });
 

@@ -449,6 +449,13 @@ pre {
   font-size: 12px;
   margin: 8px 0 0;
 }
+/* The same slot as `.inline-error`, for a step that is still in progress
+   somewhere else — a sign-in finishing in the browser — rather than a fault. */
+.inline-note {
+  color: var(--av-sys-color-text-muted);
+  font-size: 12px;
+  margin: 8px 0 0;
+}
 
 .empty-state {
   color: var(--av-sys-color-text-muted);
@@ -1109,10 +1116,6 @@ pre {
 .workspace-menu-copy > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workspace-menu-copy small { color: var(--av-sys-color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workspace-menu-error { color: var(--av-sys-color-danger-base) !important; }
-/* A workspace this device still lists but cannot open until the account is
-   reconnected says so in the muted caption every row uses for its second
-   line, with the longer reason in a tooltip. Nothing about it is an alarm. */
-.workspace-menu-tooltip { line-height: 1.4; max-width: 240px; }
 .workspace-region-tag {
   background: var(--av-sys-color-surface-subtle);
   border: 1px solid var(--av-sys-color-border-subtle);
@@ -4143,20 +4146,6 @@ button.citation-card:hover { background: var(--av-sys-color-surface-elevated-hov
 .automation-email-address > svg { color: var(--av-sys-color-text-muted); }
 .automation-email-value { font-family: var(--av-sys-font-family-mono); font-size: 9.5px; line-height: 1.35; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .automation-email-address .automation-email-copy { height: 24px; justify-self: end; width: 24px; }
-.automation-delivery-fact ul { display: grid; gap: 2px; list-style: none; margin: 0; padding: 0; }
-/* Wraps because the sub-label below a row is a whole sentence: unwrapped it
-   shares one 250px line with the destination and ellipsises the name away,
-   so the row warning that something is wrong stops saying what. */
-.automation-delivery-fact li { align-items: center; display: flex; flex-wrap: wrap; gap: 2px 6px; min-height: 26px; }
-.automation-delivery-fact label { align-items: center; color: var(--av-sys-color-text-subtle); cursor: pointer; display: flex; font-size: 11.5px; gap: 7px; min-width: 0; }
-.automation-delivery-fact label > svg { color: var(--av-sys-color-text-muted); flex: 0 0 auto; }
-.automation-delivery-fact label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.automation-delivery-fact li.is-locked { color: var(--av-sys-color-text-muted); font-size: 11.5px; gap: 7px; }
-.automation-delivery-fact li.is-locked .rally-mark { flex: 0 0 auto; height: 13px; width: 13px; }
-.automation-delivery-fact .delivery-locked-spacer { flex: 0 0 auto; height: 13px; width: 13px; }
-.automation-delivery-fact input[type='checkbox'] { height: 13px; margin: 0; width: 13px; }
-.automation-delivery-fact input[type='checkbox']:disabled { cursor: progress; }
-.automation-delivery-fact .is-warning { color: var(--av-sys-color-warning-base); }
 .fact-status { background: var(--av-sys-color-surface-raised); border-radius: var(--av-sys-size-radius-sm); padding: 5px 7px; width: fit-content; }
 .automation-status-dot { background: var(--av-ref-color-neutral-9); border-radius: 50%; flex: 0 0 10px; height: 10px; width: 10px; }
 .automation-status-dot.paused { background: var(--av-sys-color-warning-base); }

@@ -2099,11 +2099,6 @@ const automationDraftSubmissionJsonSchema = {
       }
     },
     expectedOutputs: { type: "array", items: { type: "string" } },
-    requestedDelivery: {
-      type: "array",
-      description: "The destinations the owner asked to receive the result themselves: \"email\" for their own email address, \"slack_agent_dm\" for their Rally Slack Agent DM, \"channel\" when they asked for it to go to a channel rather than to them. Name no channel: which one is decided from where this was written. Use [] when they asked for none, and always when suggestedScope is \"workstream\" — that automation's results land in this work stream, which is what its scope means. Rally does the sending; this only records what was asked for.",
-      items: { type: "string", enum: ["email", "slack_agent_dm", "channel"] }
-    },
     defaultBehavior: {
       type: "string",
       description: "A JSON-encoded object of default behavior settings; use {} when none are needed."
@@ -2155,7 +2150,7 @@ const automationDraftSubmissionJsonSchema = {
     suggestedScope: {
       type: "string",
       enum: ["personal", "workspace", "workstream"],
-      description: "Who can see and change this automation, which cannot be changed after it is accepted: \"personal\" belongs to the person who asked and delivers to them, \"workspace\" belongs to the admins and acts with the workspace's own connections, \"workstream\" belongs to this work stream — everyone in the room can manage it, its results land here, and it outlives whoever asked for it. Ask which one before submitting. There is no work stream to name: an automation can only ever belong to the one it was written in."
+      description: "Who can see and change this automation, which cannot be changed after it is accepted: \"personal\" belongs to the person who asked and acts with their own connections, \"workspace\" belongs to the admins and acts with the workspace's own connections, \"workstream\" belongs to this work stream — everyone in the room can manage it, Rally posts its results here, and it outlives whoever asked for it. Ask which one before submitting. There is no work stream to name: an automation can only ever belong to the one it was written in. Nothing else is delivered for an automation: a result that should reach an inbox, a channel, a DM, or a document is sent by the run itself, so the instructions must name that send and its recipient as a step."
     },
     ready: {
       type: "boolean",
@@ -2169,7 +2164,6 @@ const automationDraftSubmissionJsonSchema = {
     "instructions",
     "triggers",
     "expectedOutputs",
-    "requestedDelivery",
     "defaultBehavior",
     "recommendedPlugins",
     "memoryTables",
@@ -2475,16 +2469,6 @@ function normalizeAutomationDraft(value: unknown): unknown {
     requiredCapabilities: [],
     defaultBehavior: parseJsonObject(draft.defaultBehavior),
     memoryTables: Array.isArray(draft.memoryTables) ? draft.memoryTables : [],
-    // A destination named twice is one destination, and one the schema does not
-    // know is dropped rather than failing the whole submission — the draft is
-    // still usable, the create screen just does not pre-tick that box. Sorted
-    // as well as de-duplicated: the normalized draft is rendered back into the
-    // compiler's own prefix on every later turn, so letting the model's word
-    // order decide those bytes costs a prompt-cache hit per turn for nothing.
-    requestedDelivery: Array.isArray(draft.requestedDelivery)
-      ? [...new Set(draft.requestedDelivery.filter((entry) =>
-        entry === "email" || entry === "slack_agent_dm" || entry === "channel"))].sort()
-      : [],
     ready,
     followUpQuestion: null,
     elicitation: null,

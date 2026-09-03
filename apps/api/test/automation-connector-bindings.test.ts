@@ -39,7 +39,6 @@ function publishInput(trigger: AutomationDraft["triggers"][number]): {
       triggers: [trigger],
       requiredCapabilities: [],
       expectedOutputs: [],
-      requestedDelivery: [],
       defaultBehavior: {},
       recommendedPlugins: [],
       memoryTables: [],
