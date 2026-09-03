@@ -10,15 +10,12 @@
   font-synthesis: none;
   text-rendering: optimizeLegibility;
 
-  /* How far into the page the window's own buttons reach, when the platform
-     draws them over the web contents rather than in a frame above it. Zero is
-     the honest default: only macOS's `hiddenInset` title bar overlaps us, so
-     `AppShell` raises this to the band's real width there and nowhere else —
-     an unconditional gutter would indent the header on Windows and Linux for
-     buttons that are not drawn inside the window at all. Anything laid out
-     against the top-left of the window reads it rather than measuring the
-     traffic lights again. */
-  --av-cmp-window-controls-inset: 0px;
+  /* How far into the page the window's own buttons reach. Not an `--av-` token:
+     a theme cannot set this and the registry does not declare it — it is the
+     platform's geometry, and it is stated here so the media query that spends
+     it does not have to know which platform it is on. `docs/assumptions.md`
+     item 25 has the reasoning and the rejected alternative. */
+  --window-controls-inset: 0px;
 }
 
 * {
@@ -587,12 +584,13 @@ pre {
 }
 
 /* macOS draws the traffic lights over the web contents: three 12px buttons on a
-   20px pitch, from the `trafficLightPosition` the main process sets at x: 18 —
-   so they end at 70px, and this is that plus the header's own 12px of air. The
-   geometry stays in the stylesheet rather than in the component that adds the
-   class, so the one other surface that reserves this band — `.meeting-titlebar`,
-   in a window with no shell to carry a class — can be read against it. */
-.workspace-shell.has-overlay-window-controls { --av-cmp-window-controls-inset: 82px; }
+   20px pitch from the `trafficLightPosition` the main process sets at x: 18, so
+   they end at 70px, and this clears them by 12. `.meeting-titlebar` reserves the
+   same band and reaches it a different way — a flat 82px on every platform,
+   because that window renders no `.workspace-shell` and so has no class to be
+   told the platform by. Neither reads the other; the numbers agree because they
+   are the same measurement, and this comment is the only thing saying so. */
+.workspace-shell.has-overlay-window-controls { --window-controls-inset: 82px; }
 
 /* The frame a theme's backdrop document renders in. It sits between the shell's
    painted backdrop and every pane, takes no pointer, and takes no focus — the
@@ -1174,7 +1172,13 @@ pre {
 .mobile-sidebar-trigger { display: none; left: 8px; position: fixed; top: 9px; z-index: 25; }
 .sidebar-scrim { display: none; }
 .mobile-only { display: none; }
-.header-menu-button { display: none; }
+/* `flex: 0 0 auto` because this is the only way back to the navigation once the
+   sidebar has become a drawer, and it shares a flex row with a title that
+   declares `min-width: 0`. Left shrinkable it gives up width before the title
+   truncates: at the window's 860px minimum with the right rail open it measured
+   26px against its 30px box before this row reserved the window-control band,
+   and 22px after. A control that is the only exit is not the one to compress. */
+.header-menu-button { display: none; flex: 0 0 auto; }
 
 /* Deep-link failure window
    Its own renderer, so this is the whole window rather than a layer inside one:
@@ -4242,13 +4246,10 @@ button.citation-card:hover { background: var(--av-sys-color-surface-elevated-hov
   .rail-open .automation-composer-wrap { transform: translateX(-50%); width: calc(100% - 50px); }
   /* The sidebar has left the flow, and with it the 48px title bar that was
      holding the window's own buttons clear of anything readable. These headers
-     inherit that job for as long as it is gone: the drawer button, the title,
-     and the run status all start after the buttons rather than under them,
-     where on macOS they are not only illegible but unclickable — the traffic
-     lights are chrome above the web contents and take the press. Off macOS the
-     inset is 0 and this stays the 8px it has always been. */
+     inherit that job for as long as it is gone. Off macOS the inset is 0 and
+     this stays the 8px it has always been — `docs/assumptions.md` item 25. */
   .workstream-header,
-  .automation-overview-header { padding-left: max(8px, var(--av-cmp-window-controls-inset)); }
+  .automation-overview-header { padding-left: max(8px, var(--window-controls-inset)); }
 }
 
 @media (max-width: 760px) {
