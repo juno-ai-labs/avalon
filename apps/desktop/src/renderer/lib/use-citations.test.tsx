@@ -11,6 +11,7 @@ vi.mock('./platform', () => ({ desktopBridge: () => ({ openExternal }) }));
 const DECK: WorkstreamResource = {
   id: 'board-deck',
   title: 'Q3 board deck',
+  mimeType: 'text/markdown',
   resourceType: 'document',
   refreshSupported: false,
   watchEnabled: false,
@@ -33,6 +34,7 @@ describe('useCitations', () => {
       id: 'board-deck',
       title: 'Q3 board deck',
       resourceType: 'document',
+      mimeType: 'text/markdown',
     });
   });
 
@@ -48,6 +50,7 @@ describe('useCitations', () => {
       id: 'board-deck',
       title: 'Q3 board deck',
       resourceType: 'document',
+      mimeType: 'text/markdown',
     });
 
     act(() => { result.current.open({ scheme: 'resource', resourceId: 'amber-crisp-lucid-lantern' }); });
@@ -82,6 +85,21 @@ describe('useCitations', () => {
     const { result, rerender } = renderHook(() => useCitations({ resources }));
     const first = result.current;
     rerender();
+
+    expect(result.current).toBe(first);
+  });
+
+  it('keeps a stable identity across an equivalent socket snapshot', () => {
+    const { result, rerender } = renderHook(
+      ({ resources }) => useCitations({ resources }),
+      { initialProps: { resources: [DECK] } },
+    );
+    const first = result.current;
+
+    // Query hydration recreates the array and its records even when no
+    // citation-facing field changed. Cards must not restart their preview
+    // effects merely because the transport allocated new objects.
+    rerender({ resources: [{ ...DECK }] });
 
     expect(result.current).toBe(first);
   });
@@ -191,17 +209,17 @@ describe('useCitations', () => {
     expect(loadResourceContent).toHaveBeenCalledExactlyOnceWith('board-deck', expect.anything());
   });
 
-  it('keeps audio preview bytes as audio instead of decoding them as text', async () => {
-    // The defect this is here for: audio went through the derivative reader,
-    // which calls `Blob.text()` on it, and the card announcing a recording
-    // rendered the file's bytes as replacement characters.
+  it('does not request audio bytes for a text or image card preview', () => {
+    // Audio has its own inspector presentation. Asking the feed's preview path
+    // for it would either decode binary bytes as prose or revive the retired
+    // tall transport card instead of the compact file row.
     const blob = new Blob(['not text'], { type: 'audio/mpeg' });
     const loadResourceContent = vi.fn(async () => blob);
     const recording = { ...DECK, title: 'Inbox Brief.mp3', mimeType: 'audio/mpeg' };
     const { result } = renderHook(() => useCitations({ loadResourceContent, resources: [recording] }));
 
-    expect(await result.current.preview!('board-deck')).toEqual({ kind: 'audio', blob });
-    expect(loadResourceContent).toHaveBeenCalledExactlyOnceWith('board-deck', expect.anything());
+    expect(result.current.preview!('board-deck')).toBeUndefined();
+    expect(loadResourceContent).not.toHaveBeenCalled();
   });
 
   it('opens nothing for a target that names an identity or nothing at all', () => {

@@ -13,6 +13,7 @@ import { desktopWorkspaceIdentityKey } from '../../common/desktop';
 import { AccountSignInSupersededError, FINISH_SIGN_IN_IN_BROWSER, type AccountActionProgress } from '../lib/app-session';
 import type { WorkspaceMember } from '../lib/types';
 import { formatRelative } from '../lib/format';
+import { desktopBridge } from '../lib/platform';
 import { uuidV7 } from '../lib/telemetry';
 import { Avatar, Button, Modal } from './primitives';
 
@@ -47,6 +48,8 @@ export interface WorkspaceAccountMenuProps {
   /** Resolves true once the switch has taken; the menu closes on that and stays
    * open — with the row's error beneath it — when it did not. */
   onSwitchWorkspace: (workspace: DesktopWorkspaceSummary) => Promise<boolean>;
+  /** The GrokBot shell keeps workspace administration out of its account card. */
+  presentation?: 'workspace' | 'grok';
 }
 
 /** The two data regions, as the compact tag on a row and the caption under
@@ -123,6 +126,7 @@ export function WorkspaceAccountMenu({
   onOpenSettings,
   onSignOut,
   onSwitchWorkspace,
+  presentation = 'workspace',
 }: WorkspaceAccountMenuProps): React.JSX.Element {
   const [invitation, setInvitation] = useState<DesktopPendingWorkspaceInvitation | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -149,6 +153,11 @@ export function WorkspaceAccountMenu({
     ? 'attention in another workspace'
     : backgroundHasAttention ? 'unread activity in another workspace' : null;
   const multipleRegions = new Set(workspaces.map((workspace) => workspace.region)).size > 1;
+  const openPublicPage = (path: string): void => {
+    void desktopBridge().getRuntimeConfig().then(({ webBaseUrl }) => (
+      desktopBridge().openExternal(new URL(path, `${webBaseUrl.replace(/\/$/u, '')}/`).toString())
+    )).catch(() => undefined);
+  };
 
   useEffect(() => {
     if (!promptedInvitation) return;
@@ -202,7 +211,7 @@ export function WorkspaceAccountMenu({
       <DropdownMenu.Root
         onOpenChange={(open) => {
           setMenuOpen(open);
-          if (open && enabled) onMenuOpen();
+          if (open && enabled && presentation === 'workspace') onMenuOpen();
         }}
         open={menuOpen}
       >
@@ -210,8 +219,7 @@ export function WorkspaceAccountMenu({
           <button
             aria-label={[
               currentUser.name,
-              activeWorkspace.name,
-              backgroundAttentionDescription,
+              ...(presentation === 'workspace' ? [activeWorkspace.name, backgroundAttentionDescription] : []),
             ].filter(Boolean).join(', ')}
             className="account-trigger window-no-drag"
             type="button"
@@ -219,15 +227,56 @@ export function WorkspaceAccountMenu({
             <Avatar member={currentUser} size="small" />
             <span className="account-copy">
               <strong>{currentUser.name}</strong>
-              <span>{activeWorkspace.name}</span>
+              {presentation === 'workspace' && <span>{activeWorkspace.name}</span>}
             </span>
-            {backgroundHasAttention && <span aria-hidden="true" className="account-attention-dot" />}
-            <ChevronDown aria-hidden="true" size={14} />
+            {presentation === 'workspace' && backgroundHasAttention && <span aria-hidden="true" className="account-attention-dot" />}
+            {presentation === 'workspace' && <ChevronDown aria-hidden="true" size={14} />}
           </button>
         </DropdownMenu.Trigger>
         <DropdownMenu.Portal>
-          <DropdownMenu.Content align="start" className="menu-content workspace-menu" side="top" sideOffset={8}>
-            {enabled && (
+          <DropdownMenu.Content
+            align="start"
+            alignOffset={8}
+            className={presentation === 'grok' ? 'menu-content account-menu-content' : 'menu-content workspace-menu'}
+            collisionPadding={8}
+            side="top"
+            sideOffset={8}
+          >
+            {presentation === 'grok' ? (
+              <>
+                <DropdownMenu.Item className="menu-item account-menu-item account-menu-item-with-value" onSelect={onOpenSettings}>
+                  <Gauge aria-hidden="true" />
+                  <span>Weekly usage</span>
+                  <span className="account-menu-value">—</span>
+                  <ChevronRight aria-hidden="true" className="account-menu-chevron" />
+                </DropdownMenu.Item>
+                <DropdownMenu.Item className="menu-item account-menu-item" onSelect={() => openPublicPage('/')}>
+                  <Smartphone aria-hidden="true" />
+                  <span>Get Rally for iOS</span>
+                </DropdownMenu.Item>
+                <DropdownMenu.Item className="menu-item account-menu-item" onSelect={onOpenSettings}>
+                  <Settings aria-hidden="true" />
+                  <span>Settings</span>
+                </DropdownMenu.Item>
+                <DropdownMenu.Item className="menu-item account-menu-item" onSelect={() => openPublicPage('/')}>
+                  <Info aria-hidden="true" />
+                  <span>About</span>
+                </DropdownMenu.Item>
+                <DropdownMenu.Item className="menu-item account-menu-item" onSelect={() => openPublicPage('/support/')}>
+                  <CircleHelp aria-hidden="true" />
+                  <span>Help Center</span>
+                </DropdownMenu.Item>
+                <DropdownMenu.Item className="menu-item account-menu-item" onSelect={() => openPublicPage('/support/')}>
+                  <Megaphone aria-hidden="true" />
+                  <span>Send Feedback</span>
+                </DropdownMenu.Item>
+                <DropdownMenu.Separator className="menu-separator account-menu-separator" />
+                <DropdownMenu.Item className="menu-item account-menu-item" onSelect={onSignOut}>
+                  <LogOut aria-hidden="true" />
+                  <span>Log out</span>
+                </DropdownMenu.Item>
+              </>
+            ) : enabled && (
               <>
                 <DropdownMenu.Label className="menu-label workspace-menu-section">Workspaces</DropdownMenu.Label>
                 {workspaces.map((workspace) => {
@@ -326,17 +375,21 @@ export function WorkspaceAccountMenu({
                 <DropdownMenu.Separator className="menu-separator" />
               </>
             )}
-            <DropdownMenu.Label className="menu-label">
-              <span>{currentUser.email}</span>
-              <small>{regionLabel(activeWorkspace.region)} workspace</small>
-            </DropdownMenu.Label>
-            <DropdownMenu.Separator className="menu-separator" />
-            <DropdownMenu.Item asChild className="menu-item">
-              <button onClick={onOpenSettings} type="button"><Settings size={14} /> Settings…</button>
-            </DropdownMenu.Item>
-            <DropdownMenu.Item className="menu-item" onSelect={onSignOut}>
-              <LogOut size={14} /> Sign out
-            </DropdownMenu.Item>
+            {presentation === 'workspace' && (
+              <>
+                <DropdownMenu.Label className="menu-label">
+                  <span>{currentUser.email}</span>
+                  <small>{regionLabel(activeWorkspace.region)} workspace</small>
+                </DropdownMenu.Label>
+                <DropdownMenu.Separator className="menu-separator" />
+                <DropdownMenu.Item asChild className="menu-item">
+                  <button onClick={onOpenSettings} type="button"><Settings size={14} /> Settings…</button>
+                </DropdownMenu.Item>
+                <DropdownMenu.Item className="menu-item" onSelect={onSignOut}>
+                  <LogOut size={14} /> Sign out
+                </DropdownMenu.Item>
+              </>
+            )}
           </DropdownMenu.Content>
         </DropdownMenu.Portal>
       </DropdownMenu.Root>

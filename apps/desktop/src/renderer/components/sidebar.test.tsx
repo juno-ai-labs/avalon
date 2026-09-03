@@ -203,7 +203,7 @@ describe('Sidebar work-stream markers', () => {
     const commandbar = document.querySelector('.sidebar-commandbar');
     expect(titlebar).not.toBeNull();
     expect(commandbar).not.toBeNull();
-    expect(titlebar).toContainElement(screen.getByRole('link', { name: 'New work stream' }));
+    expect(titlebar).toContainElement(screen.getByRole('link', { name: 'New chat' }));
     expect(commandbar).toContainElement(screen.getByRole('searchbox', { name: 'Search work streams' }));
     expect(commandbar?.querySelector('.sidebar-new-button')).toBeNull();
   });
@@ -2149,7 +2149,7 @@ describe('pinned work streams', () => {
     fireEvent.keyDown(window, { key: 'Meta', metaKey: true });
     fireEvent.keyDown(window, { key: 'Meta', metaKey: true, repeat: true });
     const pills = [...document.querySelectorAll('.command-shortcut-pill')];
-    expect(pills.map((pill) => pill.textContent)).toEqual(['1', '2', '3', '4', '5', '6', '7', '8', '9']);
+    expect(pills.map((pill) => pill.textContent)).toEqual(['⌘1', '⌘2', '⌘3', '⌘4', '⌘5', '⌘6', '⌘7', '⌘8', '⌘9']);
     // The overlay reuses the automation You / Workspace badge so the two chips
     // cannot pick up different size or colour. Dropping either class is the
     // failure this asserts; `toHaveClass` names the missing one.
