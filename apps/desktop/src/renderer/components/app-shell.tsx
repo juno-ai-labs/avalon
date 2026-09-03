@@ -86,6 +86,23 @@ export function showsAutomation(pathname: string, automationId: string): boolean
   return pathname === `/automations/${automationId}`;
 }
 
+/**
+ * Whether this platform paints the window's own buttons over the page.
+ *
+ * Only macOS does, and only because the main window asks for `hiddenInset`.
+ * Windows and Linux keep their buttons in a frame above the web contents, so a
+ * surface reaching the top-left of the window there has nothing to clear.
+ *
+ * Undefined while the runtime config is still in flight, which resolves the
+ * same way as any other non-macOS answer: the shell renders no gutter. It
+ * cannot be seen — `App` mounts this only once the runtime has arrived — and
+ * treating the unknown as "no chrome to avoid" is the reading that leaves a
+ * header where it already was rather than jumping it sideways on arrival.
+ */
+export function overlayWindowControls(platform: string | undefined): boolean {
+  return platform === 'darwin';
+}
+
 export function openWorkstreamId(pathname: string): string | null {
   const id = /^\/workstreams\/([^/]+)$/.exec(pathname)?.[1];
   if (id === undefined || id === 'new') return null;
@@ -217,6 +234,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     invitationApi,
     pendingInvitation,
     abandonAccountSignIn,
+    runtime,
     session,
     signOut,
   } = useAppSession();
@@ -389,6 +407,13 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   }, [workspaceKey]);
   const shellClassName = [
     'workspace-shell',
+    // The main window is the only one asking for `hiddenInset`, and only macOS
+    // honours it, so it is the only place the window's own buttons are painted
+    // over a surface this stylesheet lays out. Everywhere else the buttons are
+    // in a frame above the web contents — or, on the platforms the main window
+    // asks `hidden` of, not drawn at all — and reserving room for them would
+    // indent a header against nothing.
+    overlayWindowControls(runtime?.platform) ? 'has-overlay-window-controls' : '',
     showShellRail ? 'rail-open' : '',
     switchingWorkspaceKey !== null ? 'is-switching-workspace' : '',
     enteringWorkspaceKey === workspaceKey ? 'is-entering-workspace' : '',
