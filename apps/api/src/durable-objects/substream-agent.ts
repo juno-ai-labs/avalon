@@ -1005,6 +1005,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         env,
         this.transcript,
         this.loop,
+        () => this.externalSubstreamId(),
       );
       this.terminal = new WorkstreamTerminalStorage(state.storage);
       this.toolReceipts = new WorkstreamToolReceiptStorage(state.storage);
@@ -5066,7 +5067,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         return;
       }
       if (command.type === "reorder_pending_inputs") {
-        const result = await this.product.reorderPendingInputs(auth, command.inputIds);
+        const result = await this.product.reorderPendingInputs(
+          auth,
+          command.operationId,
+          command.inputIds,
+        );
         await this.flushSemanticRealtimeOutboxBestEffort();
         socket.send(JSON.stringify(WorkstreamSocketCommandResultSchema.parse({
           type: "client_command_succeeded",
@@ -5077,7 +5082,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         return;
       }
       if (command.type === "stop_harness") {
-        await this.product.stop(auth);
+        await this.product.stop(auth, command.operationId);
         socket.send(JSON.stringify(WorkstreamSocketCommandResultSchema.parse({
           type: "client_command_succeeded",
           command: command.type,
@@ -6043,6 +6048,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         workspaceId: identity.data.workspaceId,
         workstreamId: identity.data.workstreamId,
       }, this.env.AVALON_REGION);
+      this.ensurePersistentLoop();
     } catch (error) {
       if (error instanceof Error && error.message === "workstream_object_identity_mismatch") {
         span.setError("room_identity_mismatch");

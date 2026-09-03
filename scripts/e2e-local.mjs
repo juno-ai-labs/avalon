@@ -18,6 +18,11 @@
 import { writeFileSync } from "node:fs";
 
 import { isEntryPoint } from "./entry-point.mjs";
+import {
+  openSubstreamSocket,
+  socketTicketProtocols,
+  socketUrlWithoutTicket,
+} from "./substream-socket-client.mjs";
 
 const BASE_URL = process.env.AVALON_E2E_BASE_URL ?? "http://127.0.0.1:8787";
 const REPORT_PATH = process.env.AVALON_E2E_REPORT ?? null;
@@ -136,6 +141,27 @@ async function main() {
     return { status: response.status, body: await response.json().catch(() => null) };
   };
   const uid = () => crypto.randomUUID();
+  const substreamCommand = async (workstreamId, command) => {
+    const ticket = await api("GET", `/workstreams/${workstreamId}/substreams/0/socket`);
+    if (ticket.status !== 200) return ticket;
+    const socket = await openSubstreamSocket(socketUrlWithoutTicket(ticket.body.url), {
+      expectOpen: true,
+      protocols: socketTicketProtocols(ticket.body.ticket),
+      command,
+      subscriptionBootstrap: ticket.body.subscriptionBootstrap ?? false,
+      // This is the same end-to-end operation budget used by waitForTerminal;
+      // command admission should fail the scenario before model settlement does.
+      timeoutMs: 120_000,
+    });
+    const result = socket.commandResult;
+    if (result?.type === "client_command_failed") {
+      return { status: result.error.status, body: { error: result.error } };
+    }
+    if (result?.type !== "client_command_succeeded") {
+      throw new Error("substream command closed without a correlated receipt");
+    }
+    return { status: 200, body: result };
+  };
   const canonicalTurns = (body) => {
     const transcript = body?.transcript;
     if (!transcript) return [];
@@ -175,10 +201,18 @@ async function main() {
     }
     return created.body.workstream.id;
   };
-  const message = (workstreamId, text, clientMessageId = uid()) =>
-    api("POST", `/workstreams/${workstreamId}/messages`, {
-      text, clientMessageId, mentions: [], confirmedParticipantUserIds: [], attachmentIds: [],
-    });
+  const message = (
+    workstreamId,
+    text,
+    clientMessageId = uid(),
+    mentions = [],
+  ) => substreamCommand(workstreamId, {
+    type: "create_message",
+    operationId: uid(),
+    payload: {
+      text, clientMessageId, mentions, confirmedParticipantUserIds: [], attachmentIds: [],
+    },
+  });
   const expectRunOutcome = (terminal) => {
     const verdict = runOutcomeOracle(modelConfigured, terminal);
     if (!verdict.ok) throw new Error(verdict.reason);
@@ -209,7 +243,10 @@ async function main() {
         "Count from 1 to 500 slowly, one number per line, with commentary on each.",
       );
       await new Promise((resolve) => setTimeout(resolve, 2_500));
-      const stop = await api("POST", `/workstreams/${workstreamId}/stop`, {});
+      const stop = await substreamCommand(workstreamId, {
+        type: "stop_harness",
+        operationId: uid(),
+      });
       if (![200, 202, 204, 409].includes(stop.status)) throw new Error(`stop ${stop.status}`);
       const terminal = await waitForTerminal(workstreamId);
       if (terminal.status === "timeout") throw new Error("never settled after stop");
@@ -287,7 +324,12 @@ async function main() {
       }
       for (const [label, response] of [["first", first], ["replay", replay]]) {
         const keys = Object.keys(response.body ?? {}).sort().join(",");
-        if (keys !== "deliveryState,turn") throw new Error(`${label} receipt exposed unexpected fields: ${keys}`);
+        if (keys !== "clientMessageId,command,deliveryState,operationId,turn,type") {
+          throw new Error(`${label} receipt exposed unexpected fields: ${keys}`);
+        }
+        if (response.body.command !== "create_message" || response.body.type !== "client_command_succeeded") {
+          throw new Error(`${label} receipt did not identify the accepted socket command`);
+        }
         if (!["canonical", "pending"].includes(response.body.deliveryState)) {
           throw new Error(`${label} receipt has invalid delivery state`);
         }
@@ -300,11 +342,9 @@ async function main() {
     async sad_mentions_unknown_user() {
       const workstreamId = await create("Reply with the word HI.");
       await waitForTerminal(workstreamId);
-      const response = await api("POST", `/workstreams/${workstreamId}/messages`, {
-        text: "hey @ghost", clientMessageId: uid(),
-        mentions: [{ type: "person", userId: uid(), startOffset: 4, endOffset: 10 }],
-        confirmedParticipantUserIds: [], attachmentIds: [],
-      });
+      const response = await message(workstreamId, "hey @ghost", uid(), [
+        { type: "person", userId: uid(), startOffset: 4, endOffset: 10 },
+      ]);
       if (![400, 409, 422].includes(response.status)) {
         throw new Error(`expected a safe rejection, got ${response.status}`);
       }

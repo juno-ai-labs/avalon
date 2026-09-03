@@ -466,6 +466,25 @@ function runMayStillEmitRealtime(status: WorkstreamDetail['harnessStatus']): boo
   return status === 'running' || status === 'scheduled';
 }
 
+export function workstreamDetailQueryKey(
+  workstreamId: string,
+  substreamId = '0',
+): readonly ['workstream', string] | readonly ['substream-workstream', string, string] {
+  return substreamId === '0'
+    ? ['workstream', workstreamId]
+    : ['substream-workstream', workstreamId, substreamId];
+}
+
+export function orderedTranscriptQueryKey(
+  workstreamId: string,
+  substreamId = '0',
+): readonly ['ordered-transcript', string]
+  | readonly ['substream-ordered-transcript', string, string] {
+  return substreamId === '0'
+    ? ['ordered-transcript', workstreamId]
+    : ['substream-ordered-transcript', workstreamId, substreamId];
+}
+
 /**
  * A harness status change is pushed, not polled, so both views of it take the
  * pushed value in one write: the open work stream's header reads the detail
@@ -478,9 +497,11 @@ export function applyHarnessStatus(
   queryClient: QueryClient,
   workstreamId: string,
   harnessStatus: HarnessStatus,
+  substreamId = '0',
 ): void {
-  queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) =>
+  queryClient.setQueryData<WorkstreamDetail>(workstreamDetailQueryKey(workstreamId, substreamId), (current) =>
     current && current.harnessStatus !== harnessStatus ? { ...current, harnessStatus } : current);
+  if (substreamId !== '0') return;
   setCachedWorkstreams(queryClient, (current) =>
     current?.map((workstream) => workstream.id === workstreamId && workstream.harnessStatus !== harnessStatus
       ? { ...workstream, harnessStatus }
@@ -811,6 +832,9 @@ export function useWorkstreamSocket(
       ));
       return;
     }
+    const detailQueryKey = workstreamDetailQueryKey(workstreamId, substreamId);
+    const transcriptQueryKey = orderedTranscriptQueryKey(workstreamId, substreamId);
+    const overlaysQueryKey = transcriptOverlaysQueryKey(workstreamId, substreamId);
     let closedByEffect = false;
     const socketTelemetry = realtimeSocketTelemetry('substream_feed');
     // Separate from `closedByEffect`, which means this hook is tearing down. The
@@ -858,9 +882,9 @@ export function useWorkstreamSocket(
     let openingTimedOutAttempts = 0;
     let openingTerminal = false;
     const canonicalCachesAvailable = (): boolean =>
-      queryClient.getQueryData<WorkstreamDetail>(['workstream', workstreamId])?.id === workstreamId
+      queryClient.getQueryData<WorkstreamDetail>(detailQueryKey)?.id === workstreamId
       && queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
-        ['ordered-transcript', workstreamId],
+        transcriptQueryKey,
       ) !== undefined;
     let openingCompleted = canonicalCachesAvailable();
     let connectGeneration = 0;
@@ -918,7 +942,7 @@ export function useWorkstreamSocket(
         if (closedByEffect) return;
         const { changed, backlogRemains } = advanceStreamReveal(streamCursors, performance.now());
         if (changed) {
-          queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(workstreamId), (current) =>
+          queryClient.setQueryData<TranscriptOverlay[]>(overlaysQueryKey, (current) =>
             mapTranscriptOverlayMessages(current, (messages) => applyRevealedText(messages, streamCursors)));
         }
         if (backlogRemains) scheduleReveal();
@@ -933,7 +957,7 @@ export function useWorkstreamSocket(
     const handleVisibilityChange = (): void => {
       if (document.visibilityState !== 'hidden') return;
       if (flushStreamReveal(streamCursors)) {
-        queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(workstreamId), (current) =>
+        queryClient.setQueryData<TranscriptOverlay[]>(overlaysQueryKey, (current) =>
           mapTranscriptOverlayMessages(current, (messages) => applyRevealedText(messages, streamCursors)));
       }
     };
@@ -1135,7 +1159,7 @@ export function useWorkstreamSocket(
             left.inputSequence - right.inputSequence
               || (left.inputId < right.inputId ? -1 : left.inputId > right.inputId ? 1 : 0));
         const current = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
-          ['ordered-transcript', workstreamId],
+          transcriptQueryKey,
         );
         if (!current || current.snapshotId !== assembly.snapshotId) {
           pendingInputSnapshot = null;
@@ -1143,12 +1167,12 @@ export function useWorkstreamSocket(
         }
         const complete = { ...current, pendingInputs: inputs };
         queryClient.setQueryData<WorkstreamTranscriptSnapshot>(
-          ['ordered-transcript', workstreamId],
+          transcriptQueryKey,
           complete,
         );
         const canonical = orderedTranscriptMessages(complete, workstreamId);
         queryClient.setQueryData<TranscriptOverlay[]>(
-          transcriptOverlaysQueryKey(workstreamId),
+          overlaysQueryKey,
           (overlays) => reconcileAuthoritativeTranscriptOverlays(
             canonical,
             overlays,
@@ -1182,7 +1206,7 @@ export function useWorkstreamSocket(
           : [];
         if (canonicalResyncActiveStreams.length > 0) {
           const snapshot = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
-            ['ordered-transcript', workstreamId],
+            transcriptQueryKey,
           );
           const streamed = applyActiveStreamCheckpoints(
             [],
@@ -1190,7 +1214,7 @@ export function useWorkstreamSocket(
             workstreamId,
             streamCursors,
           );
-          queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(workstreamId), (current) =>
+          queryClient.setQueryData<TranscriptOverlay[]>(overlaysQueryKey, (current) =>
             canonicalResyncActiveStreams.reduce((next, checkpoint) => {
               const message = streamed.find((candidate) => candidate.id === checkpoint.turnId);
               return message ? upsertSocketEventOverlay(
@@ -1271,12 +1295,12 @@ export function useWorkstreamSocket(
           window.clearTimeout(pending.timeout);
         }
         const current = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
-          ['ordered-transcript', workstreamId],
+          transcriptQueryKey,
         );
         if (current?.snapshotId === event.snapshotId
           && (!pending || pending.snapshotId === event.snapshotId)) {
           queryClient.setQueryData<WorkstreamTranscriptSnapshot>(
-            ['ordered-transcript', workstreamId],
+            transcriptQueryKey,
             mergeTranscriptRange(current, event.result),
           );
           pending?.resolve(event.result);
@@ -1307,7 +1331,7 @@ export function useWorkstreamSocket(
         && (event.type === 'snapshot' || (event.type === 'error' && event.requestId === null));
       if (answersSnapshotRequest) snapshotRequestInFlight = false;
       const currentTranscript = event.type === 'snapshot'
-        ? queryClient.getQueryData<WorkstreamTranscriptSnapshot>(['ordered-transcript', workstreamId])
+        ? queryClient.getQueryData<WorkstreamTranscriptSnapshot>(transcriptQueryKey)
         : undefined;
       // Snapshots are valid at sequence zero and may intentionally replace
       // state at the same sequence after an explicit initial subscription.
@@ -1333,12 +1357,12 @@ export function useWorkstreamSocket(
         };
         setActiveCompaction(event.activeCompaction);
         queryClient.setQueryData<number>(
-          workstreamSocketSnapshotGenerationQueryKey(workstreamId),
+          workstreamSocketSnapshotGenerationQueryKey(workstreamId, substreamId),
           (current) => (current ?? 0) + 1,
         );
-        queryClient.setQueryData(workstreamFeedSourceQueryKey(workstreamId), 'socket_snapshot');
+        queryClient.setQueryData(workstreamFeedSourceQueryKey(workstreamId, substreamId), 'socket_snapshot');
         const detail = mapWorkstreamDetail(event.workstream);
-        queryClient.setQueryData(['workstream', workstreamId], detail);
+        queryClient.setQueryData(detailQueryKey, detail);
         // Only a reconciliation requested on this still-contiguous socket can
         // carry previously loaded ranges across a new snapshot fence. Initial
         // delivery and history-loss recovery have no proof that mutable turns
@@ -1349,7 +1373,7 @@ export function useWorkstreamSocket(
           ? mergeCanonicalTranscriptSnapshot(currentTranscript, event.transcript)
           : event.transcript;
         queryClient.setQueryData<WorkstreamTranscriptSnapshot>(
-          ['ordered-transcript', workstreamId],
+          transcriptQueryKey,
           transcript,
         );
         const canonical = orderedTranscriptMessages(transcript, workstreamId);
@@ -1374,7 +1398,7 @@ export function useWorkstreamSocket(
           ),
         ];
         queryClient.setQueryData<TranscriptOverlay[]>(
-          transcriptOverlaysQueryKey(workstreamId),
+          overlaysQueryKey,
           (current) => reconcileAuthoritativeTranscriptOverlays(
             canonical,
             current,
@@ -1400,7 +1424,7 @@ export function useWorkstreamSocket(
         }
       } else if (event.type === 'loop_input_upserted') {
         queryClient.setQueryData<TranscriptOverlay[]>(
-          transcriptOverlaysQueryKey(workstreamId),
+          overlaysQueryKey,
           (current) => replaceTranscriptOverlay(
             current,
             pendingTranscriptInputOverlay(event.input, workstreamId, {
@@ -1412,21 +1436,21 @@ export function useWorkstreamSocket(
         );
       } else if (event.type === 'loop_input_removed') {
         queryClient.setQueryData<TranscriptOverlay[]>(
-          transcriptOverlaysQueryKey(workstreamId),
+          overlaysQueryKey,
           (current) => removeTranscriptOverlay(current, (overlay) =>
             (overlay.identity.type === 'loop_input' && overlay.identity.inputId === event.inputId)
             || (overlay.identity.type === 'client_message' && overlay.identity.turnId === event.inputId)),
         );
       } else if (event.type === 'transcript_turn_upserted') {
         const next = queryClient.setQueryData<WorkstreamTranscriptSnapshot>(
-          ['ordered-transcript', workstreamId],
+          transcriptQueryKey,
           (current) => current
             ? mergeRealtimeTranscriptTurn(current, event.turn, event.sequence)
             : current,
         );
         if (next) {
           const canonical = orderedTranscriptMessages(next, workstreamId);
-          queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(workstreamId), (current) =>
+          queryClient.setQueryData<TranscriptOverlay[]>(overlaysQueryKey, (current) =>
             transcriptOverlaysWithoutCanonicalMatch(canonical, current ?? []));
           const turnMessages = canonical.filter((message) =>
             message.transcriptTurnId === event.turn.turnId);
@@ -1438,14 +1462,14 @@ export function useWorkstreamSocket(
               (next, message) => advanceWorkstreamAttention(next, message, viewerUserId),
               workstream,
             );
-          queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) =>
+          queryClient.setQueryData<WorkstreamDetail>(detailQueryKey, (current) =>
             current ? advance(current) : current);
           setCachedWorkstreams(queryClient, (current) => current?.map((workstream) =>
             workstream.id === workstreamId ? advance(workstream) : workstream));
         }
       } else if (event.type === 'transcript_activity_upserted') {
         queryClient.setQueryData<WorkstreamTranscriptSnapshot>(
-          ['ordered-transcript', workstreamId],
+          transcriptQueryKey,
           (current) => current
             ? mergeRealtimeTranscriptActivity(
                 current,
@@ -1469,7 +1493,7 @@ export function useWorkstreamSocket(
         // `settled` when nothing will change it again; the event says which,
         // and neither is a reason to keep waiting.
         const renamed = { title: event.title, titleStatus: event.titleStatus };
-        queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) =>
+        queryClient.setQueryData<WorkstreamDetail>(detailQueryKey, (current) =>
           current ? { ...current, ...renamed } : current);
         setCachedWorkstreams(queryClient, (current) =>
           current?.map((workstream) => workstream.id === workstreamId
@@ -1479,7 +1503,7 @@ export function useWorkstreamSocket(
         // Whoever this change excluded has already been disconnected by the
         // room, so everyone still here may read it and only needs the lock on
         // their sidebar row and the header they are reading to agree.
-        queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) =>
+        queryClient.setQueryData<WorkstreamDetail>(detailQueryKey, (current) =>
           current ? { ...current, scope: event.scope } : current);
         setCachedWorkstreams(queryClient, (current) =>
           current?.map((workstream) => workstream.id === workstreamId
@@ -1489,7 +1513,7 @@ export function useWorkstreamSocket(
         const matchingCursors = new Map([...streamCursors].filter(([, cursor]) =>
           cursor.streamId === event.streamId));
         flushStreamReveal(matchingCursors);
-        queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(workstreamId), (current) => {
+        queryClient.setQueryData<TranscriptOverlay[]>(overlaysQueryKey, (current) => {
           const streamIdByMessageId = new Map((current ?? []).flatMap((overlay) => (
             overlay.provenance.source === 'stream_event'
             || overlay.provenance.source === 'stream_snapshot'
@@ -1517,13 +1541,13 @@ export function useWorkstreamSocket(
           }
         }
       } else if (event.type === 'stream_started' || event.type === 'stream_delta') {
-        queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(workstreamId), (current) =>
+        queryClient.setQueryData<TranscriptOverlay[]>(overlaysQueryKey, (current) =>
           applyStreamingOverlayEvent(current, event, workstreamId, event.transcriptSequence - 1, streamCursors, {
             paced: document.visibilityState !== 'hidden',
           }));
         scheduleReveal();
       } else if (event.type === 'harness_status_changed') {
-        applyHarnessStatus(queryClient, workstreamId, normalizeHarnessStatus(event.status));
+        applyHarnessStatus(queryClient, workstreamId, normalizeHarnessStatus(event.status), substreamId);
         if (event.status !== 'running') setActiveCompaction(null);
         if (
           event.status === 'running'
@@ -1546,9 +1570,9 @@ export function useWorkstreamSocket(
           : current);
       } else if (event.type === 'tool_started' || event.type === 'tool_completed' || event.type === 'tool_failed') {
         const afterTranscriptSequence = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
-          ['ordered-transcript', workstreamId],
+          transcriptQueryKey,
         )?.snapshotThrough ?? 0;
-        queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(workstreamId), (current) => {
+        queryClient.setQueryData<TranscriptOverlay[]>(overlaysQueryKey, (current) => {
           const messageId = `tool-${event.invocation.id}`;
           const existing = (current ?? []).find((overlay) =>
             overlay.identity.type === 'tool_call'
@@ -1577,9 +1601,9 @@ export function useWorkstreamSocket(
       } else if (event.type === 'elicitation_created' || event.type === 'elicitation_answered') {
         const messageId = elicitationMessageId(event.elicitation.id);
         const afterTranscriptSequence = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
-          ['ordered-transcript', workstreamId],
+          transcriptQueryKey,
         )?.snapshotThrough ?? 0;
-        queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(workstreamId), (current) => {
+        queryClient.setQueryData<TranscriptOverlay[]>(overlaysQueryKey, (current) => {
           if (event.elicitation.status === 'cancelled') {
             return removeTranscriptOverlay(current, (overlay) => overlay.identity.type === 'elicitation'
               && overlay.identity.elicitationId === event.elicitation.id);
@@ -1602,7 +1626,7 @@ export function useWorkstreamSocket(
           );
         });
       } else if (event.type === 'participant_added') {
-        queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) => {
+        queryClient.setQueryData<WorkstreamDetail>(detailQueryKey, (current) => {
           if (!current) return current;
           const participant = mapParticipant(event.participant);
           return {
@@ -1613,11 +1637,11 @@ export function useWorkstreamSocket(
           };
         });
       } else if (event.type === 'participant_removed') {
-        queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) =>
+        queryClient.setQueryData<WorkstreamDetail>(detailQueryKey, (current) =>
           current ? { ...current, participants: current.participants.filter((participant) => participant.id !== event.userId) } : current,
         );
       } else if (event.type === 'resource_attached' || event.type === 'resource_updated') {
-        queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) => {
+        queryClient.setQueryData<WorkstreamDetail>(detailQueryKey, (current) => {
           if (!current) return current;
           const resource = mapResource(event.resource);
           const exists = current.resources.some((candidate) => candidate.id === resource.id);
@@ -1838,67 +1862,78 @@ export function useWorkstreamSocket(
       });
       try {
         if (canonicalResyncTarget !== null) {
-          canonicalResyncInFlight = true;
-          try {
-            const targetSequence = canonicalResyncTarget;
-            const canonicalWorkstream = await api.getWorkstream(workstreamId, ticketAbort.signal);
-            if (closedByEffect || generation !== connectGeneration) return;
-            const { transcript: canonicalTranscript, ...detail } = canonicalWorkstream;
-            queryClient.setQueryData(['workstream', workstreamId], detail);
-            queryClient.setQueryData(['ordered-transcript', workstreamId], canonicalTranscript);
-            const mayStillEmitRealtime = runMayStillEmitRealtime(canonicalWorkstream.harnessStatus);
-            setActiveCompaction((current) => mayStillEmitRealtime
-              && current?.harnessRunId === canonicalWorkstream.latestHarnessRunId
-              ? current
-              : null);
-            const validatedActiveStreams = mayStillEmitRealtime
-              ? canonicalResyncActiveStreams.filter((checkpoint) =>
-                  checkpoint.harnessRunId === canonicalWorkstream.latestHarnessRunId)
-              : [];
-            const canonicalMessages = orderedTranscriptMessages(canonicalTranscript, workstreamId);
+          if (substreamId !== '0') {
+            // A child has no parent-workstream REST boot. Reset only this
+            // child's cursor and reconnect from zero so its own object sends
+            // a complete authoritative snapshot.
+            resumeState.lastSequence = 0;
+            effectiveAfterSequence = 0;
             streamCursors.clear();
-            const authoritativeOverlays = [
-              ...canonicalTranscript.pendingInputs.map((input) => pendingTranscriptInputOverlay(
-                input,
-                workstreamId,
-                { source: 'socket_snapshot', snapshotId: canonicalTranscript.snapshotId },
-              )),
-              ...activeStreamCheckpointOverlays(
-                validatedActiveStreams,
-                workstreamId,
-                canonicalTranscript.snapshotId,
-                canonicalTranscript.snapshotThrough,
-                streamCursors,
-              ),
-              ...detailTranscriptOverlays(
-                detail,
-                canonicalTranscript.snapshotId,
-                canonicalTranscript.snapshotThrough,
-                canonicalTranscript.eventSequence,
-              ),
-            ];
-            queryClient.setQueryData<TranscriptOverlay[]>(
-              transcriptOverlaysQueryKey(workstreamId),
-              (current) => reconcileAuthoritativeTranscriptOverlays(
-                canonicalMessages,
-                current,
-                authoritativeOverlays,
-              ),
-            );
-            void Promise.all([
-              queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY }),
-              queryClient.invalidateQueries({ queryKey: ['workstream-context', workstreamId] }),
-              syncBlockDashboardQueries(),
-            ]);
-            resumeState.lastSequence = Math.max(resumeState.lastSequence, targetSequence);
-            if (canonicalResyncTarget === targetSequence) {
-              canonicalResyncTarget = null;
-              canonicalResyncActiveStreams = [];
+            canonicalResyncTarget = null;
+            canonicalResyncActiveStreams = [];
+          } else {
+            canonicalResyncInFlight = true;
+            try {
+              const targetSequence = canonicalResyncTarget;
+              const canonicalWorkstream = await api.getWorkstream(workstreamId, ticketAbort.signal);
+              if (closedByEffect || generation !== connectGeneration) return;
+              const { transcript: canonicalTranscript, ...detail } = canonicalWorkstream;
+              queryClient.setQueryData(detailQueryKey, detail);
+              queryClient.setQueryData(transcriptQueryKey, canonicalTranscript);
+              const mayStillEmitRealtime = runMayStillEmitRealtime(canonicalWorkstream.harnessStatus);
+              setActiveCompaction((current) => mayStillEmitRealtime
+                && current?.harnessRunId === canonicalWorkstream.latestHarnessRunId
+                ? current
+                : null);
+              const validatedActiveStreams = mayStillEmitRealtime
+                ? canonicalResyncActiveStreams.filter((checkpoint) =>
+                    checkpoint.harnessRunId === canonicalWorkstream.latestHarnessRunId)
+                : [];
+              const canonicalMessages = orderedTranscriptMessages(canonicalTranscript, workstreamId);
+              streamCursors.clear();
+              const authoritativeOverlays = [
+                ...canonicalTranscript.pendingInputs.map((input) => pendingTranscriptInputOverlay(
+                  input,
+                  workstreamId,
+                  { source: 'socket_snapshot', snapshotId: canonicalTranscript.snapshotId },
+                )),
+                ...activeStreamCheckpointOverlays(
+                  validatedActiveStreams,
+                  workstreamId,
+                  canonicalTranscript.snapshotId,
+                  canonicalTranscript.snapshotThrough,
+                  streamCursors,
+                ),
+                ...detailTranscriptOverlays(
+                  detail,
+                  canonicalTranscript.snapshotId,
+                  canonicalTranscript.snapshotThrough,
+                  canonicalTranscript.eventSequence,
+                ),
+              ];
+              queryClient.setQueryData<TranscriptOverlay[]>(
+                overlaysQueryKey,
+                (current) => reconcileAuthoritativeTranscriptOverlays(
+                  canonicalMessages,
+                  current,
+                  authoritativeOverlays,
+                ),
+              );
+              void Promise.all([
+                queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY }),
+                queryClient.invalidateQueries({ queryKey: ['workstream-context', workstreamId] }),
+                syncBlockDashboardQueries(),
+              ]);
+              resumeState.lastSequence = Math.max(resumeState.lastSequence, targetSequence);
+              if (canonicalResyncTarget === targetSequence) {
+                canonicalResyncTarget = null;
+                canonicalResyncActiveStreams = [];
+              }
+              completeOpeningFromCanonicalCaches();
+              effectiveAfterSequence = resumeState.lastSequence;
+            } finally {
+              canonicalResyncInFlight = false;
             }
-            completeOpeningFromCanonicalCaches();
-            effectiveAfterSequence = resumeState.lastSequence;
-          } finally {
-            canonicalResyncInFlight = false;
           }
           // A newer resync target can arrive only from the socket being closed,
           // but handle it defensively before issuing another one-time ticket.

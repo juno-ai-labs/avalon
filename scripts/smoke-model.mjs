@@ -43,24 +43,30 @@ assert(workstreamId, "The model smoke work stream has no ID");
 
 const deadline = Date.now() + 90_000;
 let detail;
-let messages;
+let assistant;
 while (Date.now() < deadline) {
-  [detail, messages] = await Promise.all([
-    request(`/workstreams/${workstreamId}`, { headers }),
-    request(`/workstreams/${workstreamId}/messages?limit=50`, { headers }),
-  ]);
+  detail = await request(`/workstreams/${workstreamId}`, { headers });
   const status = detail.body?.latestHarnessRun?.status;
-  const assistant = messages.body?.items?.find((message) => message.author?.type === "agent" && message.textContent);
+  const transcript = detail.body?.transcript;
+  const turns = [
+    ...(transcript?.ranges ?? []).flatMap((range) => range.turns ?? []),
+    ...(transcript?.activeTurns ?? []),
+  ].sort((left, right) => left.transcriptSequence - right.transcriptSequence);
+  assistant = turns.filter((turn) => turn.actor === "assistant")
+    .map((turn) => (turn.blocks ?? [])
+      .filter((block) => block.type === "text")
+      .map((block) => block.text)
+      .join(""))
+    .findLast((text) => text.length > 0);
   if ((status === "completed" || status === "needs_input" || status === "failed" || status === "stopped") && assistant) break;
   await new Promise((resolve) => setTimeout(resolve, 1_000));
 }
 
-assert(detail?.response.ok && messages?.response.ok, "Could not read the completed model run");
+assert(detail?.response.ok, "Could not read the completed model run");
 const run = detail.body?.latestHarnessRun;
-const assistant = messages.body?.items?.find((message) => message.author?.type === "agent" && message.textContent);
 assert(run?.status === "completed", `The model run ended in ${run?.status ?? "an unknown state"}`);
 assert(run?.model === expectedModel, `Expected ${expectedModel}, received ${run?.model ?? "no model"}`);
-assert(assistant?.textContent?.includes("AVALON_MODEL_SMOKE_OK"), "The primary model returned an unexpected smoke response");
+assert(assistant?.includes("AVALON_MODEL_SMOKE_OK"), "The primary model returned an unexpected smoke response");
 
 console.log(JSON.stringify({
   workstreamId,
