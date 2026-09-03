@@ -935,6 +935,16 @@ reasonable reading, and no wording defeats it.
 convention the strict structured-output dialects settle on for exactly this
 reason: every property present, absence spelled out.
 
+The declaration is `anyOf`, not the flat `type: ["string", "null"]` Slack's
+cursors use, because Bind's `sanitizeToolSchema` collapses the flat form to
+`type: "string"` and appends "Accepts string or null." to the description. That
+hands a caller a schema forbidding the value and prose permitting it — the
+conflict this change exists to end — so the flat form would have been inert.
+The union passes through whole. It follows that **Slack's own null cursors are
+already being flattened this way** and its callers cannot spell absence either;
+that is a separate connector and a separate change, noted here so it is not
+lost.
+
 **Considered and rejected:** Lowering or dropping `minLength`. It re-buys the
 Linear `after: ""` failure of 2026-09-02 — the harness drops a blanked optional
 argument only where the schema says the empty string is invalid, so relaxing it
