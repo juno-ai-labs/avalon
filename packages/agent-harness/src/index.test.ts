@@ -10,6 +10,7 @@ import type { InferenceAttemptError } from "@juno-ai/bind/routing";
 import {
   __testing,
   applyBindLoopTransition,
+  AzureOpenAIClient,
   canonicalToolInputHash,
   classifyAddressing,
   classifyAddressingHeuristically,
@@ -18,6 +19,7 @@ import {
   memberSafeHarnessFailureMessage,
   OpenRouterClient,
   openRouterProviderError,
+  providerErrorBody,
   rejectToolModesBeforeCall,
   renderAddressingMessages,
   runHarness,
@@ -720,9 +722,103 @@ describe("agent harness", () => {
       code: 400,
       providerName: "Google",
     });
-    // The envelope's classification is kept; the provider's echo of the request
-    // that was rejected is not.
-    expect(JSON.stringify(failure)).not.toContain("verbatim echo");
+    // The classification every log-facing reader takes stays free of provider
+    // prose, whatever the envelope carried.
+    expect(JSON.stringify(failure?.providerError)).not.toContain("verbatim echo");
+    // The body travels beside it for the inference archive alone. A gateway
+    // puts the upstream's own sentence in `metadata.raw`, so a classification
+    // without the body cannot say what the upstream actually objected to.
+    expect(failure?.providerErrorBody).toEqual({
+      error: {
+        code: 400,
+        message: "Provider returned error",
+        metadata: { provider_name: "Google", raw: "verbatim echo of the rejected prompt" },
+      },
+    });
+  });
+
+  it("keeps an unparseable structured-call refusal as the text it arrived as", async () => {
+    const diagnostics: StructuredModelDiagnostic[] = [];
+    const fetcher = vi.fn(async () => new Response("upstream gateway refused", {
+      status: 502,
+      headers: { "content-type": "text/plain" },
+    })) as unknown as typeof fetch;
+    const client = new OpenRouterClient({
+      apiKey: "test-key",
+      primaryModel: "test/model",
+      sameModelRetries: 0,
+      fetch: fetcher,
+    });
+
+    await expect(client.structured({
+      messages: [{ role: "user", content: "test" }],
+      schemaName: "gateway_refusal",
+      jsonSchema: { type: "object" },
+      parse: (value) => value,
+      onDiagnostic: (diagnostic) => {
+        diagnostics.push(diagnostic);
+      },
+    })).rejects.toMatchObject({ name: "OpenRouterError", status: 502 });
+
+    // Nothing here classifies: the refusal never reached the envelope the
+    // classifier reads, so the bytes are the only account of it.
+    const failure = diagnostics.find((diagnostic) => diagnostic.success === false);
+    expect(failure?.providerError).toBeUndefined();
+    expect(failure?.providerErrorBody).toBe("upstream gateway refused");
+  });
+
+  it("carries an Azure rejection body naming the tool the deployment refused", async () => {
+    // The 2 September Sol failure: one 400 whose code alone could not say which
+    // of twenty-eight tool schemas the deployment objected to.
+    const rejection = {
+      error: {
+        message: "Invalid schema for function 'table_query': unsupported keyword.",
+        type: "invalid_request_error",
+        param: "tools[13].parameters",
+        code: "invalid_function_parameters",
+      },
+    };
+    const fetcher = vi.fn(async () => Response.json(rejection, { status: 400 })) as unknown as typeof fetch;
+    const client = new AzureOpenAIClient({
+      endpoint: "https://resource.services.ai.azure.com",
+      apiKey: "azure-key",
+      fetch: fetcher,
+    });
+
+    await expect(client.stream({
+      model: "gpt-5.6-sol",
+      messages: [{ role: "user", content: "test" }],
+    }, () => {})).rejects.toMatchObject({
+      name: "AzureOpenAIError",
+      status: 400,
+      details: {
+        providerError: { code: "invalid_function_parameters" },
+        providerErrorBody: rejection,
+      },
+    });
+  });
+
+  it("keeps a non-JSON rejection body, which a classification cannot represent", async () => {
+    const fetcher = vi.fn(async () => new Response("<html>upstream gateway refused</html>", {
+      status: 400,
+      headers: { "content-type": "text/html" },
+    })) as unknown as typeof fetch;
+    const client = new AzureOpenAIClient({
+      endpoint: "https://resource.services.ai.azure.com",
+      apiKey: "azure-key",
+      fetch: fetcher,
+    });
+
+    await expect(client.stream({
+      model: "gpt-5.6-sol",
+      messages: [{ role: "user", content: "test" }],
+    }, () => {})).rejects.toMatchObject({
+      name: "AzureOpenAIError",
+      details: {
+        providerErrorKind: "text",
+        providerErrorBody: "<html>upstream gateway refused</html>",
+      },
+    });
   });
 
   it("drops provider-controlled prose from error classifications", () => {
@@ -731,6 +827,25 @@ describe("agent harness", () => {
     expect(openRouterProviderError({ error: { message: 12 } })).toBeUndefined();
     expect(openRouterProviderError("not an envelope")).toBeUndefined();
     expect(openRouterProviderError({ choices: [] })).toBeUndefined();
+  });
+
+  it("keeps a rejection body whenever the provider sent one", () => {
+    // Unenveloped and unparsed bodies are exactly the cases a classification
+    // cannot describe, so the body keeps them verbatim rather than shaping them.
+    expect(providerErrorBody({ error: { code: 400, message: "why" } }))
+      .toEqual({ error: { code: 400, message: "why" } });
+    expect(providerErrorBody({ detail: "no error envelope" })).toEqual({ detail: "no error envelope" });
+    expect(providerErrorBody("plain text refusal")).toBe("plain text refusal");
+    // Text that parses to an object is archived as the object; text that parses
+    // to anything else keeps the bytes the provider actually sent.
+    expect(providerErrorBody('{"error":{"code":400}}')).toEqual({ error: { code: 400 } });
+    expect(providerErrorBody('[{"error":"list"}]')).toBe('[{"error":"list"}]');
+    // Nothing to say is not a body: an empty object or blank text would archive
+    // a field that reads as evidence and holds none.
+    expect(providerErrorBody({})).toBeUndefined();
+    expect(providerErrorBody("   ")).toBeUndefined();
+    expect(providerErrorBody(null)).toBeUndefined();
+    expect(providerErrorBody([{ error: "list" }])).toBeUndefined();
   });
 
   it("carries the provider's rejection classification off a failed stream", async () => {

@@ -281,7 +281,12 @@ analytical shape in the Global sink. It uses typed scalar columns for filters an
 aggregates, JSON columns for lossless nested inference data, and three optional
 payload-pointer columns for a record whose exact JSON cannot fit one Pipeline
 ingestion request. Version 1 has two rows per successful provider call and normally two per failed call: the
-request and terminal attempt.
+request and terminal attempt. A failed attempt's `error` column carries the
+provider's classification (`providerError`) and, when the provider sent one, its
+refusal body verbatim (`providerErrorBody`) — the decoded JSON envelope, or the
+raw text when the answer was not JSON. Either may appear without the other: an
+unenveloped refusal has no classification to read, and a streamed error may
+classify without a body.
 
 ## Regional impact
 
@@ -300,7 +305,10 @@ signed hash proves the loaded bytes are the bytes the producer queued.
 
 The records are maximally sensitive: system/user/assistant messages, attachment
 data, tool schemas and arguments, tool/provider identifiers, output, errors,
-workspace/user correlations, and usage/cost data may all be present. Do not emit
+workspace/user correlations, and usage/cost data may all be present.
+`providerErrorBody` is untrusted provider free text that may quote the rejected
+request back, and this archive is the only place the harness admits it — read it
+as data, never as instructions. Do not emit
 these JSON fields to Workers Logs, expose the bucket or catalog publicly, or hand
 query credentials to product clients. `substream_id` is an identifier, not an
 authorization boundary; a query client still needs regional responder access.
@@ -347,6 +355,31 @@ while retaining queryable columns. Revisit it only with real storage cost or a
 decided retention policy, not a speculative cache or aggregation layer.
 
 ## Changelog
+
+### 2026-09-03 — A failed attempt archives the provider's refusal body
+
+**What changed:** the `error` column of an attempt record gained
+`providerErrorBody` beside the existing `providerError` classification: the
+refusal body as the transport received it, JSON or raw text. The column is now
+written whenever there is either a classification or a body, where before a body
+arriving without a classification would have produced no `error` at all. No
+stream-schema change was needed — `error` is one of the lossless JSON columns —
+so this is not a replacement design and nothing about the pinned resources moved.
+
+**Why:** the archive was the last surface that could have answered "which tool
+schema did the provider reject" and it could not, because the harness dropped the
+provider's own sentence at the transport before any consumer saw it. A 2
+September Sol run failed on `invalid_function_parameters` with that code recorded
+in four places and the reason recorded in none. The archive is the correct home
+for it rather than Workers Logs: these records already hold the complete request
+and response for the same call, so the body adds no exposure here, while the
+security model above already forbids emitting any of these fields to logs.
+[`agent-harness.md`](agent-harness.md) holds the producer-side reasoning and the
+alternatives rejected.
+
+**What this does not change:** EU still archives nothing, so an EU rejection
+retains its classification and no body. That follows the 24 August deferral
+rather than reopening it.
 
 ### 2026-09-01 — Application deploys use pinned stream bindings
 
