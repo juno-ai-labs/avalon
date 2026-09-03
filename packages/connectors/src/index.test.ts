@@ -2498,8 +2498,20 @@ describe("connectors", () => {
       "drive.search",
     ]);
     for (const tool of paginated) {
-      const properties = (tool.inputSchema as { properties: Record<string, { description?: string }> }).properties;
-      const description = properties.pageToken?.description ?? "";
+      const properties = (tool.inputSchema as {
+        properties: Record<string, { description?: string; anyOf?: Array<{ type?: string; minLength?: number }> }>;
+      }).properties;
+      const pageToken = properties.pageToken!;
+      // Declared as a union with `null`, because omitting the key is not a move
+      // these callers reliably make and a value is. A bare optional string sent
+      // one run hunting through `"x"`, `" "`, `"undefined"` and `"/"` for
+      // something that would satisfy `minLength: 1`.
+      expect(pageToken.anyOf?.map((branch) => branch.type), `${tool.name} pageToken`)
+        .toEqual(["string", "null"]);
+      // On the string branch, not the top: it is what makes the harness drop a
+      // blanked argument instead of forwarding `""` to the provider.
+      expect(pageToken.anyOf?.[0]?.minLength, `${tool.name} pageToken`).toBe(1);
+      const description = pageToken.description ?? "";
       // Matched case-insensitively: the wording is edited for tone, and an
       // assertion pinned to a capital letter fails a rewrite that kept every
       // word. What has to survive an edit is the instruction, not its casing.
@@ -2542,6 +2554,28 @@ describe("connectors", () => {
       message: "Google API failed (400); it rejected the `pageToken` argument",
       details: { reason: "invalid_parameter", field: "pageToken" },
     });
+  });
+
+  it("reads a null cursor as the first page rather than sending it to Google", async () => {
+    const requested: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const url = requestUrl(input);
+      requested.push(url.toString());
+      return googleJson({ files: [{ id: "file-1", name: "Portfolio", mimeType: "application/pdf" }] });
+    };
+    const result = await googleAdapter(fetcher).executeTool(
+      "drive.search",
+      { query: "portfolio", pageToken: null },
+      {
+        connection: googleConnection(["drive.read"]),
+        principal: { type: "user", userId: TEST_USER_ID },
+        signal: neverAborts(),
+      }
+    );
+    expect(result.output).toMatchObject({ items: [{ id: "file-1" }] });
+    // The search runs, and Google is never handed the caller's `null`.
+    expect(requested).toHaveLength(1);
+    expect(requested[0]).not.toContain("pageToken");
   });
 
   it("refuses to name an argument the tool would itself reject", async () => {
