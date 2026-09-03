@@ -561,7 +561,7 @@ describe("connectors", () => {
     expectNormalized(result.activities);
   });
 
-  it("keeps a single edited occurrence of a series an individual Calendar activity", async () => {
+  it("keeps an occurrence edited on its own apart from the series-wide edit", async () => {
     const fetcher: typeof fetch = async () =>
       googleJson({
         items: [
@@ -588,17 +588,54 @@ describe("connectors", () => {
       googleConnection(["calendar.read"], { calendar: { syncToken: "calendar-sync-old" } }),
       neverAborts()
     );
+    // Two edits of one series, so two activities — the occurrence's own edit is
+    // not folded into the series-wide one, and neither is reported per instance.
     expect(result.activities.map((activity) => activity.dedupeKey)).toEqual([
-      "calendar:primary:standup_20260904T170000Z:exception-etag",
+      "calendar:primary:standup:series:2026-09-02T09:20:00.000Z",
       "calendar:primary:standup:series:2026-09-02T09:15:00.000Z"
     ]);
-    expect(result.activities[0]).toMatchObject({
-      providerResourceId: "standup_20260904T170000Z",
-      title: "Calendar event changed: Weekly standup",
-      subject: { start: { dateTime: "2026-08-01T10:00:00-07:00" } },
-      metadata: { seriesChange: false }
-    });
     expectNormalized(result.activities);
+  });
+
+  it("reports a lone instance of a series exactly as a full chunk of it", async () => {
+    const instance = (id: string, responseStatus: string): Record<string, unknown> => ({
+      ...calendarEvent(id, "Weekly standup", `etag-${id}`),
+      updated: "2026-09-02T09:15:00Z",
+      recurringEventId: "standup",
+      location: "Room 4",
+      attendees: [{ email: "dana@example.com", displayName: "Dana", responseStatus }]
+    });
+    const pollOnce = async (items: Record<string, unknown>[]) => {
+      const adapter = googleAdapter(async () => googleJson({ items, nextSyncToken: "calendar-sync-new" }));
+      const result = await adapter.poll!(
+        googleConnection(["calendar.read"], { calendar: { syncToken: "calendar-sync-old" } }),
+        neverAborts()
+      );
+      return result.activities;
+    };
+
+    // A burst outruns the 150 items one poll fetches, so the same series edit
+    // arrives again in later chunks — here three occurrences, then a single
+    // trailing one whose guest has since declined that Tuesday.
+    const chunk = await pollOnce([
+      instance("standup_20260905T170000Z", "accepted"),
+      instance("standup_20260906T170000Z", "accepted"),
+      instance("standup_20260907T170000Z", "accepted")
+    ]);
+    const tail = await pollOnce([instance("standup_20260908T170000Z", "declined")]);
+
+    expect(chunk).toHaveLength(1);
+    expect(tail).toHaveLength(1);
+    // Identical but for delivery time: the workspace refuses a repeated identity
+    // whose payload changed, so a chunk boundary or a per-occurrence RSVP must
+    // not reach the series payload.
+    expect({ ...tail[0], receivedAt: "" }).toEqual({ ...chunk[0], receivedAt: "" });
+    expect(tail[0]?.dedupeKey).toBe("calendar:primary:standup:series:2026-09-02T09:15:00.000Z");
+    expect(tail[0]?.externalPeople).toContainEqual(
+      expect.objectContaining({ email: "dana@example.com", role: "attendee" })
+    );
+    expect(JSON.stringify(tail[0]?.externalPeople)).not.toContain("responseStatus");
+    expectNormalized(tail);
   });
 
   it("resets an expired Calendar token through a silent bounded baseline", async () => {
