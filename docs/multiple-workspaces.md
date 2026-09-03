@@ -267,10 +267,12 @@ delete, the API returns `409` instead of applying a newly destructive outcome.
 All admission and refresh paths join `abandoned_at IS NULL`, and the ordinary
 access-revocation producer closes every socket the membership held.
 
-AutomationAgent also reads the regional workspace lifecycle before compiler or
-provider work, scheduling, run provisioning, and delivery. An abandoned
-workspace terminalizes its local pending work instead of letting an already
-addressed object continue after admission closed.
+An automation's runs are conversations under its `AutomationDO`, and their
+loops re-check the execution principal's membership before every provider
+write; a run whose principal lost the workspace stops there. The automation
+object itself reads no workspace lifecycle before its alarms fire, so a
+schedule of an abandoned workspace still admits an occurrence and provisions a
+run whose loop then refuses to act.
 
 After a successful leave, Electron removes only that workspace's credential,
 profile, and drafts, then selects the most recent surviving workspace. With none

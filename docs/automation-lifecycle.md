@@ -55,8 +55,9 @@ create one:
   opens at `/automations/:id`. The draft is written in the conversation that
   page shows.
 - **A room's agent submitting a draft.** The `rally:automations` plugin is
-  loadable in every conversation (deferred, discovered through `list_plugins`
-  and loaded with `load_plugin`) except a run's. In a work stream, its first
+  available in every conversation except a run's: preloaded in an automation's
+  own conversation, and in a work stream deferred (discovered through
+  `list_plugins` and loaded with `load_plugin`). In a work stream, its first
   `automation_submit_draft` calls `createAutomation` with `scope: "workstream"`,
   `owningWorkstreamId` the room, and the harness run id as the automation id,
   so a second submission from the same authoring loop refines the first
@@ -599,11 +600,10 @@ constraint is the only admission fence, and a new trigger kind has to derive
 one. `AutomationDO` forwards nothing its children say, so an automation's runs
 are invisible to the sidebar, the activity log, and notifications by
 construction. Where the plan this shipped from and the code differ, the code
-is described above: the drafting plugin is deferred in an automation's own
-conversation as well as in a room (loaded through `load_plugin`, never
-preloaded); `readRunState` refuses a run the automation no longer knows or
-whose automation is not `active`, rather than checking the run row's own state;
-and a mail-started run's opening is appended to the run's own conversation as a
+is described above: `readRunState` answers with both the automation's lifecycle
+and the run row's state, and `assertRunAuthorityStillValid` refuses unless the
+lifecycle is `active` and the run is `running` or `needs_input`; and a
+mail-started run's opening is appended to the run's own conversation as a
 `system` message, which is what its loop reads as the trigger. The desktop
 surfaces this document names are the routes and lists the API serves; the
 renderer's own automation screens are being rebuilt against them in the same

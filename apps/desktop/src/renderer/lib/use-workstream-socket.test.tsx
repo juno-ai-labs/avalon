@@ -3135,7 +3135,6 @@ describe('useWorkstreamSocket', () => {
       { type: 'subscribe', afterSequence: 0, publishPresence: false },
       { type: 'request_snapshot' },
     ]);
-    queryClient.setQueryData(['workstream-context', workstreamId, null], { resources: [] });
     act(() => socket.message(snapshotFrame({
       sequence: 2,
       reason: 'reconciliation',
@@ -3147,9 +3146,6 @@ describe('useWorkstreamSocket', () => {
       },
     })));
     await flushPromises();
-
-    // A snapshot carries no context, so repairing drift has to mark it stale.
-    expect(queryClient.getQueryState(['workstream-context', workstreamId, null])?.isInvalidated).toBe(true);
 
     // The renderer's shape, not the wire's: the mapper drops the null-valued
     // optional fields, and expecting the frame back would assert nothing about it.

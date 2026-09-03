@@ -2114,7 +2114,14 @@ describe("Durable Objects in the Workers runtime", () => {
     const subscribed = nextMessage(socket);
     socket.send(JSON.stringify({ type: "subscribe", afterWaterline: 0 }));
     expect(JSON.parse(String((await subscribed).data))).toMatchObject({ type: "workspace_sync" });
-    const push = nextMessageOfType(socket, "workspace_workstream_state");
+    // The opening message starts a run, and the run's own state changes ride
+    // the same legs as the rename, so an earlier frame can still carry the
+    // placeholder title. The wait is for the frame that carries the name.
+    const push = nextMatchingMessage(
+      socket,
+      "workspace_workstream_state",
+      (frame) => (frame.workstream as { titleStatus?: string } | null)?.titleStatus !== "naming",
+    );
 
     // Exactly the operation the naming service issues once the model answers,
     // through the port it issues it on. It was a routed `UPDATE workstreams`
