@@ -1819,6 +1819,10 @@ function createAvalonAutomationsPlugin(
   });
   return {
     ...plugin,
+    // An automation's own conversation exists to draft and edit it, so the
+    // tools are in hand from the first turn there. In a room they stay
+    // discoverable behind `list_plugins`, where most turns never need them.
+    preload: input.parentKind === "automation",
     // Restored durable activations deliberately skip onActivate, so every tool
     // also passes through this single-flight preparation. That is what restores
     // the inspection/evaluator facts a replacement object lost from memory.

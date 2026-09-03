@@ -1037,8 +1037,8 @@ describe('Sidebar work-stream markers', () => {
     const newAutomation = within(actions).getByRole('link', { name: 'New automation' });
     // Its own route rather than a new work stream: the automation is created
     // there and its draft is written in its own conversation.
-    expect(newAutomation).toHaveAttribute('href', '#/automations/new');
-    expect(screen.getByRole('link', { name: 'New work stream' })).toHaveAttribute('href', '#/workstreams/new');
+    expect(newAutomation).toHaveAttribute('href', '/automations/new');
+    expect(screen.getByRole('link', { name: 'New work stream' })).toHaveAttribute('href', '/workstreams/new');
   });
 
   it('names the room that owns a work-stream-scoped automation on its badge', () => {
@@ -1125,7 +1125,7 @@ describe('Sidebar work-stream markers', () => {
       .toEqual(['Ad hoc competitor scan', 'Daily product brief']);
     const row = screen.getByRole('link', { name: /Ad hoc competitor scan/u });
     expect(row).toHaveClass('is-draft');
-    expect(row).toHaveAttribute('href', '#/automations/automation-2');
+    expect(row).toHaveAttribute('href', '/automations/automation-2');
     expect(within(row).getByText('Draft')).toBeVisible();
     expect(screen.queryByText('No automations')).toBeNull();
   });

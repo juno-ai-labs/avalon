@@ -29,7 +29,7 @@ listed in [`slack-permissions.md`](slack-permissions.md) rather than here.
 | `apps/api/src/services/slack-notification-service.ts` | Workspace-bot delivery of the two things Rally tells one person about a work stream: a mention, and being added to it. |
 | `apps/api/src/routes/slack.ts` | The three signed ingress routes. |
 | `apps/api/src/durable-objects/substream-agent.ts` | The run-settlement output sink that reaches Slack. |
-| `apps/desktop/src/renderer/screens/workspace-settings.tsx`, `screens/new-automation.tsx` | Installation administration and the automation destination. |
+| `apps/desktop/src/renderer/screens/workspace-settings.tsx` | Installation administration. |
 | `config/provider-apps/slack.json` | The manifest. |
 
 ## How it works

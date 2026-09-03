@@ -8,9 +8,10 @@ substream `0` pair is dialled by a Node broker in the main process. The split
 lets the desktop open a useful swarm in parallel without moving protocol state
 or product caches out of the renderer.
 
-The broker carries one further socket kind that is not part of that swarm: the
-open automation draft's `AutomationAgent` room. It is opened on demand by the
-draft screen rather than proactively, and closes with it.
+An automation's page uses the same feed socket kind: its conversation is
+substream `0` under the automation, dialled through the same broker and the
+same `/socket/conversations/:parentId/:substreamId` route, opened on demand
+by that page rather than proactively, and with no control socket beside it.
 
 This document owns the end-to-end topology, connection-selection policy, process
 boundaries, and lifecycle. [`realtime-sockets.md`](realtime-sockets.md) owns the
@@ -29,7 +30,6 @@ protocol inside each Durable Object.
 | `apps/desktop/src/renderer/lib/workstream-socket-pool.tsx` | Owns one WorkstreamDO/substream `0` pair per selected work stream above the route, retains recently viewed pairs for five minutes, and supports presence-free pair warming on deliberate hover. |
 | `apps/desktop/src/renderer/lib/use-workstream-control-socket.ts` | Owns the WorkstreamDO metadata protocol, ticket request, snapshot application, heartbeat, and reconnect state machine. |
 | `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Owns the SubstreamAgent feed protocol, ticket request, snapshot/replay application, heartbeat, pagination, and reconnect state machine. |
-| `apps/desktop/src/renderer/lib/use-automation-agent-socket.ts` | Owns the AutomationAgent draft protocol for the one open draft: ticket request, snapshot application under the agent's own event sequence, compiler stream folding, heartbeat, and reconnect. It is mounted by `screens/new-automation.tsx` and is not pooled. |
 | `apps/desktop/src/renderer/lib/realtime-socket.ts` | Presents a browser-shaped socket to both work-stream hooks and maps Electron sockets onto one socket-ID-multiplexed preload listener. Browser development falls back to the native `WebSocket` constructor. |
 | `apps/desktop/src/common/realtime-socket.ts` | Defines the closed IPC schemas for opening, sending, closing, and receiving brokered socket events. |
 | `apps/desktop/src/common/realtime-socket-validation.ts` | Defines dependency-free channel names and strict main-to-preload event validation. |
@@ -41,7 +41,6 @@ protocol inside each Durable Object.
 | `apps/api/src/durable-objects/workspace-do.ts` | Accepts the workspace synchronization/command socket through Cloudflare's hibernation API. |
 | `apps/api/src/durable-objects/workstream-do.ts` | Accepts the per-work-stream aggregate metadata socket through the hibernation API. |
 | `apps/api/src/durable-objects/substream-agent.ts` | Accepts the substream feed socket, sends the canonical snapshot, and publishes ordered transcript/runtime events. |
-| `apps/api/src/durable-objects/automation-agent.ts` | Accepts the automation draft socket, sends its snapshot on connect, and rebroadcasts on every durable change. |
 
 ## How it works
 
@@ -57,8 +56,7 @@ Electron renderer
   |-- typed preload IPC --> Electron main --> Node ws ----> regional Worker
           one control socket per selected work stream            |
           one substream 0 feed socket per selected work stream   +--> WorkstreamDO
-          one automation room while a draft is open              +--> SubstreamAgent
-                                                                 +--> AutomationAgent
+          one substream 0 feed socket for the open automation    +--> SubstreamAgent
 ```
 
 The Worker remains in every public connection path. Durable Objects do not
@@ -79,12 +77,13 @@ Neither member of the pair carries message creation: the composer submits a
 command through WorkspaceDO. WorkspaceDO's explicit foreground signal is the
 sole source for current-client viewer presence; socket warmth is not attention.
 
-The automation draft room rides the same broker but not the same policy. It is
-opened by the draft screen when a durable automation ID exists, closed when that
-screen unmounts or the subject changes, and never warmed, retained, or pooled —
-a draft is single-author configuration work that a person is either doing or not,
-so there is no navigation latency to pre-pay. Main validates it as its own route
-kind, `automation_agent`, requiring exactly `/socket/automations/<id>`.
+An automation's conversation rides the same broker and the same route kind as
+a work stream's feed, addressed by the automation id as the parent, but not the
+same policy: it is opened by the automation's page, closed when that page
+unmounts or the subject changes, and never warmed, retained, or pooled, because
+an automation's chat is configuration work a person is either doing or not, so
+there is no navigation latency to pre-pay. It has no control socket: an
+automation parent serves no metadata snapshot.
 
 Dictation sockets keep their existing transport and lifecycle. They are not
 brokered by this module and are not part of the proactive work-stream swarm.
@@ -164,7 +163,7 @@ authority because maintenance can close a generation in place. Either way the
 object enforces local visibility, consumes the ticket ID once, accepts the
 server socket, and serializes the attachment needed after eviction.
 
-WorkspaceDO, WorkstreamDO, SubstreamAgent, and AutomationAgent use Cloudflare's
+WorkspaceDO, WorkstreamDO, and SubstreamAgent use Cloudflare's
 [WebSocket Hibernation API](https://developers.cloudflare.com/durable-objects/best-practices/websockets/).
 Idle objects can be evicted while the platform keeps their sockets connected;
 incoming application frames wake the object and recover connection identity
@@ -293,9 +292,9 @@ open transport as success.
   `validSocketPath`, which is what keeps the renderer from turning main into a
   general network client. A kind whose path check falls through to the
   work-stream branch would accept a URL its own protocol never uses.
-- **A socket kind that is not pooled must not be given the pool's lifecycle.**
-  The automation room follows its screen. Retaining it for five minutes the way a
-  work-stream pair is retained would hold an authoring room open after its author
+- **A conversation that is not pooled must not be given the pool's lifecycle.**
+  An automation's feed follows its page. Retaining it for five minutes the way a
+  work-stream pair is retained would hold a conversation open after its author
   navigated away, for a latency nobody is waiting on.
 
 ## Boundary
@@ -303,7 +302,7 @@ open transport as success.
 This module owns which Rally sockets exist concurrently, which Electron process
 owns their transport, how brokered events cross IPC, and when pooled sockets are
 retained or released. It exposes a browser-compatible `RealtimeSocket` contract
-to the work-stream control and feed hooks and to the automation draft hook.
+to the work-stream control and feed hooks, for either kind of parent.
 
 It does not own ticket claims, expiry, replay prevention, Origin policy at the
 Worker, or upgrade negotiation; those belong to
@@ -360,7 +359,6 @@ move WorkspaceDO or dictation transport into Node.
 | `apps/desktop/src/renderer/components/app-shell.test.tsx` | `pnpm --filter @rally/desktop exec vitest run src/renderer/components/app-shell.test.tsx` | Active/background selection, including all pins, five recent unpinned rows, and additional running rows. |
 | `apps/api/test-workers/durable-object-runtime.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/durable-object-runtime.test.ts` | Real-workerd upgrade, hibernation, attachment, snapshot, replay, read-only feed, and revocation behavior. |
 
-| `apps/desktop/src/renderer/lib/use-automation-agent-socket.test.tsx` | `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/use-automation-agent-socket.test.tsx` | The automation room's own state machine: subject changes, snapshot fencing, heartbeat timeout, reconnect backoff, and unmount cleanup. |
 
 The broker tests use a socket factory double because they prove Electron
 ownership and event routing, not workerd behavior. Upgrade construction and
@@ -368,16 +366,16 @@ hibernation assertions belong in `apps/api/test-workers/`; Node's `Response`
 cannot represent a real status-101 response and cannot prove Cloudflare runtime
 semantics.
 
-The gap to know about: the broker's destination-confinement cases still name
-only the two work-stream route kinds. `automation_agent`'s path check in
-`validSocketPath` is exercised by nothing, so a change to it — or to the two
-branches beside it — would not fail a test here.
+The broker's destination-confinement cases name the two brokered route kinds,
+the work-stream control socket and the conversation feed; an automation's feed
+is the second of those with an automation id in the parent position, so it is
+covered by the same path check.
 
 For a manual acceptance check, run the local regional Worker and Electron client
 as described in [`dev-environment.md`](dev-environment.md), sign in, and inspect
 the Worker output. Each proactively selected work stream should produce one
 `101` for `/socket/workstreams/:id` and one for
-`/socket/workstreams/:id/substreams/0`. Opening a row whose complete pair was
+`/socket/conversations/:id/0`. Opening a row whose complete pair was
 proactively warmed should render its feed and enabled composer without new
 connection setup. A hover-warmed pair requires no new control or feed
 connection on selection. A local model credential is required only to complete inference
@@ -398,7 +396,7 @@ socket operations only from the primary Rally window, parses every operation,
 and keys authority to that window's `webContents` ID. An open URL must use
 `ws`/`wss`, match a configured regional origin exactly, contain no username,
 password, query, or fragment, and match the path declared for its kind — one of
-the WorkstreamDO, SubstreamAgent, or AutomationAgent shapes. The first protocol
+the WorkstreamDO or SubstreamAgent shapes. The first protocol
 must be the public ticket sentinel;
 main supplies `app://rallywithai` as Origin and accepts no renderer-selected
 headers.
@@ -448,6 +446,27 @@ rows while intentionally leaving pins and active runs uncapped because those are
 explicit product states rather than speculative guesses.
 
 ## Changelog
+
+### 2026-09-03: The automation room is gone; an automation's chat is a conversation feed
+
+**What changed:** The `automation_agent` route kind, `use-automation-agent-socket.ts`,
+and the automation object's socket room are removed. An automation's page
+opens one conversation feed socket, substream `0` under the automation, through
+the same broker, route kind, and `/socket/conversations/:parentId/:substreamId`
+path a work stream's feed uses, and no control socket. The work-stream feed
+path moved from `/socket/workstreams/:id/substreams/:substreamId` to the
+conversation path as well.
+
+**Why:** The automation object stopped holding a conversation. Its chat is a
+`SubstreamAgent` under it, like a work stream's feed under `WorkstreamDO`, so
+the topology has one feed protocol and one broker kind for both. The design is
+recorded in [`workstream-durable-object.md`](workstream-durable-object.md).
+
+**Consequences:** The pool policy is the only thing that distinguishes the
+two: a work stream's pair is warmed and retained, an automation's feed follows
+its page. A future control socket for automations would be a new brokered
+kind, added to the closed enum and the path check like any other. The entry of
+2026-08-28 below describes the room this replaced.
 
 ### 2026-09-03 — The dashboard branch is removed from socket architecture
 

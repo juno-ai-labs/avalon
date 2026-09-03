@@ -1,6 +1,7 @@
 # Durable Object migration tracking
 
-Rally runs four Durable Object classes across two regional Workers, and each
+Rally runs four migrated Durable Object classes across two regional Workers,
+`SubstreamAgent`, `WorkstreamDO`, `WorkspaceDO`, and `AutomationDO`, and each
 object applies its own SQLite migration history in its constructor. Nothing in
 Cloudflare's account model can answer the question that follows from that:
 **which objects are on which schema version, and which of them are broken?** A
@@ -810,6 +811,24 @@ radius of a misclick. It sits an order of magnitude above the largest class, so
 it does not shape the cost of any run somebody means to make.
 
 ## Changelog
+
+### 2026-09-03: AutomationDO joins the tracked fleet and AutomationAgent leaves it
+
+**What changed:** `REPORTING_CLASSES`, the consumer's dispatcher map, and the
+set of classes extending `MigratableDurableObject` all name `AutomationDO` and
+no longer name `AutomationAgent`. Wrangler tag `v9` deletes the old class and
+adds the new one in the same tag, so the fleet still has four migrated classes.
+
+**Why:** The automation object was rebuilt as a conversation parent with a
+fresh one-migration ledger ([`automation-lifecycle.md`](automation-lifecycle.md)).
+A class with a new ledger is a new component to the tracker; carrying the old
+name would have shown thirteen released versions as a head the new objects
+never reach.
+
+**Consequences:** The three lists that have to agree changed together, which is
+the rule above. Historical tracker rows may still name `AutomationAgent`;
+sweeps and commands enumerate only the live class. Deleting the namespace is
+irreversible; rollback cannot restore its objects.
 
 ### 2026-09-03 — The retired dashboard class leaves the tracked fleet
 

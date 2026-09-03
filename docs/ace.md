@@ -38,7 +38,6 @@ identity-provider settings. Ace therefore follows the same employee rule while
 keeping a distinct audience.
 
 `GET /api/flags` reads `meeting-recording-enabled`, `suggested-work-enabled`,
-`automation-workspace-templates-enabled`,
 `multiple-workspaces-enabled`, and `digests-enabled`. The editor exposes enabled/paused state, default Boolean
 value, ordered first-match rules, all eleven operators, nested AND/OR groups,
 and sticky percentage rollouts. A rule is reordered by dragging its handle
