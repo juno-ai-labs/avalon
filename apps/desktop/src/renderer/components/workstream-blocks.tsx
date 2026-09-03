@@ -1644,14 +1644,17 @@ function WorkAccordionRow({ message }: { message: Message }): React.JSX.Element 
 }
 
 /**
- * A settled run's work, closed behind the total it added up to.
+ * One finished stretch of a run's work, closed behind the answer it produced.
  *
- * "Worked for 41m 17s", with the plugin and thinking rows behind a chevron.
- * While the loop runs those rows are the progress a reader is watching and the
- * feed shows them; once it finishes they are a receipt for a fact the one line
- * above the answer already states, and a reader who wants the breakdown asks
- * for it. See `collapseSettledWorkIntoAccordion` for what goes in and why the
- * total moved out of the message header to get here.
+ * "Worked for 41m 17s" where the stretch is the whole response, a plain
+ * "Worked" where the run narrated itself into several and no one of them is
+ * what the response timer measured — with the plugin and thinking rows behind a
+ * chevron either way. While a stretch is running those rows are the progress a
+ * reader is watching and the feed shows them; once an answer reports on them
+ * they are a receipt for a sentence the reader has now read, and a reader who
+ * wants the breakdown asks for it. See `collapseSettledWorkIntoAccordion` for
+ * what goes in and when the total moves out of the message header to get
+ * here.
  *
  * The control is the markdown headings' collapse: the same `ChevronRight` at
  * the same size and weight, in the same muted neutral, rotating a quarter turn
@@ -1677,8 +1680,9 @@ function WorkAccordionBlock({ disclosure, message }: {
   const accordion = message.workAccordion;
   if (!accordion) return null;
   const expanded = disclosure ? disclosure.expanded.has(message.id) : locallyExpanded;
-  // The same sentence the message header printed before this row existed, from
-  // the same function: the total did not change, only where it is written.
+  // The same sentence the message header prints, from the same function: where
+  // the total moved here it did not change, only where it is written, and where
+  // there is none this row says exactly what an unknown duration says.
   const label = workSummaryLabel(accordion);
   return (
     <div className="work-accordion">

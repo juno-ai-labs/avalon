@@ -8,9 +8,10 @@ in and for how long — "Slack is working for 4m 02s", becoming "Slack worked fo
 The same collapse is applied to the model's thinking, which arrives one row per
 reasoning segment and reads as one "thought for …" per run.
 
-Once the loop finishes, the whole run folds behind one closed accordion carrying
-its own total — "Worked for 41m 17s" — sitting directly above the answer it
-produced.
+Once an answer reports on a stretch of that work, the stretch folds behind one
+closed accordion sitting directly above the answer — "Worked for 41m 17s" where
+the stretch is the whole response, a plain "Worked" where the response narrated
+itself into several.
 
 Read this before changing what a tool call or a thinking segment looks like in
 the feed, adding a first-party plugin, changing a plugin's canonical id or
@@ -27,9 +28,9 @@ them.
 | `apps/desktop/src/renderer/lib/plugin-marks.ts` | The company marks, one `@thesvg/react` component per brand, and `connectorBrandMark` — the one table saying which mark a connector wears. |
 | `apps/desktop/src/renderer/components/primitives.tsx` | `ConnectorMark`, the one component that draws one. |
 | `apps/desktop/src/renderer/screens/workspace-settings.tsx` | Settings' provider cards and installed-connection rows, both reaching a mark from the connector's own type. |
-| `apps/desktop/src/renderer/lib/transcript.ts` | `orderedTranscriptMessages` projects tool blocks, thinking blocks, and plugin activities out of the canonical snapshot, and marks the seam where its coverage is not contiguous; `groupPluginToolMessages` collapses the composed feed, `groupThinkingMessages` collapses the thinking left in it, and `collapseSettledWorkIntoAccordion` folds a finished run's rows behind the total `foldSettledWorkIntoMessages` resolved. `thoughtVerb` and `isThinkingEvent` are the one place the two thought rows are told apart. |
+| `apps/desktop/src/renderer/lib/transcript.ts` | `orderedTranscriptMessages` projects tool blocks, thinking blocks, and plugin activities out of the canonical snapshot, and marks the seam where its coverage is not contiguous; `groupPluginToolMessages` collapses the composed feed, `groupThinkingMessages` collapses the thinking left in it, and `collapseSettledWorkIntoAccordion` folds each finished stretch of a run behind the answer that reported on it, carrying the total `foldSettledWorkIntoMessages` resolved where that stretch is the whole response. `thoughtVerb` and `isThinkingEvent` are the one place the two thought rows are told apart. |
 | `apps/desktop/src/renderer/screens/workstream.tsx` | Applies the four passes in order, and is the only caller of any of them. |
-| `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `PluginGlyph` draws a mark; `PluginActivityBlock` renders one grouped row; `ThinkingGlyph` draws the thinking row's brain and `ThoughtBlock` decides which of the two thought rows gets it; `WorkAccordionBlock` is the closed row a settled run becomes, and `WorkAccordionRow` draws what is inside it through those same two blocks. |
+| `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `PluginGlyph` draws a mark; `PluginActivityBlock` renders one grouped row; `ThinkingGlyph` draws the thinking row's brain and `ThoughtBlock` decides which of the two thought rows gets it; `WorkAccordionBlock` is the closed row a reported-on stretch becomes, and `WorkAccordionRow` draws what is inside it through those same two blocks. |
 | `apps/desktop/src/renderer/components/agent-work-timing.tsx` | The shared elapsed-time row; its `icon` slot is what lets a plugin's mark, or the thinking row's brain, stand in for the orb. |
 | `apps/desktop/src/renderer/styles/app.css` | `.plugin-face` and `.plugin-face-active` — the transcript's bare mark box and its pulse, shared by the plugin rows and the thinking row; `.work-accordion` and its toggle. |
 | `apps/desktop/src/renderer/components/message-feed.tsx` | Holds which rows a reader has opened, above the virtual window, and hands it to every row as `RowDisclosure`. |
@@ -77,10 +78,12 @@ except as the legacy fallback below.
    same way, over the same run boundary, and sums a run's thinking rows into
    the first of them. The response's own total is not thinking and is left
    alone; see [the thinking rows](#the-thinking-rows).
-5. **Closing a finished run.** `foldSettledWorkIntoMessages` resolves the
-   settled response total to the answer it belongs to, and
-   `collapseSettledWorkIntoAccordion` folds the rows above that answer into one
-   closed row carrying it; see [when the loop finishes](#when-the-loop-finishes).
+5. **Closing a reported-on stretch.** `foldSettledWorkIntoMessages` resolves
+   the settled response total to the answer it belongs to, and
+   `collapseSettledWorkIntoAccordion` folds the rows above *every* agent answer
+   into one closed row — carrying that total where the response produced a single
+   accordion; see
+   [when an answer reports on the work above it](#when-an-answer-reports-on-the-work-above-it).
 
 ### The thinking rows
 
@@ -109,8 +112,9 @@ Two rows deliberately stay out of it:
 
 - **The response's own total**, the "worked for …" row at the foot of a live
   run, which `foldSettledWorkIntoMessages` moves onto the message it produced
-  when it settles — and which then becomes the accordion's label, or stays in
-  the header where there is no accordion. It is one fact about the whole
+  when it settles — and which then becomes the label of that response's single
+  accordion, or stays in the header where there is no accordion or more than
+  one. It is one fact about the whole
   response, not a step inside it. The two are told apart by the row's verb,
   which is the same signal that fold already keys on.
 - **The plugin rows the thinking surrounds.** They keep their own places, since
@@ -227,24 +231,35 @@ against its own chip and the transcript has four themes and no chip.
 A **settled response total** is not a plugin row and does not live in the feed
 as one. While it runs it is progress and stays a row; once it settles
 `foldSettledWorkIntoMessages` moves it onto the message it produced, and it is
-printed either as that run's accordion label or, where the turn reached for
-nothing, in the message header — "Rally · 11 minutes ago · Worked for 2m 52s".
-Either way a spent timer stops sitting under the answer, where it reads like
-another step still to come.
+printed either as the label of that response's single accordion or, where the
+response produced no accordion or more than one, in the message header — "Rally ·
+11 minutes ago · Worked for 2m 52s". Either way a spent timer stops sitting under
+the answer, where it reads like another step still to come.
 
-### When the loop finishes
+### When an answer reports on the work above it
 
 Every row above is progress, and progress is worth a line each: while Rally is
-working, a reader watches which places it is in and how long each is taking. The
-moment the loop finishes none of that is progress any more. Four spent timers
-stacked above an answer are a receipt, and the receipt was already printed — it
-is the response's own total, which by then reads "Worked for 41m 17s" one line
-below them.
+working, a reader watches which places it is in and how long each is taking. An
+answer is Rally's own report on that work, so the moment one is posted none of
+the rows above it is progress any more. Four spent timers stacked above a
+sentence that already summarizes them are a receipt.
 
-So `collapseSettledWorkIntoAccordion` folds the run into a single closed row
-carrying that total, sitting where the run's first row sat, directly above the
-answer. A reader who wants the breakdown opens it and gets the same rows,
-unchanged, drawn by the same components.
+So `collapseSettledWorkIntoAccordion` folds that stretch into a single closed
+row, sitting where the stretch's first row sat, directly above the answer. A
+reader who wants the breakdown opens it and gets the same rows, unchanged, drawn
+by the same components.
+
+**The answer is the signal, not the settled response timer.** A long run narrates
+itself — it works, says what it found, works again, says what that found — and
+its response timer settles once, at the very end. Keying the collapse on that
+timer folded the last stretch only and left every earlier one expanded above the
+sentence that had already summarized it, which is the stack of spent timers this
+feature exists to remove. Keying it on the answer folds each stretch as its own
+report arrives, and the live tail — the rows with no answer under them yet — is
+the only thing left open, which is exactly the part still worth watching. That
+tail always includes the response's own timer while it runs: the projection
+positions that row after every block of the response's last turn, so it never
+sits above an answer and is never swallowed.
 
 The control is the markdown headings' collapse chevron — the same `ChevronRight`
 at 14px and 1.8, the same muted neutral, the same quarter turn on the same
@@ -262,20 +277,26 @@ stretch and centre the glyph across two lines if the label ever wrapped.
 
 Three things about it are decisions rather than details:
 
-- **The total moves; it is not copied.** `foldSettledWorkIntoMessages` has
-  already resolved the settled response timer to the answer it belongs to, which
-  is exactly the "the loop is complete" signal and exactly the total the
-  accordion wants. Printing it on the accordion *and* in the header a line below
-  would be one duration competing with itself. So the pass takes `workSummary`
-  off the message as it builds the row. **Both renderings stay**, because a turn
-  that reached for nothing has no machinery to fold and no accordion to move the
-  total to; its header keeps the line, as before.
+- **The total moves onto the accordion only when that accordion is the whole
+  response.** `foldSettledWorkIntoMessages` has already resolved the settled
+  response timer to the answer it belongs to, and where the response produced a
+  single accordion, that accordion stands for the whole of what the timer
+  measured, so the pass takes `workSummary` off the message as it builds the row
+  — printing it there *and* in the header a line below would be one duration
+  competing with itself. Where the response narrated itself into several
+  stretches, no one of them is the whole response: a total covering all of them
+  printed on the last would claim "Worked for 3m 12s" for a drawer holding 21s
+  of rows. It stays in the final answer's header instead. **Both renderings
+  stay**, and a turn that reached for nothing has no accordion to move the total
+  to either; its header keeps the line, as before.
 - **The total is not a sum over the rows inside.** A run's thinking overlaps its
   plugin work — the model reasons between calls, and a plugin's activity covers
-  the gaps between its own — so adding the rows up would overstate the run by
+  the gaps between its own — so adding the rows up would overstate the stretch by
   however much of it ran concurrently. The response activity measured the whole
-  stretch once, and it is the only honest answer available. A run with no
-  response total therefore has no accordion at all rather than a computed one.
+  stretch once, and it is the only honest answer available. A stretch with no
+  total of its own therefore reads a plain "Worked" rather than a computed
+  number — the same sentence an unknown duration already produces, from the same
+  function.
 - **The rows are nested inside the accordion row, not hidden in place.** The
   transcript is virtualized. A collapse that left its rows in the list would
   still cost one measured item each, and opening one would grow N items whose
@@ -283,11 +304,11 @@ Three things about it are decisions rather than details:
   For the same reason the open flag is held by `MessageFeed` rather than by the
   row — see `RowDisclosure`, whose set the clamped system row already uses.
 
-The boundary is the run's: the rows immediately above the answer, back to the
-first thing a person read, or to a stretch of transcript nobody has loaded. That
-is the boundary `groupPluginToolMessages` and `groupThinkingMessages` already
-grouped within, so an accordion holds exactly one run's worth of rows, each of
-them already one per plugin.
+The boundary is the stretch's: the rows immediately above the answer, back to
+the first thing a person read, or to a stretch of transcript nobody has loaded.
+That is the boundary `groupPluginToolMessages` and `groupThinkingMessages`
+already grouped within, so an accordion holds exactly one stretch's worth of
+rows, each of them already one per plugin.
 
 The unloaded-stretch half of that boundary is checked at **both** ends of the
 scan, which is the one place this pass differs in shape from the two before it.
@@ -297,7 +318,15 @@ backward from the answer, so it has to read the flag on that answer too. The
 projection sets it on a turn's *first* row only, so an answer that opens its
 turn is exactly where it lands — and such an answer opens a newly loaded island,
 which makes the machinery above it in the list some earlier island's. It has no
-run of its own to fold, so it keeps its total in the header.
+stretch of its own to fold, so it keeps its total in the header.
+
+Counting a response's accordions needs the same boundary from the other side.
+The count resets at anything that is not this response's own work — a row a
+person read that is not an answer, a row opening a newly loaded island — and at
+the answer that carried the settled response total, which is the one signal in
+the feed saying the response it belonged to is over. Without that last reset a
+second response following the first with no human row between them would be
+counted as a continuation of it and would never take its own total.
 
 ## Invariants
 
@@ -370,17 +399,24 @@ run of its own to fold, so it keeps its total in the header.
   bare because its row is a label; Settings' provider card keeps its tinted
   chip because that card is a control somebody clicks. Adding the mark did not
   restyle either.
-- **A run collapses only once its response total has settled.** That timer is
-  the loop's own completion signal, and it is the one the fold already keys on.
-  Collapsing on anything else — every row in the run reporting itself settled,
-  say — would close the drawer during a live run in the window between one
-  plugin finishing and the next starting.
+- **A stretch collapses when an answer reports on it, not when the response
+  timer settles.** An answer is Rally's own account of the rows above it, and a
+  response that narrates itself posts several. Keying on the response timer folds
+  only the last stretch. Keying on "every row in the stretch reports itself
+  settled" was rejected for the reason it always was: it would close the drawer
+  mid-run, in the window between one plugin finishing and the next starting.
+- **Nothing a reader is still watching is folded away.** The response's own
+  timer is positioned after every block of its last turn, so while it runs it is
+  the final row of the feed and no answer sits below it to fold it in.
 - **The accordion's total is the response's, never a sum of the rows in it.**
   Thinking overlaps plugin work and a plugin activity covers the gaps between
-  its own calls, so a sum overstates the run by whatever ran concurrently.
+  its own calls, so a sum overstates the stretch by whatever ran concurrently. A
+  stretch with no total of its own says "Worked" and no number.
 - **A settled total is printed in exactly one place.** On the accordion where
-  there is one, in the message header where the turn reached for nothing. Both
-  renderings exist; neither is a fallback for the other failing.
+  that accordion is the response's only one, in the message header otherwise —
+  where the turn reached for nothing, and where the response narrated itself
+  into several stretches that the total does not describe one of. All the
+  renderings exist; none is a fallback for another failing.
 - **The accordion takes a derived id.** The row it sits in place of is still in
   the feed — inside it — and two elements answering to one `message-<id>` anchor
   is worse than none. The rows inside carry no anchor at all.
@@ -469,11 +505,13 @@ It deliberately does **not** cover:
   row quietly doubled rather than two rows visibly repeating a number. Whoever
   projects thinking per attempt or per segment has to key the sum on the
   activity instead.
-- **A run whose response total never arrived** does not collapse. Its rows stay
-  in the feed as they were, which is the honest rendering: there is no total to
-  label a drawer with, and summing the rows would report a number the transcript
-  never established. The same happens to work that trails an answer with no
-  answer of its own after it.
+- **A stretch whose response total never arrived** still collapses, and its
+  drawer reads a plain "Worked". The rows are behind the answer that reported on
+  them either way; what is missing is only the number, and summing the rows to
+  invent one would report a figure the transcript never established.
+- **Work that trails an answer with no answer of its own after it** stays in the
+  feed as it was. Nothing has reported on it, so there is nothing to fold it
+  behind — which is also what keeps a live run's rows on screen.
 - **A reader who opens an accordion and scrolls away** keeps it open, because
   the flag lives in `MessageFeed`. It lasts until that component actually
   unmounts, which is *not* every navigation: `WorkstreamScreen` stays mounted
@@ -491,7 +529,7 @@ It deliberately does **not** cover:
 | --- | --- | --- |
 | `lib/plugin-groups.test.ts` | `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/plugin-groups.test.ts` | The map: the two virtual groups, the unnamed-first-party fallback, name keying across the two id families, every glyph, and that no shipped connector still draws the plug. |
 | `lib/plugin-marks.test.ts` | same, `src/renderer/lib/plugin-marks.test.ts` | The marks: the monochrome variant asked for wherever a brand ships one, and one distinct mark per brand. |
-| `lib/transcript.test.ts` | same, `src/renderer/lib/transcript.test.ts` | Grouping over a composed feed: position, run boundaries, which timing wins, dropped rows, renumbering. Collapsing thinking: the summed run, the run boundary, the response total left out of it, the unknown segment, and the concurrent starts. Closing a finished run: what goes in the drawer, the total moving out of the header, the two boundaries, the live run left open, and the derived id. |
+| `lib/transcript.test.ts` | same, `src/renderer/lib/transcript.test.ts` | Grouping over a composed feed: position, run boundaries, which timing wins, dropped rows, renumbering. Collapsing thinking: the summed run, the run boundary, the response total left out of it, the unknown segment, and the concurrent starts. Closing a reported-on stretch: what goes in the drawer, every stretch of a self-narrating run folding rather than only the last, the total moving out of the header and staying there when the response produced several drawers, the response-boundary reset, the two seam checks, the live tail left open, and the derived id. |
 | `components/workstream-blocks.test.tsx` | same, `src/renderer/components/workstream-blocks.test.tsx` | The row: its wording in both tenses, its stable accessible name while the number ticks, the pulsing mark, the absent orb, and the thinking row's brain. The accordion: closed and open, the unknown and recovered totals, and the open flag taken from the feed. |
 | `screens/workspace-settings.test.tsx` | same, `src/renderer/screens/workspace-settings.test.tsx` | Settings: an installed row and the provider card it came from carrying the same mark, and a webhook carrying none. |
 
@@ -506,6 +544,53 @@ renderer's `['ordered-transcript', <id>]` query, which exercises the whole
 projection, composition, grouping, and render path from real inputs.
 
 ## Changelog
+
+### 2026-09-03 — Every stretch of a run collapses, not just the last one
+
+**What changed:** `collapseSettledWorkIntoAccordion` builds an accordion above
+*every* agent answer that has machinery above it, instead of only above an answer
+carrying a settled `workSummary`. The response's total still moves onto that
+accordion when the response produced exactly one; where it produced several, the
+total stays in the final answer's header and each drawer reads a plain "Worked".
+The pass counts accordions per response and resets that count at anything that is
+not the response's own work, and at the answer carrying the settled total — the
+one signal in the feed saying a response is over.
+
+**Why:** A long run narrates itself. It works, says what it found, works again,
+says what that found — and the response timer settles once, at the very end. The
+old trigger fired on that timer, so it folded the last stretch and left every
+earlier one expanded above the sentence that had already summarized it. A
+screenshot of a five-minute run was three stacks of spent timers with three
+answers threaded between them, which is exactly the receipt this feature was
+built to remove; it removed it only from the bottom of the transcript. An answer
+is Rally's own report on the rows above it, so an answer arriving *is* the "that
+stretch is done" signal, and it arrives once per stretch rather than once per
+response.
+
+**Considered and rejected:** collapsing only once every row in the stretch
+reports itself settled. That was rejected when the accordion was first built, for
+the reason it is still rejected: it closes the drawer mid-run, in the window
+between one plugin finishing and the next starting. Nothing was needed in its
+place — the response's own timer is positioned after every block of its last
+turn, so while it runs it is the final row of the feed with no answer beneath it
+to fold it away, and the live tail stays open on its own.
+
+Also rejected: printing the response total on the last of several accordions,
+which is what the unchanged move-rule would have done. It would have labelled a
+drawer holding 21s of rows "Worked for 3m 12s" — the total is one fact about the
+whole response, and the last stretch is not the whole response. Summing the rows
+in a stretch to give each drawer its own number stays rejected too, and for the
+original reason: thinking overlaps plugin work, so a sum overstates by however
+much ran concurrently.
+
+**What a future change has to respect:** the collapse boundary is still the run
+boundary the two grouping passes use, checked at both ends for the unloaded-island
+seam — an accordion must never reach past a sentence or across a gap. The
+response total is still printed in exactly one place, and is still never computed
+from the rows inside a drawer. And nothing a reader is still watching may be
+folded away: if a future projection ever positions the response's live timer
+above an answer, this pass will swallow it, and the trigger will need a
+still-running guard that the feed's shape makes unnecessary today.
 
 ### 2026-09-02 — The accordion's chevron hangs in the margin, not inside the column
 

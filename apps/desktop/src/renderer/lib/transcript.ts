@@ -1761,9 +1761,11 @@ export function groupThinkingMessages(messages: readonly Message[]): Message[] {
  *
  * The header is where the total *lands*, not always where it is printed:
  * {@link collapseSettledWorkIntoAccordion} runs after this and moves it onto
- * the accordion it builds over the run, wherever there is a run to build one
- * over. What this pass answers either way is which message the total belongs
- * to, which is the question the accordion would otherwise have to ask again.
+ * the accordion it builds over the run, in the case where that accordion is the
+ * whole run — a response that narrated itself into several stretches keeps the
+ * total here, since no one of those stretches is what it measured. What this
+ * pass answers either way is which message the total belongs to, which is the
+ * question the accordion would otherwise have to ask again.
  */
 export function foldSettledWorkIntoMessages(messages: readonly Message[]): Message[] {
   const rows: Message[] = [];
@@ -1826,36 +1828,55 @@ function isCollapsedWorkRow(message: Message): boolean {
 }
 
 /**
- * Fold a finished run's machinery behind the total it added up to.
+ * Fold each finished stretch of machinery behind the answer it produced.
  *
- * While the loop runs, every row of it is progress: the reader watches which
- * places Rally is working in and how long each is taking, and that is the whole
- * point of the rows. The moment the loop finishes they stop being progress and
- * become a receipt — four spent timers stacked above an answer, saying what the
- * one line under them ("Worked for 41m 17s") already says. So the run collapses
- * into a single closed row carrying that total, and a reader who wants the
- * breakdown opens it.
+ * While a stretch is running, every row of it is progress: the reader watches
+ * which places Rally is working in and how long each is taking, and that is the
+ * whole point of the rows. An answer is Rally's own report on that work, so the
+ * moment one is posted the rows above it stop being progress and become a
+ * receipt for a sentence the reader has now read. So they collapse into a single
+ * closed row, and a reader who wants the breakdown opens it.
  *
- * The total is the response's own, which {@link foldSettledWorkIntoMessages}
- * has already moved onto the answer as its `workSummary` — the settled response
- * timer being exactly the "the loop is complete" signal this pass needs, and
- * already resolved to the message it belongs to. This pass *moves* it again
- * rather than copying it: printing it on the accordion and in the header a line
- * below would be one duration competing with itself. An answer with no
- * machinery above it — a turn that reached for nothing — has no accordion to
- * move it to and keeps it in the header, which is why both renderings stay.
+ * **An answer is the signal, not the settled response timer.** A long run
+ * narrates itself — it works, says what it found, works again, says what that
+ * found — and its response timer settles once, at the very end. Keying the
+ * collapse on that timer folded only the last stretch and left every earlier one
+ * expanded above the sentence that had already summarized it, which is the
+ * stack of spent timers this pass exists to remove. Keying it on the answer
+ * folds each stretch as its own report arrives, and the live tail — the rows
+ * with no answer under them yet — is the only thing left open, which is exactly
+ * the part still worth watching.
  *
  * The rows collapsed are the ones immediately above the answer, back to the
  * first thing a person read, which is the boundary `groupPluginToolMessages`
  * and `groupThinkingMessages` already grouped within — so the accordion holds
- * exactly one run's worth of rows, each already collapsed to one per plugin.
- * A stretch of transcript nobody has loaded ends it too, for the reason every
- * pass here stops there: the sentence that closed the earlier run may be
+ * exactly one stretch's worth of rows, each already collapsed to one per
+ * plugin. A stretch of transcript nobody has loaded ends it too, for the reason
+ * every pass here stops there: the sentence that closed the earlier run may be
  * sitting in the part nobody loaded. That seam is checked at *both* ends of the
  * scan. An answer that carries it is itself the first row of a newly loaded
  * island, so the machinery above it belongs to an earlier one and is not this
  * answer's to fold — the projection marks only a turn's first row, so an answer
  * that opens its turn is exactly the shape where that happens.
+ *
+ * **The response's total is printed on an accordion only when that accordion is
+ * the whole response.** {@link foldSettledWorkIntoMessages} has already resolved
+ * the settled response timer to the answer it belongs to, and where the run
+ * produced a single accordion that accordion stands for the whole of the work
+ * the timer measured, so the total moves onto it — printing it there *and* in
+ * the header a line below would be one duration competing with itself. Where the
+ * run narrated itself into several stretches, no one of them is the whole
+ * response, and a total covering all of them printed on the last would claim
+ * 3m 12s for a drawer holding 21s of rows. It stays in the final answer's header
+ * instead, which is the one place it was ever a fact about: "Rally · 11 minutes
+ * ago · Worked for 2m 52s". The remaining accordions say only "Worked" — never a
+ * sum of the rows inside, which would overstate the stretch by however much of
+ * it ran concurrently; see the invariant in `plugin-activity-rows.md`.
+ *
+ * The stretch count resets at anything that is not this run's own work: a row a
+ * person read that is not an answer, a newly loaded island, and the answer that
+ * carried the settled response total, which is the signal that the response it
+ * belonged to is over.
  *
  * The accordion keeps the attention ordinal of the first row it swallowed,
  * because the unread divider is placed at the first row carrying one and the
@@ -1865,16 +1886,26 @@ function isCollapsedWorkRow(message: Message): boolean {
  * excludes a tool row — an accordion scrolling into view, or a long one being
  * scrolled through, must not acknowledge a sentence still below the fold.
  *
- * The accordion sits where the run's first row sat and takes a derived id: it
- * is a different row from the one it replaces, and that row is still in the
+ * The accordion sits where the stretch's first row sat and takes a derived id:
+ * it is a different row from the one it replaces, and that row is still in the
  * feed — inside it — so reusing the id would put the same `message-<id>` anchor
  * on the document twice.
  */
 export function collapseSettledWorkIntoAccordion(messages: readonly Message[]): Message[] {
   const rows: Message[] = [];
+  // How many accordions the response being read has produced so far. Its total
+  // moves onto an accordion only while that count is one, because only then is
+  // the accordion the whole of what the total measured.
+  let accordionsInResponse = 0;
   for (const message of messages) {
-    const summary = message.workSummary;
-    if (summary === undefined || message.messageType !== 'text' || message.authorType !== 'agent'
+    const answer = message.messageType === 'text' && message.authorType === 'agent';
+    // Anything else a person reads ends the response these are counted over, as
+    // does a row opening a stretch nobody has loaded — whatever preceded it may
+    // be sitting in the part that was never fetched.
+    if (message.precededByTranscriptGap || !(answer || isCollapsedWorkRow(message))) {
+      accordionsInResponse = 0;
+    }
+    if (!answer
       // The answer opens a newly loaded island, so what sits above it in this
       // list is the previous island's work, not this run's.
       || message.precededByTranscriptGap) {
@@ -1889,10 +1920,16 @@ export function collapseSettledWorkIntoAccordion(messages: readonly Message[]): 
       if (rows[start]!.precededByTranscriptGap) break;
     }
     const collapsed = rows.splice(start);
+    const summary = message.workSummary;
     if (collapsed.length === 0) {
       rows.push(message);
+      // A settled response total ends the response it belonged to, so the next
+      // one starts counting its own accordions from zero.
+      if (summary !== undefined) accordionsInResponse = 0;
       continue;
     }
+    accordionsInResponse += 1;
+    const movesTotal = summary !== undefined && accordionsInResponse === 1;
     const first = collapsed[0]!;
     rows.push({
       ...first,
@@ -1912,14 +1949,21 @@ export function collapseSettledWorkIntoAccordion(messages: readonly Message[]): 
       thoughtEvent: undefined,
       toolEvent: undefined,
       workAccordion: {
-        durationMs: summary.durationMs,
-        ...(summary.timingAccuracy === undefined ? {} : { timingAccuracy: summary.timingAccuracy }),
+        // A stretch that is not the whole response has no honest total of its
+        // own — the rows inside overlap, so summing them overstates it — and
+        // reads as a plain "Worked", the same sentence an unknown duration
+        // already produces.
+        durationMs: movesTotal ? summary.durationMs : null,
+        ...(movesTotal && summary.timingAccuracy !== undefined
+          ? { timingAccuracy: summary.timingAccuracy }
+          : {}),
         rows: collapsed,
       },
     });
     const host: Message = { ...message };
-    delete host.workSummary;
+    if (movesTotal) delete host.workSummary;
     rows.push(host);
+    if (summary !== undefined) accordionsInResponse = 0;
   }
   return rows.map((message, index) => ({ ...message, sequenceNumber: index + 1 }));
 }
