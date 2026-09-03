@@ -147,7 +147,7 @@ anything.
 | Member dismisses or starts a suggestion | none | That member |
 | Impressions, at most hourly | none | That member |
 | Read finds eligible candidates the stored set does not account for | none | That member |
-| Read finds a ranked suggestion no longer showable | `DUE_DEBOUNCE_MS` | That member |
+| Read finds a ranked suggestion no longer showable | `READ_REPAIR_DELAY_MS` (2 min) | That member |
 
 A workspace-scope admission marks **every** active member, set-based over
 `workspace_members` — not the member list admission was given, which is capped at
@@ -242,6 +242,12 @@ enter telemetry.
   and the completed run clears it on the way out — the member keeps a set that was
   out of date before it was written.
 - **Setting a due time never delays one already outstanding** — `MIN` wins.
+  While a pass holds the lease, `due_at` is that pass's own claim time, not an
+  outstanding request, so a request arriving mid-pass is parked in
+  `pending_due_at` (`MIN` among the requests that arrive during the pass) and
+  `settleRanking` re-arms `due_at` from it. Taking `MIN` against the claim time
+  kept a time already past, and under continuous admissions the next pass began
+  the moment the current one settled, whatever the debounce said.
 - **Clearing a due time matters as much as setting it.** One left behind is
   re-claimed on every pass forever.
 - **An inference never widens access.** For a personal audience a link may explain
@@ -363,7 +369,7 @@ on how long a pass took.
 | `work_opportunity_user_states` | Per-member impressions, dismissal, and what they started |
 | `opportunity_provenance_nodes` / `_edges` | The evidence graph, scoped by visibility |
 | `work_opportunity_snapshots` | What a member actually saw at the moment they started one |
-| `suggested_work_sets` | The stored ranking, its fingerprint, and its scheduling state |
+| `suggested_work_sets` | The stored ranking, its fingerprint, and its scheduling state — `due_at` for the outstanding request, `pending_due_at` for one that arrived while a pass held the lease |
 | `suggested_work_ranking_rounds` | Every tournament round, for explaining a ranking after the fact |
 | `opportunity_batch_windows` | The debounce window candidates accumulate in |
 
@@ -389,10 +395,16 @@ value.
 
 **What changed:** Three bounds on the same pipeline. `enqueueActivityOpportunity`
 withholds `github.check_run.*` and `github.workflow_run.*` from candidacy
-before a window is opened (`isSuggestedWorkCandidateEventType`). The admission call runs at `low`
-reasoning effort and sees at most `ADMISSION_CONTEXT_REASONING_CHARACTERS` (600)
+before a window is opened (`isSuggestedWorkCandidateEventType`), and returns
+what became of the activity so the consumer's terminal log records
+`opportunity_enqueued` truthfully rather than as "unclaimed". The admission
+call runs at `low` reasoning effort and sees at most `ADMISSION_CONTEXT_REASONING_CHARACTERS` (600)
 of each existing opportunity's reasoning rather than 4,000. `DUE_DEBOUNCE_MS`
-is 30 minutes rather than 2.
+is 30 minutes rather than 2, and governs only the admission paths: the read
+path's repair keeps its own two minutes as `READ_REPAIR_DELAY_MS`. For the
+debounce to hold, `suggested_work_sets` gained `pending_due_at` (WorkspaceDO
+schema v30): a request arriving while a pass holds the lease is parked there
+and re-armed at its own time when the pass settles.
 
 **Why:** The OpenRouter bill. In the week to 2026-09-03 the admission and
 ranking prompts made 59,500 calls on `openai/gpt-5.6-terra` (the Flagship
@@ -426,7 +438,14 @@ dormant members, and the tiering is where attention belongs.
 **Consequences:** A check run or a workflow run can no longer become a
 suggestion, however meaningful. A member's set can now be up to
 thirty minutes behind the admissions that changed it, unless one of the
-immediate triggers fires (a suggestion naming them, a dismissal, a start). An
+immediate triggers fires (a suggestion naming them, a dismissal, a start) or
+they open the home screen to an unranked or holed set, which repairs in two
+minutes as before — review found the first draft had moved that member-present
+path to thirty minutes too, which is a new member's first impression, so the
+read repair got its own constant. Review also found the debounce did not hold
+while a tournament was running: `markRankingDue` took `MIN` against the
+in-flight pass's claim time, so under continuous admissions the next pass began
+the moment the current one settled. That is why the parking column exists. An
 existing opportunity's rationale reaches the next admission truncated, so a
 duplicate that is only recognisable from the tail of a long memo may be admitted
 twice. The 600-character cap and the thirty minutes are starting points chosen

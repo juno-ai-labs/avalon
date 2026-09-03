@@ -181,12 +181,13 @@ describe("suggested-work aggregation", () => {
       }),
     });
 
-    await enqueueActivityOpportunity(
+    const outcome = await enqueueActivityOpportunity(
       environment(database, { WORKSPACE_DOS: workspaces }),
       activityId,
       workspaceId,
     );
 
+    expect(outcome).toBe("enqueued");
     expect(enqueueOpportunitySource.mock.calls.map(([input]) => input)).toEqual([
       expect.objectContaining({
         partitionKey: `workspace:${userOne}`,
@@ -244,14 +245,16 @@ describe("suggested-work aggregation", () => {
       get: vi.fn().mockReturnValue({ connectorEvent, enqueueOpportunitySource }),
     });
 
-    await enqueueActivityOpportunity(
+    const outcome = await enqueueActivityOpportunity(
       environment(database, { WORKSPACE_DOS: workspaces }),
       activityId,
       workspaceId,
     );
 
     // The activity was read — the decision needs its event type — and then
-    // nothing was opened for it, for either member.
+    // nothing was opened for it, for either member, and the caller is told so
+    // rather than left to infer "unclaimed, therefore enqueued".
+    expect(outcome).toBe("excluded");
     expect(connectorEvent).toHaveBeenCalledTimes(1);
     expect(enqueueOpportunitySource).not.toHaveBeenCalled();
 

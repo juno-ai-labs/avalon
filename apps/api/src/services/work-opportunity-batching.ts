@@ -52,28 +52,40 @@ async function enqueue(env: Env, input: EnqueueInput): Promise<void> {
  * connection. A meeting being moved or cancelled is the kind of thing that
  * produces work, so it stays a candidate.
  *
- * This is an exclusion list rather than an inclusion list on purpose: a
- * connector added later still offers its activity until somebody finds a
- * reason not to, which matches how the digest's own event-type gate reads.
- * Excluded activity is still logged, still routes to watches and automations,
- * and still reaches the activity feed — only the speculative home-screen
- * surface is withheld.
+ * The GitHub manifest already classifies exactly these families as
+ * `operational` ("Continuous integration. Its own history, in its own tab."),
+ * and this list repeats that judgement rather than reading it, on purpose:
+ * `activity-consumer.ts` records that Suggested Work reads activity
+ * independently of the digest and must not inherit that notification choice.
+ * Digestibility is an inclusion list that fails closed, because a withheld
+ * digest costs nothing. This is the deliberate opposite — an exclusion list
+ * that fails open — because a connector added later should be offered as work
+ * until somebody finds a reason not to. Excluded activity is still logged,
+ * still routes to watches and automations, and still reaches the activity
+ * feed; only the speculative home-screen surface is withheld.
  */
-const SUGGESTED_WORK_EXCLUDED_EVENT_TYPES: ReadonlyArray<{ readonly prefix: string }> = [
-  { prefix: "github.check_run." },
-  { prefix: "github.workflow_run." },
+const SUGGESTED_WORK_EXCLUDED_EVENT_TYPE_PREFIXES: readonly string[] = [
+  "github.check_run.",
+  "github.workflow_run.",
 ];
 
 /** Whether an activity of this event type may become a Suggested Work candidate. */
 export function isSuggestedWorkCandidateEventType(eventType: string): boolean {
-  return !SUGGESTED_WORK_EXCLUDED_EVENT_TYPES.some((rule) => eventType.startsWith(rule.prefix));
+  return !SUGGESTED_WORK_EXCLUDED_EVENT_TYPE_PREFIXES.some((prefix) => eventType.startsWith(prefix));
 }
+
+/**
+ * What became of an activity offered to Suggested Work. Only `enqueued` opened
+ * a window; the rest say why none was, so the consumer's terminal log can
+ * record the truth rather than "unclaimed, therefore enqueued".
+ */
+export type SuggestedWorkEnqueueOutcome = "enqueued" | "excluded" | "missing" | "no_audience";
 
 export async function enqueueActivityOpportunity(
   env: Env,
   activityId: string,
   knownWorkspaceId: WorkspaceId,
-): Promise<void> {
+): Promise<SuggestedWorkEnqueueOutcome> {
   const durableActivity = WorkspaceConnectorEventSchema.nullable().parse(
     await durableObjectStubForWorkspace(
       env,
@@ -82,8 +94,8 @@ export async function enqueueActivityOpportunity(
       workspaceDOName(env.AVALON_REGION, knownWorkspaceId),
     ).then((workspace) => workspace.connectorEvent({ workspaceId: knownWorkspaceId, eventId: activityId })),
   );
-  if (!durableActivity) return;
-  if (!isSuggestedWorkCandidateEventType(durableActivity.activity.eventType)) return;
+  if (!durableActivity) return "missing";
+  if (!isSuggestedWorkCandidateEventType(durableActivity.activity.eventType)) return "excluded";
   const activity = {
     workspace_id: durableActivity.activity.workspaceId,
     connection_id: durableActivity.activity.connectionId,
@@ -102,7 +114,7 @@ export async function enqueueActivityOpportunity(
   const approximateCharacters = [activity.title, activity.summary, activity.text_snippet, activity.actor_json, activity.subject_json]
     .reduce<number>((sum, value) => sum + String(value ?? "").length, 0);
   const sourceAudience = activityContentAudience(activity);
-  if (!sourceAudience) return;
+  if (!sourceAudience) return "no_audience";
   const audienceUserIds = sourceAudience.scope === "users"
     ? sourceAudience.userIds
     : (await env.DB.prepare(
@@ -123,6 +135,7 @@ export async function enqueueActivityOpportunity(
     occurredAt: String(activity.occurred_at),
     inputCharacters: approximateCharacters,
   })));
+  return audienceUserIds.length > 0 ? "enqueued" : "no_audience";
 }
 
 export async function enqueueMentionOpportunitySnapshot(
