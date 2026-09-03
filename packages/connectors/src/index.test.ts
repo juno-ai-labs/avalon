@@ -496,6 +496,111 @@ describe("connectors", () => {
     expectNormalized(result.activities);
   });
 
+  it("collapses one recurring-series edit into a single Calendar activity", async () => {
+    const instances = Array.from({ length: 40 }, (_, index) => ({
+      ...calendarEvent(`standup_2026090${index % 10}T170000Z`, "Weekly standup", `etag-${index}`),
+      updated: "2026-09-02T09:15:00Z",
+      recurringEventId: "standup",
+      htmlLink: `https://calendar.google.com/event?eid=instance-${index}`,
+      start: { dateTime: `2026-09-0${index % 10}T10:00:00-07:00` },
+      end: { dateTime: `2026-09-0${index % 10}T10:30:00-07:00` }
+    }));
+    const fetcher: typeof fetch = async (input) => {
+      const url = requestUrl(input);
+      if (url.searchParams.get("pageToken") === "calendar-page-2") {
+        return googleJson({ items: instances.slice(20), nextSyncToken: "calendar-sync-new" });
+      }
+      return googleJson({ items: instances.slice(0, 20), nextPageToken: "calendar-page-2" });
+    };
+    const adapter = googleAdapter(fetcher);
+    const result = await adapter.poll!(
+      googleConnection(["calendar.read"], { calendar: { syncToken: "calendar-sync-old" } }),
+      neverAborts()
+    );
+    expect(result.activities).toHaveLength(1);
+    expect(result.activities[0]).toMatchObject({
+      eventType: "calendar.event_changed",
+      providerResourceId: "standup",
+      title: "Recurring event changed: Weekly standup",
+      summary: "Every occurrence of this recurring event changed",
+      occurredAt: "2026-09-02T09:15:00.000Z",
+      entityKeys: ["google:calendar:primary:event:standup"],
+      metadata: { seriesChange: true, recurringEventId: "standup", htmlLink: null }
+    });
+    // Keyed on the master and the edit rather than on an instance's etag, so
+    // the pages and later polls the same burst spreads over repeat one identity
+    // the workspace already holds.
+    expect(result.activities[0]?.dedupeKey).toBe("calendar:primary:standup:series:2026-09-02T09:15:00.000Z");
+    expectNormalized(result.activities);
+  });
+
+  it("collapses a cancelled recurring series that arrives as stripped instances", async () => {
+    const fetcher: typeof fetch = async () =>
+      googleJson({
+        items: Array.from({ length: 12 }, (_, index) => ({
+          id: `offsite_2026100${index % 10}T160000Z`,
+          etag: `cancel-etag-${index}`,
+          status: "cancelled",
+          updated: "2026-09-02T11:00:00Z"
+        })),
+        nextSyncToken: "calendar-sync-new"
+      });
+    const adapter = googleAdapter(fetcher);
+    const result = await adapter.poll!(
+      googleConnection(["calendar.read"], { calendar: { syncToken: "calendar-sync-old" } }),
+      neverAborts()
+    );
+    expect(result.activities).toHaveLength(1);
+    expect(result.activities[0]).toMatchObject({
+      providerResourceId: "offsite",
+      title: "Recurring event cancelled: Untitled event",
+      summary: "Every occurrence of this recurring event was cancelled",
+      metadata: { seriesChange: true, recurringEventId: "offsite", status: "cancelled" }
+    });
+    expect(result.activities[0]?.dedupeKey).toBe("calendar:primary:offsite:series:2026-09-02T11:00:00.000Z");
+    expectNormalized(result.activities);
+  });
+
+  it("keeps a single edited occurrence of a series an individual Calendar activity", async () => {
+    const fetcher: typeof fetch = async () =>
+      googleJson({
+        items: [
+          {
+            ...calendarEvent("standup_20260904T170000Z", "Weekly standup", "exception-etag"),
+            updated: "2026-09-02T09:20:00Z",
+            recurringEventId: "standup"
+          },
+          {
+            ...calendarEvent("standup_20260905T170000Z", "Weekly standup", "series-etag-1"),
+            updated: "2026-09-02T09:15:00Z",
+            recurringEventId: "standup"
+          },
+          {
+            ...calendarEvent("standup_20260906T170000Z", "Weekly standup", "series-etag-2"),
+            updated: "2026-09-02T09:15:00Z",
+            recurringEventId: "standup"
+          }
+        ],
+        nextSyncToken: "calendar-sync-new"
+      });
+    const adapter = googleAdapter(fetcher);
+    const result = await adapter.poll!(
+      googleConnection(["calendar.read"], { calendar: { syncToken: "calendar-sync-old" } }),
+      neverAborts()
+    );
+    expect(result.activities.map((activity) => activity.dedupeKey)).toEqual([
+      "calendar:primary:standup_20260904T170000Z:exception-etag",
+      "calendar:primary:standup:series:2026-09-02T09:15:00.000Z"
+    ]);
+    expect(result.activities[0]).toMatchObject({
+      providerResourceId: "standup_20260904T170000Z",
+      title: "Calendar event changed: Weekly standup",
+      subject: { start: { dateTime: "2026-08-01T10:00:00-07:00" } },
+      metadata: { seriesChange: false }
+    });
+    expectNormalized(result.activities);
+  });
+
   it("resets an expired Calendar token through a silent bounded baseline", async () => {
     let calls = 0;
     const fetcher: typeof fetch = async (input) => {
