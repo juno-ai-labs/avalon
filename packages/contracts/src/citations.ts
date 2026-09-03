@@ -245,14 +245,21 @@ const FOOTNOTE_DEFINITION = /^ {0,3}\[\^([^\]\s]+)\]:[ \t]*(.*)$/u;
 /** `[^label]` used in the body. Never at the head of a definition — checked first. */
 const FOOTNOTE_REFERENCE = /\[\^([^\]\s]+)\]/gu;
 /**
- * The same reference, still arriving: `[^` and however much of the identifier
- * has been streamed, at the very end of the text and with no closing bracket
- * yet. Only a surface watching a message grow has any use for this — a settled
- * message's `[^foo` is text a model wrote and stays text — but it is the same
- * grammar as the reference above and drifting from it is how one of them starts
- * recognising a reference the other does not.
+ * The same reference, still arriving: an opening `[`, optionally the `^` and
+ * however much of the identifier has been streamed, at the very end of the
+ * text and with no closing bracket yet. Only a surface watching a message grow
+ * has any use for this — a settled message's `[^foo` is text a model wrote and
+ * stays text — but it is the same grammar as the reference above and drifting
+ * from it is how one of them starts recognising a reference the other does not.
+ *
+ * The `^` is optional because the caret is the second character: a reader that
+ * waited for it would put the opening bracket of every citation on screen for
+ * one frame. What a bare `[` at the end *means* is not yet decided — a
+ * citation, a link, a task list's box, a bracket in prose — so this only says
+ * that the text ends mid-construct. The caller decides what to draw, and for a
+ * bare `[` the honest answer is nothing.
  */
-const OPEN_FOOTNOTE_REFERENCE = /\[\^[^\]\s]*$/u;
+const OPEN_FOOTNOTE_REFERENCE = /\[(?:\^[^\]\s]*)?$/u;
 
 /**
  * Matches `[^label]` wherever a reader has to find one in raw text. Capture
@@ -265,8 +272,8 @@ export function footnoteReferencePattern(): RegExp {
 
 /**
  * Matches the trailing half of a reference whose closing bracket has not
- * arrived. Anchored at the end, so it answers a question only about text that
- * is still growing.
+ * arrived, down to the bare `[` that has not yet said what it opens. Anchored
+ * at the end, so it answers a question only about text that is still growing.
  */
 export function openFootnoteReferencePattern(): RegExp {
   return new RegExp(OPEN_FOOTNOTE_REFERENCE.source, OPEN_FOOTNOTE_REFERENCE.flags);

@@ -1090,13 +1090,77 @@ describe('citations while a turn streams', () => {
 
   it('covers a reference that is still being typed, before its bracket closes', () => {
     // The tail is the one place a half-written reference exists. Without this
-    // the reader gets the same raw markup one character at a time — `[`, `[^`,
-    // `[^a` — which is the artefact by a slower route.
+    // the reader gets the same raw markup one character at a time — `[^`,
+    // `[^a`, `[^av` — which is the artefact by a slower route.
     render(<MarkdownBody citations={context()} streaming>{'The gap is real.[^ava'}</MarkdownBody>);
 
     expect(document.querySelectorAll('.citation-pill-pending')).toHaveLength(1);
     expect(document.body).not.toHaveTextContent('[^ava');
     expect(document.body).toHaveTextContent('The gap is real.');
+  });
+
+  it('shows nothing at all for the bare bracket that has not said what it opens', () => {
+    // One character in, `[` could still become a citation, a link, a task
+    // list's box, or a bracket in prose. Drawing a pill would flash one in
+    // front of every link; leaving it puts a citation's opening bracket on
+    // screen. Waiting a frame is the only answer right whichever it becomes.
+    render(<MarkdownBody citations={context()} streaming>{'The gap is real.['}</MarkdownBody>);
+
+    expect(document.querySelector('.citation-pill-pending')).toBeNull();
+    expect(document.body).not.toHaveTextContent('real.[');
+    expect(document.body).toHaveTextContent('The gap is real.');
+  });
+
+  it('leaves an escaped marker escaped, rather than skeletoning what someone hid on purpose', () => {
+    // `\\[^avalon]` reaches the rewrite as a text node reading `[^avalon]` —
+    // micromark consumes the backslash before any plugin runs — so a rewrite
+    // that trusted the decoded value would cover syntax the author escaped to
+    // show, and then hand it back at settle when the escape is honoured.
+    const view = render(
+      <MarkdownBody citations={context()} streaming>{'Write it as \\[^avalon] in the body.'}</MarkdownBody>,
+    );
+
+    expect(document.querySelector('.citation-pill-pending')).toBeNull();
+    expect(document.body).toHaveTextContent('Write it as [^avalon] in the body.');
+
+    // The settled render already showed the literal; the point is that the
+    // streaming one does not disagree with it.
+    view.rerender(<MarkdownBody citations={context()}>{'Write it as \\[^avalon] in the body.'}</MarkdownBody>);
+    expect(document.body).toHaveTextContent('Write it as [^avalon] in the body.');
+  });
+
+  it('leaves an escaped marker escaped in the open tail too', () => {
+    render(<MarkdownBody citations={context()} streaming>{'Write it as \\[^ava'}</MarkdownBody>);
+
+    expect(document.querySelector('.citation-pill-pending')).toBeNull();
+    expect(document.body).toHaveTextContent('Write it as [^ava');
+  });
+
+  it('keeps a real marker covered when an escaped one follows it in the same paragraph', () => {
+    // Caught in a live window rather than here: with a verdict on the whole
+    // text run, the real marker's skeleton appeared while the sentence was
+    // short and then *vanished* as the escaped one streamed in behind it,
+    // reverting to raw `[^avalon]` mid-turn — the same defect the escape guard
+    // was added to remove, arriving by the other door. Whether a match
+    // qualifies now depends only on the text before it, which has already
+    // arrived, so a skeleton drawn once is never taken back.
+    const source = 'A real marker.[^avalon] An escaped one \\[^avalon] stays text.';
+    const view = render(<MarkdownBody citations={context()} streaming>{'A real marker.[^avalon] An escaped one'}</MarkdownBody>);
+    expect(document.querySelectorAll('.citation-pill-pending')).toHaveLength(1);
+
+    view.rerender(<MarkdownBody citations={context()} streaming>{source}</MarkdownBody>);
+
+    expect(document.querySelectorAll('.citation-pill-pending')).toHaveLength(1);
+    expect(document.body).toHaveTextContent('A real marker. An escaped one [^avalon] stays text.');
+  });
+
+  it('leaves a character reference alone, which decodes to the same characters', () => {
+    // `&#91;` is the other way to write a bracket that is not syntax, and it
+    // reaches a text node indistinguishable from one that is.
+    render(<MarkdownBody citations={context()} streaming>{'Write it as &#91;^avalon] in the body.'}</MarkdownBody>);
+
+    expect(document.querySelector('.citation-pill-pending')).toBeNull();
+    expect(document.body).toHaveTextContent('Write it as [^avalon] in the body.');
   });
 
   it('hands the skeleton over to the numbered pill when the turn settles', () => {
