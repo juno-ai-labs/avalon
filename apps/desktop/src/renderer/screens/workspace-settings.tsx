@@ -2028,7 +2028,7 @@ export function WorkspaceSettingsScreen({
                             <dt>{entry.name}</dt>
                             <dd>
                               {entry.propertyNames.join(', ') || 'No properties'}
-                              <small>{entry.route === 'eu' ? 'EU' : 'Global'} · {entry.validation} · {entry.queueState}</small>
+                              <small>{entry.route === 'eu' ? 'EU' : 'US'} · {entry.validation} · {entry.queueState}</small>
                             </dd>
                           </div>
                         ))}

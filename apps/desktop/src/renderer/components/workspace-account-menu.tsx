@@ -10,7 +10,7 @@ import type {
   RallyRegion,
 } from '../../common/desktop';
 import { desktopWorkspaceIdentityKey } from '../../common/desktop';
-import type { AccountActionProgress } from '../lib/app-session';
+import { AccountSignInSupersededError, FINISH_SIGN_IN_IN_BROWSER, type AccountActionProgress } from '../lib/app-session';
 import type { WorkspaceMember } from '../lib/types';
 import { formatRelative } from '../lib/format';
 import { uuidV7 } from '../lib/telemetry';
@@ -38,6 +38,9 @@ export interface WorkspaceAccountMenuProps {
   ) => Promise<void>;
   onDeclineInvitation: (invitation: DesktopPendingWorkspaceInvitation) => Promise<void>;
   onMenuOpen: () => void;
+  /** The create dialog was closed while its creation waited on the browser:
+   * the creation stands down, and a sign-in that still lands is kept. */
+  onAbandonSignIn: () => void;
   onInvitationPromptDismiss: () => void;
   onOpenSettings: () => void;
   onSignOut: () => void;
@@ -46,12 +49,10 @@ export interface WorkspaceAccountMenuProps {
   onSwitchWorkspace: (workspace: DesktopWorkspaceSummary) => Promise<boolean>;
 }
 
-/** Where the person is expected next while an action that needed the account
- * identity waits for the sign-in it started; under the row, or in the dialog. */
-export const FINISH_SIGN_IN_IN_BROWSER = 'Finish signing in to Rally in your browser';
-
 /** The two data regions, as the compact tag on a row and the caption under
- * the account's email. */
+ * the account's email. `global` is the region key of the US data region — the
+ * key predates the EU region, and stored sessions and workspace records carry
+ * it, so only its name changes. */
 function regionLabel(region: RallyRegion): string {
   return region === 'eu' ? 'EU' : 'US';
 }
@@ -117,6 +118,7 @@ export function WorkspaceAccountMenu({
   onCreateWorkspace,
   onDeclineInvitation,
   onMenuOpen,
+  onAbandonSignIn,
   onInvitationPromptDismiss,
   onOpenSettings,
   onSignOut,
@@ -130,6 +132,10 @@ export function WorkspaceAccountMenu({
   const [actionPending, setActionPending] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [creationSigningIn, setCreationSigningIn] = useState(false);
+  // Creating again while a creation waits on the browser starts a newer
+  // attempt, whose sign-in supersedes the earlier one; the earlier promise
+  // then settles without touching the dialog the newer one now owns.
+  const creationAttempt = useRef(0);
   const creationOperation = useRef<{ fingerprint: string; id: string } | null>(null);
   const invitationOperation = useRef<{ invitationId: string; id: string } | null>(null);
   const workspaceNameInput = useRef<HTMLInputElement>(null);
@@ -151,25 +157,44 @@ export function WorkspaceAccountMenu({
   }, [promptedInvitation]);
 
   const submitWorkspaceCreation = (): void => {
-    if (actionPending || workspaceName.trim().length < 2) return;
+    if ((actionPending && !creationSigningIn) || workspaceName.trim().length < 2) return;
+    const attempt = ++creationAttempt.current;
     setActionPending(true);
     setActionError(null);
+    setCreationSigningIn(false);
     const input = { name: workspaceName.trim(), region: workspaceRegion };
     const fingerprint = JSON.stringify(input);
     const operation = creationOperation.current?.fingerprint === fingerprint
       ? creationOperation.current
       : { fingerprint, id: uuidV7() };
     creationOperation.current = operation;
-    void onCreateWorkspace(input, operation.id, { onSignInRequired: () => setCreationSigningIn(true) }).then(() => {
+    const current = (): boolean => creationAttempt.current === attempt;
+    void onCreateWorkspace(input, operation.id, {
+      onSignInRequired: () => { if (current()) setCreationSigningIn(true); },
+    }).then(() => {
+      if (!current()) return;
       creationOperation.current = null;
       setCreating(false);
       setWorkspaceName('');
     }, (error: unknown) => {
+      if (!current() || error instanceof AccountSignInSupersededError) return;
       setActionError(actionErrorMessage(error, 'The workspace could not be created.'));
     }).finally(() => {
+      if (!current()) return;
       setActionPending(false);
       setCreationSigningIn(false);
     });
+  };
+
+  /** Close the create dialog; a creation waiting on the browser stands down. */
+  const dismissWorkspaceCreation = (): void => {
+    if (creationSigningIn) onAbandonSignIn();
+    creationAttempt.current += 1;
+    setActionPending(false);
+    setCreationSigningIn(false);
+    setActionError(null);
+    creationOperation.current = null;
+    setCreating(false);
   };
 
   return (
@@ -384,24 +409,22 @@ export function WorkspaceAccountMenu({
         description="Choose carefully: a workspace's region cannot be changed later."
         footer={(
           <>
-            <Button className="button-secondary" disabled={actionPending} onClick={() => {
-              setActionError(null);
-              creationOperation.current = null;
-              setCreating(false);
-            }}>Cancel</Button>
+            <Button
+              className="button-secondary"
+              disabled={actionPending && !creationSigningIn}
+              onClick={dismissWorkspaceCreation}
+            >Cancel</Button>
             <Button
               className="button-primary"
-              disabled={actionPending || workspaceName.trim().length < 2}
+              disabled={(actionPending && !creationSigningIn) || workspaceName.trim().length < 2}
               onClick={submitWorkspaceCreation}
             >Create workspace</Button>
           </>
         )}
         onOpenChange={(open) => {
-          if (!open && !actionPending) {
-            setActionError(null);
-            creationOperation.current = null;
-            setCreating(false);
-          }
+          // A creation that is waiting on the browser can be left, unlike one
+          // that is in flight: the person may have closed the browser instead.
+          if (!open && (!actionPending || creationSigningIn)) dismissWorkspaceCreation();
         }}
         initialFocusRef={workspaceNameInput}
         open={creating}
