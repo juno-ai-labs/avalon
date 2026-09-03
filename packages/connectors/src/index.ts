@@ -1592,15 +1592,35 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
           "Google Calendar incremental response did not include a sync token"
         );
         return {
-          activities: collapseCalendarSeriesChanges(connection, calendarId, changed),
+          activities: await collapseCalendarSeriesChanges(connection, calendarId, changed, fetchMaster),
           cursor: { syncToken }
         };
       }
     }
     return {
-      activities: collapseCalendarSeriesChanges(connection, calendarId, changed),
+      activities: await collapseCalendarSeriesChanges(connection, calendarId, changed, fetchMaster),
       cursor: { syncToken: input.syncToken, pageToken }
     };
+
+    /**
+     * The series master, read once per changed series per poll. `null` when
+     * Google no longer has it (a purged series) or when the body is not the
+     * master asked for — a stub answering every URL alike, or a proxy's error
+     * page under a 200 — because a body that is not the master must never
+     * become the series' content.
+     */
+    async function fetchMaster(masterId: string): Promise<Record<string, unknown> | null> {
+      const url = new URL(
+        `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(masterId)}`
+      );
+      url.searchParams.set("fields", CALENDAR_SERIES_MASTER_FIELDS);
+      const response = await api(connection, url.toString(), { signal }, [404, 410]);
+      if (response.status === 404 || response.status === 410) return null;
+      const payload = await safeJsonBounded(response, GOOGLE_POLL_RESPONSE_BYTES);
+      const isMaster = readString(payload, "id") === masterId
+        && timestampFromValue(readString(payload, "updated")) !== null;
+      return isMaster ? payload : null;
+    }
   }
 
   async function pollCalendar(
@@ -2832,6 +2852,14 @@ function normalizeGmailActivity(
   };
 }
 
+/**
+ * What a series activity is built from: the master's own fields, which are the
+ * same however many of its instances a poll happened to see. `recurrence` is
+ * the one field an instance never carries.
+ */
+const CALENDAR_SERIES_MASTER_FIELDS =
+  "id,etag,status,updated,summary,location,htmlLink,creator,organizer,attendees(email,displayName,self,organizer,responseStatus),attendeesOmitted,start,end,recurrence,eventType";
+
 function calendarEventsUrl(calendarId: string, syncToken?: string, pageToken?: string): URL {
   const url = new URL(
     `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`
@@ -2883,97 +2911,129 @@ function calendarSeriesId(event: Record<string, unknown>): string | null {
  * One edit to a recurring series makes Google re-send every expanded instance
  * of it — a thousand of them for a standup that runs to 2040 — and each carries
  * its own etag, so keying identity on the etag made one edit a thousand
- * activities. Every instance of a series is reported against the series, keyed
- * on the master's id and the `updated` timestamp of the edit that touched it:
- * stable across the pages and the polls the burst is spread over, so the
- * workspace's dedupe collapses the repeats it sees on later polls.
+ * activities. Every instance of a series is reported against the series
+ * instead, and the series activity is built from the master event, read once
+ * per changed series per poll, and keyed on the master's own `updated`.
  *
- * The grouping decides nothing on its own — it only saves normalizing an
- * instance whose activity a sibling in the same poll already produced. An
- * instance is classified by what it is, never by how many of its siblings
- * happened to land in the same chunk: a burst is larger than the 150 items one
- * poll fetches, so a batch-sensitive rule would report the same edit
- * differently depending on where the page boundary fell.
+ * That is what lets it carry a real start, end, link, location, recurrence
+ * rule, and each guest's series-level RSVP. A burst is larger than the 150
+ * items one poll fetches, so the same identity is re-emitted on later polls,
+ * and the workspace refuses a repeated identity whose payload differs; the
+ * payload is therefore a pure function of the master as Google holds it for a
+ * given `updated` — never of which instances a chunk happened to contain. An
+ * earlier version built it from a representative instance and so could carry
+ * only what every instance agreed on, which was the title and nothing else.
  *
- * An occurrence edited on its own carries its own `updated`, so it is a
- * distinct edit of the series and keeps its own activity rather than folding
- * into the one for the series-wide change.
+ * An instance is classified by comparing its own `updated` to the master's,
+ * never by how many of its siblings landed in the same chunk. An instance
+ * whose `updated` is at or before the master's belongs to the series-wide
+ * edit the master records — or to an older one the master has since
+ * superseded, in which case it is reported against the master as it now
+ * stands, exactly as the newer edit's own instances will be. An instance whose
+ * `updated` is *after* the master's was edited on its own — one Tuesday moved,
+ * one guest declining one occurrence — and is reported as that instance, with
+ * that occurrence's real times, keyed on its own etag.
+ *
+ * When the master cannot be read (a purged series, or a body that is not the
+ * master) the series is reported from a representative instance keyed on the
+ * instances' `updated`, carrying only what every instance agrees on, which is
+ * the pre-master behaviour and is likewise identical in every chunk.
  */
-function collapseCalendarSeriesChanges(
+async function collapseCalendarSeriesChanges(
   connection: ConnectorConnectionContext,
   calendarId: string,
-  events: Record<string, unknown>[]
-): Omit<NormalizedActivity, "id">[] {
-  const groups = new Map<string, Record<string, unknown>[]>();
-  const order: Array<{ groupKey: string; seriesId: string } | { event: Record<string, unknown> }> = [];
+  events: Record<string, unknown>[],
+  fetchMaster: (masterId: string) => Promise<Record<string, unknown> | null>
+): Promise<Omit<NormalizedActivity, "id">[]> {
+  const seriesIds = [...new Set(events.map(calendarSeriesId).filter((id): id is string => id !== null))];
+  const masters = new Map<string, Record<string, unknown> | null>();
+  for (const seriesId of seriesIds) masters.set(seriesId, await fetchMaster(seriesId));
+
+  const activities: Omit<NormalizedActivity, "id">[] = [];
+  const emitted = new Set<string>();
   for (const event of events) {
     const seriesId = calendarSeriesId(event);
     const updatedAt = timestampFromValue(readString(event, "updated"));
-    // Without a usable `updated` the series activity has no timestamp to key
-    // on that a later poll would arrive at again, and an identity whose content
-    // changes between polls is refused at ingest. Such an item stays an
-    // individual activity rather than being folded into one that cannot repeat.
+    // Without a usable `updated` an instance cannot be placed against the
+    // master's, and a series activity keyed on it would have no timestamp a
+    // later poll arrives at again. Such an item stays an individual activity.
     if (!seriesId || !updatedAt) {
-      order.push({ event });
+      const activity = normalizeCalendarActivity(connection, calendarId, event);
+      if (activity) activities.push(activity);
       continue;
     }
-    // A NUL joins the two halves because neither can contain one, so no pair of
-    // distinct series and timestamps can spell the same key.
-    const groupKey = `${seriesId}\u0000${updatedAt}`;
-    const group = groups.get(groupKey);
-    if (group) {
-      group.push(event);
+    const master = masters.get(seriesId) ?? null;
+    const masterUpdatedAt = master ? timestampFromValue(readString(master, "updated")) : null;
+    if (master && masterUpdatedAt && updatedAt > masterUpdatedAt) {
+      const activity = normalizeCalendarActivity(connection, calendarId, event, null, seriesId);
+      if (activity) activities.push(activity);
       continue;
     }
-    groups.set(groupKey, [event]);
-    order.push({ groupKey, seriesId });
-  }
-
-  const activities: Omit<NormalizedActivity, "id">[] = [];
-  for (const entry of order) {
-    const [representative] = "groupKey" in entry ? groups.get(entry.groupKey) ?? [] : [entry.event];
-    if (!representative) continue;
-    const activity = "groupKey" in entry
-      ? normalizeCalendarActivity(connection, calendarId, representative, entry.seriesId)
-      : normalizeCalendarActivity(connection, calendarId, representative);
+    // One series activity per poll for the master's current edit, or — with no
+    // master to read — one per edit the instances themselves record. A NUL
+    // joins the halves because neither can contain one.
+    const emitKey = master ? `${seriesId}\u0000master` : `${seriesId}\u0000${updatedAt}`;
+    if (emitted.has(emitKey)) continue;
+    emitted.add(emitKey);
+    const activity = normalizeCalendarActivity(connection, calendarId, event, { id: seriesId, master });
     if (activity) activities.push(activity);
   }
   return activities;
 }
 
+interface CalendarSeriesContext {
+  readonly id: string;
+  /** The master event, or `null` when it could not be read. */
+  readonly master: Record<string, unknown> | null;
+}
+
+/**
+ * `series` makes this a series activity: built from the master when there is
+ * one, otherwise from `event` as a representative instance carrying only what
+ * every instance agrees on. `occurrenceOf` names the series an individually
+ * edited instance belongs to, for the one case — a cancelled instance — where
+ * the instance itself no longer says.
+ */
 function normalizeCalendarActivity(
   connection: ConnectorConnectionContext,
   calendarId: string,
   event: Record<string, unknown>,
-  seriesId: string | null = null
+  series: CalendarSeriesContext | null = null,
+  occurrenceOf: string | null = null
 ): Omit<NormalizedActivity, "id"> | null {
-  const eventId = seriesId ?? readString(event, "id");
+  const eventId = series?.id ?? readString(event, "id");
   if (!eventId) return null;
   const now = new Date().toISOString();
-  const status = readString(event, "status") ?? "confirmed";
-  const title = truncateText(readString(event, "summary")?.trim() || "Untitled event", 300);
-  // The series identity embeds this, and the group key the caller built embeds
-  // its own reading of the same field. The two have to agree, which they do
-  // because `collapseCalendarSeriesChanges` passes a series id only for an
-  // event whose `updated` it already parsed: the `now` fallback below is
-  // unreachable on that path, and would otherwise mint an identity that no
-  // later poll could arrive at again.
-  const updatedAt = timestampFromValue(readString(event, "updated")) ?? now;
-  const start = seriesId ? sanitizeCalendarDateTime(null) : sanitizeCalendarDateTime(readRecord(event, "start"));
-  const end = seriesId ? sanitizeCalendarDateTime(null) : sanitizeCalendarDateTime(readRecord(event, "end"));
-  const organizer = sanitizeGooglePerson(readRecord(event, "organizer"));
-  const creator = sanitizeGooglePerson(readRecord(event, "creator"));
-  // A guest's `responseStatus` is per-occurrence — one person declining one
-  // Tuesday — and `googleStructuredPeople` carries the attendee record into
-  // `sourceText` whole. A series activity is re-emitted on every poll its burst
-  // spans and the workspace refuses a repeated identity whose payload changed,
-  // so the series names each guest without the RSVP that differs between the
-  // occurrences it covers.
-  const attendees = recordArray(event, "attendees")
-    .map((person) => (seriesId ? sanitizeGooglePerson(person) : person));
-  const version = seriesId ? `series:${updatedAt}` : readString(event, "etag") ?? updatedAt;
+  const master = series?.master ?? null;
+  // Where the content comes from: the master for a series that has one, the
+  // event itself otherwise.
+  const source = master ?? event;
+  // Whether per-occurrence detail may be carried. A series built from a
+  // representative instance may not: the same identity is re-emitted from
+  // chunks that see different instances, and the workspace refuses a repeated
+  // identity whose payload changed.
+  const detailed = master !== null || series === null;
+  const status = readString(source, "status") ?? "confirmed";
+  const title = truncateText(readString(source, "summary")?.trim() || "Untitled event", 300);
+  // For a series this is the identity's timestamp. With a master it is the
+  // master's `updated`, which `fetchMaster` guaranteed parses; without one the
+  // caller only passes an instance whose `updated` it already parsed. The `now`
+  // fallback is reachable only for an individual event without one.
+  const updatedAt = timestampFromValue(readString(source, "updated")) ?? now;
+  const start = sanitizeCalendarDateTime(detailed ? readRecord(source, "start") : null);
+  const end = sanitizeCalendarDateTime(detailed ? readRecord(source, "end") : null);
+  const organizer = sanitizeGooglePerson(readRecord(source, "organizer"));
+  const creator = sanitizeGooglePerson(readRecord(source, "creator"));
+  // `googleStructuredPeople` carries the attendee record into `sourceText`
+  // whole, RSVP included. From the master that RSVP is the guest's answer for
+  // the series, the same in every chunk; from a representative instance it is
+  // one occurrence's, so the guest is named without it.
+  const attendees = recordArray(source, "attendees")
+    .map((person) => (detailed ? person : sanitizeGooglePerson(person)));
+  const version = series ? `series:${updatedAt}` : readString(event, "etag") ?? updatedAt;
   const identity = `calendar:${calendarId}:${eventId}:${version}`;
   const cancelled = status === "cancelled";
+  const firstStart = start.dateTime ?? start.date;
   return {
     ...googleActivityScope(connection),
     provider: "google",
@@ -2985,17 +3045,19 @@ function normalizeCalendarActivity(
     subject: { eventId, calendarId, status, start, end },
     occurredAt: updatedAt,
     receivedAt: now,
-    title: calendarActivityTitle(title, { cancelled, series: Boolean(seriesId) }),
-    summary: seriesId
-      ? cancelled
-        ? "Every occurrence of this recurring event was cancelled"
-        : "Every occurrence of this recurring event changed"
-      : start.dateTime || start.date
-        ? `Starts ${start.dateTime ?? start.date}`
+    title: calendarActivityTitle(title, { cancelled, series: series !== null }),
+    summary: series
+      ? [
+        cancelled
+          ? "Every occurrence of this recurring event was cancelled"
+          : "Every occurrence of this recurring event changed",
+        typeof firstStart === "string" ? `first occurrence ${firstStart}` : null
+      ].filter((value): value is string => value !== null).join(" · ")
+      : typeof firstStart === "string"
+        ? `Starts ${firstStart}`
         : "Calendar event metadata changed",
-    // A location an exception overrides is per-occurrence for the same reason.
     textSnippet: truncateText(
-      [title, seriesId ? null : readString(event, "location")]
+      [title, detailed ? readString(source, "location") : null]
         .filter((value): value is string => Boolean(value))
         .join(" · "),
       1000
@@ -3011,14 +3073,14 @@ function normalizeCalendarActivity(
     ]),
     metadata: {
       status,
-      seriesChange: Boolean(seriesId),
-      recurringEventId: seriesId ?? readString(event, "recurringEventId"),
-      eventType: readString(event, "eventType"),
-      // An instance's link opens that occurrence and differs across the
-      // instances one edit touched, so the series activity carries none rather
-      // than whichever instance a page happened to lead with.
-      htmlLink: seriesId ? null : readString(event, "htmlLink"),
-      attendeesOmitted: readBoolean(event, "attendeesOmitted") ?? false
+      seriesChange: series !== null,
+      recurringEventId: series?.id ?? readString(event, "recurringEventId") ?? occurrenceOf,
+      eventType: readString(source, "eventType"),
+      // The master's link opens the series; an instance's opens that
+      // occurrence. A representative instance's would differ by chunk.
+      htmlLink: detailed ? readString(source, "htmlLink") : null,
+      ...(master ? { recurrence: readStringArray(master, "recurrence") } : {}),
+      attendeesOmitted: readBoolean(source, "attendeesOmitted") ?? false
     }
   };
 }
