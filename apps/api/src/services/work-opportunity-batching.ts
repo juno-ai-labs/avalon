@@ -34,6 +34,39 @@ async function enqueue(env: Env, input: EnqueueInput): Promise<void> {
   });
 }
 
+/**
+ * Activity that never becomes Suggested Work, decided by event type before any
+ * window is opened for it.
+ *
+ * Everything unclaimed used to be a candidate, and on 2 September 2026 the
+ * Juno Labs workspace admitted 50,000 events in a day: 42,000 of them were CI
+ * check runs, workflow-run status transitions, and calendar instances. A check
+ * run is the status of a commit, not a piece of work for a person; a workflow
+ * run is the same status a level up; and a recurring-series edit arrives as one
+ * `calendar.event_changed` per expanded instance, so one change to a standing
+ * meeting is 730 candidates per attendee. Each one cost a frontier-model
+ * admission call whose answer was, overwhelmingly, `ignore`.
+ *
+ * This is an exclusion list rather than an inclusion list on purpose: a
+ * connector added later still offers its activity until somebody finds a
+ * reason not to, which matches how the digest's own event-type gate reads.
+ * Excluded activity is still logged, still routes to watches and automations,
+ * and still reaches the activity feed — only the speculative home-screen
+ * surface is withheld.
+ */
+const SUGGESTED_WORK_EXCLUDED_EVENT_TYPES: ReadonlyArray<{ readonly prefix: string } | { readonly exact: string }> = [
+  { prefix: "github.check_run." },
+  { prefix: "github.workflow_run." },
+  { exact: "calendar.event_changed" },
+];
+
+/** Whether an activity of this event type may become a Suggested Work candidate. */
+export function isSuggestedWorkCandidateEventType(eventType: string): boolean {
+  return !SUGGESTED_WORK_EXCLUDED_EVENT_TYPES.some((rule) => (
+    "exact" in rule ? eventType === rule.exact : eventType.startsWith(rule.prefix)
+  ));
+}
+
 export async function enqueueActivityOpportunity(
   env: Env,
   activityId: string,
@@ -48,6 +81,7 @@ export async function enqueueActivityOpportunity(
     ).then((workspace) => workspace.connectorEvent({ workspaceId: knownWorkspaceId, eventId: activityId })),
   );
   if (!durableActivity) return;
+  if (!isSuggestedWorkCandidateEventType(durableActivity.activity.eventType)) return;
   const activity = {
     workspace_id: durableActivity.activity.workspaceId,
     connection_id: durableActivity.activity.connectionId,
