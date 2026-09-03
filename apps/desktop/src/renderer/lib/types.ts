@@ -399,6 +399,27 @@ export interface ExternalActor {
   avatarUrl: string | null;
 }
 
+/**
+ * A settled stretch of work, and how well its duration is known.
+ *
+ * One shape rather than two identical ones, because the total genuinely moves
+ * between the two places it can be printed — a message header (`workSummary`)
+ * and the accordion over the run that produced it (`workAccordion`) — and
+ * `workSummaryLabel` renders either from the same fields. Two structurally
+ * identical literals would let a field added to one drift away from the other
+ * while still type-checking at that call, which is the accident this name
+ * exists to prevent.
+ *
+ * `durationMs` is null where there is no honest total: one the transcript could
+ * not establish, or a stretch not known to be the whole response and so with
+ * none of its own — the rows inside overlap, and summing them would overstate
+ * it. Both read as a plain "Worked".
+ */
+export interface WorkTotal {
+  durationMs: number | null;
+  timingAccuracy?: 'observed' | 'upper_bound';
+}
+
 export interface Message {
   id: string;
   /** Ordered-transcript sequence. Present only on canonical transcript rows. */
@@ -433,9 +454,10 @@ export interface Message {
      */
     | 'automation_activation'
     /**
-     * A settled run's machinery, folded behind its own total. Carries no work
-     * of its own: `workAccordion.rows` holds the plugin and thinking rows it
-     * swallowed, and the reader opens it to see them.
+     * One finished stretch of a run's machinery, folded behind the answer it
+     * produced. Carries no work of its own: `workAccordion.rows` holds the
+     * plugin and thinking rows it swallowed, and the reader opens it to see
+     * them.
      */
     | 'work_accordion';
   text?: string;
@@ -512,23 +534,22 @@ export interface Message {
    * into that message's header rather than leaving a spent timer sitting in
    * the feed under the answer.
    *
-   * It is printed there only when the turn reached for nothing. Where the run
-   * left machinery above the answer, `collapseSettledWorkIntoAccordion` moves
-   * this total onto the `work_accordion` row it folds that machinery into, and
-   * the header carries nothing.
+   * It is printed there when the run left no machinery above the answer to fold,
+   * and when the run narrated itself into several stretches — several
+   * accordions, no one of which is the whole of what this total measured. Where
+   * the run produced exactly one accordion, that accordion *is* the whole run,
+   * and `collapseSettledWorkIntoAccordion` moves this total onto it so the
+   * header carries nothing.
    */
-  workSummary?: {
-    durationMs: number | null;
-    timingAccuracy?: 'observed' | 'upper_bound';
-  };
+  workSummary?: WorkTotal;
   /**
    * The finished run's machinery, and the total that stands for it.
    *
-   * Set on a `work_accordion` row, which sits where the run's first row sat —
-   * directly above the answer the run produced. The total is that answer's
-   * `workSummary`, moved here rather than copied: a duration printed twice,
-   * once on the accordion and once in the header a line below it, is the same
-   * fact competing with itself.
+   * Set on a `work_accordion` row, which sits where the stretch's first row sat
+   * — directly above the answer that stretch produced. Where the stretch is the
+   * response's only one, the total is that answer's `workSummary`, moved here
+   * rather than copied: a duration printed twice, once on the accordion and
+   * once in the header a line below it, is the same fact competing with itself.
    *
    * The rows it swallowed are nested rather than left in the feed, because the
    * transcript is virtualized: a collapse that only hid its rows would still
@@ -536,11 +557,7 @@ export interface Message {
    * heights the cache has to be told about individually. One row, one
    * measurement, one thing to remember about it.
    */
-  workAccordion?: {
-    durationMs: number | null;
-    timingAccuracy?: 'observed' | 'upper_bound';
-    rows: Message[];
-  };
+  workAccordion?: WorkTotal & { rows: Message[] };
   elicitation?: ElicitationData;
 }
 
