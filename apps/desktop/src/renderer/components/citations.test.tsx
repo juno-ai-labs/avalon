@@ -1212,9 +1212,24 @@ describe('citations while a turn streams', () => {
     expect(document.querySelectorAll('.citation-pill-pending')).toHaveLength(1);
   });
 
-  it('is not drawn on a saved still, which has no stream to wait for', () => {
-    render(<MarkdownBody citations={context()} still>{claim}</MarkdownBody>);
+  it('is not drawn on a saved still, because a still is never streamed', () => {
+    // Named for the surface, but `still` is not the mechanism and must not be
+    // read as one: the suppression is `streaming` being off, which a still
+    // always is. Kept beside the settled test rather than folded into it
+    // because the export card is its own caller, and a future `still` that
+    // somehow streamed would be the bug this pins the expectation for.
+    render(<MarkdownBody citations={context()} still streaming={false}>{claim}</MarkdownBody>);
 
     expect(document.querySelector('.citation-pill-pending')).toBeNull();
+  });
+
+  it('leaves a half-written marker alone once text has arrived after it', () => {
+    // `[^ava more` is not a reference being typed — it is prose containing a
+    // bracket, and the end-anchor is what tells them apart. Pinned so that
+    // widening the open pattern has to fail a test.
+    render(<MarkdownBody citations={context()} streaming>{'The gap is real.[^ava more'}</MarkdownBody>);
+
+    expect(document.querySelector('.citation-pill-pending')).toBeNull();
+    expect(document.body).toHaveTextContent('The gap is real.[^ava more');
   });
 });

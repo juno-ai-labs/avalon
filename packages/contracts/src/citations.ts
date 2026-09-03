@@ -242,7 +242,15 @@ function normalizeFootnoteIdentifier(label: string): string {
 
 /** `[^label]: content`, at the start of a line. */
 const FOOTNOTE_DEFINITION = /^ {0,3}\[\^([^\]\s]+)\]:[ \t]*(.*)$/u;
-/** `[^label]` used in the body. Never at the head of a definition — checked first. */
+/**
+ * `[^label]` used in the body. Never at the head of a definition — checked first.
+ *
+ * Shared by the readers in this module, which use it only with `matchAll` and
+ * `replace`: the first clones the regex and the second resets `lastIndex`, so
+ * neither leaves state behind. **`exec` does not** — it advances `lastIndex` on
+ * the regex itself, so a caller that needs one takes a fresh copy from
+ * {@link footnoteReferencePattern}, which is what that factory is for.
+ */
 const FOOTNOTE_REFERENCE = /\[\^([^\]\s]+)\]/gu;
 /**
  * The same reference, still arriving: an opening `[`, optionally the `^` and
