@@ -474,6 +474,8 @@ duplicate that is only recognisable from the tail of a long memo may be admitted
 twice. The 600-character cap and the thirty minutes are starting points chosen
 for cost, not measured optima; `__workOpportunityTesting.limits` exposes both.
 
+Shipped in #541.
+
 ### 2026-08-30 — Admission can no longer route into an existing work stream
 
 **What changed:** The `route_existing` decision and its card-writing branch were

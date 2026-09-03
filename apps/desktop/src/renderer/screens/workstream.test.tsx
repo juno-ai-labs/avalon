@@ -11,7 +11,6 @@ import {
   AddResourceDialog,
   acceptedMessageOverlayDeliveryState,
   highestVisibleAttentionSequence,
-  blockDashboardHoldsSidebar,
   initialTranscriptAnchorIndex,
   manualElicitationResponse,
   preservedPrependScrollTop,
@@ -209,26 +208,19 @@ function stubElementWidths(widths: { clientWidth: number; scrollWidth: number })
 function headerElement(
   workstream = headerWorkstream,
   overrides: {
-    blockDashboardOpen?: boolean;
-    blockDashboardAvailable?: boolean;
     currentUserId?: string | null;
     onRename?: (title: string) => Promise<void>;
-    onToggleBlockDashboard?: () => void;
     presentUserIds?: readonly string[];
   } = {},
 ): React.JSX.Element {
   return (
     <Tooltip.Provider>
       <WorkstreamHeader
-        blockDashboardAvailable={overrides.blockDashboardAvailable ?? true}
-        blockDashboardOpen={overrides.blockDashboardOpen ?? false}
         currentUserId={overrides.currentUserId ?? null}
         onAddParticipant={vi.fn()}
-        // The screen opens the rail through the same store action, after
-        // giving up the right sidebar's other occupant.
+        // The screen opens the rail through the same store action.
         onOpenRail={(variant) => useUiStore.getState().openRail(variant)}
         onRename={overrides.onRename ?? (async () => undefined)}
-        onToggleBlockDashboard={overrides.onToggleBlockDashboard ?? vi.fn()}
         presentUserIds={overrides.presentUserIds ?? []}
       socketState="connected"
       workstream={workstream}
@@ -344,32 +336,10 @@ describe('WorkstreamHeader origin affordances', () => {
     const openContext = screen.getByRole('button', { name: 'Hide work-stream context' });
     expect(openContext).toHaveAttribute('aria-pressed', 'true');
     expect(openContext).toHaveClass('is-active');
-    // The sidebar holds one panel at a time, so the other control stays unpressed.
-    expect(screen.getByRole('button', { name: 'Show HyperSight' })).toHaveAttribute('aria-pressed', 'false');
 
     fireEvent.click(openContext);
     expect(useUiStore.getState().railOpen).toBe(false);
     expect(screen.getByRole('button', { name: 'Work-stream context' })).toHaveAttribute('aria-pressed', 'false');
-  });
-
-  it('shows HyperSight as the open panel while it holds the sidebar', () => {
-    const onToggleBlockDashboard = vi.fn();
-    renderWorkstreamHeader(headerWorkstream, { blockDashboardOpen: true, onToggleBlockDashboard });
-
-    const blockDashboard = screen.getByRole('button', { name: 'Hide HyperSight' });
-    expect(blockDashboard).toHaveAttribute('aria-pressed', 'true');
-    expect(blockDashboard).toHaveClass('is-active');
-    expect(screen.getByRole('button', { name: 'Work-stream context' })).toHaveAttribute('aria-pressed', 'false');
-
-    fireEvent.click(blockDashboard);
-    expect(onToggleBlockDashboard).toHaveBeenCalledTimes(1);
-  });
-
-  it('removes the HyperSight control when HyperSight Enabled is false', () => {
-    renderWorkstreamHeader(headerWorkstream, { blockDashboardAvailable: false });
-
-    expect(screen.queryByRole('button', { name: /HyperSight/u })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Work-stream context' })).toBeVisible();
   });
 
   it('does not expose automation runs or an origin icon for ad-hoc work streams', async () => {
@@ -776,21 +746,6 @@ const transcript: Message[] = [
     createdAt: '2026-08-01T00:00:02.000Z',
   },
 ];
-
-describe('right sidebar occupancy', () => {
-  it('gives the slot to the inspector, so a failed preference write cannot open both', () => {
-    expect(blockDashboardHoldsSidebar(true, false, true)).toBe(true);
-    expect(blockDashboardHoldsSidebar(false, false, true)).toBe(false);
-    expect(blockDashboardHoldsSidebar(false, true, true)).toBe(false);
-    // The stored preference can still say "visible" after a rolled-back write;
-    // the panel the person just opened keeps the slot regardless.
-    expect(blockDashboardHoldsSidebar(true, true, true)).toBe(false);
-  });
-
-  it('leaves the slot empty for a preference this visit has not opened', () => {
-    expect(blockDashboardHoldsSidebar(true, false, false)).toBe(false);
-  });
-});
 
 describe('transcript read positioning', () => {
   it('opens one message before the first unread sequence to preserve context', () => {

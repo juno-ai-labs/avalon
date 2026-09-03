@@ -1,8 +1,6 @@
 import {
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   WorkstreamControlSocketEventSchema,
-  type BlockDashboard,
-  type BlockDashboardPreference,
   type WorkstreamControlMetadata,
 } from '@rally/contracts';
 import { useQueryClient } from '@tanstack/react-query';
@@ -181,20 +179,6 @@ export function useWorkstreamControlSocket(
     };
     const applyMetadata = (metadata: WorkstreamControlMetadata): void => {
       if (metadata.id !== workstreamId) return;
-      // The boot frame is where the panel preference arrives now; it has no
-      // request of its own. Written straight in rather than invalidated: this
-      // frame is the answer a refetch would go and ask for.
-      // Guarded like its sibling in `workstream.tsx`: the field is optional for
-      // rollout skew, and writing `undefined` here happens to be inert only
-      // because TanStack bails on it. Two writers to one key disagreeing about
-      // an absent value is the asymmetry that survives a refactor and then does
-      // not.
-      if (metadata.viewer.blockDashboardPreference) {
-        queryClient.setQueryData<BlockDashboardPreference>(
-          ['block-dashboard-preference', workstreamId],
-          metadata.viewer.blockDashboardPreference,
-        );
-      }
       const state = metadataState(metadata);
       const applied = applyVersionedWorkstreamState(queryClient, {
         workstreamId,
@@ -259,13 +243,6 @@ export function useWorkstreamControlSocket(
             }
             if (event.data.type === 'workstream_metadata') {
               applyMetadata(event.data.metadata);
-            } else if (event.data.type === 'block_dashboard_configuration_updated') {
-              queryClient.setQueryData<BlockDashboard>(['block-dashboard', workstreamId], event.data.blockDashboard);
-            } else if (event.data.type === 'block_dashboard_preference_updated') {
-              queryClient.setQueryData<BlockDashboardPreference>(
-                ['block-dashboard-preference', workstreamId],
-                event.data.preference,
-              );
             }
           } catch (error) {
             // A reconnect always returns a complete authoritative metadata snapshot.

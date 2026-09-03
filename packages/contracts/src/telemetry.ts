@@ -136,7 +136,7 @@ const telemetrySurface = z.enum([
   "onboarding_welcome", "onboarding_region", "onboarding_workspace", "workspace_home",
   "workstream", "note_detail", "meeting_capture", "automation_builder", "automation_detail",
   "settings_account", "settings_digest", "settings_workspace", "settings_connections",
-  "settings_application", "settings_developer", "resource_inspector", "hypersight", "terminal",
+  "settings_application", "settings_developer", "resource_inspector", "terminal",
 ]);
 const surfaceEntrypoint = z.enum([
   "direct", "sidebar_new", "sidebar_pinned", "sidebar_recent", "sidebar_note", "sidebar_automation",
@@ -154,7 +154,6 @@ export const TELEMETRY_REALTIME_SOCKETS = [
   "workspace",
   "workstream_control",
   "substream_feed",
-  "block_dashboard",
 ] as const;
 export type TelemetryRealtimeSocket = typeof TELEMETRY_REALTIME_SOCKETS[number];
 export const TELEMETRY_REALTIME_SOCKET_CAUSES = [
@@ -990,44 +989,6 @@ export const TELEMETRY_EVENTS = {
       result: resultClass,
     })),
   }),
-  hypersight_opened: productEvent({
-    name: "hypersight_opened",
-    definition: "The HyperSight panel became visible for a loaded work stream.",
-    productQuestion: "How often do people inspect synthesized work-stream context and at what configuration size?",
-    sources: ["desktop-renderer"],
-    authoritativeSource: "desktop-renderer",
-    identityScopes: ["workspace-user"],
-    properties: deferredZodSchema(() => z.strictObject({ workstreamId: resourceId, blockCount: countBucket })),
-  }),
-  hypersight_configuration_changed: productEvent({
-    name: "hypersight_configuration_changed",
-    definition: "The regional API completed a content-free change to a HyperSight block configuration.",
-    productQuestion: "How do people customize HyperSight, and which configuration mutations succeed?",
-    sources: ["api"],
-    authoritativeSource: "api",
-    identityScopes: ["workspace-user"],
-    properties: deferredZodSchema(() => z.strictObject({
-      workstreamId: resourceId,
-      action: z.enum(["add", "edit", "reorder", "delete"]),
-      blockCount: countBucket,
-      result: resultClass,
-    })),
-  }),
-  hypersight_run_terminal: productEvent({
-    name: "hypersight_run_terminal",
-    definition: "A HyperSight refresh run reached an authoritative terminal state.",
-    productQuestion: "How reliably and quickly does HyperSight refresh, including results superseded while running?",
-    sources: ["api"],
-    authoritativeSource: "api",
-    identityScopes: ["workspace-user", "workspace"],
-    properties: deferredZodSchema(() => z.strictObject({
-      workstreamId: resourceId,
-      harnessRunId: resourceId,
-      result: z.enum(["success", "validation_error", "conflict", "denied", "unavailable", "failed", "cancelled"]),
-      duration: journeyDurationBucket,
-      staleAtCompletion: z.boolean(),
-    })),
-  }),
   terminal_workspace_terminal: productEvent({
     name: "terminal_workspace_terminal",
     definition: "A Terminal workspace lifecycle action reached its authoritative platform result.",
@@ -1470,7 +1431,7 @@ export const TELEMETRY_EVENTS = {
       pluginId: safeTelemetryTaxonomyValue,
       capability: safeTelemetryTaxonomyValue,
       mode: z.enum(["read", "write"]),
-      runKind: z.enum(["workstream", "automation", "hypersight", "subagent", "system"]),
+      runKind: z.enum(["workstream", "automation", "subagent", "system"]),
       executionScope: z.enum(["user", "workspace"]),
     })),
     propertyClassifications: {
@@ -1491,7 +1452,7 @@ export const TELEMETRY_EVENTS = {
       workstreamId: resourceId,
       harnessRunId: resourceId,
       automationId: resourceId.optional(),
-      runKind: z.enum(["workstream", "automation", "hypersight", "subagent", "system"]),
+      runKind: z.enum(["workstream", "automation", "subagent", "system"]),
       triggerType: z.enum(["composer", "retry", "manual", "scheduled", "activity", "inbound_email", "digest", "system"]),
       terminalState: z.enum(["completed", "needs_input", "stopped", "failed"]),
       duration: journeyDurationBucket,
@@ -1519,7 +1480,7 @@ export const TELEMETRY_EVENTS = {
       pluginId: safeTelemetryTaxonomyValue,
       capability: safeTelemetryTaxonomyValue,
       mode: z.enum(["read", "write"]),
-      runKind: z.enum(["workstream", "automation", "hypersight", "subagent", "system"]),
+      runKind: z.enum(["workstream", "automation", "subagent", "system"]),
       executionScope: z.enum(["user", "workspace"]),
       result: z.enum(["success", "validation_error", "authorization_denied", "provider_error", "ambiguous", "cancelled"]),
       duration: journeyDurationBucket,

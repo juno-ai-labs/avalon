@@ -70,8 +70,7 @@ function parseJson(value: string | null): Record<string, unknown> {
   }
 }
 
-function runKind(row: RunRow): 'workstream' | 'automation' | 'hypersight' | 'system' {
-  if (row.origin === 'block_dashboard_block') return 'hypersight';
+function runKind(row: RunRow): 'workstream' | 'automation' | 'system' {
   if (row.automation_id) return 'automation';
   if (row.origin === 'scheduled_digest') return 'system';
   return 'workstream';
@@ -81,7 +80,6 @@ function triggerType(row: RunRow): 'composer' | 'retry' | 'manual' | 'scheduled'
   if (row.origin === 'human_message') return 'composer';
   if (row.origin === 'manual_retry') return 'retry';
   if (row.origin === 'scheduled_digest') return 'digest';
-  if (row.origin === 'block_dashboard_block') return 'system';
   if (row.automation_trigger_type === 'activity') return 'activity';
   if (row.automation_trigger_type === 'inbound_email') return 'inbound_email';
   if (row.automation_trigger_type === 'scheduled') return 'scheduled';

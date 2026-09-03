@@ -73,7 +73,7 @@ describe('Ace Hono application', () => {
   it('rejects a cross-origin write before it reaches Flagship', async () => {
     const cloudflare = vi.spyOn(globalThis, 'fetch');
     const response = await worker.fetch!(new Request(
-      'https://ace.internal.rallywith.ai/api/flags/hypersight-enabled',
+      'https://ace.internal.rallywith.ai/api/flags/meeting-recording-enabled',
       { method: 'PUT', headers: { Origin: 'https://attacker.example' } },
     ), env(), { waitUntil: vi.fn() } as unknown as ExecutionContext);
 

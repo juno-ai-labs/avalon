@@ -1965,7 +1965,7 @@ export class WorkstreamObjectProductService {
       error_json: string | null; started_at: number; completed_at: number | null; created_at: number;
     }>(
       `SELECT run_id, origin, status, model, error_json, started_at, completed_at, created_at
-         FROM runs WHERE parent_tool_call_id IS NULL AND origin != 'block_dashboard_block'
+         FROM runs WHERE parent_tool_call_id IS NULL
         ORDER BY created_at DESC, run_id DESC LIMIT 1`,
     ));
     return WorkstreamDetailSchema.parse({
@@ -2863,7 +2863,7 @@ export class WorkstreamObjectProductService {
       started_at: number; completed_at: number | null; created_at: number; final_turn_id: string | null;
     }>(
       `SELECT run_id, origin, status, usage_json, started_at, completed_at, created_at, final_turn_id
-         FROM runs WHERE origin != 'block_dashboard_block'
+         FROM runs
         ORDER BY started_at DESC LIMIT 250`,
     ).toArray().map((row) => {
       if (row.status === "waiting" || row.status === "steering") {
@@ -4034,7 +4034,7 @@ export class WorkstreamObjectProductService {
         if (input.expectedLatestHarnessRunId) {
           const latest = first(this.storage.sql.exec<{ run_id: string }>(
             `SELECT run_id FROM runs WHERE parent_tool_call_id IS NULL
-              AND origin != 'block_dashboard_block' ORDER BY created_at DESC, run_id DESC LIMIT 1`,
+              ORDER BY created_at DESC, run_id DESC LIMIT 1`,
           ));
           if (latest?.run_id !== input.expectedLatestHarnessRunId) {
             throw new ApiError(409, "terminal_repository_request_stale", "The work stream changed before this message was admitted");
@@ -4813,7 +4813,7 @@ export class WorkstreamObjectProductService {
       execution_context_json: string | null;
     }>(
       `SELECT run_id, status, trigger_part_id, model, execution_context_json FROM runs
-        WHERE substream_id = '0' AND parent_tool_call_id IS NULL AND origin != 'block_dashboard_block'
+        WHERE substream_id = '0' AND parent_tool_call_id IS NULL
         ORDER BY created_at DESC LIMIT 1`,
     ));
     if (!latest || !["failed", "cancelled"].includes(latest.status)) {
@@ -4885,7 +4885,6 @@ export class WorkstreamObjectProductService {
         const stillLatest = first(sql.exec<{ run_id: string; status: string }>(
           `SELECT run_id, status FROM runs
             WHERE substream_id = '0' AND parent_tool_call_id IS NULL
-              AND origin != 'block_dashboard_block'
             ORDER BY created_at DESC, run_id DESC LIMIT 1`,
         ));
         if (!stillLatest || stillLatest.run_id !== latest.run_id

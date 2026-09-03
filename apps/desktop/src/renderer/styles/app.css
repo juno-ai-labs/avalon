@@ -2662,51 +2662,6 @@ pre {
 
 .transcript-scroll { min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scroll-behavior: auto; scrollbar-gutter: stable; }
 
-/* HyperSight — the second panel of the right sidebar, sharing the inspector
-   rail's frame, grab handle, and header through `.rail-surface`. */
-.block-dashboard-rail .rail-title { gap: 7px; }
-.block-dashboard-rail .rail-title h2 { margin-left: 0; }
-.block-dashboard-rail-icon { align-items: center; color: var(--av-sys-color-brand-ink); display: flex; }
-.block-dashboard-block-count { color: var(--av-sys-color-text-muted); font-size: 9.5px; }
-.block-dashboard-panel { min-width: 0; }
-.block-dashboard-block-list { padding: 8px 10px 10px; }
-.block-dashboard-block { display: grid; gap: 7px; grid-template-columns: minmax(0, 1fr) 29px; margin-bottom: 9px; min-height: 96px; position: relative; transition: opacity 100ms ease, transform 100ms ease; }
-.block-dashboard-block-card { background: var(--av-sys-color-surface-raised); border: 1px solid var(--av-ref-color-line-4); border-radius: var(--av-sys-size-radius-lg); color: var(--av-sys-color-text-subtle); line-height: 1.48; max-height: 260px; min-height: 96px; overflow-y: auto; padding: 12px 14px; }
-.block-dashboard-block-card .markdown-body { font-size: 12px; }
-.block-dashboard-block-card .markdown-body > :first-child { margin-top: 0; }
-.block-dashboard-block-card .markdown-body > :last-child { margin-bottom: 0; }
-.block-dashboard-block-controls { align-items: center; display: flex; flex-direction: column; gap: 3px; }
-.block-dashboard-block-controls > .icon-button { color: color-mix(in srgb, var(--av-sys-color-brand-base) 72%, var(--av-sys-color-text-muted)); height: 28px; width: 28px; }
-.block-dashboard-block-controls > .icon-button:hover { background: color-mix(in srgb, var(--av-sys-color-brand-base) 10%, var(--av-sys-color-surface-raised)); color: var(--av-sys-color-brand-ink); }
-.block-dashboard-block-hover-controls { align-items: center; display: flex; flex-direction: column; gap: 3px; opacity: 0; transform: translateY(-3px); transition: opacity 100ms ease, transform 100ms ease; }
-.block-dashboard-block:hover .block-dashboard-block-hover-controls,
-.block-dashboard-block:focus-within .block-dashboard-block-hover-controls,
-.block-dashboard-block.is-dragging .block-dashboard-block-hover-controls { opacity: 1; transform: translateY(0); }
-.block-dashboard-grip { align-items: center; background: transparent; border-radius: var(--av-sys-size-radius-md); color: var(--av-sys-color-text-muted); cursor: grab; display: flex; height: 27px; justify-content: center; padding: 0; width: 27px; }
-.block-dashboard-grip:hover:not(:disabled) { background: var(--av-sys-color-surface-raised); color: var(--av-sys-color-text-subtle); }
-.block-dashboard-grip:active { cursor: grabbing; }
-.block-dashboard-grip:disabled { cursor: not-allowed; opacity: .4; }
-.block-dashboard-delete { color: var(--av-sys-color-danger-base) !important; height: 27px !important; width: 27px !important; }
-.block-dashboard-delete:hover { background: var(--av-sys-color-danger-tint) !important; color: var(--av-sys-color-danger-strong) !important; }
-.block-dashboard-block.is-dragging .block-dashboard-block-card { border-style: dashed; opacity: .28; }
-.block-dashboard-drag-ghost { left: 0; max-height: 190px; opacity: .88; pointer-events: none; position: fixed; top: -10000px; z-index: 10000; }
-.block-dashboard-block-placeholder { color: var(--av-ref-color-neutral-9); font-size: 12px; margin: 0; }
-.block-dashboard-block-state { align-items: center; color: var(--av-ref-color-neutral-10); display: flex; font-size: 11px; gap: 7px; min-height: 70px; justify-content: center; }
-.block-dashboard-block-state.is-error { color: var(--av-sys-color-danger-soft); }
-.block-dashboard-block-streaming { display: grid; gap: 9px; }
-.block-dashboard-block-stream-status { align-items: center; border-top: 1px solid var(--av-ref-color-line-4); color: var(--av-ref-color-neutral-10); display: flex; font-size: 10px; gap: 6px; padding-top: 8px; }
-.block-dashboard-block-stream-status.is-error { color: var(--av-sys-color-danger-soft); }
-.block-dashboard-add-block { align-items: center; background: transparent; border: 1px dashed var(--av-ref-color-line-4); border-radius: var(--av-sys-size-radius-lg); color: var(--av-ref-color-neutral-10); display: flex; font-size: 11px; gap: 7px; justify-content: center; min-height: 43px; width: 100%; }
-.block-dashboard-add-block:hover:not(:disabled) { background: var(--av-sys-color-surface-raised); border-color: var(--av-ref-color-line-6); color: var(--av-sys-color-text-subtle); }
-.block-dashboard-add-block:disabled { cursor: not-allowed; opacity: .45; }
-.block-dashboard-panel-error { color: var(--av-sys-color-danger-soft); font-size: 10.5px; margin: 9px 36px 0 0; }
-.block-dashboard-load-state { align-items: center; display: flex; flex-direction: column; gap: 10px; justify-content: center; padding: 46px 14px; }
-.block-dashboard-load-state .center-state { background: transparent; }
-.block-dashboard-load-state .inline-error { margin: 0; }
-.block-dashboard-prompt-field { display: grid; gap: 7px; }
-.block-dashboard-prompt-field > span { color: var(--av-sys-color-text-muted); font-size: 11px; }
-.block-dashboard-prompt-field textarea { background: var(--av-ref-color-neutral-1); border: 1px solid var(--av-ref-color-line-4); border-radius: var(--av-sys-size-radius-lg); color: var(--av-sys-color-text-default); line-height: 1.5; min-height: 142px; outline: 0; padding: 10px 11px; resize: vertical; width: 100%; }
-.block-dashboard-prompt-field textarea:focus { border-color: var(--av-ref-color-line-6); }
 .unread-divider { align-items: center; color: var(--av-sys-color-accent-base); display: flex; font-size: 10.5px; font-weight: 620; gap: 9px; margin: 8px 0 14px; }
 .unread-divider::before,
 .unread-divider::after { background: var(--av-sys-color-accent-tint); content: ''; flex: 1; height: 1px; }
@@ -3757,13 +3712,11 @@ button.citation-card:hover { background: var(--av-sys-color-surface-elevated-hov
 .mention-confirm-person > span { display: flex; flex-direction: column; }
 .mention-confirm-person small { color: var(--av-sys-color-text-muted); font-size: 11px; }
 
-/* Right sidebar: the context inspector rail and HyperSight */
+/* Right sidebar: the context inspector rail */
 
 .rail-scrim { display: none; }
-/* HyperSight and the inspector share one slot, so the width lives on the shell
-   rather than on either panel: registering it as a length lets the slot animate
-   as it changes hands, carrying the panel, the handle beside it, and the room
-   the main pane leaves for it along with it. */
+/* The width lives on the shell so the panel, handle, and room the main pane
+   leaves for it animate together. */
 @property --rail-width {
   syntax: '<length>';
   inherits: true;
@@ -3779,14 +3732,11 @@ button.citation-card:hover { background: var(--av-sys-color-surface-elevated-hov
    column's minimum is the items' min-content, and a markdown document's
    min-content is its longest unwrapped line — so the panel grew with the file
    and `.rail-scroll`'s `overflow-x: hidden` clipped the prose instead of
-   wrapping it to the slot. HyperSight already set `min-width: 0` on
-   `.block-dashboard-panel`; the inspector document never got the equivalent. */
+   wrapping it to the slot. */
 .rail-surface { background: var(--av-sys-color-surface-subtle); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-sys-size-radius-lg); bottom: 8px; box-shadow: var(--av-sys-elevation-shadow-rail); display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: 45px minmax(0, 1fr); min-width: 320px; outline: 0; overflow: hidden; position: fixed; right: 8px; top: 8px; width: var(--rail-slot); z-index: 40; }
-/* The panel that just lost the slot dissolves over the one that took it. Only
-   the outgoing panel animates: the incoming one is already opaque underneath,
-   so the frame itself never thins out mid-hand-off. */
-.rail-surface.is-leaving { animation: rail-hand-off 190ms linear forwards; pointer-events: none; z-index: 41; }
-@keyframes rail-hand-off {
+/* A dismissed panel dissolves without making the frame disappear abruptly. */
+.rail-surface.is-leaving { animation: rail-exit-fade 190ms linear forwards; pointer-events: none; z-index: 41; }
+@keyframes rail-exit-fade {
   from { opacity: 1; }
   to { opacity: 0; }
 }
@@ -3806,7 +3756,7 @@ button.citation-card:hover { background: var(--av-sys-color-surface-elevated-hov
 .sidebar-resizer:focus-visible > span,
 .sidebar.is-resizing .sidebar-resizer > span { background: var(--av-sys-color-brand-ink); height: 54px; }
 .rail-resizer { bottom: 8px; position: fixed; right: calc(var(--rail-slot) + 8px); top: 8px; width: 12px; z-index: 41; }
-/* A drag has to track the pointer exactly; only a hand-off is animated. */
+/* A drag has to track the pointer exactly; only closing the rail is animated. */
 .is-resizing-rail { cursor: col-resize !important; user-select: none !important; }
 .is-resizing-rail .workspace-shell { transition: none; }
 .rail-header { align-items: center; border-bottom: 1px solid var(--av-ref-color-line-2); display: flex; justify-content: space-between; padding: 0 7px 0 11px; }
@@ -4715,7 +4665,7 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   .automation-update-banner { grid-template-columns: 30px minmax(0, 1fr); }
   .automation-update-banner > .button { grid-column: 1 / -1; justify-content: center; }
   .automation-update-details > div { grid-template-columns: 1fr; }
-  .workstream-header-actions > .icon-button:not(.block-dashboard-toggle):not(:last-child) { display: none; }
+  .workstream-header-actions > .icon-button:not(.panel-toggle):not(:last-child) { display: none; }
   .socket-state:not(.header-socket-state) { display: none; }
 }
 

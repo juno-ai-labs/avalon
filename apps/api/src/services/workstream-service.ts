@@ -26,12 +26,10 @@ import { activateWorkstreamLoop, publishWorkstreamEvent } from "./integrations";
 import { logStructuredEvent, logWarn } from "../observability/logger";
 import { scheduledWorkstreamModelForExisting } from "./agent-model-flags";
 import {
-  issueBlockDashboardBlockSocketTicket,
   issueSocketTicket,
   issueWorkstreamControlSocketTicket,
   WORKSTREAM_SOCKET_TICKET_TTL_SECONDS,
 } from "./socket-service";
-import { loadBlockDashboard } from "./block-dashboard-service";
 import { WorkstreamDirectoryService } from "./workstream-directory-service";
 import {
   activityOriginLocator,
@@ -864,22 +862,6 @@ export class WorkstreamService {
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
     url.pathname = `/socket/workstreams/${id}`;
     url.search = new URLSearchParams({ ticket }).toString();
-    return { url: url.toString(), ticket };
-  }
-
-  async blockDashboardBlockSocketTicket(id: string, blockId: string) {
-    await this.requireVisibleWorkstream(id);
-    const blockDashboard = await loadBlockDashboard(this.env, this.auth.workspaceId, id);
-    if (!blockDashboard.blocks.some((block) => block.id === blockId)) {
-      throw new ApiError(404, "block_dashboard_block_not_found", "HyperSight block not found");
-    }
-    const ticket = await issueBlockDashboardBlockSocketTicket(this.env, this.auth, id, blockId);
-    const url = new URL(this.env.PUBLIC_API_BASE_URL);
-    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-    url.pathname = `/socket/workstreams/${id}/block-dashboard/blocks/${blockId}`;
-    // This endpoint has no legacy desktop consumer. Unlike the older socket
-    // issuers, it never puts the bearer in a URL that Cloudflare may log.
-    url.search = "";
     return { url: url.toString(), ticket };
   }
 

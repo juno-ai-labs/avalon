@@ -199,7 +199,6 @@ export function parseTelemetryProductIntent(value: unknown): DesktopTelemetryPro
     || semanticKind === 'surface_viewed'
     || semanticKind === 'automation_builder_started'
     || semanticKind === 'automation_opened'
-    || semanticKind === 'hypersight_opened'
     || semanticKind === 'workstream_resource_action_completed'
     || semanticKind === 'recording_start_completed'
     || semanticKind === 'recording_terminal'

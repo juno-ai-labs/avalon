@@ -95,10 +95,10 @@ describe("which harness-run operations commit a directory projection", () => {
     storage.latestRootRun();
     storage.runIsActive({ runId: RUN });
     storage.triggerPartId({ runId: RUN });
-    storage.staleLeaseRuns({ blockOnly: false, now: NOW + 90_000, limit: 10 });
+    storage.staleLeaseRuns({ now: NOW + 90_000, limit: 10 });
     storage.reapableInlineChildren({ now: NOW + 90_000, limit: 10 });
     storage.residualRepairCandidates({
-      markerEventKey: "residual_receipts_settled", blockOnly: false, limit: 10,
+      markerEventKey: "residual_receipts_settled", limit: 10,
     });
     storage.recordRunProgress({
       runId: RUN, attemptId: "a1", owner: "o1", now: NOW + 1_000,
