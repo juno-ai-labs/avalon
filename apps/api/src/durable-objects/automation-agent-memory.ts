@@ -1,4 +1,4 @@
-import { AutomationMemoryTableSchema } from "@rally/contracts";
+import { AutomationMemoryTableSchema, MEMORY_RECALL_QUERY_LIMIT } from "@rally/contracts";
 import { z } from "zod";
 
 import { sha256 } from "../lib/crypto";
@@ -50,7 +50,7 @@ const FenceSchema = z.strictObject({
 });
 
 const SearchSchema = z.union([
-  z.strictObject({ query: z.string().trim().min(1).max(2_000) }),
+  z.strictObject({ query: z.string().trim().min(1).max(MEMORY_RECALL_QUERY_LIMIT) }),
   z.strictObject({ memoryItemId: z.string().uuid() }),
 ]);
 const AddSchema = z.strictObject({
@@ -88,7 +88,7 @@ const TableCreateSchema = z.strictObject({
   keyColumns: z.array(z.string().trim().min(1).max(120)).min(1),
   rationale: z.string().trim().min(1).max(2_000),
 });
-const TableSearchSchema = z.strictObject({ query: z.string().trim().min(1).max(2_000) });
+const TableSearchSchema = z.strictObject({ query: z.string().trim().min(1).max(MEMORY_RECALL_QUERY_LIMIT) });
 const TableDescribeSchema = z.strictObject({ memoryTableId: z.string().min(1) });
 const PredicateSchema = z.strictObject({
   column: z.string().min(1),

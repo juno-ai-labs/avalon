@@ -1241,6 +1241,41 @@ silently return every test to the shared key while each still passes alone.
 
 ## Changelog
 
+### 2026-09-03 — The assembled memory-recall query is bounded before run setup uses it
+
+**What changed:** `freezeRunMemoryContext` clamps its query to
+`MEMORY_RECALL_QUERY_LIMIT` before recall, hashing or persistence. That constant
+moved to `@rally/contracts`, the one dependency the memory service, the memory
+tools and `AutomationAgent` all share, and every recall-query bound now reads it
+instead of repeating the literal. `workstream_harness_threw` logs stack *frames*
+rather than the first six lines of `stack`, and `table_search` declares the
+`minLength`/`maxLength` its executor enforces.
+
+**Why:** The recall query is assembled from run content — `memoryQueryParts`
+joins the objective, the trigger context and the entire text of the triggering
+message — and an automation run sends it to the automation memory tool's
+`search`, whose `query` is capped. An automation triggered by a long email or
+chat message therefore built an over-long query, and the `ZodError` escaped
+inside run setup: before the frozen scope, before the first inference, before
+any tool. The run failed on every attempt and stayed failed.
+
+The logging change is why that took days to attribute. `stack` is the message
+followed by the frames, and a `ZodError`'s message is multi-line JSON: twelve
+lines of message and five frames for this error, so the first six lines were
+message only — on the one log written to record *where* a run died, while
+`reason` already carried *what*.
+
+**What a future change has to respect:** the clamp belongs in
+`freezeRunMemoryContext` rather than at the call site, because that is where the
+automation and workspace recall paths converge and where the query reaches the
+hash and the persisted text; clamping later would freeze a query the run did not
+search with, and a replay would not match it. The truncation is not free on both
+branches — the workspace branch embeds the query for a vector search, so a
+prefix retrieves differently — and it is accepted because `memoryQueryParts`
+appends the objective first and the triggering message last, so what is dropped
+is the tail of a long message rather than the objective. Reordering those parts
+would change what truncation costs.
+
 ### 2026-09-02 — A deploy no longer kills the runs it interrupts
 
 **What changed:** `persistScope` and `persistPluginActivation` reuse an existing
