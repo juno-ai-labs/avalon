@@ -1878,6 +1878,16 @@ function isCollapsedWorkRow(message: Message): boolean {
  * carried the settled response total, which is the signal that the response it
  * belonged to is over.
  *
+ * The count is only a proxy for "this accordion is the whole response", and it
+ * fails across a seam: a response whose earlier stretches were never loaded
+ * shows one accordion here and produced several. So a seam landing on a
+ * response's own work also marks its coverage **partial**, and a partial
+ * response never hands its total to a drawer — the number would claim time the
+ * drawer cannot show, and would jump from the drawer back to the header the
+ * moment the gap was filled. The mark is not sticky: the next row a person read
+ * re-establishes coverage, because a response starting after a row this client
+ * is holding starts in the part of the transcript it has.
+ *
  * The accordion keeps the attention ordinal of the first row it swallowed,
  * because the unread divider is placed at the first row carrying one and the
  * machinery of an unread turn belongs under that divider with the answer it
@@ -1897,73 +1907,91 @@ export function collapseSettledWorkIntoAccordion(messages: readonly Message[]): 
   // moves onto an accordion only while that count is one, because only then is
   // the accordion the whole of what the total measured.
   let accordionsInResponse = 0;
+  // Whether this response's earlier stretches may be sitting in a part of the
+  // transcript nobody has loaded, which makes the count above a count of the
+  // rows this client happens to hold rather than of the response's own work.
+  let responseCoverageIsPartial = false;
   for (const message of messages) {
     const answer = message.messageType === 'text' && message.authorType === 'agent';
-    // Anything else a person reads ends the response these are counted over, as
-    // does a row opening a stretch nobody has loaded — whatever preceded it may
-    // be sitting in the part that was never fetched.
-    if (message.precededByTranscriptGap || !(answer || isCollapsedWorkRow(message))) {
+    if (!(answer || isCollapsedWorkRow(message))) {
+      // Anything else a person reads ends the response these are counted over.
+      // It also settles coverage: a response that starts after a row this
+      // client is looking at starts in the part of the transcript it holds.
       accordionsInResponse = 0;
+      responseCoverageIsPartial = false;
+    } else if (message.precededByTranscriptGap) {
+      // The response's own work opens a newly loaded island. What came before
+      // it was never fetched and may be more of this same response, so no
+      // accordion built from here on is known to be the response's only one.
+      accordionsInResponse = 0;
+      responseCoverageIsPartial = true;
     }
-    if (!answer
-      // The answer opens a newly loaded island, so what sits above it in this
-      // list is the previous island's work, not this run's.
-      || message.precededByTranscriptGap) {
-      rows.push(message);
-      continue;
+    // An answer carrying the seam is itself the first row of a newly loaded
+    // island, so the machinery above it in this list belongs to an earlier one
+    // and is not this answer's to fold.
+    const foldable = answer && message.precededByTranscriptGap !== true;
+    let collapsed: Message[] = [];
+    if (foldable) {
+      let start = rows.length;
+      while (start > 0 && isCollapsedWorkRow(rows[start - 1]!)) {
+        start -= 1;
+        // The seam's own row opens the visible stretch, so the run starts at it
+        // rather than before it.
+        if (rows[start]!.precededByTranscriptGap) break;
+      }
+      collapsed = rows.splice(start);
     }
-    let start = rows.length;
-    while (start > 0 && isCollapsedWorkRow(rows[start - 1]!)) {
-      start -= 1;
-      // The seam's own row opens the visible stretch, so the run starts at it
-      // rather than before it.
-      if (rows[start]!.precededByTranscriptGap) break;
-    }
-    const collapsed = rows.splice(start);
-    const summary = message.workSummary;
+    const summary = answer ? message.workSummary : undefined;
     if (collapsed.length === 0) {
       rows.push(message);
-      // A settled response total ends the response it belonged to, so the next
-      // one starts counting its own accordions from zero.
-      if (summary !== undefined) accordionsInResponse = 0;
-      continue;
+    } else {
+      accordionsInResponse += 1;
+      const movesTotal = summary !== undefined
+        && accordionsInResponse === 1
+        && !responseCoverageIsPartial;
+      const first = collapsed[0]!;
+      rows.push({
+        ...first,
+        id: `${first.id}:work-accordion`,
+        messageType: 'work_accordion',
+        // The unread divider is placed at the first row carrying an ordinal, so
+        // a row that swallowed the ones that carried it has to carry it too or
+        // the divider slides down past the accordion and leaves an unread
+        // turn's work sitting in the read section above it. Acknowledgement is
+        // the separate question, and the answer there is still no: see the
+        // docblock.
+        attentionSequenceNumber: collapsed.find(
+          (row) => row.attentionSequenceNumber != null,
+        )?.attentionSequenceNumber ?? null,
+        // The row's own work is inside it now; nothing downstream should read
+        // the first row's timing back off the wrapper.
+        pluginActivity: undefined,
+        thoughtEvent: undefined,
+        toolEvent: undefined,
+        workAccordion: {
+          // A stretch that is not known to be the whole response has no honest
+          // total of its own — the rows inside overlap, so summing them
+          // overstates it — and reads as a plain "Worked", the same sentence an
+          // unknown duration already produces.
+          durationMs: movesTotal ? summary.durationMs : null,
+          ...(movesTotal && summary.timingAccuracy !== undefined
+            ? { timingAccuracy: summary.timingAccuracy }
+            : {}),
+          rows: collapsed,
+        },
+      });
+      const host: Message = { ...message };
+      if (movesTotal) delete host.workSummary;
+      rows.push(host);
     }
-    accordionsInResponse += 1;
-    const movesTotal = summary !== undefined && accordionsInResponse === 1;
-    const first = collapsed[0]!;
-    rows.push({
-      ...first,
-      id: `${first.id}:work-accordion`,
-      messageType: 'work_accordion',
-      // The unread divider is placed at the first row carrying an ordinal, so a
-      // row that swallowed the ones that carried it has to carry it too or the
-      // divider slides down past the accordion and leaves an unread turn's work
-      // sitting in the read section above it. Acknowledgement is the separate
-      // question, and the answer there is still no: see the docblock.
-      attentionSequenceNumber: collapsed.find(
-        (row) => row.attentionSequenceNumber != null,
-      )?.attentionSequenceNumber ?? null,
-      // The row's own work is inside it now; nothing downstream should read the
-      // first row's timing back off the wrapper.
-      pluginActivity: undefined,
-      thoughtEvent: undefined,
-      toolEvent: undefined,
-      workAccordion: {
-        // A stretch that is not the whole response has no honest total of its
-        // own — the rows inside overlap, so summing them overstates it — and
-        // reads as a plain "Worked", the same sentence an unknown duration
-        // already produces.
-        durationMs: movesTotal ? summary.durationMs : null,
-        ...(movesTotal && summary.timingAccuracy !== undefined
-          ? { timingAccuracy: summary.timingAccuracy }
-          : {}),
-        rows: collapsed,
-      },
-    });
-    const host: Message = { ...message };
-    if (movesTotal) delete host.workSummary;
-    rows.push(host);
-    if (summary !== undefined) accordionsInResponse = 0;
+    // A settled response total is the one signal in the feed saying the
+    // response it belonged to is over — wherever the answer carrying it ended
+    // up, folded or not. The next response counts its own accordions from zero,
+    // over the loaded rows that follow it.
+    if (summary !== undefined) {
+      accordionsInResponse = 0;
+      responseCoverageIsPartial = false;
+    }
   }
   return rows.map((message, index) => ({ ...message, sequenceNumber: index + 1 }));
 }
