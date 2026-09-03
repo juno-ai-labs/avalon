@@ -9,6 +9,16 @@
   font-family: var(--av-sys-font-family-ui);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
+
+  /* How far into the page the window's own buttons reach, when the platform
+     draws them over the web contents rather than in a frame above it. Zero is
+     the honest default: only macOS's `hiddenInset` title bar overlaps us, so
+     `AppShell` raises this to the band's real width there and nowhere else —
+     an unconditional gutter would indent the header on Windows and Linux for
+     buttons that are not drawn inside the window at all. Anything laid out
+     against the top-left of the window reads it rather than measuring the
+     traffic lights again. */
+  --av-cmp-window-controls-inset: 0px;
 }
 
 * {
@@ -575,6 +585,14 @@ pre {
   position: relative;
   width: 100%;
 }
+
+/* macOS draws the traffic lights over the web contents: three 12px buttons on a
+   20px pitch, from the `trafficLightPosition` the main process sets at x: 18 —
+   so they end at 70px, and this is that plus the header's own 12px of air. The
+   geometry stays in the stylesheet rather than in the component that adds the
+   class, so the one other surface that reserves this band — `.meeting-titlebar`,
+   in a window with no shell to carry a class — can be read against it. */
+.workspace-shell.has-overlay-window-controls { --av-cmp-window-controls-inset: 82px; }
 
 /* The frame a theme's backdrop document renders in. It sits between the shell's
    painted backdrop and every pane, takes no pointer, and takes no focus — the
@@ -4222,8 +4240,15 @@ button.citation-card:hover { background: var(--av-sys-color-surface-elevated-hov
   .workspace-shell { --rail-slot: min(var(--rail-width), calc(100vw - 16px)); }
   .automation-composer-wrap,
   .rail-open .automation-composer-wrap { transform: translateX(-50%); width: calc(100% - 50px); }
+  /* The sidebar has left the flow, and with it the 48px title bar that was
+     holding the window's own buttons clear of anything readable. These headers
+     inherit that job for as long as it is gone: the drawer button, the title,
+     and the run status all start after the buttons rather than under them,
+     where on macOS they are not only illegible but unclickable — the traffic
+     lights are chrome above the web contents and take the press. Off macOS the
+     inset is 0 and this stays the 8px it has always been. */
   .workstream-header,
-  .automation-overview-header { padding-left: 8px; }
+  .automation-overview-header { padding-left: max(8px, var(--av-cmp-window-controls-inset)); }
 }
 
 @media (max-width: 760px) {
