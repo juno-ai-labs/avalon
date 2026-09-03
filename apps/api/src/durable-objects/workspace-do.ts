@@ -9223,6 +9223,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
               attention_code, projected_at
           FROM automation_directory
          WHERE workspace_id = ? AND lifecycle <> 'deleted'
+           AND scope IN ('personal', 'workspace')
            AND (scope = 'workspace' OR author_user_id = ?)
          ORDER BY title COLLATE NOCASE, automation_id
          LIMIT ?`, workspaceId, userId, SIDEBAR_LIST_LIMIT).toArray().map((row) => ({
