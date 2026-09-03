@@ -52,7 +52,7 @@ import { pluginGroupIconForContract, type PluginGroupIcon } from '../lib/plugin-
 import { isPluginBrandMark, type PluginBrandMark } from '../lib/plugin-marks';
 import { reportTelemetryProductIntent } from '../lib/telemetry';
 import { isThinkingEvent, thoughtVerb } from '../lib/transcript';
-import type { ElicitationData, Message, MessageMention } from '../lib/types';
+import type { ElicitationData, Message, MessageMention, WorkTotal } from '../lib/types';
 import { useTextClamped } from '../lib/use-text-clamped';
 import { AgentWorkTiming } from './agent-work-timing';
 import {
@@ -1465,14 +1465,18 @@ function SystemMessageBlock({ disclosure, message }: { disclosure?: RowDisclosur
 }
 
 /**
- * How a settled response's total reads in a message header.
+ * How a settled total reads, in a message header or on an accordion.
  *
- * Null is an unknown duration, not a zero one, and the header then says only
- * that Rally worked — the same rule the plugin rows follow, for the same
- * reason: a transcript that cannot see how long something took must not
- * report a time it does not have.
+ * It takes the `WorkTotal` both of those carry rather than one field's own
+ * type, because the total moves between them and this is the one place either
+ * is turned into a sentence.
+ *
+ * Null is an unknown duration, not a zero one — or a stretch with no total of
+ * its own — and the line then says only that Rally worked: the same rule the
+ * plugin rows follow, for the same reason. A transcript that cannot see how
+ * long something took must not report a time it does not have.
  */
-function workSummaryLabel(summary: NonNullable<Message['workSummary']>): string {
+function workSummaryLabel(summary: WorkTotal): string {
   if (summary.durationMs === null) return 'Worked';
   const duration = formatDuration(summary.durationMs) ?? '0ms';
   return summary.timingAccuracy === 'upper_bound'
@@ -1644,14 +1648,17 @@ function WorkAccordionRow({ message }: { message: Message }): React.JSX.Element 
 }
 
 /**
- * A settled run's work, closed behind the total it added up to.
+ * One finished stretch of a run's work, closed behind the answer it produced.
  *
- * "Worked for 41m 17s", with the plugin and thinking rows behind a chevron.
- * While the loop runs those rows are the progress a reader is watching and the
- * feed shows them; once it finishes they are a receipt for a fact the one line
- * above the answer already states, and a reader who wants the breakdown asks
- * for it. See `collapseSettledWorkIntoAccordion` for what goes in and why the
- * total moved out of the message header to get here.
+ * "Worked for 41m 17s" where the stretch is the whole response, a plain
+ * "Worked" where the run narrated itself into several and no one of them is
+ * what the response timer measured — with the plugin and thinking rows behind a
+ * chevron either way. While a stretch is running those rows are the progress a
+ * reader is watching and the feed shows them; once an answer reports on them
+ * they are a receipt for a sentence the reader has now read, and a reader who
+ * wants the breakdown asks for it. See `collapseSettledWorkIntoAccordion` for
+ * what goes in and when the total moves out of the message header to get
+ * here.
  *
  * The control is the markdown headings' collapse: the same `ChevronRight` at
  * the same size and weight, in the same muted neutral, rotating a quarter turn
@@ -1677,8 +1684,9 @@ function WorkAccordionBlock({ disclosure, message }: {
   const accordion = message.workAccordion;
   if (!accordion) return null;
   const expanded = disclosure ? disclosure.expanded.has(message.id) : locallyExpanded;
-  // The same sentence the message header printed before this row existed, from
-  // the same function: the total did not change, only where it is written.
+  // The same sentence the message header prints, from the same function: where
+  // the total moved here it did not change, only where it is written, and where
+  // there is none this row says exactly what an unknown duration says.
   const label = workSummaryLabel(accordion);
   return (
     <div className="work-accordion">
