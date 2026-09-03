@@ -48,7 +48,6 @@ import { ApiError } from "../lib/api-error";
 import { connectionFromRow } from "../mappers/connection";
 import {
   connectorRegistryForEnv,
-  customMcpConnectorConfig,
   githubConnectorConfig,
   xConnectorConfig,
 } from "../lib/connector-registry";
@@ -2329,6 +2328,7 @@ export class ConnectionService {
     }
     const config = this.customMcpConfig(connection);
     const auth = this.requireAuth();
+    await this.assertCustomMcpPolicyIsUsable(connection, toolPolicy);
     await this.env.DB.prepare(
       `UPDATE connector_connections
        SET config_json = json_patch(config_json, ?), updated_at = ?
@@ -2350,10 +2350,17 @@ export class ConnectionService {
     return this.getCustomMcpSettings(id);
   }
 
+  /**
+   * The registry lookup is the whole check.
+   *
+   * Every other connector can be absent for want of credentials, and its
+   * service method says so with a 503. This one has none to be missing —
+   * `customMcpConnectorConfig` returns a callback URI and cannot fail — so a
+   * guard here would read as protection while catching nothing. A region that
+   * somehow did not register it raises `unsupported_capability` from the
+   * registry, which is the honest answer.
+   */
   private customMcpAdapter(): ResolvedConnectorAdapter {
-    if (!customMcpConnectorConfig(this.env)) {
-      throw new ApiError(503, "custom_mcp_unavailable", "Custom MCP servers are not configured in this Rally region");
-    }
     return this.registry().get(CUSTOM_MCP_CONNECTOR_TYPE);
   }
 
@@ -2408,6 +2415,33 @@ export class ConnectionService {
       }
     }
     return sealed;
+  }
+
+  /**
+   * Refuse a policy that would leave this connection able to call nothing.
+   *
+   * Creation already refuses that state, and narrowing an existing connection
+   * into it silently is the same outcome arrived at a different way: the plugin
+   * stops loading, and the only place that says why is a settings pane the
+   * person has no reason to reopen.
+   *
+   * A server that cannot be reached does not block the change. A stored belief
+   * about a third party is not evidence, and refusing somebody's setting
+   * because their server is down right now would be the worse mistake.
+   */
+  private async assertCustomMcpPolicyIsUsable(
+    connection: StoredConnection,
+    toolPolicy: CustomMcpToolPolicy,
+  ): Promise<void> {
+    if (toolPolicy === "all_tools") return;
+    const inventory = await this.readCustomMcpInventory(connection).catch(() => null);
+    if (!inventory || inventory.tools.length === 0) return;
+    if (inventory.tools.some((tool) => tool.readOnly)) return;
+    throw new ApiError(
+      422,
+      "custom_mcp_policy_admits_nothing",
+      "This MCP server marks none of its tools read-only, so a read-only connection could call nothing",
+    );
   }
 
   private async readCustomMcpInventory(connection: StoredConnection) {
