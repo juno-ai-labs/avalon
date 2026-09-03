@@ -4,6 +4,7 @@ export const desktopSettingsSections = [
   'workspace',
   'connections',
   'github',
+  'custom-mcp',
   'application',
 ] as const;
 

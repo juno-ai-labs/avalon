@@ -1,6 +1,8 @@
 import { RALLY_HEADERS } from "@rally/contracts/http-headers";
 import {
+  CUSTOM_MCP_CONNECTOR_TYPE,
   ConnectorError,
+  CustomMcpCapabilities,
   GoogleCapabilityScopes,
   GranolaCapabilities,
   LinearCapabilityScopes,
@@ -14,6 +16,7 @@ import {
   discoverGitHubConnectionRepositories,
   getGitHubInstallation,
   githubRepositoryAccessPolicy,
+  listCustomMcpToolInventory,
   type AuthorizedConnectorConnection,
   type ConnectorConnectionContext,
   type GitHubWebhookResourceDiscovery,
@@ -26,12 +29,15 @@ import type {
   ConnectorOAuthAttempt,
   ConnectorOAuthProvider,
   ConnectorOAuthStart,
+  CreateCustomMcpConnectionRequestSchema,
   CreateWebhookConnectionRequestSchema,
+  CustomMcpConnectionSettings,
+  CustomMcpToolPolicy,
   GitHubRepositoryAccessSettings,
   UpdateGitHubRepositoryAccessSettings,
   Scope,
 } from "@rally/contracts";
-import { asUserId, asWorkspaceId } from "@rally/contracts";
+import { CustomMcpConnectionConfigSchema, asUserId, asWorkspaceId } from "@rally/contracts";
 import { addWorkspaceTarget } from "@rally/contracts/workspace-target";
 import { newId, nowIso } from "@rally/db";
 import type { z } from "zod";
@@ -40,7 +46,12 @@ import { apiTelemetryEnvelope, emitAuthenticatedApiTelemetry } from "../telemetr
 import { linearNativeAgentEnabled, numericEnv } from "../env";
 import { ApiError } from "../lib/api-error";
 import { connectionFromRow } from "../mappers/connection";
-import { connectorRegistryForEnv, githubConnectorConfig, xConnectorConfig } from "../lib/connector-registry";
+import {
+  connectorRegistryForEnv,
+  customMcpConnectorConfig,
+  githubConnectorConfig,
+  xConnectorConfig,
+} from "../lib/connector-registry";
 import { encryptString, openString, randomToken, sealString, sha256 } from "../lib/crypto";
 import {
   compatibleDesktopDeepLink,
@@ -171,15 +182,58 @@ function connectorIngressRouteValues(
 
 type OAuthConnectorProvider = Exclude<ConnectorOAuthProvider, "google" | "github">;
 
+/** What a custom MCP authorization carries from its start to its callback. */
+interface CustomMcpStartConfiguration {
+  serverUrl: string;
+  displayName: string;
+  toolPolicy: CustomMcpToolPolicy;
+}
+
+/**
+ * The stored form of a configured endpoint.
+ *
+ * One normalization, at every entry, so the string a reconnect matches against
+ * and the string the adapter dials are the same one — `https://a.example/mcp`
+ * and `https://a.example:443/mcp` are the same server and must not read as two.
+ */
+function normalizeCustomMcpServerUrl(value: string): string {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new ApiError(422, "invalid_connector_configuration", "The MCP server URL is not a valid URL");
+  }
+  if (url.protocol !== "https:" || url.username || url.password) {
+    throw new ApiError(
+      422,
+      "invalid_connector_configuration",
+      "An MCP server URL must use HTTPS and carry no embedded credentials",
+    );
+  }
+  return url.toString();
+}
+
+/** What a person is told when their server refused the first connection. */
+function customMcpUnreachable(error: unknown): ApiError {
+  if (error instanceof ApiError) return error;
+  return new ApiError(422, "custom_mcp_unreachable", `Rally could not use this MCP server: ${connectorFailureMessage(error)}`);
+}
+
+function connectorFailureMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.slice(0, 500);
+}
+
 const TELEMETRY_CONNECTOR_TYPES = new Set([
-  "generic_webhook", "github", "google", "granola", "linear", "notion", "slack", "x",
+  "custom_mcp", "generic_webhook", "github", "google", "granola", "linear", "notion", "slack", "x",
 ]);
 
-function telemetryConnector(value: unknown): "generic_webhook" | "github" | "google" | "granola" | "linear" | "notion" | "slack" | "x" | null {
+type TelemetryConnectorType =
+  "custom_mcp" | "generic_webhook" | "github" | "google" | "granola" | "linear" | "notion" | "slack" | "x";
+
+function telemetryConnector(value: unknown): TelemetryConnectorType | null {
   const connector = String(value);
-  return TELEMETRY_CONNECTOR_TYPES.has(connector)
-    ? connector as "generic_webhook" | "github" | "google" | "granola" | "linear" | "notion" | "slack" | "x"
-    : null;
+  return TELEMETRY_CONNECTOR_TYPES.has(connector) ? connector as TelemetryConnectorType : null;
 }
 
 function telemetryConnectionHealth(value: unknown): "healthy" | "needs_reconnect" | "error" | "disabled" | "unknown" {
@@ -194,6 +248,12 @@ export interface GitHubSetupResult {
 }
 
 const providerCapabilityScopes: Record<OAuthConnectorProvider, Record<string, readonly string[]>> = {
+  // A configured server publishes its own scopes through protected-resource
+  // metadata, and Rally asks for exactly those. There is no Rally-authored
+  // scope vocabulary to map a capability onto here.
+  custom_mcp: {
+    [CustomMcpCapabilities.tools]: [],
+  },
   granola: {
     [GranolaCapabilities.personalRead]: ["mcp", "offline_access"],
     [GranolaCapabilities.workspaceRead]: [],
@@ -662,6 +722,15 @@ export class ConnectionService {
       capabilities: string[];
       connectionId?: string;
       desktopHandoffVersion: 1 | 2;
+      /**
+       * The connection-level configuration a custom MCP authorization needs.
+       *
+       * It travels through the sealed OAuth state rather than being written
+       * before consent, so an abandoned authorization leaves no half-made
+       * connection, and a callback cannot be pointed at a different server
+       * than the one the person approved.
+       */
+      customMcp?: CustomMcpStartConfiguration;
     },
   ): Promise<ConnectorOAuthStart> {
     const auth = this.requireAuth();
@@ -701,11 +770,15 @@ export class ConnectionService {
       : randomToken(32);
     const attemptId = randomToken(32);
     const expiresAt = new Date(Date.now() + 10 * 60_000).toISOString();
+    if (provider === "custom_mcp" && !input.customMcp) {
+      throw new ApiError(422, "invalid_connector_configuration", "A custom MCP authorization needs its server URL");
+    }
     const authorization = await adapter.beginAuthorization?.({
       state,
       codeChallenge: challenge,
       connectionScope: input.scope,
       scopes: capabilities.flatMap((capability) => providerCapabilityScopes[provider][capability] ?? []),
+      ...(input.customMcp ? { serverUrl: input.customMcp.serverUrl } : {}),
     });
     if (!authorization) throw new ApiError(503, "connector_oauth_unavailable", `${adapter.manifest.displayName} authorization is unavailable`);
     const statePayload = await sealString(JSON.stringify({
@@ -716,6 +789,7 @@ export class ConnectionService {
       capabilities,
       connectionId: input.connectionId ?? null,
       authorizationState: authorization.state ?? null,
+      customMcp: input.customMcp ?? null,
     }), this.env.OAUTH_STATE_ENCRYPTION_KEY);
     await this.persistOAuthStart({
       attemptId,
@@ -1003,7 +1077,16 @@ export class ConnectionService {
     const row = await this.consumeProviderState(provider, state, "connector");
     const stateData = JSON.parse(
       await openString(String(row.code_verifier_encrypted), this.env.OAUTH_STATE_ENCRYPTION_KEY),
-    ) as { provider: OAuthConnectorProvider; attemptId?: unknown; verifier: string; scope: Scope; capabilities: string[]; connectionId: string | null; authorizationState?: unknown };
+    ) as {
+      provider: OAuthConnectorProvider;
+      attemptId?: unknown;
+      verifier: string;
+      scope: Scope;
+      capabilities: string[];
+      connectionId: string | null;
+      authorizationState?: unknown;
+      customMcp?: CustomMcpStartConfiguration | null;
+    };
     const attemptId = oauthAttemptIdValue(stateData.attemptId);
     if (stateData.provider !== provider) throw new ApiError(401, "invalid_oauth_state", "The connector provider does not match this authorization");
     await this.assertOAuthStatePrincipalAllowed(row, stateData.scope);
@@ -1103,7 +1186,33 @@ export class ConnectionService {
       ?? stringField(credentials, "providerAccountName")
       ?? stringField(credentials, "workspaceName")
       ?? providerAccountId;
-    const displayName = `${adapter.manifest.displayName} · ${label}`.slice(0, 180);
+    // A custom server has no provider account to name a connection after, so
+    // the name is the one the person typed, kept verbatim the way an inbound
+    // webhook's is. Every other connector still reads as "<Provider> · <account>".
+    const customMcp = provider === "custom_mcp"
+      ? this.customMcpCompletionConfiguration(stateData.customMcp ?? null, existing)
+      : null;
+    const displayName = customMcp
+      ? customMcp.displayName.slice(0, 180)
+      : `${adapter.manifest.displayName} · ${label}`.slice(0, 180);
+    if (customMcp && providerAccountId !== customMcp.serverUrl) {
+      throw new ApiError(
+        409,
+        "custom_mcp_server_mismatch",
+        "The authorization completed against a different MCP server than the one requested",
+      );
+    }
+    const connectorConfig = {
+      region: this.env.AVALON_REGION,
+      ...verifiedIdentityConfig(provider, credentials, providerAccountId),
+      ...(customMcp
+        ? {
+            serverUrl: customMcp.serverUrl,
+            authMode: "oauth" as const,
+            toolPolicy: customMcp.toolPolicy,
+          }
+        : {}),
+    };
     const modelPluginId = await this.allocateModelPluginId(
       String(row.workspace_id),
       provider,
@@ -1122,10 +1231,7 @@ export class ConnectionService {
         providerAccountId,
         displayName,
         modelPluginId,
-        JSON.stringify({
-          region: this.env.AVALON_REGION,
-          ...verifiedIdentityConfig(provider, credentials, providerAccountId),
-        }),
+        JSON.stringify(connectorConfig),
         at,
         connectionId,
         row.workspace_id,
@@ -1152,10 +1258,7 @@ export class ConnectionService {
           Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
           JSON.stringify(grantedCapabilities),
           modelPluginId,
-          JSON.stringify({
-            region: this.env.AVALON_REGION,
-            ...verifiedIdentityConfig(provider, credentials, providerAccountId),
-          }),
+          JSON.stringify(connectorConfig),
           at,
           at,
         ), attemptId, connectionId);
@@ -1398,6 +1501,27 @@ export class ConnectionService {
         capabilities: parseJson(connection.granted_scopes_json, []),
         connectionId: id,
         desktopHandoffVersion,
+      });
+    }
+    if (connection.connector_type === CUSTOM_MCP_CONNECTOR_TYPE) {
+      const config = this.customMcpConfig(connection);
+      if (config.authMode !== "oauth") {
+        throw new ApiError(
+          422,
+          "reconnect_not_supported",
+          "This MCP connection authenticates with configured headers; edit the headers instead",
+        );
+      }
+      return this.beginProvider(CUSTOM_MCP_CONNECTOR_TYPE, {
+        scope: connection.scope,
+        capabilities: parseJson(connection.granted_scopes_json, []),
+        connectionId: id,
+        desktopHandoffVersion,
+        customMcp: {
+          serverUrl: config.serverUrl,
+          displayName: String(connection.display_name),
+          toolPolicy: config.toolPolicy,
+        },
       });
     }
     if (
@@ -2007,6 +2131,259 @@ export class ConnectionService {
       false,
     ).catch(() => undefined);
     return { connection };
+  }
+
+  /**
+   * Register a custom MCP server that authenticates with configured headers.
+   *
+   * Written and then proved: the row has to exist before the credential door
+   * can hand the adapter an authorized connection, and a server that cannot be
+   * reached is removed again rather than left as a connection whose only
+   * symptom is a plugin that silently fails to load inside somebody's run.
+   */
+  async createCustomMcp(input: z.infer<typeof CreateCustomMcpConnectionRequestSchema>) {
+    const telemetryStartedAt = Date.now();
+    const auth = this.requireAuth();
+    this.assertScopeAllowed(input.scope);
+    this.customMcpAdapter();
+    const capabilities = [CustomMcpCapabilities.tools];
+    const serverUrl = normalizeCustomMcpServerUrl(input.serverUrl);
+    const id = newId();
+    const encrypted = await encryptString(
+      JSON.stringify({ authMode: "headers", requestHeaders: input.requestHeaders }),
+      this.env.CONNECTOR_CREDENTIALS_KEY,
+      id,
+    );
+    const at = nowIso();
+    const modelPluginId = await this.allocateModelPluginId(auth.workspaceId, CUSTOM_MCP_CONNECTOR_TYPE);
+    await this.env.DB.prepare(
+      `INSERT INTO connector_connections
+       (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id, display_name,
+        encrypted_credentials, credential_iv, credential_key_version, granted_scopes_json,
+        model_plugin_id, status, cursor_json, config_json, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'healthy', '{}', ?, ?, ?)`,
+    ).bind(
+      id,
+      auth.workspaceId,
+      CUSTOM_MCP_CONNECTOR_TYPE,
+      input.scope,
+      input.scope === "personal" ? auth.userId : null,
+      serverUrl,
+      input.displayName.slice(0, 180),
+      encrypted.ciphertext,
+      encrypted.iv,
+      Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
+      JSON.stringify(capabilities),
+      modelPluginId,
+      JSON.stringify(this.customMcpConfigJson(serverUrl, "headers", input.scope, input.toolPolicy)),
+      at,
+      at,
+    ).run();
+    try {
+      await this.verifyCustomMcp(id);
+    } catch (error) {
+      await this.env.DB.prepare(
+        `DELETE FROM connector_connections WHERE id = ? AND workspace_id = ?`,
+      ).bind(id, auth.workspaceId).run();
+      throw customMcpUnreachable(error);
+    }
+    await this.syncConnectorIngressRoute(id);
+    await this.recordConnectionAudit(auth.workspaceId, auth.userId, "connector.authorized", id, {
+      provider: CUSTOM_MCP_CONNECTOR_TYPE,
+      scope: input.scope,
+      capabilities,
+      serverUrl,
+      authMode: "headers",
+    });
+    const connection = (await this.list()).find((item) => item.id === id);
+    if (!connection) throw new ApiError(500, "connection_write_failed", "The MCP connection could not be loaded");
+    await this.emitConnectorSetupCompleted(
+      await this.loadAuthorized(id),
+      "api_key",
+      Date.now() - telemetryStartedAt,
+      false,
+    ).catch(() => undefined);
+    return { connection };
+  }
+
+  /** Begin the standards-based authorization for a custom MCP server. */
+  async beginCustomMcp(input: {
+    scope: Scope;
+    displayName: string;
+    serverUrl: string;
+    toolPolicy: CustomMcpToolPolicy;
+    desktopHandoffVersion: 1 | 2;
+  }): Promise<ConnectorOAuthStart> {
+    this.customMcpAdapter();
+    return this.beginProvider(CUSTOM_MCP_CONNECTOR_TYPE, {
+      scope: input.scope,
+      capabilities: [CustomMcpCapabilities.tools],
+      desktopHandoffVersion: input.desktopHandoffVersion,
+      customMcp: {
+        serverUrl: normalizeCustomMcpServerUrl(input.serverUrl),
+        displayName: input.displayName.slice(0, 180),
+        toolPolicy: input.scope === "workspace" ? input.toolPolicy : "all_tools",
+      },
+    });
+  }
+
+  /**
+   * The server's live catalog, the annotations behind the read-only policy, and
+   * which tools that policy currently admits.
+   *
+   * A server that cannot be reached is reported as an unavailable catalog
+   * rather than as a failed request: the row's policy and endpoint are still
+   * worth showing, and the alternative is a settings screen that shows nothing
+   * at all whenever a third-party server is down.
+   */
+  async getCustomMcpSettings(id: string): Promise<CustomMcpConnectionSettings> {
+    const connection = await this.loadVisible(id);
+    this.assertCustomMcpConnection(connection);
+    const config = this.customMcpConfig(connection);
+    let tools: CustomMcpConnectionSettings["tools"] = [];
+    let toolsUnavailable: string | null = null;
+    try {
+      const inventory = await this.readCustomMcpInventory(connection);
+      tools = inventory.tools;
+    } catch (error) {
+      toolsUnavailable = connectorFailureMessage(error);
+    }
+    return {
+      connectionId: String(connection.id),
+      connectionName: String(connection.display_name),
+      scope: connection.scope,
+      serverUrl: config.serverUrl,
+      authMode: config.authMode,
+      toolPolicy: connection.scope === "workspace" ? config.toolPolicy : "all_tools",
+      toolPolicyEditable: connection.scope === "workspace",
+      tools,
+      toolsUnavailable,
+    };
+  }
+
+  /**
+   * Change which of a server's tools a workspace connection exposes.
+   *
+   * Workspace only, and not because a personal connection is trusted more: a
+   * workspace connection hands one credential to everybody, which is the
+   * situation the policy exists for. A personal connection is usable only by
+   * the person who authorized it, with their own provider identity.
+   */
+  async updateCustomMcpToolPolicy(
+    id: string,
+    toolPolicy: CustomMcpToolPolicy,
+  ): Promise<CustomMcpConnectionSettings> {
+    const connection = await this.loadAuthorized(id);
+    this.assertCustomMcpConnection(connection);
+    if (connection.scope !== "workspace") {
+      throw new ApiError(
+        422,
+        "custom_mcp_policy_unsupported",
+        "The tool policy applies to workspace connections; a personal connection is only ever your own",
+      );
+    }
+    const config = this.customMcpConfig(connection);
+    const auth = this.requireAuth();
+    await this.env.DB.prepare(
+      `UPDATE connector_connections
+       SET config_json = json_patch(config_json, ?), updated_at = ?
+       WHERE id = ? AND workspace_id = ? AND connector_type = ?`,
+    ).bind(
+      JSON.stringify({ toolPolicy }),
+      nowIso(),
+      id,
+      auth.workspaceId,
+      CUSTOM_MCP_CONNECTOR_TYPE,
+    ).run();
+    await this.recordConnectionAudit(auth.workspaceId, auth.userId, "connector.settings_changed", id, {
+      provider: CUSTOM_MCP_CONNECTOR_TYPE,
+      scope: connection.scope,
+      serverUrl: config.serverUrl,
+      toolPolicy,
+    });
+    await publishConnectorWorkspaceSync(this.env, auth.workspaceId);
+    return this.getCustomMcpSettings(id);
+  }
+
+  private customMcpAdapter(): ResolvedConnectorAdapter {
+    if (!customMcpConnectorConfig(this.env)) {
+      throw new ApiError(503, "custom_mcp_unavailable", "Custom MCP servers are not configured in this Rally region");
+    }
+    return this.registry().get(CUSTOM_MCP_CONNECTOR_TYPE);
+  }
+
+  private assertCustomMcpConnection(connection: StoredConnection): void {
+    if (connection.connector_type !== CUSTOM_MCP_CONNECTOR_TYPE) {
+      throw new ApiError(422, "connector_settings_unsupported", "This connector does not provide MCP tool settings");
+    }
+  }
+
+  private customMcpConfig(connection: StoredConnection) {
+    const parsed = CustomMcpConnectionConfigSchema.safeParse(parseJson(connection.config_json, {}));
+    if (!parsed.success) {
+      throw new ApiError(
+        500,
+        "custom_mcp_configuration_invalid",
+        "This MCP connection is missing its server configuration",
+      );
+    }
+    return parsed.data;
+  }
+
+  /**
+   * A personal connection stores `all_tools` whatever the request asked for, so
+   * the stored row and the policy in force can never disagree — the adapter
+   * reads the same field for every scope.
+   */
+  private customMcpConfigJson(
+    serverUrl: string,
+    authMode: "oauth" | "headers",
+    scope: Scope,
+    toolPolicy: CustomMcpToolPolicy,
+  ): Record<string, unknown> {
+    return {
+      region: this.env.AVALON_REGION,
+      serverUrl,
+      authMode,
+      toolPolicy: scope === "workspace" ? toolPolicy : "all_tools",
+    };
+  }
+
+  private customMcpCompletionConfiguration(
+    sealed: CustomMcpStartConfiguration | null,
+    existing: StoredConnection | null,
+  ): CustomMcpStartConfiguration {
+    if (!sealed) {
+      throw new ApiError(401, "invalid_oauth_state", "The MCP authorization is missing its server configuration");
+    }
+    if (existing) {
+      const current = this.customMcpConfig(existing);
+      if (current.serverUrl !== sealed.serverUrl) {
+        throw new ApiError(409, "custom_mcp_server_mismatch", "Reconnect this connection to the same MCP server");
+      }
+    }
+    return sealed;
+  }
+
+  private async readCustomMcpInventory(connection: StoredConnection) {
+    const adapter = this.customMcpAdapter();
+    const context = await this.context(connection);
+    return withAuthorizedConnection(
+      this.env,
+      { connection: context, adapter, signal: AbortSignal.timeout(20_000) },
+      (authorized) => listCustomMcpToolInventory(authorized, AbortSignal.timeout(20_000)),
+    );
+  }
+
+  private async verifyCustomMcp(id: string): Promise<void> {
+    const row = await this.env.DB.prepare(
+      `SELECT * FROM connector_connections WHERE id = ?`,
+    ).bind(id).first<StoredConnection>();
+    if (!row) throw new ApiError(500, "connection_write_failed", "The MCP connection could not be loaded");
+    const inventory = await this.readCustomMcpInventory(row);
+    if (inventory.tools.length === 0) {
+      throw new ConnectorError("unsupported_capability", "This MCP server advertises no tools");
+    }
   }
 
   async ingestGranolaWebhook(
@@ -3056,6 +3433,16 @@ function verifiedIdentityConfig(
       ? stringField(credentials, "notionOwnerUserEmail")
       : null,
     identityDisplayName: stringField(credentials, "notionOwnerUserName"),
+  };
+  // A configured MCP server is a resource, not a directory: it identifies no
+  // Rally member, so it contributes nothing to actor resolution. Returning the
+  // Slack-shaped fallback below would write "https" into `providerTenantId`.
+  if (provider === "custom_mcp") return {
+    providerTenantId: providerAccountId,
+    providerUserId: null,
+    handle: null,
+    verifiedEmail: null,
+    identityDisplayName: null,
   };
   if (provider === "granola") return {
     providerTenantId: stringField(credentials, "workspaceId") ?? providerAccountId,

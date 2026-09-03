@@ -1,0 +1,268 @@
+# Custom MCP connectors
+
+A custom MCP connector is a Model Context Protocol server that somebody in a
+workspace pointed Rally at, rather than one Rally ships a declaration for. One
+connector type, `custom_mcp`, backs every such server: each connection carries
+its own endpoint, its own credential, and — for a workspace connection — its own
+policy about how much of that server's catalog Rally may call.
+
+Read this before changing how a configured server is added, authorized, or
+narrowed. The transport, OAuth helpers, live discovery, and exact call
+forwarding underneath it are the shared hosted-MCP module described in
+[`hosted-mcp-connectors.md`](hosted-mcp-connectors.md); the tenancy, credential,
+and connection rules it inherits are in [`connectors.md`](connectors.md).
+
+## Where the code lives
+
+| Path | Responsibility |
+| --- | --- |
+| `packages/connectors/src/custom-mcp.ts` | The adapter: per-connection endpoint resolution, header and OAuth authentication, the tool-policy filter, and the person-facing tool inventory. |
+| `packages/connectors/src/hosted-mcp.ts` | The shared MCP transport, OAuth discovery/DCR/PKCE, and the `selectTools` narrowing hook this connector supplies. |
+| `packages/contracts/src/index.ts` | `CustomMcpConnectionConfigSchema`, `CustomMcpRequestHeadersSchema`, the two request contracts, the settings response, and the header limits. |
+| `apps/api/src/services/connection-service.ts` | `createCustomMcp`, `beginCustomMcp`, `getCustomMcpSettings`, `updateCustomMcpToolPolicy`, and the custom-MCP branches of `completeProvider` and `reconnect`. |
+| `apps/api/src/routes/connections.ts` | `POST /connections/custom-mcp`, `POST /connections/custom-mcp/start`, `GET /connections/:id/custom-mcp/tools`, `PUT /connections/:id/custom-mcp/tool-policy`, and the OAuth callback. |
+| `apps/api/src/lib/connector-registry.ts` | `customMcpConnectorConfig` — the callback URI, which is all this connector needs to be available in a region. |
+| `apps/desktop/src/renderer/screens/workspace-settings.tsx` | The provider card, the connect dialog, and the **MCP tools** pane. |
+
+## How it works
+
+### Adding a server
+
+A person supplies a name, an HTTPS endpoint, and one of two ways to
+authenticate. Both paths refuse anything but HTTPS and reject a URL carrying
+embedded credentials, and both normalize the endpoint once, at the entry, so the
+string a reconnect is matched against is the string the adapter dials.
+
+- **Request headers.** The header names and values are stored as the
+  connection's credential — encrypted at rest, bound to the connection, never
+  returned to a client — and replayed on every MCP request. The row is written
+  first and then *proved*: the service reads the server's catalog through the
+  ordinary credential door, and a server that cannot be reached takes the row
+  with it. A connection whose only symptom is a plugin that fails to load inside
+  somebody's run three days later is the failure this avoids.
+- **OAuth.** The endpoint travels through Rally's sealed OAuth state to the
+  shared hosted-MCP authorization: protected-resource discovery, dynamic client
+  registration as `Rally`, authorization code with PKCE, and refresh. Nothing is
+  written until the callback returns, so an abandoned authorization leaves no
+  half-made connection, and the callback cannot be pointed at a server other
+  than the one whose consent screen the person saw.
+
+A workspace connection is an administrator's to make, as every workspace
+connection is. A personal one is any member's.
+
+### Which server a connection talks to
+
+The endpoint lives in `config_json` rather than beside the credential, because
+discovery, execution, and the connections screen all need it and a value only
+the decryption path could see would leave a row unable to say where it points.
+`createHostedMcpPassthrough` takes a resolver rather than a fixed URL for this
+connector, so one adapter serves every configured server.
+
+### Tools
+
+Nothing about a server's catalog is written into Rally. `tools/list` is read at
+activation, exactly as it is for Granola, Slack, and Notion, and the model sees
+the server's own names, descriptions, and schemas under Rally's normal
+confirmation and receipt policy. A server may add, change, or withdraw a tool
+without a Rally release.
+
+A **workspace** connection additionally carries a tool policy:
+
+- `all_tools` — every tool the server advertises.
+- `read_only_tools` — only the tools the server itself annotates
+  `readOnlyHint: true`. An absent annotation is a write, because most servers
+  annotate nothing at all and treating silence as read-only would admit every
+  one of them.
+
+The policy is applied at discovery *and* again to the fresh catalog read before
+every `tools/call`, so a tool it withholds is unreachable rather than merely
+unadvertised — an activation taken while the connection allowed everything
+cannot spend a write after the policy narrowed.
+
+A personal connection has no such control and stores `all_tools` whatever a
+request asks for. That is not a statement that personal connections are trusted
+more: a personal connection acts with its owner's own identity on that server
+and is usable by nobody else, so it exposes exactly what that person can already
+do. The policy exists because a workspace connection hands one credential to
+every member.
+
+### Looking at what a server offers
+
+`GET /connections/:id/custom-mcp/tools` reads the same live catalog an
+activation reads and returns, per tool, the server's `readOnlyHint` and
+`destructiveHint` and whether the current policy admits it. The **MCP tools**
+settings pane renders it beside the endpoint, the authentication mode, and the
+policy control. A tool the policy withholds stays listed and marked, so a person
+can see what is being held back rather than watching it disappear.
+
+## Invariants
+
+- **The endpoint is the account identity.** A generic MCP server need not
+  identify a subject, so the normalized resource URL is what `provider_account_id`
+  holds and what a reconnect must match. Authorizing an existing connection
+  against a different server is refused rather than silently repointing it.
+- **The read-only policy narrows; it never authorizes.** Every admitted tool
+  still carries `mode: "write"`, confirmation, and a record-before-execute
+  receipt, because an MCP annotation is a claim by the server rather than a
+  promise to Rally. A server that mislabels a mutation gets it listed as
+  read-only, and still cannot run it without a confirmation.
+- **A personal connection's stored policy is `all_tools`.** The adapter reads
+  one field for every scope; a personal row that kept a narrower request would
+  restrict its owner with no control anywhere to widen it again.
+- **Configured headers cannot reach the transport's own headers.**
+  `accept`, `content-type`, `content-length`, `host`, `connection`,
+  `transfer-encoding`, `mcp-session-id`, and `mcp-protocol-version` are refused
+  at the contract, and the transport sets its own after applying whatever the
+  connection carries.
+- **Remote text is data on every surface it reaches.** Tool names,
+  descriptions, and annotations are untrusted on the way to the model *and* on
+  the way to the settings screen, which bounds and strips them before rendering.
+- **The connector's trusted catalog prose names no server.** A connector's
+  agent-plugin descriptor is code-authored and may not interpolate connection
+  labels ([`connectors.md`](connectors.md)), so every custom MCP plugin
+  describes itself the same way and is distinguished by its workspace-local
+  model plugin id (`plugin_custom_mcp`, `plugin_custom_mcp_2`, …).
+
+## Boundary
+
+This module owns what is specific to a person-configured server: its endpoint,
+its two authentication modes, its tool policy, and the inventory a person reads.
+It owns no transport, no OAuth mechanics, and no tool conversion — those are
+`hosted-mcp.ts` — and no tenancy, credential storage, refresh coordination,
+receipts, or confirmation policy, which are the connection service, the
+credential door, and the harness exactly as they are for every other connector.
+
+It deliberately does not ingest activity: a configured server has no webhook, no
+poll, and no activity types, so nothing here reaches digests, automations,
+watches, or work-stream origins.
+
+## Failure modes and limits
+
+| Condition | Result |
+| --- | --- |
+| The server refuses or cannot be reached at creation | The request fails with `custom_mcp_unreachable` and the row is removed; nothing is left in Connections. |
+| The server advertises no tools at creation | The same refusal: Rally does not store a connection with nothing to call. |
+| The server becomes unreachable later | The settings pane reports the catalog as unreadable and still shows the endpoint and policy; the model's plugin fails to load with `plugin_tools_unavailable`. |
+| More than 16 headers, or a header value over 8,192 characters | The create request is refused before anything is written. Set by the team on 2026-09-03. |
+| A header value carries a newline, or names a transport header | Refused at the contract, so a configured value can neither split a request nor override what Rally negotiated. |
+| An OAuth grant is revoked | The adapter marks the connection `needs_reconnect` only for the OAuth error codes that mean a dead grant; everything else the server names is treated as Rally's problem. |
+| A header-authenticated connection is refused by the server | No retry and no reconnect: there is nothing to refresh, and the fix is to edit the headers. |
+| Two tools collide after Rally's model-facing normalization | The whole surface fails closed, as it does for every hosted MCP server. |
+
+Every other transport bound — 128 tools, 20 catalog pages, 100 KB per schema,
+2 MB per response, 30 seconds per tool — is the shared hosted-MCP module's and is
+listed in [`hosted-mcp-connectors.md`](hosted-mcp-connectors.md).
+
+There is deliberately **no cap on how many custom MCP connections a workspace
+may hold.** Each one adds a plugin to the catalog every run in that workspace is
+built against, so the cost is real; the team decided on 2026-09-03 that a
+workspace hitting it is a conversation rather than a refusal.
+
+## Testing
+
+```bash
+pnpm --filter @rally/connectors exec vitest run src/custom-mcp.test.ts
+pnpm --filter @rally/api exec vitest run test/custom-mcp-connection.test.ts
+pnpm --filter @rally/desktop exec vitest run src/renderer/screens/workspace-settings.test.tsx
+pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts \
+  test-workers/workstream-schema-migration.test.ts
+```
+
+- `packages/connectors/src/custom-mcp.test.ts` drives a stub MCP server over the
+  real transport: per-connection endpoints, header authentication, the read-only
+  filter at discovery *and* before a call, the inventory, and an OAuth flow whose
+  authorization server is on a different origin from the resource.
+- `apps/api/test/custom-mcp-connection.test.ts` covers creation against a stubbed
+  server, the rollback when it refuses, the policy update, the administrator
+  boundary, and the unreadable-catalog response. It stubs `globalThis.fetch`,
+  because the registry builds the adapter from the environment.
+- The workerd suite carries the schema half: migration 31 rebuilds
+  `connector_connections`, and only a populated object shows whether its
+  dependents survived.
+
+## Data model
+
+No new table. `connector_connections` holds a `custom_mcp` row like any other
+connection, with `config_json` carrying `serverUrl`, `authMode`, and
+`toolPolicy`, and the credential envelope carrying either the request headers or
+the OAuth tokens and client registration. WorkspaceDO migration 31 widened the
+`connector_type` and `connector_oauth_attempts.provider` CHECK vocabularies to
+admit the new value.
+
+## Security and trust model
+
+The endpoint, the headers, and the tool policy are workspace configuration; the
+server's responses are not. Tool metadata and results are untrusted remote
+content, bounded and stripped on the way to a person and passed to the model
+under the connector's static system message.
+
+The OAuth trust anchor is the URL the person typed. For a connector Rally ships,
+the allowed authorization-server origins are named in source; a configured server
+has no such list, so this connector opts into
+`trustAdvertisedAuthorizationServer` and accepts the authorization server the
+resource advertises under RFC 9728 — which is what that document exists for, and
+what every other MCP client does. Everything else still holds: HTTPS only, no
+embedded credentials, and every advertised authorization, token, and registration
+endpoint must share the one admitted origin.
+
+Header authentication is a stored secret with no rotation story. Rally never
+returns it, but it is replayed verbatim to whatever host the connection names, so
+the endpoint and the header are one decision and are captured together.
+
+## Open questions
+
+- **A person cannot tell two custom MCP plugins apart from the model's side.**
+  The plugin descriptor is code-authored and may not carry a connection label, so
+  every custom server presents the same trusted prose to the model and is
+  distinguished only by its plugin id. Naming them properly needs a way to admit
+  workspace-supplied text into a descriptor without making it instruction, which
+  is a decision about the plugin catalog rather than about this connector.
+- **Editing a connection is add-and-remove.** There is no route to change an
+  endpoint, replace headers, or rename a server; a change means a new connection
+  and deleting the old one.
+
+## Changelog
+
+### 2026-09-03 — Rally connects MCP servers it does not ship
+
+**What changed:** A `custom_mcp` connector type, with per-connection endpoints,
+header or OAuth authentication in either scope, a live tool inventory in
+Connections, and a workspace-only read-only tool policy. The shared hosted-MCP
+module grew three things to support it: an endpoint resolved per connection,
+request authentication as headers rather than only a bearer token, and a
+`selectTools` narrowing applied at discovery and before every call. WorkspaceDO
+migration 31 widened the two connector CHECK vocabularies.
+
+**Why:** Every connector Rally had was a provider somebody here wrote a
+declaration for, so a workspace with an internal MCP server — or any of the
+hundreds now published — had no way to use it. The catalog cannot be the limit of
+what Rally can reach, and the hosted-MCP module already did all the hard parts
+for three providers; what it lacked was the ability for a connection, rather than
+a release, to say which server it meant.
+
+**Considered and rejected:** *A separate table and code path for configured
+servers*, which would have avoided the migration and lost credential refresh,
+plugin construction, receipts, the connections screen, and disable — everything
+that makes a connection a connection. *Trusting `readOnlyHint` to lower Rally's
+write policy*, which would let a server's own claim skip confirmation for a
+mutation; the hint narrows the surface and changes nothing about what an
+admitted call must do. *Rebuilding all thirteen dependent tables* in migration
+31, which would have restated schemas that later migrations have already
+changed, with no test able to notice a column quietly not carried across.
+*Disabling foreign keys for the rebuild instead*, which is what the released
+migration mode does and what a first draft of 31 did: it does not work.
+`PRAGMA foreign_keys = OFF` is silently a no-op once an object event has touched
+SQLite, and the workerd test caught the parent's drop cascading a workspace's
+webhook receipts away.
+
+**Consequences:** Adding a hosted-MCP provider Rally *does* ship still means a
+small declaration; this is not a replacement for one, and a first-party provider
+should keep its named authorization origins rather than trusting whatever a
+resource advertises. A workspace can now grow its plugin catalog without limit,
+which is a cost every run in that workspace pays. Anything that reads
+`connector_type` must accept `custom_mcp` — the value reaches telemetry, the
+desktop catalog, and the deep-link vocabulary. And a future change to
+`connector_connections`' shape inherits the hold-and-restore recipe in migration
+31, which is the only one proven to work here.
+
+Shipped in the pull request for this change.

@@ -5,6 +5,9 @@ import { reportDesktopHandoff } from './telemetry';
 type ConnectorProvider = ConnectorOAuthProviderValue;
 
 const connectorName: Record<ConnectorProvider, string> = {
+  // A configured MCP server has no name Rally knows: the label the person gave
+  // it lives on the connection, which this page never loads.
+  custom_mcp: 'The MCP server',
   google: 'Google',
   github: 'GitHub',
   granola: 'Granola',

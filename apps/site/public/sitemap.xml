@@ -64,6 +64,9 @@
     <loc>https://rallywith.ai/support/connectors/x/</loc>
   </url>
   <url>
+    <loc>https://rallywith.ai/support/connectors/custom-mcp/</loc>
+  </url>
+  <url>
     <loc>https://rallywith.ai/support/contact/</loc>
   </url>
 </urlset>
