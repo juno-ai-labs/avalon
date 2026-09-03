@@ -257,7 +257,6 @@ function input(activityId: string | null = null): WorkstreamWorkflowInput {
       defaultPluginIds: [],
       activitySourcePluginIds: {},
       connectorBindings: {},
-      deliveryTargets: [],
       owningWorkstreamId: null,
   scope: "personal" as const,
   authoringOrigin: null,

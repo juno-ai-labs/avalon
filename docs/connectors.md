@@ -237,19 +237,15 @@ knows, enriches only the unresolved provider members, and bounds that provider w
 and one shared deadline. Do not turn roster size into one database query and one unconstrained API
 request per member: private conversations may legitimately reach the connector's 200-member cap.
 
-### Delivering automation results to a person
+### Delivering a digest to a person
 
-A connector that can hand a finished result to a specific person declares `userDelivery` in its manifest: the frozen `targetType` stored on the automation, the label and one-line description the create screen shows, and `requiresPersonalIdentityLink`. Nothing about which providers can deliver is written into the API or the client — declaring this is what puts a connection in the "Deliver results" list, and a connector that declares nothing is never offered. The same declaration serves every personal destination Rally has: personal automation results and the scheduled digest ([`digests.md`](digests.md)) read the same list, so a connector that starts declaring a surface becomes a destination for both without either surface changing.
+A connector that can hand a finished digest to a specific person declares `userDelivery` in its manifest: the `targetType` stored on the digest destination, the label and one-line description the digest settings screen shows, and `requiresPersonalIdentityLink`. Nothing about which providers can deliver is written into the API or the client — declaring this is what puts a connection in the digest's destination list, and a connector that declares nothing is never offered. The scheduled digest ([`digests.md`](digests.md)) is the one consumer. It used to serve personal automation results as well; automations no longer have destinations of their own — a run sends its result with the connector tools it holds, inside the loop — so a connector that starts declaring a surface becomes a digest destination without the digest changing.
 
 `requiresPersonalIdentityLink` marks the providers whose installation is workspace-wide. A team-wide bot addresses nobody on its own, so such a connection becomes a destination only for a user who has linked their own provider identity to it. `apps/api/src/services/user-delivery.ts` answers that question: it maps each delivery target type to the table recording "this Rally user is this provider user on this connection" — `slack_user_links` for `slack_agent_dm` — and is the one place a new linked provider is registered. A target type absent from that map needs no link, because its connection already belongs to one person. The connections endpoint resolves `userDelivery` per requesting user, so a disabled connection, an unlinked installation, or a connector Rally does not register in this region is simply not a destination. A connection merely marked `needs_reconnect` stays a destination: the send is what discovers whether the credential still works.
 
 Saving a **digest** destination runs the same resolution. `resolveFrozenDeliveryIdentity` asks `resolveUserDelivery` whether this connection is a destination for this user — the identical declaration, health, and identity-link test the settings screen was offered on — and only then calls the target type's entry in `FROZEN_IDENTITY_RESOLVERS` for the provider tenant and user to store. Eligibility is therefore stated once: the API cannot reject a destination the screen offered, and no rule about connection scope is written into the save path. Nothing about which providers can deliver lives in the API or the client.
 
-**An automation's destinations no longer go through that path.** `AutomationAgent.resolveDeliveryTargets` resolves the whole set itself, at acceptance and again on every `PATCH`, reading the connection's status and scope and then `slack_user_links` in its own SQL. It has to: the resolution now happens inside the Durable Object that owns the automation, and it freezes the result into the acceptance row rather than a workspace table. The rules it applies are the same ones — a disabled connection, a personal connection belonging to somebody else, or a missing identity link each refuse the write — but they are stated a second time, in a second place. A change to eligibility has to be made in both.
-
-Both tables it reads there — `connector_connections` and `slack_user_links` — are WorkspaceDO's, and the object reaches them through `withWorkspaceRuntimeDatabase`, never through its own `this.env.DB`. A Durable Object is handed the raw environment, so unlike a service nothing wraps its `DB` on the way in; migration 0090 dropped both tables from regional D1, and the statements sent there failed as `no such table` — an unmapped code, so a `500` — which is why no automation could save a connector destination until 2026-08-31. `apps/api/test/durable-object-workspace-table-routing.test.ts` now fails on any object that reaches a `WORKSPACE_LOCAL_TABLES` table on the regional binding.
-
-Slack declares `slack_agent_dm` with a required identity link. Teams or Discord would declare their own target type the same way and register it in `AutomationDeliveryTargetTypeSchema`, in `PERSONAL_IDENTITY_LINKS` if the surface needs a link, in `FROZEN_IDENTITY_RESOLVERS`, and — because that resolver is not on the automation path — in `AutomationAgent.resolveDeliveryTargets` and in `AutomationRunDeliveryTargetV1Schema`, the discriminated union the frozen run context carries. Digest delivery needs one more entry — `CONNECTOR_DELIVERIES` in `digest-delivery-service.ts` — but no schema change: `digest_delivery_targets.target_type` is checked per family (email versus connector-addressed) rather than enumerated. A target type with no resolver is refused at save rather than half-stored. The two identity columns are still named `slack_team_id` and `slack_user_id`; they hold the provider tenant and user of whichever connector owns the row, and a second connector is the point at which renaming them earns its migration. The saved destinations and how each is delivered are described in [work-stream and automation email addresses](workstream-email-addresses.md#outbound-automation-results).
+Slack declares `slack_agent_dm` with a required identity link. Teams or Discord would declare their own target type the same way and register it in `AutomationDeliveryTargetTypeSchema` (kept under that name because digests and receipts share it), in `PERSONAL_IDENTITY_LINKS` if the surface needs a link, in `FROZEN_IDENTITY_RESOLVERS`, and in `CONNECTOR_DELIVERIES` in `digest-delivery-service.ts` — but no schema change: `digest_delivery_targets.target_type` is checked per family (email versus connector-addressed) rather than enumerated. A target type with no resolver is refused at save rather than half-stored. The two identity columns are still named `slack_team_id` and `slack_user_id`; they hold the provider tenant and user of whichever connector owns the row, and a second connector is the point at which renaming them earns its migration.
 
 ### Being found, and being refused
 
@@ -786,23 +782,27 @@ It does not own:
 | The single Notion ingress | [`notion-ingress.md`](notion-ingress.md) |
 | How a tool is *designed* so a small model uses it right | [`agent-tools.md`](agent-tools.md) |
 | How a run holds and narrows connector authority | [`agent-harness.md`](agent-harness.md) |
-| Where automation results are delivered | [`workstream-email-addresses.md`](workstream-email-addresses.md#outbound-automation-results) |
+| Why an automation sends its own results, and the one destination that is not the run's | [`automation-lifecycle.md`](automation-lifecycle.md) |
 
-Adding a personal delivery surface touches registries and one hand-written read:
-`AutomationDeliveryTargetTypeSchema`, `AutomationRunDeliveryTargetV1Schema`,
-`PERSONAL_IDENTITY_LINKS` if the surface needs a link, `FROZEN_IDENTITY_RESOLVERS`
-for the digest path, `AutomationAgent.resolveDeliveryTargets` for the automation
-path, and `CONNECTOR_DELIVERIES` for digest delivery. Nothing
-about which providers can deliver is written into the API or the client.
+Adding a personal delivery surface touches registries only, and only the
+digest's: `AutomationDeliveryTargetTypeSchema` (the name is historical; digests
+and delivery receipts share it), `PERSONAL_IDENTITY_LINKS` if the surface needs
+a link, `FROZEN_IDENTITY_RESOLVERS`, and `CONNECTOR_DELIVERIES` in
+`digest-delivery-service.ts`. Automations no longer have a delivery path to
+register with: a run sends its result through whatever connector tools it
+holds, so a new surface reaches automations the moment its connector ships a
+send tool. Nothing about which providers can deliver is written into the API
+or the client.
 
-The automation path is the one that is not a registry, and the one to be careful
-with: a new link table (`teams_user_links`, say) is a WorkspaceDO table, so the
-read added there goes through `withWorkspaceRuntimeDatabase` like its neighbour.
-Written against `this.env.DB` it names a table regional D1 does not have, which
-reaches the person as "An unexpected error occurred" rather than as anything
-naming the boundary. That is the defect recorded in the delivery-resolution note
-above, and `durable-object-workspace-table-routing.test.ts` is what now catches
-it.
+The one thing to be careful with is where the identity-link table lives: a new
+one (`teams_user_links`, say) is a WorkspaceDO table, so any read of it from a
+Durable Object goes through `withWorkspaceRuntimeDatabase`, never `this.env.DB`.
+Written against the regional binding it names a table regional D1 does not have,
+which reaches the person as "An unexpected error occurred" rather than as
+anything naming the boundary. That defect was found on the automation delivery
+path this section used to describe, and
+`durable-object-workspace-table-routing.test.ts` is what catches it now,
+whichever object makes the mistake next.
 
 ## Failure modes and limits
 

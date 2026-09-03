@@ -60,14 +60,6 @@ const AUTOMATION_ERROR_RESPONSES = {
     status: 409,
     message: "This automation is not ready yet. Answer Rally's outstanding question first.",
   },
-  automation_definition_revision_stale: {
-    // Not "reload": by the time anybody reads this the newer draft has already
-    // arrived over the automation's socket, and the desktop has no reload
-    // control to name. Re-reading the summary and pressing the button again is
-    // the recovery, on every client.
-    status: 409,
-    message: "This draft changed while you were reviewing it. Review the updated draft, then create it again.",
-  },
   automation_pending_elicitation: {
     status: 409,
     message: "Answer Rally's outstanding question before creating this automation.",
@@ -82,7 +74,6 @@ const AUTOMATION_ERROR_RESPONSES = {
   automation_not_accepted: { status: 409, message: "This automation has not been created yet." },
   automation_not_pausable: { status: 409, message: "This automation cannot be paused right now." },
   automation_not_resumable: { status: 409, message: "This automation cannot be resumed right now." },
-  automation_not_configurable: { status: 409, message: "This automation's delivery cannot be changed right now." },
   automation_activation_fenced: {
     status: 409,
     message: "This automation changed while it was being created. Reload and try again.",
@@ -92,27 +83,23 @@ const AUTOMATION_ERROR_RESPONSES = {
     message: "That schedule has no future run. Choose a different time.",
   },
   automation_timezone_invalid: { status: 422, message: "That time zone is not one Rally recognizes." },
+  // The five below are what remains once acceptance derives its bindings from
+  // the draft instead of taking them in a request. Each was reachable before
+  // and none had a row, so each reached a member as `SAFE_CODE`'s generic
+  // "This automation could not complete that request." — a sentence with no
+  // next step, on the one button the proposal card offers.
+  automation_activity_source_unbound: {
+    status: 422,
+    message: "This automation's trigger is missing the connection it watches. Ask Rally to set it up again.",
+  },
   automation_plugin_unavailable: {
     status: 409,
     message: "A connection this automation needs is unavailable. Reconnect it and try again.",
   },
-  automation_delivery_connection_unavailable: {
-    status: 409,
-    message: "A delivery destination is unavailable. Reconnect it and try again.",
-  },
-  automation_delivery_identity_unavailable: {
-    status: 409,
-    message: "A delivery destination could not be resolved for your account.",
-  },
-  // Both of these are thrown and both were falling to the `SAFE_CODE` net, so
-  // one half of the delivery surface answered with a sentence and the other
-  // half with "This automation could not complete that request." — which, under
-  // a checkbox, reads as the automation having broken rather than the setting
-  // having failed to save.
-  automation_email_delivery_unavailable: {
-    status: 409,
-    message: "Your account has no email address, so Rally cannot send results there.",
-  },
+  // Thrown when a derived plugin resolves to a connection the caller may not
+  // bind. It fell to the `SAFE_CODE` net and answered "This automation could not
+  // complete that request.", which under a Create button reads as the automation
+  // having broken rather than as a connection the person could go and share.
   automation_workspace_connection_required: {
     status: 409,
     message: "A workspace automation can only use connections shared with the whole workspace.",
@@ -121,9 +108,6 @@ const AUTOMATION_ERROR_RESPONSES = {
     status: 503,
     message: "Rally is finishing an update to automations. Try again in a moment.",
   },
-  // "Request" is the HTTP object, not anything on the screen, and "draft" is
-  // already the sidebar's word for the thing being created.
-  automation_draft_id_required: { status: 422, message: "This automation has no draft to create from." },
   // A draft written outside a work stream has no room to belong to, and one
   // cannot be supplied: the request carries no room by design.
   automation_workstream_scope_requires_authoring_room: {

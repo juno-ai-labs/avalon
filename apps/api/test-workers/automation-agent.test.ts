@@ -62,9 +62,14 @@ function readyDefinition(name: string) {
     triggers: [{ type: "manual" as const }],
     requiredCapabilities: [],
     expectedOutputs: [],
-    requestedDelivery: [],
+    // Typed rather than inferred: several tests spread this fixture and replace
+    // one of these, and an inferred `never[]` refuses every replacement.
     defaultBehavior: {},
-    recommendedPlugins: [],
+    recommendedPlugins: [] as Array<{
+      pluginId: string;
+      recommendedTools: string[];
+      reason: string;
+    }>,
     memoryTables: [],
     suggestedScope: "personal" as const,
     followUpQuestion: null,
@@ -276,6 +281,10 @@ describe("AutomationAgent", () => {
       });
 
       // With real rules it is admitted, and acceptance registers those rules.
+      // The binding is named nowhere in this call: `notion_source ->
+      // plugin_notion` is read off the draft's own trigger. The projection
+      // below resolving to the real connection is what proves the derivation,
+      // because nothing here could have supplied it.
       const admitted = await submit(eventDriven(true), rules);
       await instance.acceptDraft({
         schemaVersion: 1,
@@ -284,9 +293,6 @@ describe("AutomationAgent", () => {
         authorUserId: AUTHOR_ID,
         definitionRevision: admitted.definitionRevision,
         scope: "personal",
-        defaultPluginIds: [],
-        activitySourcePluginIds: { notion_source: "plugin_notion" },
-        deliveryTargets: [],
         modelOverride: null,
       });
       expect(JSON.parse(state.storage.sql.exec<{ json: string }>(
@@ -322,9 +328,6 @@ describe("AutomationAgent", () => {
         authorUserId: AUTHOR_ID,
         definitionRevision: 1,
         scope: "personal",
-        defaultPluginIds: [],
-        activitySourcePluginIds: {},
-        deliveryTargets: [],
         modelOverride: null,
       });
 
@@ -452,54 +455,67 @@ describe("AutomationAgent", () => {
     });
   });
 
-  it("refuses a submitted draft that is not the definition the object stored", async () => {
-    // Decided in `AutomationAgentService` before `acceptDraft` is called, so it
-    // never reached `withAutomationErrors` and answered `500 internal_error` /
-    // "An unexpected error occurred" — no next step for the person, at error
-    // severity, under the one status a client backing off on 5xx retries.
-    // A compiler turn settling while somebody reviews the summary is the
-    // ordinary way in.
-    const definition = readyDefinition("Weekday digest");
-    await seedReadyDraft(definition);
-
-    await expect(authorService().accept({
-      draftId: AUTOMATION_ID,
-      draft: { ...definition, description: "Summarize unread email every weekday, with links." },
-      scope: "personal",
-    })).rejects.toMatchObject({
-      status: 409,
-      code: "automation_definition_revision_stale",
-      message: "This draft changed while you were reviewing it. Review the updated draft, then create it again.",
-    });
-  });
-
-  it("refuses a create that names no draft", async () => {
-    // The other refusal `accept` decides for itself, and the other bare throw.
-    // Its own test because the assertion above aborts this file's `it` on
-    // failure, so a single test would only ever prove whichever came first.
-    const definition = readyDefinition("Weekday digest");
-    await seedReadyDraft(definition);
-
-    await expect(authorService().accept({ draft: definition, scope: "personal" }))
-      .rejects.toMatchObject({
-        status: 422,
-        code: "automation_draft_id_required",
-        message: "This automation has no draft to create from.",
+  it("resumes an activation a pre-deploy request left behind, whatever hash it stored", async () => {
+    // The acceptance row stores a digest of the request that wrote it, and the
+    // request's shape has changed once already: the id-only door dropped three
+    // fields. An object a deploy caught `activating` therefore holds a hash no
+    // request of the new shape can reproduce. Judged on the hash, every retry
+    // was `automation_acceptance_conflict` and the object stayed stuck for
+    // good; judged on the facts the row stores, the retry is the same
+    // acceptance and finishes it. The stored hash is kept untouched, because
+    // the activation step still uses it as its fence.
+    await seedReadyDraft(readyDefinition("Manual helper"));
+    const stub = automationStub();
+    await runInDurableObject(stub, async (instance: AutomationAgent, state) => {
+      (instance as unknown as { workspace(): unknown }).workspace = async () => ({
+        applyExternalEventRegistrations: async () => ({
+          applied: true,
+          effectiveAfterEventSequence: 7,
+        }),
+        applyAutomationProjection: async () => ({ applied: true }),
       });
-  });
+      state.storage.sql.exec(
+        `INSERT INTO automation_acceptance
+           (id, definition_revision, request_hash, scope, owning_workstream_id,
+            default_plugin_ids_json, activity_source_plugin_ids_json, connector_bindings_json,
+            model_override, evaluator_projection_json,
+            evaluator_source_hash, accepted_at, activated_at)
+         VALUES (1, 1, 'sha256:pre-deploy-request-shape', 'personal', NULL, '[]', '{}', '{}',
+                 NULL, '[]', 'sha256:evaluators', 100, NULL)`,
+      );
+      state.storage.sql.exec(
+        `UPDATE automation_state
+            SET lifecycle = 'activating', accepted_definition_revision = 1 WHERE id = 1`,
+      );
 
-  it("still accepts the draft the object actually holds", async () => {
-    // The refusals are the boundary's, not a blanket rejection. Without this,
-    // a comparison that refused everything would pass both tests above.
-    const definition = readyDefinition("Weekday digest");
-    await seedReadyDraft(definition);
-    await pinWorkspaceIdentity();
+      const detail = await instance.acceptDraft({
+        schemaVersion: 1,
+        automationId: AUTOMATION_ID,
+        workspaceId: WORKSPACE_ID,
+        authorUserId: AUTHOR_ID,
+        definitionRevision: 1,
+        scope: "personal",
+        modelOverride: null,
+      });
 
-    await expect(authorService().accept({
-      draftId: AUTOMATION_ID,
-      draft: definition,
-      scope: "personal",
-    })).resolves.toMatchObject({ id: AUTOMATION_ID, name: "Weekday digest", status: "active" });
+      expect(detail).toMatchObject({ id: AUTOMATION_ID, status: "active" });
+      expect(state.storage.sql.exec<{ lifecycle: string; request_hash: string }>(
+        `SELECT state.lifecycle, acceptance.request_hash
+           FROM automation_state state JOIN automation_acceptance acceptance ON acceptance.id = 1
+          WHERE state.id = 1`,
+      ).one()).toEqual({ lifecycle: "active", request_hash: "sha256:pre-deploy-request-shape" });
+
+      // A retry that names a different acceptance is still a conflict.
+      await expect(instance.acceptDraft({
+        schemaVersion: 1,
+        automationId: AUTOMATION_ID,
+        workspaceId: WORKSPACE_ID,
+        authorUserId: AUTHOR_ID,
+        definitionRevision: 2,
+        scope: "personal",
+        modelOverride: null,
+      })).rejects.toThrow("automation_acceptance_conflict");
+    });
   });
 
   it("creates the automation a proposal card offers, from its id alone", async () => {
@@ -519,6 +535,191 @@ describe("AutomationAgent", () => {
 
     await expect(authorService().acceptAuthoredDraft(AUTOMATION_ID))
       .resolves.toMatchObject({ id: AUTOMATION_ID, name: "Daily joke", status: "active" });
+  });
+
+  it("creates an external-event automation from a card, binding the draft's own source", async () => {
+    // The defect this whole change exists for. Acceptance took its bindings in
+    // a request field; the proposal card is the only caller left and cannot
+    // fill one, so it sent `{}` and every external-event draft was refused —
+    // `automation_evaluator_source_binding_mismatch`, untabled, reaching a
+    // member as a generic 409 under a button that then did nothing again.
+    //
+    // Nothing in this test names `notion_source -> plugin_notion`. That the
+    // automation activates, and that the acceptance row records the binding, is
+    // the whole proof: the only place it can have come from is the draft.
+    const NOTION_CONNECTION_ID = "00000000-0000-7000-8000-0000000000bb";
+    await pinWorkspaceIdentity();
+    await runInDurableObject(
+      env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID))),
+      (_workspace, state) => {
+        state.storage.sql.exec(
+          `INSERT INTO connector_connections
+             (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+              display_name, granted_scopes_json, status, cursor_json, config_json,
+              created_at, updated_at, model_plugin_id)
+           VALUES (?, ?, 'notion', 'personal', ?, 'acct', 'A connection', '[]', 'healthy',
+                   '{}', '{}', 1, 1, 'plugin_notion')`,
+          NOTION_CONNECTION_ID, WORKSPACE_ID, AUTHOR_ID,
+        );
+      },
+    );
+    await runInDurableObject(automationStub(), async (instance: AutomationAgent) => {
+      (instance as unknown as { workspace(): unknown }).workspace = async () => ({
+        applyExternalEventRegistrations: async () => ({ applied: true, effectiveAfterEventSequence: 7 }),
+        applyAutomationProjection: async () => ({ applied: true }),
+      });
+      await instance.admitAuthoredDraft({
+        schemaVersion: 1,
+        automationId: AUTOMATION_ID,
+        workspaceId: WORKSPACE_ID,
+        authorUserId: AUTHOR_ID,
+        region: "global",
+        authoredInWorkstreamId: AUTHORING_WORKSTREAM_ID,
+        evaluatorRules: {
+          schemaVersion: 1,
+          evaluators: [{
+            evaluatorKey: "page_created",
+            source: {
+              sourceBindingKey: "notion_source",
+              suggestedSourcePluginId: "plugin_notion",
+              event: { kind: "event_type" as const, eventType: "notion.page.created" },
+            },
+            when: { kind: "always" as const },
+          }],
+        },
+        draft: {
+          ...readyDefinition("Report new pages"),
+          triggers: [{
+            type: "connector_activity" as const,
+            connectorType: "notion",
+            sourceBindingKey: "notion_source",
+            suggestedSourcePluginId: "plugin_notion",
+            eventTypes: ["notion.page.created"],
+            deterministicFilters: {},
+          }],
+        },
+      });
+    });
+
+    await expect(authorService().acceptAuthoredDraft(AUTOMATION_ID))
+      .resolves.toMatchObject({ id: AUTOMATION_ID, name: "Report new pages", status: "active" });
+
+    await runInDurableObject(automationStub(), (_instance: AutomationAgent, state) => {
+      expect(JSON.parse(state.storage.sql.exec<{ json: string }>(
+        `SELECT activity_source_plugin_ids_json AS json FROM automation_acceptance WHERE id = 1`,
+      ).one().json)).toEqual({ notion_source: "plugin_notion" });
+      expect(JSON.parse(state.storage.sql.exec<{ json: string }>(
+        `SELECT connector_bindings_json AS json FROM automation_acceptance WHERE id = 1`,
+      ).one().json)).toEqual({ plugin_notion: NOTION_CONNECTION_ID });
+    });
+  });
+
+  it("binds the plugins a draft recommends, and refuses when one has no connection", async () => {
+    // `defaultPluginIds` was the quiet half of the same defect: the card sent
+    // `[]`, so an automation was created successfully and ran without the
+    // connectors its own overview named. Nothing failed, which is what made it
+    // worse than the loud one.
+    await pinWorkspaceIdentity();
+    const SLACK_CONNECTION_ID = "00000000-0000-7000-8000-0000000000bc";
+    await runInDurableObject(
+      env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID))),
+      (_workspace, state) => {
+        state.storage.sql.exec(
+          `INSERT INTO connector_connections
+             (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+              display_name, granted_scopes_json, status, cursor_json, config_json,
+              created_at, updated_at, model_plugin_id)
+           VALUES (?, ?, 'slack', 'workspace', NULL, 'acct', 'Slack', '[]', 'healthy',
+                   '{}', '{}', 1, 1, 'plugin_slack')`,
+          SLACK_CONNECTION_ID, WORKSPACE_ID,
+        );
+      },
+    );
+    await seedReadyDraft({
+      ...readyDefinition("Standup summary"),
+      recommendedPlugins: [{
+        pluginId: "plugin_slack",
+        recommendedTools: ["slack_read_channel"],
+        reason: "Read the standup channel",
+      }],
+    });
+
+    await expect(authorService().acceptAuthoredDraft(AUTOMATION_ID)).resolves.toMatchObject({
+      status: "active",
+    });
+    await runInDurableObject(automationStub(), (_instance: AutomationAgent, state) => {
+      expect(JSON.parse(state.storage.sql.exec<{ json: string }>(
+        `SELECT connector_bindings_json AS json FROM automation_acceptance WHERE id = 1`,
+      ).one().json)).toEqual({ plugin_slack: SLACK_CONNECTION_ID });
+    });
+  });
+
+  it("tells a member which connection to reconnect when a recommended plugin has none", async () => {
+    // The residual time-gap refusal, and the reason deriving does not simply
+    // move the failure: the draft named a plugin whose connection has since
+    // gone, and that is a fact about now rather than about the draft. It has to
+    // reach the member as an instruction, not as the generic conflict every
+    // untabled code used to produce.
+    await pinWorkspaceIdentity();
+    await seedReadyDraft({
+      ...readyDefinition("Standup summary"),
+      recommendedPlugins: [{
+        pluginId: "plugin_slack",
+        recommendedTools: ["slack_read_channel"],
+        reason: "Read the standup channel",
+      }],
+    });
+
+    await expect(authorService().acceptAuthoredDraft(AUTOMATION_ID)).rejects.toMatchObject({
+      status: 409,
+      code: "automation_plugin_unavailable",
+      message: "A connection this automation needs is unavailable. Reconnect it and try again.",
+    });
+  });
+
+  it("refuses to admit a ready draft whose evaluator names a source no trigger declares", async () => {
+    // Triggers and evaluator rules are written by two separate tool calls, and
+    // nothing compared them directly: acceptance inferred their agreement from
+    // a request field that happened to carry both. Deriving removes that field,
+    // so the comparison has to be made where it is actually knowable.
+    await runInDurableObject(automationStub(), async (instance: AutomationAgent, state) => {
+      await expect(instance.admitAuthoredDraft({
+        schemaVersion: 1,
+        automationId: AUTOMATION_ID,
+        workspaceId: WORKSPACE_ID,
+        authorUserId: AUTHOR_ID,
+        region: "global",
+        authoredInWorkstreamId: AUTHORING_WORKSTREAM_ID,
+        evaluatorRules: {
+          schemaVersion: 1,
+          evaluators: [{
+            evaluatorKey: "page_created",
+            source: {
+              sourceBindingKey: "a_source_no_trigger_declares",
+              suggestedSourcePluginId: "plugin_notion",
+              event: { kind: "event_type" as const, eventType: "notion.page.created" },
+            },
+            when: { kind: "always" as const },
+          }],
+        },
+        draft: {
+          ...readyDefinition("Report new pages"),
+          triggers: [{
+            type: "connector_activity" as const,
+            connectorType: "notion",
+            sourceBindingKey: "notion_source",
+            suggestedSourcePluginId: "plugin_notion",
+            eventTypes: ["notion.page.created"],
+            deterministicFilters: {},
+          }],
+        },
+      })).rejects.toThrow("automation_activity_source_unbound");
+      // Refused before anything was written, so the drafting loop can repair
+      // and resubmit rather than leaving a card that cannot work.
+      expect(state.storage.sql.exec<{ n: number }>(
+        `SELECT COUNT(*) AS n FROM automation_definition_revisions`,
+      ).one().n).toBe(0);
+    });
   });
 
   it("answers a directory membership refusal as 403, not a 500 and not a conflict", async () => {
@@ -589,11 +790,7 @@ describe("AutomationAgent", () => {
         `DELETE FROM workstream_email_routes WHERE automation_subscription_id = ?`,
       ).bind(AUTOMATION_ID).run();
 
-      await expect(authorService().accept({
-        draftId: AUTOMATION_ID,
-        draft: definition,
-        scope: "personal",
-      })).rejects.toMatchObject({
+      await expect(authorService().acceptAuthoredDraft(AUTOMATION_ID)).rejects.toMatchObject({
         status: 503,
         code: "workstream_email_key_invalid",
       });
@@ -618,7 +815,6 @@ describe("AutomationAgent", () => {
         triggers: [{ type: "resource_watch" as const, resourceId: "00000000-0000-7000-8000-0000000000d1" }],
         requiredCapabilities: [],
         expectedOutputs: [],
-        requestedDelivery: [],
         defaultBehavior: {},
         recommendedPlugins: [],
         memoryTables: [],
@@ -633,7 +829,6 @@ describe("AutomationAgent", () => {
       defaultPluginIds: [],
       activitySourcePluginIds: {},
       connectorBindings: {},
-      deliveryTargets: [],
       emailAddress: null,
       modelOverride: null,
       createdAt: 1_800_000_000_000,
@@ -956,7 +1151,7 @@ describe("AutomationAgent", () => {
     function seedRun(
       state: DurableObjectState,
       runId: string,
-      options: { deliveryTargets?: unknown[]; disposition?: string } = {},
+      options: { disposition?: string } = {},
     ): void {
       const context = {
         schemaVersion: 1,
@@ -979,9 +1174,6 @@ describe("AutomationAgent", () => {
         defaultPluginIds: [],
         activitySourcePluginIds: {},
         connectorBindings: {},
-        deliveryTargets: options.deliveryTargets ?? [
-          { type: "email", emailAddress: "recruiter@example.com" },
-        ],
         modelOverride: null,
         executionPrincipal: { type: "user", userId: AUTHOR_ID },
         trigger: { kind: "manual", requestedByUserId: AUTHOR_ID },
@@ -1049,7 +1241,7 @@ describe("AutomationAgent", () => {
       });
     });
 
-    it("delivers rather than withholding when the classifier cannot be reached", async () => {
+    it("exposes rather than withholding when the classifier cannot be reached", async () => {
       const runId = "00000000-0000-7000-8000-0000000000e2";
       await runInDurableObject(automationStub(), async (instance: AutomationAgent, state) => {
         seedIdentity(state);
@@ -1065,13 +1257,17 @@ describe("AutomationAgent", () => {
 
         // No provider credentials in workerd here, so the inference fails and
         // the failure direction is what this proves: a result nobody can judge
-        // is sent, not swallowed.
-        expect(decision.disposition).toBe("deliver");
+        // is surfaced, not swallowed. The arm it lands on changed with the
+        // destinations: this is a personal run with no owning room, so there is
+        // nothing left to `deliver` to and the fail-open answer is to expose
+        // the run's own work stream. A room-owned run would default to
+        // `deliver` for the same reason.
+        expect(decision.disposition).toBe("expose_workstream");
         expect(decision.source).toBe("default");
         expect(state.storage.sql.exec<{ disposition: string; disposition_source: string }>(
           `SELECT disposition, disposition_source FROM automation_runs WHERE run_id = ?`,
           runId,
-        ).one()).toEqual({ disposition: "deliver", disposition_source: "default" });
+        ).one()).toEqual({ disposition: "expose_workstream", disposition_source: "default" });
       });
     });
 
@@ -1079,7 +1275,7 @@ describe("AutomationAgent", () => {
       const runId = "00000000-0000-7000-8000-0000000000e3";
       await runInDurableObject(automationStub(), async (instance: AutomationAgent, state) => {
         seedIdentity(state);
-        seedRun(state, runId, { deliveryTargets: [] });
+        seedRun(state, runId);
 
         const decision = await instance.resolveRunDisposition({
           schemaVersion: 1,
@@ -1132,9 +1328,9 @@ describe("an automation the work stream owns", () => {
         `INSERT INTO automation_acceptance
            (id, definition_revision, request_hash, scope, owning_workstream_id,
             default_plugin_ids_json, activity_source_plugin_ids_json, connector_bindings_json,
-            delivery_targets_json, model_override, evaluator_projection_json,
+            model_override, evaluator_projection_json,
             evaluator_source_hash, accepted_at, activated_at)
-         VALUES (1, 1, 'sha256:request', 'workstream', ?, '[]', '{}', '{}', '[]', NULL, '[]',
+         VALUES (1, 1, 'sha256:request', 'workstream', ?, '[]', '{}', '{}', NULL, '[]',
                  'sha256:evaluators', 100, 101)`,
         OWNING_WORKSTREAM_ID,
       );
@@ -1316,9 +1512,9 @@ describe("taking over who an automation runs as", () => {
         `INSERT INTO automation_acceptance
            (id, definition_revision, request_hash, scope, owning_workstream_id,
             default_plugin_ids_json, activity_source_plugin_ids_json, connector_bindings_json,
-            delivery_targets_json, model_override, evaluator_projection_json,
+            model_override, evaluator_projection_json,
             evaluator_source_hash, accepted_at, activated_at)
-         VALUES (1, 1, 'sha256:request', 'workstream', ?, '[]', '{}', ?, '[]', NULL, '[]',
+         VALUES (1, 1, 'sha256:request', 'workstream', ?, '[]', '{}', ?, NULL, '[]',
                  'sha256:evaluators', 100, 101)`,
         OWNING_WORKSTREAM_ID,
         JSON.stringify({ plugin_gmail: LEAVER_GMAIL, plugin_slack: SHARED_SLACK }),
@@ -1479,10 +1675,18 @@ describe("whose connections a draft may bind", () => {
         userId: OWNER_ID,
         authorUserId: OWNER_ID,
         scope: "workstream",
-        defaultPluginIds: ["plugin_gmail"],
-        activitySourcePluginIds: {},
-        deliveryTargets: [],
-      }, readyDefinition("Candidate intake")))
+      }, {
+        // The plugin is named by the draft's own recommendation now, which is
+        // where acceptance reads it from. Passing it in the request no longer
+        // reaches this guard, so a draft carrying it is the only way to prove
+        // the guard still fires.
+        ...readyDefinition("Candidate intake"),
+        recommendedPlugins: [{
+          pluginId: "plugin_gmail",
+          recommendedTools: ["gmail_search"],
+          reason: "Read the candidate's mail",
+        }],
+      }))
         .rejects.toThrow("automation_personal_connection_access_denied");
     });
   });
