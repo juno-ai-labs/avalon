@@ -245,6 +245,34 @@ const FOOTNOTE_DEFINITION = /^ {0,3}\[\^([^\]\s]+)\]:[ \t]*(.*)$/u;
 /** `[^label]` used in the body. Never at the head of a definition — checked first. */
 const FOOTNOTE_REFERENCE = /\[\^([^\]\s]+)\]/gu;
 /**
+ * The same reference, still arriving: `[^` and however much of the identifier
+ * has been streamed, at the very end of the text and with no closing bracket
+ * yet. Only a surface watching a message grow has any use for this — a settled
+ * message's `[^foo` is text a model wrote and stays text — but it is the same
+ * grammar as the reference above and drifting from it is how one of them starts
+ * recognising a reference the other does not.
+ */
+const OPEN_FOOTNOTE_REFERENCE = /\[\^[^\]\s]*$/u;
+
+/**
+ * Matches `[^label]` wherever a reader has to find one in raw text. Capture
+ * group 1 is the identifier before {@link normalizeFootnoteIdentifier}. Fresh
+ * each call so a `/g` lastIndex cannot leak across callers.
+ */
+export function footnoteReferencePattern(): RegExp {
+  return new RegExp(FOOTNOTE_REFERENCE.source, FOOTNOTE_REFERENCE.flags);
+}
+
+/**
+ * Matches the trailing half of a reference whose closing bracket has not
+ * arrived. Anchored at the end, so it answers a question only about text that
+ * is still growing.
+ */
+export function openFootnoteReferencePattern(): RegExp {
+  return new RegExp(OPEN_FOOTNOTE_REFERENCE.source, OPEN_FOOTNOTE_REFERENCE.flags);
+}
+
+/**
  * An inline link or image, whose target group is what decides the citation.
  *
  * Deliberately as wide as the renderer's own parser, because every form this

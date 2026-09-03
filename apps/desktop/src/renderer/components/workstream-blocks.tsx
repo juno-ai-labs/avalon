@@ -32,7 +32,9 @@ import {
   connectorMentionHref,
   connectorTypeFromEmbedHref,
   connectorTypeFromMentionHref,
+  footnoteReferencePattern,
   isConnectorHref,
+  openFootnoteReferencePattern,
   personIdFromMentionHref,
 } from '@rally/contracts/citations';
 import { ConnectorEmbedCard, ConnectorMentionChip } from './connector-mentions';
@@ -340,27 +342,35 @@ function MarkdownTable({ children, node, style, ...props }: React.ComponentProps
 const BARE_BREAK_TAG = /^<br\s*\/?>$/iu;
 
 /**
- * The slice of an mdast node the break rewrite reads. Structural rather than
- * imported: the renderer depends on `mdast` only transitively through
- * react-markdown.
+ * The slice of an mdast node the two rewrites below read. Structural rather
+ * than imported: the renderer depends on `mdast` only transitively through
+ * react-markdown. `data` is remark-rehype's element escape hatch — a node
+ * carrying `hName`/`hProperties`/`hChildren` becomes exactly that element,
+ * which is how the pending citation pill exists without a Markdown syntax of
+ * its own.
  */
-interface BreaksNode {
+interface MarkdownRewriteNode {
   type: string;
   value?: string;
-  children?: BreaksNode[];
+  children?: MarkdownRewriteNode[];
+  data?: {
+    hName?: string;
+    hProperties?: Record<string, unknown>;
+    hChildren?: unknown[];
+  };
 }
 
 function remarkHtmlBreaks() {
   return (tree: unknown) => {
-    rewriteMarkdownBreaks(tree as BreaksNode);
+    rewriteMarkdownBreaks(tree as MarkdownRewriteNode);
   };
 }
 
-function rewriteMarkdownBreaks(node: BreaksNode): void {
+function rewriteMarkdownBreaks(node: MarkdownRewriteNode): void {
   if (node.type === 'code' || node.type === 'inlineCode') return;
   const children = node.children;
   if (children === undefined) return;
-  let rebuilt: BreaksNode[] | undefined;
+  let rebuilt: MarkdownRewriteNode[] | undefined;
   for (let index = 0; index < children.length; index += 1) {
     const child = children[index]!;
     if (child.type === 'html' && child.value !== undefined && BARE_BREAK_TAG.test(child.value.trim())) {
@@ -372,6 +382,138 @@ function rewriteMarkdownBreaks(node: BreaksNode): void {
     rebuilt?.push(child);
   }
   if (rebuilt !== undefined) node.children = rebuilt;
+}
+
+/**
+ * The skeleton a citation wears between being written and being defined.
+ *
+ * A GFM footnote reference is only a reference to a parser that can already
+ * see its definition. While a turn streams, the model writes `[^avalon]` in a
+ * sentence and the `[^avalon]: [file](resource://…)` that defines it seconds
+ * later, at the bottom — so for the whole intervening stretch remark-gfm reads
+ * the marker as ordinary text and the reader watches raw `[^avalon]` sit in
+ * the middle of a paragraph until the turn settles. On a long grounded answer
+ * that is most of the answer's lifetime, and it is the one place Rally shows
+ * somebody its own markup.
+ *
+ * What goes there instead is the pill's own box with the number not yet in it:
+ * same font size, same padding, same raise off the baseline, so the line does
+ * not reflow when the definition lands and the pill takes over. It is
+ * `aria-hidden` because it names nothing — a screen reader gets the source
+ * when the pill arrives with its label, and a shimmering rectangle announced
+ * as "1" would be a claim about a citation nobody has read yet.
+ *
+ * **Streaming only.** A settled message whose definition never arrived keeps
+ * its literal `[^avalon]`, which is the honest rendering of a reference to
+ * nothing; a permanent skeleton would promise a source that is never coming.
+ */
+function pendingCitationNode(): MarkdownRewriteNode {
+  return {
+    type: 'pendingCitation',
+    data: {
+      hName: 'span',
+      hProperties: { className: ['citation-pill-pending'], 'aria-hidden': 'true' },
+      hChildren: [],
+    },
+  };
+}
+
+/**
+ * The pending-pill rewrite, over the text remark-gfm left behind.
+ *
+ * It reads no definitions and asks the document no questions, which is what
+ * keeps it a hoisted constant rather than a per-render closure: a reference
+ * whose definition this parse *can* see is already a `footnoteReference` node
+ * and never reaches a text node at all. So "still a `[^…]` in the text" is
+ * exactly "not resolved here", decided by the parser rather than restated.
+ * Code is skipped for free — an inline span and a fenced block both hold their
+ * source as their own `value`, not as text children — which is what keeps a
+ * message *explaining* footnote syntax from sprouting skeletons.
+ *
+ * The tail variant below adds the reference that is still being typed. Only
+ * the stream's final segment gets it: there the last text node may hold a
+ * half-arrived `[^ava`, and letting that grow a character at a time in front
+ * of the reader is the same raw markup by a slower route. Everywhere else the
+ * text has settled, and a trailing `[^` is a bracket a model wrote.
+ */
+function remarkPendingCitations() {
+  return (tree: unknown) => {
+    rewriteFootnoteReferences(tree as MarkdownRewriteNode);
+  };
+}
+
+/** The same rewrite at the open end of the stream. */
+function remarkPendingTailCitations() {
+  return (tree: unknown) => {
+    const root = tree as MarkdownRewriteNode;
+    rewriteFootnoteReferences(root);
+    rewriteOpenFootnoteReference(root);
+  };
+}
+
+function rewriteFootnoteReferences(node: MarkdownRewriteNode): void {
+  const children = node.children;
+  if (children === undefined) return;
+  let rebuilt: MarkdownRewriteNode[] | undefined;
+  for (let index = 0; index < children.length; index += 1) {
+    const child = children[index]!;
+    const split = child.type === 'text' && child.value !== undefined
+      ? splitFootnoteReferences(child.value)
+      : undefined;
+    if (split !== undefined) {
+      rebuilt ??= children.slice(0, index);
+      rebuilt.push(...split);
+      continue;
+    }
+    rewriteFootnoteReferences(child);
+    rebuilt?.push(child);
+  }
+  if (rebuilt !== undefined) node.children = rebuilt;
+}
+
+/** The pieces of a text node with its unresolved references lifted out, or `undefined` for text with none. */
+function splitFootnoteReferences(value: string): MarkdownRewriteNode[] | undefined {
+  const pattern = footnoteReferencePattern();
+  let match = pattern.exec(value);
+  if (match === null) return undefined;
+  const pieces: MarkdownRewriteNode[] = [];
+  let consumed = 0;
+  while (match !== null) {
+    if (match.index > consumed) pieces.push({ type: 'text', value: value.slice(consumed, match.index) });
+    pieces.push(pendingCitationNode());
+    consumed = match.index + match[0].length;
+    match = pattern.exec(value);
+  }
+  if (consumed < value.length) pieces.push({ type: 'text', value: value.slice(consumed) });
+  return pieces;
+}
+
+/**
+ * The one reference that is still being typed: the document's last leaf, when
+ * it is text ending in an opener whose bracket has not closed.
+ *
+ * Descending to the last leaf rather than scanning is what keeps an open
+ * fence out of it — a code node holds its source as a value and is not text —
+ * and what keeps this from firing on a `[^` in the middle of settled prose.
+ */
+function rewriteOpenFootnoteReference(node: MarkdownRewriteNode): void {
+  const children = node.children;
+  if (children === undefined || children.length === 0) return;
+  const last = children[children.length - 1]!;
+  if (last.children !== undefined && last.children.length > 0) {
+    rewriteOpenFootnoteReference(last);
+    return;
+  }
+  if (last.type !== 'text' || last.value === undefined) return;
+  const match = openFootnoteReferencePattern().exec(last.value);
+  if (match === null) return;
+  const before = last.value.slice(0, match.index);
+  children.splice(
+    children.length - 1,
+    1,
+    ...(before ? [{ type: 'text', value: before }] : []),
+    pendingCitationNode(),
+  );
 }
 
 function personIdFromHref(href: string | undefined): string | undefined {
@@ -550,6 +692,15 @@ function renderIdentity(
 
 const REMARK_PLUGINS = [remarkGfm, remarkHtmlBreaks];
 /**
+ * The same list plus the pending-pill rewrite, for a message that is still
+ * growing. Two hoisted constants rather than a memo: both are compared by
+ * identity where they reach a settled segment, and neither depends on anything
+ * but which half of a streaming render is being drawn.
+ */
+const STREAMING_REMARK_PLUGINS = [remarkGfm, remarkHtmlBreaks, remarkPendingCitations];
+/** The open end of that message, where the last reference may be half-written. */
+const STREAMING_TAIL_REMARK_PLUGINS = [remarkGfm, remarkHtmlBreaks, remarkPendingTailCitations];
+/**
  * The embed-row pass groups only what the citation matrix will draw as a card,
  * so a surface with no citation context groups nothing at all — and gets a
  * hoisted empty array rather than a new one per render, because these reach the
@@ -562,6 +713,7 @@ type MarkdownUrlTransform = NonNullable<React.ComponentProps<typeof ReactMarkdow
 type MarkdownRehypeOptions = NonNullable<React.ComponentProps<typeof ReactMarkdown>['remarkRehypeOptions']>;
 /** Taken from the component's own props rather than from `unified`, which is a transitive dependency. */
 type MarkdownRehypePlugins = NonNullable<React.ComponentProps<typeof ReactMarkdown>['rehypePlugins']>;
+type MarkdownRemarkPlugins = NonNullable<React.ComponentProps<typeof ReactMarkdown>['remarkPlugins']>;
 
 /** A blank line: the classic boundary between markdown blocks. */
 const BLANK_LINE = /^\s*$/u;
@@ -680,10 +832,11 @@ export function splitStreamingMarkdown(source: string): { settled: string[]; tai
  * makes a paced reveal affordable: each animation-frame commit re-parses only
  * the open tail, while every settled segment's element is reused untouched.
  */
-const SettledMarkdownSegment = memo(function SettledMarkdownSegment({ components, rehypeOptions, rehypePlugins, source, urlTransform }: {
+const SettledMarkdownSegment = memo(function SettledMarkdownSegment({ components, rehypeOptions, rehypePlugins, remarkPlugins, source, urlTransform }: {
   components: MarkdownComponents;
   rehypeOptions: MarkdownRehypeOptions;
   rehypePlugins: MarkdownRehypePlugins;
+  remarkPlugins: MarkdownRemarkPlugins;
   source: string;
   urlTransform: MarkdownUrlTransform;
 }): React.JSX.Element {
@@ -691,7 +844,7 @@ const SettledMarkdownSegment = memo(function SettledMarkdownSegment({ components
     <ReactMarkdown
       components={components}
       rehypePlugins={rehypePlugins}
-      remarkPlugins={REMARK_PLUGINS}
+      remarkPlugins={remarkPlugins}
       remarkRehypeOptions={rehypeOptions}
       urlTransform={urlTransform}
     >
@@ -930,6 +1083,9 @@ export function MarkdownBody({
     ...headingComponents,
     section: dropBorrowedFootnotes,
   }), [dropBorrowedFootnotes, headingComponents]);
+  // A streaming body draws the pending pill; a settled one never does, so the
+  // literal `[^foo]` of a reference nothing ever defined stays literal.
+  const remarkPlugins = streaming ? STREAMING_REMARK_PLUGINS : REMARK_PLUGINS;
   const rendered = useMemo(() => {
     const componentsFor = (source: string, extra: MarkdownComponents): {
       resolved: string;
@@ -942,13 +1098,17 @@ export function MarkdownBody({
       if (extra === components) return { resolved, used: borrowedComponents };
       return { resolved, used: { ...extra, section: dropBorrowedFootnotes } };
     };
-    const renderMarkdown = (source: string, extra: MarkdownComponents = components): React.JSX.Element => {
+    const renderMarkdown = (
+      source: string,
+      extra: MarkdownComponents = components,
+      plugins: MarkdownRemarkPlugins = remarkPlugins,
+    ): React.JSX.Element => {
       const { resolved, used } = componentsFor(source, extra);
       return (
         <ReactMarkdown
           components={used}
           rehypePlugins={rehypePlugins}
-          remarkPlugins={REMARK_PLUGINS}
+          remarkPlugins={plugins}
           remarkRehypeOptions={rehypeOptions}
           urlTransform={urlTransform}
         >
@@ -968,12 +1128,14 @@ export function MarkdownBody({
                 rehypePlugins={rehypePlugins}
                 key={index}
                 rehypeOptions={rehypeOptions}
+                remarkPlugins={remarkPlugins}
                 source={resolved}
                 urlTransform={urlTransform}
               />
             );
           })}
-          {renderMarkdown(tail, extra)}
+          {/* Only here is the source's last line still arriving. */}
+          {renderMarkdown(tail, extra, STREAMING_TAIL_REMARK_PLUGINS)}
         </>
       );
     };
@@ -984,6 +1146,7 @@ export function MarkdownBody({
           components={used}
           rehypePlugins={rehypePlugins}
           rehypeOptions={rehypeOptions}
+          remarkPlugins={remarkPlugins}
           source={resolved}
           urlTransform={urlTransform}
         />
@@ -1012,6 +1175,7 @@ export function MarkdownBody({
                   components={headingComponents}
                   rehypePlugins={rehypePlugins}
                   rehypeOptions={rehypeOptions}
+                  remarkPlugins={remarkPlugins}
                   source={part.heading}
                   urlTransform={urlTransform}
                 />
@@ -1040,6 +1204,7 @@ export function MarkdownBody({
     markdown,
     rehypeOptions,
     rehypePlugins,
+    remarkPlugins,
     streaming,
     urlTransform,
   ]);
