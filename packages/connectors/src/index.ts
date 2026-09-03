@@ -457,7 +457,7 @@ export const GoogleFileWriteAuthorizationGuidance =
   "Only files with writableByRally=true are eligible for Docs or Sheets write tools; files created through this connection are writable, but an arbitrary Drive search result might be read-only under Google's per-file authorization.";
 
 /**
- * What a paginated Google tool says about its cursor parameter.
+ * What every paginated Google tool says about its cursor parameter.
  *
  * Every other parameter on these tools carries a description, and a run got
  * every one of them right — a valid `fileType`, a valid `orderBy`, a valid
@@ -469,10 +469,14 @@ export const GoogleFileWriteAuthorizationGuidance =
  * from. Google rejects an invented one with a 400 that fails the call before it
  * searches, so the guess costs the whole request rather than degrading it.
  *
- * `repeatedArguments` names what must not change across a page, because the
- * token encodes the query it was issued for. Google does not re-run a changed
- * search when given a cursor, it resumes the old one — a silent wrong answer,
- * which is worse than the error an invalid token produces.
+ * "Other arguments unchanged" is deliberately not a list of them. The token
+ * encodes the query it was issued for, and Google does not re-run a changed
+ * search when given a cursor — it resumes the old one, a silent wrong answer
+ * rather than an error. Naming each tool's filters said the same thing four
+ * ways and left a fifth to be remembered: `orderBy` was missed on
+ * `drive.search` when the lists were written out, which is the whole failure
+ * that clause exists to prevent. A sentence that covers every argument cannot
+ * be short by one.
  *
  * The last page is stated as `null` rather than as an absent key because
  * `readString` returns `null`, and that is the shape all four tools emit.
@@ -480,15 +484,8 @@ export const GoogleFileWriteAuthorizationGuidance =
  * resolve the contradiction against what it sees; X shipped a repair for a
  * model reading a falsy cursor as another page and paging forever.
  */
-function googlePageTokenDescription(repeatedArguments: readonly string[]): string {
-  const quoted = repeatedArguments.map((name) => `\`${name}\``);
-  const unchanged = quoted.length === 0
-    ? ""
-    : quoted.length === 1
-      ? `, repeating that call's ${quoted[0]} unchanged`
-      : `, repeating that call's ${quoted.slice(0, -1).join(", ")} and ${quoted[quoted.length - 1]} unchanged`;
-  return `Omit this for the first page. To continue an earlier search pass back the exact \`nextPageToken\` string a previous call to this tool returned${unchanged}. It is an opaque cursor — a long provider-generated string, not a page number, an offset, or an index. Never construct, guess, shorten, or increment this token. A result whose \`nextPageToken\` is \`null\` is the last page: stop there rather than calling again.`;
-}
+const GOOGLE_PAGE_TOKEN_DESCRIPTION =
+  "Omit this for the first page. To continue an earlier search pass back the exact `nextPageToken` string a previous call to this tool returned, with that call's other arguments unchanged. It is an opaque cursor — a long provider-generated string, not a page number, an offset, or an index. Never construct, guess, shorten, or increment this token. A result whose `nextPageToken` is `null` is the last page: stop there rather than calling again.";
 
 export const googleTools: ToolDefinition[] = [
   {
@@ -522,7 +519,7 @@ export const googleTools: ToolDefinition[] = [
           type: "string",
           minLength: 1,
           maxLength: 2_000,
-          description: googlePageTokenDescription(["query"]),
+          description: GOOGLE_PAGE_TOKEN_DESCRIPTION,
         }
       },
       required: ["query"]
@@ -612,7 +609,7 @@ export const googleTools: ToolDefinition[] = [
           type: "string",
           minLength: 1,
           maxLength: 2_000,
-          description: googlePageTokenDescription([]),
+          description: GOOGLE_PAGE_TOKEN_DESCRIPTION,
         }
       }
     }
@@ -636,7 +633,7 @@ export const googleTools: ToolDefinition[] = [
           type: "string",
           minLength: 1,
           maxLength: 2_000,
-          description: googlePageTokenDescription(["calendarId", "timeMin", "timeMax", "query"]),
+          description: GOOGLE_PAGE_TOKEN_DESCRIPTION,
         }
       },
       required: ["timeMin", "timeMax"]
@@ -711,7 +708,7 @@ export const googleTools: ToolDefinition[] = [
           type: "string",
           minLength: 1,
           maxLength: 2_000,
-          description: googlePageTokenDescription(["query", "fileType", "modifiedAfter", "orderBy"]),
+          description: GOOGLE_PAGE_TOKEN_DESCRIPTION,
         }
       }
     }
