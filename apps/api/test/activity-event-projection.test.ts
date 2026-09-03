@@ -155,7 +155,7 @@ function connectorEvent(): WorkspaceConnectorEvent {
   };
 }
 
-function processingEnv(claimed: boolean): {
+function processingEnv(claimed: boolean, eventType?: string): {
   env: Env;
   opportunitySources: Array<Record<string, unknown>>;
   recorded: ActivityEventInput[];
@@ -164,6 +164,7 @@ function processingEnv(claimed: boolean): {
   const opportunitySources: Array<Record<string, unknown>> = [];
   const recorded: ActivityEventInput[] = [];
   const event = connectorEvent();
+  if (eventType) event.activity.eventType = eventType;
   const env = createTestEnv({
     DB: sqliteD1(database),
     AVALON_REGION: "global",
@@ -201,6 +202,7 @@ describe("routing connector activity before Suggested Work", () => {
 
   it("offers only an unclaimed event to each eligible member", async () => {
     const { env, opportunitySources, recorded } = processingEnv(false);
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
 
     await processConnectorEvent(env, connectorEvent());
 
@@ -210,8 +212,37 @@ describe("routing connector activity before Suggested Work", () => {
       `workspace:${MEMBER_B}`,
     ]);
     expect(recorded).toHaveLength(1);
+    expect(completionLog(info)).toMatchObject({ opportunity_enqueued: true, opportunity_outcome: "enqueued" });
+  });
+
+  it("records an unclaimed event whose type is excluded from candidacy as not enqueued", async () => {
+    // A CI status transition is unclaimed, so it is offered — and declined by
+    // event type before any window opens. The terminal log has to say so:
+    // `opportunity_enqueued` derived from "unclaimed" alone would report every
+    // one of these as admission load, which is the traffic anyone checking the
+    // gate will query.
+    const { env, opportunitySources, recorded } = processingEnv(false, "github.check_run.completed");
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+
+    const event = connectorEvent();
+    event.activity.eventType = "github.check_run.completed";
+    await processConnectorEvent(env, event);
+
+    expect(opportunitySources).toEqual([]);
+    // Still projected into the feed: only the home-screen surface withholds it.
+    expect(recorded).toHaveLength(1);
+    expect(completionLog(info)).toMatchObject({ opportunity_enqueued: false, opportunity_outcome: "excluded" });
   });
 });
+
+/** The consumer's terminal log entry, as the structured logger handed it to the console. */
+function completionLog(info: { mock: { calls: unknown[][] } }): Record<string, unknown> {
+  const entries = info.mock.calls
+    .map(([entry]) => entry as Record<string, unknown>)
+    .filter((entry) => entry?.event === "connector_event_processing_completed");
+  expect(entries).toHaveLength(1);
+  return entries[0]!;
+}
 
 describe("projecting connector activity into the activity log", () => {
   it("shares a public workspace activity with every member", async () => {
