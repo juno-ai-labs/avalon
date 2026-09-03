@@ -26,48 +26,24 @@ function expectOrdered(source: string, markers: readonly string[]): void {
 }
 
 describe("what a run may consult, and what it may do", () => {
-  it("offers the built-in library to every run and settles authority in the tool loop instead", () => {
+  it("offers the built-in library to roots and inline children while child writes remain denied", () => {
     const root = section(
       "export async function runWorkstreamHarness(",
       "function inlineChildOutcomeAsToolResult(",
     );
-    // Offered to all of them. Withholding a skill would hide advice and never
-    // authority, and would hide a future general skill along with it.
+    // Offered to both live run kinds. Withholding a skill would hide advice and
+    // never authority, and would hide a future general skill along with it.
     expect(root).toContain("skills: [...BUILT_IN_SKILLS]");
-    expect(root).not.toContain("blockDashboardRun ? {} : { skills:");
-
-    // What a surface may *do* is decided here, by tool mode, before the call.
-    expect(root).toContain('rejectToolModesBeforeCall(["write"], "Writes are not currently allowed"');
 
     const inlineChild = section(
       "function createInlineChildAgentTool(",
       "async function recordOpenRouterInferenceAttempt(",
     );
+    // What the read-only child may *do* is decided by tool mode before the call.
     expect(inlineChild).toContain('rejectToolModesBeforeCall(\n              ["write"],');
     expect(inlineChild).toContain("skills: [...BUILT_IN_SKILLS]");
   });
 
-  it("takes a HyperSight block from a tool call, and asks again when the turn ends without one", () => {
-    const root = section(
-      "export async function runWorkstreamHarness(",
-      "function inlineChildOutcomeAsToolResult(",
-    );
-    // The block is what was submitted, not whatever text the run trailed off
-    // with — a preamble used to become part of the dashboard. `submitted` is
-    // the row-backed value, so a retried attempt that replayed the submission
-    // receipt instead of executing it still persists the block it has.
-    // The call, not its argument spelling. The block row moved onto the object
-    // in the block-dashboard slice and its key is `block_run_id` there rather
-    // than `id`; an assertion that tracked the rename would be asserting on the
-    // rename. What this line is for is that the value is read back from the row
-    // at all, which is what makes a replayed submission survive.
-    expect(root).toContain("readBlockDashboardBlockMarkdown(");
-    expect(root).toContain("blockDashboardBlockOutcome(terminalResult, submitted)");
-    expect(root).not.toContain("streamedText || null,");
-    // And a turn that ends without the call is asked for it once.
-    expect(root).toContain("onTurnWouldEnd:");
-    expect(root).toContain("blockDashboardSubmissionAsked = true;");
-  });
 });
 
 describe("harness liveness-monitor lifetime", () => {

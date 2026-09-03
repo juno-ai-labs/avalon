@@ -16,7 +16,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   substreamAgentName,
   workspaceDOName,
-  workstreamDOName,
 } from "../src/durable-objects/names";
 import {
   SCHEDULED_ALARM_CANCELLATION_RECOVERY_MS,
@@ -28,7 +27,6 @@ import {
   type ScheduledAlarmRun,
 } from "../src/durable-objects/scheduled-alarms";
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
-import type { WorkstreamDO } from "../src/durable-objects/workstream-do";
 import { workstreamRegionalEffectHash } from "../src/durable-objects/workstream-regional-effect";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000000a1");
@@ -314,39 +312,6 @@ describe("the shared Durable Object alarm list", () => {
       expect(await state.storage.getAlarm()).toBe(
         now + SCHEDULED_ALARM_CANCELLATION_RECOVERY_MS,
       );
-    });
-  });
-
-  it("keeps a future WorkstreamDO lane visible behind an overdue derived lane", async () => {
-    const stub = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
-      workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
-    ));
-    await stub.fetch("https://workstream.test/health");
-
-    await runInDurableObject(stub, async (instance: WorkstreamDO, state) => {
-      const now = Date.now();
-      const future = now + SCHEDULED_ALARM_CANCELLATION_RECOVERY_MS / 2;
-      state.storage.sql.exec(
-        `INSERT INTO block_dashboard_source_refresh_outbox
-           (id, trigger_sequence, attempts, not_before, created_at, updated_at)
-         VALUES (1, 1, 0, ?, ?, ?)`,
-        now - 60_000,
-        now,
-        now,
-      );
-      state.storage.sql.exec(
-        `INSERT INTO durable_outbox
-           (message_id, partition_key, source_version, source_epoch, effect_kind,
-            payload_json, payload_hash, state, attempts, not_before, created_at)
-         VALUES ('future-effect', 'common', 1, 1, 'directory_common',
-                 '{}', 'future-effect-hash', 'pending', 0, ?, ?)`,
-        future,
-        now,
-      );
-
-      await scheduling(instance).armAlarmBeforeDueWork(now);
-
-      expect(await state.storage.getAlarm()).toBe(future);
     });
   });
 

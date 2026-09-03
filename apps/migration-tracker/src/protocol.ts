@@ -238,7 +238,6 @@ export interface InventoryObject {
  */
 export const REPORTING_CLASSES = [
   "SubstreamAgent",
-  "BlockDashboardAgent",
   "WorkstreamDO",
   "WorkspaceDO",
 ] as const;

@@ -2488,10 +2488,21 @@ describe("a member's message travels the whole pipeline", () => {
       clientMessageId: "pipeline-room-socket-wakeup-1",
       deliveryState: "pending",
     });
+    // Admission arms alarm recovery before committing the pending row. That
+    // alarm may legally promote it while the socket receipt is in flight, so
+    // prove exactly one durable owner rather than racing that promotion.
     expect(await runInDurableObject(stub, (_instance, state) =>
       state.storage.sql.exec<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM pending_loop_inputs
-          WHERE client_message_id = 'pipeline-room-socket-wakeup-1'`,
+        `SELECT COUNT(*) AS count FROM (
+           SELECT input_id FROM pending_loop_inputs
+            WHERE client_message_id = 'pipeline-room-socket-wakeup-1'
+           UNION ALL
+           SELECT delivered.input_id
+             FROM delivered_loop_inputs delivered
+             JOIN canonical_conversation_turn_details turn
+               ON turn.id = delivered.delivered_turn_id
+            WHERE turn.client_message_id = 'pipeline-room-socket-wakeup-1'
+         )`,
       ).one().count)).toBe(1);
     socket.close(1000, "done");
   });

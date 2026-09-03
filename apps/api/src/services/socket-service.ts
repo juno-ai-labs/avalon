@@ -1,13 +1,11 @@
 import { RALLY_HEADERS, rallyHeaderAliases } from "@rally/contracts/http-headers";
 import { jwtVerify, SignJWT } from "jose";
 import {
-  asBlockId,
   asAutomationId,
   asSubstreamId,
   asUserId,
   asWorkspaceId,
   asWorkstreamId,
-  type BlockId,
   type AutomationId,
   type SubstreamId,
   type UserId,
@@ -23,7 +21,6 @@ import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { inFlowSpan } from "../observability/tracing";
 import {
-  blockDashboardAgentName,
   automationAgentName,
   substreamAgentName,
   workspaceDOName,
@@ -79,10 +76,6 @@ interface AutomationSocketClaims extends WorkspaceSocketClaims {
 
 interface WorkstreamControlSocketClaims extends WorkspaceSocketClaims {
   workstreamId: WorkstreamId;
-}
-
-interface BlockDashboardBlockSocketClaims extends WorkstreamControlSocketClaims {
-  blockId: BlockId;
 }
 
 export interface TranscriptionSocketClaims {
@@ -342,62 +335,6 @@ export async function issueWorkstreamControlSocketTicket(
     .setIssuedAt(now)
     .setExpirationTime(now + 60)
     .sign(signingKey(env));
-}
-
-export async function issueBlockDashboardBlockSocketTicket(
-  env: Env,
-  auth: AuthContext,
-  workstreamId: string,
-  blockId: string,
-): Promise<string> {
-  assertSessionPrincipal(auth);
-  const now = Math.floor(Date.now() / 1_000);
-  return new SignJWT({
-    purpose: "block_dashboard_block_socket",
-    sid: auth.sessionId,
-    wid: auth.workspaceId,
-    wsid: workstreamId,
-    bid: blockId,
-    region: auth.region,
-  })
-    .setProtectedHeader({ alg: "HS256", typ: "JWT" })
-    .setSubject(auth.userId)
-    .setJti(uuidV7())
-    .setIssuer("avalon-api")
-    .setAudience("avalon-block-dashboard-block-socket")
-    .setIssuedAt(now)
-    .setExpirationTime(now + 60)
-    .sign(signingKey(env));
-}
-
-export async function verifyBlockDashboardBlockSocketTicket(
-  env: Env,
-  ticket: string,
-): Promise<BlockDashboardBlockSocketClaims> {
-  try {
-    const { payload } = await jwtVerify(ticket, signingKey(env), {
-      algorithms: ["HS256"], issuer: "avalon-api", audience: "avalon-block-dashboard-block-socket",
-    });
-    if (
-      payload.purpose !== "block_dashboard_block_socket" || typeof payload.sub !== "string" ||
-      typeof payload.sid !== "string" || typeof payload.wid !== "string" ||
-      typeof payload.wsid !== "string" || typeof payload.bid !== "string" ||
-      typeof payload.jti !== "string" || typeof payload.exp !== "number" ||
-      (payload.region !== "global" && payload.region !== "eu")
-    ) throw new Error("Incomplete HyperSight block socket claims");
-    return {
-      sessionId: payload.sid,
-      userId: asUserId(payload.sub),
-      workspaceId: asWorkspaceId(payload.wid),
-      workstreamId: asWorkstreamId(payload.wsid),
-      blockId: asBlockId(payload.bid),
-      region: payload.region,
-      ticketId: payload.jti,
-      expiresAt: payload.exp,
-    };
-  } catch {
-    throw new ApiError(401, "invalid_socket_ticket", "The realtime ticket is invalid or expired");
-  }
 }
 
 export async function verifyWorkstreamControlSocketTicket(
@@ -762,68 +699,6 @@ export class WorkstreamControlSocketService {
     const response = await stub.fetch(
       new Request("https://workstream.internal/socket", { method: "GET", headers }),
     );
-    return withNegotiatedSubprotocol(request, response);
-  }
-}
-
-/** Edge authentication and regional routing for one HyperSight block agent socket. */
-export class BlockDashboardBlockSocketService {
-  constructor(private readonly env: Env) {}
-
-  async upgrade(
-    workstreamId: string,
-    blockId: string,
-    queryTicket: string | undefined,
-    request: Request,
-  ): Promise<Response> {
-    if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
-      throw new ApiError(426, "websocket_upgrade_required", "A WebSocket upgrade is required");
-    }
-    if (!isAllowedSocketOrigin(this.env, request.headers.get("origin"))) {
-      throw new ApiError(403, "socket_origin_forbidden", "The realtime origin is not allowed");
-    }
-    const claims = await verifyBlockDashboardBlockSocketTicket(
-      this.env,
-      socketTicketFromRequest(request, queryTicket),
-    );
-    if (
-      claims.region !== this.env.AVALON_REGION
-      || claims.workstreamId !== workstreamId
-      || claims.blockId !== blockId
-    ) {
-      throw new ApiError(403, "socket_ticket_scope_mismatch", "The ticket does not authorize this HyperSight block");
-    }
-    const stub = await durableObjectStubForWorkspace(
-      this.env,
-      this.env.BLOCK_DASHBOARD_AGENTS,
-      claims.workspaceId,
-      blockDashboardAgentName(
-        claims.region,
-        claims.workspaceId,
-        claims.workstreamId,
-        claims.blockId,
-      ),
-    );
-    await stub.initializeBlock({
-      region: claims.region,
-      workspaceId: claims.workspaceId,
-      workstreamId: claims.workstreamId,
-      blockId: claims.blockId,
-    });
-    const headers = new Headers(request.headers);
-    headers.delete("sec-websocket-protocol");
-    headers.set(RALLY_HEADERS.REGION, claims.region);
-    headers.set(RALLY_HEADERS.WORKSPACE_ID, claims.workspaceId);
-    headers.set(RALLY_HEADERS.WORKSTREAM_ID, claims.workstreamId);
-    headers.set(RALLY_HEADERS.BLOCK_DASHBOARD_BLOCK_ID, claims.blockId);
-    headers.set(RALLY_HEADERS.SESSION_ID, claims.sessionId);
-    headers.set(RALLY_HEADERS.USER_ID, claims.userId);
-    headers.set(RALLY_HEADERS.SOCKET_TICKET_ID, claims.ticketId);
-    headers.set(RALLY_HEADERS.SOCKET_TICKET_EXPIRES_AT, String(claims.expiresAt));
-    const response = await stub.fetch(new Request(
-      "https://block-dashboard.internal/socket",
-      { method: "GET", headers },
-    ));
     return withNegotiatedSubprotocol(request, response);
   }
 }

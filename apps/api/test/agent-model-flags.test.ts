@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { BLOCK_DASHBOARD_MODEL, type Env } from "../src/env";
+import type { Env } from "../src/env";
 import type { AgentModelRouting } from "../src/services/agent-model-flags";
 import {
   AGENT_MODEL_FLAG_KEYS,
@@ -174,10 +174,6 @@ describe("agent model flags", () => {
     expect(defaultAgentModelRouting(baseEnv, "automation_compiler").model).toBe("x-ai/grok-4.5");
     expect(defaultAgentModelRouting(baseEnv, "addressing_classifier").model).toBe("google/gemini-2.5-flash-lite");
     expect(defaultAgentModelRouting(baseEnv, "workstream_naming").model).toBe("google/gemini-2.5-flash-lite");
-    expect(defaultAgentModelRouting(baseEnv, "block_dashboard")).toEqual({
-      model: BLOCK_DASHBOARD_MODEL,
-      fallbackModels: [],
-    });
   });
 
   it("falls back to the Worker variables when no binding is attached", async () => {
@@ -353,8 +349,8 @@ describe("agent model flags", () => {
     });
   });
 
-  // Deliberately a role whose default fallbacks are non-empty: on `blockDashboard`
-  // this would pass even if the default's fallbacks were merged over the served
+  // Deliberately a role whose default fallbacks are non-empty: this would pass
+  // even if the default's fallbacks were merged over the served
   // value, which is the half-applied plan the whole design exists to prevent.
   it("treats an omitted fallback list as no fallbacks rather than the variable's list", async () => {
     const env = envWithFlags(serving({ model: "anthropic/claude-opus-4.6" }));
@@ -364,22 +360,6 @@ describe("agent model flags", () => {
       fallbackModels: [],
     });
     expect(defaultAgentModelRouting(env, "workstream").fallbackModels).not.toHaveLength(0);
-  });
-
-  it("gives HyperSight the fallbacks its flag serves, like every other role", async () => {
-    // HyperSight's fallbacks used to be dropped here to hold "a block pins one
-    // model" as a resolver invariant. It is a default now, not an invariant:
-    // the drop was silent apart from a warn nobody reads, so an operator who
-    // set a fallback list saw it accepted by the API and never applied.
-    const env = envWithFlags(serving({
-      model: "anthropic/claude-opus-4.6",
-      fallbackModels: ["x-ai/grok-4.3"],
-    }));
-
-    await expect(resolveAgentModelRouting(env, "block_dashboard")).resolves.toEqual({
-      model: "anthropic/claude-opus-4.6",
-      fallbackModels: ["x-ai/grok-4.3"],
-    });
   });
 
   it("keeps the flag's fallbacks for every role", async () => {
