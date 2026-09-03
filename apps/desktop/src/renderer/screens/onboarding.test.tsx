@@ -172,7 +172,7 @@ describe('identity-first onboarding screens', () => {
     expect(screen.queryByText('Rally agent: Terminal access')).not.toBeInTheDocument();
     expect(screen.queryByRole('list')).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('radio', { name: /Global/u }));
+    fireEvent.click(screen.getByRole('radio', { name: /United States/u }));
     expect(screen.queryByText('Unavailable for EU region (at this time, subject to change based on providers)')).not.toBeInTheDocument();
     expect(screen.queryByRole('list')).not.toBeInTheDocument();
   });

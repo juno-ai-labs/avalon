@@ -1198,7 +1198,7 @@ export function WorkspaceSettingsScreen({
                       <small>All workspace data, sessions, and requests remain pinned to this regional service.</small>
                     </span>
                     <span className="settings-row-value">
-                      <strong>{workspace.region === 'eu' ? 'European Union' : 'Global'}</strong>
+                      <strong>{workspace.region === 'eu' ? 'European Union' : 'United States'}</strong>
                       <Badge>Locked</Badge>
                     </span>
                   </div>
@@ -2029,7 +2029,7 @@ export function WorkspaceSettingsScreen({
                             <dt>{entry.name}</dt>
                             <dd>
                               {entry.propertyNames.join(', ') || 'No properties'}
-                              <small>{entry.route === 'eu' ? 'EU' : 'Global'} · {entry.validation} · {entry.queueState}</small>
+                              <small>{entry.route === 'eu' ? 'EU' : 'US'} · {entry.validation} · {entry.queueState}</small>
                             </dd>
                           </div>
                         ))}
