@@ -24,6 +24,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import {
   asAutomationId,
+  asSubstreamId,
   asUserId,
   asWorkspaceId,
   type AutomationDraft,
@@ -113,9 +114,9 @@ function workspaceStub() {
   return env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)));
 }
 
-function childStub(runId: string): DurableObjectStub {
+function childStub(runId: string) {
   return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
-    conversationObjectName("global", WORKSPACE_ID, AUTOMATION_ID, runId),
+    conversationObjectName("global", WORKSPACE_ID, AUTOMATION_ID, asSubstreamId(runId)),
   ));
 }
 
@@ -624,12 +625,15 @@ describe("AutomationDO", () => {
     // Forward only: a later `running` from the same child cannot reopen a
     // completed run.
     const latest = delivered.filter((envelope) => envelope.effect.kind === "directory_common").at(-1)!;
+    const latestEffect = latest.effect;
+    if (latestEffect.kind !== "directory_common") throw new Error("expected the child's directory_common effect");
+    const regressed = { ...latestEffect, state: "running" };
     const regression: ConversationEffectEnvelope = ConversationEffectEnvelopeSchema.parse({
       ...latest,
       messageId: `${latest.messageId}:regression`,
       sourceVersion: latest.sourceVersion + 1,
-      effect: { ...latest.effect, state: "running" },
-      payloadHash: conversationEffectHash({ ...latest.effect, state: "running" }),
+      effect: regressed,
+      payloadHash: conversationEffectHash(regressed),
     });
     expect(await consumeEffectBodies(TEST_ENV, [regression])).toEqual({ acked: 1, retried: 0 });
     expect(await automationStub().readRunState({ ...addressed(), runId: started.runId }))

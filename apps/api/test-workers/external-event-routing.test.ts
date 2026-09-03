@@ -28,7 +28,7 @@ import { env } from "cloudflare:workers";
 import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { asAutomationId, asUserId, asWorkspaceId, type AutomationDraft } from "@rally/contracts";
+import { asAutomationId, asSubstreamId, asUserId, asWorkspaceId, type AutomationDraft } from "@rally/contracts";
 
 import type { AutomationDO } from "../src/durable-objects/automation-do";
 import { automationDOName, conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
@@ -96,9 +96,9 @@ function automation(): DurableObjectStub<AutomationDO> {
   ));
 }
 
-function conversation(parentId: string, substreamId?: string): DurableObjectStub {
+function conversation(parentId: string, substreamId?: string) {
   return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
-    conversationObjectName("global", WORKSPACE_ID, parentId, substreamId),
+    conversationObjectName("global", WORKSPACE_ID, parentId, substreamId === undefined ? "0" : asSubstreamId(substreamId)),
   ));
 }
 
