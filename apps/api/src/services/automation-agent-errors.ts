@@ -92,6 +92,31 @@ const AUTOMATION_ERROR_RESPONSES = {
     message: "That schedule has no future run. Choose a different time.",
   },
   automation_timezone_invalid: { status: 422, message: "That time zone is not one Rally recognizes." },
+  // The five below are what remains once acceptance derives its bindings from
+  // the draft instead of taking them in a request. Each was reachable before
+  // and none had a row, so each reached a member as `SAFE_CODE`'s generic
+  // "This automation could not complete that request." — a sentence with no
+  // next step, on the one button the proposal card offers.
+  automation_activity_source_unbound: {
+    status: 422,
+    message: "This automation's trigger is missing the connection it watches. Ask Rally to set it up again.",
+  },
+  automation_delivery_channel_unsupported: {
+    status: 422,
+    message: "Automations can only send results to your email today. Ask Rally to change how this one delivers.",
+  },
+  automation_personal_delivery_required: {
+    status: 422,
+    message: "Only a personal automation can send results outside Rally.",
+  },
+  automation_evaluator_source_binding_mismatch: {
+    status: 422,
+    message: "This automation's trigger and its rules disagree about which connection to watch. Ask Rally to set it up again.",
+  },
+  automation_evaluator_connection_missing: {
+    status: 409,
+    message: "A connection this automation needs is unavailable. Reconnect it and try again.",
+  },
   automation_plugin_unavailable: {
     status: 409,
     message: "A connection this automation needs is unavailable. Reconnect it and try again.",
