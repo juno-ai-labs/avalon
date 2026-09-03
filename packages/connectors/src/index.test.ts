@@ -11,6 +11,7 @@ import {
   createGoogleConnector,
   CredentialCipher,
   defineConnectorActivityTriggers,
+  googleTools,
   pollCheckpointedActivityStreams,
   verifyGenericWebhook,
   authorizedConnection,
@@ -2480,6 +2481,91 @@ describe("connectors", () => {
       details: { reason: "drive_file_not_writable", isAppAuthorized: false, canEdit: false }
     });
     expect(mutationUrls).toEqual([]);
+  });
+
+  it("tells a caller where every Google cursor comes from, and what the last page looks like", () => {
+    const paginated = googleTools.filter((tool) => {
+      const properties = (tool.inputSchema as { properties?: Record<string, unknown> }).properties ?? {};
+      return Object.hasOwn(properties, "pageToken");
+    });
+    // The four that page today. A fifth added without a description fails here
+    // rather than in somebody's run: the value of an opaque cursor is the one
+    // argument that cannot be reasoned out from its name and its bounds.
+    expect(paginated.map((tool) => tool.name)).toEqual([
+      "gmail.search",
+      "calendar.list_calendars",
+      "calendar.list_events",
+      "drive.search",
+    ]);
+    for (const tool of paginated) {
+      const properties = (tool.inputSchema as { properties: Record<string, { description?: string }> }).properties;
+      const description = properties.pageToken?.description ?? "";
+      expect(description, `${tool.name} pageToken`).toContain("nextPageToken");
+      expect(description, `${tool.name} pageToken`).toContain("never construct");
+      // Stated as the `null` these tools actually emit. A description of an
+      // absent key would contradict what the caller sees on every last page.
+      expect(description, `${tool.name} pageToken`).toContain("`nextPageToken` is `null`");
+    }
+  });
+
+  it("names the argument Google refused instead of only its status code", async () => {
+    const fetcher: typeof fetch = async () => googleJson({
+      error: {
+        code: 400,
+        message: "Invalid Value",
+        errors: [{
+          domain: "global",
+          reason: "invalid",
+          message: "Invalid Value",
+          locationType: "parameter",
+          location: "pageToken",
+        }],
+      },
+    }, 400);
+    await expect(googleAdapter(fetcher).executeTool(
+      "drive.search",
+      { query: "portfolio", pageToken: "1" },
+      {
+        connection: googleConnection(["drive.read"]),
+        principal: { type: "user", userId: TEST_USER_ID },
+        signal: neverAborts(),
+      }
+    )).rejects.toMatchObject({
+      code: "provider_error",
+      // `field` is on the structured-failure allowlist, so this is what the
+      // model is given to correct. Without it a rejected argument is
+      // indistinguishable from any other 400, and the run varies everything
+      // except the one value Google is refusing.
+      message: "Google API failed (400); it rejected the `pageToken` argument",
+      details: { reason: "invalid_parameter", field: "pageToken" },
+    });
+  });
+
+  it("does not relay a rejection whose location is not an argument name", async () => {
+    const fetcher: typeof fetch = async () => googleJson({
+      error: {
+        code: 400,
+        message: "Invalid Value",
+        errors: [{
+          domain: "global",
+          reason: "invalid",
+          locationType: "parameter",
+          // Google puts a query fragment here for some error classes, and a
+          // search term is the caller's own content. Only an identifier-shaped
+          // name leaves the adapter.
+          location: "name contains 'Q3 board deck' and trashed = false",
+        }],
+      },
+    }, 400);
+    await expect(googleAdapter(fetcher).executeTool(
+      "drive.search",
+      { query: "Q3 board deck" },
+      {
+        connection: googleConnection(["drive.read"]),
+        principal: { type: "user", userId: TEST_USER_ID },
+        signal: neverAborts(),
+      }
+    )).rejects.toMatchObject({ code: "provider_error", message: "Google API failed (400)" });
   });
 
   it("refreshes once after a Google 401 and retries with the new access token", async () => {
