@@ -25,6 +25,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import {
   asAutomationId,
+  asSubstreamId,
   asUserId,
   asWorkspaceId,
   asWorkstreamId,
@@ -117,15 +118,15 @@ function roomParent() {
   return env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(workstreamDOName("global", WORKSPACE_ID, ROOM_ID)));
 }
 
-function roomConversation(): DurableObjectStub {
+function roomConversation() {
   return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
     conversationObjectName("global", WORKSPACE_ID, ROOM_ID),
   ));
 }
 
-function runChild(runId: string): DurableObjectStub {
+function runChild(runId: string) {
   return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
-    conversationObjectName("global", WORKSPACE_ID, AUTOMATION_ID, runId),
+    conversationObjectName("global", WORKSPACE_ID, AUTOMATION_ID, asSubstreamId(runId)),
   ));
 }
 
@@ -191,7 +192,7 @@ async function seedRoom(): Promise<void> {
   await roomParent().reserveChild({
     workspaceId: WORKSPACE_ID,
     parentId: ROOM_ID,
-    substreamId: "0",
+    substreamId: asSubstreamId("0"),
     kind: "main",
     createdByUserId: AUTHOR_ID,
     authorityGeneration: 1,

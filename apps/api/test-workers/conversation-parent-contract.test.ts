@@ -22,7 +22,7 @@ import { env } from "cloudflare:workers";
 import { reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { asAutomationId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import { asAutomationId, asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId, type UserId } from "@rally/contracts";
 
 import type { AutomationDO } from "../src/durable-objects/automation-do";
 import {
@@ -92,7 +92,7 @@ function roomParent(roomId: string) {
   ));
 }
 
-function conversation(parentId: string): DurableObjectStub {
+function conversation(parentId: string) {
   return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
     conversationObjectName("global", WORKSPACE_ID, parentId),
   ));
@@ -137,7 +137,7 @@ async function seedRoom(roomId: string, scope: "personal" | "workspace", partici
   await roomParent(roomId).reserveChild({
     workspaceId: WORKSPACE_ID,
     parentId: roomId,
-    substreamId: "0",
+    substreamId: asSubstreamId("0"),
     kind: "main",
     createdByUserId: AUTHOR_ID,
     authorityGeneration: 1,
@@ -196,7 +196,7 @@ async function seedAutomation(scope: "personal" | "workspace" | "workstream", ow
   return automationId;
 }
 
-function viewer(parentId: string, userId: string) {
+function viewer(parentId: string, userId: UserId) {
   return { workspaceId: WORKSPACE_ID, parentId, userId };
 }
 
