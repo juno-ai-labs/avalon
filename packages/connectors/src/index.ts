@@ -382,8 +382,110 @@ function googleFileFamilyError(
   );
 }
 
+/**
+ * Which tool argument each Google request parameter came from, per tool.
+ *
+ * Google names a refused argument by its *HTTP parameter*, and for most of
+ * these the two names differ: `drive.search` sends `maxResults` as `pageSize`,
+ * and three tools send a `query` as `q`. Relaying Google's name directly would
+ * tell a caller to fix `q` — which every one of these tools rejects outright,
+ * since their schemas are `additionalProperties: false` over a `z.strictObject`
+ * parse. That reproduces the wrong-argument loop this mapping exists to end,
+ * one layer down, so a parameter with no entry here is dropped rather than
+ * relayed under a name the tool would refuse.
+ *
+ * Two deliberate absences. Drive's `q` is composed from `query`, `fileType`,
+ * and `modifiedAfter` together, so no single argument is the one to change.
+ * And `orderBy` is Drive's alone: `calendar.list_events` sends that parameter
+ * too, but Rally fixes its value at `startTime`, so a caller who was told to
+ * correct `orderBy` there would be sent after an argument it does not have and
+ * could not have caused.
+ *
+ * Because a lookup only ever yields one of these literals, provider text never
+ * reaches the model through this path — the values are Rally's own, not
+ * Google's, and no bound on the provider's string is needed to keep it that
+ * way.
+ */
+const GOOGLE_TOOL_ARGUMENT_BY_PARAMETER = {
+  "gmail.search": { q: "query", maxResults: "maxResults", pageToken: "pageToken" },
+  "calendar.list_calendars": { maxResults: "maxResults", pageToken: "pageToken" },
+  "calendar.list_events": {
+    q: "query",
+    timeMin: "timeMin",
+    timeMax: "timeMax",
+    maxResults: "maxResults",
+    pageToken: "pageToken",
+  },
+  "drive.search": { orderBy: "orderBy", pageSize: "maxResults", pageToken: "pageToken" },
+} as const satisfies Record<string, Readonly<Record<string, string>>>;
+
+/**
+ * The tool argument a Google rejection names, when it names one this tool has.
+ *
+ * Google reports an invalid argument in the legacy `error.errors[]` shape,
+ * carrying `locationType: "parameter"` and the parameter's name in `location`.
+ * Rally's failure said only `Google API failed (400)`, which named nothing a
+ * caller could act on: a run that guessed a `pageToken` value sent an invalid
+ * cursor eight times over, varying every argument except the one Google was
+ * refusing, and then abandoned Drive and answered from public web search.
+ *
+ * The name reaches the model through `field` on the structured-failure
+ * allowlist, which is for recovery context rather than provider text. A caller
+ * that passes no mapping — every hydration and polling path, which has no
+ * caller argument to correct — gets the plain failure it got before.
+ */
+function googleRejectedArgument(
+  details: unknown,
+  argumentByParameter: Readonly<Record<string, string>> | undefined,
+): string | null {
+  if (!argumentByParameter) return null;
+  if (!details || typeof details !== "object") return null;
+  const error = (details as { error?: unknown }).error;
+  if (!error || typeof error !== "object") return null;
+  const errors = (error as { errors?: unknown }).errors;
+  if (!Array.isArray(errors)) return null;
+  for (const entry of errors) {
+    if (!entry || typeof entry !== "object") continue;
+    const { locationType, location } = entry as { locationType?: unknown; location?: unknown };
+    if (locationType !== "parameter" || typeof location !== "string") continue;
+    if (Object.hasOwn(argumentByParameter, location)) return argumentByParameter[location]!;
+  }
+  return null;
+}
+
 export const GoogleFileWriteAuthorizationGuidance =
   "Only files with writableByRally=true are eligible for Docs or Sheets write tools; files created through this connection are writable, but an arbitrary Drive search result might be read-only under Google's per-file authorization.";
+
+/**
+ * What every paginated Google tool says about its cursor parameter.
+ *
+ * Every other parameter on these tools carries a description, and a run got
+ * every one of them right — a valid `fileType`, a valid `orderBy`, a valid
+ * RFC 3339 `modifiedAfter` — while sending `"/"`, `"1"`, and `"next"` for the
+ * one that carried none. A cursor is the single argument whose value cannot be
+ * reasoned out from its name and its bounds: `maxResults` needs no description
+ * because `minimum`/`maximum` on a field called "max results" already say what
+ * it is, and nothing about `minLength`/`maxLength` says where a token comes
+ * from. Google rejects an invented one with a 400 that fails the call before it
+ * searches, so the guess costs the whole request rather than degrading it.
+ *
+ * "Other arguments unchanged" is deliberately not a list of them. The token
+ * encodes the query it was issued for, and Google does not re-run a changed
+ * search when given a cursor — it resumes the old one, a silent wrong answer
+ * rather than an error. Naming each tool's filters said the same thing four
+ * ways and left a fifth to be remembered: `orderBy` was missed on
+ * `drive.search` when the lists were written out, which is the whole failure
+ * that clause exists to prevent. A sentence that covers every argument cannot
+ * be short by one.
+ *
+ * The last page is stated as `null` rather than as an absent key because
+ * `readString` returns `null`, and that is the shape all four tools emit.
+ * Describing a key that is never absent as "absent" would leave a model to
+ * resolve the contradiction against what it sees; X shipped a repair for a
+ * model reading a falsy cursor as another page and paging forever.
+ */
+const GOOGLE_PAGE_TOKEN_DESCRIPTION =
+  "Omit this for the first page. To continue an earlier search pass back the exact `nextPageToken` string a previous call to this tool returned, with that call's other arguments unchanged. It is an opaque cursor — a long provider-generated string, not a page number, an offset, or an index. Never construct, guess, shorten, or increment this token. A result whose `nextPageToken` is `null` is the last page: stop there rather than calling again.";
 
 export const googleTools: ToolDefinition[] = [
   {
@@ -413,7 +515,12 @@ export const googleTools: ToolDefinition[] = [
             "Gmail search query. Supports Gmail's operators, for example from:dana@example.com, to:, cc:, subject:, newer_than:30d, older_than:1y, has:attachment, in:anywhere, is:unread, and OR / parentheses / \"quoted phrases\". Prefer an operator query over bare keywords, which match message bodies and return far too much.",
         },
         maxResults: { type: "integer", minimum: 1, maximum: 25 },
-        pageToken: { type: "string", minLength: 1, maxLength: 2_000 }
+        pageToken: {
+          type: "string",
+          minLength: 1,
+          maxLength: 2_000,
+          description: GOOGLE_PAGE_TOKEN_DESCRIPTION,
+        }
       },
       required: ["query"]
     }
@@ -498,7 +605,12 @@ export const googleTools: ToolDefinition[] = [
       additionalProperties: false,
       properties: {
         maxResults: { type: "integer", minimum: 1, maximum: 250 },
-        pageToken: { type: "string", minLength: 1, maxLength: 2_000 }
+        pageToken: {
+          type: "string",
+          minLength: 1,
+          maxLength: 2_000,
+          description: GOOGLE_PAGE_TOKEN_DESCRIPTION,
+        }
       }
     }
   },
@@ -517,7 +629,12 @@ export const googleTools: ToolDefinition[] = [
         timeMax: { type: "string", minLength: 1, format: "date-time" },
         query: { type: "string", minLength: 1 },
         maxResults: { type: "integer", minimum: 1, maximum: 100 },
-        pageToken: { type: "string", minLength: 1, maxLength: 2_000 }
+        pageToken: {
+          type: "string",
+          minLength: 1,
+          maxLength: 2_000,
+          description: GOOGLE_PAGE_TOKEN_DESCRIPTION,
+        }
       },
       required: ["timeMin", "timeMax"]
     }
@@ -587,7 +704,12 @@ export const googleTools: ToolDefinition[] = [
           description: "Result order. Defaults to relevance.",
         },
         maxResults: { type: "integer", minimum: 1, maximum: 100 },
-        pageToken: { type: "string", minLength: 1, maxLength: 2_000 }
+        pageToken: {
+          type: "string",
+          minLength: 1,
+          maxLength: 2_000,
+          description: GOOGLE_PAGE_TOKEN_DESCRIPTION,
+        }
       }
     }
   },
@@ -1134,7 +1256,11 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
     connection: ConnectorConnectionContext,
     url: string,
     init: RequestInit = {},
-    allowedErrorStatuses: readonly number[] = []
+    allowedErrorStatuses: readonly number[] = [],
+    // Passed only by a tool whose caller chose the arguments, so a rejection
+    // can name one back. Absent everywhere else, which is what keeps a polling
+    // or hydration failure from claiming a caller argument was at fault.
+    argumentByParameter?: Readonly<Record<string, string>>
   ): Promise<Response> {
     const attempt = async (): Promise<Response> => {
       const token = String(connection.credentials.accessToken ?? "");
@@ -1162,7 +1288,23 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
             payload: details
           });
         }
-        throw new ConnectorError("provider_error", `Google API failed (${response.status})`, details);
+        // Only a 400. Drive reports an unreachable file with the same
+        // `errors[]` shape and `location: "fileId"`, so a 404 read this way
+        // would tell a caller its id was malformed when the file is simply
+        // deleted, trashed, or not shared — pointing it at re-deriving an id it
+        // had right, instead of at the access problem.
+        const rejectedArgument = response.status === 400
+          ? googleRejectedArgument(details, argumentByParameter)
+          : null;
+        throw new ConnectorError(
+          "provider_error",
+          rejectedArgument
+            ? `Google API failed (${response.status}); it rejected the \`${rejectedArgument}\` argument`
+            : `Google API failed (${response.status})`,
+          rejectedArgument
+            ? { reason: "invalid_parameter", field: rejectedArgument, payload: details }
+            : details
+        );
       }
       return response;
     };
@@ -2140,9 +2282,13 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         url.searchParams.set("maxResults", String(args.maxResults));
         if (args.pageToken) url.searchParams.set("pageToken", args.pageToken);
         url.searchParams.set("fields", "messages(id,threadId),nextPageToken,resultSizeEstimate");
-        const payload = await api(context.connection, url.toString(), { signal: context.signal }).then((response) =>
-          safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES)
-        );
+        const payload = await api(
+          context.connection,
+          url.toString(),
+          { signal: context.signal },
+          [],
+          GOOGLE_TOOL_ARGUMENT_BY_PARAMETER["gmail.search"]
+        ).then((response) => safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES));
         // The list endpoint returns bare identifiers. Hydrating each hit's
         // headers here is what makes a search result answerable on its own; a
         // model handed only IDs either spends a round trip per hit or invents
@@ -2309,9 +2455,13 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
           "fields",
           "nextPageToken,items(id,summary,description,location,timeZone,summaryOverride,colorId,backgroundColor,foregroundColor,hidden,selected,primary,accessRole,deleted)"
         );
-        const payload = await api(context.connection, url.toString(), { signal: context.signal }).then((response) =>
-          safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES)
-        );
+        const payload = await api(
+          context.connection,
+          url.toString(),
+          { signal: context.signal },
+          [],
+          GOOGLE_TOOL_ARGUMENT_BY_PARAMETER["calendar.list_calendars"]
+        ).then((response) => safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES));
         const calendars = recordArray(payload, "items").slice(0, args.maxResults).map(sanitizeGoogleCalendar);
         return {
           output: boundedToolOutput({ items: calendars, nextPageToken: readString(payload, "nextPageToken") }),
@@ -2343,9 +2493,13 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
           "nextPageToken,items(id,iCalUID,status,htmlLink,created,updated,summary,description,location,creator,organizer,start,end,recurrence,recurringEventId,originalStartTime,attendees(displayName,email,responseStatus,self,organizer),attendeesOmitted,attachments(fileUrl,title,mimeType,fileId),visibility,transparency,eventType)"
         );
         if (args.query) url.searchParams.set("q", args.query);
-        const payload = await api(context.connection, url.toString(), { signal: context.signal }).then((response) =>
-          safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES)
-        );
+        const payload = await api(
+          context.connection,
+          url.toString(),
+          { signal: context.signal },
+          [],
+          GOOGLE_TOOL_ARGUMENT_BY_PARAMETER["calendar.list_events"]
+        ).then((response) => safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES));
         const items = recordArray(payload, "items").slice(0, args.maxResults).map((event) =>
           sanitizeCalendarEvent(event, calendarId)
         );
@@ -2669,9 +2823,13 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         url.searchParams.set("includeItemsFromAllDrives", "true");
         if (args.pageToken) url.searchParams.set("pageToken", args.pageToken);
         url.searchParams.set("fields", "nextPageToken,files(id,name,mimeType,modifiedTime,createdTime,webViewLink,trashed,owners(displayName,emailAddress),lastModifyingUser(displayName,emailAddress),size,md5Checksum,parents,description,isAppAuthorized,capabilities(canEdit))");
-        const payload = await api(context.connection, url.toString(), { signal: context.signal }).then((response) =>
-          safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES)
-        );
+        const payload = await api(
+          context.connection,
+          url.toString(),
+          { signal: context.signal },
+          [],
+          GOOGLE_TOOL_ARGUMENT_BY_PARAMETER["drive.search"]
+        ).then((response) => safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES));
         const files = recordArray(payload, "files").slice(0, args.maxResults).map(sanitizeDriveFile);
         return {
           output: boundedToolOutput({ items: files, nextPageToken: readString(payload, "nextPageToken") }),
