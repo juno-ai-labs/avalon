@@ -244,11 +244,12 @@ describe('token references', () => {
   const RULE_LOCAL = ['--sidebar-row-background', '--pill-overhang', '--rail-slot',
     '--composer-line-height', '--composer-text-padding', '--system-message-lines',
     '--tw-fade-scrollbar-thumb', '--tw-fade-scrollbar-width', '--av-cmp-sidebar-width',
-    // The window chrome's own geometry, not an appearance: how far the
-    // platform's window buttons reach into the page. `:root` states the
-    // no-overlay default and `.workspace-shell.has-overlay-window-controls`
-    // states macOS's band, both in this file.
-    '--av-cmp-window-controls-inset',
+    // Deliberately outside the `--av-` namespace, unlike its neighbour above:
+    // `--av-cmp-sidebar-width` is a registry token a theme may set and is here
+    // only because the resize handle also writes it inline, while this one is
+    // the platform's window-chrome geometry, which no theme has an opinion
+    // about and the registry does not declare.
+    '--window-controls-inset',
     '--turn-bubble-radius'];
 
   // Set at runtime rather than in CSS: some by components as inline styles,
