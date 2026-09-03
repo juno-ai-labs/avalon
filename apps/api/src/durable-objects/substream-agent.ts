@@ -1,3 +1,6 @@
+    if (this.messages.messageByClientId({ clientMessageId })) {
+      return { outcome: "replayed", code: "resource_update_replayed" };
+    }
 import { ConversationParentKindSchema } from "@rally/contracts/conversation-parent";
 import { pendingBindToolBatch } from "@rally/agent-harness";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
@@ -1578,9 +1581,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       || identity.parentId !== request.workstreamId
       || this.externalSubstreamId() !== request.substreamId) {
       return { outcome: "refused", code: "workstream_destination_mismatch" };
-    }
-    if (this.messages.messageByClientId({ clientMessageId })) {
-      return { outcome: "replayed", code: "resource_update_replayed" };
     }
     const prepared = await this.messages.prepareMessage({
       messageId: uuidV7(request.event.occurredAt),
