@@ -7,7 +7,6 @@ import {
   BlockDashboardStreamCheckpointSchema,
   AnswerElicitationRequestSchema,
   AppendNoteTranscriptSegmentRequestSchema,
-  AutomationDeliveryTargetSetSchema,
   AutomationDraftSchema,
   AutomationDraftStreamEventSchema,
   AGENT_MODEL_FLAG_KEYS,
@@ -528,56 +527,22 @@ describe("boundary contracts", () => {
     }).success).toBe(true);
   });
 
-  it("lets a draft belong to the work stream it was written in", () => {
-    const base = {
-      name: "Weekly changelog",
-      description: "Summarize what shipped.",
-      overview: "Every Monday, write what shipped.",
-      instructions: "Summarize the merged work, newest first.",
-      triggers: [{ type: "manual" as const }],
-      requiredCapabilities: [],
-      expectedOutputs: [],
-      defaultBehavior: {},
-      recommendedPlugins: [],
-      memoryTables: [],
-      followUpQuestion: null,
-      elicitation: null,
-      ready: true,
-    };
-
-    expect(AutomationDraftSchema.safeParse({
-      ...base,
-      suggestedScope: "workstream",
-      requestedDelivery: [],
-    }).success).toBe(true);
-
-    // Scope is the destination for a room's automation: its results land in
-    // the room that owns it. Naming another would ask for two destinations,
-    // one of which nobody chose.
-    const withDelivery = AutomationDraftSchema.safeParse({
-      ...base,
-      suggestedScope: "workstream",
-      requestedDelivery: ["email"],
-    });
-    expect(withDelivery.success).toBe(false);
-    expect(withDelivery.error?.issues[0]?.path).toEqual(["requestedDelivery"]);
-
-    // The other scopes are unaffected: a person's automation delivers to them.
-    expect(AutomationDraftSchema.safeParse({
-      ...base,
-      suggestedScope: "personal",
-      requestedDelivery: ["email"],
-    }).success).toBe(true);
-  });
-
-  it("lets a workspace draft ask for a channel without naming one", () => {
-    // A workspace automation reaches people by acting with its connector
-    // tools. "channel" says the person asked for one; which channel is decided
-    // when it runs, from where it was authored, so no ID appears here.
-    expect(AutomationDraftSchema.safeParse({
+  it("still parses a draft stored before delivery was removed", () => {
+    // `requestedDelivery` recorded where a person asked the result to go, and
+    // acceptance turned it into a destination. Automations no longer have
+    // destinations: a run sends its own result with its own connector tools,
+    // and the only thing that follows from the automation itself is the room
+    // that owns it. The field is gone.
+    //
+    // Drafts carrying it are already stored, so what has to hold is that they
+    // still read. `AutomationDraftSchema` is not strict, so the key is stripped
+    // rather than refused — this asserts that, because making the schema strict
+    // later would turn every one of those rows into a parse failure at the
+    // boundary that reads them.
+    const parsed = AutomationDraftSchema.safeParse({
       name: "Shipped this week",
       description: "Post what shipped.",
-      overview: "Every Friday, post to the team channel.",
+      overview: "Every Friday, summarize the week.",
       instructions: "Summarize the week.",
       triggers: [{ type: "manual" as const }],
       requiredCapabilities: [],
@@ -585,12 +550,19 @@ describe("boundary contracts", () => {
       defaultBehavior: {},
       recommendedPlugins: [],
       memoryTables: [],
-      suggestedScope: "workspace",
-      requestedDelivery: ["channel"],
+      suggestedScope: "workstream",
+      requestedDelivery: ["email", "channel"],
       followUpQuestion: null,
       elicitation: null,
       ready: true,
-    }).success).toBe(true);
+    });
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.data).not.toHaveProperty("requestedDelivery");
+    // A room-scoped draft asking for delivery used to be refused outright. It
+    // is admissible now because the request means nothing, not because the
+    // rule was relaxed.
+    expect(parsed.data?.suggestedScope).toBe("workstream");
   });
 
   it("allows incomplete source fields while an activity draft is not ready", () => {
@@ -1477,53 +1449,6 @@ describe("boundary contracts", () => {
   });
 });
 
-describe("automation delivery destinations", () => {
-  const slack = { type: "slack_agent_dm" as const, connectionId: "018f3f4e-7b5a-7cc1-9a6f-2aa0324b7910" };
-
-  it("refuses the same destination kind twice", () => {
-    // `automation_delivery_targets` is unique on (subscription, target_type), so
-    // a set naming a kind twice has no valid persisted form. Stated as a bound
-    // alone this reached the database and became a 500; the route and the create
-    // request now share this schema so neither can drift from the other again.
-    const refused = AutomationDeliveryTargetSetSchema.safeParse([{ type: "email" }, { type: "email" }]);
-    expect(refused.success).toBe(false);
-    expect(refused.error?.issues[0]?.message).toBe("Each delivery destination can be chosen once");
-    expect(AutomationDeliveryTargetSetSchema.safeParse([slack, slack]).success).toBe(false);
-  });
-
-  it("accepts one of each kind, and nothing beyond the two Avalon offers", () => {
-    expect(AutomationDeliveryTargetSetSchema.safeParse([{ type: "email" }, slack]).success).toBe(true);
-    expect(AutomationDeliveryTargetSetSchema.safeParse([]).success).toBe(true);
-    expect(AutomationDeliveryTargetSetSchema.safeParse([{ type: "sms" }]).success).toBe(false);
-  });
-
-  it("reads a draft written before it recorded what was asked for", () => {
-    const { requestedDelivery, ...beforeTheField } = {
-      ...AutomationDraftSchema.parse({
-        name: "Daily briefing",
-        description: "Summarizes the day ahead.",
-        overview: "Runs every morning.",
-        instructions: "Prepare the briefing.",
-        triggers: [{ type: "manual", summary: "Run on request" }],
-        requiredCapabilities: [],
-        expectedOutputs: [],
-        defaultBehavior: {},
-        recommendedPlugins: [],
-        memoryTables: [],
-        suggestedScope: "personal",
-        followUpQuestion: null,
-        elicitation: null,
-        ready: true,
-      }),
-    };
-    expect(requestedDelivery).toEqual([]);
-    // Drafts persist inside the conversation row, so one saved before this field
-    // existed is reparsed on every later turn; without the default that is an
-    // `invalid_response` on a draft the person is still editing.
-    expect(AutomationDraftSchema.parse(beforeTheField).requestedDelivery).toEqual([]);
-    expect(AutomationDraftSchema.safeParse({ ...beforeTheField, requestedDelivery: ["sms"] }).success).toBe(false);
-  });
-});
 
 describe("resource version provenance", () => {
   const revision = {

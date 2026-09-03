@@ -978,38 +978,6 @@ export const AutomationPluginRecommendationSchema = z.object({
   reason: z.string().min(1).max(800),
 });
 
-export const AutomationDeliveryTargetInputSchema = z.discriminatedUnion("type", [
-  z.strictObject({ type: z.literal("slack_agent_dm"), connectionId: IdSchema }),
-  z.strictObject({ type: z.literal("email") }),
-]);
-
-/**
- * The whole destination set an automation delivers its result to, as a client
- * states it.
- *
- * One schema rather than a bound repeated per route, because the rule it
- * carries is the table's: `automation_delivery_targets` is unique on
- * `(automation_subscription_id, target_type)`, so a set naming a type twice has
- * no valid persisted form. Stated as a `.max()` alone it reads as "at most two
- * of anything", which admits two of the same kind and leaves the unique index
- * as the only thing refusing them — reached after validation has passed, so the
- * caller gets a 500 where they should have got a 422. `create` carried the
- * refinement and `PATCH` re-declared the array without it; sharing the schema is
- * what stops that happening a third time.
- */
-export const AutomationDeliveryTargetSetSchema = z.array(AutomationDeliveryTargetInputSchema)
-  .max(2)
-  .superRefine((targets, context) => {
-    const types = new Set<string>();
-    for (const target of targets) {
-      if (types.has(target.type)) {
-        context.addIssue({ code: z.ZodIssueCode.custom, message: "Each delivery destination can be chosen once" });
-        return;
-      }
-      types.add(target.type);
-    }
-  });
-
 export const MemoryTableColumnTypeSchema = z.enum([
   "string",
   "url",
@@ -1358,24 +1326,6 @@ export function isExternalEventTrigger(
     || trigger.type === "webhook";
 }
 
-/**
- * Where the person asked for the result to go, as the compiler understood it.
- *
- * A *request*, not a destination: the destinations are chosen on the create
- * screen and changed afterwards from the automation. This exists so that choice
- * starts from what was actually asked for rather than from a regex over the
- * draft's prose — the compiler is the one thing in the system that already
- * parsed the sentence.
- */
-/**
- * Where a draft asks to be delivered.
- *
- * `channel` is not a second shape: a workspace automation reaches people by
- * acting with its connector tools, and this says the person asked for a channel
- * rather than naming one. Which channel is decided when the automation runs,
- * from where it was authored — nothing here carries an ID.
- */
-export const AutomationRequestedDeliverySchema = z.enum(["email", "slack_agent_dm", "channel"]);
 export const AutomationDraftSchema = z.object({
   name: z.string().min(1).max(140),
   description: z.string().min(1).max(1200),
@@ -1384,8 +1334,6 @@ export const AutomationDraftSchema = z.object({
   triggers: z.array(TriggerDefinitionSchema).min(1),
   requiredCapabilities: z.array(z.string()).default([]),
   expectedOutputs: z.array(z.string()).default([]),
-  /** Defaulted, so a draft saved before this field existed still parses. */
-  requestedDelivery: z.array(AutomationRequestedDeliverySchema).max(2).default([]),
   defaultBehavior: z.record(z.string(), z.unknown()).default({}),
   recommendedPlugins: z.array(AutomationPluginRecommendationSchema).default([]),
   memoryTables: z.array(AutomationMemoryTableSchema).default([]),
@@ -1400,17 +1348,6 @@ export const AutomationDraftSchema = z.object({
   elicitation: AutomationDraftElicitationSchema.nullable().default(null),
   ready: z.boolean()
 }).superRefine((draft, context) => {
-  // Scope is the destination for a room's automation: its results land in the
-  // room that owns it, and there is nothing else for it to ask for. A draft
-  // that named one anyway would be asking for two destinations, one of which
-  // nobody chose.
-  if (draft.suggestedScope === "workstream" && draft.requestedDelivery.length > 0) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["requestedDelivery"],
-      message: "A work-stream automation delivers to its work stream, so it requests no delivery",
-    });
-  }
   const names = new Set<string>();
   draft.memoryTables.forEach((table, index) => {
     const normalized = table.name.toLocaleLowerCase();
@@ -1474,18 +1411,6 @@ export const AutomationDraftSchema = z.object({
 });
 
 /**
- * The delivery channels an accepted automation can actually be given.
- *
- * `requestedDelivery` records what the drafting conversation was asked for, in
- * a vocabulary wider than acceptance can express: `slack_agent_dm` resolves to
- * a target that names a specific Slack connection, and `channel` has no target
- * shape at all. Neither is derivable from a draft, which deliberately carries
- * no IDs. Only `email` is, because it resolves from the author's own user row
- * and needs nothing chosen.
- */
-const DERIVABLE_REQUESTED_DELIVERY = new Set(["email"]);
-
-/**
  * Everything acceptance needs that the draft has already decided.
  *
  * Acceptance used to take these as request fields, because the wizard that
@@ -1505,7 +1430,6 @@ const DERIVABLE_REQUESTED_DELIVERY = new Set(["email"]);
 export function automationAcceptanceSelections(draft: AutomationDraft): {
   activitySourcePluginIds: Record<string, string>;
   defaultPluginIds: string[];
-  deliveryTargets: z.infer<typeof AutomationDeliveryTargetSetSchema>;
 } {
   const activitySourcePluginIds: Record<string, string> = {};
   for (const trigger of draft.triggers) {
@@ -1516,16 +1440,13 @@ export function automationAcceptanceSelections(draft: AutomationDraft): {
   return {
     activitySourcePluginIds,
     defaultPluginIds: [...new Set(draft.recommendedPlugins.map((plugin) => plugin.pluginId))],
-    deliveryTargets: draft.requestedDelivery.includes("email") ? [{ type: "email" }] : [],
   };
 }
 
 /** Why a draft could not be accepted as written, in the object's own vocabulary. */
 export type AutomationDraftAcceptanceBlocker =
   | "automation_evaluator_rules_required"
-  | "automation_activity_source_unbound"
-  | "automation_delivery_channel_unsupported"
-  | "automation_personal_delivery_required";
+  | "automation_activity_source_unbound";
 
 /**
  * What would stop this draft being accepted, decided from the draft alone.
@@ -1560,15 +1481,6 @@ export function automationDraftAcceptanceBlocker(
     if (!bound || bound !== evaluator.source.suggestedSourcePluginId) {
       return "automation_activity_source_unbound";
     }
-  }
-  if (draft.requestedDelivery.some((channel) => !DERIVABLE_REQUESTED_DELIVERY.has(channel))) {
-    return "automation_delivery_channel_unsupported";
-  }
-  // Acceptance refuses delivery outside a personal automation. The draft's own
-  // refinement only forbids it for `workstream`, so a `workspace` draft could be
-  // submitted ready and then refused; both ends now answer the same question.
-  if (draft.requestedDelivery.length > 0 && draft.suggestedScope !== "personal") {
-    return "automation_personal_delivery_required";
   }
   return null;
 }
@@ -1744,12 +1656,6 @@ export const AutomationDetailSchema = AutomationSummarySchema.extend({
   memoryTables: z.array(AutomationMemoryTableSchema).default([]),
   defaultPluginIds: z.array(ModelPluginIdSchema).default([]),
   activitySourcePluginIds: ActivitySourcePluginIdsSchema.default({}),
-  deliveryTargets: z.array(z.object({
-    type: AutomationDeliveryTargetTypeSchema,
-    connectionId: IdSchema.nullable().default(null),
-    displayName: z.string().min(1).max(320),
-    status: z.enum(["active", "needs_input", "disabled"]),
-  })).default([]),
   templateUpdate: AutomationTemplateUpdateSchema.nullable().default(null),
   nextPlannedWorkstream: WorkstreamSchema.nullable(),
   recentRuns: z.array(AutomationRunSchema)
