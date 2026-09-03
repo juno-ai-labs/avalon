@@ -782,23 +782,27 @@ It does not own:
 | The single Notion ingress | [`notion-ingress.md`](notion-ingress.md) |
 | How a tool is *designed* so a small model uses it right | [`agent-tools.md`](agent-tools.md) |
 | How a run holds and narrows connector authority | [`agent-harness.md`](agent-harness.md) |
-| Where automation results are delivered | [`workstream-email-addresses.md`](workstream-email-addresses.md#outbound-automation-results) |
+| Why an automation sends its own results, and the one destination that is not the run's | [`automation-lifecycle.md`](automation-lifecycle.md) |
 
-Adding a personal delivery surface touches registries and one hand-written read:
-`AutomationDeliveryTargetTypeSchema`, `AutomationRunDeliveryTargetV1Schema`,
-`PERSONAL_IDENTITY_LINKS` if the surface needs a link, `FROZEN_IDENTITY_RESOLVERS`
-for the digest path, `AutomationAgent.resolveDeliveryTargets` for the automation
-path, and `CONNECTOR_DELIVERIES` for digest delivery. Nothing
-about which providers can deliver is written into the API or the client.
+Adding a personal delivery surface touches registries only, and only the
+digest's: `AutomationDeliveryTargetTypeSchema` (the name is historical; digests
+and delivery receipts share it), `PERSONAL_IDENTITY_LINKS` if the surface needs
+a link, `FROZEN_IDENTITY_RESOLVERS`, and `CONNECTOR_DELIVERIES` in
+`digest-delivery-service.ts`. Automations no longer have a delivery path to
+register with: a run sends its result through whatever connector tools it
+holds, so a new surface reaches automations the moment its connector ships a
+send tool. Nothing about which providers can deliver is written into the API
+or the client.
 
-The automation path is the one that is not a registry, and the one to be careful
-with: a new link table (`teams_user_links`, say) is a WorkspaceDO table, so the
-read added there goes through `withWorkspaceRuntimeDatabase` like its neighbour.
-Written against `this.env.DB` it names a table regional D1 does not have, which
-reaches the person as "An unexpected error occurred" rather than as anything
-naming the boundary. That is the defect recorded in the delivery-resolution note
-above, and `durable-object-workspace-table-routing.test.ts` is what now catches
-it.
+The one thing to be careful with is where the identity-link table lives: a new
+one (`teams_user_links`, say) is a WorkspaceDO table, so any read of it from a
+Durable Object goes through `withWorkspaceRuntimeDatabase`, never `this.env.DB`.
+Written against the regional binding it names a table regional D1 does not have,
+which reaches the person as "An unexpected error occurred" rather than as
+anything naming the boundary. That defect was found on the automation delivery
+path this section used to describe, and
+`durable-object-workspace-table-routing.test.ts` is what catches it now,
+whichever object makes the mistake next.
 
 ## Failure modes and limits
 
