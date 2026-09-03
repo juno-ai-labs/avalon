@@ -2110,11 +2110,69 @@ describe('collapseSettledWorkIntoAccordion', () => {
       answer('turn-2'),
     ]);
 
-    // The first answer carries no settled total, so its own run stays in the
-    // feed; the second one's drawer holds only the work that came after it.
+    // Each answer folds the stretch that reported into it, and neither drawer
+    // reaches past the sentence between them.
     expect(collapsed.map((message) => message.messageType))
-      .toEqual(['plugin_activity', 'text', 'work_accordion', 'text']);
+      .toEqual(['work_accordion', 'text', 'work_accordion', 'text']);
+    expect(collapsed[0]!.workAccordion?.rows.map((row) => row.id)).toEqual(['plugin-early']);
     expect(collapsed[2]!.workAccordion?.rows.map((row) => row.id)).toEqual(['thought-two']);
+  });
+
+  it('folds every stretch of a run that narrated itself, not only the last', () => {
+    // The response timer settles once, at the end. Keying on it folded the last
+    // stretch and left the earlier ones expanded above the sentences that had
+    // already summarized them — the stack of spent timers this pass removes.
+    const collapsed = collapseSettledWorkIntoAccordion([
+      said('human-one'),
+      thinking('thought-one'),
+      answer('turn-1', { id: 'turn-1:text', workSummary: undefined }),
+      plugin('plugin-github', 'GitHub'),
+      thinking('thought-two'),
+      answer('turn-2', { id: 'turn-2:text', workSummary: undefined }),
+      plugin('plugin-web', 'Web'),
+      answer('turn-3'),
+    ]);
+
+    expect(collapsed.map((message) => message.messageType)).toEqual([
+      'text',
+      'work_accordion', 'text',
+      'work_accordion', 'text',
+      'work_accordion', 'text',
+    ]);
+    expect(collapsed[3]!.workAccordion?.rows.map((row) => row.id))
+      .toEqual(['plugin-github', 'thought-two']);
+  });
+
+  it('keeps a multi-stretch response\'s total in the header rather than on its last drawer', () => {
+    // The total measured the whole response. No one stretch is that, so printing
+    // it on the last drawer would claim 2,477s for the 50s of rows inside it.
+    const collapsed = collapseSettledWorkIntoAccordion([
+      said('human-one'),
+      thinking('thought-one'),
+      answer('turn-1', { id: 'turn-1:text', workSummary: undefined }),
+      thinking('thought-two'),
+      answer('turn-2'),
+    ]);
+
+    expect(collapsed[1]!.workAccordion?.durationMs).toBeNull();
+    expect(collapsed[3]!.workAccordion?.durationMs).toBeNull();
+    expect(collapsed[4]!.workSummary).toEqual({ durationMs: 2_477_000 });
+  });
+
+  it('starts counting a response\'s stretches again after the previous one settled', () => {
+    // A settled total ends the response it belonged to, so the next response's
+    // single drawer is still that response's whole run and still takes it.
+    const collapsed = collapseSettledWorkIntoAccordion([
+      thinking('thought-one'),
+      answer('turn-1', { id: 'turn-1:text' }),
+      thinking('thought-two'),
+      answer('turn-2', { id: 'turn-2:text' }),
+    ]);
+
+    expect(collapsed[0]!.workAccordion?.durationMs).toBe(2_477_000);
+    expect(collapsed[2]!.workAccordion?.durationMs).toBe(2_477_000);
+    expect(collapsed[1]!.workSummary).toBeUndefined();
+    expect(collapsed[3]!.workSummary).toBeUndefined();
   });
 
   it('stops at a stretch of transcript nobody has loaded', () => {
@@ -2165,18 +2223,23 @@ describe('collapseSettledWorkIntoAccordion', () => {
     expect(collapsed[0]!.attentionSequenceNumber).toBe(12);
   });
 
-  it('leaves a running loop expanded, because its rows are the progress being watched', () => {
-    // `foldSettledWorkIntoMessages` writes `workSummary` only once the response
-    // timer settles, so a live run reaches this pass with nothing to collapse on.
+  it('leaves the live tail expanded, because its rows are the progress being watched', () => {
+    // Nothing has reported on these rows yet — the response's own timer is the
+    // last row in the feed while it runs — so they stay in the feed as progress.
     const collapsed = collapseSettledWorkIntoAccordion([
+      thinking('thought-one'),
+      answer('turn-1', { workSummary: undefined }),
       plugin('plugin-web', 'Web', { pluginActivity: {
         groupKey: 'name:Web', name: 'Web', icon: 'web', active: true, durationMs: 7_000,
         activeVerb: 'Using Web', completedVerb: 'Used Web',
       } }),
-      answer('turn-1', { workSummary: undefined }),
+      thinking('thought-live', { thoughtEvent: {
+        status: 'started', durationMs: 12_000, activeVerb: 'working', completedVerb: 'worked',
+      } }),
     ]);
 
-    expect(collapsed.map((message) => message.messageType)).toEqual(['plugin_activity', 'text']);
+    expect(collapsed.map((message) => message.messageType))
+      .toEqual(['work_accordion', 'text', 'plugin_activity', 'thought']);
   });
 
   it('gives the accordion a derived id, no attention ordinal, and a renumbered feed', () => {
