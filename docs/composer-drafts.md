@@ -19,19 +19,18 @@ the attachment hook, or the cache itself.
 | `apps/desktop/src/renderer/lib/use-draft-text.ts` | The text half: hydration, the debounce, the two commits, `releaseDraft`. |
 | `apps/desktop/src/renderer/lib/use-file-attachments.ts` | The attachment half: restore, re-upload, the ten-file settle. |
 | `apps/desktop/src/renderer/lib/app-session.tsx` | Watches the session and calls `clearAllDrafts` on a scope change. |
-| `apps/desktop/src/renderer/components/workstream-composer.tsx`, `screens/new-workstream.tsx`, `screens/automation.tsx` | The three surfaces that cache. An automation's own conversation, once it exists, is a `SubstreamAgent` feed whose composer is keyed like a work stream's by its parent id. |
+| `apps/desktop/src/renderer/components/workstream-composer.tsx`, `screens/new-workstream.tsx`, `screens/conversation-surface.tsx` | The surfaces that cache: the composer of an existing conversation (a work stream's or an automation's, keyed by the parent id) and the **New work stream** launcher. |
 
 ## How it works
 
 ### Which surfaces cache a draft
 
-Three surfaces cache a draft, and they are the only ones that do:
+Two surfaces cache a draft, and they are the only ones that do:
 
 | Surface | Component | Cache key |
 | --- | --- | --- |
-| A work stream's composer | `WorkstreamComposer` | `workspace:<region>:<workspaceId>:workstream:<workstreamId>` |
+| A conversation's composer, a work stream's or an automation's | `ConversationSurface` through `WorkstreamComposer` | `workspace:<region>:<workspaceId>:workstream:<parentId>`, the parent being the work stream or the automation |
 | **New work stream** | `NewWorkstreamScreen` | `workspace:<region>:<workspaceId>:new-workstream` |
-| **New automation** | `NewAutomationScreen` | `workspace:<region>:<workspaceId>:new-automation`, and `workspace:<region>:<workspaceId>:new-automation:<draftAutomationId>` once the conversation has a draft automation |
 
 `lib/draft-keys.ts` is the single place those strings are built. A draft's text and
 its attachments share one key, so the two halves of a composer can never drift
@@ -39,14 +38,12 @@ apart, and the launchers are scoped by regional workspace identity so switching
 workspaces does not surface another workspace's words even if Global and EU hold
 the same workspace UUID.
 
-**New automation** is one screen serving many conversations, so its key gains the
-draft automation being written the moment a turn names one — otherwise an unsent
-sentence, and the files staged beside it, follow the screen into the next
-automation. The key moves on a settled turn rather than with the address bar, and
-the text typed while that turn was running is carried across by hand. The
-automation surface is being rebuilt against `POST /automations`, which creates
-the automation before its conversation opens; the keys here are what
-`draft-keys.ts` still builds.
+**New automation** caches nothing: `/automations/new` calls `POST /automations`
+and replaces itself with `/automations/:id`, so the first sentence is typed into
+a conversation that already has its durable id. `draft-keys.ts` still builds
+the `new-automation` keys and `draft-cache.ts` still migrates their legacy
+spellings, because a released build may have rows under them; no screen writes
+them now.
 
 ### What is stored, and where
 
@@ -116,11 +113,11 @@ landed, which the debounce never held because saving stands down until hydration
 That one is written by its own unmount-only commit; without it, a composer opened,
 typed into, and left inside the read window lost the sentence.
 
-A key change is a *copy* unless something removes the original, and one screen
-needs a **move**. The New automation screen re-keys its own composer when a turn
-names the draft it just wrote, carrying whatever was typed while the model worked
-onto the new key by hand. `releaseDraft()` is what makes that a move: it drops the
-pending write so the key-change flush leaves nothing behind, and clears the key the
+A key change is a *copy* unless something removes the original, and a screen
+that re-keys its own composer needs a **move**. The retired New automation
+screen was that screen; none does it today, and the mechanism stays for the
+next one. `releaseDraft()` is what makes a re-key a move: it drops the pending
+write so the key-change flush leaves nothing behind, and clears the key the
 text was typed under, which a typing burst longer than the debounce has already
 written. Both halves are needed — either alone leaves the sentence in two places —
 and it must be called before the key changes, since it reads the key being released
@@ -255,6 +252,24 @@ signing out deletes all of them. [`security.md`](security.md) owns the boundary 
 sits inside.
 
 ## Changelog
+
+### 2026-09-03: New automation stops caching a draft
+
+**What changed:** The **New automation** surface no longer exists as a
+composer: `/automations/new` creates the automation over `POST /automations`
+and replaces itself with `/automations/:id`, whose composer is the ordinary
+conversation composer keyed by the automation id as the parent. The
+`new-automation` keys remain in `draft-keys.ts` and the legacy migration in
+`draft-cache.ts` only so rows a released build wrote can still be found.
+
+**Why:** An automation is drafted in a conversation of its own
+([`automation-lifecycle.md`](automation-lifecycle.md)), and the conversation
+exists before a person can type, so there is no pre-identity sentence to hold
+and no key to move on a settled turn.
+
+**Consequences:** `releaseDraft()` and the move it enables have no caller; the
+invariant about a re-keying screen stands for the next one. The
+`new-automation` keys can be dropped once no released build predates this.
 
 ### 2026-08-31 — Every draft key begins with its workspace
 

@@ -887,7 +887,7 @@ export class AutomationDO extends ConversationParentDurableObject {
     let authorized = row.scope === "workspace"
       || row.author_user_id === request.userId
       || row.run_as_user_id === request.userId;
-    if (!authorized && row.scope === "workstream" && row.owning_workstream_id === null) {
+    if (!authorized && row.scope === "workstream" && row.owning_workstream_id) {
       const workspace = await durableObjectStubForWorkspace(
         this.env,
         this.env.WORKSPACE_DOS,

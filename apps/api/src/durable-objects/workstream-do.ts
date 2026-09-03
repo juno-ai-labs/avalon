@@ -693,7 +693,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       || this.userProjection(request.userId)?.isParticipant === true;
     return ConversationParentAuthorizeViewerResultSchema.parse({
       authorized,
-      archived: false,
+      archived: row.archived_at !== null,
     });
   }
 

@@ -40,7 +40,8 @@ effect pipeline its children use are owned by
 | `apps/api/src/queues/activity-consumer.ts` | Delivers a matched event to `admitExternalEvent`, and a run child's effects to the object through the shared effect leg. |
 | `apps/api/src/services/resend-inbound-email-service.ts` | `ingestAutomation`: resolves the sender, stores the message, and calls `admitInboundEmail` once. |
 | `apps/api/src/services/memory-service.ts` | `resolveMemoryAccess`: a conversation whose parent is an automation resolves the workspace scope and the automation's own `automation` scope. |
-| `apps/desktop/src/renderer/screens/automation.tsx`, `components/inspector-rail.tsx`, `components/sidebar.tsx` | The `/automations/:id` route host, the room rail's automation grouping, and the sidebar rows. |
+| `apps/desktop/src/renderer/screens/automation.tsx`, `components/automation-header.tsx`, `screens/conversation-surface.tsx` | `/automations/new` calls `POST /automations` and replaces itself with `/automations/:id`; that route renders the header (lifecycle badge, scope, email address, Create or Apply changes, Pause, Resume, Delete, Run now, the run list from `GET /automations/:id/runs`) over the shared conversation surface with `parentKind: "automation"` and `substreamId: "0"`. |
+| `apps/desktop/src/renderer/components/sidebar.tsx`, `components/inspector-rail.tsx` | The sidebar's automation rows (drafts labelled **Draft**, the **New automation** action beside **New work stream**) and the room rail's automation grouping from `GET /automations/workstream/:workstreamId`; an automation's own conversation shows no such grouping. |
 
 ## How it works
 
@@ -51,9 +52,11 @@ create one:
 
 - **`POST /automations`**, the sidebar's "New automation". It takes no body:
   `AutomationService.create` calls `createAutomation` with `scope: "personal"`
-  and no owning work stream, and answers `{automationId}`, which the client
-  opens at `/automations/:id`. The draft is written in the conversation that
-  page shows.
+  and no owning work stream, and answers `{automationId}`. The desktop's
+  `/automations/new` makes that call once per visit and replaces itself with
+  `/automations/:id`, so Back never lands on a screen that would create
+  another; the draft is written in the conversation that page shows, and
+  **Create** on its header is the first apply.
 - **A room's agent submitting a draft.** The `rally:automations` plugin is
   available in every conversation except a run's: preloaded in an automation's
   own conversation, and in a work stream deferred (discovered through
@@ -246,9 +249,10 @@ The loop input carries a reference, not a copy. At loop start
 work stream, run-as principal, model override, trigger, opening, and state),
 which builds the prompt context and decides which connector plugins preload.
 Before every provider write, `assertRunAuthorityStillValid` asks the parent
-`readRunState`; a run the automation no longer knows, or whose automation is not
-`active`, refuses with `ConnectorError("unauthorized")`, so a run that outlives
-a pause or a delete stops rather than finishing on stale consent. The
+`readRunState`; a run the automation no longer knows, whose automation is not
+`active`, or whose own row is no longer `running` or `needs_input`, refuses
+with `ConnectorError("unauthorized")`, so a run that outlives a pause or a
+delete stops rather than finishing on stale consent. The
 `rally:automations` drafting plugin is withheld from a run.
 
 The run reports its state the way every conversation does: its
@@ -605,9 +609,10 @@ and the run row's state, and `assertRunAuthorityStillValid` refuses unless the
 lifecycle is `active` and the run is `running` or `needs_input`; and a
 mail-started run's opening is appended to the run's own conversation as a
 `system` message, which is what its loop reads as the trigger. The desktop
-surfaces this document names are the routes and lists the API serves; the
-renderer's own automation screens are being rebuilt against them in the same
-change and are not described here beyond the route host.
+moved with it: the automation overview screen, the attention notice, the
+template surfaces, and the principal-unavailable card are gone, and the
+automation page is the shared conversation surface under a header that carries
+the lifecycle.
 
 ### 2026-09-03 — An automation has no destinations of its own
 

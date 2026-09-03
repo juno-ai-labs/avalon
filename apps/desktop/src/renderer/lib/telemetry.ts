@@ -123,7 +123,7 @@ export function telemetrySurfaceForPath(
 } | null {
   if (pathname === '/workstreams/new') return { surface: 'workspace_home' };
   if (pathname === '/meeting') return { surface: 'meeting_capture' };
-  // `/automations/new` redirects to a new work stream now that drafting is a
+  // `/automations/new` creates the automation and replaces itself with its
   // conversation. Reporting a builder surface for a path that shows one for an
   // instant on its way somewhere else would put a screen nobody saw in the
   // funnel; `automation_builder` stays in the union because rows recorded

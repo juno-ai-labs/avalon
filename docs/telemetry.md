@@ -199,13 +199,17 @@ API answers it with only `connector_setup_completed_v2` under the same operation
 ID, including terminal failures. An older client without the version marker
 retains the V1 outcome, so one attempt never emits both destination versions.
 
-Automation measurement starts when the builder becomes actionable. The API
-records each durable compiler turn, first create-ready revision, authoritative
-custom/template creation, overview reopen, and lifecycle or execution outcome.
-Trigger, connector, plugin, delivery-target, input-mode, turn-count, and duration
-dimensions are closed and content-free. Current clients emit only the richer
-contracts; legacy creation/action contracts remain accepted for released clients
-and are not duplicated.
+An automation is measured as its conversations and its runs. The desktop's
+surface for `/automations/:id` is `automation_detail`, whether the automation
+is a draft or applied, because one screen is behind the route; the
+`automation_builder` surface stays in the closed union only because rows
+recorded before the builder's retirement carry it, and no current client
+reports it. The entry points `sidebar_automation` and `automation_run_list`
+name how the page was reached. On the API, a run's outcome and its
+`agent_tool_started` events carry the automation id, the run id, and the
+trigger kind from the run's `automationRun` reference; the compiler-turn,
+revision, template, and overview-reopen measurements went with the builder.
+Dimensions stay closed and content-free.
 
 The regional agent runtime emits `agent_tool_started` only after the canonical
 execution plan has been durably admitted and replay/ambiguity checks have passed.
@@ -682,6 +686,23 @@ the dry-run evidence; change batching or sampling only after measuring those
 signals, never by weakening policy or deadline tests.
 
 ## Changelog
+
+### 2026-09-03: Automation telemetry follows the run reference and one detail surface
+
+**What changed:** The compiler-turn, create-ready revision, template creation,
+and overview-reopen measurements are gone with the automation builder and
+compiler. A run's outcome and tool events read `automation_id`,
+`automation_run_id`, and `automation_trigger_type` from the run's
+`automationRun` reference rather than a frozen run context, and the desktop
+reports `automation_detail` for every `/automations/:id` visit.
+
+**Why:** The automation was rebuilt as a conversation parent
+([`automation-lifecycle.md`](automation-lifecycle.md)); drafting is a
+conversation the work-stream telemetry already covers, and there is no builder
+screen to attribute.
+
+**Consequences:** `automation_builder` and `automation_builder_started` remain
+in the closed unions for rows already recorded and have no current emitter.
 
 ### 2026-09-03 — HyperSight telemetry is retired with the feature
 
