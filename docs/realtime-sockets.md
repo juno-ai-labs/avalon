@@ -38,7 +38,7 @@ connection lifecycle around that admission protocol.
 | `apps/api/src/durable-objects/workspace-do.ts` | Accepts the persistent workspace synchronization/command socket, serves authoritative cursor-paged work-stream rows, persists a bounded replay log, and consumes its purpose-specific ticket in SQL. |
 | `apps/api/src/durable-objects/workstream-do.ts` | Accepts the per-work-stream aggregate metadata socket and returns complete viewer-specific snapshots. |
 | `apps/api/src/durable-objects/block-dashboard-agent.ts` | Accepts one hibernating socket per visible configured block and returns its durable run plus active-output checkpoint. |
-| `apps/api/src/durable-objects/substream-agent.ts` | Accepts the direct read/stream/download feed and `create_message` commands, consumes its distinct ticket in SQL, and admits writes from the identity serialized when the socket was authorized. |
+| `apps/api/src/durable-objects/substream-agent.ts` | Accepts the direct read/stream/download feed and all substream-local commands (message, elicitation answer, pending-input reorder, stop, retry), consumes its distinct ticket in SQL, and admits writes from the identity serialized when the socket was authorized. |
 | `apps/api/src/durable-objects/automation-agent.ts` | Accepts one hibernating socket per automation draft, consumes its ticket in `automation_socket_ticket_receipts`, re-reads the session and membership from D1, and admits only the automation's author. |
 | `apps/desktop/src/renderer/lib/use-automation-agent-socket.ts` | The automation draft feed: ticket request, snapshot fence against the compiler stream, folded narration, heartbeat, and reconnect backoff. |
 | `apps/desktop/src/renderer/lib/workspace-socket.tsx` | Keeps the workspace socket alive across navigation, correlates/retries directory-page requests, resumes its waterline, applies current work-stream rows, and invalidates workspace query surfaces. |
@@ -48,7 +48,7 @@ connection lifecycle around that admission protocol.
 | `apps/desktop/src/renderer/lib/use-workstream-control-socket.ts` | Applies complete waterlined WorkstreamDO metadata snapshots to detail and sidebar caches. |
 | `apps/desktop/src/renderer/lib/workstream-state-store.ts` | Shared common/viewer and WorkspaceDO-directory waterline ledgers used by both parent sockets; independently rejects stale state fields and older pin/page fields. |
 | `apps/desktop/src/renderer/lib/use-block-dashboard-sockets.ts` | Opens block sockets only while HyperSight is visible, applies full stream checkpoints, rejects stale revisions, and reconnects without duplicate text. |
-| `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Keeps a pooled SubstreamAgent feed, resends idempotent message commands after reconnect, explicitly disables legacy feed-derived presence, and invokes the separate WorkstreamDO control lifecycle. |
+| `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Keeps a pooled, substream-addressed SubstreamAgent feed, resends idempotent child commands after reconnect until their private operation receipts arrive, explicitly disables legacy feed-derived presence, and invokes the separate WorkstreamDO control lifecycle. |
 | `packages/contracts/src/workstream-transcript.ts` | Ordered turn/block, snapshot-fenced range, gap coverage, and nested UTC activity contracts used by the SubstreamAgent feed. |
 | `apps/desktop/src/renderer/lib/workstream-socket-pool.tsx` | Owns the work-stream sockets above the route, gives each mounted owner one opaque lease ID shared by its control/feed starts, warms one presence-free control/feed pair after a one-second sidebar hover, and retains recently viewed pairs without remounting their connection hooks. |
 | `apps/desktop/src/renderer/lib/realtime-socket.ts` | Preserves the browser `WebSocket` event/readiness contract for the work-stream hooks while routing Electron transport through one socket-ID-multiplexed privileged-bridge listener; browser development keeps the native constructor. |
@@ -726,6 +726,28 @@ the provider's redirect and cannot move; [`security.md`](security.md) records
 what that leaves exposed.
 
 ## Changelog
+
+### 2026-09-02 — The substream socket becomes the child command plane
+
+**What changed:** one operation-ID protocol now carries message admission,
+elicitation answer, pending-input reorder, stop, and retry directly to the
+addressed SubstreamAgent. The desktop retains each command across reconnect and
+the object returns a private correlated result. Retry reuses the operation ID
+as its durable run receipt, making an ambiguous resend safe. The unused
+WorkspaceDO `create_message` command is removed in the same hard cutover.
+
+**Why:** the ticket has already selected and authorized the child authority.
+Routing these same mutations through work-stream REST added an unnecessary
+product-parent hop and would have coupled a future automation-owned substream to
+work-stream routes.
+
+**Considered and rejected:** dual REST/socket support because no deployed client
+needs a compatibility window. Parent-owned participants, resources, metadata,
+and archive remain outside this child protocol.
+
+**What a future change has to respect:** every child command needs a durable
+idempotency identity and a private receipt; canonical consequences still travel
+as sequenced feed state.
 
 ### 2026-09-02 — A room-owned automation cannot block the whole sidebar snapshot
 

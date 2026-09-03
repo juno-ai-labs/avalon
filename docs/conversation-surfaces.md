@@ -69,6 +69,20 @@ prove layout, focus, scroll position, or overlap.
 
 ## Changelog
 
+### 2026-09-02 — Work-stream conversation controls use their substream connection
+
+**What changed:** the shared work-stream socket adapter now exposes message,
+elicitation-answer, pending-input reorder, stop, and retry commands. The screen
+uses those commands while its rendering and optimistic behavior stay unchanged.
+
+**Why:** those controls act on the conversation child, and the feed already
+selects that child. Keeping transport in the adapter lets the same feed and
+composer be hosted under a different parent without teaching shared components
+about work-stream REST.
+
+**What a future change has to respect:** shared conversation components remain
+transport-neutral; a parent adapter provides the addressed substream connection.
+
 ### 2026-09-02 — One open-row set, for every kind of collapsible row
 
 **What changed:** `SystemRowDisclosure` is `RowDisclosure`, the `MessageBlock`
@@ -302,7 +316,8 @@ active voice across all visible turns.
 **What changed:** While a work-stream loop is running, the composer no longer
 offers a steer/queue dropdown. Sends default to queue, and pending rows
 (author avatar, hover drag handle) stack on the composer instead of as
-transcript pills. Reorder is REST, visible to every viewer.
+transcript pills. Reorder is a private substream-socket command whose canonical
+queue state remains visible to every viewer.
 
 **Why:** The queue is a work-stream product control, not a shared conversation
 primitive. Putting it in `ComposerInput` would smuggle loop semantics into

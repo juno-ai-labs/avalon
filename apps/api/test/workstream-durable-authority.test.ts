@@ -106,8 +106,6 @@ describe("a stack that never opened the durable-object authority", () => {
       service.attachResource(workstreamId, "00000000-0000-7000-8000-0000000000f1"),
       service.detachResource(workstreamId, "00000000-0000-7000-8000-0000000000f1"),
       service.answerElicitation(workstreamId, elicitationId, { answer: "yes" }),
-      service.stop(workstreamId),
-      service.retry(workstreamId),
       service.create({
         openingMessage: "Start",
         clientMessageId: "client-2",

@@ -6,7 +6,9 @@ Worker. This document says which one carries what, and it is deliberately
 opinionated, because the two are interchangeable often enough that the choice
 otherwise gets made by whichever one the last person happened to write.
 
-**The rule in one line: data comes down the socket, changes go up over REST.**
+**The rule in one line: state comes down the owning socket; commands for an
+already-open child go back through that same socket, while parent and bootstrap
+mutations use REST.**
 The socket is not a change-notification channel that the client answers with a
 fetch. It carries the data itself, and it carries it **before the client asks**
 — by the time a socket is open the server already knows, from the ticket that
@@ -522,67 +524,55 @@ will do both, in different code paths, and the resulting bug is intermittent.
 - Don't skip the comparison because only one socket sends this today. The
   second sender arrives as a feature and finds a rewrite.
 
-## Why mutations go up over REST
+## Why child commands use the owning socket
 
-Everything that changes state is an HTTP request: create a work stream, accept a
-suggestion, answer an elicitation, rename, pin, invite, connect a connector,
-change a setting. The authored message send is the one standing exception, and
-[the last section](#known-divergences) says why it was granted.
+A mutation belongs on an already-open child socket when the connection itself
+selects the durable authority being changed. For `SubstreamAgent`, that means
+message admission, elicitation answers, pending-input reorder, stop, and retry.
+The socket ticket already fixes workspace, parent, substream, user, session,
+role, region, and authority generation. Repeating a work-stream URL in REST
+would add a routing path without adding authority.
 
-**Because a mutation needs a reply, and HTTP is the thing that has replies.** A
-status code, an error body, a retry policy, an idempotency key, per-route
-authorization, CORS preflight, and a trace that starts and ends in the same
-invocation. A socket command needs every one of those built by hand: a
-correlation id, a timeout, a private receipt frame, a failure envelope, and a
-resend rule after reconnect. That is HTTP, reimplemented inside a WebSocket, and
-maintained by us.
+A command still needs request semantics. Every substream mutation therefore
+carries an `operationId`; the object returns a private correlated success or
+failure receipt; the renderer keeps the exact command over a transient
+disconnect and resends it after reconnect. The write itself must be idempotent
+under its durable identity. Message admission uses `clientMessageId`,
+elicitation answers use their stable response identity, reorder and stop
+converge, and retry uses `operationId` as the subordinate run ID.
 
-**Because a socket is a stream of state and a mutation is a transaction.** The
-push channel's contract is "the newest value wins, older ones are discarded". A
-command cannot be discarded because a newer one arrived. Putting both on one
-channel means one of the two contracts is a lie.
+The command receipt is not canonical shared state. It tells one caller whether
+its transaction was accepted. The durable consequence is still published on
+the sequenced feed to every reader, including that caller. Socket deltas keep
+their newest-value ordering; commands keep their correlated operation ordering.
 
-**Because the reply can carry the result.** REST is not write-only here: when
-the caller needs read-your-write — the created work stream's id to navigate to,
-the compiled automation to display — the response returns it. The durable
-consequence still goes out on the socket to every client including this one,
-which is what keeps the mutator's view identical to every other client's rather
-than close to it.
-
-So the shape of every mutation is: **REST request → authoritative write →
-response to the caller → push to every socket that cares.** The response is a
-convenience for the caller; the push is the truth for everyone.
-
-Enforce that at the room rather than by convention. `SubstreamAgent` accepts
-only `create_message` as a mutation on the admitted room socket; every other
-mutation frame receives `rest_required` — "persist this action through the
-work-stream API before publishing it." A frame type existing in a shared client
-schema is not permission to send it; the authority decides, and it says so in
-an error a client author can act on.
+REST remains right when no child socket exists yet or the mutation belongs to a
+different authority: create a work stream, rename/archive it, manage
+participants or resources, pin it, invite a member, or change workspace
+settings. Those operations select or change the parent and may create/destroy
+the very child connection a socket command would require.
 
 **Do**
 
-- Send state changes as HTTP, with a status code and an idempotency key.
+- Send commands for an open child through that child's addressed socket.
+- Give every socket command a stable operation ID, private receipt, durable
+  idempotency rule, and reconnect resend.
+- Send bootstrap and parent-owned mutations over REST.
 - Return the authoritative result when the caller needs read-your-write.
 - Publish the durable consequence to every subscriber, the mutator included.
-- Refuse mutation frames at the authority, with an error that names the right
-  path.
-- Treat a socket command as an exception that has to be argued for in writing.
 - Let the push be the ordering for everyone, the caller included.
 
 **Don't**
 
-- Don't build a command frame, correlation id, timeout, and error envelope on a
-  socket. That is HTTP rebuilt by hand and maintained by us.
+- Don't add a parallel REST route for a child command already carried by its
+  socket.
+- Don't resend an ambiguous command under a new identity.
 - Don't make a caller learn the outcome of its own write by waiting for a
   broadcast.
 - Don't let the caller's response be the only place a change appears. The
   mutator's view can then differ from every other client's, and nothing will
   correct it.
-- Don't rely on a shared schema, a code review, or a comment to keep mutations
-  off a socket.
-- Don't add a socket command because it is fewer lines in the renderer, or
-  because a similar one already exists.
+- Don't put a parent-owned mutation on a child socket merely because it is open.
 - Don't apply a response optimistically in a way the later push cannot correct.
 
 ## When a REST read is still right
@@ -631,16 +621,19 @@ person went looking for.
 
 In order. The first answer that applies decides it.
 
-1. **Does it change state?** REST. Stop.
-2. **Is there a socket open to the authority that owns it?** If not, REST — and
-   ask whether the surface should have a socket.
-3. **Will the screen that needs it render before it arrives?** Then it belongs
+1. **Does it change an already-open child authority?** Send a correlated,
+   idempotent command through that child's socket. Stop.
+2. **Does it bootstrap, select, create, destroy, or change the parent?** REST.
+   Stop.
+3. **Is there a socket open to the authority that owns the read?** If not, REST
+   — and ask whether the surface should have a socket.
+4. **Will the screen that needs it render before it arrives?** Then it belongs
    in the connect payload, not in a request that screen makes.
-4. **Can it change while a window is open?** Then it is pushed, and the push is
+5. **Can it change while a window is open?** Then it is pushed, and the push is
    the only path — do not add a REST read for its first value.
-5. **Is it bounded, or does it have a natural first page?** If neither, it is
+6. **Is it bounded, or does it have a natural first page?** If neither, it is
    not a connect payload; give it a cursor or leave it a fetch.
-6. **Otherwise it is a fetch**, and the reason it is a fetch belongs in a comment
+7. **Otherwise it is a fetch**, and the reason it is a fetch belongs in a comment
    at the call site.
 
 Three signs the answer above was wrong:
@@ -649,10 +642,10 @@ Three signs the answer above was wrong:
   focus, or a retry whose purpose is to notice a change rather than to recover
   from a failure. A surface that goes stale without the user doing anything is a
   missing push.
-- **You are writing infrastructure for the channel you picked.** Correlation
-  ids, timeouts, and receipt frames on a socket mean the mutation wanted HTTP.
-  Cache invalidation, poll intervals, and refetch cascades on a fetch mean the
-  read wanted a push.
+- **You are duplicating infrastructure across commands.** Correlation, failure,
+  reconnect, and resend belong to one child-command transport, not to each
+  feature. Cache invalidation, poll intervals, and refetch cascades on a fetch
+  mean the read wanted a push.
 - **Two places produce the same field and stamp it independently.** A relay is
   fine and is how a work-stream row reaches both the control socket and the
   workspace socket — it forwards the owner's version. Two producers that each
@@ -728,7 +721,8 @@ describes behaviour to replace, not a pattern to copy into something new.**
 | Suggested actions | `GET /work-opportunities?limit=4`, invalidated by the `activity` and `work_opportunities` topics | **No.** The rows are in the object holding the socket. |
 | Sending a message | Command frame on the admitted SubstreamAgent socket, answered with a private receipt | Yes. The command is scoped by the socket attachment and remains idempotent across reconnect. |
 | Connector list in workspace settings | `GET /connections`, re-read on every window refocus (`refetchOnWindowFocus: 'always'`) | **No.** The one focus revalidation in the client; the global default is off. See below. |
-| Every other mutation | REST, refused on the feed socket with `rest_required` | Yes. |
+| Substream-local commands | `create_message`, elicitation answer, pending-input reorder, stop, and retry use the addressed SubstreamAgent socket with private operation receipts | Yes. |
+| Parent/bootstrap mutations | REST | Yes. |
 
 ## Known divergences
 
@@ -805,6 +799,29 @@ read survives, and it is not a precedent.
 
 ## Changelog
 
+### 2026-09-02 — Substream-local commands move together onto the child socket
+
+**What changed:** elicitation answers, pending-input reorder, stop, and retry
+join message admission on the addressed SubstreamAgent socket. Their public REST
+routes, desktop HTTP methods, and the unused WorkspaceDO message-command path
+are removed. One operation-ID receipt and
+reconnect queue serves all five commands; retry uses the operation ID as its
+durable run ID. Archive now requests loop stop inside its own object transaction.
+
+**Why:** these actions mutate the exact child selected by the open socket. A
+parallel REST route repeated routing and authorization without adding a parent
+decision, and made generalizing the same substream under another parent require
+another product-specific HTTP surface.
+
+**Considered and rejected:** retaining REST compatibility, because there are no
+deployed clients to protect and two writable transports would leave dead code
+and two retry contracts. Moving participants/resources was also rejected: they
+remain parent/product lifecycle decisions rather than substream conversation
+commands.
+
+**What a future change has to respect:** a new substream parent supplies
+admission and addressing; it must not require a second child-mutation API.
+
 ### 2026-09-01 — Message admission moves to the socket that owns the room
 
 **What changed:** `create_message` now uses the admitted SubstreamAgent socket,
@@ -821,8 +838,8 @@ response that private receipts solve. Per-message D1 reauthorization on the
 child duplicates admission while the access-revocation queue already closes
 lost authority.
 
-**Consequences:** Sending remains the deliberate mutation-over-socket case; it
-now matches the authority rule instead of appearing as a known divergence.
+**Consequences:** Sending established the operation-receipt pattern now shared
+by every substream-local command.
 
 ### 2026-08-30 — Sidebar participant preview is join time
 

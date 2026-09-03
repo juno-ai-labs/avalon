@@ -5,18 +5,13 @@ import {
   AcknowledgeWorkstreamReadRequestSchema,
   AddParticipantRequestSchema,
   ApplyWorkstreamBatchRequestSchema,
-  AnswerElicitationRequestSchema,
-  CreateMessageRequestSchema,
   CreateWorkstreamRequestSchema,
-  ElicitationSchema,
   IdSchema,
   BlockDashboardPreferenceSchema,
   BlockDashboardSchema,
   ParticipantSchema,
   PreviewWorkstreamBatchRequestSchema,
   ReorderWorkstreamPinsRequestSchema,
-  ReorderPendingLoopInputsRequestSchema,
-  ReorderPendingLoopInputsResultSchema,
   WorkstreamResourceSchema,
   UpdateBlockDashboardPreferenceRequestSchema,
   UpdateBlockDashboardRequestSchema,
@@ -24,7 +19,6 @@ import {
   WorkstreamBootSchema,
   WorkstreamBatchAcceptedSchema,
   WorkstreamBatchPreviewSchema,
-  WorkstreamMessageAdmissionReceiptSchema,
   WorkstreamSchema,
   WorkspaceWorkstreamCursorSchema,
 } from "@rally/contracts";
@@ -46,7 +40,6 @@ import { apiTelemetryEnvelope, emitAuthenticatedApiTelemetry, telemetryOperation
 const idParam = z.object({ id: IdSchema });
 const participantParam = z.object({ id: IdSchema, userId: IdSchema });
 const resourceParam = z.object({ id: IdSchema, resourceId: IdSchema });
-const elicitationParam = z.object({ id: IdSchema, elicitationId: IdSchema });
 const listQuery = z.object({
   limit: z.coerce.number().int().min(1).max(250).default(100),
   // Timestamps are still accepted for clients holding pre-cutover cursors;
@@ -77,11 +70,6 @@ const CreatedWorkstreamSchema = z.strictObject({
   turnId: IdSchema,
   harnessRunId: IdSchema.nullable(),
 });
-const CreatedMessageSchema = WorkstreamMessageAdmissionReceiptSchema;
-const AnsweredElicitationSchema = z.strictObject({
-  elicitation: ElicitationSchema.optional(),
-});
-const RetriedRunSchema = z.object({ harnessRunId: IdSchema });
 /**
  * What every pin mutation answers with: the caller's pinned work streams, in
  * their order. Pinning, unpinning, and reordering all return the same list
@@ -297,37 +285,6 @@ workstreamRoutes.post("/:id/read-state/mark-unread", zValidator("param", idParam
   const client = await authoritativeWorkstreamClient(c, c.req.valid("param").id);
   return c.json(WorkstreamSchema.parse(await client.markUnread()));
 });
-workstreamRoutes.post("/:id/messages", zValidator("param", idParam), requireSendableMessageLength("text"),
-  zValidator("json", CreateMessageRequestSchema), async (c) => {
-  const operationId = telemetryOperationId(readRallyHeader((name) => c.req.header(name), RALLY_HEADERS.OPERATION_ID));
-  const id = c.req.valid("param").id;
-  const body = c.req.valid("json");
-  return requestFlowSpan(c, "workstream.message.send", {
-    flow: "workstream_message_send",
-    identity: { workstreamId: id },
-    attributes: {
-      "rally.transport": "http",
-      "rally.message.client_id": body.clientMessageId,
-      "rally.message.attachment_count": body.attachmentIds?.length ?? 0,
-      ...(operationId ? { "rally.operation.id": operationId } : {}),
-    },
-  }, async (span) => {
-    const client = await authoritativeWorkstreamClient(c, id, { span, flow: "workstream_message_send" });
-    const result = await span.step("workstream.message.write", () => client.createMessage(body));
-    return c.json(CreatedMessageSchema.parse(result), 201);
-  });
-});
-workstreamRoutes.put(
-  "/:id/pending-inputs",
-  zValidator("param", idParam),
-  zValidator("json", ReorderPendingLoopInputsRequestSchema),
-  async (c) => {
-    const client = await authoritativeWorkstreamClient(c, c.req.valid("param").id);
-    return c.json(ReorderPendingLoopInputsResultSchema.parse(
-      await client.reorderPendingInputs(c.req.valid("json").inputIds),
-    ));
-  },
-);
 workstreamRoutes.post("/:id/participants", zValidator("param", idParam), zValidator("json", AddParticipantRequestSchema), async (c) => {
   const client = await authoritativeWorkstreamClient(c, c.req.valid("param").id);
   return c.json(ParticipantSchema.parse(await client.addParticipant(c.req.valid("json").userId)), 201);
@@ -346,22 +303,6 @@ workstreamRoutes.delete("/:id/resources/:resourceId", zValidator("param", resour
   const client = await authoritativeWorkstreamClient(c, param.id);
   await client.detachResource(param.resourceId);
   return c.body(null, 204);
-});
-workstreamRoutes.post("/:id/elicitations/:elicitationId/answer", zValidator("param", elicitationParam), zValidator("json", AnswerElicitationRequestSchema), async (c) => {
-  const param = c.req.valid("param");
-  const client = await authoritativeWorkstreamClient(c, param.id);
-  return c.json(AnsweredElicitationSchema.parse(
-    await client.answerElicitation(param.elicitationId, c.req.valid("json")),
-  ));
-});
-workstreamRoutes.post("/:id/stop", zValidator("param", idParam), async (c) => {
-  const client = await authoritativeWorkstreamClient(c, c.req.valid("param").id);
-  await client.stop();
-  return c.body(null, 204);
-});
-workstreamRoutes.post("/:id/retry", zValidator("param", idParam), async (c) => {
-  const client = await authoritativeWorkstreamClient(c, c.req.valid("param").id);
-  return c.json(RetriedRunSchema.parse(await client.retry()), 202);
 });
 workstreamRoutes.get(
   "/:id/socket",
