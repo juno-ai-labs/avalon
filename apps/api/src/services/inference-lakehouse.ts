@@ -1,7 +1,6 @@
 import type {
   InferenceAttemptEvent,
   InferenceRequestEvent,
-  OpenRouterProviderError,
   StructuredModelDiagnostic,
 } from "@rally/agent-harness";
 import { z } from "zod";
@@ -135,15 +134,6 @@ function commonRecord(
     ...(context.parentRequestId ? { parent_request_id: context.parentRequestId } : {}),
     ...(context.draftId ? { draft_id: context.draftId } : {}),
     inference_request_id: inferenceRequestId,
-  };
-}
-
-function persistedProviderError(error: OpenRouterProviderError): Record<string, string | number> {
-  return {
-    ...(typeof error.code === "string" || typeof error.code === "number"
-      ? { code: error.code }
-      : {}),
-    ...(typeof error.providerName === "string" ? { providerName: error.providerName } : {}),
   };
 }
 
@@ -296,9 +286,7 @@ export function captureStreamingInferenceAttempt(
       : {}),
     ...(attempt.responseBytes !== undefined ? { response_bytes: attempt.responseBytes } : {}),
     ...(attempt.response ? { response: { ...attempt.response } } : {}),
-    ...(attempt.providerError
-      ? { error: { providerError: persistedProviderError(attempt.providerError) } }
-      : {}),
+    ...(attempt.providerError ? { error: { providerError: attempt.providerError } } : {}),
     metadata: { cursor: attempt.cursor },
   });
 }
@@ -360,9 +348,7 @@ export function captureStructuredInferenceDiagnostic(
       : {}),
     ...(diagnostic.responseBytes !== undefined ? { response_bytes: diagnostic.responseBytes } : {}),
     ...(diagnostic.responsePayload ? { response: diagnostic.responsePayload } : {}),
-    ...(diagnostic.providerError
-      ? { error: { providerError: persistedProviderError(diagnostic.providerError) } }
-      : {}),
+    ...(diagnostic.providerError ? { error: { providerError: diagnostic.providerError } } : {}),
     metadata: {
       attempt: diagnostic.attempt,
       fallbackAttempt: diagnostic.fallbackAttempt,

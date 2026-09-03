@@ -3290,7 +3290,14 @@ function providerDeclaredTransportFailure(details: unknown): {
   }
 }
 
-function classifyProviderFailure(error: unknown) {
+/**
+ * Exported for the test that pins what a refusal's *status* buys. A body the
+ * transport could not parse used to escape as a `TypeError` and land on the
+ * `network` arm below — blanket-retriable, status discarded — so keeping the
+ * status changed how a whole class of upstream failure routes, not just how it
+ * reads. That consequence needs a test of its own; nothing else imports this.
+ */
+export function classifyProviderFailure(error: unknown) {
   if (error instanceof OpenRouterCompletionDefectError) {
     return { kind: error.defect, statusCode: null, retryAfterMs: null } as const;
   }

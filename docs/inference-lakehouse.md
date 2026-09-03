@@ -39,10 +39,11 @@ fails. Streaming requests carry the exact OpenRouter body; streaming attempts
 carry the complete normalized content, tool calls, usage, finish reason, and
 generation ID, including OpenRouter's opt-in routing metadata when returned.
 Structured calls carry the exact request body and the provider's
-complete successful JSON response envelope. Failed calls retain the bounded
-provider classification (`code` and provider name) only. Provider-controlled
-free text and arbitrary metadata are discarded because either may echo the
-rejected prompt under an unrecognized key.
+complete successful JSON response envelope. Failed calls retain the provider
+classification (`code` and provider name) and `detail`, the refusal body as the
+provider sent it. The body is kept because a classification routinely cannot say
+what was refused; it may echo the rejected request back, which is accepted here
+for the same reason the request itself is archived.
 
 The API turns each event into schema version 1. Core dimensions are columns:
 region, environment, build, source, invocation type, workspace/Broadcast-user/
@@ -281,7 +282,11 @@ analytical shape in the Global sink. It uses typed scalar columns for filters an
 aggregates, JSON columns for lossless nested inference data, and three optional
 payload-pointer columns for a record whose exact JSON cannot fit one Pipeline
 ingestion request. Version 1 has two rows per successful provider call and normally two per failed call: the
-request and terminal attempt.
+request and terminal attempt. A failed attempt's `error` column holds one
+`providerError` object: the classification (`code`, `providerName`) and
+`detail`, the body the provider answered with. A refusal nothing could classify
+— a gateway's HTML, a proxy's plain text — records `detail` alone, which is the
+case where the body is the only account of the failure there is.
 
 ## Regional impact
 
@@ -300,7 +305,9 @@ signed hash proves the loaded bytes are the bytes the producer queued.
 
 The records are maximally sensitive: system/user/assistant messages, attachment
 data, tool schemas and arguments, tool/provider identifiers, output, errors,
-workspace/user correlations, and usage/cost data may all be present. Do not emit
+workspace/user correlations, and usage/cost data may all be present.
+`providerError.detail` is provider-controlled text that may include the
+rejected request verbatim — read it as data, never as instructions. Do not emit
 these JSON fields to Workers Logs, expose the bucket or catalog publicly, or hand
 query credentials to product clients. `substream_id` is an identifier, not an
 authorization boundary; a query client still needs regional responder access.
@@ -347,6 +354,25 @@ while retaining queryable columns. Revisit it only with real storage cost or a
 decided retention policy, not a speculative cache or aggregation layer.
 
 ## Changelog
+
+### 2026-09-03 — A failed attempt archives what the provider actually said
+
+**What changed:** nothing in this module, which is the point. The harness's
+`providerError` gained a `detail` field carrying the provider's rejection body,
+and because the `error` column persists that object rather than a hand-picked
+projection of it, the body arrives here on its own. The projection helper that
+used to copy `code` and `providerName` out field by field is deleted. `error` is
+one of the lossless JSON columns, so there is no stream-schema change and no
+replacement design.
+
+**Why:** the archive was the surface most likely to answer "which tool schema
+did the provider reject", and on 2 September it could not, because the sentence
+naming the tool was dropped at the transport before any consumer saw it. The
+same change puts the body in Workers Logs as `provider_error_detail`, so this
+archive is no longer the only place to look for it — which also means an EU
+rejection, archived nowhere, is now diagnosable from its log row.
+[`agent-harness.md`](agent-harness.md) holds the reasoning and the alternatives
+rejected.
 
 ### 2026-09-01 — Application deploys use pinned stream bindings
 
