@@ -838,6 +838,30 @@ function withheldOutcomeCode(reason: string): string {
   return carried.length <= 160 ? carried : `${carried.slice(0, 157)}...`;
 }
 
+/**
+ * The first frames of a thrown error, taken as *frames* rather than as the
+ * first six lines.
+ *
+ * `stack` is the message followed by the frames, and a `ZodError`'s message is
+ * multi-line JSON — so slicing the first six lines of one captured six lines of
+ * the message and no frames at all. Every `workstream_harness_threw` for a
+ * validation failure was therefore logged without the one thing the log exists
+ * to carry, which is why a run dying inside `freezeRunMemoryContext` looked for
+ * days like it might have come from any of four call sites. `reason` already
+ * carries the message; this carries where it happened.
+ *
+ * The split is by prefix rather than by parsing, so an error whose message
+ * quotes another error's stack contributes those lines too — worth knowing
+ * before trusting a frame count, and still strictly better than a slice that
+ * captured no frames at all. A frameless error now logs `null` rather than a
+ * copy of `reason`, which is the intended trade.
+ */
+export function harnessErrorFrames(error: unknown): string | null {
+  if (!(error instanceof Error) || !error.stack) return null;
+  const frames = error.stack.split("\n").filter((line) => line.trimStart().startsWith("at "));
+  return frames.length > 0 ? frames.slice(0, 6).join("\n") : null;
+}
+
 export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private readonly state: DurableObjectState;
   private readonly recentEvents: ServerSocketEvent[] = [];
@@ -2585,7 +2609,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         operation,
         code: "terminal_operation_not_committed",
         reason: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack?.split("\n").slice(0, 6).join("\n") ?? null : null,
+        stack: harnessErrorFrames(error),
       });
       throw new TerminalObjectPortError(operation, {
         code: "terminal_operation_not_committed",
@@ -3661,7 +3685,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         harness_run_id: input.harnessRunId,
         error_code: code,
         reason: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack?.split("\n").slice(0, 6).join("\n") ?? null : null,
+        stack: harnessErrorFrames(error),
       });
       outcome = {
         status: code === "run_cancelled" ? "stopped" : "failed",
