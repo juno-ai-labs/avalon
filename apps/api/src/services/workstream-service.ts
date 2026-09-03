@@ -799,14 +799,6 @@ export class WorkstreamService {
     return (await this.authoritativeClient(id)).answerElicitation(elicitationId, input);
   }
 
-  async stop(id: string): Promise<void> {
-    return (await this.authoritativeClient(id)).stop();
-  }
-
-  async retry(id: string): Promise<{ harnessRunId: string }> {
-    return (await this.authoritativeClient(id)).retry();
-  }
-
   async socketTicket(
     id: string,
     substreamId = "0",

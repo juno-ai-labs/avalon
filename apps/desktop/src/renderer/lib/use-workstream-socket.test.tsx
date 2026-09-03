@@ -844,7 +844,9 @@ describe('useWorkstreamSocket', () => {
     await flushPromises();
     const socket = FakeWebSocket.instances[0]!;
     act(() => socket.open());
-    const firstCommand = sentFrames(socket).find((frame) => frame.type === 'create_message');
+    const firstCommand = sentFrames(socket).find((frame): frame is Extract<ClientSocketEvent, {
+      type: 'create_message';
+    }> => frame.type === 'create_message');
     expect(firstCommand).toEqual(expect.objectContaining({
       type: 'create_message',
       payload: {
@@ -866,6 +868,7 @@ describe('useWorkstreamSocket', () => {
     act(() => reconnectedSocket.message({
       type: 'client_command_succeeded',
       command: 'create_message',
+      operationId: firstCommand?.operationId,
       clientMessageId,
       turn: {
         turnId,
@@ -875,6 +878,101 @@ describe('useWorkstreamSocket', () => {
       deliveryState: 'canonical',
     }));
     await expect(admission).resolves.toEqual(acceptedTurn);
+  });
+
+  it('sends child-local commands to the addressed substream and resends them until receipt', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const workstreamId = '00000000-0000-7000-8000-000000000621';
+    const substreamId = '00000000-0000-7000-8000-000000000622';
+    const elicitationId = '00000000-0000-7000-8000-000000000623';
+    const retryRunId = '00000000-0000-7000-8000-000000000624';
+    const getSocketTicket = vi.fn(async () => ({
+      url: `wss://api.rally.test/workstreams/${workstreamId}/substreams/${substreamId}`,
+      ticket: 'socket-ticket',
+      protocols: socketTicketProtocols('socket-ticket'),
+    }));
+    const api = socketApiWith({ getSocketTicket });
+    const { result } = renderHook(() => useWorkstreamSocket(
+      api,
+      workstreamId,
+      true,
+      false,
+      'active_workstream',
+      undefined,
+      true,
+      substreamId,
+    ), { wrapper: createWrapper() });
+
+    await flushPromises();
+    expect(getSocketTicket).toHaveBeenCalledWith(
+      workstreamId,
+      substreamId,
+      expect.any(String),
+      0,
+      false,
+      expect.any(AbortSignal),
+    );
+    const first = FakeWebSocket.instances[0]!;
+    act(() => first.open());
+
+    const stop = result.current.stopHarness();
+    await flushPromises();
+    const stopCommand = sentFrames(first).find((frame): frame is Extract<ClientSocketEvent, {
+      type: 'stop_harness';
+    }> => frame.type === 'stop_harness')!;
+    act(() => first.close(1006));
+    act(() => vi.advanceTimersByTime(750));
+    await flushPromises();
+    const second = FakeWebSocket.instances[1]!;
+    act(() => second.open());
+    expect(sentFrames(second)).toContainEqual(stopCommand);
+    act(() => second.message({
+      type: 'client_command_succeeded',
+      command: 'stop_harness',
+      operationId: stopCommand.operationId,
+    }));
+    await expect(stop).resolves.toBeUndefined();
+
+    const answer = result.current.answerElicitation(elicitationId, 'Ship it');
+    await flushPromises();
+    const answerCommand = sentFrames(second).find((frame): frame is Extract<ClientSocketEvent, {
+      type: 'answer_elicitation';
+    }> => frame.type === 'answer_elicitation')!;
+    expect(answerCommand).toMatchObject({ elicitationId, payload: { answer: 'Ship it' } });
+    act(() => second.message({
+      type: 'client_command_succeeded',
+      command: 'answer_elicitation',
+      operationId: answerCommand.operationId,
+    }));
+    await expect(answer).resolves.toBeUndefined();
+
+    const reorder = result.current.reorderPendingInputs([elicitationId]);
+    await flushPromises();
+    const reorderCommand = sentFrames(second).find((frame): frame is Extract<ClientSocketEvent, {
+      type: 'reorder_pending_inputs';
+    }> => frame.type === 'reorder_pending_inputs')!;
+    act(() => second.message({
+      type: 'client_command_succeeded',
+      command: 'reorder_pending_inputs',
+      operationId: reorderCommand.operationId,
+      pendingInputs: [],
+    }));
+    await expect(reorder).resolves.toEqual({ pendingInputs: [] });
+
+    const retry = result.current.retryHarness();
+    await flushPromises();
+    const retryCommand = sentFrames(second).find((frame): frame is Extract<ClientSocketEvent, {
+      type: 'retry_harness';
+    }> => frame.type === 'retry_harness')!;
+    act(() => second.message({
+      type: 'client_command_succeeded',
+      command: 'retry_harness',
+      operationId: retryCommand.operationId,
+      harnessRunId: retryRunId,
+    }));
+    await expect(retry).resolves.toEqual({ harnessRunId: retryRunId });
   });
 
   it('rejects a pending message when an older worker returns an uncorrelated command error', async () => {
@@ -3748,8 +3846,8 @@ describe('useWorkstreamSocket', () => {
       type: 'error',
       sequence: 9,
       occurredAt: '2026-09-02T17:00:00.000Z',
-      code: 'rest_required',
-      message: 'Persist this action through the work-stream API before publishing it.',
+      code: 'unrelated_error',
+      message: 'An unrelated operation failed.',
       requestId: null,
     }));
     await flushPromises();

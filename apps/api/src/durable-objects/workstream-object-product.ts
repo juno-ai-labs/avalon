@@ -1536,6 +1536,20 @@ export class WorkstreamObjectProductService {
             auth.userId, auth.userId, now, now, now,
           );
         }
+        if (input.archived === true) {
+          // Archiving removes the interactive surface that can issue a stop.
+          // Commit the stop request with the archive so no client-side request
+          // ordering can strand an executing loop behind an unreadable room.
+          sql.exec(
+            `UPDATE substream_loops
+                SET stop_requested_at = ?, stop_after_step_ordinal = step_ordinal,
+                    stop_reason = 'workstream_archived', revision = revision + 1,
+                    updated_at = ?
+              WHERE id = 1 AND status = 'executing' AND stop_requested_at IS NULL`,
+            now,
+            now,
+          );
+        }
         sql.exec(
           `UPDATE workstream SET
              title = COALESCE(?, title),
@@ -4444,12 +4458,34 @@ export class WorkstreamObjectProductService {
     });
   }
 
-  async retry(auth: AuthContext): Promise<WorkstreamObjectRetryResult> {
+  async retry(auth: AuthContext, runId: HarnessRunId): Promise<WorkstreamObjectRetryResult> {
     const root = await this.authorize(auth);
     const loop = this.loops.loop();
     if (!loop) throw new Error("substream_loop_not_initialized");
     if (loop.loop_id !== substreamLoopId(asWorkstreamId(root.workstream_key))) {
       throw new Error("substream_loop_identity_mismatch");
+    }
+    const replay = first(this.storage.sql.exec<{ execution_context_json: string | null }>(
+      `SELECT execution_context_json FROM runs
+        WHERE run_id = ? AND substream_id = '0' AND origin = 'manual_retry'`,
+      runId,
+    ));
+    if (replay) {
+      if (replay.execution_context_json === null) {
+        throw new Error("substream_retry_replay_context_missing");
+      }
+      const workflowInput = WorkstreamWorkflowInputSchema.parse(JSON.parse(replay.execution_context_json));
+      return {
+        harnessRunId: runId,
+        activationRequest: {
+          kind: "activate_substream_loop",
+          loopId: loop.loop_id,
+          cause: "manual_retry",
+          inputId: null,
+          receiptRunId: runId,
+          workflowInput,
+        },
+      };
     }
     if (loop.status === "executing") {
       throw new ApiError(409, "harness_already_running", "This work stream already has an active run");
@@ -4479,7 +4515,6 @@ export class WorkstreamObjectProductService {
         WHERE substream_id = '0' ORDER BY sequence_number DESC LIMIT 1`,
     ));
     const now = Date.now();
-    const runId = asHarnessRunId(uuidV7(now));
     const workflowInput = WorkstreamWorkflowInputSchema.parse({
       ...previousContext,
       region: this.env.AVALON_REGION,
