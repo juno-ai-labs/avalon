@@ -22,7 +22,7 @@ import { createIdentityObjectPort } from "../runtime/identity-port";
  * carrying the OpenRouter model it runs on and the OpenRouter models it may
  * route onward to, so a model swap is a flag change rather than a deploy.
  *
- * The first five names match `AgentInferenceSource` in
+ * The first four names match `AgentInferenceSource` in
  * `agent-inference-logging.ts`, so a lakehouse record and a flag key describe
  * the same agent. The rest are the standalone structured-output agents, which
  * call OpenRouter directly rather than through the harness.

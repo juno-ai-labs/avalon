@@ -72,6 +72,8 @@ dead product concepts appear valid at API boundaries.
 **Consequences:** Previously persisted values remain historical data only; no
 live parser or route admits them as HyperSight entities.
 
+Shipped in #541.
+
 ### 2026-08-29 — Transcript turn identity is explicitly opaque
 
 **What changed:** `TranscriptTurnIdSchema` is the shared contract for canonical

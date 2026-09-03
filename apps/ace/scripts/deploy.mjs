@@ -83,6 +83,14 @@ async function flagExists(key) {
   return (await existingFlagKeysPromise).has(key);
 }
 
+async function retireFlag(key) {
+  if (!await flagExists(key)) return;
+  await cloudflare(`/flagship/apps/${flagshipAppId}/flags/${encodeURIComponent(key)}`, {
+    method: 'DELETE',
+  }, aceRuntimeToken);
+  (await existingFlagKeysPromise).delete(key);
+}
+
 async function ensureFlag(key, description, defaultVariation = 'off') {
   if (await flagExists(key)) return;
   await cloudflare(`/flagship/apps/${flagshipAppId}/flags`, {
@@ -119,6 +127,10 @@ function run(command, args, options = {}) {
 }
 
 const audience = await ensureAccessApplication();
+await Promise.all([
+  retireFlag('hypersight-enabled'),
+  retireFlag('agent-model-block-dashboard'),
+]);
 await Promise.all([
   ensureFlag('meeting-recording-enabled', 'True shows meeting-recording actions in Electron; false hides them without changing API availability.'),
   ensureFlag('suggested-work-enabled', 'True shows Suggested Work surfaces in Electron; false hides them without changing API availability.'),

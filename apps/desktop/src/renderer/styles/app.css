@@ -3705,11 +3705,9 @@ button.citation-card:hover { background: var(--av-sys-color-surface-elevated-hov
    and `.rail-scroll`'s `overflow-x: hidden` clipped the prose instead of
    wrapping it to the slot. */
 .rail-surface { background: var(--av-sys-color-surface-subtle); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-sys-size-radius-lg); bottom: 8px; box-shadow: var(--av-sys-elevation-shadow-rail); display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: 45px minmax(0, 1fr); min-width: 320px; outline: 0; overflow: hidden; position: fixed; right: 8px; top: 8px; width: var(--rail-slot); z-index: 40; }
-/* The panel that just lost the slot dissolves over the one that took it. Only
-   the outgoing panel animates: the incoming one is already opaque underneath,
-   so the frame itself never thins out mid-hand-off. */
-.rail-surface.is-leaving { animation: rail-hand-off 190ms linear forwards; pointer-events: none; z-index: 41; }
-@keyframes rail-hand-off {
+/* A dismissed panel dissolves without making the frame disappear abruptly. */
+.rail-surface.is-leaving { animation: rail-exit-fade 190ms linear forwards; pointer-events: none; z-index: 41; }
+@keyframes rail-exit-fade {
   from { opacity: 1; }
   to { opacity: 0; }
 }
@@ -3729,7 +3727,7 @@ button.citation-card:hover { background: var(--av-sys-color-surface-elevated-hov
 .sidebar-resizer:focus-visible > span,
 .sidebar.is-resizing .sidebar-resizer > span { background: var(--av-sys-color-brand-ink); height: 54px; }
 .rail-resizer { bottom: 8px; position: fixed; right: calc(var(--rail-slot) + 8px); top: 8px; width: 12px; z-index: 41; }
-/* A drag has to track the pointer exactly; only a hand-off is animated. */
+/* A drag has to track the pointer exactly; only closing the rail is animated. */
 .is-resizing-rail { cursor: col-resize !important; user-select: none !important; }
 .is-resizing-rail .workspace-shell { transition: none; }
 .rail-header { align-items: center; border-bottom: 1px solid var(--av-ref-color-line-2); display: flex; justify-content: space-between; padding: 0 7px 0 11px; }
@@ -4638,7 +4636,7 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   .automation-update-banner { grid-template-columns: 30px minmax(0, 1fr); }
   .automation-update-banner > .button { grid-column: 1 / -1; justify-content: center; }
   .automation-update-details > div { grid-template-columns: 1fr; }
-  .workstream-header-actions > .icon-button:not(:last-child) { display: none; }
+  .workstream-header-actions > .icon-button:not(.panel-toggle):not(:last-child) { display: none; }
   .socket-state:not(.header-socket-state) { display: none; }
 }
 

@@ -776,6 +776,8 @@ retaining the host would leave a hidden feature surface.
 **Consequences:** The shared renderer continues to serve the main feed and
 other documented live surfaces.
 
+Shipped in #541.
+
 ### 2026-09-02 — The heading gutter is margin, so an answer is never indented
 
 **What changed:** `.markdown-body:has(> .markdown-collapse) { padding-left: 20px }`

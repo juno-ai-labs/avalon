@@ -889,6 +889,8 @@ Durable Objects. Complete removal requires a forward cleanup at each authority.
 **Consequences:** The older schema steps remain unchanged so existing objects
 can migrate deterministically before the cleanup step runs.
 
+Shipped in #541.
+
 ### 2026-09-03 — Stored automation state carries no delivery targets
 
 **What changed:** The automation bullet above no longer describes a frozen
@@ -907,6 +909,8 @@ retried. Rewriting stored state was chosen over tolerating the key on read
 because a tolerated key is a dead field every future reader has to know to
 ignore. The product reasoning is in
 [`automation-lifecycle.md`](automation-lifecycle.md).
+
+Shipped in #541.
 
 ### 2026-08-31 — Platform identity routes become plural and setup replay becomes durable
 

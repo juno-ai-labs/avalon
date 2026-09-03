@@ -277,6 +277,7 @@ function connectorEvent(eventId = "00000000-0000-7000-8000-000000000301") {
 
 type TestableSubstreamAgent = {
   publishAgentRuntimeEvent(event: Record<string, unknown>): Promise<void>;
+  deliverCommittedRealtimeEvent(event: Record<string, unknown>): Promise<void>;
   drainSemanticRealtimeOutbox(): Promise<void>;
   semanticRealtimeEvent(input: Record<string, unknown>): Record<string, unknown>;
   nextLoopWorkAt(): number | null;
@@ -731,8 +732,9 @@ describe("Durable Objects in the Workers runtime", () => {
   it("does not read a preparing work stream while resolving its first model", async () => {
     await seedOpenAuthority();
     await seedCreatorProfile();
+    const modelTargetingWorkstreamId = asWorkstreamId("00000000-0000-7000-8000-0000000001ab");
     const child = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
-      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+      substreamAgentName("global", WORKSPACE_ID, modelTargetingWorkstreamId),
     ));
     const auth = {
       sessionId: SESSION_ID,
@@ -770,7 +772,7 @@ describe("Durable Objects in the Workers runtime", () => {
 
       await product.initialize(auth, {
         workspaceId: WORKSPACE_ID,
-        workstreamId: WORKSTREAM_ID,
+        workstreamId: modelTargetingWorkstreamId,
         generation: 1,
         title: "Authority-safe model targeting",
         objective: "Resolve the first model without querying a preparing object",
@@ -5553,6 +5555,68 @@ describe("Durable Objects in the Workers runtime", () => {
     } finally {
       socket.close(1000, "test complete");
     }
+  });
+
+  it("recovers a committed semantic event after the post-commit drain crashes", async () => {
+    await seedOpenAuthority();
+    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    expect((await stub.bootstrapRuntime({
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      generation: 1,
+    })).status).toBe(200);
+
+    await runInDurableObject(stub, async (instance, state) => {
+      const messages = new WorkstreamMessageStorage(state.storage);
+      await messages.appendMessage({
+        messageId: "00000000-0000-7000-8000-00000000014a",
+        clientMessageId: "semantic-crash-window",
+        authorType: "external",
+        authorUserId: null,
+        externalActorJson: JSON.stringify({ provider: "slack", displayName: "Release bot" }),
+        messageType: "text",
+        text: "Canonical before publication",
+        structuredContentJson: null,
+        producedByRunId: null,
+        now: Date.parse("2026-08-26T20:00:00.000Z"),
+      });
+
+      const testable = instance as unknown as TestableSubstreamAgent;
+      const delivery = vi.spyOn(testable, "deliverCommittedRealtimeEvent")
+        .mockRejectedValueOnce(new Error("forced_semantic_delivery_failure"));
+      await expect(testable.drainSemanticRealtimeOutbox())
+        .rejects.toThrow("forced_semantic_delivery_failure");
+      delivery.mockRestore();
+
+      // The canonical row and its exact room sequence survive together. The
+      // outbox is acknowledged only after delivery succeeds.
+      expect(state.storage.sql.exec(
+        `SELECT turn_id FROM participant_transcript_turns WHERE turn_id = ?`,
+        "00000000-0000-7000-8000-00000000014a",
+      ).one()).toEqual({ turn_id: "00000000-0000-7000-8000-00000000014a" });
+      expect(state.storage.sql.exec(
+        `SELECT source_version, state FROM durable_outbox
+          WHERE channel = 'semantic_realtime_v1'`,
+      ).one()).toEqual({ source_version: 1, state: "pending" });
+      state.storage.sql.exec(
+        `UPDATE durable_outbox SET not_before = 0
+          WHERE channel = 'semantic_realtime_v1'`,
+      );
+    });
+
+    // Simulate eviction in the gap before the best-effort continuation could
+    // re-arm delivery. Construction derives the alarm from the durable outbox.
+    await evictDurableObject(stub);
+    await stub.wake();
+    await expect.poll(
+      () => runInDurableObject(stub, (_instance, state) => Number(state.storage.sql.exec(
+        `SELECT COUNT(*) AS count FROM durable_outbox
+          WHERE channel = 'semantic_realtime_v1'`,
+      ).one().count)),
+      { timeout: 4_000, interval: 50 },
+    ).toBe(0);
   });
 
   it("hydrates an overtaken pending upsert as a delivered removal from the minimal receipt", async () => {

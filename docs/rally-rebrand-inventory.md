@@ -438,6 +438,8 @@ remaining rename task would misstate the work left to do.
 **Consequences:** Historical entries retain the names that were accurate when
 those changes shipped.
 
+Shipped in #541.
+
 ### 2026-08-25 — The person-notification emails and both Resend senders
 
 **What changed:** `participant-` and `mention-email-service.ts` say Rally, and

@@ -696,6 +696,8 @@ produced.
 **Consequences:** Historical telemetry remains interpretable, while new events
 contain only live Rally sources.
 
+Shipped in #541.
+
 ### 2026-09-03 — Every substream mutation keeps a named server span
 
 **What changed:** Answer, reorder, stop, and retry commands share the
@@ -712,6 +714,8 @@ the common operation without multiplying the registry.
 
 **Consequences:** The socket cutover keeps request-equivalent server timing and
 error evidence without recording command contents.
+
+Shipped in #541.
 
 ### 2026-09-02 — Send readiness follows the addressed substream command socket
 

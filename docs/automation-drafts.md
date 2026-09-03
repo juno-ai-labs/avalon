@@ -343,6 +343,8 @@ screen that pre-selected from it was deleted on 2026-09-01. The Testing row for
 alternatives are in [`automation-lifecycle.md`](automation-lifecycle.md). This
 entry records that the drafts document caught up with it.
 
+Shipped in #541.
+
 ### 2026-09-01 — The standalone draft screen is retired
 
 **What changed:** `new-automation.tsx` and its tests are deleted.

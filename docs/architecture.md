@@ -295,7 +295,7 @@ object therefore owns the fact that a mention or state change occurred without
 acquiring workspace credentials, placing product text in Queue storage, or
 turning a failed network call into a lost sidebar update.
 
-All four object roles accept Cloudflare hibernating sockets with purpose-scoped,
+All three object roles accept Cloudflare hibernating sockets with purpose-scoped,
 single-use tickets and serialized connection attachments. The ticket establishes
 the intended object/audience; admission and later commands still resolve current
 regional session, membership, and object-local visibility. An already connected
@@ -320,6 +320,7 @@ The socket responsibilities are deliberately not interchangeable:
 - `SubstreamAgent` is a read-only direct conversation feed plus correlated
   transcript-page download. Its object-local SQL owns canonical parts, tool
   calls/results, active compaction, and the accumulated output checkpoint.
+
 Electron's header/detail/sidebar use one shared work-stream cache and one
 per-work-stream ledger keyed by authority generation plus separate common and
 viewer waterlines. The direct WorkstreamDO event gives an open work stream the
@@ -397,8 +398,8 @@ without waking a hibernated object. The SubstreamAgent feed jitters its heartbea
 across 45–55 seconds; WorkspaceDO and WorkstreamDO use a
 fixed 50-second interval. Every role closes after 15 seconds without `pong`,
 reconnects with equal-jitter exponential backoff capped at 30 seconds, pauses
-while offline, and resumes from its own topic waterline, metadata waterlines, feed
-sequence/stream cursor, or full block checkpoint.
+while offline, and resumes from its own topic waterline, metadata waterlines,
+feed sequence/stream cursor, or active-output checkpoint.
 
 Viewing is presence only. Participant persistence occurs only through explicit
 addition or an authored work-stream action.
@@ -414,6 +415,7 @@ work-stream messages admit one complete Bind loop into their `SubstreamAgent`.
 The durable child dispatch row, attempt lease, receipts, and checkpoints recover
 2–30 minute loops and rare two-hour-plus coding sessions across eviction. Generic
 Cloudflare Workflows remain available for non-workstream loops and legacy drain.
+
 Supported regional work-stream runtimes may discover the deferred Terminal
 plugin. Loading it changes only Bind's prompt/tool surface; the first file,
 command, resource, or repository tool call lazily crosses the regional API into
@@ -807,6 +809,8 @@ subsystem would still carry authority, migrations, and operational cost.
 **Consequences:** The durable hierarchy is WorkspaceDO to WorkstreamDO to
 SubstreamAgent. Forward migrations delete the retired object class and its
 object-local tables; historical migrations remain immutable evidence.
+
+Shipped in #541.
 
 ### 2026-09-01 — Existing-room sends stop crossing the workspace parent
 

@@ -1295,7 +1295,6 @@ async function settleAndRecordResidualReceipts(
   runs: HarnessRunObjectPort,
   receipts: ToolReceiptObjectPort,
   row: TerminalizedReceiptRepair,
-  beforeRecord?: () => Promise<void>,
 ): Promise<void> {
   const fallback = receiptRepairFailure(row);
   const result = await receipts.settleResidualReceipts({
@@ -1306,7 +1305,6 @@ async function settleAndRecordResidualReceipts(
     now: row.terminalizedAt,
   });
   if (result.open > 0) throw new Error("residual_receipts_not_settled");
-  await beforeRecord?.();
   await recordResidualReceiptsSettled(runs, row);
 }
 
@@ -1599,7 +1597,6 @@ export async function repairTerminalResidualReceipts(
         runs,
         receipts,
         repair,
-        undefined,
       );
     } catch (error) {
       options.onReceiptRepairFailure?.({
@@ -1689,7 +1686,6 @@ export async function reapStaleHarnessRuns(
         runs,
         receipts,
         repair,
-        undefined,
       );
     } catch (error) {
       reportFailure("stale_root", repair, error);

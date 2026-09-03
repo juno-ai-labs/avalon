@@ -202,6 +202,8 @@ retired controls would invite writes that no product path can observe.
 **Consequences:** Existing regional and read-only inspection boundaries are
 unchanged.
 
+Shipped in #541.
+
 ### 2026-08-30 — Admit hosted origins to the MCP transport
 
 **What changed:** The stateless MCP handler now admits request `Origin` headers
