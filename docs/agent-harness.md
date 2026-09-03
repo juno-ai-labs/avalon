@@ -549,9 +549,9 @@ accepts the registry setting when present; an explicit task/run effort,
 including structured inference's `none`, overrides it. `x-ai/grok-4.6` and
 `google/gemini-3.8-flash` currently default to `low` everywhere: routed
 work-stream turns and direct structured or streaming OpenRouter calls all
-resolve the setting after the actual primary or fallback model is selected. Tool-bearing Chat Completions
-requests also opt in to parallel tool calls on both OpenRouter and Azure;
-requests with no tools omit the field.
+resolve the setting after the actual primary or fallback model is selected.
+Tool-bearing Chat Completions requests also opt in to parallel tool calls on
+both OpenRouter and Azure; requests with no tools omit the field.
 
 The Azure transport is enabled only when its dedicated endpoint and API key are
 both present. Those values are separate from realtime-dictation configuration,
