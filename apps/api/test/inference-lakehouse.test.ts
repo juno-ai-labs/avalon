@@ -239,6 +239,75 @@ describe("inference lakehouse", () => {
     expect(JSON.stringify(archived)).not.toContain("verbatim echo");
   });
 
+  it("archives the rejection body a classification code cannot describe", async () => {
+    const { env, objects, pointers } = fixture();
+    // The 2 September Sol failure. `invalid_function_parameters` reached every
+    // surface production has; nothing anywhere said which tool schema earned it.
+    const rejection = {
+      error: {
+        message: "Invalid schema for function 'table_query': unsupported keyword.",
+        type: "invalid_request_error",
+        param: "tools[13].parameters",
+        code: "invalid_function_parameters",
+      },
+    };
+
+    await captureStreamingInferenceAttempt(env, {
+      source: "workstream",
+      workspaceId: "workspace-1",
+      workstreamId: "workstream-1",
+    }, {
+      inferenceRequestId: "azure-rejection",
+      success: false,
+      turnId: "run-1:turn:1",
+      model: "openai/gpt-5.6-sol",
+      provider: "azure",
+      providerInvocationModel: "gpt-5.6-sol",
+      cursor: { structuredOutputAttempt: 0, stageIndex: 0, candidateIndex: 0, endpointAttempt: 0 },
+      latencyMs: 1386,
+      disposition: "fallback",
+      failureKind: "http",
+      providerError: { code: "invalid_function_parameters" },
+      providerErrorBody: rejection,
+    });
+
+    const archived = JSON.parse(objects.get(
+      (pointers[0] as { objectKey: string }).objectKey,
+    )!) as InferenceLakehouseRecord;
+    expect(archived.error).toEqual({
+      providerError: { code: "invalid_function_parameters" },
+      providerErrorBody: rejection,
+    });
+  });
+
+  it("archives an unclassifiable rejection body on its own", async () => {
+    const { env, objects, pointers } = fixture();
+
+    await captureStreamingInferenceAttempt(env, {
+      source: "workstream",
+      workspaceId: "workspace-1",
+    }, {
+      inferenceRequestId: "gateway-rejection",
+      success: false,
+      turnId: "run-1:turn:1",
+      model: "openai/gpt-5.6-sol",
+      provider: "azure",
+      providerInvocationModel: "gpt-5.6-sol",
+      cursor: { structuredOutputAttempt: 0, stageIndex: 0, candidateIndex: 0, endpointAttempt: 0 },
+      latencyMs: 120,
+      disposition: "failed",
+      failureKind: "http",
+      providerErrorBody: "<html>upstream gateway refused</html>",
+    });
+
+    // No classification to pair it with is precisely when the body is the only
+    // evidence there is, so it must not be dropped for arriving alone.
+    const archived = JSON.parse(objects.get(
+      (pointers[0] as { objectKey: string }).objectKey,
+    )!) as InferenceLakehouseRecord;
+    expect(archived.error).toEqual({ providerErrorBody: "<html>upstream gateway refused</html>" });
+  });
+
   it("uses the canonical main substream for workstream inference without an explicit identity", async () => {
     const { env, objects, pointers } = fixture();
 
