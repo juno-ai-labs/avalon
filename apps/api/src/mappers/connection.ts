@@ -33,7 +33,11 @@ export function connectionFromRow(
     displayName: row.display_name,
     grantedCapabilities,
     status: row.status,
-    settingsKind: row.connector_type === "github" ? "github_repository_access" : null,
+    settingsKind: row.connector_type === "github"
+      ? "github_repository_access"
+      : row.connector_type === "custom_mcp"
+        ? "custom_mcp_tools"
+        : null,
     userDelivery,
     lastSyncAt: row.last_sync_at,
     createdAt: row.created_at,

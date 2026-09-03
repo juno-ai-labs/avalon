@@ -23,6 +23,7 @@ export type TelemetryIdentityScope = typeof TELEMETRY_IDENTITY_SCOPES[number];
 export type TelemetryPropertyClassification = "operational" | "product" | "diagnostic";
 
 export const TELEMETRY_CONNECTOR_TYPES = [
+  "custom_mcp",
   "google",
   "generic_webhook",
   "github",

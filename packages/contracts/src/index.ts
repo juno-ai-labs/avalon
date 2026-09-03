@@ -11,7 +11,7 @@ import {
 } from "./workstream-transcript";
 export * from "./workstream-transcript";
 import { ConnectorOAuthProviders } from "./connector-oauth-providers";
-import { HttpUrlSchema, httpUrlSchema } from "./url-schemas";
+import { HttpsUrlSchema, HttpUrlSchema, httpUrlSchema } from "./url-schemas";
 import { AttachmentKindSchema, ResourceSlugSchema, SuggestedAttachmentToolCallSchema } from "./attachment-contracts";
 import {
   ResourceDirectionSchema,
@@ -893,14 +893,14 @@ export const ConnectionSchema = z.object({
   id: IdSchema,
   modelPluginId: z.string().regex(/^plugin_[a-z][a-z0-9_]{0,62}$/u),
   workspaceId: IdSchema,
-  connectorType: z.enum(["google", "generic_webhook", "github", "granola", "linear", "notion", "slack", "x"]),
+  connectorType: z.enum(["custom_mcp", "google", "generic_webhook", "github", "granola", "linear", "notion", "slack", "x"]),
   scope: ScopeSchema,
   ownerUserId: IdSchema.nullable(),
   ownerName: z.string().nullable(),
   displayName: z.string().min(1).max(180),
   grantedCapabilities: z.array(z.string()),
   status: z.enum(["healthy", "needs_reconnect", "error", "disabled"]),
-  settingsKind: z.enum(["github_repository_access"]).nullable().default(null),
+  settingsKind: z.enum(["github_repository_access", "custom_mcp_tools"]).nullable().default(null),
   /**
    * Set when this connection can deliver automation results to the requesting
    * user right now — the connector declares the surface and, where the
@@ -1963,6 +1963,142 @@ export const CreateWebhookConnectionRequestSchema = z.object({
   scope: ScopeSchema,
   eventTypes: z.array(z.string().trim().min(1).max(500)).max(100).default([]),
   idempotencyKey: z.string().trim().min(1).max(120).optional()
+});
+
+// --- Custom MCP servers ----------------------------------------------------
+
+/** How a connection to a person-configured MCP server authenticates. */
+export const CustomMcpAuthModes = ["oauth", "headers"] as const;
+export const CustomMcpAuthModeSchema = z.enum(CustomMcpAuthModes);
+
+/**
+ * Which of a server's tools a connection exposes.
+ *
+ * `read_only_tools` keeps only what the server itself annotates `readOnlyHint`.
+ * It narrows what Rally offers and relaxes nothing: an admitted tool still
+ * carries write confirmation and a record-before-execute receipt, because an
+ * MCP annotation is a hint from the server rather than a promise to Rally.
+ */
+export const CustomMcpToolPolicies = ["all_tools", "read_only_tools"] as const;
+export const CustomMcpToolPolicySchema = z.enum(CustomMcpToolPolicies);
+
+/**
+ * Header entries a connection may not set. Not a defensive limit but a
+ * correctness boundary: the MCP transport decides each of these, and a
+ * configured value winning would break the session or silently change what
+ * Rally negotiated.
+ */
+const RESERVED_CUSTOM_MCP_HEADERS = new Set([
+  "accept",
+  "connection",
+  "content-length",
+  "content-type",
+  "host",
+  "mcp-protocol-version",
+  "mcp-session-id",
+  "transfer-encoding",
+]);
+
+/**
+ * Bounds: header entries stored on one header-authenticated connection.
+ * Set by the team on 2026-09-03; the reasoning is not recorded beyond the
+ * value, which holds one credential header plus routing and tenant headers.
+ * Trips: the create request is refused with a 422 and nothing is stored.
+ */
+export const MAX_CUSTOM_MCP_HEADERS = 16;
+
+/**
+ * Bounds: characters in one stored header value, which is held in memory,
+ * encrypted at rest, and replayed on every request this connection makes.
+ * Set by the team on 2026-09-03; 8 KB holds a long-lived signed token.
+ * Trips: as above — refused before anything is written.
+ */
+export const MAX_CUSTOM_MCP_HEADER_VALUE_CHARS = 8_192;
+
+/** RFC 9110 field names, minus the ones the MCP transport owns. */
+export const CustomMcpRequestHeadersSchema = z.record(
+  z.string()
+    .regex(/^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,64}$/u, "Expected an HTTP header name")
+    .refine(
+      (name) => !RESERVED_CUSTOM_MCP_HEADERS.has(name.toLowerCase()),
+      "This header is set by the MCP transport",
+    ),
+  z.string()
+    .min(1)
+    .max(MAX_CUSTOM_MCP_HEADER_VALUE_CHARS)
+    // A value carrying a newline is a request-splitting attempt, and `Headers`
+    // would throw at the fetch rather than at the input.
+    .regex(/^[\x20-\x7E\t]+$/u, "Expected a printable single-line header value"),
+).refine(
+  (headers) => {
+    const count = Object.keys(headers).length;
+    return count >= 1 && count <= MAX_CUSTOM_MCP_HEADERS;
+  },
+  `Expected between 1 and ${MAX_CUSTOM_MCP_HEADERS} headers`,
+);
+
+/**
+ * The non-secret half of a custom MCP connection, held in `config_json`.
+ *
+ * The endpoint lives here rather than beside the credential because discovery,
+ * execution, and the connections screen all need it, and a value only the
+ * decryption path could see would leave a row unable to say which server it
+ * points at.
+ */
+export const CustomMcpConnectionConfigSchema = z.looseObject({
+  serverUrl: HttpsUrlSchema,
+  authMode: CustomMcpAuthModeSchema,
+  toolPolicy: CustomMcpToolPolicySchema.default("all_tools"),
+});
+
+const CustomMcpConnectionBaseSchema = z.object({
+  displayName: z.string().trim().min(1).max(180),
+  scope: ScopeSchema,
+  serverUrl: HttpsUrlSchema,
+});
+
+/** Header-authenticated connections are written directly; no browser is involved. */
+export const CreateCustomMcpConnectionRequestSchema = CustomMcpConnectionBaseSchema.extend({
+  requestHeaders: CustomMcpRequestHeadersSchema,
+  toolPolicy: CustomMcpToolPolicySchema.default("all_tools"),
+});
+
+/** An OAuth connection starts a standards-based authorization instead. */
+export const StartCustomMcpConnectionRequestSchema = CustomMcpConnectionBaseSchema.extend({
+  toolPolicy: CustomMcpToolPolicySchema.default("all_tools"),
+});
+
+export const CustomMcpToolSummarySchema = z.object({
+  name: z.string().min(1).max(200),
+  description: z.string().max(4_000),
+  readOnly: z.boolean(),
+  destructive: z.boolean(),
+  available: z.boolean(),
+});
+
+/**
+ * What the connections screen shows for one custom MCP connection.
+ *
+ * `tools` is read live from the server, so it is remote content: a client
+ * renders it as text and never as instruction. `toolsUnavailable` carries the
+ * reason a catalog could not be read, which is a different state from a server
+ * that advertises nothing.
+ */
+export const CustomMcpConnectionSettingsSchema = z.object({
+  connectionId: IdSchema,
+  connectionName: z.string().min(1).max(180),
+  scope: ScopeSchema,
+  serverUrl: HttpsUrlSchema,
+  authMode: CustomMcpAuthModeSchema,
+  toolPolicy: CustomMcpToolPolicySchema,
+  /** Whether this connection's scope allows the read-only policy to be chosen. */
+  toolPolicyEditable: z.boolean(),
+  tools: z.array(CustomMcpToolSummarySchema).max(128),
+  toolsUnavailable: z.string().max(500).nullable().default(null),
+});
+
+export const UpdateCustomMcpToolPolicyRequestSchema = z.object({
+  toolPolicy: CustomMcpToolPolicySchema,
 });
 
 /**
@@ -3375,6 +3511,11 @@ export type CreateNoteRequest = z.infer<typeof CreateNoteRequestSchema>;
 export type UpdateNoteRequest = z.infer<typeof UpdateNoteRequestSchema>;
 export type AppendNoteTranscriptSegmentRequest = z.infer<typeof AppendNoteTranscriptSegmentRequestSchema>;
 export type Connection = z.infer<typeof ConnectionSchema>;
+export type CustomMcpAuthMode = z.infer<typeof CustomMcpAuthModeSchema>;
+export type CustomMcpToolPolicy = z.infer<typeof CustomMcpToolPolicySchema>;
+export type CustomMcpConnectionConfig = z.infer<typeof CustomMcpConnectionConfigSchema>;
+export type CustomMcpConnectionSettings = z.infer<typeof CustomMcpConnectionSettingsSchema>;
+export type CustomMcpToolSummary = z.infer<typeof CustomMcpToolSummarySchema>;
 export type GitHubRepositoryRemoteAccess = z.infer<typeof GitHubRepositoryRemoteAccessSchema>;
 export type GitHubRepositoryAccessMode = z.infer<typeof GitHubRepositoryAccessModeSchema>;
 export type GitHubRepositoryAccessEntry = z.infer<typeof GitHubRepositoryAccessEntrySchema>;

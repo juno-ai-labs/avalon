@@ -23,6 +23,10 @@ const api = vi.hoisted(() => ({
   createWebhookConnection: vi.fn(),
   rotateWebhookSecret: vi.fn(),
   createXConnection: vi.fn(),
+  createCustomMcpConnection: vi.fn(),
+  startCustomMcpConnection: vi.fn(),
+  getCustomMcpSettings: vi.fn(),
+  updateCustomMcpToolPolicy: vi.fn(),
   getConnectorOAuthAttempt: vi.fn(),
   startProviderConnection: vi.fn(),
   reconnectConnection: vi.fn(),
@@ -143,7 +147,9 @@ function renderSettings(
   );
 }
 
-function openSettingsSection(name: 'Account' | 'Digest' | 'Workspace' | 'Connections' | 'GitHub' | 'Application'): void {
+function openSettingsSection(
+  name: 'Account' | 'Digest' | 'Workspace' | 'Connections' | 'GitHub' | 'MCP tools' | 'Application',
+): void {
   const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
   fireEvent.click(within(navigation).getByRole('button', { name }));
 }
@@ -252,7 +258,7 @@ describe('Workspace settings', () => {
       ],
     }));
     api.getAvailableConnectorTypes.mockResolvedValue([
-      'generic_webhook', 'github', 'google', 'granola', 'linear', 'notion', 'slack', 'x',
+      'custom_mcp', 'generic_webhook', 'github', 'google', 'granola', 'linear', 'notion', 'slack', 'x',
     ]);
     api.createGranolaWorkspaceConnection.mockResolvedValue({
       id: '00000000-0000-7000-8000-000000000018',
@@ -477,6 +483,174 @@ describe('Workspace settings', () => {
 
     const row = (await screen.findByText('Deploy notifications')).closest('tr');
     expect(row?.querySelector('.connector-mark')).toBeNull();
+  });
+
+  it('adds a custom MCP server through headers without leaving for a browser', async () => {
+    api.createCustomMcpConnection.mockResolvedValue({
+      id: '00000000-0000-7000-8000-000000000030',
+      connectorType: 'custom_mcp',
+      scope: 'workspace',
+      displayName: 'Acme docs',
+      capabilities: ['custom_mcp.tools'],
+      status: 'healthy',
+      settingsKind: 'custom_mcp_tools',
+    });
+    renderSettings();
+    openSettingsSection('Connections');
+
+    const card = (await screen.findByText('Custom MCP server')).closest('article');
+    fireEvent.click(within(card!).getByRole('button', { name: 'Connect workspace' }));
+    // The labels carry their help text too, so each matcher is anchored on the
+    // field's own name rather than the whole string.
+    fireEvent.change(screen.getByLabelText(/^Name/u), { target: { value: 'Acme docs' } });
+    fireEvent.change(screen.getByLabelText(/^Server URL/u), {
+      target: { value: 'https://mcp.acme.test/mcp' },
+    });
+    fireEvent.change(screen.getByLabelText(/^Authorization/u), { target: { value: 'headers' } });
+    fireEvent.change(screen.getByLabelText('Header 1 name'), { target: { value: 'Authorization' } });
+    fireEvent.change(screen.getByLabelText('Header 1 value'), { target: { value: 'Bearer secret' } });
+    fireEvent.change(screen.getByLabelText(/^Tools Rally may use/u), {
+      target: { value: 'read_only_tools' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Add server' }));
+
+    await waitFor(() => expect(api.createCustomMcpConnection).toHaveBeenCalledWith({
+      displayName: 'Acme docs',
+      scope: 'workspace',
+      serverUrl: 'https://mcp.acme.test/mcp',
+      requestHeaders: { Authorization: 'Bearer secret' },
+      toolPolicy: 'read_only_tools',
+    }));
+    // Header authentication never leaves Rally, so nothing may open a browser.
+    expect(openExternal).not.toHaveBeenCalled();
+    expect(api.startCustomMcpConnection).not.toHaveBeenCalled();
+  });
+
+  it('sends an OAuth MCP server to its own authorization and waits for the callback', async () => {
+    api.startCustomMcpConnection.mockResolvedValue({
+      url: 'https://mcp.acme.test/authorize?state=abc',
+      attemptId: 'a'.repeat(43),
+    });
+    api.getConnectorOAuthAttempt.mockResolvedValue({
+      attemptId: 'a'.repeat(43),
+      provider: 'custom_mcp',
+      status: 'pending',
+      connectionId: null,
+      errorCode: null,
+      expiresAt: '2026-09-03T01:00:00.000Z',
+    });
+    renderSettings();
+    openSettingsSection('Connections');
+
+    const card = (await screen.findByText('Custom MCP server')).closest('article');
+    fireEvent.click(within(card!).getByRole('button', { name: 'Connect for me' }));
+    fireEvent.change(screen.getByLabelText(/^Name/u), { target: { value: 'My docs' } });
+    fireEvent.change(screen.getByLabelText(/^Server URL/u), {
+      target: { value: 'https://mcp.acme.test/mcp' },
+    });
+    // A personal connection has no policy to choose: it is only ever its owner's.
+    expect(screen.queryByLabelText(/^Tools Rally may use/u)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Authorize server' }));
+
+    await waitFor(() => expect(api.startCustomMcpConnection).toHaveBeenCalledWith({
+      displayName: 'My docs',
+      scope: 'you',
+      serverUrl: 'https://mcp.acme.test/mcp',
+      toolPolicy: 'all_tools',
+    }));
+    await waitFor(() => expect(openExternal).toHaveBeenCalledWith('https://mcp.acme.test/authorize?state=abc'));
+  });
+
+  it('shows a connected server its live catalog and changes what the workspace may call', async () => {
+    api.getConnections.mockResolvedValue([{
+      id: '00000000-0000-7000-8000-000000000030',
+      connectorType: 'custom_mcp',
+      scope: 'workspace',
+      displayName: 'Acme docs',
+      capabilities: ['custom_mcp.tools'],
+      status: 'healthy',
+      settingsKind: 'custom_mcp_tools',
+    }]);
+    const settings = {
+      connectionId: '00000000-0000-7000-8000-000000000030',
+      connectionName: 'Acme docs',
+      scope: 'workspace' as const,
+      serverUrl: 'https://mcp.acme.test/mcp',
+      authMode: 'headers' as const,
+      toolPolicy: 'all_tools' as const,
+      toolPolicyEditable: true,
+      tools: [
+        { name: 'search_docs', description: 'Search the corpus', readOnly: true, destructive: false, available: true },
+        { name: 'publish_doc', description: 'Publish a document', readOnly: false, destructive: true, available: true },
+      ],
+      toolsUnavailable: null,
+    };
+    api.getCustomMcpSettings.mockResolvedValue(settings);
+    api.updateCustomMcpToolPolicy.mockResolvedValue({
+      ...settings,
+      toolPolicy: 'read_only_tools',
+      tools: [
+        settings.tools[0]!,
+        { ...settings.tools[1]!, available: false },
+      ],
+    });
+    renderSettings();
+
+    const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
+    fireEvent.click(await within(navigation).findByRole('button', { name: 'MCP tools' }));
+
+    expect(await screen.findByText('https://mcp.acme.test/mcp')).toBeVisible();
+    const writeRow = (await screen.findByText('publish_doc'))
+      .closest<HTMLElement>('.settings-custom-mcp-tool-row');
+    expect(within(writeRow!).getByText('Destructive')).toBeVisible();
+    expect(within(writeRow!).getByText('Available')).toBeVisible();
+
+    fireEvent.change(screen.getByLabelText('Tools Rally may use'), {
+      target: { value: 'read_only_tools' },
+    });
+    await waitFor(() => expect(api.updateCustomMcpToolPolicy).toHaveBeenCalledWith(
+      '00000000-0000-7000-8000-000000000030',
+      'read_only_tools',
+    ));
+    // The tool is still listed, so a person can see what the policy is holding
+    // back rather than watching it disappear.
+    await waitFor(() => expect(
+      within(screen.getByText('publish_doc').closest<HTMLElement>('.settings-custom-mcp-tool-row')!)
+        .getByText('Withheld'),
+    ).toBeVisible());
+  });
+
+  it('says why a catalog is missing instead of showing an empty one', async () => {
+    api.getConnections.mockResolvedValue([{
+      id: '00000000-0000-7000-8000-000000000030',
+      connectorType: 'custom_mcp',
+      scope: 'you',
+      displayName: 'My docs',
+      capabilities: ['custom_mcp.tools'],
+      status: 'healthy',
+      settingsKind: 'custom_mcp_tools',
+    }]);
+    api.getCustomMcpSettings.mockResolvedValue({
+      connectionId: '00000000-0000-7000-8000-000000000030',
+      connectionName: 'My docs',
+      scope: 'personal',
+      serverUrl: 'https://mcp.acme.test/mcp',
+      authMode: 'oauth',
+      toolPolicy: 'all_tools',
+      toolPolicyEditable: false,
+      tools: [],
+      toolsUnavailable: 'Custom MCP returned HTTP 503',
+    });
+    renderSettings();
+
+    const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
+    fireEvent.click(await within(navigation).findByRole('button', { name: 'MCP tools' }));
+
+    expect(await screen.findByText('This server’s tools could not be read')).toBeVisible();
+    expect(screen.getByText('Custom MCP returned HTTP 503')).toBeVisible();
+    // A personal connection's policy is fixed, so the control is not offered as
+    // something to change.
+    expect(screen.getByLabelText('Tools Rally may use')).toBeDisabled();
   });
 
   it('adds a nested GitHub settings page only for a configurable active connection', async () => {

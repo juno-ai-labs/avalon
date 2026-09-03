@@ -6,9 +6,15 @@ export interface DurableObjectSqliteMigration {
   /**
    * SQLite's documented table-rebuild procedure requires foreign keys to be
    * disabled before its transaction begins. Use only for a released migration
-   * whose SQL depends on that legacy execution environment. New migrations
-   * must remain valid with foreign-key enforcement enabled and rebuild their
-   * dependency graph child-first.
+   * whose SQL depends on that legacy execution environment.
+   *
+   * A new migration must not reach for this, and not only as a matter of
+   * preference: the pragma below is a no-op once anything in the same object
+   * event has touched SQLite, which by the time a group runs is always. A
+   * rebuild written against it runs with enforcement on and drops its
+   * dependents for real. Replace a referenced parent by copying each dependent
+   * aside and restoring it — WorkspaceDO migration 31 — and see
+   * `docs/durable-object-sqlite.md`.
    */
   foreignKeys?: "disabled_during_rebuild";
   /**

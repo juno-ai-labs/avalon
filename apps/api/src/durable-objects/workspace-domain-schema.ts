@@ -40,8 +40,18 @@ const WORKSPACE_FENCED_TABLES = [
   "realtime_transcription_sessions",
 ] as const;
 
-function workspaceIdentityFences(): string[] {
-  return WORKSPACE_FENCED_TABLES.flatMap((table) => [
+/**
+ * The two triggers that hold one table's rows to this object's workspace.
+ *
+ * Exported because a table rebuild drops its triggers with it: SQLite takes a
+ * table's triggers when the table goes, and a rebuild that restored only the
+ * indexes would leave the upgraded object without the guard that stops another
+ * workspace's row from reaching it. A migration recreates them from here rather
+ * than from a copy, so the fence a rebuilt table gets is the fence every other
+ * table has.
+ */
+export function workspaceIdentityFencesFor(table: string): string[] {
+  return [
     `CREATE TRIGGER ${table}_workspace_identity_insert
       BEFORE INSERT ON ${table}
       WHEN NEW.workspace_id IS NOT (SELECT workspace_id FROM workspace_identity WHERE id = 1)
@@ -50,7 +60,11 @@ function workspaceIdentityFences(): string[] {
       BEFORE UPDATE OF workspace_id ON ${table}
       WHEN NEW.workspace_id IS NOT (SELECT workspace_id FROM workspace_identity WHERE id = 1)
       BEGIN SELECT RAISE(ABORT, 'workspace_identity_mismatch'); END`,
-  ]);
+  ];
+}
+
+function workspaceIdentityFences(): string[] {
+  return WORKSPACE_FENCED_TABLES.flatMap((table) => workspaceIdentityFencesFor(table));
 }
 
 /**
