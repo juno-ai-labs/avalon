@@ -4377,9 +4377,6 @@ async function createInlineChildHarnessSurface(options: {
     // anything, so its parent's wake-ups are context it can neither use nor act
     // on. The write half is already excluded by the read-only filter above.
     .filter((tool) => !tool.definition.capability.startsWith("workstream.wakeup."))
-    .filter((tool) =>
-      options.parentInput.reason !== "inbound_email"
-      || !tool.definition.capability.startsWith("web."))
     .map((tool): HarnessTool => ({
       definition: tool.definition,
       ...(tool.validateInput ? { validateInput: tool.validateInput } : {}),
@@ -6068,10 +6065,6 @@ async function loadHarnessTools(
       definition: ToolDefinition,
       includeStaticInputValidator = false,
     ): HarnessTool | null => {
-      // A mailbox From header is not a strong authentication primitive. Email-
-      // triggered automations may inspect bound connector data, but external
-      // connector writes require a subsequent human-started run.
-      if (input.reason === "inbound_email" && definition.mode === "write") return null;
       if (!grantedScopes.includes(definition.capability)) return null;
       if (!connectorCapabilitySupportsScope(adapter, definition.capability, scope)) return null;
       const tool: HarnessTool = {
@@ -7896,12 +7889,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
       },
     },
   ];
-  // Inbound email is untrusted external data. It may use explicitly bound
-  // connector reads, but it cannot open an outbound channel that could be
-  // abused to exfiltrate those private results through a query or URL.
-  if (input.reason !== "inbound_email") {
-    tools.splice(2, 0, ...createFirecrawlWebTools(env));
-  }
+  tools.splice(2, 0, ...createFirecrawlWebTools(env));
   tools.push(...createMemoryTools(env, input));
   tools.push(...createMemoryTableTools(env, input));
   return tools;
