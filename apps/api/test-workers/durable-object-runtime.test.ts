@@ -3129,7 +3129,7 @@ describe("Durable Objects in the Workers runtime", () => {
     });
   });
 
-  it("answers subscribe with the whole sidebar, unasked", async () => {
+  it("answers subscribe with the whole sidebar and excludes room-owned automations", async () => {
     await seedOpenAuthority();
     const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
       workspaceDOName("global", WORKSPACE_ID),
@@ -3163,6 +3163,7 @@ describe("Durable Objects in the Workers runtime", () => {
     // Notes remain workspace product state. Automations arrive through a
     // content-free projection from their named AutomationAgent.
     const subscriptionId = "00000000-0000-7000-8000-000000000704";
+    const workstreamSubscriptionId = "00000000-0000-7000-8000-000000000709";
     const resourceId = "00000000-0000-7000-8000-000000000705";
     const noteId = "00000000-0000-7000-8000-000000000706";
     await expect(stub.executeRuntimeSql({
@@ -3198,6 +3199,25 @@ describe("Durable Objects in the Workers runtime", () => {
       scope: "workspace",
       title: "Monday brief",
       description: "Every Monday",
+      nextRunAt: null,
+      attentionCode: null,
+    })).resolves.toEqual({ applied: true });
+    // The author owns both rows, but this one belongs to the room's rail. If
+    // the top-level query selects by author alone, its third scope makes the
+    // whole WorkspaceSidebar schema fail before the socket can send anything.
+    await expect(stub.applyAutomationProjection({
+      schemaVersion: 1,
+      automationId: workstreamSubscriptionId,
+      workspaceId: WORKSPACE_ID,
+      authorUserId: USER_ID,
+      authorityGeneration: 1,
+      projectionVersion: 1,
+      payloadHash: "room-owned-standup-v1",
+      lifecycle: "active",
+      scope: "workstream",
+      owningWorkstreamId: WORKSTREAM_ID,
+      title: "Room-owned standup",
+      description: "Lives on the work stream's own automation rail",
       nextRunAt: null,
       attentionCode: null,
     })).resolves.toEqual({ applied: true });
@@ -3247,6 +3267,7 @@ describe("Durable Objects in the Workers runtime", () => {
       expect(page.workstreams.nextCursor).toBeNull();
       expect(page.automations.items).toHaveLength(1);
       expect(page.automations.items[0]).toMatchObject({ id: subscriptionId, name: "Monday brief" });
+      expect(page.automations.items.map((item) => item.id)).not.toContain(workstreamSubscriptionId);
       // Served as stored: reconciling a route is a Global-registry call, and
       // this handler runs on the object's single thread beside the directory
       // read. The REST refresh is what fills it in.
