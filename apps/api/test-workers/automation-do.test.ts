@@ -582,6 +582,10 @@ describe("AutomationDO", () => {
     const revised = await submit({ ...DEFINITION, instructions: "Count the open pull requests and report the number." });
     await apply();
     expect(revised.definitionRevision).toBe(2);
+    // A newer draft the conversation has written but nobody has applied: the
+    // run reads the revision it was admitted under, not whatever is current.
+    const unapplied = await submit({ ...DEFINITION, instructions: "Count the closed pull requests instead." });
+    expect(unapplied.definitionRevision).toBe(3);
     const started = await automationStub().runNow({ ...addressed(), actor: actor(), idempotencyKey: "provision-run-01" });
 
     const run = await settledChildRun(started.runId);
@@ -597,6 +601,7 @@ describe("AutomationDO", () => {
     expect(provider.calls.length).toBeGreaterThanOrEqual(1);
     const systemPrompt = promptText(provider.calls[0]!.messages[0]?.content);
     expect(systemPrompt).toContain("Count the open pull requests and report the number.");
+    expect(systemPrompt).not.toContain("Count the closed pull requests instead.");
     expect(await automationStub().readRunDefinition({ ...addressed(), runId: started.runId })).toMatchObject({
       definitionRevision: 2,
       runId: started.runId,
