@@ -875,7 +875,88 @@ pre {
 }
 .sidebar-list { display: grid; gap: var(--av-sys-space-row-gap); }
 .sidebar-context-target { min-width: 0; }
+.sidebar-workstream-preview-anchor { min-width: 0; width: 100%; }
 .sidebar-context-target .sidebar-row { width: 100%; }
+
+/* Source-verified against GrokBot 0.36.0's `sand-agent-hover-card`: the card
+   stays 260px wide in both sidebar forms, sits 8px off the row, and uses a
+   10px inset, 12px radius, 4px stack gap, and two preview lines. It is a
+   preview rather than another navigation target, so it never captures the
+   pointer from the row underneath it. */
+.sidebar-workstream-preview-surface {
+  animation: sidebar-workstream-preview-in 100ms ease-out;
+  background: var(--av-sys-color-surface-raised);
+  border: .5px solid var(--av-sys-color-border-subtle);
+  border-radius: 12px;
+  box-shadow: var(--av-sys-elevation-shadow-md);
+  color: var(--av-sys-color-text-default);
+  padding: 10px;
+  pointer-events: none;
+  width: 260px;
+  z-index: 1000;
+}
+
+.sidebar-workstream-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.sidebar-workstream-preview-header {
+  align-items: flex-end;
+  display: flex;
+  gap: 4px;
+  justify-content: space-between;
+  min-width: 0;
+  width: 100%;
+}
+
+.sidebar-workstream-preview-identity {
+  align-items: center;
+  display: flex;
+  flex: 1 1 auto;
+  gap: 8px;
+  min-width: 0;
+}
+
+.sidebar-workstream-preview-name {
+  color: var(--av-sys-color-text-default);
+  font-size: var(--grok-font-body-2-size, 13px);
+  font-weight: var(--grok-font-medium, 500);
+  line-height: var(--grok-font-body-2-leading, 18px);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-workstream-preview-header time {
+  color: var(--av-sys-color-text-muted);
+  flex: 0 0 auto;
+  font-size: var(--grok-font-label-size, 12px);
+  font-weight: var(--grok-font-regular, 420);
+  line-height: var(--grok-font-label-leading, 16px);
+  white-space: nowrap;
+}
+
+.sidebar-workstream-preview-copy {
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  color: var(--av-sys-color-text-subtle);
+  display: -webkit-box;
+  font-size: var(--grok-font-body-2-size, 13px);
+  font-weight: var(--grok-font-regular, 420);
+  line-height: var(--grok-font-body-2-leading, 18px);
+  overflow: hidden;
+}
+
+.sidebar-workstream-preview-copy.is-empty { color: var(--av-sys-color-text-muted); }
+
+@keyframes sidebar-workstream-preview-in {
+  from { opacity: 0; transform: translateX(-2px); }
+  to { opacity: 1; transform: translateX(0); }
+}
 
 /* The pinned list is arranged by hand, so the grab cursor is the only standing
    sign that it can be. The row keeps its place in the flow while it is dragged
@@ -2987,165 +3068,29 @@ pre {
 .markdown-body .citation-chip-icon svg { height: 0.95em; width: 0.95em; }
 .citation-chip-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 
-/* The embed card. It is a block because image syntax is block-level to the
-   model that wrote it, so it already arrives in a paragraph of its own.
-
-   The shape is an attached file's tile rather than a list row: the kind badge
-   at the head, the title and kind at the foot, and deliberate empty room
-   between — the room is what says "a thing was produced here", so the height
-   is a floor rather than a hug. Every colour is a semantic token, which is how
-   the same rule lands as a white sheet with a hairline on Terra Light and as a
-   near-borderless warm card drawn with space on Air; the kind takes the
-   theme's own label voice for the same reason. */
-.citation-card { background: var(--av-sys-color-surface-elevated); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-sys-size-radius-lg); color: var(--av-sys-color-text-default); cursor: pointer; display: flex; flex-direction: column; font: inherit; gap: 9px; margin: var(--av-sys-space-prose-gap) 0; max-width: 100%; min-height: 170px; overflow: hidden; padding: 11px; text-align: left; width: 176px; }
-/* Written against the element, not against a `:not()` of the audio class: the
-   whole-card hover belongs to the cards that *are* one button, and an audio
-   card is a container with two controls in it. Lighting the container on hover
-   advertises a click the container does not take. */
-button.citation-card:hover { background: var(--av-sys-color-surface-elevated-hover); border-color: var(--av-sys-color-border-strong); }
-.citation-card-audio { cursor: default; }
-.citation-card-badge { align-items: center; align-self: flex-start; border: 1px solid var(--av-ref-color-line-4); border-radius: var(--av-sys-size-radius-sm); color: var(--av-sys-color-text-muted); display: inline-flex; height: 27px; justify-content: center; width: 27px; }
-/* An image is the card's glance at an image resource. A fixed preview box keeps
-   portrait and landscape files from changing the row's height; `cover` fills
-   it without distortion, and the explicit center keeps the crop balanced. */
-.markdown-body .citation-card-image-preview { background: var(--av-sys-color-surface-raised); border-radius: var(--av-sys-size-radius-sm); display: block; height: 72px; margin: 0; max-width: none; object-fit: cover; object-position: center; width: 100%; }
-/* The opening lines of the resource's own text, filling the room between the
-   badge and the title. It is a *glance*, not a reader: the clamp cuts it at
-   four lines, and nothing here scrolls in either axis — a scrollable box
-   inside a card the whole of which is one button would swallow the click it
-   advertises. The kind label's size, and `font-weight: normal` rather than
-   `sys.label.weight`: that token is 560, the same as the title's
-   `sys.font.weight.strong`, so the glance competed with the line it is
-   meant to recede from. The named weights only go up from `strong`; `normal`
-   (400) is the step down that exists without inventing a number. Headings
-   inherit it; `strong` keeps markdown's own weight, so `**Author:**` actually
-   reads as emphasis. `pointer-events: none` plus `inert` on the node keep nested
-   markdown (a link, a code-block copy control) from becoming a second target
-   inside the card.
-
-   The tone is `text.disabled`, the faintest step on `sys.color.text`
-   (strongest to faintest). The preview exists to hint at the document, not
-   to be read here — type as dark as `text.muted` (the kind label) competes
-   with the title for the click. The token names a contrast, not the button's
-   state: the card stays enabled, and this layer is the one that should recede.
-   `.markdown-body` restates the colour on itself because a colour on the host
-   does not inherit into that wrapper. The card and the wrapper's element are
-   named so this is (0,3,1): the feed's
-   `:is(.workstream-screen, .automation-chat-surface) .agent-message .markdown-body`
-   (and the human-bubble twin) is (0,3,0), and a host written as
-   `.citation-card-preview .markdown-body` lost, so inherit never landed and the
-   glance painted at the turn's size and colour. `*` carries the tone into
-   descendants that `.markdown-body strong` (and `a`, `th`) paint themselves,
-   without naming a markdown element a host may not restyle. It also zeros
-   block margins: blank lines stay in the excerpt (they are the block grammar)
-   and the clamp's seams belong here rather than in a source rewrite. */
-.citation-card-preview { -webkit-box-orient: vertical; -webkit-line-clamp: 4; color: var(--av-sys-color-text-disabled); display: -webkit-box; font-size: var(--av-sys-label-font-size); font-weight: normal; line-height: 1.5; max-height: calc(var(--av-sys-label-font-size) * 1.5 * 4); overflow: hidden; pointer-events: none; word-break: break-word; }
-.citation-card .citation-card-preview div.markdown-body { color: inherit; font-size: inherit; font-weight: inherit; line-height: inherit; }
-.citation-card .citation-card-preview div.markdown-body * { color: inherit; margin: 0; }
-/* `*` does not match `::marker`, so the shared `.markdown-body li::marker`
-   colour would otherwise keep the bullets at the turn's ink beside faint
-   text. Inherit here the same way `*` carries the tone, without naming a
-   markdown element. */
-.citation-card .citation-card-preview div.markdown-body ::marker { color: inherit; }
-/* A heading scale of one size: the shared scale's h1 is larger than this
-   tile, and a glance that spent its four lines on a title would hide the
-   sentence that distinguishes one card from another. The same (0,3,1)-plus
-   element that wins the wrapper's inherit wins the scale, so a heading does
-   not keep the shared size while the wrapper's type recedes. */
-.citation-card .citation-card-preview div.markdown-body :is(h1, h2, h3, h4, h5, h6) {
-  color: inherit;
-  font-size: inherit;
-  font-weight: inherit;
-  line-height: inherit;
-  margin: 0;
-}
-/* What stands in for it while the derivative is still being converted. The
-   card does not resize when the text lands because of its own `min-height` and
-   the title block's `margin-top: auto`, not because these bars measure the
-   same as the lines they stand in for — they do not, and saying so here would
-   be a claim the next edit could quietly break. */
-.citation-card-preview-skeleton { display: flex; flex-direction: column; gap: 5px; overflow: hidden; }
-.citation-card-preview-skeleton > span { animation: citation-card-shimmer 1.8s ease-in-out infinite; background: var(--av-sys-color-shimmer-default); border-radius: var(--av-sys-size-radius-pill); height: 7px; }
-.citation-card-preview-skeleton > span:nth-child(1) { width: 100%; }
-.citation-card-preview-skeleton > span:nth-child(2) { animation-delay: 0.12s; width: 82%; }
-.citation-card-preview-skeleton > span:nth-child(3) { animation-delay: 0.24s; width: 60%; }
+/* A block `resource://` embed shares the attachment vocabulary: intrinsic media
+   for an image, or one compact file row. The old tall citation tile made sites
+   and audio look like empty documents and survived after attachments moved on. */
+.citation-card { color: var(--av-sys-color-text-default); cursor: pointer; font: inherit; margin: var(--av-sys-space-prose-gap) 0; max-width: 100%; overflow: hidden; text-align: left; }
+.citation-card.is-file { align-items: center; background: var(--attachment-card-background, var(--av-sys-color-surface-elevated)); border: .5px solid var(--attachment-card-border, var(--av-ref-color-line-4)); border-radius: 12px; display: grid; gap: 9px; grid-template-columns: 36px minmax(0, 1fr); min-height: 54px; min-width: min(220px, 100%); padding: 8px; width: min(340px, 100%); }
+.citation-card.is-file:hover { background: var(--av-sys-color-surface-elevated-hover); }
+.citation-card-badge { align-items: center; background: color-mix(in srgb, var(--av-sys-color-accent-base) 18%, var(--av-sys-color-surface-raised)); border-radius: 9px; color: var(--av-sys-color-accent-base); display: inline-flex; height: 36px; justify-content: center; width: 36px; }
+.citation-card.is-image { background: var(--av-ref-color-neutral-4); border: 0; border-radius: 12px; box-shadow: inset 0 0 0 .5px color-mix(in srgb, var(--av-sys-color-text-default) 15%, transparent); display: block; max-height: 200px; min-height: 64px; padding: 0; position: relative; transition: filter 140ms ease; }
+.citation-card.is-image:hover { filter: brightness(1.04); }
+.markdown-body .citation-card-image-preview { display: block; height: 100%; margin: 0; max-width: none; object-fit: cover; width: 100%; }
+.citation-card-preview-skeleton { animation: citation-card-shimmer 1.8s ease-in-out infinite; background: var(--av-sys-color-shimmer-default); display: block; inset: 0; position: absolute; }
 @keyframes citation-card-shimmer {
   0%, 100% { opacity: 0.45; }
   50% { opacity: 1; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .citation-card-preview-skeleton > span { animation: none; }
+  .citation-card-preview-skeleton,
+  .citation-card.is-image { animation: none; transition: none; }
 }
-/* The audio card's transport: the position, the clock, and the control that
-   moves them, stacked in the room above the title.
-
-   The play button sits *under* the bar and the clock rather than in the badge
-   slot, so the card reads top to bottom as what this is, where it is, and what
-   to press — and the badge goes on saying what every other card's badge says.
-
-   It is an `.icon-button`, the same control the header's own icons are, and it
-   takes that class rather than restating it so the two cannot drift. The one
-   thing it has to resolve for itself is the hover fill: `.icon-button` rests
-   transparent and fills with `surface.raised` on hover, which is the step above
-   a *header*, and this button sits on a card that is already
-   `surface.elevated` — the same colour on Terra, one point off it on Air Dark.
-   So the hover here is the card's own `surface.elevated.hover`, the step that
-   is one above this surface, and it is written against `.citation-card-audio`
-   so it wins on specificity rather than on being lower in the file than
-   `.icon-button:hover:not(:disabled)`.
-
-   The bar itself is drawn on a pseudo-element from `--citation-card-played`,
-   which the card publishes as a percentage. That keeps a position that changes
-   four times a second out of the DOM: it is one custom property on one node,
-   not a child element React reconciles on every `timeupdate`. While the bytes
-   are still arriving the empty bar takes the skeleton's own shimmer, so the
-   card says it is asking without borrowing three text-shaped lines for a file
-   that has no text — the track is already the skeleton's own fill, so the
-   loading state adds the shimmer and nothing else. That token rather than a
-   line colour: the line ramp is a hairline against a surface, and on the dark
-   themes it is within a few points of the card it would be drawn on, which
-   left the empty bar invisible and the clock floating under nothing. `margin-top: auto` seats the transport with the title
-   rather than under the badge — the room above it is the same deliberate empty
-   room every other card keeps, and the first `auto` in the column takes the
-   slack, so the title block's own stays true. */
-.citation-card-play { align-self: flex-start; cursor: pointer; }
-.citation-card-audio .citation-card-play:hover:not(:disabled),
-.citation-card-audio .citation-card-play:focus-visible { background: var(--av-sys-color-surface-elevated-hover); }
-.citation-card-transport { display: flex; flex-direction: column; gap: 5px; margin-top: auto; min-width: 0; }
-.citation-card-progress { background: var(--av-sys-color-shimmer-default); border-radius: var(--av-sys-size-radius-pill); height: 3px; overflow: hidden; width: 100%; }
-.citation-card-progress::after { background: var(--av-sys-color-text-muted); content: ''; display: block; height: 100%; width: var(--citation-card-played, 0%); }
-.citation-card-progress[data-loading='true'] { animation: citation-card-shimmer 1.8s ease-in-out infinite; }
-/* Below the rule it answers, not above it. A media query adds no specificity,
-   so this and the shimmer are both (0,2,0) and the cascade falls through to
-   source order — written in the block beside the skeleton's, 29 lines earlier,
-   it lost, and a reader who asked for less motion got the full shimmer. The
-   skeleton's own answer works only because its base rule precedes it. */
-@media (prefers-reduced-motion: reduce) {
-  .citation-card-progress[data-loading='true'] { animation: none; }
-}
-.citation-card-elapsed { color: var(--av-sys-color-text-muted); font-size: var(--av-sys-label-font-size); font-variant-numeric: tabular-nums; letter-spacing: var(--av-sys-label-tracking); }
-/* The element is the playback, not a control: the transport above it is what a
-   reader operates, and the browser's own bar would be a second one. */
-.citation-card-audio-source { display: none; }
-/* `margin-top: auto` puts the title block at the foot whether or not a preview
-   filled the room above it, so a card with an excerpt is the same shape as one
-   without. The audio card's title block is a button, so it carries the reset
-   the span never needed. */
-.citation-card-text { display: flex; flex-direction: column; gap: 3px; margin-top: auto; min-width: 0; }
-.citation-card-open { background: none; border: 0; color: inherit; cursor: pointer; font: inherit; padding: 0; text-align: left; }
-.citation-card-open:hover .citation-card-title { text-decoration: underline; }
-.citation-card-title { font-size: 0.97em; font-weight: var(--av-sys-font-weight-strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.citation-card-kind { color: var(--av-sys-color-text-muted); font-size: var(--av-sys-label-font-size); letter-spacing: var(--av-sys-label-tracking); text-transform: var(--av-sys-label-transform); }
-/* A run of embeds, merged by the rehype pass into one row that scrolls
-   sideways — a column of tiles between two sentences reads as the transcript
-   stalling, and the row spends one card's height however many were announced.
-
-   `overscroll-behavior-x: contain` stops a swipe that reaches the end of the
-   row from chaining outward, where the window would take it as a back
-   gesture; `scrollbar-width: thin` matches the settings icon shelf, the other
-   horizontal scroller in this file, and keeps a full-size overlay bar out of
-   the 10px gap beneath 170px tiles. */
-.citation-card-row { display: flex; gap: 10px; margin: var(--av-sys-space-prose-gap) 0; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: thin; }
+.citation-card-text { display: flex; flex-direction: column; min-width: 0; }
+.citation-card-title { font-size: 14px; font-weight: 540; line-height: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.citation-card-kind { color: var(--av-sys-color-text-muted); font-size: 12px; letter-spacing: 0; line-height: 16px; text-transform: none; }
+.citation-card-row { display: flex; gap: 6px; margin: var(--av-sys-space-prose-gap) 0; max-width: 560px; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: thin; }
 .citation-card-row .citation-card { flex: 0 0 auto; margin: 0; }
 
 /* The grounding pill. It costs one character of line width and no vertical
@@ -3651,21 +3596,20 @@ button.citation-card:hover { background: var(--av-sys-color-surface-elevated-hov
 .workstream-composer.is-file-dragging,
 .transcript-scroll.is-file-dragging,
 .rail-surface.is-file-dragging { box-shadow: inset 0 0 0 2px var(--av-sys-color-brand-base); }
-.composer-attachments,
-.message-attachments { display: flex; flex-wrap: wrap; gap: 7px; }
-.composer-attachments { padding: 11px 13px 1px; }
-.message-attachments { margin: 0 0 9px; }
-.attachment-tile { background: var(--av-ref-color-neutral-4); border: 1px solid var(--av-ref-color-line-4); border-radius: var(--av-sys-size-radius-md); height: 58px; overflow: visible; position: relative; width: 58px; }
+.composer-attachments { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; padding: 11px 13px 1px; }
+.message-attachments { align-items: flex-start; display: flex; flex-direction: column; gap: 8px; margin: 4px 0 9px; max-width: min(100%, 560px); }
+.attachment-tile { background: var(--av-ref-color-neutral-4); border: .5px solid var(--av-ref-color-line-4); border-radius: 12px; height: 58px; overflow: visible; position: relative; width: 58px; }
 .attachment-tile-content { align-items: center; background: transparent; border: 0; border-radius: inherit; color: var(--av-ref-color-neutral-11); display: flex; height: 100%; justify-content: center; overflow: hidden; padding: 0; width: 100%; }
 .attachment-tile-content:not(:disabled) { cursor: zoom-in; }
 .attachment-tile-content img { height: 100%; object-fit: cover; width: 100%; }
-.attachment-extension { font-size: 12px; font-weight: 600; letter-spacing: .01em; max-width: 48px; overflow: hidden; text-overflow: ellipsis; text-transform: lowercase; }
 .attachment-remove,
 .attachment-retry { align-items: center; background: var(--av-cmp-sidebar-background-solid); border: 1px solid var(--av-ref-color-line-4); border-radius: var(--av-sys-size-radius-pill); color: var(--av-ref-color-neutral-13); display: flex; height: 21px; justify-content: center; opacity: 0; padding: 0; position: absolute; transition: opacity 120ms ease; width: 21px; z-index: 3; }
 .attachment-remove { right: -7px; top: -7px; }
 .attachment-retry { bottom: 4px; left: 50%; opacity: 1; transform: translateX(-50%); }
 .attachment-tile:hover .attachment-remove,
-.attachment-tile:focus-within .attachment-remove { opacity: 1; }
+.attachment-tile:focus-within .attachment-remove,
+.attachment-file-card:hover .attachment-remove,
+.attachment-file-card:focus-within .attachment-remove { opacity: 1; }
 .attachment-tile.is-failed { border-color: var(--av-sys-color-danger-base); }
 .attachment-progress { align-items: center; background: var(--av-sys-color-scrim-subtle); border-radius: inherit; display: flex; inset: 0; justify-content: center; position: absolute; }
 .attachment-progress svg { height: 42px; position: absolute; transform: rotate(-90deg); width: 42px; }
@@ -3673,22 +3617,102 @@ button.citation-card:hover { background: var(--av-sys-color-surface-elevated-hov
 .attachment-progress-track { stroke: var(--av-ref-color-neutral-7); }
 .attachment-progress-value { stroke: var(--av-sys-color-brand-base); stroke-linecap: round; transition: stroke-dashoffset 100ms linear; }
 .attachment-progress small { color: var(--av-ref-color-neutral-14); font-size: 9px; font-variant-numeric: tabular-nums; position: relative; }
-.sent-attachment { height: 86px; width: 86px; }
-.human-message .message-attachments { justify-content: var(--av-cmp-turn-align); }
-.attachment-lightbox-overlay { background: var(--av-sys-color-scrim-solid); inset: 0; position: fixed; z-index: 1000; }
-.attachment-lightbox { background: var(--av-sys-color-scrim-solid); display: grid; grid-template-rows: 58px minmax(0, 1fr); inset: 0; position: fixed; z-index: 1001; }
-.attachment-lightbox-header { align-items: center; border-bottom: 1px solid var(--av-ref-color-line-2); display: grid; grid-template-columns: minmax(0, 1fr) auto auto; padding: 0 16px 0 22px; }
-.attachment-lightbox-header h2 { color: var(--av-ref-color-neutral-13); font-size: 13px; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.human-message .message-attachments { align-items: flex-end; margin-left: auto; }
+
+.message-attachment-images { display: flex; gap: 6px; max-width: 560px; width: 100%; }
+.message-attachment-images.is-single { width: fit-content; }
+.message-attachment-image-cell { display: block; flex: 1 1 0; min-width: 0; overflow: hidden; position: relative; }
+.message-attachment-image-cell:first-child,
+.message-attachment-image-cell:first-child .message-attachment-image { border-bottom-left-radius: 12px; border-top-left-radius: 12px; }
+.message-attachment-image-cell:last-child,
+.message-attachment-image-cell:last-child .message-attachment-image { border-bottom-right-radius: 12px; border-top-right-radius: 12px; }
+.message-attachment-image {
+  background: var(--av-ref-color-neutral-4);
+  border: 0;
+  box-shadow: inset 0 0 0 .5px color-mix(in srgb, var(--av-sys-color-text-default) 15%, transparent);
+  display: block;
+  max-height: 200px;
+  max-width: 100%;
+  min-height: 64px;
+  overflow: hidden;
+  padding: 0;
+  transition: filter 140ms ease;
+}
+.message-attachment-images.is-gallery .message-attachment-image { aspect-ratio: auto !important; height: 192px; width: 100% !important; }
+.message-attachment-image:hover:not(:disabled) { filter: brightness(1.04); }
+.message-attachment-image img { display: block; height: 100%; object-fit: cover; width: 100%; }
+.message-attachment-images.is-single .message-attachment-image img { object-fit: contain; }
+.message-attachment-image-skeleton { align-items: center; color: var(--av-sys-color-text-muted); display: flex; height: 100%; justify-content: center; min-height: 150px; width: 100%; }
+.message-attachment-more { align-items: center; background: rgba(0, 0, 0, .56); color: #fff; display: flex; font-size: 18px; font-weight: 560; inset: 0; justify-content: center; pointer-events: none; position: absolute; }
+
+.attachment-file-card {
+  align-items: center;
+  background: var(--attachment-card-background, var(--av-sys-color-surface-elevated));
+  border: .5px solid var(--attachment-card-border, var(--av-ref-color-line-4));
+  border-radius: 12px;
+  color: var(--av-sys-color-text-default);
+  display: flex;
+  margin-block: 4px;
+  max-width: min(340px, 100%);
+  min-height: 54px;
+  min-width: min(220px, 100%);
+  overflow: visible;
+  padding: 8px;
+  position: relative;
+}
+.attachment-file-card.is-pending { margin-block: 0; width: min(260px, 100%); }
+.attachment-file-card.is-failed { border-color: var(--av-sys-color-danger-base); }
+.attachment-file-open { align-items: center; background: transparent; display: grid; flex: 1 1 auto; gap: 9px; grid-template-columns: 36px minmax(0, 1fr); min-width: 0; padding: 0; text-align: left; }
+.attachment-file-open:hover:not(:disabled) .attachment-file-name { text-decoration: underline; text-underline-offset: 2px; }
+.attachment-file-icon { align-items: center; background: color-mix(in srgb, var(--av-sys-color-accent-base) 18%, var(--av-sys-color-surface-raised)); border-radius: 9px; color: var(--av-sys-color-accent-base); display: flex; flex: 0 0 auto; height: 36px; justify-content: center; width: 36px; }
+.attachment-file-details { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; }
+.attachment-file-name { display: flex; font-size: 14px; font-weight: 540; line-height: 18px; min-width: 0; white-space: nowrap; }
+.attachment-file-name > span:first-child { overflow: hidden; text-overflow: ellipsis; }
+.attachment-file-name > span:last-child { flex: 0 0 auto; }
+.attachment-file-meta { color: var(--av-sys-color-text-muted); font-size: 12px; line-height: 16px; }
+.attachment-file-download,
+.attachment-lightbox-action { align-items: center; background: transparent; border-radius: 8px; color: var(--av-sys-color-text-muted); display: flex; flex: 0 0 auto; height: 34px; justify-content: center; padding: 0; width: 34px; }
+.attachment-file-download:hover,
+.attachment-lightbox-action:hover { background: var(--av-sys-color-surface-raised-hover); color: var(--av-sys-color-text-default); }
+
+[data-theme='air'] { --attachment-card-background: #fcfcfc; --attachment-card-border: rgba(20, 20, 20, .15); }
+[data-theme='air-dark'] { --attachment-card-background: #2f2f2f; --attachment-card-border: rgba(252, 252, 252, .15); }
+
+.attachment-lightbox-overlay { backdrop-filter: blur(1px); background: rgba(0, 0, 0, .82); inset: 0; position: fixed; z-index: 1000; }
+.attachment-lightbox { inset: 0; position: fixed; z-index: 1001; }
+.attachment-lightbox-a11y-title { clip: rect(0, 0, 0, 0); clip-path: inset(50%); height: 1px; overflow: hidden; position: absolute; white-space: nowrap; width: 1px; }
+.attachment-lightbox.is-media-viewer { background: transparent; display: block; }
+.attachment-lightbox.is-document-viewer { background: var(--av-sys-color-surface-default); border: .5px solid var(--av-ref-color-line-4); border-radius: 16px; box-shadow: 0 28px 80px rgba(0, 0, 0, .5); display: grid; grid-template-rows: 62px minmax(0, 1fr); inset: 6vh 7.5vw; overflow: hidden; }
+.attachment-lightbox-header { align-items: center; border-bottom: .5px solid var(--av-ref-color-line-3); display: grid; gap: 8px; grid-template-columns: minmax(0, 1fr) auto auto auto; padding: 0 14px 0 24px; }
+.attachment-lightbox-header h2 { color: var(--av-sys-color-text-default); font-size: 14px; font-weight: 560; margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .attachment-lightbox-content { min-height: 0; overflow: auto; }
-.attachment-lightbox-content.is-image { align-items: center; display: flex; justify-content: center; overflow: hidden; padding: 32px; }
-.attachment-lightbox-content.is-image img { border-radius: var(--av-sys-size-radius-sm); box-shadow: var(--av-sys-elevation-shadow-lg); height: auto; max-height: 100%; max-width: 100%; object-fit: contain; width: auto; }
+.attachment-lightbox-content.is-image,
+.attachment-lightbox-content.is-video { align-items: center; display: flex; height: 100%; justify-content: center; overflow: hidden; padding: 52px 72px; }
+.attachment-lightbox-content.is-image img { border-radius: 16px; box-shadow: 0 28px 80px rgba(0, 0, 0, .42); height: auto; max-height: 100%; max-width: min(86vw, 1400px); object-fit: contain; user-select: none; width: auto; }
+.attachment-lightbox-content.is-video video { border-radius: 16px; box-shadow: 0 28px 80px rgba(0, 0, 0, .42); max-height: 100%; max-width: min(86vw, 1400px); }
+.attachment-lightbox-content.is-image.is-expanded,
+.attachment-lightbox-content.is-video.is-expanded { align-items: flex-start; justify-content: flex-start; overflow: auto; }
+.attachment-lightbox-content.is-image.is-expanded img,
+.attachment-lightbox-content.is-video.is-expanded video { margin: auto; max-height: none; max-width: none; }
 .attachment-lightbox-content.is-audio { align-items: center; display: flex; justify-content: center; padding: 32px; }
 .attachment-lightbox-content.is-audio audio { max-width: 560px; width: 100%; }
-.attachment-lightbox-close { align-items: center; background: var(--av-sys-color-surface-raised); border: 1px solid var(--av-ref-color-line-4); border-radius: var(--av-sys-size-radius-pill); color: var(--av-ref-color-neutral-14); display: flex; height: 34px; justify-content: center; width: 34px; }
+.attachment-lightbox-content.is-html { background: #fff; overflow: hidden; }
+.attachment-lightbox-content.is-html iframe { background: #fff; border: 0; height: 100%; width: 100%; }
+.attachment-lightbox-close { align-items: center; background: transparent; border-radius: 8px; color: var(--av-sys-color-text-muted); display: flex; height: 34px; justify-content: center; width: 34px; }
+.attachment-lightbox-close:hover { background: var(--av-sys-color-surface-raised-hover); color: var(--av-sys-color-text-default); }
 .attachment-lightbox-document { margin: 0 auto; max-width: 960px; min-height: 100%; padding: 44px 36px 96px; }
-.attachment-lightbox-text { color: var(--av-ref-color-neutral-13); font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: 13px; line-height: 1.65; margin: 0 auto; max-width: 1100px; min-height: 100%; overflow-wrap: anywhere; padding: 44px 36px 96px; white-space: pre-wrap; }
-.attachment-lightbox-status { align-items: center; color: var(--av-ref-color-neutral-11); display: flex; gap: 9px; justify-content: center; min-height: 100%; padding: 32px; }
+.attachment-lightbox-text { color: var(--av-sys-color-text-default); font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: 13px; line-height: 1.65; margin: 0 auto; max-width: 1100px; min-height: 100%; overflow-wrap: anywhere; padding: 44px 36px 96px; white-space: pre-wrap; }
+.attachment-lightbox-status { align-items: center; color: var(--av-sys-color-text-muted); display: flex; gap: 9px; justify-content: center; min-height: 100%; padding: 32px; }
 .attachment-lightbox-status.is-error { color: var(--av-sys-color-danger-soft); }
+.attachment-media-expand { align-items: center; background: transparent; border-radius: 8px; color: rgba(255, 255, 255, .72); display: flex; height: 36px; justify-content: center; position: absolute; right: 22px; top: 22px; width: 36px; z-index: 3; }
+.attachment-media-expand:hover { background: rgba(255, 255, 255, .09); color: #fff; }
+.attachment-gallery-arrow { align-items: center; background: rgba(36, 36, 36, .82); border: .5px solid rgba(255, 255, 255, .18); border-radius: 999px; color: #fff; display: flex; height: 44px; justify-content: center; position: absolute; top: 50%; transform: translateY(-50%); width: 44px; z-index: 3; }
+.attachment-gallery-arrow:hover { background: rgba(60, 60, 60, .94); }
+.attachment-gallery-arrow.is-previous { left: 20px; }
+.attachment-gallery-arrow.is-next { right: 20px; }
+@media (prefers-reduced-motion: reduce) {
+  .attachment-lightbox-overlay { backdrop-filter: none; }
+}
 .agent-document-deck-region { margin-top: 10px; max-width: 100%; }
 .agent-document-preamble { margin-bottom: 14px; }
 .agent-document-deck-scroll { max-width: 100%; overflow-x: auto; padding: 4px 10px 8px 4px; }
@@ -4459,15 +4483,15 @@ button.citation-card:hover { background: var(--av-sys-color-surface-elevated-hov
 
 @media (max-width: 920px) {
   :root { --av-cmp-sidebar-width: 0px; }
-  .workspace-shell { --av-cmp-sidebar-width: 0px !important; }
-  .main-pane { margin-left: 0; }
-  .sidebar { background: var(--av-cmp-sidebar-background-solid); box-shadow: var(--av-sys-elevation-shadow-drawer); transform: translateX(-100%); transition: transform 160ms ease; width: 300px; z-index: 70; }
-  .sidebar.is-mobile-open { transform: translateX(0); }
-  .sidebar-scrim { background: var(--av-sys-color-scrim-default); display: block; inset: 0; position: fixed; z-index: 65; }
-  .mobile-only,
-  .header-menu-button { display: inline-flex; }
+  .workspace-shell:not(.grokbot-shell) { --av-cmp-sidebar-width: 0px !important; }
+  .workspace-shell:not(.grokbot-shell) .main-pane { margin-left: 0; }
+  .workspace-shell:not(.grokbot-shell) .sidebar { background: var(--av-cmp-sidebar-background-solid); box-shadow: var(--av-sys-elevation-shadow-drawer); transform: translateX(-100%); transition: transform 160ms ease; width: 300px; z-index: 70; }
+  .workspace-shell:not(.grokbot-shell) .sidebar.is-mobile-open { transform: translateX(0); }
+  .workspace-shell:not(.grokbot-shell) .sidebar-scrim { background: var(--av-sys-color-scrim-default); display: block; inset: 0; position: fixed; z-index: 65; }
+  .workspace-shell:not(.grokbot-shell) .mobile-only,
+  .workspace-shell:not(.grokbot-shell) .header-menu-button { display: inline-flex; }
   .mobile-sidebar-trigger { display: none; }
-  .sidebar-resizer { display: none; }
+  .workspace-shell:not(.grokbot-shell) .sidebar-resizer { display: none; }
   .workspace-shell { --rail-slot: min(var(--rail-width), calc(100vw - 16px)); }
   .automation-composer-wrap,
   .rail-open .automation-composer-wrap { transform: translateX(-50%); width: calc(100% - 50px); }
@@ -4981,6 +5005,45 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   width: fit-content;
 }
 
+/* GrokBot keeps a pasted transcript useful without letting one turn become the
+   whole conversation. At normal desktop scale its collapsed message occupies
+   roughly three quarters of the viewport, capped at the reference's ~560 CSS
+   pixel card; the lower fade and disclosure live inside the bubble rather than
+   adding a second action row beneath it. */
+:is(.workstream-screen, .automation-chat-surface) .human-message-bubble:not([data-expanded]) .human-message-bubble-body {
+  max-height: min(72vh, 560px);
+  overflow: hidden;
+  position: relative;
+}
+
+:is(.workstream-screen, .automation-chat-surface) .human-message-bubble[data-clamped]:not([data-expanded]) .human-message-bubble-body::after {
+  background: linear-gradient(to bottom, transparent, var(--av-cmp-bubble-human-background));
+  bottom: 0;
+  content: '';
+  height: 56px;
+  left: 0;
+  pointer-events: none;
+  position: absolute;
+  right: 0;
+}
+
+.human-message-toggle {
+  align-items: center;
+  background: transparent;
+  color: var(--av-cmp-bubble-human-foreground);
+  display: flex;
+  font-size: 12px;
+  font-weight: 500;
+  gap: 4px;
+  line-height: 18px;
+  margin-top: 4px;
+  padding: 0;
+}
+
+.human-message-toggle:hover { opacity: 0.82; }
+.human-message-toggle svg { transition: transform 140ms; }
+.human-message-toggle[aria-expanded='true'] svg { transform: rotate(180deg); }
+
 /* The two ways a turn can be in the room before the room has it: still in
    flight, or admitted and waiting for the loop. Both are the reader's own words
    already rendered, and both say the same thing about themselves — not landed
@@ -5406,6 +5469,23 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   min-height: 54px;
   padding: 8px;
 }
+.grokbot-shell .workstream-row .sidebar-row-icon {
+  flex: 0 0 36px;
+  height: 36px;
+  width: 36px;
+}
+.grokbot-shell .workstream-row-status {
+  bottom: 0;
+  right: 0;
+}
+.grokbot-shell .workstream-row-status .status-indicator {
+  height: 14px;
+  width: 14px;
+}
+.grokbot-shell .workstream-row .workstream-row-status .status-dot {
+  height: 8px;
+  width: 8px;
+}
 .grokbot-shell .workstream-row.is-active { background: var(--av-cmp-row-background-selected); }
 .grokbot-shell .command-shortcut-scrim {
   justify-content: flex-end;
@@ -5461,6 +5541,70 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   text-transform: none;
 }
 .grokbot-shell .sidebar-group-menu-trigger { display: none; }
+
+/* GrokBot's sidebar does not become a drawer when the conversation gets
+   narrow. It becomes an 88px icon rail, either because the saved compact
+   preference is on or because the conversation needs its protected 424px.
+   The component owns that calculation; this block owns the resulting rail. */
+.grokbot-shell .sidebar.is-compact .sidebar-titlebar {
+  justify-content: center;
+  padding: 0;
+}
+.grokbot-shell .sidebar.is-compact .sidebar-titlebar > .sidebar-new-button,
+.grokbot-shell .sidebar.is-compact .sidebar-commandbar,
+.grokbot-shell .sidebar.is-compact .sidebar-new-chat-draft,
+.grokbot-shell .sidebar.is-compact .sidebar-section-heading,
+.grokbot-shell .sidebar.is-compact .sidebar-group-heading,
+.grokbot-shell .sidebar.is-compact .sidebar-row-main,
+.grokbot-shell .sidebar.is-compact .sidebar-workstream-timer,
+.grokbot-shell .sidebar.is-compact .workstream-row-people,
+.grokbot-shell .sidebar.is-compact .command-shortcut-scrim,
+.grokbot-shell .sidebar.is-compact .sidebar-empty {
+  display: none;
+}
+.grokbot-shell .sidebar.is-compact .sidebar-scroll {
+  padding: 4px 17px 12px;
+}
+.grokbot-shell .sidebar.is-compact .sidebar-section,
+.grokbot-shell .sidebar.is-compact .workstreams-section,
+.grokbot-shell .sidebar.is-compact .sidebar-group {
+  margin-top: 0;
+}
+.grokbot-shell .sidebar.is-compact .pinned-section {
+  border-bottom: var(--av-sys-size-border-hairline) solid var(--av-cmp-sidebar-border);
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+}
+.grokbot-shell .sidebar.is-compact .sidebar-list { gap: 0; }
+.grokbot-shell .sidebar.is-compact .sidebar-context-target { width: 54px; }
+.grokbot-shell .sidebar.is-compact .workstream-row {
+  display: flex;
+  gap: 0;
+  height: 54px;
+  justify-content: center;
+  min-height: 54px;
+  padding: 9px;
+  width: 54px;
+}
+.grokbot-shell .sidebar.is-compact .workstream-row .sidebar-row-icon { flex: 0 0 36px; }
+.grokbot-shell .sidebar.is-compact .sidebar-rail-new-button {
+  border-radius: 10px;
+  flex: 0 0 54px;
+  height: 54px;
+  margin: 0 auto;
+  width: 54px;
+}
+.grokbot-shell .sidebar.is-compact .account-trigger {
+  flex: 0 0 54px;
+  gap: 0;
+  height: 54px;
+  justify-content: center;
+  margin: 0 auto 8px;
+  min-height: 54px;
+  padding: 12px 14px;
+  width: 54px;
+}
+.grokbot-shell .sidebar.is-compact .account-copy { display: none; }
 
 .workstream-screen .human-message-bubble {
   background: var(--av-cmp-bubble-human-background);

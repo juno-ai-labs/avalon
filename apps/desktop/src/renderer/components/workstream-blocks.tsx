@@ -26,8 +26,9 @@ import {
   Square,
   TerminalSquare,
   Volume2,
+  X,
 } from 'lucide-react';
-import { Children, Fragment, memo, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { Children, Fragment, memo, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Highlight, Prism, type Language, type PrismTheme } from 'prism-react-renderer';
 import {
   citationFootnotes,
@@ -997,10 +998,23 @@ export function MarkdownBody({
 }): React.JSX.Element {
   // One token per mounted body, so the links keep stable identity across renders.
   const token = useMemo(createConnectorMentionToken, []);
+  // Socket hydration may replace a message with an equivalent object and a
+  // newly allocated mentions array. Preserve the semantic value's identity so
+  // that metadata-only refresh does not rebuild the parsed Markdown tree.
+  const mentionsKey = JSON.stringify(mentions.map((mention) => [
+    mention.type,
+    mention.personId,
+    mention.connectorType,
+    mention.displayName,
+    mention.avatarUrl,
+    mention.startOffset,
+    mention.endOffset,
+  ]));
+  const stableMentions = useMemo(() => mentions, [mentionsKey]);
   // Mentions first, normalization second, and the order is load-bearing: the
   // connector offsets are measured against the stored text, so anything that
   // changes its length has to run after they have been resolved into links.
-  const linked = withConnectorMentionLinks(children, mentions, token);
+  const linked = withConnectorMentionLinks(children, stableMentions, token);
   const markdown = verbatim ? linked : normalizeModelMarkdown(linked);
   const messageId = telemetry?.messageId;
   const workstreamId = telemetry?.workstreamId;
@@ -1021,8 +1035,24 @@ export function MarkdownBody({
     for (const identifier of referenced) {
       if (definitions.has(identifier)) numbers.set(identifier, numbers.size + 1);
     }
-    return { ...(citations ? { citations } : {}), PreviewBody: CitationPreviewBody, footnotes: found, numbers, prefix, still };
+    return { ...(citations ? { citations } : {}), footnotes: found, numbers, prefix, still };
   }, [citations, footnoteSource, prefix, still]);
+  // Code rendering does not depend on citation resolution or the identity of
+  // the mentions array. Keep its component type stable when either of those
+  // inputs is refreshed: ReactMarkdown treats a new inline function as a new
+  // component type, which used to unmount a finished Mermaid diagram, show its
+  // much shorter source fallback, and then render the diagram again.
+  const renderCode = useCallback((properties: React.ComponentProps<'code'> & ExtraProps): React.JSX.Element => (
+    <MarkdownCode
+      {...properties}
+      glance={glance}
+      // An open fence changes on every streaming commit, and Mermaid's
+      // asynchronous parse cannot be cancelled. Render once the turn is
+      // complete; glances and saved stills deliberately keep source code.
+      renderDiagrams={!glance && !still && !streaming}
+      telemetry={messageId !== undefined && workstreamId !== undefined ? { messageId, workstreamId } : undefined}
+    />
+  ), [glance, messageId, still, streaming, workstreamId]);
   // Stable across commits that change nothing they depend on, for two reasons:
   // the settled segments' memo compares them by identity, and the memoised
   // element below reuses the whole rendered body while they hold still.
@@ -1036,7 +1066,7 @@ export function MarkdownBody({
               anchor={{ ...props, href }}
               footnoteRef={node?.properties?.dataFootnoteRef !== undefined}
               href={href}
-              identity={() => renderIdentity(href, linkChildren, mentions, token)}
+              identity={() => renderIdentity(href, linkChildren, stableMentions, token)}
             >{linkChildren}</CitationLink>
           )
       ),
@@ -1064,17 +1094,7 @@ export function MarkdownBody({
         if (node?.properties?.dataFootnotes === undefined) return <section {...props}>{sectionChildren}</section>;
         return <CitationFootnoteSection section={props}>{sectionChildren}</CitationFootnoteSection>;
       },
-      code: (properties) => (
-        <MarkdownCode
-          {...properties}
-          glance={glance}
-          // An open fence changes on every streaming commit, and Mermaid's
-          // asynchronous parse cannot be cancelled. Render once the turn is
-          // complete; glances and saved stills deliberately keep source code.
-          renderDiagrams={!glance && !still && !streaming}
-          telemetry={messageId !== undefined && workstreamId !== undefined ? { messageId, workstreamId } : undefined}
-        />
-      ),
+      code: renderCode,
       pre: ({ children: preChildren }) => <>{preChildren}</>,
       table: MarkdownTable,
     } satisfies MarkdownComponents,
@@ -1091,7 +1111,7 @@ export function MarkdownBody({
         ? url
         : defaultUrlTransform(url)
     )) satisfies MarkdownUrlTransform,
-  }), [glance, mentions, messageId, still, streaming, token, workstreamId]);
+  }), [glance, renderCode, stableMentions, token]);
   // Heading overrides are a second map so a nested h3 in a section body does
   // not grow a chevron: only the section's own heading markdown uses these.
   const headingComponents = useMemo<MarkdownComponents>(() => ({
@@ -1523,20 +1543,6 @@ function AgentDocumentDeck({
 }
 
 /**
- * The embed card's preview, fed through this same renderer so a Word file's
- * `**Author:**` bolds here the way it bolds in the rail one click away.
- *
- * Glance: a fence or a link cannot nest a control inside the card's button,
- * and an external image cannot fetch from a URL the document chose. No
- * citations: a document that cites another resource would otherwise draw a
- * card inside this card. Verbatim: the text is the file's, and the model-text
- * repair is a repair of what a model wrote.
- */
-function CitationPreviewBody({ children }: { children: string }): React.JSX.Element {
-  return <MarkdownBody glance verbatim>{children}</MarkdownBody>;
-}
-
-/**
  * What a person can do with a finished turn: copy it, or keep it as a file.
  *
  * Both exports render the same `MarkdownBody` the turn above is made of, so the
@@ -1759,6 +1765,47 @@ function ToolBlock({ message }: { message: Message }): React.JSX.Element | null 
 export interface RowDisclosure {
   expanded: ReadonlySet<string>;
   onToggle: (messageId: string) => void;
+}
+
+function HumanMessageBubble({
+  children,
+  disclosure,
+  messageId,
+  text,
+}: {
+  children: React.ReactNode;
+  disclosure?: RowDisclosure;
+  messageId: string;
+  text: string;
+}): React.JSX.Element {
+  const [locallyExpanded, setLocallyExpanded] = useState(false);
+  const [bodyNode, setBodyNode] = useState<HTMLElement | null>(null);
+  const expanded = disclosure ? disclosure.expanded.has(messageId) : locallyExpanded;
+  const clamped = useTextClamped(bodyNode, text, !expanded);
+
+  return (
+    <div
+      className="human-message-bubble"
+      data-clamped={clamped ? 'true' : undefined}
+      data-expanded={expanded ? 'true' : undefined}
+    >
+      <div className="human-message-bubble-body" ref={setBodyNode}>{children}</div>
+      {(expanded || clamped) && (
+        <button
+          aria-expanded={expanded}
+          className="human-message-toggle"
+          onClick={() => {
+            if (disclosure) disclosure.onToggle(messageId);
+            else setLocallyExpanded((current) => !current);
+          }}
+          type="button"
+        >
+          {expanded ? 'Show less' : 'Show more'}
+          <ChevronDown aria-hidden="true" size={14} />
+        </button>
+      )}
+    </div>
+  );
 }
 
 /**
@@ -2593,13 +2640,13 @@ export function MessageBlock({
             />
           ) : null}
           {message.text ? (
-            <div className="human-message-bubble">
+            <HumanMessageBubble disclosure={rowDisclosure} messageId={message.id} text={message.text}>
               <MarkdownBody
                 mentions={message.mentions}
                 telemetry={{ messageId: message.id, workstreamId: message.workstreamId }}
                 verbatim
               >{message.text}</MarkdownBody>
-            </div>
+            </HumanMessageBubble>
           ) : null}
           {pendingLabel && <span className="message-delivery-pill">{pendingLabel}</span>}
         </div>

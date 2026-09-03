@@ -25,7 +25,7 @@ export interface PendingAttachment {
   error?: string;
 }
 
-const MAX_ATTACHMENTS = 10;
+const MAX_ATTACHMENTS = 6;
 const MAX_ATTACHMENT_BYTES = 25_000_000;
 const IMAGE_FILE_PATTERN = /\.(?:avif|bmp|gif|heic|heif|jpe?g|png|svg|webp)$/iu;
 const DISCONNECTED_ERROR = 'Rally is not connected. Try again after reconnecting.';
@@ -424,7 +424,7 @@ export function useFileAttachments(api: FileAttachmentsApi | null, draftKey: str
         if (attachment.status === 'uploading') void upload(attachment, draftKey);
       }
       // A drop that raced the read was counted against an empty composer, so the
-      // ten-file limit is settled here rather than by hiding the excess: the
+      // six-file limit is settled here rather than by hiding the excess: the
       // overflow is cancelled, uncached, and its draft resources released.
       const overflowing = merged.slice(MAX_ATTACHMENTS);
       for (const attachment of overflowing) discard(attachment, draftKey);

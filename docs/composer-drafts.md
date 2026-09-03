@@ -17,7 +17,7 @@ the attachment hook, or the cache itself.
 | `apps/desktop/src/renderer/lib/draft-cache.ts` | The `avalon-composer-drafts` IndexedDB database, both object stores, the epoch, and `pruneExpiredDrafts`. |
 | `apps/desktop/src/renderer/lib/draft-keys.ts` | **Every** cache key string. The single source. |
 | `apps/desktop/src/renderer/lib/use-draft-text.ts` | The text half: hydration, the debounce, the two commits, `releaseDraft`. |
-| `apps/desktop/src/renderer/lib/use-file-attachments.ts` | The attachment half: restore, re-upload, the ten-file settle. |
+| `apps/desktop/src/renderer/lib/use-file-attachments.ts` | The attachment half: restore, re-upload, the six-file settle. |
 | `apps/desktop/src/renderer/lib/app-session.tsx` | Watches the session and calls `clearAllDrafts` on a scope change. |
 | `apps/desktop/src/renderer/components/workstream-composer.tsx`, `screens/new-workstream.tsx`, `screens/conversation-surface.tsx` | The surfaces that cache: the composer of an existing conversation (a work stream's or an automation's, keyed by the parent id) and the **New work stream** launcher. |
 
@@ -208,9 +208,9 @@ a draft is a convenience over state the server has never been told about.
   the composer's error line.** The attachment still uploads and still sends; what it
   will not do is come back after a restart, and that is worth saying out loud in a
   feature whose whole promise is that work survives.
-- **The ten-file limit is settled after the read, not before it.** A drop that
+- **The six-file limit is settled after the read, not before it.** A drop that
   arrives while the cache is still opening is counted against an empty composer, so
-  it can push the total past ten once the cached files land. The excess is then
+  it can push the total past six once the cached files land. The excess is then
   cancelled, uncached, and its draft resources released, and the composer reports
   the same overflow message it would have shown up front — rather than hiding files
   that were uploaded but can no longer be reached or removed.

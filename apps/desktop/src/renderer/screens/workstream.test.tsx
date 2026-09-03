@@ -1,6 +1,7 @@
 import { createRef } from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
+import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { WORKSTREAM_NAMING_GRACE_MS } from '@rally/contracts';
 import type { DesktopSession } from '../../common/desktop';
@@ -150,22 +151,24 @@ describe('running work-stream message delivery', () => {
   it('queues a message for the in-flight loop without a delivery dropdown', async () => {
     const onSend = vi.fn(async () => undefined);
     render(
-      <Tooltip.Provider>
-        <WorkstreamComposer
-          attachments={[]}
-          fileInputRef={createRef<HTMLInputElement>()}
-          members={[]}
-          onAttach={vi.fn()}
-          onOpenAttachment={vi.fn()}
-          onRemoveAttachment={vi.fn()}
-          onRetryAttachment={vi.fn()}
-          onSend={onSend}
-          onStop={vi.fn(async () => undefined)}
-          sending={false}
-          uploading={false}
-          workstream={{ ...headerWorkstream, harnessStatus: 'running' }}
-        />
-      </Tooltip.Provider>,
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <WorkstreamComposer
+            attachments={[]}
+            fileInputRef={createRef<HTMLInputElement>()}
+            members={[]}
+            onAttach={vi.fn()}
+            onOpenAttachment={vi.fn()}
+            onRemoveAttachment={vi.fn()}
+            onRetryAttachment={vi.fn()}
+            onSend={onSend}
+            onStop={vi.fn(async () => undefined)}
+            sending={false}
+            uploading={false}
+            workstream={{ ...headerWorkstream, harnessStatus: 'running' }}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
     );
 
     expect(screen.queryByRole('combobox', { name: 'Message delivery' })).not.toBeInTheDocument();

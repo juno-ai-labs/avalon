@@ -65,6 +65,36 @@ describe('attachment presentation', () => {
     await waitFor(() => expect(button).toHaveFocus());
   });
 
+  it('keeps a settled thumbnail mounted across equivalent transcript refreshes', async () => {
+    const attachment: MessageAttachment = {
+      id: 'stable-image',
+      fileName: 'settled.png',
+      mimeType: 'image/png',
+      sizeBytes: 5,
+      contentAvailable: true,
+      createdAt: '2026-08-04T00:00:00.000Z',
+    };
+    const loadContent = vi.fn(async () => new Blob(['image'], { type: 'image/png' }));
+    const onOpen = vi.fn();
+    const view = render(
+      <MessageAttachments attachments={[attachment]} loadContent={loadContent} onOpen={onOpen} />,
+    );
+
+    const image = await screen.findByRole('img', { name: 'settled.png' });
+    expect(loadContent).toHaveBeenCalledOnce();
+
+    // A socket snapshot recreates both the record and the containing array.
+    // Neither is a media change, so the blob URL and DOM image must survive it.
+    view.rerender(
+      <MessageAttachments attachments={[{ ...attachment }]} loadContent={loadContent} onOpen={onOpen} />,
+    );
+    await Promise.resolve();
+
+    expect(screen.getByRole('img', { name: 'settled.png' })).toBe(image);
+    expect(loadContent).toHaveBeenCalledOnce();
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+  });
+
   it('loads generated audio lazily and exposes an AI-voice player', async () => {
     const attachment: MessageAttachment = {
       id: 'resource-audio',
@@ -155,7 +185,7 @@ describe('attachment presentation', () => {
     }
     render(<Example />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Close preview' }));
+    fireEvent.keyDown(window, { key: 'Escape' });
     resolveContent(new Blob(['late'], { type: 'image/png' }));
     await Promise.resolve();
 

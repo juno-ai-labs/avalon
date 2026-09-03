@@ -564,10 +564,10 @@ describe('MessageBlock markdown', () => {
 
     render(<MessageBlock {...actions} message={message} />);
 
-    const chip = screen.getByText('@Ada Lovelace').closest('.mention-chip');
+    const chip = screen.getByText('Ada Lovelace').closest('.mention-chip');
     expect(chip).toHaveAttribute('data-person-id', personId);
     expect(chip?.tagName).toBe('SPAN');
-    expect(screen.queryByRole('link', { name: '@Ada Lovelace' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Ada Lovelace' })).not.toBeInTheDocument();
     expect(screen.queryByText('@Spoofed label')).not.toBeInTheDocument();
     expect(chip?.querySelector('img')).toHaveAttribute('src', 'https://example.com/ada.png');
   });
@@ -591,7 +591,7 @@ describe('MessageBlock markdown', () => {
 
     render(<MessageBlock {...actions} message={message} />);
 
-    expect(screen.getByText('@Ada Lovelace').closest('.mention-chip'))
+    expect(screen.getByText('Ada Lovelace').closest('.mention-chip'))
       .toHaveAttribute('data-person-id', personId);
   });
 
@@ -1223,6 +1223,24 @@ describe('MessageBlock markdown', () => {
     act(() => { applyTheme({ family: 'terra', mode: 'light' }); });
   });
 
+  it('keeps a settled Mermaid diagram mounted when message metadata refreshes', async () => {
+    const renderCallBaseline = mermaidRender.mock.calls.length;
+    mermaidRender.mockResolvedValue({ svg: '<svg viewBox="0 0 40 20"><text>Stable graph</text></svg>' });
+    const markdown = '```mermaid\ngraph TD; A-->B\n```';
+    const view = render(<MarkdownBody mentions={[]}>{markdown}</MarkdownBody>);
+
+    expect(await screen.findByText('Stable graph')).toBeVisible();
+    expect(mermaidRender).toHaveBeenCalledTimes(renderCallBaseline + 1);
+
+    // A new array is what production transcript hydration supplies even when
+    // the message has no changed mentions.
+    view.rerender(<MarkdownBody mentions={[]}>{markdown}</MarkdownBody>);
+    await act(async () => { await Promise.resolve(); });
+
+    expect(screen.getByText('Stable graph')).toBeVisible();
+    expect(mermaidRender).toHaveBeenCalledTimes(renderCallBaseline + 1);
+  });
+
   it('keeps code copy retryable when clipboard access is unavailable', async () => {
     copyText.mockRejectedValueOnce(new Error('clipboard unavailable'));
     const message: Message = {
@@ -1287,7 +1305,7 @@ describe('MessageBlock agent document cards', () => {
 
     expect(screen.getByRole('dialog')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Recommendation' })).toBeInTheDocument();
-    expect(screen.getByText('Section 2 of 3')).toBeInTheDocument();
+    expect(screen.getAllByText('Section 2 of 3')).toHaveLength(2);
     expect(screen.getByRole('dialog').querySelector('.agent-document-lightbox-page'))
       .toHaveTextContent('Ship the focused change.');
 
@@ -1329,10 +1347,11 @@ describe('MessageBlock agent document cards', () => {
     expect(document.querySelector('.agent-document-deck')).not.toBeInTheDocument();
   });
 
-  it('retains the existing inline disclosures when the host does not opt in', () => {
+  it('keeps ordinary headings open when the host does not opt into document cards', () => {
     render(<MessageBlock {...actions} message={documentMessage} />);
 
-    expect(screen.getAllByRole('button', { name: 'Expand section' })).toHaveLength(3);
+    expect(screen.getByRole('heading', { name: 'Findings' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: /section/u })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Open section/u })).not.toBeInTheDocument();
   });
 });
