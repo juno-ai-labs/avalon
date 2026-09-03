@@ -638,10 +638,19 @@ role does not reach into it. Creating a workspace-scoped automation requires
 owner or admin at acceptance.
 
 Inbound mail is untrusted: the From header can be spoofed, so the sender must
-resolve to an active workspace member (and to the author for a personal
-automation), and an inbound-email run additionally omits every connector write
-tool and the outbound web search and fetch tools so untrusted mail cannot be used
-as an exfiltration channel.
+resolve to an active workspace member, and to the author for a personal
+automation. That screening is the whole control. An inbound-email run holds the
+same tools as any other trigger.
+
+It did not always. The run used to omit every connector write tool and the
+outbound web tools, which read like a boundary and was not one: a
+`connector_activity` run reading an equally untrusted third-party page kept both,
+so the rule hardened one channel out of several and described a protection the
+system did not have. Removing it is a deliberate acceptance of the residual
+risk, which is prompt injection in the body of mail a member legitimately sends
+or forwards. That risk is not new and is not specific to mail — it is the same
+risk any connector content carries — and it is now handled in one place for all
+of them rather than by a rule that named only this one.
 
 Alarm failures log a `diagnosticErrorCode`, never the thrown message: an alarm
 lane runs the compiler and connector tools, so the error reaching the handler can
