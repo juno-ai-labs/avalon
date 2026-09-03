@@ -2,7 +2,6 @@ import {
   asHarnessRunId,
   asUserId,
   asWorkspaceId,
-  type AutomationRunContextV1,
   asAutomationId,
   asWorkstreamId,
   type WorkstreamWorkflowInput,
@@ -167,12 +166,7 @@ function seededDatabase(options: { targets?: string } = {}): DatabaseSync {
   return database;
 }
 
-type DeliveryTarget = AutomationRunContextV1["deliveryTargets"][number];
-
-function workflowInput(deliveryTargets: DeliveryTarget[] = [{
-  type: "email",
-  emailAddress: "alex@example.com",
-}]): WorkstreamWorkflowInput {
+function workflowInput(): WorkstreamWorkflowInput {
   return {
     region: "global",
     workspaceId: WORKSPACE,
@@ -205,7 +199,6 @@ function workflowInput(deliveryTargets: DeliveryTarget[] = [{
       defaultPluginIds: [],
       activitySourcePluginIds: {},
       connectorBindings: {},
-      deliveryTargets,
       owningWorkstreamId: null,
   scope: "personal" as const,
   authoringOrigin: null,
@@ -225,24 +218,6 @@ const workstream = {
 };
 
 describe("what an automation run is told about its own delivery", () => {
-  it("names the frozen destination Avalon will mail the result to", async () => {
-    const env = envFor(seededDatabase());
-
-    const context = await loadRunPromptContext(env, workflowInput(), lease, workstream);
-
-    // The whole defect this test exists for: a run that is not told Avalon
-    // delivers the result sends it itself through the mail connector, and the
-    // owner receives the same briefing twice, from two different senders.
-    expect(context.systemPrompt).toContain('"channel": "email"');
-    expect(context.systemPrompt).toContain('"destination": "alex@example.com"');
-    expect(context.systemPrompt).toContain("# Result delivery");
-    expect(context.systemPrompt).toContain("# External delivery output");
-    expect(context.systemPrompt).toContain("put the complete usable result in the final message");
-    expect(context.systemPrompt).toContain(
-      "drop every recipient — to, cc, channel, or DM target — that matches one of those destinations",
-    );
-  });
-
   it("retains automatic memory recall when an automation was triggered by inbound email", async () => {
     const env = envFor(seededDatabase());
     const input = workflowInput();
@@ -256,58 +231,11 @@ describe("what an automation run is told about its own delivery", () => {
   it("lists nothing when the automation has no destination beyond Avalon", async () => {
     const env = envFor(seededDatabase({ targets: "" }));
 
-    const context = await loadRunPromptContext(env, workflowInput([]), lease, workstream);
+    const context = await loadRunPromptContext(env, workflowInput(), lease, workstream);
 
     // A run with no frozen destination is free to do the sending the task asks
     // for, so the context must not imply somebody else already sent it.
     expect(context.systemPrompt).toContain('"resultDelivery": []');
-  });
-
-  it("names a Slack destination by the id a tool call can be matched against", async () => {
-    const env = envFor(seededDatabase({
-      targets: `
-        INSERT INTO automation_delivery_targets
-          (id, workspace_id, automation_subscription_id, target_type, connection_id, user_id,
-           slack_team_id, slack_user_id, status, created_at, updated_at)
-        VALUES ('${TARGET}', '${WORKSPACE}', '${SUBSCRIPTION}', 'slack_agent_dm', '${CONNECTION}',
-                '${OWNER}', 'T1', 'U1', 'active', '2026-01-01', '2026-01-01');`,
-    }));
-
-    const context = await loadRunPromptContext(env, workflowInput([{
-      type: "slack_agent_dm",
-      connectionId: CONNECTION,
-      slackTeamId: "T1",
-      slackUserId: "U1",
-    }]), lease, workstream);
-
-    // The rule the run applies is "does this recipient match one of these", so
-    // a description is not something a tool argument can be compared against.
-    expect(context.systemPrompt).toContain('"channel": "slack_agent_dm"');
-    expect(context.systemPrompt).toContain('"destination": "U1"');
-  });
-
-  it("lists a Slack target that failed once, because Avalon still delivers to it", async () => {
-    const env = envFor(seededDatabase({
-      targets: `
-        INSERT INTO automation_delivery_targets
-          (id, workspace_id, automation_subscription_id, target_type, connection_id, user_id,
-           slack_team_id, slack_user_id, status, created_at, updated_at)
-        VALUES ('${TARGET}', '${WORKSPACE}', '${SUBSCRIPTION}', 'slack_agent_dm', '${CONNECTION}',
-                '${OWNER}', 'T1', 'U1', 'needs_input', '2026-01-01', '2026-01-01');`,
-    }));
-
-    const context = await loadRunPromptContext(env, workflowInput([{
-      type: "slack_agent_dm",
-      connectionId: CONNECTION,
-      slackTeamId: "T1",
-      slackUserId: "U1",
-    }]), lease, workstream);
-
-    // The Slack sender deliberately attempts a `needs_input` target rather than
-    // trusting a stale belief. Filtering it out here would tell the run nothing
-    // is sending and put the duplicate back for the targets most likely to be
-    // in that state.
-    expect(context.systemPrompt).toContain('"destination": "U1"');
   });
 
   it("leaves out a Slack target whose owner turned both notifications off", async () => {
@@ -324,54 +252,13 @@ describe("what an automation run is told about its own delivery", () => {
         VALUES ('${CONNECTION}', '${OWNER}', 'U1', 0, 0, '2026-01-01');`,
     }));
 
-    const context = await loadRunPromptContext(env, workflowInput([]), lease, workstream);
+    const context = await loadRunPromptContext(env, workflowInput(), lease, workstream);
 
     // Avalon sends nothing to it, so telling the run to stand down on its
     // account would deliver the result nowhere.
     expect(context.systemPrompt).toContain('"resultDelivery": []');
   });
 
-  it("orders destinations so two renders of one run are the same bytes", async () => {
-    const env = envFor(seededDatabase({
-      targets: `
-        INSERT INTO automation_delivery_targets
-          (id, workspace_id, automation_subscription_id, target_type, connection_id, user_id,
-           slack_team_id, slack_user_id, status, created_at, updated_at)
-        VALUES ('${TARGET}', '${WORKSPACE}', '${SUBSCRIPTION}', 'slack_agent_dm', '${CONNECTION}',
-                '${OWNER}', 'T1', 'U1', 'active', '2026-01-01', '2026-01-01');
-        INSERT INTO automation_delivery_targets
-          (id, workspace_id, automation_subscription_id, target_type, user_id, email_address,
-           status, created_at, updated_at)
-        VALUES ('${LINK}', '${WORKSPACE}', '${SUBSCRIPTION}', 'email', '${OWNER}',
-                'alex@example.com', 'active', '2026-01-01', '2026-01-01');`,
-    }));
-
-    const context = await loadRunPromptContext(env, workflowInput([
-      { type: "slack_agent_dm", connectionId: CONNECTION, slackTeamId: "T1", slackUserId: "U1" },
-      { type: "email", emailAddress: "alex@example.com" },
-    ]), lease, workstream);
-
-    // The prefix is re-rendered every turn and must survive a retry unchanged,
-    // and nothing constrains the order two rows come back in.
-    const start = context.systemPrompt.indexOf('"resultDelivery"');
-    const delivery = context.systemPrompt.slice(start, context.systemPrompt.indexOf("]", start));
-    expect(delivery).toContain("alex@example.com");
-    expect(delivery).toContain("U1");
-    expect(delivery.indexOf("alex@example.com")).toBeLessThan(delivery.indexOf("U1"));
-  });
-
-  it("does not claim an email destination outside production", async () => {
-    const env = envFor(seededDatabase(), "test");
-
-    const context = await loadRunPromptContext(env, workflowInput(), lease, workstream);
-
-    // `sendResendEmail` refuses to send outside production, so a run told
-    // Avalon has the email covered stands down and nobody gets the briefing —
-    // which is every staging automation, going quiet with nothing to explain
-    // it now that the compiler no longer writes a provider send.
-    expect(context.systemPrompt).toContain('"resultDelivery": []');
-    expect(context.systemPrompt).not.toContain("alex@example.com");
-  });
 
   it("ignores a destination that is not delivering", async () => {
     const env = envFor(seededDatabase({
@@ -383,7 +270,7 @@ describe("what an automation run is told about its own delivery", () => {
                 'alex@example.com', 'disabled', '2026-01-01', '2026-01-01');`,
     }));
 
-    const context = await loadRunPromptContext(env, workflowInput([]), lease, workstream);
+    const context = await loadRunPromptContext(env, workflowInput(), lease, workstream);
 
     // A disabled or failed target sends nothing, so the run must not be told to
     // stand down on its account.

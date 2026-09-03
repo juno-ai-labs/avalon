@@ -5,7 +5,6 @@ import {
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   AutomationDraftSchema,
   AgentModelOverrideSchema,
-  AutomationDeliveryTargetSetSchema,
   AutomationDetailSchema,
   ActivitySourcePluginIdsSchema,
   ModelPluginIdSchema,
@@ -39,10 +38,7 @@ import { uuidV7 } from "../lib/uuid-v7";
 import { diagnosticErrorCode, logWarn } from "../observability/logger";
 import { classifyAutomationResult } from "../services/automation-result-disposition";
 import { activateWorkstreamLoop } from "../services/integrations";
-import {
-  withWorkspaceRuntimeDatabase,
-  workspaceRegionalDatabase,
-} from "../services/workspace-runtime-database";
+import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
 import {
   bootstrapWorkstreamRuntimeEnvironment,
   provisionWorkstreamObject,
@@ -241,7 +237,6 @@ const AutomationLegacyImportRequestSchema = z.strictObject({
     defaultPluginIds: z.array(ModelPluginIdSchema),
     activitySourcePluginIds: ActivitySourcePluginIdsSchema,
     connectorBindings: z.record(z.string(), z.string()),
-    deliveryTargets: AutomationRunContextV1Schema.shape.deliveryTargets,
     emailAddress: z.string().email().nullable(),
     modelOverride: AgentModelOverrideSchema.nullable(),
     createdAt: z.number().int().nonnegative(),
@@ -836,7 +831,6 @@ type AutomationAcceptanceRow = {
   default_plugin_ids_json: string;
   activity_source_plugin_ids_json: string;
   connector_bindings_json: string;
-  delivery_targets_json: string;
   model_override: string | null;
   evaluator_projection_json: string;
   evaluator_source_hash: string;
@@ -1307,9 +1301,9 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
              (id, definition_revision, request_hash, scope, owning_workstream_id,
               default_plugin_ids_json,
               activity_source_plugin_ids_json, connector_bindings_json,
-              delivery_targets_json, model_override, evaluator_projection_json,
+              model_override, evaluator_projection_json,
               evaluator_source_hash, accepted_at)
-           VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           input.definitionRevision,
           requestHash,
           input.scope,
@@ -1317,7 +1311,6 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
           JSON.stringify(prepared.selections.defaultPluginIds),
           JSON.stringify(prepared.selections.activitySourcePluginIds),
           JSON.stringify(prepared.connectorBindings),
-          JSON.stringify(prepared.deliveryTargets),
           input.modelOverride,
           JSON.stringify(prepared.evaluators),
           prepared.evaluatorSourceHash,
@@ -1542,15 +1535,14 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
         `INSERT INTO automation_acceptance
            (id, definition_revision, request_hash, scope, default_plugin_ids_json,
             activity_source_plugin_ids_json, connector_bindings_json,
-            delivery_targets_json, model_override, evaluator_projection_json,
+            model_override, evaluator_projection_json,
             evaluator_source_hash, effective_after_event_sequence, accepted_at, activated_at)
-         VALUES (1, 1, ?, ?, ?, ?, ?, ?, ?, '[]', ?, 0, ?, ?)`,
+         VALUES (1, 1, ?, ?, ?, ?, ?, ?, '[]', ?, 0, ?, ?)`,
         input.sourceHash,
         source.scope,
         JSON.stringify(source.defaultPluginIds),
         JSON.stringify(source.activitySourcePluginIds),
         JSON.stringify(source.connectorBindings),
-        JSON.stringify(source.deliveryTargets),
         source.modelOverride,
         input.sourceHash,
         source.createdAt,
@@ -1914,36 +1906,6 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
     });
     await this.armNextAlarm();
     this.broadcastLatestEvents();
-  }
-
-  async updateDeliveryTargets(input: {
-    automationId: string;
-    workspaceId: string;
-    userId: string;
-    actorRole?: string;
-    participantOfOwningWorkstream?: boolean;
-    deliveryTargets: unknown;
-  }): Promise<AutomationDetail> {
-    await this.initialized;
-    this.assertManager(
-      input.automationId, input.workspaceId, input.userId, input.actorRole,
-      input.participantOfOwningWorkstream ?? false,
-    );
-    if (!["active", "paused"].includes(this.lifecycle())) throw new Error("automation_not_configurable");
-    const acceptance = this.acceptance();
-    if (!acceptance) throw new Error("automation_acceptance_missing");
-    const requested = AutomationDeliveryTargetSetSchema.parse(input.deliveryTargets);
-    const deliveryTargets = await this.resolveDeliveryTargets({
-      workspaceId: input.workspaceId,
-      authorUserId: input.userId,
-      scope: acceptance.scope,
-      deliveryTargets: requested,
-    });
-    this.state.storage.sql.exec(
-      `UPDATE automation_acceptance SET delivery_targets_json = ? WHERE id = 1`,
-      JSON.stringify(deliveryTargets),
-    );
-    return this.detailUnchecked();
   }
 
   async deleteAutomation(input: {
@@ -2631,9 +2593,14 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       result: request.result,
       recentDispositions: recent,
       reach: {
-        // A room's automation always has somewhere to deliver — the room it
-        // belongs to — whether or not anybody added a destination beside it.
-        canDeliver: context.deliveryTargets.length > 0 || context.owningWorkstreamId !== null,
+        // The room it belongs to, which is now the only thing an automation
+        // delivers to. Destinations beside it are gone: a run sends its own
+        // result with its own connector tools, and what it chooses to send is
+        // inside the loop rather than something this decides for it. What is
+        // left here is the one delivery that follows from ownership, and it is
+        // the one this classifier was built for — a spurious result in a shared
+        // room is what "survivable for one inbox and not for a room" meant.
+        canDeliver: context.owningWorkstreamId !== null,
         // A room's automation has nothing to expose: its results already arrive
         // in a work stream people can see, so revealing the occurrence's own
         // child work stream would add a second row for the same news.
@@ -2680,15 +2647,11 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       return { applied: false, outcomeCode: "automation_delivery_run_unknown" };
     }
     const context = AutomationRunContextV1Schema.parse(JSON.parse(run.context_json));
-    const targetKeys = new Set(context.deliveryTargets.map((target) => target.type === "email"
-      ? `email:${target.emailAddress.toLocaleLowerCase()}`
-      : `slack_agent_dm:${target.connectionId}:${target.slackTeamId}:${target.slackUserId}`));
-    // The owning room is a destination too, and the only one for most automations
-    // a room owns. Built from `deliveryTargets` alone this set never contained
-    // it, so every receipt for the delivery this scope exists for was refused —
-    // and refused by returning `applied: false` rather than throwing, which the
-    // settlement loop does not treat as a failure. The delivery happened, the
-    // room got its message, and nothing recorded that it had.
+    // The owning room is the only destination an automation has. The set used
+    // to be built from chosen destinations with the room added afterwards; the
+    // chosen ones are gone, so the room is all that remains and a receipt for
+    // anything else is one nothing could have sent.
+    const targetKeys = new Set<string>();
     if (context.owningWorkstreamId !== null) {
       targetKeys.add(`workstream:${context.owningWorkstreamId}`);
     }
@@ -3063,7 +3026,6 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
   ): Promise<{
     selections: ReturnType<typeof automationAcceptanceSelections>;
     connectorBindings: Record<string, string>;
-    deliveryTargets: AutomationRunContextV1["deliveryTargets"];
     evaluators: unknown[];
     evaluatorSourceHash: string;
     schedules: Array<{
@@ -3129,11 +3091,6 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       ) throw new Error("automation_personal_connection_access_denied");
       connectorBindings[pluginId] = connection.id;
     }
-
-    const deliveryTargets = await this.resolveDeliveryTargets({
-      ...input,
-      deliveryTargets: selections.deliveryTargets,
-    });
 
     const externalTriggers = definition.triggers.filter(isExternalEventTrigger);
     const staged = this.state.storage.sql.exec<{ evaluator_rules_json: string | null }>(
@@ -3299,7 +3256,7 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
         nextDueAt: next.getTime(),
       });
     }
-    return { selections, connectorBindings, deliveryTargets, evaluators, evaluatorSourceHash, schedules };
+    return { selections, connectorBindings, evaluators, evaluatorSourceHash, schedules };
   }
 
   private recordDraftMutation(input: {
@@ -3418,60 +3375,6 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
    */
   private workspaceDatabase(workspaceId: string): D1Database {
     return withWorkspaceRuntimeDatabase(this.env, asWorkspaceId(workspaceId)).DB;
-  }
-
-  private async resolveDeliveryTargets(input: {
-    workspaceId: string;
-    authorUserId: string;
-    scope: z.infer<typeof AutomationScopeSchema>;
-    deliveryTargets: z.infer<typeof AutomationDeliveryTargetSetSchema>;
-  }): Promise<AutomationRunContextV1["deliveryTargets"]> {
-    if (input.scope !== "personal" && input.deliveryTargets.length > 0) {
-      throw new Error("automation_personal_delivery_required");
-    }
-    const workspaceDatabase = this.workspaceDatabase(input.workspaceId);
-    const resolved: AutomationRunContextV1["deliveryTargets"] = [];
-    for (const target of input.deliveryTargets) {
-      if (target.type === "email") {
-        // Named rather than `this.env.DB`: this read belongs to the regional
-        // authority, and saying so keeps it correct if the object's environment
-        // is ever wrapped.
-        const user = await workspaceRegionalDatabase(this.env).prepare(
-          `SELECT email FROM users WHERE id = ?`,
-        ).bind(input.authorUserId).first<{ email: string | null }>();
-        if (!user?.email) throw new Error("automation_email_delivery_unavailable");
-        resolved.push({ type: "email", emailAddress: user.email });
-        continue;
-      }
-      const connection = await workspaceDatabase.prepare(
-        `SELECT status, scope, owner_user_id FROM connector_connections
-          WHERE workspace_id = ? AND id = ?`,
-      ).bind(input.workspaceId, target.connectionId).first<{
-        status: string;
-        scope: string;
-        owner_user_id: string | null;
-      }>();
-      if (
-        !connection
-        || connection.status === "disabled"
-        || (connection.scope === "personal" && connection.owner_user_id !== input.authorUserId)
-      ) throw new Error("automation_delivery_connection_unavailable");
-      const link = await workspaceDatabase.prepare(
-        `SELECT slack_team_id, slack_user_id FROM slack_user_links
-          WHERE workspace_id = ? AND connection_id = ? AND user_id = ? AND status = 'active'`,
-      ).bind(input.workspaceId, target.connectionId, input.authorUserId).first<{
-        slack_team_id: string;
-        slack_user_id: string;
-      }>();
-      if (!link) throw new Error("automation_delivery_identity_unavailable");
-      resolved.push({
-        type: "slack_agent_dm",
-        connectionId: target.connectionId,
-        slackTeamId: link.slack_team_id,
-        slackUserId: link.slack_user_id,
-      });
-    }
-    return resolved;
   }
 
   private async acceptanceTimezone(
@@ -3762,7 +3665,6 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       defaultPluginIds: JSON.parse(acceptance.default_plugin_ids_json),
       activitySourcePluginIds: JSON.parse(acceptance.activity_source_plugin_ids_json),
       connectorBindings: JSON.parse(acceptance.connector_bindings_json),
-      deliveryTargets: JSON.parse(acceptance.delivery_targets_json),
       owningWorkstreamId: acceptance.owning_workstream_id,
       scope: acceptance.scope as "personal" | "workspace" | "workstream",
       authoringOrigin: this.authoredOrigin(),
@@ -3968,7 +3870,7 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       `SELECT definition_revision, request_hash, scope, owning_workstream_id,
               default_plugin_ids_json,
               activity_source_plugin_ids_json, connector_bindings_json,
-              delivery_targets_json, model_override, evaluator_projection_json,
+              model_override, evaluator_projection_json,
               evaluator_source_hash, effective_after_event_sequence, accepted_at, activated_at
          FROM automation_acceptance WHERE id = 1`,
     ).toArray()[0] ?? null;
@@ -4090,12 +3992,6 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
     const emailAddress = this.state.storage.sql.exec<{ email_address: string }>(
       `SELECT email_address FROM automation_email_route WHERE id = 1`,
     ).toArray()[0]?.email_address ?? null;
-    const deliveryTargets = JSON.parse(acceptance.delivery_targets_json) as Array<{
-      type: "email" | "slack_agent_dm";
-      connectionId?: string;
-      emailAddress?: string;
-      slackUserId?: string;
-    }>;
     return AutomationDetailSchema.parse({
       id: identity.automation_id,
       name: definition.name,
@@ -4125,20 +4021,6 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       memoryTables: definition.memoryTables,
       defaultPluginIds: JSON.parse(acceptance.default_plugin_ids_json),
       activitySourcePluginIds: JSON.parse(acceptance.activity_source_plugin_ids_json),
-      deliveryTargets: deliveryTargets.map((target) => ({
-        type: target.type,
-        connectionId: target.connectionId ?? null,
-        // Never the provider's own id. This field is read only for a
-        // destination whose connection is gone, where it is the sole label on
-        // the one row telling a person something is wrong — and `U0ABCDEF` is
-        // not something they have ever seen in Slack. The projection is
-        // synchronous (`broadcastSnapshot` calls it), so it cannot join the
-        // connection's name; the target type's own noun is what it has.
-        displayName: target.type === "email"
-          ? target.emailAddress ?? "Email"
-          : "Slack direct message",
-        status: "active",
-      })),
       templateUpdate: null,
       nextPlannedWorkstream: null,
       // Preserve the existing detail contract's recent-history window. The

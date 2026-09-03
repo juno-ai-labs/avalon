@@ -1,6 +1,8 @@
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 
+import { AutomationRunContextV1Schema } from "@rally/contracts";
+
 import { AUTOMATION_AGENT_SCHEMA_MIGRATIONS } from "../src/durable-objects/automation-agent";
 
 const AUTOMATION_ID = "00000000-0000-7000-8000-0000000000b3";
@@ -183,5 +185,144 @@ describe("the AutomationAgent ownership migration", () => {
     expect(() => database.exec(
       `UPDATE automation_state SET paused_reason = 'because' WHERE id = 1`,
     )).toThrow();
+  });
+});
+
+describe("the AutomationAgent destination removal (v13)", () => {
+  /** A frozen run context as an object at v12 holds it, destinations and all. */
+  const frozenAtV12 = {
+    schemaVersion: 1,
+    automationId: AUTOMATION_ID,
+    workspaceId: WORKSPACE_ID,
+    runId: "00000000-0000-7000-8000-0000000000c1",
+    authorityGeneration: 1,
+    definitionRevision: 1,
+    definition: {
+      name: "Weekly changelog",
+      description: "Summarizes the week.",
+      overview: "Every Friday.",
+      instructions: "Summarize what shipped.",
+      requiredCapabilities: [],
+      expectedOutputs: [],
+      defaultBehavior: {},
+      recommendedPlugins: [],
+      memoryTables: [],
+    },
+    defaultPluginIds: [],
+    activitySourcePluginIds: {},
+    connectorBindings: {},
+    deliveryTargets: [{ type: "email", emailAddress: "author@example.com" }],
+    owningWorkstreamId: WORKSTREAM_ID,
+    scope: "workstream",
+    authoringOrigin: null,
+    modelOverride: null,
+    executionPrincipal: { type: "user", userId: AUTHOR_ID },
+    trigger: { kind: "manual", requestedByUserId: AUTHOR_ID },
+    opening: null,
+    memoryScope: { automationId: AUTOMATION_ID, authorityGeneration: 1 },
+  };
+
+  function seedAtV12(database: DatabaseSync): void {
+    database.exec(`INSERT INTO automation_acceptance
+      (id, definition_revision, request_hash, scope, owning_workstream_id,
+       default_plugin_ids_json, activity_source_plugin_ids_json, connector_bindings_json,
+       delivery_targets_json, model_override, evaluator_projection_json, evaluator_source_hash,
+       effective_after_event_sequence, accepted_at, activated_at)
+     VALUES (1, 1, 'sha256:request', 'workstream', '${WORKSTREAM_ID}', '["plugin_slack"]', '{}',
+             '{"plugin_slack":"conn-1"}', '[{"type":"email","emailAddress":"author@example.com"}]',
+             NULL, '[]', 'sha256:evaluators', 7, 100, 101)`);
+    database.prepare(`INSERT INTO automation_runs
+      (run_id, occurrence_key, trigger_type, admission_state, execution_state, delivery_state,
+       context_json, source_version, created_at, updated_at)
+     VALUES (?, 'manual:1', 'manual', 'claimed', 'pending', 'pending', ?, 1, 1, 1)`)
+      .run(frozenAtV12.runId, JSON.stringify(frozenAtV12));
+    // A context that never had the key, so the rewrite's guard has something to
+    // skip. Its bytes must come out identical.
+    const neverHadIt = Object.fromEntries(
+      Object.entries(frozenAtV12).filter(([key]) => key !== "deliveryTargets"),
+    );
+    database.prepare(`INSERT INTO automation_runs
+      (run_id, occurrence_key, trigger_type, admission_state, execution_state, delivery_state,
+       context_json, source_version, created_at, updated_at)
+     VALUES ('00000000-0000-7000-8000-0000000000c2', 'manual:2', 'manual', 'claimed', 'pending',
+             'pending', ?, 1, 1, 1)`).run(JSON.stringify(neverHadIt));
+  }
+
+  it("leaves a frozen context the strict contract can still read", () => {
+    // The whole reason the migration exists. `AutomationRunContextV1Schema` is
+    // strict, so the moment `deliveryTargets` left the contract every stored
+    // context still carrying it — a claimed run waiting to execute, a
+    // historical row the detail path reads — would have failed to parse.
+    const database = new DatabaseSync(":memory:");
+    apply(database, 12);
+    seedAtV12(database);
+    // Established, not assumed: the seeded context is one the contract refuses.
+    expect(AutomationRunContextV1Schema.safeParse(frozenAtV12).success).toBe(false);
+
+    apply(database, 13, 12);
+
+    const rows = database.prepare(
+      `SELECT run_id, context_json FROM automation_runs ORDER BY run_id`,
+    ).all() as Array<{ run_id: string; context_json: string }>;
+    for (const row of rows) {
+      const parsed = AutomationRunContextV1Schema.safeParse(JSON.parse(row.context_json));
+      expect(parsed.success, row.run_id).toBe(true);
+      expect(JSON.parse(row.context_json)).not.toHaveProperty("deliveryTargets");
+    }
+    // The room survived the rewrite; it is the one destination that was never
+    // in `deliveryTargets` and the one the classifier still gates.
+    expect(JSON.parse(rows[0]!.context_json).owningWorkstreamId).toBe(WORKSTREAM_ID);
+  });
+
+  it("rebuilds the acceptance row without the column and without losing anything else", () => {
+    const database = new DatabaseSync(":memory:");
+    apply(database, 12);
+    seedAtV12(database);
+
+    apply(database, 13, 12);
+
+    const columns = (database.prepare(`PRAGMA table_info(automation_acceptance)`).all() as Array<{ name: string }>)
+      .map((column) => column.name);
+    expect(columns).not.toContain("delivery_targets_json");
+    // Every other column, with its value: a rebuild that dropped the owning
+    // room would detach the automation from the room that manages it, and one
+    // that dropped the bindings would run it without its connectors.
+    expect(database.prepare(`SELECT * FROM automation_acceptance`).get()).toEqual({
+      id: 1,
+      definition_revision: 1,
+      request_hash: "sha256:request",
+      scope: "workstream",
+      owning_workstream_id: WORKSTREAM_ID,
+      default_plugin_ids_json: '["plugin_slack"]',
+      activity_source_plugin_ids_json: "{}",
+      connector_bindings_json: '{"plugin_slack":"conn-1"}',
+      model_override: null,
+      evaluator_projection_json: "[]",
+      evaluator_source_hash: "sha256:evaluators",
+      effective_after_event_sequence: 7,
+      accepted_at: 100,
+      activated_at: 101,
+    });
+    // The scope/room CHECK came across with the table, or a later write could
+    // record a room-scoped acceptance that owns no room.
+    expect(() => database.exec(
+      `UPDATE automation_acceptance SET owning_workstream_id = NULL WHERE id = 1`,
+    )).toThrow(/CHECK constraint failed/u);
+    expect(database.prepare(`PRAGMA foreign_key_check`).all()).toEqual([]);
+  });
+
+  it("is a no-op the second time, which is what a resumed migration group needs", () => {
+    const database = new DatabaseSync(":memory:");
+    apply(database, 12);
+    seedAtV12(database);
+    apply(database, 13, 12);
+    const before = database.prepare(`SELECT context_json FROM automation_runs ORDER BY run_id`).all();
+
+    // Only the rewrite can be replayed — the rebuild renames a table away — and
+    // the rewrite is the statement a crash between groups would replay.
+    const rewrite = AUTOMATION_AGENT_SCHEMA_MIGRATIONS.find((m) => m.version === 13)!.statements[0]!;
+    database.exec(rewrite);
+
+    expect(database.prepare(`SELECT context_json FROM automation_runs ORDER BY run_id`).all()).toEqual(before);
   });
 });

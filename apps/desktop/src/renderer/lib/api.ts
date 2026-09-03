@@ -570,7 +570,6 @@ function mapAutomationDetail(detail: z.infer<typeof WireAutomationDetailSchema>)
     defaultPluginIds: detail.defaultPluginIds,
     activitySourcePluginIds: detail.activitySourcePluginIds,
     activitySources: activitySourcesFromTriggers(detail.triggers),
-    deliveryTargets: detail.deliveryTargets,
     executionScope: detail.executionPrincipal['type'] === 'workspace' ? 'Workspace' : 'You',
     runs,
     ...(detail.templateUpdate
@@ -1019,21 +1018,6 @@ export class RallyApi {
     const raw = await this.request(`/automations/${encodeURIComponent(id)}`, { schema: WireAutomationDetailSchema, signal });
     this.automationDetails.set(id, raw);
     return mapAutomationDetail(raw);
-  }
-
-  async updateAutomation(id: string, input: {
-    instructions?: string;
-    activitySourcePluginIds?: Record<string, string>;
-    /** Absent leaves destinations alone; present replaces the whole set. */
-    deliveryTargets?: Array<{ type: 'email' } | { type: 'slack_agent_dm'; connectionId: string }>;
-  }): Promise<AutomationDetail> {
-    const updated = await this.request(`/automations/${encodeURIComponent(id)}`, {
-      method: 'PATCH',
-      body: input,
-      schema: WireAutomationDetailSchema,
-    });
-    this.automationDetails.set(id, updated);
-    return mapAutomationDetail(updated);
   }
 
   async adoptAutomationUpdate(
