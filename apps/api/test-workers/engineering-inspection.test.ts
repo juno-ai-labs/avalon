@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { asSubstreamId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 
 import {
-  substreamAgentName,
+  conversationObjectName,
   workspaceDOName,
   workstreamDOName,
 } from "../src/durable-objects/names";
@@ -25,7 +25,7 @@ describe("internal Durable Object SQLite inspection RPC", () => {
         workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
       )),
       env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
-        substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID, SUBSTREAM_ID),
+        conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID, SUBSTREAM_ID),
       )),
     ];
     await Promise.all(stubs.map(async (stub) => {
@@ -49,7 +49,7 @@ describe("internal Durable Object SQLite inspection RPC", () => {
         workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
       )),
       env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
-        substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID, SUBSTREAM_ID),
+        conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID, SUBSTREAM_ID),
       )),
     ];
 

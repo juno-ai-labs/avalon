@@ -328,6 +328,7 @@ async function createDigestWorkstream(
     env,
     schedule.workspace_id,
     workstreamId,
+    "workstream",
   );
   await provisionWorkstreamObject(env, {
     workspaceId: asWorkspaceId(schedule.workspace_id),
@@ -339,7 +340,6 @@ async function createDigestWorkstream(
     title: digestWorkstreamTitle(occurrence.plannedFor, schedule.timezone),
     objective: "Write this person's scheduled digest of what changed since the last one.",
     scope: "personal",
-    originType: "ad_hoc",
     createdByUserId: schedule.user_id,
     // The recipient is the sole participant, which is what makes every tool the
     // run reaches for resolve against their own access and nobody else's.
@@ -348,9 +348,6 @@ async function createDigestWorkstream(
     emailAddress: null,
     emailRouteStatus: null,
     systemKind: "digest",
-    automationSubscriptionId: null,
-    automationRunId: null,
-    plannedFor: null,
     modelOverride: null,
     now: Date.parse(at),
   });

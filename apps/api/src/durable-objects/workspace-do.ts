@@ -1,16 +1,9 @@
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import {
-  AutomationAttentionReasonSchema,
-  AutomationDraftCreationClaimRequestSchema,
-  AutomationDraftCreationClaimResultSchema,
   ExternalEventEvaluatorV1Schema,
   ExternalEventRegistrationProjectionV1Schema,
   WorkspaceExternalEventDeliveryQueueMessageSchema,
-  WorkspaceExternalEventDeliveryClaimRequestSchema,
-  WorkspaceExternalEventDeliveryClaimResultSchema,
-  WorkspaceExternalEventDeliverySettleRequestSchema,
   WorkspaceExternalEventMatchResultSchema,
-  AutomationIdSchema,
   asAutomationId,
   asWorkspaceId,
   IdSchema,
@@ -38,11 +31,8 @@ import {
   WORKSTREAM_NAMING_GRACE_MS,
   WorkstreamIdSchema,
   WorkstreamSchema,
-  type AutomationAttentionReason,
   type AutomationSummary,
   type WorkstreamAutomationSummary,
-  type AutomationDraftCreationClaimRequest,
-  type AutomationDraftCreationClaimResult,
   type WorkspaceSidebar,
   type NoteSummary,
   type ProjectSnapshot,
@@ -108,12 +98,7 @@ import {
 } from "../services/workspace-schedule-execution";
 import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
 import { evaluateExternalEventPredicate } from "../services/external-event-evaluator";
-import { automationAgentName, workspaceDOName } from "./names";
-import {
-  automationCutoverWitness as readAutomationCutoverWitness,
-  cutoverWorkspaceAutomations,
-  removeLegacyAutomationSchema,
-} from "./automation-cutover";
+import { automationDOName, workspaceDOName } from "./names";
 import { reportScheduledAlarmAttempt } from "./scheduled-alarm-report";
 import {
   WorkspaceDirectoryApplyRequestSchema,
@@ -126,8 +111,8 @@ import {
   WorkspaceBatchDispatchBeginResultSchema,
   WorkspaceBatchNoteArchiveRequestSchema,
   WorkspaceBatchNoteArchiveResultSchema,
-  WorkspaceDirectoryExistsRequestSchema,
   WorkspaceDirectoryApplyResultSchema,
+  WorkspaceAutomationDirectoryApplyRequestSchema,
   WorkspaceDirectoryDueRequestSchema,
   WorkspaceDirectoryListRequestSchema,
   WorkspaceDirectoryLookupRequestSchema,
@@ -135,17 +120,10 @@ import {
   WorkspaceDirectoryRecentRequestSchema,
   WorkspaceDirectoryReadableIdsRequestSchema,
   WorkspaceDirectoryReadableIdsResultSchema,
-  WorkspaceDirectoryDeliveryAuthorityRequestSchema,
-  WorkspaceDirectoryExposeRunRequestSchema,
-  WorkspaceDirectoryOwnedAutomationsRequestSchema,
-  WorkspaceDirectoryOwnedAutomationsSchema,
-  WorkspaceDirectoryDeliveryAuthoritySchema,
   WorkspaceDirectoryNotificationRequestSchema,
   WorkspaceDirectoryNotificationStateSchema,
   WorkspaceDirectoryPageSchema,
   WorkspaceDirectoryPinRequestSchema,
-  WorkspaceDirectoryPlannedAutomationRequestSchema,
-  WorkspaceDirectoryPlannedRequestSchema,
   WorkspaceDirectoryReorderPinsRequestSchema,
   WorkspaceDirectoryResourceAccessRequestSchema,
   WorkspaceDirectoryResourceAccessResultSchema,
@@ -154,8 +132,6 @@ import {
   WorkspaceDirectoryScheduleTargetsRequestSchema,
   WorkspaceDirectoryScheduleTargetsResultSchema,
   WorkspaceDirectoryVisibilityRequestSchema,
-  WorkspaceAutomationOriginLabelRequestSchema,
-  WorkspaceAutomationOriginLabelSchema,
   WorkspaceDirectoryVisibleIdsRequestSchema,
   WorkspaceDirectoryVisibleIdsPageSchema,
   WorkspaceRegionalEffectApplyRequestSchema,
@@ -170,7 +146,6 @@ import {
   type WorkspaceBatchNoteArchiveResult,
   type WorkspaceDirectoryApplyResult,
   type WorkspaceDirectoryDueRequest,
-  type WorkspaceDirectoryExistsRequest,
   type WorkspaceDirectoryListRequest,
   type WorkspaceDirectoryLookupRequest,
   type WorkspaceDirectoryLookupResult,
@@ -179,8 +154,6 @@ import {
   type WorkspaceDirectoryReadableIdsResult,
   type WorkspaceDirectoryPage,
   type WorkspaceDirectoryPinRequest,
-  type WorkspaceDirectoryPlannedAutomationRequest,
-  type WorkspaceDirectoryPlannedRequest,
   type WorkspaceDirectoryReorderPinsRequest,
   type WorkspaceDirectoryResourceAccessRequest,
   type WorkspaceDirectoryResourceAccessResult,
@@ -191,30 +164,11 @@ import {
   type WorkspaceDirectoryScheduleTargetsRequest,
   type WorkspaceDirectoryScheduleTargetsResult,
   type WorkspaceDirectoryVisibilityRequest,
-  type WorkspaceAutomationOriginLabel,
-  type WorkspaceAutomationOriginLabelRequest,
   type WorkspaceDirectoryVisibleIdsRequest,
   type WorkspaceDirectoryVisibleIdsPage,
   type WorkspaceRegionalEffectApplyRequest,
   type WorkspaceRegionalEffectApplyResult,
 } from "./workspace-directory-protocol";
-import {
-  addWorkspaceAutomationTemplateVersion,
-  listWorkspaceAutomationTemplates,
-  publishWorkspaceAutomationTemplate,
-  workspaceAutomationTemplateOwnership,
-} from "./workspace-automation-template-storage";
-import {
-  WorkspaceAutomationTemplateOwnershipRequestSchema,
-  WorkspaceAutomationTemplatePublishRequestSchema,
-  WorkspaceAutomationTemplateVersionRequestSchema,
-  type WorkspaceAutomationTemplateList,
-  type WorkspaceAutomationTemplateOwnership,
-  type WorkspaceAutomationTemplateOwnershipRequest,
-  type WorkspaceAutomationTemplatePublishRequest,
-  type WorkspaceAutomationTemplateVersionRequest,
-  type WorkspaceAutomationTemplateVersionResult,
-} from "./workspace-automation-template-protocol";
 import {
   abandonWorkspaceConnectorOAuthAttempt,
   bindWorkspaceConnectorOAuthAttemptTelemetry,
@@ -677,7 +631,7 @@ import {
   type WorkspaceUploadDraftDeleteRequest,
   type WorkspaceUploadDraftDeleteResult,
 } from "./workspace-resources-protocol";
-import type { WorkstreamRegionalEffectEnvelope } from "./workstream-regional-effect";
+import type { ParentEffectEnvelope } from "@rally/contracts/conversation-effects";
 import {
   WorkspaceReleaseDraftAttachmentsRequestSchema,
   WorkspaceReleaseDraftAttachmentsResultSchema,
@@ -963,8 +917,6 @@ interface WorkspaceSocketAttachment extends SocketIdentity {
 
 interface WorkspaceDirectoryRow extends Record<string, SqlStorageValue> {
   workstream_id: string;
-  /** 1 once an automation run's own work stream has been made visible. */
-  automation_exposed?: number;
   authority_generation: number;
   common_waterline: number;
   common_event_id: string;
@@ -977,12 +929,7 @@ interface WorkspaceDirectoryRow extends Record<string, SqlStorageValue> {
   completed_at: number | null;
   archived_at: number | null;
   email_address: string | null;
-  origin_type: "ad_hoc" | "automation";
-  origin_label: string | null;
   created_by_user_id: string | null;
-  automation_subscription_id: string | null;
-  automation_run_id: string | null;
-  planned_for: number | null;
   title_status: "naming" | "automatic" | "settled";
   latest_attention_ordinal: number;
   unread_tracking_start_ordinal: number;
@@ -2568,31 +2515,137 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
       WHERE telemetry_operation_id IS NOT NULL`,
     ...workspaceIdentityFencesFor("connector_oauth_attempts"),
   ],
+}, {
+  version: 32,
+  description: "automations become conversation parents: one directory row per automation, registrations without coordinates, no delivery ledger",
+  statements: [
+    // A run no longer has a work stream of its own; it is a child conversation
+    // under its automation. Every directory row a run made is gone with the
+    // class that made it, and the columns that described it stay as dead
+    // columns: they sit inside CHECK constraints in the released table text,
+    // and rebuilding the directory around them would cost more than leaving
+    // `'ad_hoc'` and NULL in place. Nothing reads them.
+    `DELETE FROM workspace_workstream_directory WHERE origin_type = 'automation'`,
+    // Delivery is now one Queue message per matched registration, idempotent
+    // where it lands, so there is no ledger of deliveries to lease or settle.
+    `DROP TABLE IF EXISTS workspace_external_event_deliveries`,
+    // The draft compiler, the August cutover, and the template gallery are all
+    // retired; their tables hold nothing the new automation object reads.
+    `DROP TABLE IF EXISTS automation_creation_claims`,
+    `DROP TABLE IF EXISTS automation_cutover_campaign`,
+    `DROP TABLE IF EXISTS automation_template_versions`,
+    `DROP TABLE IF EXISTS automation_templates`,
+    // The automation object was replaced, so its projection is rebuilt rather
+    // than migrated: `AutomationDO` publishes its row through the same outbox
+    // its children's aggregates travel through, versioned by `source_version`
+    // alone. Recreated, not altered: the lifecycle CHECK loses `activating`.
+    `DROP TABLE IF EXISTS automation_directory`,
+    `CREATE TABLE automation_directory (
+      automation_id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      author_user_id TEXT NOT NULL,
+      source_version INTEGER NOT NULL CHECK (source_version > 0),
+      payload_hash TEXT NOT NULL,
+      lifecycle TEXT NOT NULL CHECK (lifecycle IN ('draft', 'active', 'paused', 'deleted')),
+      scope TEXT NOT NULL CHECK (scope IN ('personal', 'workspace', 'workstream')),
+      owning_workstream_id TEXT,
+      title TEXT NOT NULL,
+      description TEXT NOT NULL,
+      next_run_at INTEGER,
+      projected_at INTEGER NOT NULL CHECK (projected_at >= 0),
+      CHECK ((scope = 'workstream') = (owning_workstream_id IS NOT NULL))
+    ) STRICT`,
+    `CREATE INDEX automation_directory_sidebar_idx
+      ON automation_directory(workspace_id, lifecycle, projected_at DESC, automation_id)`,
+    `CREATE INDEX automation_directory_workstream_idx
+      ON automation_directory(owning_workstream_id, lifecycle, projected_at DESC)
+      WHERE owning_workstream_id IS NOT NULL`,
+    ...automationDirectoryWorkspaceIdentityGuards(),
+    // Registrations are a complete replacement per destination, so the
+    // generation, version and hash that ordered competing projections have no
+    // job left. A work stream's watched-resource rows are kept; an
+    // automation's belonged to the deleted class and are re-registered by the
+    // new one when it is applied.
+    `CREATE TABLE workspace_external_event_registrations_v32 (
+      registration_id TEXT PRIMARY KEY,
+      destination_key TEXT NOT NULL,
+      workspace_id TEXT NOT NULL,
+      effective_after_event_sequence INTEGER NOT NULL CHECK (effective_after_event_sequence >= 0),
+      connection_id TEXT NOT NULL,
+      connector_type TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      resource_id TEXT,
+      evaluator_json TEXT NOT NULL CHECK (json_valid(evaluator_json)),
+      destination_kind TEXT NOT NULL CHECK (destination_kind IN ('automation', 'workstream_resource_update')),
+      automation_id TEXT,
+      workstream_id TEXT,
+      substream_id TEXT,
+      destination_resource_id TEXT,
+      state TEXT NOT NULL CHECK (state IN ('active', 'removed')),
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      CHECK (
+        (destination_kind = 'automation' AND automation_id IS NOT NULL
+          AND workstream_id IS NULL AND substream_id IS NULL AND destination_resource_id IS NULL)
+        OR
+        (destination_kind = 'workstream_resource_update' AND automation_id IS NULL
+          AND workstream_id IS NOT NULL AND substream_id IS NOT NULL AND destination_resource_id IS NOT NULL)
+      )
+    ) STRICT`,
+    `INSERT INTO workspace_external_event_registrations_v32
+       (registration_id, destination_key, workspace_id, effective_after_event_sequence,
+        connection_id, connector_type, event_type, resource_id, evaluator_json,
+        destination_kind, automation_id, workstream_id, substream_id, destination_resource_id,
+        state, created_at, updated_at)
+     SELECT registration_id, destination_key, workspace_id, effective_after_event_sequence,
+        connection_id, connector_type, event_type, resource_id, evaluator_json,
+        destination_kind, automation_id, workstream_id, substream_id, destination_resource_id,
+        state, created_at, updated_at
+       FROM workspace_external_event_registrations
+      WHERE destination_kind = 'workstream_resource_update' AND state IN ('active', 'removed')`,
+    `DROP TABLE workspace_external_event_registrations`,
+    `ALTER TABLE workspace_external_event_registrations_v32 RENAME TO workspace_external_event_registrations`,
+    `CREATE INDEX workspace_external_event_candidates_idx
+      ON workspace_external_event_registrations(
+        connection_id, event_type, resource_id, state, registration_id
+      )`,
+    `CREATE INDEX workspace_external_event_destination_idx
+      ON workspace_external_event_registrations(destination_kind, destination_key, state)`,
+    `CREATE TRIGGER workspace_external_event_registrations_workspace_identity_insert
+      BEFORE INSERT ON workspace_external_event_registrations
+      WHEN NEW.workspace_id IS NOT (SELECT workspace_id FROM workspace_identity WHERE id = 1)
+      BEGIN SELECT RAISE(ABORT, 'workspace_identity_mismatch'); END`,
+    `CREATE TRIGGER workspace_external_event_registrations_workspace_identity_update
+      BEFORE UPDATE OF workspace_id ON workspace_external_event_registrations
+      WHEN NEW.workspace_id IS NOT (SELECT workspace_id FROM workspace_identity WHERE id = 1)
+      BEGIN SELECT RAISE(ABORT, 'workspace_identity_mismatch'); END`,
+  ],
 }];
 
-function compareProjectionCoordinate(
-  generation: number,
-  version: number,
-  existingGeneration: number,
-  existingVersion: number,
-): number {
-  return generation === existingGeneration
-    ? Math.sign(version - existingVersion)
-    : Math.sign(generation - existingGeneration);
+interface AutomationDirectoryRow extends Record<string, SqlStorageValue> {
+  automation_id: string;
+  lifecycle: "draft" | "active" | "paused";
+  scope: "personal" | "workspace" | "workstream";
+  owning_workstream_id: string | null;
+  title: string;
+  description: string;
+  next_run_at: number | null;
+  projected_at: number;
 }
 
-/**
- * The stored attention code as the contract spells it.
- *
- * `attention_code` is a free `TEXT` column — the cutover and the agent both
- * write it — so the value is parsed rather than asserted on the way out. The
- * write path below admits only the contract's reasons, which is why this can
- * be strict: a row outside them is a projection that should never have been
- * accepted, and every caller of this hands its rows to the same schema at the
- * route or socket boundary a moment later anyway.
- */
-function automationAttention(code: string | null): AutomationAttentionReason | null {
-  return code === null ? null : AutomationAttentionReasonSchema.parse(code);
+function automationSummary(row: AutomationDirectoryRow): AutomationSummary {
+  return {
+    id: row.automation_id,
+    name: row.title || "New automation",
+    description: row.description,
+    emailAddress: null,
+    scope: row.scope,
+    owningWorkstreamId: row.owning_workstream_id,
+    status: row.lifecycle,
+    nextRunAt: row.next_run_at === null ? null : new Date(row.next_run_at).toISOString(),
+    lastRunAt: null,
+    updatedAt: new Date(row.projected_at).toISOString(),
+  };
 }
 
 function externalEventContext(
@@ -2853,12 +2906,7 @@ function directoryWorkstream(
     titleStatus,
     objective: truncateUtf16Safe(row.description, WORKSTREAM_DESCRIPTION_MAX_CHARACTERS),
     emailAddress: row.email_address,
-    originType: row.origin_type,
-    originLabel: row.origin_label,
     createdByUserId: row.created_by_user_id,
-    automationSubscriptionId: row.automation_subscription_id,
-    automationRunId: row.automation_run_id,
-    plannedFor: iso(row.planned_for),
     harnessStatus: workstreamHarnessStatus(row.exact_state),
     latestAttentionSequenceNumber: latest,
     readThroughSequenceNumber: seen,
@@ -2897,14 +2945,6 @@ function mapDirectoryWorkstreams(
   return rows.map((row) => directoryWorkstream(row, workspaceId, previews.get(row.workstream_id)));
 }
 
-function mapDirectoryWorkstream(
-  sql: DurableObjectState["storage"]["sql"],
-  row: WorkspaceDirectoryRow,
-  workspaceId: string,
-): Workstream {
-  return mapDirectoryWorkstreams(sql, [row], workspaceId)[0]!;
-}
-
 function directoryStateVersion(row: WorkspaceDirectoryRow) {
   return {
     workstreamId: row.workstream_id,
@@ -2927,12 +2967,7 @@ function internalDirectoryItem(row: WorkspaceDirectoryRow) {
     lastActivityAt: iso(row.last_activity_at),
     archivedAt: iso(row.archived_at),
     updatedAt: iso(row.source_updated_at),
-    originType: row.origin_type,
-    originLabel: row.origin_label,
     createdByUserId: row.created_by_user_id,
-    automationSubscriptionId: row.automation_subscription_id,
-    automationRunId: row.automation_run_id,
-    plannedFor: iso(row.planned_for),
   };
 }
 
@@ -2941,11 +2976,8 @@ const SELECT_WORKSPACE_DIRECTORY = `SELECT directory.workstream_id,
     directory.source_event_id AS common_event_id, directory.title,
     directory.description, directory.scope, directory.exact_state,
     directory.system_kind, directory.last_activity_at, directory.completed_at,
-    directory.archived_at, directory.email_address, directory.origin_type,
-    directory.automation_exposed,
-    directory.origin_label, directory.created_by_user_id,
-    directory.automation_subscription_id, directory.automation_run_id,
-    directory.planned_for, directory.title_status,
+    directory.archived_at, directory.email_address, directory.created_by_user_id,
+    directory.title_status,
     directory.latest_attention_ordinal, directory.unread_tracking_start_ordinal,
     directory.next_wakeup_due_at, directory.next_wakeup_prompt,
     directory.source_created_at, directory.source_updated_at,
@@ -3931,136 +3963,43 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.ensureIdentity(workspaceId, placementAffinity);
   }
 
-  /** Resolve an uncertain first wizard send to exactly one server identity. */
-  async claimAutomationDraft(
-    input: AutomationDraftCreationClaimRequest,
-  ): Promise<AutomationDraftCreationClaimResult> {
+  /**
+   * One automation's sidebar row, as its object published it.
+   *
+   * Fenced on the automation's own `sourceVersion`: a strictly newer version
+   * replaces the row, an older one is ignored, and the same version carrying
+   * different bytes is the conflict this refuses. The row is content-free by
+   * design; `AutomationDO` is the authority and the detail read goes there.
+   */
+  async applyAutomationDirectory(input: unknown): Promise<{ applied: boolean }> {
     await this.initialized;
-    const request = AutomationDraftCreationClaimRequestSchema.parse(input);
+    const request = WorkspaceAutomationDirectoryApplyRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
-    if (request.region !== this.env.AVALON_REGION) throw new Error("automation_region_mismatch");
-    if (!await this.activeWorkspaceMember(request.workspaceId, request.authorUserId)) {
-      throw new Error("automation_author_access_denied");
-    }
-    const cutover = this.state.storage.sql.exec<{ state: string }>(
-      `SELECT state FROM automation_cutover_campaign WHERE id = 1`,
-    ).toArray()[0];
-    if (cutover?.state !== "completed") throw new Error("automation_cutover_in_progress");
-    return this.state.storage.transactionSync(() => {
-      const existing = this.state.storage.sql.exec<{ automation_id: string }>(
-        `SELECT automation_id FROM automation_creation_claims
-          WHERE workspace_id = ? AND author_user_id = ? AND client_creation_key = ?`,
-        request.workspaceId,
-        request.authorUserId,
-        request.clientCreationKey,
+    const envelope = request.envelope;
+    const effect = envelope.effect;
+    if (effect.kind !== "directory_automation") throw new Error("automation_directory_effect_kind_invalid");
+    const result = this.state.storage.transactionSync(() => {
+      const existing = this.state.storage.sql.exec<{ source_version: number; payload_hash: string }>(
+        `SELECT source_version, payload_hash FROM automation_directory WHERE automation_id = ?`,
+        effect.automationId,
       ).toArray()[0];
       if (existing) {
-        return AutomationDraftCreationClaimResultSchema.parse({
-          automationId: existing.automation_id,
-          created: false,
-        });
-      }
-      const automationId = uuidV7();
-      this.state.storage.sql.exec(
-        `INSERT INTO automation_creation_claims
-           (workspace_id, author_user_id, client_creation_key, automation_id, created_at)
-         VALUES (?, ?, ?, ?, ?)`,
-        request.workspaceId,
-        request.authorUserId,
-        request.clientCreationKey,
-        automationId,
-        Date.now(),
-      );
-      return AutomationDraftCreationClaimResultSchema.parse({ automationId, created: true });
-    });
-  }
-
-  async finalizeAutomationCutover(input: unknown): Promise<{
-    state: "completed";
-    imported: number;
-    discardedDrafts: number;
-    sourceHash: string;
-  }> {
-    await this.initialized;
-    const workspaceId = z.looseObject({ workspaceId: WorkspaceIdSchema }).parse(input).workspaceId;
-    this.assertWorkspace(workspaceId);
-    const result = await cutoverWorkspaceAutomations({
-      env: this.env,
-      storage: this.state.storage,
-      request: input,
-      applyProjection: (projection) => this.applyAutomationProjection(projection),
-    });
-    await this.refreshSchedule(workspaceId);
-    return result;
-  }
-
-  async automationCutoverWitness(input: { workspaceId: string }): Promise<{ draftIds: string[] }> {
-    await this.migrationsReady();
-    this.assertWorkspace(input.workspaceId);
-    return readAutomationCutoverWitness(this.state.storage, input.workspaceId);
-  }
-
-  /** Content-free list projection; the AutomationAgent remains canonical. */
-  async applyAutomationProjection(input: unknown): Promise<{ applied: boolean }> {
-    await this.initialized;
-    const request = z.strictObject({
-      schemaVersion: z.literal(1),
-      automationId: IdSchema,
-      workspaceId: WorkspaceIdSchema,
-      authorUserId: UserIdSchema,
-      authorityGeneration: z.number().int().positive(),
-      projectionVersion: z.number().int().positive(),
-      payloadHash: z.string().min(1),
-      lifecycle: z.enum(["draft", "activating", "active", "paused", "deleted"]),
-      scope: z.enum(["personal", "workspace", "workstream"]),
-      /**
-       * The room that owns a `workstream`-scoped automation, and nothing at all
-       * for the other two. The rail reads the directory by it and the sidebar
-       * excludes rows that have one, so a projection that omitted it would put
-       * a room's automation in everybody's sidebar.
-       */
-      owningWorkstreamId: IdSchema.nullable().default(null),
-      title: z.string(),
-      description: z.string(),
-      nextRunAt: z.number().int().nonnegative().nullable(),
-      // The contract's reasons rather than free text: the directory row is what
-      // the sidebar reads, and a code nothing on the client can render is a
-      // marker with no sentence behind it.
-      attentionCode: AutomationAttentionReasonSchema.nullable(),
-    }).parse(input);
-    this.assertWorkspace(request.workspaceId);
-    const result = this.state.storage.transactionSync(() => {
-      const existing = this.state.storage.sql.exec<{
-        authority_generation: number;
-        projection_version: number;
-        payload_hash: string;
-      }>(`SELECT authority_generation, projection_version, payload_hash
-            FROM automation_directory WHERE automation_id = ?`, request.automationId).toArray()[0];
-      if (existing) {
-        const coordinate = compareProjectionCoordinate(
-          request.authorityGeneration,
-          request.projectionVersion,
-          existing.authority_generation,
-          existing.projection_version,
-        );
-        if (coordinate < 0) return { applied: false };
-        if (coordinate === 0) {
-          if (existing.payload_hash !== request.payloadHash) {
-            throw new Error("automation_projection_hash_conflict");
+        if (existing.source_version > envelope.sourceVersion) return { applied: false };
+        if (existing.source_version === envelope.sourceVersion) {
+          if (existing.payload_hash !== envelope.payloadHash) {
+            throw new Error("automation_directory_version_conflict");
           }
           return { applied: false };
         }
       }
       this.state.storage.sql.exec(
         `INSERT INTO automation_directory
-           (automation_id, workspace_id, author_user_id, authority_generation,
-            projection_version, payload_hash, lifecycle, scope, owning_workstream_id,
-            title, description, next_run_at, attention_code, projected_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           (automation_id, workspace_id, author_user_id, source_version, payload_hash,
+            lifecycle, scope, owning_workstream_id, title, description, next_run_at, projected_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(automation_id) DO UPDATE SET
            author_user_id = excluded.author_user_id,
-           authority_generation = excluded.authority_generation,
-           projection_version = excluded.projection_version,
+           source_version = excluded.source_version,
            payload_hash = excluded.payload_hash,
            lifecycle = excluded.lifecycle,
            scope = excluded.scope,
@@ -4068,21 +4007,18 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
            title = excluded.title,
            description = excluded.description,
            next_run_at = excluded.next_run_at,
-           attention_code = excluded.attention_code,
            projected_at = excluded.projected_at`,
-        request.automationId,
+        effect.automationId,
         request.workspaceId,
-        request.authorUserId,
-        request.authorityGeneration,
-        request.projectionVersion,
-        request.payloadHash,
-        request.lifecycle,
-        request.scope,
-        request.owningWorkstreamId,
-        request.title,
-        request.description,
-        request.nextRunAt,
-        request.attentionCode,
+        effect.authorUserId,
+        envelope.sourceVersion,
+        envelope.payloadHash,
+        effect.lifecycle,
+        effect.scope,
+        effect.owningWorkstreamId,
+        effect.title,
+        effect.description,
+        epoch(effect.nextRunAt),
         Date.now(),
       );
       this.state.storage.sql.exec(
@@ -4096,14 +4032,25 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return result;
   }
 
+  /** Which room owns an automation, for a caller that has to resolve participation. */
+  async automationOwner(input: unknown): Promise<{ owningWorkstreamId: string | null }> {
+    await this.initialized;
+    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, automationId: IdSchema }).parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const row = this.state.storage.sql.exec<{ owning_workstream_id: string | null }>(
+      `SELECT owning_workstream_id FROM automation_directory WHERE automation_id = ? AND lifecycle <> 'deleted'`,
+      request.automationId,
+    ).toArray()[0];
+    return { owningWorkstreamId: row?.owning_workstream_id ?? null };
+  }
+
   /**
-   * Content-free automation sidebar projection; AutomationAgent remains authority.
+   * The automations in a person's left sidebar, drafts included.
    *
-   * Drafts are excluded, and that follows from the builder's retirement rather
-   * than being a taste: a draft is a conversation in progress and now lives
-   * where that conversation is — a room's rail, or nowhere at all if it was
-   * written on the screen that no longer exists. Listing one here would offer a
-   * row whose only destination is an automation that has not been created yet.
+   * A draft is a conversation in progress, and its row is how the person gets
+   * back to it. A room's automation is listed in that room's rail and nowhere
+   * else: in a personal list it would be an object somebody sees without the
+   * context that explains it.
    */
   async listAutomationDirectory(input: unknown): Promise<{ items: AutomationSummary[] }> {
     await this.initialized;
@@ -4112,49 +4059,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
       throw new Error("automation_directory_access_denied");
     }
-    const rows = this.state.storage.sql.exec<{
-      automation_id: string;
-      lifecycle: "activating" | "active" | "paused";
-      scope: "personal" | "workspace";
-      title: string;
-      description: string;
-      next_run_at: number | null;
-      attention_code: string | null;
-      projected_at: number;
-    }>(`SELECT automation_id, lifecycle, scope, title, description, next_run_at,
-              attention_code, projected_at
-          FROM automation_directory
-         WHERE workspace_id = ? AND lifecycle NOT IN ('deleted', 'draft')
-           -- A room's automation is listed in that room's rail and nowhere
-           -- else. In a personal list it would be an object somebody sees
-           -- without the context that explains it, in a list where pausing it
-           -- affects people who are not looking at that list.
-           AND owning_workstream_id IS NULL
-           AND (scope = 'workspace' OR author_user_id = ?)
-         ORDER BY projected_at DESC, automation_id
-         LIMIT 250`, request.workspaceId, request.userId).toArray();
-    return {
-      items: rows.map((row) => ({
-        id: row.automation_id,
-        name: row.title || "New automation",
-        description: row.description,
-        emailAddress: null,
-        scope: row.scope,
-        // The sidebar excludes drafts, so this cannot be one. A draft row
-        // here led to the overview's "not created yet" error state.
-        status: row.lifecycle === "paused"
-          ? "paused"
-          : row.attention_code ? "error" : "active",
-        // Carried beside the status rather than folded into it. Both codes the
-        // cutover writes arrive on an automation it also paused, so the status
-        // alone says "paused" and nothing says why.
-        attention: automationAttention(row.attention_code),
-        nextRunAt: row.next_run_at === null ? null : new Date(row.next_run_at).toISOString(),
-        lastRunAt: null,
-        updatedAt: new Date(row.projected_at).toISOString(),
-        updateAvailable: false,
-      })),
-    };
+    return { items: this.listSidebarAutomations(request.workspaceId, request.userId, 250) };
   }
 
   /**
@@ -4163,7 +4068,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * The counterpart to the sidebar's list, which excludes exactly these rows.
    * A room's automation is managed by the room's participants, so the gate is
    * participation rather than authorship: the person who created it may be
-   * gone, and the automation is still theirs to pause.
+   * gone, and the automation is still theirs to pause. Participation, not
+   * listability: a workspace-scoped room is listable to every member, and
+   * gating on that would hand its automations to people who are not in it.
    */
   async listWorkstreamAutomations(input: unknown): Promise<{ items: WorkstreamAutomationSummary[] }> {
     await this.initialized;
@@ -4176,97 +4083,35 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
       throw new Error("automation_directory_access_denied");
     }
-    // Participation, not listability. A workspace-scoped room is listable to
-    // every member of the workspace, so gating on that would hand the names,
-    // descriptions and schedules of its automations to people who are not in
-    // it — while `authorizeAutomationViewer` goes on refusing them the details.
-    // The wider half of that pair is the one that leaks.
     if (!this.isWorkstreamParticipant(request.workstreamId, request.userId)) {
       throw new Error("automation_directory_access_denied");
     }
-    const rows = this.state.storage.sql.exec<{
-      automation_id: string;
-      lifecycle: "activating" | "active" | "paused";
-      title: string;
-      description: string;
-      next_run_at: number | null;
-      attention_code: string | null;
-      projected_at: number;
-    }>(`SELECT automation_id, lifecycle, title, description, next_run_at,
-              attention_code, projected_at
-          FROM automation_directory
-         WHERE owning_workstream_id = ? AND lifecycle NOT IN ('deleted', 'draft')
-         ORDER BY projected_at DESC, automation_id
-         LIMIT 250`, request.workstreamId).toArray();
+    const rows = this.state.storage.sql.exec<AutomationDirectoryRow>(
+      `SELECT automation_id, lifecycle, scope, owning_workstream_id, title, description,
+              next_run_at, projected_at
+         FROM automation_directory
+        WHERE owning_workstream_id = ? AND lifecycle <> 'deleted'
+        ORDER BY projected_at DESC, automation_id
+        LIMIT 250`,
+      request.workstreamId,
+    ).toArray();
     return {
-      items: rows.map((row) => ({
-        id: row.automation_id,
-        name: row.title || "New automation",
-        description: row.description,
-        emailAddress: null,
-        // No draft arm: the query excludes them. A draft is decided on its
-        // proposal card in the feed, and a row here led to the overview's
-        // "this automation has not been created yet" — the same dead end the
-        // sidebar removed and this list reintroduced.
-        status: row.lifecycle === "paused"
-          ? "paused"
-          : row.attention_code ? "error" : "active",
-        attention: automationAttention(row.attention_code),
-        nextRunAt: row.next_run_at === null ? null : new Date(row.next_run_at).toISOString(),
-        lastRunAt: null,
-        updatedAt: new Date(row.projected_at).toISOString(),
-        updateAvailable: false,
-      })),
+      items: rows.map((row) => {
+        const summary = automationSummary(row);
+        return {
+          id: summary.id,
+          name: summary.name,
+          description: summary.description,
+          emailAddress: summary.emailAddress,
+          status: summary.status,
+          nextRunAt: summary.nextRunAt,
+          lastRunAt: summary.lastRunAt,
+          updatedAt: summary.updatedAt,
+        };
+      }),
     };
   }
 
-  /**
-   * Which of these bindings the named principal can no longer reach.
-   *
-   * Answered here because `connector_connections` lives here: migration 0090
-   * dropped it from regional D1, so a caller reading it on `env.DB` gets
-   * `no such table` — the failure the workspace-table routing guard exists to
-   * catch, and did.
-   *
-   * Workspace-scoped bindings are never reported: they belong to the workspace
-   * rather than to whoever authorized them, so they did not break when their
-   * authorizer left.
-   */
-  async unreachablePersonalBindings(input: unknown): Promise<{ providers: string[] }> {
-    await this.initialized;
-    const request = z.strictObject({
-      workspaceId: WorkspaceIdSchema,
-      principalUserId: UserIdSchema,
-      connectionIds: z.array(z.string().min(1)).max(100),
-    }).parse(input);
-    this.assertWorkspace(request.workspaceId);
-    if (request.connectionIds.length === 0) return { providers: [] };
-    const rows = this.state.storage.sql.exec<{
-      id: string;
-      connector_type: string;
-      scope: string;
-      owner_user_id: string | null;
-      status: string;
-    }>(
-      `SELECT id, connector_type, scope, owner_user_id, status
-         FROM connector_connections
-        WHERE id IN (SELECT value FROM json_each(?))`,
-      JSON.stringify(request.connectionIds),
-    ).toArray();
-    const byId = new Map(rows.map((row) => [row.id, row]));
-    const providers = new Set<string>();
-    for (const connectionId of request.connectionIds) {
-      const row = byId.get(connectionId);
-      // A binding whose row is gone is unreachable and cannot name its
-      // provider; the ones that remain say which they were.
-      if (!row) { providers.add("a disconnected account"); continue; }
-      if (row.scope !== "personal") continue;
-      if (row.status === "disabled" || (row.owner_user_id ?? "") !== request.principalUserId) {
-        providers.add(row.connector_type);
-      }
-    }
-    return { providers: [...providers].sort() };
-  }
   /**
    * Whether this person is an active participant of this work stream.
    *
@@ -4288,13 +4133,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * Whether somebody may still act on a work stream, asked directly.
-   *
-   * `authorizeAutomationViewer` answers the same question through the
-   * automation directory, which a draft being accepted is not yet in. This one
-   * names the room, so it works before the automation exists.
+   * Whether somebody may act on a work stream, asked by the object that has
+   * to know and cannot see this directory: an automation owned by a room
+   * answers its viewer question with this.
    */
-  async workstreamParticipation(input: unknown): Promise<{ participant: boolean }> {
+  async workstreamParticipant(input: unknown): Promise<{ participant: boolean }> {
     await this.initialized;
     const request = z.strictObject({
       workspaceId: WorkspaceIdSchema,
@@ -4305,47 +4148,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return { participant: this.isWorkstreamParticipant(request.workstreamId, request.userId) };
   }
 
-  /** Current membership plus projected scope gates direct AutomationAgent reads. */
-  async authorizeAutomationViewer(input: unknown): Promise<{ authorized: boolean }> {
-    await this.initialized;
-    const request = z.strictObject({
-      workspaceId: WorkspaceIdSchema,
-      automationId: AutomationIdSchema,
-      userId: UserIdSchema,
-    }).parse(input);
-    this.assertWorkspace(request.workspaceId);
-    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
-      return { authorized: false };
-    }
-    const row = this.state.storage.sql.exec<{
-      scope: "personal" | "workspace" | "workstream";
-      author_user_id: string;
-      owning_workstream_id: string | null;
-    }>(`SELECT scope, author_user_id, owning_workstream_id FROM automation_directory
-          WHERE workspace_id = ? AND automation_id = ? AND lifecycle <> 'deleted'`,
-    request.workspaceId, request.automationId).toArray()[0];
-    if (!row) return { authorized: false };
-    // A room's automation is the room's: every active participant may read it,
-    // and participation lives in the work stream's own object rather than
-    // here. The viewer overlay this object *does* keep is the same fact the
-    // sidebar is filtered by, so it answers without a second round trip.
-    if (row.scope === "workstream" && row.owning_workstream_id) {
-      const participant = this.state.storage.sql.exec<{ is_participant: number }>(
-        `SELECT is_participant FROM workspace_workstream_viewers
-          WHERE workstream_id = ? AND user_id = ?`,
-        row.owning_workstream_id,
-        request.userId,
-      ).toArray()[0];
-      return { authorized: participant?.is_participant === 1 };
-    }
-    return {
-      authorized: row.scope === "workspace" || row.author_user_id === request.userId,
-    };
-  }
-
-  /** Complete-replace one automation or watched-link evaluator generation. */
+  /**
+   * Replace one destination's evaluators, completely.
+   *
+   * No coordinate and no hash: the caller is the destination's own authority
+   * and this is whatever it says now. A repeat with the same set removes and
+   * re-inserts the same rows, which is equivalent, and the cutoff sequence
+   * means an event admitted before the call is never matched by a rule that
+   * did not exist when it arrived.
+   */
   async applyExternalEventRegistrations(input: unknown): Promise<{
-    applied: boolean;
     effectiveAfterEventSequence: number;
   }> {
     await this.initialized;
@@ -4356,43 +4168,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       const destinationKey = destinationKind === "automation"
         ? `automation:${request.destination.automationId}`
         : `workstream:${request.destination.workstreamId}:${request.destination.substreamId}:${request.destination.resourceId}`;
-      const existing = this.state.storage.sql.exec<{
-        authority_generation: number;
-        projection_version: number;
-        source_hash: string;
-      }>(`SELECT authority_generation, projection_version, source_hash
-            FROM workspace_external_event_registrations
-           WHERE destination_kind = ?
-             AND destination_key = ?
-           ORDER BY authority_generation DESC, projection_version DESC LIMIT 1`,
-      destinationKind, destinationKey).toArray()[0];
-      if (existing) {
-        const coordinate = compareProjectionCoordinate(
-          request.authorityGeneration,
-          request.projectionVersion,
-          existing.authority_generation,
-          existing.projection_version,
-        );
-        if (coordinate < 0) {
-          return { applied: false, effectiveAfterEventSequence: this.latestConnectorEventSequence() };
-        }
-        if (coordinate === 0) {
-          if (existing.source_hash !== request.sourceHash) {
-            throw new Error("external_event_registration_hash_conflict");
-          }
-          const cutoff = this.state.storage.sql.exec<{ cutoff: number }>(
-            `SELECT MAX(effective_after_event_sequence) AS cutoff
-               FROM workspace_external_event_registrations
-              WHERE destination_kind = ? AND destination_key = ?
-                AND authority_generation = ? AND projection_version = ?`,
-            destinationKind,
-            destinationKey,
-            request.authorityGeneration,
-            request.projectionVersion,
-          ).toArray()[0]?.cutoff ?? this.latestConnectorEventSequence();
-          return { applied: false, effectiveAfterEventSequence: cutoff };
-        }
-      }
       const now = Date.now();
       const cutoff = this.latestConnectorEventSequence();
       this.state.storage.sql.exec(
@@ -4405,20 +4180,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         destinationKey,
       );
       for (const evaluator of request.evaluators) {
-        const registrationId = uuidV7();
         this.state.storage.sql.exec(
           `INSERT INTO workspace_external_event_registrations
-             (registration_id, destination_key, workspace_id, authority_generation, projection_version,
-              source_hash, effective_after_event_sequence, connection_id, connector_type,
-              event_type, resource_id, evaluator_json, destination_kind, automation_id,
-              workstream_id, substream_id, destination_resource_id, state, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)`,
-          registrationId,
+             (registration_id, destination_key, workspace_id, effective_after_event_sequence,
+              connection_id, connector_type, event_type, resource_id, evaluator_json,
+              destination_kind, automation_id, workstream_id, substream_id,
+              destination_resource_id, state, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)`,
+          uuidV7(),
           destinationKey,
           request.workspaceId,
-          request.authorityGeneration,
-          request.projectionVersion,
-          request.sourceHash,
           cutoff,
           evaluator.source.connectionId,
           evaluator.source.connectorType,
@@ -4434,7 +4205,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           now,
         );
       }
-      return { applied: true, effectiveAfterEventSequence: cutoff };
+      // Rows removed long ago are noise in every candidate scan; keep the
+      // table to what still matches.
+      this.state.storage.sql.exec(
+        `DELETE FROM workspace_external_event_registrations
+          WHERE state = 'removed' AND updated_at < ?`,
+        now - 24 * 60 * 60_000,
+      );
+      return { effectiveAfterEventSequence: cutoff };
     });
   }
 
@@ -4459,7 +4237,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return { active: row !== undefined };
   }
 
-  /** Deterministically create ID-only destination receipts for one accepted event. */
+  /**
+   * Every destination one accepted event reaches, each as a complete Queue
+   * message.
+   *
+   * No ledger and no lease. Each delivery carries the registration, the
+   * destination and the event, and the object it lands on is idempotent on
+   * that pair: an automation keys its run on the event id, a watched work
+   * stream keys its receipt on the event and registration ids. A redelivery
+   * is therefore a no-op there, which is all a lease ever guaranteed.
+   */
   async matchExternalEventDestinations(input: unknown) {
     await this.initialized;
     const request = z.strictObject({ workspaceId: WorkspaceIdSchema, eventId: IdSchema }).parse(input);
@@ -4471,6 +4258,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       connection_id: string;
       connector_type: string;
       event_type: string;
+      title: string;
+      summary: string;
+      occurred_at: number;
       text_snippet: string | null;
       metadata_json: string;
       connection_scope: string;
@@ -4478,8 +4268,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       target_user_ids_json: string;
       visibility_json: string;
     }>(`SELECT event_id, event_sequence, payload_hash, connection_id, connector_type,
-              event_type, text_snippet, metadata_json, connection_scope,
-              connection_owner_user_id, target_user_ids_json, visibility_json
+              event_type, title, summary, occurred_at, text_snippet, metadata_json,
+              connection_scope, connection_owner_user_id, target_user_ids_json, visibility_json
           FROM workspace_connector_events WHERE event_id = ?`, request.eventId).toArray()[0];
     if (!event) throw new Error("connector_event_not_found");
     const metadata = JSON.parse(event.metadata_json) as Record<string, unknown>;
@@ -4489,16 +4279,15 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       : [];
     const registrations = this.state.storage.sql.exec<{
       registration_id: string;
-      authority_generation: number;
-      projection_version: number;
-      source_hash: string;
       resource_id: string | null;
       evaluator_json: string;
       destination_kind: "automation" | "workstream_resource_update";
       automation_id: string | null;
       workstream_id: string | null;
-    }>(`SELECT registration_id, authority_generation, projection_version, source_hash,
-              resource_id, evaluator_json, destination_kind, automation_id, workstream_id
+      substream_id: string | null;
+      destination_resource_id: string | null;
+    }>(`SELECT registration_id, resource_id, evaluator_json, destination_kind, automation_id,
+              workstream_id, substream_id, destination_resource_id
           FROM workspace_external_event_registrations
          WHERE state = 'active' AND connection_id = ? AND connector_type = ?
            AND event_type = ? AND effective_after_event_sequence < ?
@@ -4509,10 +4298,21 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // channel arrives on the *workspace* connection and carries its restriction
     // in `visibility`, so matching on connection and event type alone would let
     // a personal automation's evaluator probe content its author cannot see.
-    // Refusing here rather than at admission means no delivery row is created,
-    // so nothing downstream has to re-derive the audience.
     const restrictedUserIds = restrictedActivityUserIds(event);
-    const deliveries = this.state.storage.transactionSync(() => registrations.flatMap((registration) => {
+    const visibility = JSON.parse(event.visibility_json) as { kind?: unknown; scope?: unknown };
+    const workspaceEvent = {
+      id: event.event_id,
+      eventSequence: event.event_sequence,
+      eventType: event.event_type,
+      title: event.title,
+      summary: event.summary,
+      occurredAt: event.occurred_at,
+      audienceUserIds: JSON.parse(event.target_user_ids_json) as string[],
+      audienceKind: visibility.kind === "workspace" || visibility.scope === "workspace"
+        ? "workspace" as const
+        : "restricted" as const,
+    };
+    const deliveries = registrations.flatMap((registration) => {
       if (registration.resource_id && !resourceIds.includes(registration.resource_id)) return [];
       if (restrictedUserIds !== null && registration.destination_kind === "automation") {
         // A workspace automation is readable by every member, so a restricted
@@ -4528,189 +4328,29 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       }
       const evaluator = ExternalEventEvaluatorV1Schema.parse(JSON.parse(registration.evaluator_json));
       if (!evaluateExternalEventPredicate(evaluator.when, context)) return [];
-      const destinationId = registration.automation_id ?? registration.workstream_id;
-      if (!destinationId) throw new Error("external_event_destination_missing");
-      const deliveryId = uuidV7();
-      const payloadHash = `${event.payload_hash}:${registration.source_hash}`;
-      const inserted = this.state.storage.sql.exec<{ delivery_id: string }>(
-        `INSERT OR IGNORE INTO workspace_external_event_deliveries
-           (delivery_id, workspace_event_id, event_sequence, registration_id,
-            authority_generation, projection_version, source_hash, destination_kind,
-            destination_id, payload_hash, state, attempts, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?)
-         RETURNING delivery_id`,
-        deliveryId,
-        event.event_id,
-        event.event_sequence,
-        registration.registration_id,
-        registration.authority_generation,
-        registration.projection_version,
-        registration.source_hash,
-        registration.destination_kind,
-        destinationId,
-        payloadHash,
-        Date.now(),
-        Date.now(),
-      ).toArray()[0];
-      if (!inserted) return [];
+      const destination = registration.destination_kind === "automation"
+        ? { kind: "automation" as const, automationId: registration.automation_id! }
+        : {
+            kind: "workstream_resource_update" as const,
+            workstreamId: registration.workstream_id!,
+            substreamId: registration.substream_id!,
+            resourceId: registration.destination_resource_id!,
+          };
       return [WorkspaceExternalEventDeliveryQueueMessageSchema.parse({
         type: "workspace_external_event_delivery_v1",
         schemaVersion: 1,
         region: this.env.AVALON_REGION,
         workspaceId: request.workspaceId,
-        workspaceEventId: event.event_id,
-        deliveryId: inserted.delivery_id,
-        payloadHash,
+        registrationId: registration.registration_id,
+        destination,
+        event: workspaceEvent,
+        payloadHash: event.payload_hash,
       })];
-    }));
-    const pending = this.state.storage.sql.exec<{
-      delivery_id: string;
-      payload_hash: string;
-    }>(`SELECT delivery_id, payload_hash FROM workspace_external_event_deliveries
-          WHERE workspace_event_id = ? AND state = 'pending'
-          ORDER BY delivery_id`, event.event_id).toArray().map((row) => (
-      WorkspaceExternalEventDeliveryQueueMessageSchema.parse({
-        type: "workspace_external_event_delivery_v1",
-        schemaVersion: 1,
-        region: this.env.AVALON_REGION,
-        workspaceId: request.workspaceId,
-        workspaceEventId: event.event_id,
-        deliveryId: row.delivery_id,
-        payloadHash: row.payload_hash,
-      })
-    ));
-    const claimed = this.state.storage.sql.exec<{ claimed: number }>(
-      `SELECT EXISTS(
-         SELECT 1 FROM workspace_external_event_deliveries WHERE workspace_event_id = ?
-       ) AS claimed`,
-      event.event_id,
-    ).one().claimed === 1;
-    return WorkspaceExternalEventMatchResultSchema.parse({
-      claimed,
-      deliveries: [...new Map([...deliveries, ...pending].map((delivery) => [delivery.deliveryId, delivery])).values()],
     });
-  }
-
-  async claimExternalEventDelivery(input: unknown) {
-    await this.initialized;
-    const request = WorkspaceExternalEventDeliveryClaimRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return WorkspaceExternalEventDeliveryClaimResultSchema.parse(
-      this.state.storage.transactionSync(() => {
-        const row = this.state.storage.sql.exec<{
-          state: string;
-          payload_hash: string;
-          lease_expires_at: number | null;
-          destination_kind: "automation" | "workstream_resource_update";
-          authority_generation: number;
-          projection_version: number;
-          automation_id: string | null;
-          workstream_id: string | null;
-          substream_id: string | null;
-          destination_resource_id: string | null;
-          event_id: string;
-          event_sequence: number;
-          event_type: string;
-          title: string;
-          summary: string;
-          occurred_at: number;
-          visibility_json: string;
-          target_user_ids_json: string;
-        }>(`SELECT delivery.state, delivery.payload_hash, delivery.lease_expires_at,
-                  registration.destination_kind, delivery.authority_generation,
-                  delivery.projection_version, registration.automation_id,
-                  registration.workstream_id, registration.substream_id,
-                  registration.destination_resource_id, event.event_id, event.event_sequence, event.event_type,
-                  event.title, event.summary, event.occurred_at, event.visibility_json,
-                  event.target_user_ids_json
-              FROM workspace_external_event_deliveries delivery
-              JOIN workspace_external_event_registrations registration
-                ON registration.registration_id = delivery.registration_id
-              JOIN workspace_connector_events event
-                ON event.event_id = delivery.workspace_event_id
-             WHERE delivery.delivery_id = ? AND delivery.workspace_event_id = ?`,
-        request.deliveryId, request.workspaceEventId).toArray()[0];
-        if (!row || row.payload_hash !== request.payloadHash) {
-          throw new Error("external_event_delivery_not_found");
-        }
-        if (row.state === "delivered" || row.state === "not_delivered") return { outcome: "delivered" as const };
-        const now = Date.now();
-        if (row.state === "delivering" && (row.lease_expires_at ?? 0) > now) {
-          return { outcome: "busy" as const, retryAt: row.lease_expires_at! };
-        }
-        const leaseExpiresAt = now + CONNECTOR_EVENT_PROCESSING_LEASE_MS;
-        this.state.storage.sql.exec(
-          `UPDATE workspace_external_event_deliveries
-              SET state = 'delivering', lease_id = ?, lease_expires_at = ?,
-                  attempts = attempts + 1, updated_at = ?
-            WHERE delivery_id = ?`,
-          request.leaseId,
-          leaseExpiresAt,
-          now,
-          request.deliveryId,
-        );
-        const visibility = JSON.parse(row.visibility_json) as { kind?: unknown; scope?: unknown };
-        const audienceKind = visibility.kind === "workspace" || visibility.scope === "workspace"
-          ? "workspace"
-          : "restricted";
-        const audienceUserIds = JSON.parse(row.target_user_ids_json) as string[];
-        const destination = row.destination_kind === "automation"
-          ? {
-              kind: "automation" as const,
-              automationId: row.automation_id!,
-              authorityGeneration: row.authority_generation,
-              projectionVersion: row.projection_version,
-            }
-          : {
-              kind: "workstream_resource_update" as const,
-              workstreamId: row.workstream_id!,
-              substreamId: row.substream_id!,
-              resourceId: row.destination_resource_id!,
-              authorityGeneration: row.authority_generation,
-              projectionVersion: row.projection_version,
-            };
-        return {
-          outcome: "claimed" as const,
-          leaseExpiresAt,
-          destination,
-          event: {
-            id: row.event_id,
-            eventSequence: row.event_sequence,
-            eventType: row.event_type,
-            title: row.title,
-            summary: row.summary,
-            occurredAt: row.occurred_at,
-            audienceUserIds,
-            audienceKind,
-          },
-        };
-      }),
-    );
-  }
-
-  async settleExternalEventDelivery(input: unknown): Promise<void> {
-    await this.initialized;
-    const request = WorkspaceExternalEventDeliverySettleRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    const changed = this.state.storage.sql.exec<{ delivery_id: string }>(
-      `UPDATE workspace_external_event_deliveries
-          SET state = ?, outcome_code = ?, lease_id = NULL, lease_expires_at = NULL,
-              updated_at = ?
-        WHERE delivery_id = ? AND state = 'delivering' AND lease_id = ?
-        RETURNING delivery_id`,
-      request.outcome,
-      request.outcomeCode,
-      Date.now(),
-      request.deliveryId,
-      request.leaseId,
-    ).toArray();
-    if (changed.length === 1) return;
-    const settled = this.state.storage.sql.exec<{ state: string; outcome_code: string | null }>(
-      `SELECT state, outcome_code FROM workspace_external_event_deliveries WHERE delivery_id = ?`,
-      request.deliveryId,
-    ).toArray()[0];
-    if (settled?.state === request.outcome && settled.outcome_code === request.outcomeCode) return;
-    throw new Error("external_event_delivery_settlement_fenced");
+    return WorkspaceExternalEventMatchResultSchema.parse({
+      matched: deliveries.length > 0,
+      deliveries,
+    });
   }
 
   private latestConnectorEventSequence(): number {
@@ -6051,47 +5691,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       ).bind(request.workspaceId, ...userIds).all<{ user_id: string }>();
       for (const member of members.results ?? []) activeUsers.add(member.user_id);
     }
-    const subscriptionIds = [...new Set(request.envelopes.flatMap((envelope) => (
-      envelope.effect.kind === "directory_common" && envelope.effect.automationSubscriptionId
-        ? [envelope.effect.automationSubscriptionId]
-        : []
-    )))];
-    const originLabels = new Map<string, string>();
-    if (subscriptionIds.length > 0) {
-      const placeholders = subscriptionIds.map(() => "?").join(",");
-      const labels = this.state.storage.sql.exec<{ id: string; name: string }>(
-        `SELECT automation_id AS id, title AS name
-           FROM automation_directory
-          WHERE workspace_id = ? AND automation_id IN (${placeholders})`,
-        request.workspaceId,
-        ...subscriptionIds,
-      ).toArray();
-      for (const label of labels) {
-        originLabels.set(label.id, truncateUtf16Safe(label.name, 120));
-      }
-    }
     let directoryChanged = false;
     const commonChanges = new Set<string>();
     const archivalChanges = new Set<string>();
-    const watchReconciliations = new Map<string, {
-      authorityGeneration: number;
-      projectionVersion: number;
-      sourceHash: string;
-    }>();
-    const automationRunProjections = new Map<string, {
-      automationId: string;
-      runId: string;
-      workstreamId: string;
-      workstreamGeneration: number;
-      sourceVersion: number;
-      payloadHash: string;
-      state: string;
-      completedAt: number | null;
-    }>();
+    const watchReconciliations = new Set<string>();
     const viewerChanges = new Map<string, Set<string>>();
     const accepted: WorkspaceDirectoryApplyResult["accepted"] = [];
     for (const envelope of request.envelopes) {
-      const applied = this.applyDirectoryEnvelope(envelope, activeUsers, originLabels);
+      const applied = this.applyDirectoryEnvelope(envelope, activeUsers);
       directoryChanged = directoryChanged || applied.changed;
       // A replay reconciles as well as a first application, the way the watch
       // registrations below do. The row and its receipt commit inside the call
@@ -6104,20 +5711,20 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       // retry path.
       if (applied.archivalChanged
         || (applied.replayed && envelope.effect.kind === "directory_common")) {
-        archivalChanges.add(envelope.workstreamId);
+        archivalChanges.add(envelope.parentId);
       }
       if (applied.changed && envelope.effect.kind === "directory_common") {
-        commonChanges.add(envelope.workstreamId);
+        commonChanges.add(envelope.parentId);
       } else if (applied.changed && envelope.effect.kind === "directory_user") {
         if (applied.participantMembershipChanged) {
           // The facepile is the whole participant set. A join or leave that
           // only reached the affected viewer's socket would leave everyone
           // else's pile stale until reconnect.
-          commonChanges.add(envelope.workstreamId);
+          commonChanges.add(envelope.parentId);
         } else {
-          const users = viewerChanges.get(envelope.workstreamId) ?? new Set<string>();
+          const users = viewerChanges.get(envelope.parentId) ?? new Set<string>();
           users.add(envelope.effect.userId);
-          viewerChanges.set(envelope.workstreamId, users);
+          viewerChanges.set(envelope.parentId, users);
         }
       }
       if (envelope.effect.kind === "directory_common") {
@@ -6127,7 +5734,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           payload_hash: string;
         }>(`SELECT authority_generation, waterline, payload_hash
               FROM workspace_workstream_directory WHERE workstream_id = ?`,
-        envelope.workstreamId).toArray()[0];
+        envelope.parentId).toArray()[0];
         // Reconcile on an exact replay as well as the first application. The
         // directory row and registration replacement are separate durable
         // transactions, so a failed connector lookup must be recoverable by
@@ -6136,29 +5743,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           && current.authority_generation === envelope.generation
           && current.waterline === envelope.sourceVersion
           && current.payload_hash === envelope.payloadHash) {
-          watchReconciliations.set(envelope.workstreamId, {
-            authorityGeneration: envelope.generation,
-            projectionVersion: envelope.sourceVersion,
-            sourceHash: envelope.payloadHash,
-          });
-          const durableAutomation = envelope.effect.automationSubscriptionId
-            ? this.state.storage.sql.exec<{ one: number }>(
-                `SELECT 1 AS one FROM automation_directory WHERE automation_id = ?`,
-                envelope.effect.automationSubscriptionId,
-              ).toArray()[0]
-            : null;
-          if (durableAutomation && envelope.effect.automationSubscriptionId && envelope.effect.automationRunId) {
-            automationRunProjections.set(envelope.effect.automationRunId, {
-              automationId: envelope.effect.automationSubscriptionId,
-              runId: envelope.effect.automationRunId,
-              workstreamId: envelope.workstreamId,
-              workstreamGeneration: envelope.generation,
-              sourceVersion: envelope.sourceVersion,
-              payloadHash: envelope.payloadHash,
-              state: envelope.effect.state,
-              completedAt: epoch(envelope.effect.completedAt),
-            });
-          }
+          watchReconciliations.add(envelope.parentId);
         }
       }
       accepted.push({ messageId: envelope.messageId, payloadHash: envelope.payloadHash });
@@ -6179,45 +5764,17 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       && this.projectStorage().noteMemberArchivalChange([...archivalChanges])) {
       this.publishProjectSnapshot();
     }
-    await Promise.all([...watchReconciliations].map(([workstreamId, coordinate]) => (
+    await Promise.all([...watchReconciliations].map((workstreamId) => (
       this.reconcileWorkstreamResourceRegistrations({
         workspaceId: request.workspaceId,
         workstreamId,
-        ...coordinate,
       })
     )));
-    // One automation's refusal must not fail the batch. These envelopes are
-    // already accepted above — the directory rows are written, and this hop is
-    // the copy each automation keeps of its own run. Letting a rejection
-    // propagate out of the `Promise.all` fails every envelope in the batch,
-    // which is then redelivered with the same payload and fails the same way:
-    // one automation the agent cannot parse for stalls the directory for all
-    // of them, permanently. Each projection is carried on its own and its
-    // failure logged, so the automation that could not be reached is the only
-    // one that falls behind, and it catches up on its next projection.
-    const runProjections = await Promise.allSettled(
-      [...automationRunProjections.values()].map(async (projection) => {
-        const automationId = asAutomationId(projection.automationId);
-        const agent = await durableObjectStubForWorkspace(
-          this.env,
-          this.env.AUTOMATION_AGENTS,
-          request.workspaceId,
-          automationAgentName(this.env.AVALON_REGION, asWorkspaceId(request.workspaceId), automationId),
-        );
-        await agent.applyRunProjection({
-          schemaVersion: 1,
-          workspaceId: request.workspaceId,
-          ...projection,
-        });
-      }),
-    );
-    for (const settled of runProjections) {
-      if (settled.status !== "rejected") continue;
-      logWarn(this.env, "automation_run_projection_failed", {
-        workspace_id: request.workspaceId,
-        code: diagnosticErrorCode(settled.reason, "automation_run_projection_failed"),
-      });
-    }
+    // Archiving a room is a decision about the room, and the automations it
+    // owns follow it. Each is its own object and is told on its own: one that
+    // cannot be reached is the only one that falls behind, and its next
+    // occurrence finds the room archived through `authority` anyway.
+    if (archivalChanges.size > 0) await this.notifyOwningRoomArchival(request.workspaceId, [...archivalChanges]);
     if (commonChanges.size > 0) {
       // A `directory_common` effect is the only writer of
       // `next_terminal_action_at`, and it arrives outside any alarm — off the
@@ -6254,12 +5811,56 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * stream projects only the link intent; WorkspaceDO resolves resource and
    * connector facts and uses the same replacement engine as automations.
    */
+  /**
+   * Tell each automation a room owns that the room's archive state changed.
+   *
+   * Read from the directory rather than assumed from the effect: a replayed
+   * common effect reaches here too, and the row is what the archive is now.
+   */
+  private async notifyOwningRoomArchival(workspaceId: string, workstreamIds: readonly string[]): Promise<void> {
+    const owned = this.state.storage.sql.exec<{
+      automation_id: string;
+      workstream_id: string;
+      archived_at: number | null;
+    }>(
+      `SELECT automation.automation_id, directory.workstream_id, directory.archived_at
+         FROM automation_directory automation
+         JOIN workspace_workstream_directory directory
+           ON directory.workstream_id = automation.owning_workstream_id
+        WHERE automation.lifecycle <> 'deleted'
+          AND automation.owning_workstream_id IN (SELECT value FROM json_each(?))
+        ORDER BY automation.automation_id`,
+      JSON.stringify(workstreamIds),
+    ).toArray();
+    if (owned.length === 0) return;
+    const settled = await Promise.allSettled(owned.map(async (row) => {
+      const automation = await durableObjectStubForWorkspace(
+        this.env,
+        this.env.AUTOMATION_DOS,
+        workspaceId,
+        automationDOName(this.env.AVALON_REGION, asWorkspaceId(workspaceId), asAutomationId(row.automation_id)),
+      );
+      await automation.setOwningRoomArchived({
+        workspaceId: asWorkspaceId(workspaceId),
+        automationId: row.automation_id,
+        workstreamId: row.workstream_id,
+        archived: row.archived_at !== null,
+      });
+    }));
+    for (const [index, outcome] of settled.entries()) {
+      if (outcome.status !== "rejected") continue;
+      logWarn(this.env, "automation_owning_room_archival_failed", {
+        workspace_id: workspaceId,
+        automation_id: owned[index]?.automation_id ?? null,
+        workstream_id: owned[index]?.workstream_id ?? null,
+        code: diagnosticErrorCode(outcome.reason, "automation_owning_room_archival_failed"),
+      });
+    }
+  }
+
   private async reconcileWorkstreamResourceRegistrations(input: {
     workspaceId: string;
     workstreamId: string;
-    authorityGeneration: number;
-    projectionVersion: number;
-    sourceHash: string;
   }): Promise<void> {
     const linkedResources = this.state.storage.sql.exec<{
       resource_id: string;
@@ -6313,9 +5914,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           substreamId: "0",
           resourceId,
         },
-        authorityGeneration: input.authorityGeneration,
-        projectionVersion: input.projectionVersion,
-        sourceHash: input.sourceHash,
         evaluators: descriptors.map((descriptor) => ({
           evaluatorId: uuidV7(),
           source: {
@@ -6492,7 +6090,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         AND viewer.user_id = ?
         AND viewer.authority_generation = directory.authority_generation
        WHERE directory.archived_at IS NULL
-         AND directory.origin_type <> 'automation'
          AND directory.system_kind IS NULL`,
       request.userId,
     ).one();
@@ -6569,7 +6166,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
          LEFT JOIN workspace_workstream_pins pin
            ON pin.workstream_id = directory.workstream_id AND pin.user_id = ?
         WHERE directory.archived_at IS NULL
-          AND directory.origin_type <> 'automation'
           AND (? = 1 OR directory.system_kind IS NULL)
           AND (directory.scope = 'workspace' OR viewer.is_participant = 1)
           AND (? IS NULL OR directory.last_activity_at >= ?)
@@ -6796,60 +6392,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * and a workspace at its cap are ordinary answers, and the sentence the
    * person reads is the service's to choose.
    */
-  /** The workspace-shared template gallery, at each template's latest version. */
-  async listAutomationTemplates(
-    input: { workspaceId: string },
-  ): Promise<WorkspaceAutomationTemplateList> {
-    await this.initialized;
-    const workspaceId = IdSchema.parse(input.workspaceId);
-    this.assertWorkspace(workspaceId);
-    return listWorkspaceAutomationTemplates(this.state.storage, workspaceId);
-  }
-
-  /**
-   * Whether this person owns an active template with this id.
-   *
-   * A preflight, so the service can answer 404 before it validates a draft's
-   * connectors. Without it, adding a version to somebody else's template
-   * answers with a connector error — which both changes the endpoint's
-   * contract and tells a caller about connector state they have no claim on.
-   * The write still fences on ownership; this only decides what is said.
-   */
-  async automationTemplateOwnership(
-    input: WorkspaceAutomationTemplateOwnershipRequest,
-  ): Promise<WorkspaceAutomationTemplateOwnership> {
-    await this.initialized;
-    const request = WorkspaceAutomationTemplateOwnershipRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return workspaceAutomationTemplateOwnership(this.state.storage, request);
-  }
-
-  /** Publish a template and its first version, or neither. */
-  async publishAutomationTemplate(
-    input: WorkspaceAutomationTemplatePublishRequest,
-  ): Promise<void> {
-    await this.initialized;
-    const request = WorkspaceAutomationTemplatePublishRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    publishWorkspaceAutomationTemplate(this.state.storage, request);
-  }
-
-  /**
-   * Add the next version of a template the caller owns.
-   *
-   * The version number is read and bumped in one critical section, which two
-   * separate statements through the runtime facade could not do: both readers
-   * saw the same number and the unique constraint refused the second write.
-   */
-  async addAutomationTemplateVersion(
-    input: WorkspaceAutomationTemplateVersionRequest,
-  ): Promise<WorkspaceAutomationTemplateVersionResult> {
-    await this.initialized;
-    const request = WorkspaceAutomationTemplateVersionRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return addWorkspaceAutomationTemplateVersion(this.state.storage, request);
-  }
-
   /**
    * Re-derive the alarm after a typed method moved an outbox due time.
    *
@@ -8114,35 +7656,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return invalidateWorkspaceMemoryTableRows(this.state.storage, request);
   }
 
-  /**
-   * The title to show as a generated work stream's origin label.
-   *
-   * WorkstreamDO renders the summary and does not hold the automation's
-   * directory row. It used to read it as SQL through the workspace runtime
-   * facade, which routes by table name and sends an unrecognised one to the
-   * regional database — which is how this read came to answer
-   * `no such table: automation_directory` on every attempt to open an
-   * automation's run work stream.
-   *
-   * A deleted automation answers `null` rather than its last title: the work
-   * stream outlives the automation that made it, and the label should go quiet
-   * rather than name something the workspace no longer has.
-   */
-  async automationOriginLabel(
-    input: WorkspaceAutomationOriginLabelRequest,
-  ): Promise<WorkspaceAutomationOriginLabel> {
-    await this.initialized;
-    const request = WorkspaceAutomationOriginLabelRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    const row = this.state.storage.sql.exec<{ title: string }>(
-      `SELECT title FROM automation_directory
-        WHERE automation_id = ? AND workspace_id = ? AND lifecycle <> 'deleted'`,
-      request.automationId,
-      request.workspaceId,
-    ).toArray()[0];
-    return WorkspaceAutomationOriginLabelSchema.parse({ title: row?.title ?? null });
-  }
-
   /** A person's digest configuration, minus the connector-joined delivery targets. */
   async digestSettings(input: WorkspaceDigestSettingsRequest): Promise<WorkspaceDigestSettings> {
     await this.initialized;
@@ -8410,56 +7923,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     });
   }
 
-  /** Maintenance fence used before a D1 route may advertise an active child. */
-  async hasWorkstreamDirectory(input: WorkspaceDirectoryExistsRequest): Promise<boolean> {
-    await this.initialized;
-    const request = WorkspaceDirectoryExistsRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return Boolean(this.state.storage.sql.exec<{ one: number }>(
-      `SELECT 1 AS one FROM workspace_workstream_directory WHERE workstream_id = ?`,
-      request.workstreamId,
-    ).toArray()[0]);
-  }
-
-  async plannedWorkstream(input: WorkspaceDirectoryPlannedRequest): Promise<Workstream | null> {
-    await this.initialized;
-    const request = WorkspaceDirectoryPlannedRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    const viewerId = request.userId;
-    const row = this.state.storage.sql.exec<WorkspaceDirectoryRow>(
-      `${SELECT_WORKSPACE_DIRECTORY}
-       WHERE directory.automation_subscription_id = ?
-         AND directory.planned_for = ? AND directory.archived_at IS NULL
-         AND (directory.scope = 'workspace' OR viewer.is_participant = 1)
-       ORDER BY directory.source_updated_at DESC, directory.workstream_id LIMIT 1`,
-      viewerId,
-      viewerId,
-      request.automationSubscriptionId,
-      epoch(request.plannedFor),
-    ).toArray()[0];
-    return row ? mapDirectoryWorkstream(this.state.storage.sql, row, request.workspaceId) : null;
-  }
-
-  /** Exact idempotency lookup for the scheduler, independent of any member's visibility. */
-  async plannedAutomationWorkstream(
-    input: WorkspaceDirectoryPlannedAutomationRequest,
-  ): Promise<Workstream | null> {
-    await this.initialized;
-    const request = WorkspaceDirectoryPlannedAutomationRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    const row = this.state.storage.sql.exec<WorkspaceDirectoryRow>(
-      `${SELECT_WORKSPACE_DIRECTORY}
-       WHERE directory.automation_subscription_id = ?
-         AND directory.planned_for = ? AND directory.archived_at IS NULL
-       ORDER BY directory.source_updated_at DESC, directory.workstream_id LIMIT 1`,
-      "",
-      "",
-      request.automationSubscriptionId,
-      epoch(request.plannedFor),
-    ).toArray()[0];
-    return row ? mapDirectoryWorkstream(this.state.storage.sql, row, request.workspaceId) : null;
-  }
-
   async pinWorkstream(input: WorkspaceDirectoryPinRequest): Promise<{ items: Workstream[] }> {
     await this.initialized;
     const request = WorkspaceDirectoryPinRequestSchema.parse(input);
@@ -8583,105 +8046,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }) : null;
   }
 
-  /**
-   * The fence a delivery into a work stream writes behind.
-   *
-   * Read from the directory rather than from the room itself: the directory is
-   * what a re-authorization bumps, so a delivery that read the room would learn
-   * about the change only after writing into it. Returns null for a work stream
-   * this workspace does not have, which a caller must treat as "do not write"
-   * rather than "generation 1".
-   */
-  async workstreamDeliveryAuthority(
-    input: z.input<typeof WorkspaceDirectoryDeliveryAuthorityRequestSchema>,
-  ): Promise<z.infer<typeof WorkspaceDirectoryDeliveryAuthoritySchema> | null> {
-    await this.initialized;
-    const request = WorkspaceDirectoryDeliveryAuthorityRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    const row = this.state.storage.sql.exec<{
-      authority_generation: number;
-      archived_at: number | null;
-    }>(
-      `SELECT authority_generation, archived_at
-         FROM workspace_workstream_directory WHERE workstream_id = ?`,
-      request.workstreamId,
-    ).toArray()[0];
-    return row ? WorkspaceDirectoryDeliveryAuthoritySchema.parse({
-      authorityGeneration: row.authority_generation,
-      archived: row.archived_at !== null,
-    }) : null;
-  }
-
-  /**
-   * Reveal an automation occurrence's own work stream in the sidebar.
-   *
-   * Creates nothing. The run finished in a work stream that already exists and
-   * already holds its whole transcript; every listing query hides it because
-   * `origin_type = 'automation'`, and this stops that one row being hidden. A
-   * reader who takes the disposition's name literally will look for a creation
-   * path that is deliberately absent.
-   *
-   * Idempotent because it is a boolean: a delivery retry after a crash has
-   * nothing to duplicate.
-   */
-  async exposeAutomationRunWorkstream(
-    input: z.input<typeof WorkspaceDirectoryExposeRunRequestSchema>,
-  ): Promise<{ exposed: boolean; outcomeCode: string }> {
-    await this.initialized;
-    const request = WorkspaceDirectoryExposeRunRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    const row = this.state.storage.sql.exec<{
-      origin_type: string;
-      archived_at: number | null;
-    }>(
-      `SELECT origin_type, archived_at
-         FROM workspace_workstream_directory WHERE workstream_id = ?`,
-      request.workstreamId,
-    ).toArray()[0];
-    if (!row) return { exposed: false, outcomeCode: "workstream_not_found" };
-    // Only a run's own work stream. Exposing anything else would mean this RPC
-    // could unhide a room whose visibility somebody decided deliberately.
-    if (row.origin_type !== "automation") {
-      return { exposed: false, outcomeCode: "workstream_not_an_automation_run" };
-    }
-    // An archived run stays archived: a person archives an exposed run like any
-    // other work stream, and a later occurrence must not undo that.
-    if (row.archived_at !== null) return { exposed: false, outcomeCode: "workstream_archived" };
-    this.state.storage.sql.exec(
-      request.scope === null
-        ? `UPDATE workspace_workstream_directory
-              SET automation_exposed = 1
-            WHERE workstream_id = ?`
-        : `UPDATE workspace_workstream_directory
-              SET automation_exposed = 1, scope = ?
-            WHERE workstream_id = ?`,
-      ...(request.scope === null
-        ? [request.workstreamId]
-        : [request.scope, request.workstreamId]),
-    );
-    return { exposed: true, outcomeCode: "workstream_exposed" };
-  }
-
-  /** Every automation this work stream owns, whatever its lifecycle. */
-  async automationsOwnedByWorkstream(
-    input: z.input<typeof WorkspaceDirectoryOwnedAutomationsRequestSchema>,
-  ): Promise<z.infer<typeof WorkspaceDirectoryOwnedAutomationsSchema>> {
-    await this.initialized;
-    const request = WorkspaceDirectoryOwnedAutomationsRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    const rows = this.state.storage.sql.exec<{ automation_id: string; lifecycle: string }>(
-      `SELECT automation_id, lifecycle FROM automation_directory
-        WHERE owning_workstream_id = ? ORDER BY automation_id`,
-      request.workstreamId,
-    ).toArray();
-    return WorkspaceDirectoryOwnedAutomationsSchema.parse({
-      automations: rows.map((row) => ({
-        automationId: row.automation_id,
-        lifecycle: row.lifecycle,
-      })),
-    });
-  }
-
   async workstreamsForResource(
     input: WorkspaceDirectoryResourceRequest,
   ): Promise<WorkspaceDirectoryResourceResult> {
@@ -8801,11 +8165,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       workstream_id: string;
       scope: "personal" | "workspace";
       created_by_user_id: string | null;
-      automation_subscription_id: string | null;
       is_participant: number;
     }>(
       `SELECT directory.workstream_id, directory.scope, directory.created_by_user_id,
-              directory.automation_subscription_id,
               COALESCE(viewer.is_participant, 0) AS is_participant
          FROM workspace_workstream_resource_links link
          JOIN workspace_workstream_directory directory
@@ -8824,7 +8186,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         workstreamId: row.workstream_id,
         scope: row.scope,
         createdByUserId: row.created_by_user_id,
-        automationSubscriptionId: row.automation_subscription_id,
         isParticipant: row.is_participant === 1,
       })),
     });
@@ -8879,9 +8240,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   private applyDirectoryEnvelope(
-    envelope: WorkstreamRegionalEffectEnvelope,
+    envelope: ParentEffectEnvelope,
     activeUsers: ReadonlySet<string>,
-    originLabels: ReadonlyMap<string, string>,
   ): {
     changed: boolean;
     participantMembershipChanged: boolean;
@@ -8918,7 +8278,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         }>(
           `SELECT authority_generation, waterline, payload_hash, archived_at
              FROM workspace_workstream_directory WHERE workstream_id = ?`,
-          envelope.workstreamId,
+          envelope.parentId,
         ).toArray()[0];
         const applies = !current
           || envelope.generation > current.authority_generation
@@ -8932,9 +8292,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         }
         if (applies) {
           const effect = envelope.effect;
-          const originLabel = effect.automationSubscriptionId
-            ? originLabels.get(effect.automationSubscriptionId) ?? null
-            : null;
           this.state.storage.sql.exec(
             `INSERT INTO workspace_workstream_directory
                (workstream_id, authority_generation, waterline, source_event_id, payload_hash,
@@ -8972,7 +8329,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
                source_created_at = excluded.source_created_at,
                source_updated_at = excluded.source_updated_at,
                projected_at = excluded.projected_at`,
-            envelope.workstreamId,
+            envelope.parentId,
             envelope.generation,
             envelope.sourceVersion,
             envelope.messageId,
@@ -8987,12 +8344,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
             epoch(effect.completedAt),
             epoch(effect.archivedAt),
             effect.emailAddress ?? null,
-            effect.originType ?? "ad_hoc",
-            originLabel,
+            "ad_hoc",
+            null,
             effect.createdByUserId ?? null,
-            effect.automationSubscriptionId ?? null,
-            effect.automationRunId ?? null,
-            epoch(effect.plannedFor),
+            null,
+            null,
+            null,
             effect.titleStatus ?? "settled",
             effect.latestAttentionOrdinal ?? 0,
             effect.unreadTrackingStartOrdinal ?? 0,
@@ -9005,7 +8362,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           );
           this.state.storage.sql.exec(
             `DELETE FROM workspace_workstream_resource_links WHERE workstream_id = ?`,
-            envelope.workstreamId,
+            envelope.parentId,
           );
           for (const link of effect.resourceLinks ?? []) {
             this.state.storage.sql.exec(
@@ -9013,7 +8370,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
                  (workstream_id, resource_id, watch_enabled, relationship_type,
                   authority_generation, waterline, source_event_id, projected_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-              envelope.workstreamId,
+              envelope.parentId,
               link.resourceId,
               link.watchEnabled ? 1 : 0,
               link.relationshipType,
@@ -9047,7 +8404,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
                 WHERE workspace_id = ? AND workstream_id = ?
                   AND input_id = ? AND resource_id = ?`,
               envelope.workspaceId,
-              envelope.workstreamId,
+              envelope.parentId,
               release.inputId,
               release.resourceId,
             );
@@ -9071,14 +8428,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         }>(
           `SELECT authority_generation, waterline, payload_hash, is_participant
              FROM workspace_workstream_viewers WHERE workstream_id = ? AND user_id = ?`,
-          envelope.workstreamId,
+          envelope.parentId,
           effect.userId,
         ).toArray()[0];
         if (!activeUsers.has(effect.userId)) {
           const deleted = this.state.storage.sql.exec<{ is_participant: number }>(
             `DELETE FROM workspace_workstream_viewers
               WHERE workstream_id = ? AND user_id = ? RETURNING is_participant`,
-            envelope.workstreamId,
+            envelope.parentId,
             effect.userId,
           ).toArray()[0];
           changed = deleted !== undefined;
@@ -9127,7 +8484,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
                  manual_unread_generation = excluded.manual_unread_generation,
                  latest_mention_attention_ordinal = excluded.latest_mention_attention_ordinal,
                  projected_at = excluded.projected_at`,
-              envelope.workstreamId,
+              envelope.parentId,
               effect.userId,
               envelope.generation,
               envelope.sourceVersion,
@@ -9154,7 +8511,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       insertWorkstreamEffectReceipt(
         this.state.storage,
         envelope.messageId,
-        envelope.workstreamId,
+        envelope.parentId,
         envelope.payloadHash,
         now,
       );
@@ -9168,7 +8525,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const rows = this.state.storage.sql.exec<WorkspaceDirectoryRow>(
       `${SELECT_WORKSPACE_DIRECTORY}
        WHERE directory.archived_at IS NULL AND pin.user_id IS NULL
-         AND (directory.origin_type <> 'automation' OR directory.automation_exposed = 1)
          AND directory.exact_state NOT IN ('running', 'interrupting', 'preparing_context',
                                            'waiting_capacity')
          AND (? = 1 OR directory.system_kind IS NULL)
@@ -9212,49 +8568,23 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * The automations the sidebar opens with, read straight from this object.
-   *
-   * The REST list reconciles each automation's email route against the Global
-   * registry before answering. That is a network call, and this runs on the
-   * socket handler's single thread with the directory read beside it, so the
-   * address is served as stored and reconciled by the next `automations`
-   * refresh. No sidebar row renders it. `sidebar-reads.ts` holds the reasoning
-   * along with the statement both callers use.
+   * The automations a person's left sidebar lists: their own and the
+   * workspace's, drafts included, never a room's.
    */
-  private listSidebarAutomations(workspaceId: string, userId: string): AutomationSummary[] {
-    return this.state.storage.sql.exec<{
-      automation_id: string;
-      lifecycle: "draft" | "activating" | "active" | "paused";
-      title: string;
-      description: string;
-      scope: "personal" | "workspace";
-      next_run_at: number | null;
-      attention_code: string | null;
-      projected_at: number;
-    }>(`SELECT automation_id, lifecycle, title, description, scope, next_run_at,
-              attention_code, projected_at
-          FROM automation_directory
-         WHERE workspace_id = ? AND lifecycle <> 'deleted'
-           AND scope IN ('personal', 'workspace')
-           AND (scope = 'workspace' OR author_user_id = ?)
-         ORDER BY title COLLATE NOCASE, automation_id
-         LIMIT ?`, workspaceId, userId, SIDEBAR_LIST_LIMIT).toArray().map((row) => ({
-      id: row.automation_id,
-      name: row.title || "New automation",
-      description: row.description,
-      emailAddress: null,
-      scope: row.scope,
-      status: row.lifecycle === "draft"
-        ? "draft"
-        : row.lifecycle === "paused"
-          ? "paused"
-          : row.attention_code ? "error" : "active",
-      attention: automationAttention(row.attention_code),
-      nextRunAt: row.next_run_at === null ? null : new Date(row.next_run_at).toISOString(),
-      lastRunAt: null,
-      updatedAt: new Date(row.projected_at).toISOString(),
-      updateAvailable: false,
-    }));
+  private listSidebarAutomations(workspaceId: string, userId: string, limit = SIDEBAR_LIST_LIMIT): AutomationSummary[] {
+    return this.state.storage.sql.exec<AutomationDirectoryRow>(
+      `SELECT automation_id, lifecycle, scope, owning_workstream_id, title, description,
+              next_run_at, projected_at
+         FROM automation_directory
+        WHERE workspace_id = ? AND lifecycle <> 'deleted'
+          AND owning_workstream_id IS NULL
+          AND (scope = 'workspace' OR author_user_id = ?)
+        ORDER BY title COLLATE NOCASE, automation_id
+        LIMIT ?`,
+      workspaceId,
+      userId,
+      limit,
+    ).toArray().map(automationSummary);
   }
 
   private listSidebarNotes(
@@ -9268,7 +8598,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return this.state.storage.sql.exec<WorkspaceDirectoryRow>(
       `${SELECT_WORKSPACE_DIRECTORY}
        WHERE directory.archived_at IS NULL AND pin.user_id IS NOT NULL
-         AND (directory.origin_type <> 'automation' OR directory.automation_exposed = 1)
          AND (? = 1 OR directory.system_kind IS NULL)
          AND (directory.scope = 'workspace' OR viewer.is_participant = 1)
        ORDER BY pin.position, directory.workstream_id`,
@@ -9287,7 +8616,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return this.state.storage.sql.exec<WorkspaceDirectoryRow>(
       `${SELECT_WORKSPACE_DIRECTORY}
        WHERE directory.archived_at IS NULL
-         AND (directory.origin_type <> 'automation' OR directory.automation_exposed = 1)
          AND directory.exact_state IN ('running', 'interrupting', 'preparing_context',
                                        'waiting_capacity')
          AND (? = 1 OR directory.system_kind IS NULL)
@@ -9366,7 +8694,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       ).toArray()[0];
       if (!row) continue;
       const visible = row.archived_at === null
-        && (row.origin_type !== "automation" || row.automation_exposed === 1)
         && (row.scope === "workspace" || row.is_participant === 1);
       const stateVersion = directoryStateVersion(row);
       const payload = JSON.stringify(WorkspaceWorkstreamStateEventSchema.parse({
@@ -9587,19 +8914,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       workspaceId,
       this.env.AVALON_REGION,
       placementAffinity,
-      now,
-      now,
-    );
-    removeLegacyAutomationSchema(this.state.storage);
-    // A workspace born on the new build has no legacy authority to import. It
-    // starts past the campaign fence; only carried objects require the
-    // explicit audit/import/cleanup RPC before authoring is admitted.
-    this.state.storage.sql.exec(
-      `INSERT INTO automation_cutover_campaign
-         (id, workspace_id, state, source_hash, source_witness_json,
-          cursor_json, completed_at, updated_at)
-       VALUES (1, ?, 'completed', 'fresh', '{}', '{}', ?, ?)`,
-      workspaceId,
       now,
       now,
     );

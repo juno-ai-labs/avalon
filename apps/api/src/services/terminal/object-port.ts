@@ -1,6 +1,6 @@
-import { asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import { asWorkspaceId, asSubstreamId } from "@rally/contracts";
 
-import { substreamAgentName } from "../../durable-objects/names";
+import { conversationObjectName } from "../../durable-objects/names";
 import { rpcResultBody } from "../../durable-objects/rpc-result";
 import {
   TERMINAL_OPERATIONS,
@@ -94,6 +94,8 @@ export function createTerminalObjectPort(
    * so it can keep those semantics without RPCing back into its own event.
    */
   localOverride?: WorkstreamTerminalStorage | TerminalOperationExecutor,
+  /** Which of the parent's conversations; the main one by default. */
+  substreamId: string = "0",
 ): TerminalObjectPort {
   // The same seam the eight object ports take through `createObjectPort`:
   // an explicit override for a focused test, otherwise whatever the owning
@@ -101,7 +103,7 @@ export function createTerminalObjectPort(
   // rather than storage because its object wraps every operation in an alarm
   // and transaction boundary that storage alone would skip.
   const local = localOverride
-    ?? localWorkstreamAuthority(env, workspaceId, workstreamId, "terminal");
+    ?? localWorkstreamAuthority(env, workspaceId, workstreamId, "terminal", substreamId);
   const call = async (operation: TerminalOperation, args: unknown[]): Promise<unknown> => {
     if (typeof local === "function") {
       return await local(operation, args) ?? null;
@@ -114,15 +116,17 @@ export function createTerminalObjectPort(
       env,
       env.SUBSTREAM_AGENTS,
       asWorkspaceId(workspaceId),
-      substreamAgentName(
+      conversationObjectName(
         env.AVALON_REGION,
         asWorkspaceId(workspaceId),
-        asWorkstreamId(workstreamId),
+        workstreamId,
+        substreamId === "0" ? "0" : asSubstreamId(substreamId),
       ),
     );
     const result = await stub.executeTerminalOperation({
       workspaceId,
       workstreamId,
+      substreamId,
       operation,
       args,
     });

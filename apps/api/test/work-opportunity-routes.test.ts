@@ -146,7 +146,6 @@ describe("suggested-work HTTP product actions", () => {
         originType: "ad_hoc",
         originLabel: null,
         createdByUserId: USER_ID,
-        automationSubscriptionId: null,
         automationRunId: null,
         plannedFor: null,
         harnessStatus: "scheduled",

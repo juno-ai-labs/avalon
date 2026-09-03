@@ -620,7 +620,7 @@ describe("carrying one revocation to the objects", () => {
         substreamIds: options.substreamIds ?? [],
       })),
       SUBSTREAM_AGENTS: namespace(() => undefined),
-      AUTOMATION_AGENTS: namespace(() => undefined),
+      AUTOMATION_DOS: namespace(() => undefined),
       ACCESS_REVOCATION_QUEUE: {
         send: async (body: unknown) => { sent.push({ body }); },
         sendBatch: async (messages: Array<{ body: unknown }>) => { sent.push(...messages); },

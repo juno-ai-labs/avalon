@@ -29,7 +29,7 @@ import type { ArtifactHostDO } from "./durable-objects/artifact-host-do";
 import type { SubstreamAgent } from "./durable-objects/substream-agent";
 import type { WorkspaceDO } from "./durable-objects/workspace-do";
 import type { WorkstreamDO } from "./durable-objects/workstream-do";
-import type { AutomationAgent } from "./durable-objects/automation-agent";
+import type { AutomationDO } from "./durable-objects/automation-do";
 import type { DurableObjectMigrationReport } from "@rally/contracts/durable-object-migrations";
 import type { TelemetryOperatorPrincipal } from './telemetry/operator-auth';
 import type { DocumentProcessingRpcBinding } from './services/document-processing-contract';
@@ -59,7 +59,7 @@ export interface Env {
   // both. Either way they fall back to the model variables below.
   FLAGS?: Flagship;
   SUBSTREAM_AGENTS: DurableObjectNamespace<SubstreamAgent>;
-  AUTOMATION_AGENTS: DurableObjectNamespace<AutomationAgent>;
+  AUTOMATION_DOS: DurableObjectNamespace<AutomationDO>;
   WORKSTREAM_DOS: DurableObjectNamespace<WorkstreamDO>;
   WORKSPACE_DOS: DurableObjectNamespace<WorkspaceDO>;
   CRASH_SYMBOLICATOR: DurableObjectNamespace<CrashSymbolicatorContainer>;
@@ -150,7 +150,6 @@ export interface Env {
   OPENROUTER_FALLBACK_MODELS: string;
   OPENROUTER_CLASSIFIER_MODEL: string;
   OPENROUTER_STRUCTURED_MODEL: string;
-  OPENROUTER_AUTOMATION_MODEL: string;
   AZURE_OPENAI_ENDPOINT?: string;
   AZURE_OPENAI_API_KEY?: string;
   AZURE_OPENAI_REALTIME_DEPLOYMENT?: string;
@@ -229,7 +228,6 @@ export interface Env {
   PROVIDER_WEBHOOK_MAX_BYTES?: string;
   INBOUND_EMAIL_MAX_BYTES?: string;
   INBOUND_EMAIL_PROCESSING_LEASE_SECONDS?: string;
-  AUTOMATION_EMAIL_MAX_RUNS_PER_HOUR?: string;
   LOG_LEVEL: "debug" | "info" | "warn" | "error";
 }
 
@@ -337,7 +335,7 @@ const EnvContractSchema = z.object({
   TERMINAL_PROVIDER: binding<TerminalProviderRpcBinding>().optional(),
   TELEMETRY_DELIVERY: binding<TelemetryDeliveryRpcBinding>().optional(),
   SUBSTREAM_AGENTS: binding<DurableObjectNamespace<SubstreamAgent>>(),
-  AUTOMATION_AGENTS: binding<DurableObjectNamespace<AutomationAgent>>(),
+  AUTOMATION_DOS: binding<DurableObjectNamespace<AutomationDO>>(),
   WORKSTREAM_DOS: binding<DurableObjectNamespace<WorkstreamDO>>(),
   WORKSPACE_DOS: binding<DurableObjectNamespace<WorkspaceDO>>(),
   CRASH_SYMBOLICATOR: binding<DurableObjectNamespace<CrashSymbolicatorContainer>>(),
@@ -376,7 +374,6 @@ const EnvContractSchema = z.object({
   OPENROUTER_FALLBACK_MODELS: z.string(),
   OPENROUTER_CLASSIFIER_MODEL: z.string().min(1),
   OPENROUTER_STRUCTURED_MODEL: z.string().min(1),
-  OPENROUTER_AUTOMATION_MODEL: z.string().min(1),
   AZURE_INFERENCE_ENDPOINT: AzureInferenceEndpointSchema.optional(),
   // Deliberately optional: Azure model routing degrades to OpenRouter when absent.
   AZURE_INFERENCE_API_KEY: z.string().min(1).optional(),
@@ -411,7 +408,6 @@ const EnvContractSchema = z.object({
   PROVIDER_WEBHOOK_MAX_BYTES: numericString.optional(),
   INBOUND_EMAIL_MAX_BYTES: numericString.optional(),
   INBOUND_EMAIL_PROCESSING_LEASE_SECONDS: numericString.optional(),
-  AUTOMATION_EMAIL_MAX_RUNS_PER_HOUR: numericString.optional(),
 
   EU_PUBLIC_API_BASE_URL: HttpUrlSchema.optional(),
   GITHUB_INGRESS_BASE_URL: HttpUrlSchema.optional(),
@@ -600,8 +596,7 @@ export function numericEnv(
     | "WEBHOOK_REPLAY_WINDOW_SECONDS"
     | "PROVIDER_WEBHOOK_MAX_BYTES"
     | "INBOUND_EMAIL_MAX_BYTES"
-    | "INBOUND_EMAIL_PROCESSING_LEASE_SECONDS"
-    | "AUTOMATION_EMAIL_MAX_RUNS_PER_HOUR",
+    | "INBOUND_EMAIL_PROCESSING_LEASE_SECONDS",
   fallback: number,
 ): number {
   const parsed = Number.parseInt(env[key] ?? "", 10);

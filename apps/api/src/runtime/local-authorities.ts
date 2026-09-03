@@ -20,7 +20,7 @@
  * means a run does not have to be *recognized* to reach storage it is already
  * holding.
  */
-import type { WorkspaceId, WorkstreamId } from "@rally/contracts";
+import type { WorkspaceId } from "@rally/contracts";
 
 import type { Env } from "../env";
 // Type-only, so the value import in the other direction stays a one-way edge:
@@ -93,7 +93,18 @@ export interface WorkstreamAuthorityScope {
 
 const LOCAL_AUTHORITIES = Symbol("workstream-local-authorities");
 
-type AuthorityRegistry = ReadonlyMap<string, LocalWorkstreamAuthorities>;
+interface InstalledAuthorities {
+  /** What this object durably is. */
+  substreamId: string;
+  /**
+   * Whether a port built with no substream id resolves here. True inside every
+   * conversation object: a loop-side port means the conversation it runs in.
+   */
+  answersDefault: boolean;
+  authorities: LocalWorkstreamAuthorities;
+}
+
+type AuthorityRegistry = ReadonlyMap<string, InstalledAuthorities>;
 
 function scopeKey(workspaceId: string, workstreamId: string): string {
   return `${workspaceId}:${workstreamId}`;
@@ -116,19 +127,25 @@ export function localWorkstreamAuthority<K extends WorkstreamAuthority>(
   workspaceId: string,
   workstreamId: string,
   authority: K,
+  substreamId: string = "0",
 ): LocalWorkstreamAuthorities[K] | undefined {
-  return carriedAuthorities(env).get(scopeKey(workspaceId, workstreamId))?.[authority];
+  const installed = carriedAuthorities(env).get(scopeKey(workspaceId, workstreamId));
+  // A port that names a substream other than the one this object is must go
+  // over the wire: the installed executors answer for this object alone.
+  if (!installed || (substreamId !== "0" && installed.substreamId !== substreamId)) return undefined;
+  if (substreamId === "0" && installed.substreamId !== "0" && !installed.answersDefault) return undefined;
+  return installed.authorities[authority];
 }
 
 /**
- * Whether this object is the authority for the work stream being run.
+ * Whether this object is the authority for the conversation being run.
  *
  * This is the *routing* half of `objectPortRefusal` and deliberately not all of
- * it: every endpoint refuses anything but an identity match on both ids in the
- * main child, and a local path that answered where an endpoint would refuse
- * would serve a work stream's state out of the wrong object — a far worse
- * failure than the round trip it saves. Exported and pure so the rule is checked
- * rather than reasoned about.
+ * it: every endpoint refuses anything but an identity match on the parent and
+ * on the substream it durably is, and a local path that answered where an
+ * endpoint would refuse would serve a conversation's state out of the wrong
+ * object — a far worse failure than the round trip it saves. Exported and pure
+ * so the rule is checked rather than reasoned about.
  *
  * The other half — `isAuthoritative()`, which is `authority_mode` and a
  * generation above zero — is deliberately absent here, because this is answered
@@ -140,20 +157,25 @@ export function localWorkstreamAuthority<K extends WorkstreamAuthority>(
  * storage instance.
  *
  * Both substream ids are compared, not one: `substreamId` is the run being
- * dispatched and `externalSubstreamId` is what this object durably is. A
- * non-main object running a main-child run — or the reverse — is a routing
- * defect that must go over the wire and be refused, not answered locally.
+ * dispatched and `externalSubstreamId` is what this object durably is. An
+ * object running another substream's run is a routing defect that must go
+ * over the wire and be refused, not answered locally.
+ *
+ * The registry is keyed by the parent alone, so inside a child conversation a
+ * port built without a substream id means "the conversation I am running in",
+ * which is what every loop-side port means. A deliberate read of the parent's
+ * main conversation from inside a child names `"0"` explicitly and goes over
+ * the wire.
  */
 export function objectOwnsWorkstreamAuthorities(
-  identity: { workspaceId: WorkspaceId; workstreamId: WorkstreamId } | null,
+  identity: { workspaceId: WorkspaceId; parentId: string } | null,
   externalSubstreamId: string,
   scope: WorkstreamAuthorityScope,
 ): boolean {
   return identity !== null
     && identity.workspaceId === scope.workspaceId
-    && identity.workstreamId === scope.workstreamId
-    && scope.substreamId === "0"
-    && externalSubstreamId === "0";
+    && identity.parentId === scope.workstreamId
+    && scope.substreamId === externalSubstreamId;
 }
 
 /**
@@ -169,11 +191,16 @@ export function withLocalWorkstreamAuthorities(
   env: Env,
   workspaceId: string,
   workstreamId: string,
+  substreamId: string,
   authorities: LocalWorkstreamAuthorities,
 ): Env {
   const key = scopeKey(workspaceId, workstreamId);
   const carried: AuthorityRegistry = new Map(carriedAuthorities(env))
-    .set(key, { ...carriedAuthorities(env).get(key), ...authorities });
+    .set(key, {
+      substreamId,
+      answersDefault: true,
+      authorities: { ...carriedAuthorities(env).get(key)?.authorities, ...authorities },
+    });
   return new Proxy(env, {
     get(target, property, receiver) {
       if (property === LOCAL_AUTHORITIES) return carried;

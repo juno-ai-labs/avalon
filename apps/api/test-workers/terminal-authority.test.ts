@@ -25,7 +25,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { asSubstreamId } from "@rally/contracts";
 
-import { substreamAgentName } from "../src/durable-objects/names";
+import { conversationObjectName } from "../src/durable-objects/names";
 import type { SubstreamAgent } from "../src/durable-objects/substream-agent";
 import type { TerminalOperation } from "../src/durable-objects/workstream-terminal-protocol";
 import { rpcResultBody } from "../src/durable-objects/rpc-result";
@@ -57,7 +57,7 @@ let unique = 0;
 function agent(): DurableObjectStub {
   unique += 1;
   return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
-    substreamAgentName(
+    conversationObjectName(
       "global",
       WORKSPACE_ID,
       WORKSTREAM_ID,
@@ -69,7 +69,7 @@ function agent(): DurableObjectStub {
 /** The one main-child object whose Terminal tables are work-stream authority. */
 function mainAgent(): DurableObjectStub {
   return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
-    substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID, asSubstreamId("0")),
+    conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID, asSubstreamId("0")),
   ));
 }
 

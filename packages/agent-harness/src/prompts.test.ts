@@ -7,7 +7,6 @@ import {
   renderSemanticTriggerMessages,
   renderScheduledDigestBriefMessage,
   renderTriggerActivityMessage,
-  renderAutomationResultDispositionMessages,
   renderUntrustedAutomationResultMessage,
   renderUntrustedInboundEmailMessage,
   renderUntrustedSlackOriginMessage,
@@ -395,17 +394,6 @@ describe("prompt renderers", () => {
       deliveredAt: "2026-08-03T00:00:00.000Z",
       text: injection,
     });
-    // The classifier reads that same result. Its system prompt must not carry
-    // it, and the user message must.
-    const dispositionMessages = renderAutomationResultDispositionMessages({
-      automationName: injection,
-      automationObjective: injection,
-      triggerKind: "external_event",
-      triggerSummary: injection,
-      result: injection,
-      recentDispositions: ["done"],
-      reach: { canDeliver: true, canExpose: false },
-    });
     // A digest brief is Avalon's instruction wrapped around connector-derived
     // event titles and bodies, so it carries outside content and belongs here.
     const digestMessage = renderScheduledDigestBriefMessage({
@@ -446,10 +434,6 @@ describe("prompt renderers", () => {
     expect(emailMessage).toMatchObject({ role: "user" });
     expect(activationMessage).toMatchObject({ role: "user" });
     expect(activationMessage.content).toContain(injection);
-    expect(dispositionMessages[0]).toMatchObject({ role: "system" });
-    expect(dispositionMessages[0]!.content).not.toContain(injection);
-    expect(dispositionMessages[1]).toMatchObject({ role: "user" });
-    expect(dispositionMessages[1]!.content).toContain(injection);
     expect(digestMessage).toMatchObject({ role: "user" });
     expect(digestMessage.content).toContain(injection);
     expect(semanticMessages[0]!.content).not.toContain(injection);

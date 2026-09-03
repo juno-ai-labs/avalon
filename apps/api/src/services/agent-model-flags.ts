@@ -68,15 +68,12 @@ export function defaultAgentModelRouting(env: Env, role: AgentModelRole): AgentM
     case "inline_child":
     case "meeting_notes":
       return { model: modelId(env.OPENROUTER_PRIMARY_MODEL), fallbackModels };
-    case "automation_compiler":
-      return { model: modelId(env.OPENROUTER_AUTOMATION_MODEL), fallbackModels };
     case "addressing_classifier":
     case "workstream_naming":
       return { model: modelId(env.OPENROUTER_CLASSIFIER_MODEL), fallbackModels };
     case "work_opportunity_admission":
     case "work_opportunity_ranking":
     case "workstream_description":
-    case "automation_result_disposition":
       return { model: modelId(env.OPENROUTER_STRUCTURED_MODEL), fallbackModels };
     default: {
       const exhaustive: never = role;
@@ -292,14 +289,14 @@ function unknownStoredOverride(value: unknown): string | null {
 export function automationModelOverride(
   env: Env,
   value: unknown,
-  context: { workspaceId: string; automationSubscriptionId: string },
+  context: { workspaceId: string; automationId: string },
 ): string | null {
   const unknown = unknownStoredOverride(value);
   if (unknown) {
     logStructuredEvent(env, "warn", "workstream_model_override_unknown", {
       agent: "workstream",
       workspace_id: context.workspaceId,
-      automation_subscription_id: context.automationSubscriptionId,
+      automation_id: context.automationId,
       stored_model: unknown,
     });
   }

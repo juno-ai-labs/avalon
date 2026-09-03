@@ -169,7 +169,7 @@ export function createWorkstreamAttachmentTools(
               })
             : null;
           const output = WorkstreamListResourcesOutputSchema.parse({
-            workstreamId: input.workstreamId,
+            workstreamId: input.parentId,
             asOf,
             totalVisibleResources: visible.rows.length,
             totalMatchingResources: matching.length,
@@ -186,10 +186,10 @@ export function createWorkstreamAttachmentTools(
         try {
           result = await loadVisibleWorkstreamResourcePage(
             env.DB,
-            createResourceObjectPort(env, input.workspaceId, input.workstreamId),
+            createResourceObjectPort(env, input.workspaceId, input.parentId),
             {
               workspaceId: input.workspaceId,
-              workstreamId: input.workstreamId,
+              workstreamId: input.parentId,
               principal: input.executionPrincipal,
               attachmentKind,
               limit,
@@ -218,7 +218,7 @@ export function createWorkstreamAttachmentTools(
             })
           : null;
         const output = WorkstreamListResourcesOutputSchema.parse({
-          workstreamId: input.workstreamId,
+          workstreamId: input.parentId,
           asOf,
           totalVisibleResources: result.totalVisibleResources,
           totalMatchingResources: result.totalMatchingResources,
@@ -559,7 +559,7 @@ export function createWorkstreamAttachmentTools(
         try {
           draft = await summarizeDerivative({
             workspaceId: input.workspaceId,
-            workstreamId: input.workstreamId,
+            workstreamId: input.parentId,
             userId: input.executionPrincipal.type === "user" ? input.executionPrincipal.userId : null,
             resourceId: row.id,
             title: row.title,
@@ -604,7 +604,7 @@ export function createWorkstreamAttachmentTools(
 /** Recreate only ephemeral visual parts from a JSON-only completed receipt. */
 export async function rehydrateWorkstreamViewReceipt(
   env: Env,
-  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId" | "executionPrincipal">,
+  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "parentId" | "executionPrincipal">,
   rawInput: unknown,
   rawOutput: unknown,
 ): Promise<ModelMessageContentPart[]> {
@@ -613,10 +613,10 @@ export async function rehydrateWorkstreamViewReceipt(
   if (!parsedInput.success || !parsedOutput.success || parsedOutput.data.returned === 0) return [];
   const visible = await loadVisibleWorkstreamResourcesByIds(
     env.DB,
-    createResourceObjectPort(env, input.workspaceId, input.workstreamId),
+    createResourceObjectPort(env, input.workspaceId, input.parentId),
     {
       workspaceId: input.workspaceId,
-      workstreamId: input.workstreamId,
+      workstreamId: input.parentId,
       principal: input.executionPrincipal,
       resourceIds: parsedInput.data.resourceIds,
     },
@@ -889,7 +889,7 @@ async function sealCursorState(
   return sealAttachmentCursor(env.SESSION_SIGNING_KEY, {
     purpose: scopedCursorPurpose(options, purpose),
     principal: executionPrincipalKey(input.executionPrincipal),
-    scopeId: input.workstreamId,
+    scopeId: input.parentId,
     expiresAt: Date.now() + CURSOR_TTL_MS,
     state,
   });
@@ -907,7 +907,7 @@ async function openCursorState<T>(
     const payload = await openAttachmentCursor(env.SESSION_SIGNING_KEY, cursor, {
       purpose: scopedCursorPurpose(options, purpose),
       principal: executionPrincipalKey(input.executionPrincipal),
-      scopeId: input.workstreamId,
+      scopeId: input.parentId,
     });
     return schema.parse(payload.state);
   } catch (error) {
@@ -941,10 +941,10 @@ async function loadScopedResourceRows(
   }
   return loadVisibleWorkstreamResourcesByIds(
     env.DB,
-    createResourceObjectPort(env, input.workspaceId, input.workstreamId),
+    createResourceObjectPort(env, input.workspaceId, input.parentId),
     {
       workspaceId: input.workspaceId,
-      workstreamId: input.workstreamId,
+      workstreamId: input.parentId,
       principal: input.executionPrincipal,
       resourceIds,
     },

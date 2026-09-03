@@ -23,18 +23,15 @@ import { env } from "cloudflare:workers";
 import { reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import { asUserId, asWorkspaceId, asWorkstreamId, type ParentEffectEnvelope } from "@rally/contracts";
 
-import type { AuthContext } from "../src/env";
-import { substreamAgentName, workspaceDOName, workstreamDOName } from "../src/durable-objects/names";
+import type { AuthContext, Env } from "../src/env";
+import { conversationObjectName, workspaceDOName, workstreamDOName } from "../src/durable-objects/names";
 import type { SubstreamAgent } from "../src/durable-objects/substream-agent";
 import type { WorkstreamObjectProductService } from "../src/durable-objects/workstream-object-product";
 import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
-import {
-  WorkstreamRegionalEffectEnvelopeSchema,
-  type WorkstreamRegionalEffectEnvelope,
-} from "../src/durable-objects/workstream-regional-effect";
-import { processWorkstreamNotificationIntent } from "../src/services/workstream-regional-effect-service";
+import { processWorkstreamNotificationIntent } from "../src/services/conversation-effect-service";
+import { deliverChildEffects, pendingParentEffects } from "./helpers/conversation-effects";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000006a1");
 const WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006a2");
@@ -148,8 +145,38 @@ beforeEach(async () => {
 
 function agentStub(workstreamId = WORKSTREAM_ID): DurableObjectStub<SubstreamAgent> {
   return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
-    substreamAgentName("global", WORKSPACE_ID, workstreamId),
+    conversationObjectName("global", WORKSPACE_ID, workstreamId),
   ));
+}
+
+function parentStub(workstreamId = WORKSTREAM_ID): DurableObjectStub {
+  return env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
+    workstreamDOName("global", WORKSPACE_ID, workstreamId),
+  ));
+}
+
+/**
+ * Keep an object's outbox readable for the helpers.
+ *
+ * The drain alarm fires the moment an effect commits and hands the rows to
+ * `ACTIVITY_QUEUE`, which nothing in this Worker consumes, so a read placed
+ * after the mutation races the drain (docs/testing.md). A producer that
+ * refuses makes the drain defer the rows instead of deleting them, and the
+ * helpers then hand exactly those rows to the real consumer.
+ */
+async function parkEffectQueue(stub: DurableObjectStub): Promise<void> {
+  await runInDurableObject(stub, (instance) => {
+    const target = instance as unknown as { env: Env };
+    const parked = {
+      send: () => Promise.reject(new Error("effect_queue_parked_by_test")),
+      sendBatch: () => Promise.reject(new Error("effect_queue_parked_by_test")),
+    };
+    target.env = new Proxy(target.env, {
+      get: (current, property, receiver) => property === "ACTIVITY_QUEUE"
+        ? parked
+        : Reflect.get(current, property, receiver),
+    });
+  });
 }
 
 async function product(stub: DurableObjectStub, body: unknown): Promise<{
@@ -187,6 +214,7 @@ async function openWorkstream(
   } = {},
 ): Promise<void> {
   const workstreamId = options.workstreamId ?? WORKSTREAM_ID;
+  await parkEffectQueue(stub);
   // These cases assert creation's committed transcript and regional effects,
   // all of which `initialize` owns. The SubstreamAgent endpoint's next step is
   // only an execution-receipt wake. Calling the product service directly keeps
@@ -226,9 +254,11 @@ async function provisionWorkstream(
   workstreamId = WORKSTREAM_ID,
   options: { title?: string; scope?: "personal" | "workspace" } = {},
 ): Promise<void> {
+  await parkEffectQueue(stub);
   expect((await stub.bootstrapRuntime({
     workspaceId: WORKSPACE_ID,
-    workstreamId,
+    parentKind: "workstream",
+    parentId: workstreamId,
     generation: 1,
   })).status).toBe(200);
   expect((await stub.executeIdentityOperation({
@@ -239,14 +269,12 @@ async function provisionWorkstream(
       title: options.title ?? "Quarterly planning",
       objective: "Draft the quarterly plan",
       scope: options.scope ?? "personal",
-      originType: "ad_hoc",
       createdByUserId: CREATOR_ID,
       participantUserIds: [CREATOR_ID],
       harnessStatus: "idle",
       emailAddress: null,
       emailRouteStatus: null,
       systemKind: null,
-      automationSubscriptionId: null,
       automationRunId: null,
       plannedFor: null,
       modelOverride: null,
@@ -325,20 +353,19 @@ async function waitForCanonicalTurn(stub: DurableObjectStub, turnId: string): Pr
   ).toBe(1);
 }
 
+/**
+ * What the parent has queued for the workspace once the child's effects reach
+ * it: the child leg is driven through the real Queue consumer, and the
+ * parent's outbox is read with its own drain parked.
+ */
 async function deliveredEffects(
   stub: DurableObjectStub,
   workstreamId = WORKSTREAM_ID,
-): Promise<WorkstreamRegionalEffectEnvelope[]> {
-  await (stub as unknown as { flushEffectsToWorkstreamDO(): Promise<unknown> })
-    .flushEffectsToWorkstreamDO();
-  const parent = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
-    workstreamDOName("global", WORKSPACE_ID, workstreamId),
-  ));
-  const rows = await runInDurableObject(parent, (_instance, state) =>
-    state.storage.sql.exec<{ payload_json: string }>(
-      `SELECT payload_json FROM durable_outbox ORDER BY created_at, message_id`,
-    ).toArray());
-  return rows.map((row) => WorkstreamRegionalEffectEnvelopeSchema.parse(JSON.parse(row.payload_json)));
+): Promise<ParentEffectEnvelope[]> {
+  const parent = parentStub(workstreamId);
+  await parkEffectQueue(parent);
+  await deliverChildEffects(env, stub);
+  return pendingParentEffects(parent);
 }
 
 /**
@@ -353,10 +380,7 @@ async function viewerProjectionVersion(
   userId: string,
   workstreamId = WORKSTREAM_ID,
 ): Promise<number> {
-  const parent = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
-    workstreamDOName("global", WORKSPACE_ID, workstreamId),
-  ));
-  return runInDurableObject(parent, (_instance, state) =>
+  return runInDurableObject(parentStub(workstreamId), (_instance, state) =>
     Number(state.storage.sql.exec<{ next_version: number }>(
       `SELECT next_version FROM projection_keys WHERE projection_key = ?`,
       `user:${userId}`,
@@ -374,12 +398,8 @@ async function notificationReceipts(
   stub: DurableObjectStub,
   workstreamId = WORKSTREAM_ID,
 ): Promise<string[]> {
-  await (stub as unknown as { flushEffectsToWorkstreamDO(): Promise<unknown> })
-    .flushEffectsToWorkstreamDO();
-  const parent = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
-    workstreamDOName("global", WORKSPACE_ID, workstreamId),
-  ));
-  return runInDurableObject(parent, (_instance, state) =>
+  await deliverChildEffects(env, stub);
+  return runInDurableObject(parentStub(workstreamId), (_instance, state) =>
     state.storage.sql.exec<{ message_id: string }>(
       `SELECT message_id FROM child_effect_receipts
         WHERE message_id LIKE 'effect:participant_added:%' ORDER BY message_id`,

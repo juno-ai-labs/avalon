@@ -77,7 +77,7 @@ export async function createAvalonTerminalPlugin(
 
   await admitTerminalPublicationGrant(env, {
     workspaceId: input.workspaceId,
-    workstreamId: input.workstreamId,
+    workstreamId: input.parentId,
     harnessRunId: input.harnessRunId,
     triggerMessageId: input.triggerMessageId,
     executionPrincipal: input.executionPrincipal,
@@ -94,7 +94,7 @@ export async function createAvalonTerminalPlugin(
         "terminal_provider_request_finished",
         {
           workspace_id: input.workspaceId,
-          workstream_id: input.workstreamId,
+          workstream_id: input.parentId,
           harness_run_id: input.harnessRunId,
           tool_invocation_id: trace?.toolInvocationId ?? null,
           tool_call_id: trace?.toolCallId ?? null,

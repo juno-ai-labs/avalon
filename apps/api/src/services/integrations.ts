@@ -53,7 +53,6 @@ import {
 import { HttpUrlSchema } from "@rally/contracts/url-schemas";
 import {
   AutomationActivationV1Schema,
-  AutomationMemoryTableSchema,
   ModelPluginIdSchema,
   ToolDefinitionSchema,
   WorkstreamReadResourceOutputSchema,
@@ -65,7 +64,6 @@ import {
   asAutomationId,
   asUserId,
   asWorkspaceId,
-  type AutomationRunContextV1,
   asWorkstreamId,
   type UserId,
   type WorkspaceId,
@@ -84,6 +82,9 @@ import {
   type ToolInvocation,
   type ToolDefinition,
   type WorkstreamWorkflowInput,
+  AutomationRunDefinitionV1Schema,
+  MESSAGE_MAX_CHARACTERS,
+  type AutomationRunDefinitionV1,
 } from "@rally/contracts";
 import { newId, nowIso } from "@rally/db";
 import {
@@ -98,7 +99,8 @@ import {
   type ResolvedConnectorAdapter,
 } from "@rally/connectors";
 import { z } from "zod";
-import { automationAgentName, substreamAgentName, workspaceDOName } from "../durable-objects/names";
+import { automationDOName, conversationObjectName, workspaceDOName, workstreamDOName } from "../durable-objects/names";
+import { createAutomation } from "./automation-service";
 import type { TranscriptCompactionContinuation } from "../durable-objects/workstream-transcript-storage";
 import { rpcResultBody } from "../durable-objects/rpc-result";
 import { WorkspaceConnectorEventSchema } from "../durable-objects/workspace-connector-event-protocol";
@@ -238,7 +240,6 @@ import {
 } from "./memory-service";
 import { createMemoryTableTools } from "./memory-table-service";
 import type { MaterializedMemoryTable } from "./memory-table-service";
-import { readAutomationMemoryBootstrapForRun } from "./automation-memory-client";
 import { workstreamRunLimits } from "./workstream-run-policy";
 import { TERMINAL_PLUGIN_ID } from "./terminal/contract";
 import { createAvalonTerminalPlugin } from "./terminal/plugin";
@@ -1072,7 +1073,7 @@ async function loadWorkstreamContextCompaction(
  */
 async function loadTriggerFencedTranscriptMessages(
   transcript: MessageObjectPort,
-  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId" | "triggerMessageId">
+  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "parentId" | "triggerMessageId">
     & Partial<Pick<WorkstreamWorkflowInput, "transcriptFenceMessageId">>,
   listMessages: TranscriptMessageLister,
   afterSequence = -1,
@@ -1107,7 +1108,7 @@ async function loadTriggerFencedTranscriptMessages(
   while (true) {
     const page = await listMessages(
       input.workspaceId,
-      input.workstreamId,
+      input.parentId,
       pageSize,
       cursor,
     );
@@ -1166,7 +1167,7 @@ function automationActivationName(structuredContent: unknown): string {
 
 async function projectModelProtocolTranscript(
   env: Env,
-  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId" | "triggerMessageId">
+  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "parentId" | "triggerMessageId">
     & Partial<Pick<WorkstreamWorkflowInput, "executionPrincipal">>,
   storedMessages: Message[],
 ): Promise<{ messages: ModelMessage[]; issues: ModelTranscriptProjectionIssue[] }> {
@@ -1185,7 +1186,7 @@ async function projectModelProtocolTranscript(
     // messages. The workspace and work-stream predicates were the object's own
     // identity, which the port now enforces. So this is a receipt lookup by id
     // and nothing more.
-    const receipts = createToolReceiptObjectPort(env, input.workspaceId, input.workstreamId);
+    const receipts = createToolReceiptObjectPort(env, input.workspaceId, input.parentId);
     const toolRows: ToolReceiptRecord[] = [];
     // The batch bound is kept: the request envelope caps its arguments, and one
     // work stream's transcript can carry more tool messages than that.
@@ -1662,10 +1663,13 @@ function createAvalonAutomationsPlugin(
     submitted: AutomationDraft | null;
     evaluatorRules: AutomationSetEvaluatorRulesInputV1 | null;
   } = { submitted: null, evaluatorRules: null };
-  // One automation per authoring loop. Held here so a second submission
+  // In an automation's own conversation the draft is that automation's; in a
+  // room, one automation per authoring loop, held so a second submission
   // refines the first rather than creating another: an agent that asked a
   // clarifying question and submitted again has one proposal, not two.
-  const authoredAutomationId = asAutomationId(input.harnessRunId);
+  const authoredAutomationId = input.parentKind === "automation"
+    ? asAutomationId(input.parentId)
+    : asAutomationId(input.harnessRunId);
   let preparation: Promise<void> | null = null;
   const prepare = async (): Promise<void> => {
     if (!authorUserId) return;
@@ -1681,7 +1685,7 @@ function createAvalonAutomationsPlugin(
       const receipts = await createToolReceiptObjectPort(
         env,
         input.workspaceId,
-        input.workstreamId,
+        input.parentId,
       ).receiptsForRun({
         runId: input.harnessRunId,
         capabilities: [
@@ -1748,38 +1752,31 @@ function createAvalonAutomationsPlugin(
     draftMutationPort: {
       submitDraft: async (draft: AutomationDraft) => {
         if (!authorUserId) throw new Error("automation_draft_author_unavailable");
-        const agent = await durableObjectStubForWorkspace(
+        // A room's draft creates the automation on its first submission, owned
+        // by the room; the automation's own conversation already has one.
+        if (input.parentKind !== "automation") {
+          await createAutomation(env, {
+            workspaceId: input.workspaceId,
+            authorUserId,
+            scope: "workstream",
+            owningWorkstreamId: input.parentId,
+            automationId: authoredAutomationId,
+          });
+        }
+        const automation = await durableObjectStubForWorkspace(
           env,
-          env.AUTOMATION_AGENTS,
+          env.AUTOMATION_DOS,
           asWorkspaceId(input.workspaceId),
-          automationAgentName(
-            env.AVALON_REGION,
-            asWorkspaceId(input.workspaceId),
-            asAutomationId(authoredAutomationId),
-          ),
+          automationDOName(env.AVALON_REGION, asWorkspaceId(input.workspaceId), authoredAutomationId),
         );
-        const admitted = await agent.admitAuthoredDraft({
-          schemaVersion: 1,
+        const submitted = await automation.submitDefinition({
+          workspaceId: asWorkspaceId(input.workspaceId),
           automationId: authoredAutomationId,
-          workspaceId: input.workspaceId,
-          authorUserId,
-          region: env.AVALON_REGION,
-          authoredInWorkstreamId: input.workstreamId,
-          // Only a real channel. A DM is where somebody asked, not somewhere a
-          // standing automation should speak from, and a mention with no
-          // channel has nothing to record.
-          evaluatorRules: draftState.evaluatorRules,
-          authoredOrigin: input.slackOrigin?.channelId
-            && input.slackOrigin.channelType !== "im"
-            ? {
-                kind: "slack" as const,
-                teamId: input.slackOrigin.teamId,
-                channelId: input.slackOrigin.channelId,
-                channelName: input.slackOrigin.channelName,
-              }
-            : null,
           draft,
+          evaluatorRules: draftState.evaluatorRules,
+          submittedByRunId: input.harnessRunId,
         });
+        if (input.parentKind === "automation") return submitted;
         // The proposal, in the feed where the conversation happened. Posted
         // after the draft exists so a card can never name an automation the
         // accept action would not find.
@@ -1787,31 +1784,26 @@ function createAvalonAutomationsPlugin(
           env,
           env.SUBSTREAM_AGENTS,
           asWorkspaceId(input.workspaceId),
-          substreamAgentName(
-            env.AVALON_REGION,
-            asWorkspaceId(input.workspaceId),
-            asWorkstreamId(input.workstreamId),
-            asSubstreamId("0"),
-          ),
+          conversationObjectName(env.AVALON_REGION, asWorkspaceId(input.workspaceId), input.parentId),
         );
         await substream.appendDraftProposedCard({
           schemaVersion: 1,
           workspaceId: input.workspaceId,
-          workstreamId: input.workstreamId,
-          definitionRevision: admitted.definitionRevision,
+          workstreamId: input.parentId,
+          definitionRevision: submitted.definitionRevision,
           occurredAt: Date.now(),
           card: {
             type: "automation_draft_proposed",
             schemaVersion: 1,
-            automationId: asAutomationId(authoredAutomationId),
+            automationId: authoredAutomationId,
             automationName: draft.name,
             description: draft.description,
             triggerSummaries: draft.triggers.map(automationTriggerLine),
-            suggestedScope: draft.suggestedScope,
+            suggestedScope: "workstream",
             ready: draft.ready,
           },
         });
-        return admitted;
+        return submitted;
       },
       // Held until the submission that has somewhere to put them. A draft
       // written here has no automation until its first submission, and the
@@ -2073,10 +2065,10 @@ export async function activateWorkstreamLoop(env: Env, input: WorkstreamWorkflow
     env,
     env.SUBSTREAM_AGENTS,
     input.workspaceId,
-    substreamAgentName(
+    conversationObjectName(
       input.region,
       input.workspaceId,
-      input.workstreamId,
+      input.parentId,
       substreamId,
     ),
   );
@@ -2174,7 +2166,7 @@ export async function publishWorkstreamEvent(
       env,
       env.SUBSTREAM_AGENTS,
       workspaceId,
-      substreamAgentName(env.AVALON_REGION, asWorkspaceId(workspaceId), asWorkstreamId(workstreamId)),
+      conversationObjectName(env.AVALON_REGION, asWorkspaceId(workspaceId), asWorkstreamId(workstreamId)),
     );
     const response = await agent.publishEvent({ workspaceId: asWorkspaceId(workspaceId), workstreamId: asWorkstreamId(workstreamId), event });
     // A room that answered `409 room_identity_mismatch` or rejected the frame
@@ -2265,19 +2257,19 @@ export async function runWorkstreamHarness(
   // The archive gate was a `WHERE` clause because the read was a statement;
   // it is a test on the row here, and the row carries the object's own column
   // names — `description` is what the retired view called `objective`.
-  const identity = await createIdentityObjectPort(env, input.workspaceId, input.workstreamId)
+  const identity = await createIdentityObjectPort(env, input.workspaceId, input.parentId)
     .identity();
   const workstream = identity && identity.archived_at === null
     ? { title: identity.title, objective: identity.description }
     : null;
   if (!workstream) return { status: "failed", error: { code: "workstream_not_found", message: "Work stream not found" } };
-  const initialRun = await createHarnessRunObjectPort(env, input.workspaceId, input.workstreamId)
+  const initialRun = await createHarnessRunObjectPort(env, input.workspaceId, input.parentId)
     .run({ runId: input.harnessRunId });
   if (!initialRun) return { status: "failed", error: { code: "harness_run_not_found", message: "Harness run not found" } };
   if (initialRun.status === "cancelled") return { status: "stopped" };
   const streamId = input.harnessRunId;
   const persistedHostOutcome = await loadPersistedHarnessHostOutcome(
-    createHarnessRunObjectPort(env, input.workspaceId, input.workstreamId),
+    createHarnessRunObjectPort(env, input.workspaceId, input.parentId),
     input,
   );
   if (persistedHostOutcome) {
@@ -2294,7 +2286,7 @@ export async function runWorkstreamHarness(
     code: "run_ownership_lost",
   });
   const attemptLease = runtime.lease;
-  const runs = createHarnessRunObjectPort(env, input.workspaceId, input.workstreamId);
+  const runs = createHarnessRunObjectPort(env, input.workspaceId, input.parentId);
   const liveness = new CoalescedRunLiveness(runs, input.harnessRunId, attemptLease, {
     leaseSeconds: 300,
     minimumIntervalMs: 5_000,
@@ -2308,15 +2300,15 @@ export async function runWorkstreamHarness(
   const priorCompaction = requiresCanonicalBootstrap
     ? await loadWorkstreamContextCompaction(
         env.DB,
-        createTranscriptObjectPort(env, input.workspaceId, input.workstreamId),
-        createResourceObjectPort(env, input.workspaceId, input.workstreamId),
+        createTranscriptObjectPort(env, input.workspaceId, input.parentId),
+        createResourceObjectPort(env, input.workspaceId, input.parentId),
         input.workspaceId,
-        input.workstreamId,
+        input.parentId,
         input.executionPrincipal,
         undefined,
       )
     : null;
-  const transcript = createMessageObjectPort(env, input.workspaceId, input.workstreamId);
+  const transcript = createMessageObjectPort(env, input.workspaceId, input.parentId);
   const storedMessages = requiresCanonicalBootstrap
     ? await loadTriggerFencedTranscriptMessages(
       transcript,
@@ -2327,7 +2319,7 @@ export async function runWorkstreamHarness(
       // lister: the loader's fence walk is the same walk.
       transcriptLister(
         transcript,
-        { workspaceId: input.workspaceId, workstreamId: input.workstreamId },
+        { workspaceId: input.workspaceId, workstreamId: input.parentId },
       ),
       priorCompaction?.compactedThroughSequence ?? -1,
     )
@@ -2349,7 +2341,7 @@ export async function runWorkstreamHarness(
     logStructuredEvent(env, "warn", "harness_model_transcript_projected", {
       request_id: input.harnessRunId,
       workspace_id: input.workspaceId,
-      workstream_id: input.workstreamId,
+      workstream_id: input.parentId,
       issues: transcriptProjection.issues,
     });
   }
@@ -2450,7 +2442,7 @@ export async function runWorkstreamHarness(
   const attachmentGroundingReceipts = await createToolReceiptObjectPort(
     env,
     input.workspaceId,
-    input.workstreamId,
+    input.parentId,
   ).receiptsForRun({
     runId: input.harnessRunId,
     capabilities: ATTACHMENT_CONTENT_CAPABILITIES,
@@ -2485,7 +2477,7 @@ export async function runWorkstreamHarness(
     triggerPolicy: {
       reason: input.reason,
       inboundEmail: input.reason === "inbound_email",
-      automationSubscriptionId: input.automationSubscriptionId ?? null,
+      automationId: input.automationRun?.automationId ?? null,
       triggerMessageId: input.triggerMessageId ?? null,
       activityId: input.activityId ?? null,
       automationRunId: runAuthoritySnapshot.automationRunId,
@@ -2499,7 +2491,7 @@ export async function runWorkstreamHarness(
     limits: runScopeLimits,
   });
   const priorHints = await loadAuthorizedActivationHints(
-    createSchedulingObjectPort(env, input.workspaceId, input.workstreamId),
+    createSchedulingObjectPort(env, input.workspaceId, input.parentId),
     new Set(harnessTools.plugins.map((plugin) => plugin.canonicalId)),
   );
   const requestedActivations = [
@@ -2552,7 +2544,7 @@ export async function runWorkstreamHarness(
         publish: (publishedEvent: Record<string, unknown>) => publishWorkstreamEvent(
           env,
           input.workspaceId,
-          input.workstreamId,
+          input.parentId,
           publishedEvent,
         ),
       }] : []),
@@ -2561,7 +2553,7 @@ export async function runWorkstreamHarness(
       logStructuredEvent(env, "warn", "harness_realtime_event_dropped", {
         request_id: input.harnessRunId,
         workspace_id: input.workspaceId,
-        workstream_id: input.workstreamId,
+        workstream_id: input.parentId,
         channel,
         event_type: typeof event.type === "string" ? event.type : "unknown",
       });
@@ -2591,7 +2583,7 @@ export async function runWorkstreamHarness(
       logStructuredEvent(env, "warn", "harness_failure_stream_flush_dropped", {
         request_id: input.harnessRunId,
         workspace_id: input.workspaceId,
-        workstream_id: input.workstreamId,
+        workstream_id: input.parentId,
         reason: streamError instanceof Error ? streamError.name : "stream_flush_failed",
       });
     }
@@ -2599,7 +2591,7 @@ export async function runWorkstreamHarness(
 
   const modelRouting = await resolveWorkstreamModelRouting(env, {
     workspaceId: input.workspaceId,
-    workstreamId: input.workstreamId,
+    workstreamId: input.parentId,
   });
 
   if (!runtime?.persistentLoop && await isHarnessStopped(runs, input.harnessRunId)) {
@@ -2619,10 +2611,10 @@ export async function runWorkstreamHarness(
       : {}),
     requestId: input.harnessRunId,
     source: "workstream",
-    workstreamId: input.workstreamId,
+    workstreamId: input.parentId,
     substreamId: input.substreamId ?? "0",
   });
-  const orderedTranscript = createTranscriptObjectPort(env, input.workspaceId, input.workstreamId);
+  const orderedTranscript = createTranscriptObjectPort(env, input.workspaceId, input.parentId);
   const ensureTranscriptToolParents = async (event: {
     toolCallId: string;
     pluginId: string;
@@ -2734,7 +2726,7 @@ export async function runWorkstreamHarness(
       },
       workspaceId: input.workspaceId,
       resolveAzureModelPricing: createAzureModelPricingResolver(env),
-      workstreamId: input.workstreamId,
+      workstreamId: input.parentId,
       loopId: input.loopId,
       harnessRunId: input.harnessRunId,
       executionPrincipal: input.executionPrincipal,
@@ -2742,7 +2734,7 @@ export async function runWorkstreamHarness(
         source: "workstream",
         feature: AGENT_MODEL_FLAG_KEYS.workstream,
         workspaceId: input.workspaceId,
-        workstreamId: input.workstreamId,
+        workstreamId: input.parentId,
         substreamId: input.substreamId ?? "0",
         ...(input.executionPrincipal.type === "user"
           ? { contextUserId: input.executionPrincipal.userId }
@@ -2820,7 +2812,7 @@ export async function runWorkstreamHarness(
             await liveness.pulse("compaction_prepare", true);
             await assertRunAuthorityStillValid(env, input, runAuthoritySnapshot);
             preparedCompactionVisibilityFingerprint = await loadWorkstreamResourceInventoryFingerprint(
-              createResourceObjectPort(env, input.workspaceId, input.workstreamId),
+              createResourceObjectPort(env, input.workspaceId, input.parentId),
             );
           },
           renderAppendix: async () => {
@@ -2833,10 +2825,10 @@ export async function runWorkstreamHarness(
             try {
               current = await loadVisibleWorkstreamResourceInventory(
                 env.DB,
-                createResourceObjectPort(env, input.workspaceId, input.workstreamId),
+                createResourceObjectPort(env, input.workspaceId, input.parentId),
                 {
                   workspaceId: input.workspaceId,
-                  workstreamId: input.workstreamId,
+                  workstreamId: input.parentId,
                   principal: input.executionPrincipal,
                   expectedFingerprint: preparedCompactionVisibilityFingerprint,
                 },
@@ -2893,7 +2885,7 @@ export async function runWorkstreamHarness(
       logStructuredEvent(env, "warn", "harness_plugin_activation_dropped", {
         request_id: input.harnessRunId,
         workspace_id: input.workspaceId,
-        workstream_id: input.workstreamId,
+        workstream_id: input.parentId,
         drop,
       });
     },
@@ -2901,7 +2893,7 @@ export async function runWorkstreamHarness(
       logStructuredEvent(env, "warn", "harness_stream_event_dropped", {
         request_id: input.harnessRunId,
         workspace_id: input.workspaceId,
-        workstream_id: input.workstreamId,
+        workstream_id: input.parentId,
         event_type: event.type,
         turn_id: event.turnId,
         epoch: event.epoch,
@@ -3012,7 +3004,7 @@ export async function runWorkstreamHarness(
       await recordInferenceAttempt(runs, {
         harnessRunId: input.harnessRunId,
         workspaceId: input.workspaceId,
-        workstreamId: input.workstreamId,
+        workstreamId: input.parentId,
         attemptId: liveness.lease.attemptId,
         turnId: attempt.turnId,
         endpointAttempt: attempt.cursor.endpointAttempt + 1,
@@ -3051,7 +3043,7 @@ export async function runWorkstreamHarness(
       logStructuredEvent(env, "warn", "harness_transcript_healed", {
         request_id: input.harnessRunId,
         workspace_id: input.workspaceId,
-        workstream_id: input.workstreamId,
+        workstream_id: input.parentId,
         issues,
       });
     },
@@ -3078,7 +3070,7 @@ export async function runWorkstreamHarness(
       const row = await createToolReceiptObjectPort(
         env,
         input.workspaceId,
-        input.workstreamId,
+        input.parentId,
       ).receiptForCall({ runId: input.harnessRunId, toolCallId });
       if (!row) return null;
       const policyMatches = storedToolPolicyMatches(row.executionPlanJson, expectedPolicy);
@@ -3120,7 +3112,7 @@ export async function runWorkstreamHarness(
           plugins: harnessTools.plugins,
           context: {
             workspaceId: input.workspaceId,
-            workstreamId: input.workstreamId,
+            workstreamId: input.parentId,
             harnessRunId: input.harnessRunId,
             toolCallId,
             executionPrincipal: input.executionPrincipal,
@@ -3147,7 +3139,7 @@ export async function runWorkstreamHarness(
           }
           logStructuredEvent(env, "info", "terminal_tool_receipt_recovered", {
             workspace_id: input.workspaceId,
-            workstream_id: input.workstreamId,
+            workstream_id: input.parentId,
             harness_run_id: input.harnessRunId,
             tool_invocation_id: row.effectIntentId,
           });
@@ -3164,7 +3156,7 @@ export async function runWorkstreamHarness(
         }
         logStructuredEvent(env, "warn", "terminal_tool_receipt_recovery_ambiguous", {
           workspace_id: input.workspaceId,
-          workstream_id: input.workstreamId,
+          workstream_id: input.parentId,
           harness_run_id: input.harnessRunId,
           tool_invocation_id: row.effectIntentId,
         });
@@ -3196,7 +3188,7 @@ export async function runWorkstreamHarness(
         // still flips — a write may have reached the provider before failing.
         if (row.status !== "ambiguous" && row.status !== "completed") {
           await finalizeToolInvocationFailure(
-            createToolReceiptObjectPort(env, input.workspaceId, input.workstreamId),
+            createToolReceiptObjectPort(env, input.workspaceId, input.parentId),
             liveness.lease, {
             harnessRunId: input.harnessRunId,
             invocationId: row.effectIntentId,
@@ -3389,11 +3381,11 @@ export async function runWorkstreamHarness(
             toolSurfaceHash: receiptPolicy.toolSurfaceHash,
           };
           const receipt = await persistToolExecutionPlan(
-            createToolReceiptObjectPort(env, input.workspaceId, input.workstreamId),
+            createToolReceiptObjectPort(env, input.workspaceId, input.parentId),
             liveness.lease, {
             harnessRunId: input.harnessRunId,
             workspaceId: input.workspaceId,
-            workstreamId: input.workstreamId,
+            workstreamId: input.parentId,
             toolCallId: event.toolCallId,
             toolName: event.toolName,
             ...(receiptPolicy.connectionId ? { connectionId: receiptPolicy.connectionId } : {}),
@@ -3426,7 +3418,7 @@ export async function runWorkstreamHarness(
               await emit({ type: "tool_failed", invocation });
               await emitAgentToolTerminalTelemetry(env, {
                 workspaceId: input.workspaceId,
-                workstreamId: input.workstreamId,
+                workstreamId: input.parentId,
                 harnessRunId: input.harnessRunId,
                 invocationId: invocation.id,
               }).catch(() => undefined);
@@ -3438,7 +3430,7 @@ export async function runWorkstreamHarness(
             }
             logStructuredEvent(env, "warn", "tool_receipt_coordinate_conflict", {
               workspace_id: input.workspaceId,
-              workstream_id: input.workstreamId,
+              workstream_id: input.parentId,
               harness_run_id: input.harnessRunId,
               tool_invocation_id: receipt.invocationId,
               tool_name: event.toolName,
@@ -3483,18 +3475,18 @@ export async function runWorkstreamHarness(
             }
             await emitAgentToolStartedTelemetry(env, {
               workspaceId: input.workspaceId,
-              workstreamId: input.workstreamId,
+              workstreamId: input.parentId,
               harnessRunId: input.harnessRunId,
               invocationId: invocation.id,
-              ...(input.automationSubscriptionId
-                ? { automationId: input.automationSubscriptionId }
+              ...(input.automationRun
+                ? { automationId: input.automationRun.automationId }
                 : {}),
               executionPrincipal: input.executionPrincipal,
               toolName: receiptPolicy.definition.name,
               pluginId: receiptPolicy.pluginId,
               capability: receiptPolicy.definition.capability,
               mode,
-              runKind: input.automationSubscriptionId
+              runKind: input.automationRun
                 ? "automation"
                 : input.executionPrincipal.type === "workspace"
                   ? "system"
@@ -3582,7 +3574,7 @@ export async function runWorkstreamHarness(
             await recordToolAudit(env, input, invocation.id, event.toolName, receiptPolicy.definition.mode, "completed");
             await emitAgentToolTerminalTelemetry(env, {
               workspaceId: input.workspaceId,
-              workstreamId: input.workstreamId,
+              workstreamId: input.parentId,
               harnessRunId: input.harnessRunId,
               invocationId: invocation.id,
             }).catch(() => undefined);
@@ -3616,12 +3608,12 @@ export async function runWorkstreamHarness(
                   toolSurfaceHash: receiptPolicy.toolSurfaceHash,
                 };
                 return persistToolExecutionPlan(
-                  createToolReceiptObjectPort(env, input.workspaceId, input.workstreamId),
+                  createToolReceiptObjectPort(env, input.workspaceId, input.parentId),
                   liveness.lease,
                   {
                     harnessRunId: input.harnessRunId,
                     workspaceId: input.workspaceId,
-                    workstreamId: input.workstreamId,
+                    workstreamId: input.parentId,
                     toolCallId: event.toolCallId,
                     toolName: event.toolName,
                     ...(receiptPolicy.connectionId ? { connectionId: receiptPolicy.connectionId } : {}),
@@ -3642,7 +3634,7 @@ export async function runWorkstreamHarness(
           }
           if (!planAlreadyAmbiguous) {
             await settleRootHarnessToolFailure(
-              createToolReceiptObjectPort(env, input.workspaceId, input.workstreamId),
+              createToolReceiptObjectPort(env, input.workspaceId, input.parentId),
               liveness.lease,
               {
                 harnessRunId: input.harnessRunId,
@@ -3710,7 +3702,7 @@ export async function runWorkstreamHarness(
             await recordToolAudit(env, input, invocation.id, event.toolName, receiptPolicy.definition.mode, ambiguous ? "ambiguous" : "failed");
             await emitAgentToolTerminalTelemetry(env, {
               workspaceId: input.workspaceId,
-              workstreamId: input.workstreamId,
+              workstreamId: input.parentId,
               harnessRunId: input.harnessRunId,
               invocationId: invocation.id,
             }).catch(() => undefined);
@@ -3812,7 +3804,7 @@ export async function runWorkstreamHarness(
     logStructuredEvent(env, "warn", "attachment_grounding_guard_triggered", {
       request_id: input.harnessRunId,
       workspace_id: input.workspaceId,
-      workstream_id: input.workstreamId,
+      workstream_id: input.parentId,
       unresolved_count: diagnostic.count,
       error_codes: diagnostic.errorCodes,
       tool_names: diagnostic.toolNames,
@@ -3836,7 +3828,7 @@ export async function runWorkstreamHarness(
     logStructuredEvent(env, "warn", "workstream_harness_run_failed", {
       request_id: input.harnessRunId,
       workspace_id: input.workspaceId,
-      workstream_id: input.workstreamId,
+      workstream_id: input.parentId,
       outcome_status: outcome.status,
       failure_code: outcome.failure?.code ?? null,
       failure_kind: outcome.failure?.kind ?? null,
@@ -3934,7 +3926,7 @@ async function waitForInlineChildResult(
   parentToolCallId: string,
   signal: AbortSignal,
 ): Promise<InlineChildResult | null> {
-  const runs = createHarnessRunObjectPort(env, parentInput.workspaceId, parentInput.workstreamId);
+  const runs = createHarnessRunObjectPort(env, parentInput.workspaceId, parentInput.parentId);
   while (!signal.aborted) {
     await assertHarnessAttemptOwned(runs, parentInput.harnessRunId, parentLease);
     const lookup = await loadInlineChildResult(runs, parentInput, parentToolCallId);
@@ -4174,13 +4166,13 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
       const args = InlineChildToolInputSchema.parse(raw);
       const parentInput: HarnessRunCoordinates = {
         workspaceId: options.input.workspaceId,
-        workstreamId: options.input.workstreamId,
+        parentId: options.input.parentId,
         harnessRunId: options.input.harnessRunId,
       };
       const runs = createHarnessRunObjectPort(
         options.env,
         parentInput.workspaceId,
-        parentInput.workstreamId,
+        parentInput.parentId,
       );
       const canonicalByModelId = new Map(
         options.harnessTools.plugins.map((plugin) => [plugin.modelId, plugin.canonicalId]),
@@ -4370,7 +4362,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
         const childToolEffectIntents = createToolEffectIntents();
         const childModelRouting = await resolveAgentModelRouting(options.env, "inline_child", {
           workspaceId: childInput.workspaceId,
-          workstreamId: childInput.workstreamId,
+          workstreamId: childInput.parentId,
         });
         const childInferenceLogger = createAgentInferenceLogger(options.env, {
           workspaceId: childInput.workspaceId,
@@ -4380,7 +4372,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
           requestId: childInput.harnessRunId,
           parentRequestId: parentInput.harnessRunId,
           source: "inline_child",
-          workstreamId: childInput.workstreamId,
+          workstreamId: childInput.parentId,
           substreamId: childInput.substreamId ?? "0",
         });
         const outcome = await runHarness({
@@ -4405,7 +4397,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
           },
           workspaceId: childInput.workspaceId,
           resolveAzureModelPricing: createAzureModelPricingResolver(options.env),
-          workstreamId: childInput.workstreamId,
+          workstreamId: childInput.parentId,
           loopId: childInput.loopId,
           harnessRunId: childInput.harnessRunId,
           executionPrincipal: childInput.executionPrincipal,
@@ -4413,7 +4405,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
             source: "inline_child",
             feature: AGENT_MODEL_FLAG_KEYS.inline_child,
             workspaceId: childInput.workspaceId,
-            workstreamId: childInput.workstreamId,
+            workstreamId: childInput.parentId,
             substreamId: childInput.substreamId ?? "0",
             ...(childInput.executionPrincipal.type === "user"
               ? { contextUserId: childInput.executionPrincipal.userId }
@@ -4502,7 +4494,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
             const row = await createToolReceiptObjectPort(
               options.env,
               childInput.workspaceId,
-              childInput.workstreamId,
+              childInput.parentId,
             ).receiptForCall({ runId: childInput.harnessRunId, toolCallId });
             if (!row) return null;
             if (row.requestHash !== inputHash) throw new Error("tool_receipt_input_mismatch");
@@ -4567,7 +4559,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
               request_id: childInput.harnessRunId,
               parent_request_id: parentInput.harnessRunId,
               workspace_id: childInput.workspaceId,
-              workstream_id: childInput.workstreamId,
+              workstream_id: childInput.parentId,
               issues,
             });
           },
@@ -4576,7 +4568,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
               request_id: childInput.harnessRunId,
               parent_request_id: parentInput.harnessRunId,
               workspace_id: childInput.workspaceId,
-              workstream_id: childInput.workstreamId,
+              workstream_id: childInput.parentId,
               event_type: event.type,
               turn_id: event.turnId,
               epoch: event.epoch,
@@ -4612,12 +4604,12 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
                 };
                 const receipt = await persistToolExecutionPlan(
                   createToolReceiptObjectPort(
-                    options.env, childInput.workspaceId, childInput.workstreamId,
+                    options.env, childInput.workspaceId, childInput.parentId,
                   ),
                   childLiveness.lease, {
                   harnessRunId: childInput.harnessRunId,
                   workspaceId: childInput.workspaceId,
-                  workstreamId: childInput.workstreamId,
+                  workstreamId: childInput.parentId,
                   toolCallId: event.toolCallId,
                   toolName: event.toolName,
                   ...(receiptPolicy.connectionId ? { connectionId: receiptPolicy.connectionId } : {}),
@@ -4642,11 +4634,11 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
                 );
                 if (invocation) await emitAgentToolStartedTelemetry(options.env, {
                   workspaceId: childInput.workspaceId,
-                  workstreamId: childInput.workstreamId,
+                  workstreamId: childInput.parentId,
                   harnessRunId: childInput.harnessRunId,
                   invocationId: invocation.id,
-                  ...(childInput.automationSubscriptionId
-                    ? { automationId: childInput.automationSubscriptionId }
+                  ...(childInput.automationRun
+                    ? { automationId: childInput.automationRun.automationId }
                     : {}),
                   executionPrincipal: childInput.executionPrincipal,
                   toolName: receiptPolicy.definition.name,
@@ -4690,7 +4682,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
                 // mutate shared dependency state before its completion fence.
                 await registerAttachmentToolReceipt(options.env, {
                   workspaceId: childInput.workspaceId,
-                  workstreamId: childInput.workstreamId,
+                  workstreamId: childInput.parentId,
                   invocationId: invocation.id,
                   expectedOutputRef: outputRef,
                   canonicalToolName: receiptPolicy.definition.name,
@@ -4699,7 +4691,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
                 await assertChildOwned();
                 await emitAgentToolTerminalTelemetry(options.env, {
                   workspaceId: childInput.workspaceId,
-                  workstreamId: childInput.workstreamId,
+                  workstreamId: childInput.parentId,
                   harnessRunId: childInput.harnessRunId,
                   invocationId: invocation.id,
                 }).catch(() => undefined);
@@ -4732,13 +4724,13 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
                       };
                       return persistToolExecutionPlan(
                         createToolReceiptObjectPort(
-                          options.env, childInput.workspaceId, childInput.workstreamId,
+                          options.env, childInput.workspaceId, childInput.parentId,
                         ),
                         childLiveness.lease,
                         {
                           harnessRunId: childInput.harnessRunId,
                           workspaceId: childInput.workspaceId,
-                          workstreamId: childInput.workstreamId,
+                          workstreamId: childInput.parentId,
                           toolCallId: event.toolCallId,
                           toolName: event.toolName,
                           ...(receiptPolicy.connectionId
@@ -4767,7 +4759,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
                 const failure = classifyHarnessToolFailure(event);
                 await finalizeToolInvocationFailure(
                   createToolReceiptObjectPort(
-                    options.env, childInput.workspaceId, childInput.workstreamId,
+                    options.env, childInput.workspaceId, childInput.parentId,
                   ),
                   childLiveness.lease, {
                   harnessRunId: childInput.harnessRunId,
@@ -4784,7 +4776,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
                 await assertChildOwned();
                 await emitAgentToolTerminalTelemetry(options.env, {
                   workspaceId: childInput.workspaceId,
-                  workstreamId: childInput.workstreamId,
+                  workstreamId: childInput.parentId,
                   harnessRunId: childInput.harnessRunId,
                   invocationId,
                 }).catch(() => undefined);
@@ -4840,7 +4832,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
           request_id: admission.childInput.harnessRunId,
           parent_request_id: parentInput.harnessRunId,
           workspace_id: parentInput.workspaceId,
-          workstream_id: parentInput.workstreamId,
+          workstream_id: parentInput.parentId,
           failure_classification: error instanceof Error ? error.name : "unknown",
         });
       } finally {
@@ -4878,11 +4870,11 @@ async function recordOpenRouterInferenceAttempt(
         ? "defect" as const
         : "failed" as const);
   await recordInferenceAttempt(
-    createHarnessRunObjectPort(env, input.workspaceId, input.workstreamId),
+    createHarnessRunObjectPort(env, input.workspaceId, input.parentId),
     {
       harnessRunId: input.harnessRunId,
       workspaceId: input.workspaceId,
-      workstreamId: input.workstreamId,
+      workstreamId: input.parentId,
       attemptId: lease.attemptId,
       turnId: attempt.turnId,
       endpointAttempt: attempt.cursor.endpointAttempt + 1,
@@ -5001,61 +4993,32 @@ async function loadRunPromptContext(
           channel: "workstream";
           destination: string;
         }>;
-        authoringOrigin: AutomationRunContextV1["authoringOrigin"];
         defaultBehavior: Record<string, unknown>;
         overrides: Record<string, unknown>;
         durableTables: MaterializedMemoryTable[];
       }
     | undefined;
-  if (input.automationSubscriptionId) {
-    const frozen = input.automationRunContext;
-    // A workflow input serialized by the pre-cutover build names a
-    // subscription but cannot carry this context, so it lands here and stops.
-    // That is the intended outcome rather than a gap: the cutover drops the
-    // subscription, delivery-target, and resource rows such a run would need,
-    // so there is nothing left to finish it *as an automation run*, and
-    // finishing it as an ordinary one would drop its delivery silently.
-    //
-    // No drain step exists for these because the cutover is predicated on
-    // there being no customer automations to carry through a compatibility
-    // window — the product decision recorded in
-    // `docs/PRDs/2026-08-25_durable-automation-lifecycle/prd.md` and echoed in
-    // `docs/data-model.md`. If that premise is ever wrong, this is where it
-    // shows: the run fails by name instead of continuing on absent authority.
-    if (
-      !frozen
-      || frozen.automationId !== input.automationSubscriptionId
-      || frozen.workspaceId !== input.workspaceId
-    ) throw new Error("automation_run_context_not_found");
-    AutomationMemoryTableSchema.array().parse(frozen.definition.memoryTables);
-    const durableTables = (await readAutomationMemoryBootstrapForRun(env, input)).tables;
-    type ResultDestination = {
-      channel: "workstream";
-      destination: string;
-    };
-    // What Rally delivers on the run's behalf, which is now only the room a
-    // work-stream automation belongs to. Chosen destinations are gone: an
-    // automation that wants to reach somewhere outside Rally sends there itself,
-    // with the connector tools it was bound, as part of doing the work.
-    //
-    // This section exists to prevent a duplicate send, so it has to stay
-    // accurate in both directions. Naming the room stops the run posting the
-    // result there a second time; naming nothing, for every other scope, is
-    // what tells the run that nobody will send this for it.
-    const resultDelivery: ResultDestination[] = frozen.owningWorkstreamId !== null
-      ? [{ channel: "workstream", destination: frozen.owningWorkstreamId }]
+  if (input.automationRun) {
+    // A run reads its definition from its parent by revision. The revision is
+    // immutable, so nothing is frozen into the loop input beyond the reference.
+    const definition = await readAutomationRunDefinition(env, input);
+    // What Rally delivers on the run's behalf, which is only the room a
+    // work-stream automation belongs to, through the tool the run holds.
+    // Naming the room tells the run its result has one place to go; naming
+    // nothing tells it nobody will send this for it.
+    const resultDelivery: Array<{ channel: "workstream"; destination: string }> = definition.owningWorkstreamId !== null
+      ? [{ channel: "workstream", destination: definition.owningWorkstreamId }]
       : [];
-    automationSendsOutward = frozen.owningWorkstreamId === null;
+    automationSendsOutward = definition.owningWorkstreamId === null;
     automationContext = {
-      name: frozen.definition.name,
-      versionNumber: frozen.definitionRevision,
-      instructions: frozen.definition.instructions,
-      expectedOutputs: frozen.definition.expectedOutputs,
+      name: definition.definition.name,
+      versionNumber: definition.definitionRevision,
+      instructions: definition.definition.instructions,
+      expectedOutputs: definition.definition.expectedOutputs,
       resultDelivery,
-      authoringOrigin: frozen.authoringOrigin,
-      defaultBehavior: frozen.definition.defaultBehavior,
+      defaultBehavior: definition.definition.defaultBehavior,
       overrides: {},
-      durableTables,
+      durableTables: [],
     };
   }
   const additionalMessages: ModelMessage[] = [];
@@ -5085,7 +5048,7 @@ async function loadRunPromptContext(
     memoryQueryParts.push(JSON.stringify(recallable));
   }
   if (input.triggerMessageId && recallsMemoryAtAdmission) {
-    const triggerMessage = await createMessageObjectPort(env, input.workspaceId, input.workstreamId)
+    const triggerMessage = await createMessageObjectPort(env, input.workspaceId, input.parentId)
       .message({ messageId: input.triggerMessageId });
     if (triggerMessage?.text_content.trim()) memoryQueryParts.push(triggerMessage.text_content);
   }
@@ -5112,14 +5075,14 @@ async function loadRunPromptContext(
   }
   if (input.scheduledWakeupId) {
     const wakeup = await loadWorkstreamWakeup(
-      createSchedulingObjectPort(env, input.workspaceId, input.workstreamId),
+      createSchedulingObjectPort(env, input.workspaceId, input.parentId),
       input.workspaceId,
-      input.workstreamId,
+      input.parentId,
       input.scheduledWakeupId,
     );
     // Re-read against this work stream rather than trusting the workflow input:
     // the id travels through a durable parameter that outlives the row it names.
-    if (!wakeup || wakeup.workstream_id !== input.workstreamId) {
+    if (!wakeup || wakeup.workstream_id !== input.parentId) {
       throw new Error("scheduled_wakeup_context_not_found");
     }
     if (recallsMemoryAtAdmission) memoryQueryParts.push(wakeup.prompt);
@@ -5152,7 +5115,7 @@ async function loadRunPromptContext(
         deliveryId: input.digestDeliveryId,
       }),
     ).delivery;
-    const digestMessage = await createMessageObjectPort(env, input.workspaceId, input.workstreamId)
+    const digestMessage = await createMessageObjectPort(env, input.workspaceId, input.parentId)
       .messageByClientId({ clientMessageId: `digest:${input.digestDeliveryId}` });
     // Failing the attempt rather than running without the window: a digest with
     // no brief cannot be written, and settlement folds an unsettled window into
@@ -5230,12 +5193,12 @@ function truncateUtf8(value: string, maxBytes: number): string {
 
 function toolReplayOutputKey(
   env: Env,
-  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId" | "harnessRunId">,
+  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "parentId" | "harnessRunId">,
   attemptId: string,
   stableToolCallId: string,
   contentHash: string,
 ): string {
-  return `${env.AVALON_REGION}/${input.workspaceId}/workstreams/${input.workstreamId}/harness/${input.harnessRunId}/tool-results/${encodeURIComponent(attemptId)}/${encodeURIComponent(stableToolCallId)}/${encodeURIComponent(contentHash)}.json`;
+  return `${env.AVALON_REGION}/${input.workspaceId}/workstreams/${input.parentId}/harness/${input.harnessRunId}/tool-results/${encodeURIComponent(attemptId)}/${encodeURIComponent(stableToolCallId)}/${encodeURIComponent(contentHash)}.json`;
 }
 
 function serializeToolReplayOutput(output: unknown): string {
@@ -5262,7 +5225,7 @@ function durableToolReplayOutput(capability: string, output: unknown, summary: s
 
 async function persistSuccessfulToolResult(
   env: Env,
-  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId" | "harnessRunId">,
+  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "parentId" | "harnessRunId">,
   lease: AttemptLease,
   result: {
     invocationId: string;
@@ -5281,10 +5244,10 @@ async function persistSuccessfulToolResult(
    * seam the Terminal port takes, and for the same reason.
    */
   receipts: ToolReceiptObjectPort
-    = createToolReceiptObjectPort(env, input.workspaceId, input.workstreamId),
+    = createToolReceiptObjectPort(env, input.workspaceId, input.parentId),
   /** The harness-run authority, injectable through the same seam and for the same reason. */
   runs: HarnessRunObjectPort
-    = createHarnessRunObjectPort(env, input.workspaceId, input.workstreamId),
+    = createHarnessRunObjectPort(env, input.workspaceId, input.parentId),
 ): Promise<string> {
   const replayPayload = serializeToolReplayOutput(result.output);
   const contentHash = await sha256(replayPayload);
@@ -5299,7 +5262,7 @@ async function persistSuccessfulToolResult(
     httpMetadata: { contentType: "application/json; charset=utf-8" },
     customMetadata: {
       workspaceId: input.workspaceId,
-      workstreamId: input.workstreamId,
+      workstreamId: input.parentId,
       harnessRunId: input.harnessRunId,
       attemptId: lease.attemptId,
       contentHash,
@@ -5345,7 +5308,7 @@ async function persistSuccessfulToolResult(
 
 async function settleRootHarnessToolCompletion(
   env: Env,
-  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId" | "harnessRunId">,
+  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "parentId" | "harnessRunId">,
   lease: AttemptLease,
   result: {
     invocationId: string;
@@ -5359,9 +5322,9 @@ async function settleRootHarnessToolCompletion(
   },
   /** Injectable for the same reason `persistSuccessfulToolResult`'s is. */
   receipts: ToolReceiptObjectPort
-    = createToolReceiptObjectPort(env, input.workspaceId, input.workstreamId),
+    = createToolReceiptObjectPort(env, input.workspaceId, input.parentId),
   runs: HarnessRunObjectPort
-    = createHarnessRunObjectPort(env, input.workspaceId, input.workstreamId),
+    = createHarnessRunObjectPort(env, input.workspaceId, input.parentId),
 ): Promise<string> {
   const outputRef = await persistSuccessfulToolResult(env, input, lease, {
     invocationId: result.invocationId,
@@ -5384,7 +5347,7 @@ async function settleRootHarnessToolCompletion(
   // invalidates the receipt, and executes again instead of trusting the JSON.
   await registerAttachmentToolReceipt(env, {
     workspaceId: input.workspaceId,
-    workstreamId: input.workstreamId,
+    workstreamId: input.parentId,
     invocationId: result.invocationId,
     expectedOutputRef: outputRef,
     canonicalToolName: result.canonicalToolName,
@@ -5464,7 +5427,7 @@ export async function loadToolReplayOutput(
 
 async function loadAuthorizedAttachmentReplay(
   env: Env,
-  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId" | "executionPrincipal">,
+  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "parentId" | "executionPrincipal">,
   receipt: {
     invocationId: string;
     capability: string;
@@ -5479,7 +5442,7 @@ async function loadAuthorizedAttachmentReplay(
   if (!receipt.capability.startsWith("workstream.resources.")) return undefined;
   const validation = await validateAttachmentToolReceiptReplay(env, {
     workspaceId: input.workspaceId,
-    workstreamId: input.workstreamId,
+    workstreamId: input.parentId,
     principal: input.executionPrincipal,
     invocationId: receipt.invocationId,
     capability: receipt.capability,
@@ -5487,7 +5450,7 @@ async function loadAuthorizedAttachmentReplay(
   if (validation !== "valid" || !receipt.outputRef) {
     await invalidateAttachmentToolReplay(env, {
       workspaceId: input.workspaceId,
-      workstreamId: input.workstreamId,
+      workstreamId: input.parentId,
       invocationId: receipt.invocationId,
     });
     return null;
@@ -5496,7 +5459,7 @@ async function loadAuthorizedAttachmentReplay(
   if (output === null) {
     await invalidateAttachmentToolReplay(env, {
       workspaceId: input.workspaceId,
-      workstreamId: input.workstreamId,
+      workstreamId: input.parentId,
       invocationId: receipt.invocationId,
     });
     return null;
@@ -5509,7 +5472,7 @@ async function loadAuthorizedAttachmentReplay(
   } catch {
     await invalidateAttachmentToolReplay(env, {
       workspaceId: input.workspaceId,
-      workstreamId: input.workstreamId,
+      workstreamId: input.parentId,
       invocationId: receipt.invocationId,
     });
     return null;
@@ -5517,7 +5480,7 @@ async function loadAuthorizedAttachmentReplay(
   if (receipt.canonicalToolName === "view_resource" && contentParts.length === 0) {
     await invalidateAttachmentToolReplay(env, {
       workspaceId: input.workspaceId,
-      workstreamId: input.workstreamId,
+      workstreamId: input.parentId,
       invocationId: receipt.invocationId,
     });
     return null;
@@ -5547,17 +5510,14 @@ async function loadHarnessTools(
   modeByTool: Map<string, "read" | "write">;
 }> {
   const [attachedLinks, connectionRows] = await Promise.all([
-    createResourceObjectPort(env, input.workspaceId, input.workstreamId).attachedResourceIds(),
+    createResourceObjectPort(env, input.workspaceId, input.parentId).attachedResourceIds(),
     env.DB.prepare(
       `SELECT * FROM connector_connections WHERE workspace_id = ? AND status <> 'disabled'
        ORDER BY created_at ASC`,
     ).bind(input.workspaceId).all<Record<string, unknown>>(),
   ]);
-  const defaultModelPluginIds = new Set(
-    input.automationSubscriptionId
-      ? input.automationRunContext?.defaultPluginIds ?? []
-      : [],
-  );
+  const runDefinition = input.automationRun ? await readAutomationRunDefinition(env, input) : null;
+  const defaultModelPluginIds = new Set(runDefinition?.defaultPluginIds ?? []);
   // Two reads, one per authority, where the retired statement was a join.
   // Which resources this work stream has attached is the object's, and which
   // connection owns each of them is the workspace's — `_runtime_resources`
@@ -5596,9 +5556,15 @@ async function loadHarnessTools(
   // engine with a human approval step in front of it. It does its work, writes
   // its result, and what happens to that result is decided outside it.
   const loadedAutomationPluginIds = new Set<string>();
-  const automationsPlugin = input.automationRunContext
+  const automationsPlugin = input.automationRun
     ? null
     : createAvalonAutomationsPlugin(env, input, loadedAutomationPluginIds);
+  // The one way a run reaches the room that owns its automation. Offered only
+  // to a run of a room's automation, so a personal or workspace automation
+  // cannot post into a room at all.
+  const postResultPlugin = runDefinition?.owningWorkstreamId
+    ? createAutomationPostResultPlugin(env, input, runDefinition)
+    : null;
   // `tools` retains the historical flattened view for API diagnostics and
   // tests. Bind receives stable always-active core plugins plus loadable
   // built-in and credential-scoped plugins.
@@ -5609,6 +5575,7 @@ async function loadHarnessTools(
     terminalPlugin,
     multimodalGenerationPlugin,
     automationsPlugin,
+    postResultPlugin,
   ].filter(
     (plugin): plugin is HarnessPlugin => plugin !== null,
   );
@@ -6425,13 +6392,13 @@ async function assertRunAuthorityStillValid(
 ): Promise<RunAuthoritySnapshot> {
   const db: D1Database = env.DB;
   await assertExecutionPrincipalAuthorized(db, input.workspaceId, input.executionPrincipal);
-  const workstream = await createIdentityObjectPort(env, input.workspaceId, input.workstreamId)
+  const workstream = await createIdentityObjectPort(env, input.workspaceId, input.parentId)
     .identity();
   if (!workstream || workstream.archived_at != null) {
     throw new ConnectorError("unauthorized", "Work stream is no longer active");
   }
 
-  if (!input.automationSubscriptionId) {
+  if (!input.automationRun) {
     const snapshot: RunAuthoritySnapshot = {
       automationRunId: null,
       automationTemplateVersionId: null,
@@ -6445,41 +6412,28 @@ async function assertRunAuthorityStillValid(
     return snapshot;
   }
 
-  if (workstream.automation_subscription_id !== input.automationSubscriptionId || !workstream.automation_run_id) {
-    throw new ConnectorError("unauthorized", "Automation authority no longer matches this work stream");
-  }
-  const frozen = input.automationRunContext;
-  if (
-    !frozen
-    || frozen.workspaceId !== input.workspaceId
-    || frozen.automationId !== input.automationSubscriptionId
-    || frozen.runId !== workstream.automation_run_id
-  ) throw new ConnectorError("unauthorized", "Automation run context no longer matches this work stream");
-  // The frozen context proves what this run was authorized to do; it cannot
-  // prove the automation still wants it done. Pausing or deleting bumps the
-  // authority generation, and a run that outlived its own generation must stop
-  // issuing provider writes rather than finish on stale consent.
+  // The loop input proves what this run was authorized to do; it cannot prove
+  // the automation still wants it done. Pausing or deleting marks the run row,
+  // and a run that outlived its consent must stop issuing provider writes
+  // rather than finish on stale consent.
+  const run = input.automationRun;
   const live = await (await durableObjectStubForWorkspace(
     env,
-    env.AUTOMATION_AGENTS,
+    env.AUTOMATION_DOS,
     asWorkspaceId(input.workspaceId),
-    automationAgentName(
-      input.region,
-      asWorkspaceId(input.workspaceId),
-      asAutomationId(frozen.automationId),
-    ),
-  )).readRunAuthority({
-    automationId: frozen.automationId,
-    workspaceId: input.workspaceId,
-    runId: frozen.runId,
+    automationDOName(input.region, asWorkspaceId(input.workspaceId), asAutomationId(run.automationId)),
+  )).readRunState({
+    workspaceId: asWorkspaceId(input.workspaceId),
+    automationId: run.automationId,
+    runId: run.runId,
   });
-  if (!live || live.lifecycle !== "active" || live.authorityGeneration !== frozen.authorityGeneration) {
-    throw new ConnectorError("unauthorized", "This automation is no longer running");
+  if (!live || live.lifecycle !== "active" || (live.state !== "running" && live.state !== "needs_input")) {
+    throw new ConnectorError("unauthorized", "This automation run is no longer running");
   }
   const snapshot: RunAuthoritySnapshot = {
-    automationRunId: frozen.runId,
-    automationTemplateVersionId: `${frozen.automationId}:${frozen.definitionRevision}`,
-    triggerType: frozen.trigger.kind,
+    automationRunId: run.runId,
+    automationTemplateVersionId: `${run.automationId}:${run.definitionRevision}`,
+    triggerType: run.trigger.kind,
   };
   if (expected && (
     expected.automationRunId !== snapshot.automationRunId ||
@@ -6487,6 +6441,120 @@ async function assertRunAuthorityStillValid(
     expected.triggerType !== snapshot.triggerType
   )) throw new ConnectorError("unauthorized", "The immutable run authority changed");
   return snapshot;
+}
+
+/** A run's definition, read from its parent by revision; one call per loop start. */
+async function readAutomationRunDefinition(
+  env: Env,
+  input: WorkstreamWorkflowInput,
+): Promise<AutomationRunDefinitionV1> {
+  const run = input.automationRun;
+  if (!run) throw new Error("automation_run_reference_missing");
+  const automation = await durableObjectStubForWorkspace(
+    env,
+    env.AUTOMATION_DOS,
+    asWorkspaceId(input.workspaceId),
+    automationDOName(input.region, asWorkspaceId(input.workspaceId), asAutomationId(run.automationId)),
+  );
+  return AutomationRunDefinitionV1Schema.parse(await automation.readRunDefinition({
+    workspaceId: asWorkspaceId(input.workspaceId),
+    automationId: run.automationId,
+    runId: run.runId,
+  }));
+}
+
+/**
+ * The one tool through which a run reaches the room that owns its automation.
+ *
+ * Deliberately a tool the model calls with the text it wants the room to see,
+ * not a classifier deciding after the fact whether a result was worth posting:
+ * the instructions say what the room should hear, and the run follows them.
+ * Refused for an archived room, which the run reports as the tool's error.
+ */
+function createAutomationPostResultPlugin(
+  env: Env,
+  input: WorkstreamWorkflowInput,
+  definition: AutomationRunDefinitionV1,
+): HarnessPlugin {
+  const owningWorkstreamId = definition.owningWorkstreamId;
+  if (!owningWorkstreamId || !input.automationRun) throw new Error("automation_post_result_requires_owning_room");
+  const run = input.automationRun;
+  const tool: HarnessTool = {
+    definition: {
+      name: "automation_post_result",
+      description: [
+        "Post this run's result into the work stream that owns this automation.",
+        "Call it once, with the complete result the people in that work stream should read.",
+        "Nothing else delivers a result there: a run that does not call this leaves the work stream unchanged.",
+      ].join(" "),
+      capability: "rally.automation.result.post",
+      mode: "write",
+      idempotency: "safe",
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          text: { type: "string", minLength: 1, maxLength: MESSAGE_MAX_CHARACTERS, description: "The result, as the work stream should read it." },
+        },
+        required: ["text"],
+      },
+    },
+    execute: async (raw) => {
+      const args = z.object({ text: z.string().min(1).max(MESSAGE_MAX_CHARACTERS) }).parse(raw);
+      const workspaceId = asWorkspaceId(input.workspaceId);
+      const room = await durableObjectStubForWorkspace(
+        env,
+        env.WORKSTREAM_DOS,
+        workspaceId,
+        workstreamDOName(env.AVALON_REGION, workspaceId, asWorkstreamId(owningWorkstreamId)),
+      );
+      const authority = await room.authority({ workspaceId, parentId: owningWorkstreamId });
+      if (!authority.exists) throw new Error("automation_owning_room_missing");
+      if (authority.archived) throw new Error("automation_owning_room_archived");
+      const main = await durableObjectStubForWorkspace(
+        env,
+        env.SUBSTREAM_AGENTS,
+        workspaceId,
+        conversationObjectName(env.AVALON_REGION, workspaceId, owningWorkstreamId),
+      );
+      const result = await main.appendAutomationActivation({
+        schemaVersion: 1,
+        workspaceId: input.workspaceId,
+        workstreamId: owningWorkstreamId,
+        authorityGeneration: authority.authorityGeneration,
+        deliveryId: run.runId,
+        text: args.text,
+        executionPrincipal: input.executionPrincipal,
+        activation: {
+          type: "automation_activation",
+          schemaVersion: 1,
+          automationId: run.automationId,
+          automationName: definition.definition.name,
+          runId: run.runId,
+          deliveryId: run.runId,
+          trigger: { kind: run.trigger.kind },
+          occurredAt: Date.now(),
+        },
+      });
+      if (result.outcome === "refused") throw new Error(`automation_post_result_refused:${result.code}`);
+      const summary = result.outcome === "replayed"
+        ? "The result was already posted to the work stream."
+        : "Posted the result to the work stream.";
+      return { output: summary, summary };
+    },
+  };
+  return {
+    canonicalId: "rally:automation-result",
+    modelId: "rally_automation_result",
+    shortWireName: "automation_result",
+    displayName: "Automation result",
+    searchAliases: [],
+    description: "Post this run's result into the work stream that owns the automation.",
+    systemMessage: "When the instructions say the work stream should hear the result, post it with automation_post_result, once, in full.",
+    tools: [tool],
+    preload: true,
+    explicit: false,
+  };
 }
 
 async function raceWithSignal<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
@@ -6533,12 +6601,12 @@ async function persistWorkstreamPluginActivation(
     throw new ConnectorError("unauthorized", "Plugin is outside this immutable run scope");
   }
   await persistRunPluginActivation(
-    createHarnessRunObjectPort(env, input.workspaceId, input.workstreamId),
+    createHarnessRunObjectPort(env, input.workspaceId, input.parentId),
     input,
     lease,
     { pluginId, toolSurfaceHash: surfaceHash },
   );
-  await createSchedulingObjectPort(env, input.workspaceId, input.workstreamId)
+  await createSchedulingObjectPort(env, input.workspaceId, input.parentId)
     .recordPluginActivation({ pluginId, now: Date.now() });
 }
 
@@ -6626,7 +6694,7 @@ async function pluginAuthorizationFromHealth(
       logStructuredEvent(env, "warn", "connector_health_warning", {
         request_id: input.harnessRunId,
         workspace_id: input.workspaceId,
-        workstream_id: input.workstreamId,
+        workstream_id: input.parentId,
         plugin_id: frozen.pluginId,
         connection_id: frozen.connectionId,
         connector_type: frozen.connectorType,
@@ -6655,7 +6723,7 @@ export type PluginAuthorizationEnv = Pick<
 
 export type PluginAuthorizationInput = Pick<
   WorkstreamWorkflowInput,
-  "harnessRunId" | "workspaceId" | "workstreamId"
+  "harnessRunId" | "workspaceId" | "parentId"
 >;
 
 export type PluginAuthorizationConnection = Pick<
@@ -6672,7 +6740,7 @@ function logPluginAuthorizationFailure(
   logStructuredEvent(env, "warn", "connector_plugin_reauthorization_failed", {
     request_id: input.harnessRunId,
     workspace_id: input.workspaceId,
-    workstream_id: input.workstreamId,
+    workstream_id: input.parentId,
     plugin_id: frozen.pluginId,
     connection_id: frozen.connectionId,
     connector_type: frozen.connectorType,
@@ -6993,14 +7061,14 @@ function connectorSelectionPriority(
 
 async function coreWriteEntityId(
   kind: "elicitation",
-  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId" | "harnessRunId">,
+  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "parentId" | "harnessRunId">,
   providerIdempotencyKey: string,
 ): Promise<string> {
   const seed = new TextEncoder().encode([
     "avalon-core-write-v1",
     kind,
     input.workspaceId,
-    input.workstreamId,
+    input.parentId,
     input.harnessRunId,
     providerIdempotencyKey,
   ].join(":"));
@@ -7210,7 +7278,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
     // and the run that answers it is usually not the run that built the page.
     ...createWorkstreamArtifactDataTools(createArtifactDataToolContext(env, {
       workspaceId: input.workspaceId,
-      workstreamId: input.workstreamId,
+      workstreamId: input.parentId,
       principal: input.executionPrincipal,
     })),
     {
@@ -7286,7 +7354,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
         // A replay resolves to the wake-up the first attempt persisted. Check it
         // before the cap, so a retry cannot be refused by a limit its own first
         // attempt filled.
-        const scheduling = createSchedulingObjectPort(env, input.workspaceId, input.workstreamId);
+        const scheduling = createSchedulingObjectPort(env, input.workspaceId, input.parentId);
         const replayed = await findWorkstreamWakeupByIdempotencyKey(
           scheduling,
           providerIdempotencyKey,
@@ -7303,7 +7371,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
             await refreshAgentTimerAlarm(
               env,
               input.workspaceId,
-              input.workstreamId,
+              input.parentId,
             );
           }
           const persistedDueAt = new Date(replayed.dueAt);
@@ -7342,7 +7410,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
           await refreshAgentTimerAlarm(
             env,
             input.workspaceId,
-            input.workstreamId,
+            input.parentId,
           );
         } catch (error) {
           // The row exists but nothing is armed to fire it, and a workspace with
@@ -7379,7 +7447,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
       },
       execute: async () => {
         const pending = await listPendingWorkstreamWakeups(
-          createSchedulingObjectPort(env, input.workspaceId, input.workstreamId),
+          createSchedulingObjectPort(env, input.workspaceId, input.parentId),
         );
         const zones = await runLocalTimezones(env, input);
         return {
@@ -7418,7 +7486,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
       },
       execute: async (raw) => {
         const args = z.strictObject({ wakeupId: z.string().uuid() }).parse(raw);
-        const scheduling = createSchedulingObjectPort(env, input.workspaceId, input.workstreamId);
+        const scheduling = createSchedulingObjectPort(env, input.workspaceId, input.parentId);
         const outcome = await cancelWorkstreamWakeup(scheduling, { wakeupId: args.wakeupId });
         if (outcome === "not_found") {
           const pending = await listPendingWorkstreamWakeups(scheduling);
@@ -7433,7 +7501,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
           const row = await loadWorkstreamWakeup(
             scheduling,
             input.workspaceId,
-            input.workstreamId,
+            input.parentId,
             args.wakeupId,
           );
           throw new WakeupInputError(
@@ -7445,7 +7513,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
         await refreshAgentTimerAlarm(
           env,
           input.workspaceId,
-          input.workstreamId,
+          input.parentId,
         );
         return {
           output: { wakeupId: args.wakeupId, status: "cancelled" },
@@ -7469,7 +7537,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
         const id = await coreWriteEntityId("elicitation", input, providerIdempotencyKey);
         const at = nowIso();
         const elicitation = {
-          id, workstreamId: input.workstreamId, harnessRunId: input.harnessRunId,
+          id, workstreamId: input.parentId, harnessRunId: input.harnessRunId,
           prompt: args.prompt, responseType: args.responseType, options: args.options,
           minimumSelections: args.minimumSelections, maximumSelections: args.maximumSelections,
           targetUserId: null, status: "open" as const, answer: null,
@@ -7481,7 +7549,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
         // that would have collided rather than by a read that might have raced
         // it. The question is durable either way; only the event and the
         // telemetry are skipped, because the first attempt already sent them.
-        const opened = await createSchedulingObjectPort(env, input.workspaceId, input.workstreamId)
+        const opened = await createSchedulingObjectPort(env, input.workspaceId, input.parentId)
           .openElicitation({
             elicitationId: id,
             runId: input.harnessRunId,
@@ -7504,7 +7572,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
             halt: "needs_input" as const,
           };
         }
-        await publishWorkstreamEvent(env, input.workspaceId, input.workstreamId, { type: "elicitation_created", elicitation });
+        await publishWorkstreamEvent(env, input.workspaceId, input.parentId, { type: "elicitation_created", elicitation });
         await emitProductUsageTelemetry(env, {
           workspaceId: input.workspaceId,
           ...(input.executionPrincipal.type === 'user'
@@ -7514,7 +7582,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
           properties: {
             elicitationId: id,
             runId: input.harnessRunId,
-            workstreamId: input.workstreamId,
+            workstreamId: input.parentId,
             responseType: args.responseType,
             optionCount: telemetryCountBucket(args.options.length),
             surface: 'workstream',
@@ -8035,7 +8103,7 @@ function wireTimestamp(at: number | null): string | null {
 
 async function loadToolInvocation(
   env: Env,
-  target: { workspaceId: string; workstreamId: string; harnessRunId: string },
+  target: { workspaceId: string; parentId: string; harnessRunId: string },
   toolCallId: string,
   // The smallest capability this needs, rather than the whole port: it reads one
   // receipt and never settles anything, and saying so is what lets a caller —
@@ -8043,7 +8111,7 @@ async function loadToolInvocation(
   receipts: Pick<ToolReceiptObjectPort, "receiptForCall"> = createToolReceiptObjectPort(
     env,
     target.workspaceId,
-    target.workstreamId,
+    target.parentId,
   ),
 ): Promise<ToolInvocation | null> {
   const receipt = await receipts.receiptForCall({
@@ -8130,7 +8198,7 @@ async function recordToolAudit(
     input.workspaceId,
     input.executionPrincipal.type,
     input.executionPrincipal.type === "user" ? input.executionPrincipal.userId : null,
-    input.workstreamId,
+    input.parentId,
     `${mode === "write" ? "external_write" : "tool_read"}.${status}`,
     invocationId,
     JSON.stringify({ toolName, harnessRunId: input.harnessRunId }),

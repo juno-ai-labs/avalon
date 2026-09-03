@@ -10,9 +10,7 @@ import {
   ParticipantSchema,
   PreviewWorkstreamBatchRequestSchema,
   ReorderWorkstreamPinsRequestSchema,
-  WorkstreamResourceSchema,
   UpdateWorkstreamRequestSchema,
-  WorkstreamBootSchema,
   WorkstreamBatchAcceptedSchema,
   WorkstreamBatchPreviewSchema,
   WorkstreamSchema,
@@ -34,7 +32,6 @@ import { apiTelemetryEnvelope, emitAuthenticatedApiTelemetry, telemetryOperation
 
 const idParam = z.object({ id: IdSchema });
 const participantParam = z.object({ id: IdSchema, userId: IdSchema });
-const resourceParam = z.object({ id: IdSchema, resourceId: IdSchema });
 const listQuery = z.object({
   limit: z.coerce.number().int().min(1).max(250).default(100),
   // Timestamps are still accepted for clients holding pre-cutover cursors;
@@ -48,8 +45,6 @@ const listQuery = z.object({
   // see it: a system work stream still requires participation.
   includeSystem: z.enum(["true", "false"]).default("false"),
 });
-const resourceBody = z.object({ resourceId: IdSchema });
-const substreamSocketParam = idParam.extend({ substreamId: z.union([z.literal("0"), IdSchema]) });
 
 /**
  * Response contracts for the shapes this route composes itself. The single
@@ -83,10 +78,6 @@ const SocketTicketSchema = z.object({
   ticket: z.string().min(1),
   ticketId: IdSchema.optional(),
   subscriptionBootstrap: z.boolean().optional(),
-});
-const SocketTicketQuerySchema = z.object({
-  afterSequence: z.coerce.number().int().nonnegative().optional(),
-  speculative: z.literal("true").transform(() => true).optional(),
 });
 
 export const workstreamRoutes = new Hono<HonoAppEnv>();
@@ -216,38 +207,6 @@ workstreamRoutes.delete("/:id/pin", zValidator("param", idParam), async (c) => {
   const result = await new WorkstreamDirectoryService(c.env, getAuth(c)).unpin(c.req.valid("param").id);
   return c.json(PinnedWorkstreamsSchema.parse(result));
 });
-workstreamRoutes.get("/:id", zValidator("param", idParam), async (c) => {
-  const id = c.req.valid("param").id;
-  const operationId = telemetryOperationId(readRallyHeader((name) => c.req.header(name), RALLY_HEADERS.OPERATION_ID));
-  return requestFlowSpan(c, "workstream.detail.read", {
-    flow: "workstream_open",
-    identity: { workstreamId: id },
-    attributes: {
-      ...(operationId ? { "rally.operation.id": operationId } : {}),
-    },
-  }, async (span) => {
-    const client = await authoritativeWorkstreamClient(c, id, { span, flow: "workstream_open" });
-    // This route is the socket-first reader's explicit recovery twin. The room
-    // answers detail and its one canonical ordered transcript snapshot.
-    const boot = await span.step(
-      "workstream.detail.load",
-      () => client.boot(),
-    );
-    span.setAttributes({
-      "rally.workstream.participant_count": boot.workstream.participants.length,
-      "rally.workstream.resource_count": boot.workstream.resources.length,
-      "rally.workstream.harness_status": boot.workstream.harnessStatus,
-      "rally.boot.turn_count": boot.transcript.ranges.reduce(
-        (count, range) => count + range.turns.length,
-        boot.transcript.activeTurns.length,
-      ),
-    });
-    return c.json(WorkstreamBootSchema.parse({
-      ...boot.workstream,
-      transcript: boot.transcript,
-    }));
-  });
-});
 workstreamRoutes.patch("/:id", zValidator("param", idParam), zValidator("json", UpdateWorkstreamRequestSchema), async (c) => {
   const client = await authoritativeWorkstreamClient(c, c.req.valid("param").id);
   return c.json(WorkstreamSchema.parse(await client.update(c.req.valid("json"))));
@@ -269,71 +228,10 @@ workstreamRoutes.delete("/:id/participants/:userId", zValidator("param", partici
   await new WorkstreamService(c.env, getAuth(c)).removeParticipant(param.id, param.userId);
   return c.body(null, 204);
 });
-workstreamRoutes.post("/:id/resources", zValidator("param", idParam), zValidator("json", resourceBody), async (c) => {
-  const client = await authoritativeWorkstreamClient(c, c.req.valid("param").id);
-  return c.json(WorkstreamResourceSchema.parse(await client.attachResource(c.req.valid("json").resourceId)), 201);
-});
-workstreamRoutes.delete("/:id/resources/:resourceId", zValidator("param", resourceParam), async (c) => {
-  const param = c.req.valid("param");
-  const client = await authoritativeWorkstreamClient(c, param.id);
-  await client.detachResource(param.resourceId);
-  return c.body(null, 204);
-});
-workstreamRoutes.get(
-  "/:id/socket",
-  zValidator("param", idParam),
-  zValidator("query", SocketTicketQuerySchema),
-  async (c) => {
-    const id = c.req.valid("param").id;
-    const afterSequence = c.req.valid("query").afterSequence;
-    const speculative = c.req.valid("query").speculative ?? false;
-    return requestFlowSpan(c, "workstream.socket.ticket", {
-      flow: "workstream_open",
-      identity: { workstreamId: id, substreamId: "0" },
-    }, async (span) => {
-      const issued = await span.step("workstream.socket.ticket.issue", () =>
-        new WorkstreamService(c.env, getAuth(c), requestDeferral(c)).socketTicket(
-          id,
-          "0",
-          afterSequence,
-          speculative,
-        ));
-      // The upgrade this authorizes is a new connection, which the platform
-      // traces as its own invocation with its own trace id. The ticket id is the
-      // attribute both traces carry, and the only thing that joins them.
-      span.setAttributes({
-        "rally.socket.ticket_id": issued.ticketId,
-      });
-      return c.json(SocketTicketSchema.parse(issued));
-    });
-  },
-);
-workstreamRoutes.get(
-  "/:id/substreams/:substreamId/socket",
-  zValidator("param", substreamSocketParam),
-  zValidator("query", SocketTicketQuerySchema),
-  async (c) => {
-    const param = c.req.valid("param");
-    const afterSequence = c.req.valid("query").afterSequence;
-    const speculative = c.req.valid("query").speculative ?? false;
-    return requestFlowSpan(c, "workstream.socket.ticket", {
-      flow: "workstream_open",
-      identity: { workstreamId: param.id, substreamId: param.substreamId },
-    }, async (span) => {
-      const issued = await span.step("workstream.socket.ticket.issue", () =>
-        new WorkstreamService(c.env, getAuth(c), requestDeferral(c)).socketTicket(
-          param.id,
-          param.substreamId,
-          afterSequence,
-          speculative,
-        ));
-      span.setAttributes({
-        "rally.socket.ticket_id": issued.ticketId,
-      });
-      return c.json(SocketTicketSchema.parse(issued));
-    });
-  },
-);
+// The conversation surface — boot, resources, feed sockets — lives under
+// `/conversations/:parentId`, where a work stream and an automation are
+// addressed the same way. What stays here is the work stream as a workspace
+// object: listing, pins, participants, its metadata, and its control socket.
 workstreamRoutes.get("/:id/control-socket", zValidator("param", idParam), async (c) =>
   c.json(SocketTicketSchema.parse(await new WorkstreamService(c.env, getAuth(c))
     .workstreamControlSocketTicket(c.req.valid("param").id))),

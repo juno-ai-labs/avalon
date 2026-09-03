@@ -1,3 +1,4 @@
+import { ConversationParentKindSchema } from "@rally/contracts/conversation-parent";
 import { pendingBindToolBatch } from "@rally/agent-harness";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import {
@@ -5,8 +6,6 @@ import {
   AnswerElicitationRequestSchema,
   AutomationActivationV1Schema,
   AutomationDraftProposedV1Schema,
-  AutomationPrincipalUnavailableV1Schema,
-  type AutomationRunContextV1,
   ExecutionPrincipalSchema,
   ClientSocketEventSchema,
   IdSchema,
@@ -21,10 +20,8 @@ import {
   type SubstreamId,
   type UserId,
   type WorkspaceId,
-  type WorkstreamId,
   WorkspaceIdSchema,
   WorkstreamIdSchema,
-  asAutomationId,
   asSubstreamId,
   asHarnessRunId,
   asUserId,
@@ -55,15 +52,11 @@ import {
 
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
-import { sha256 } from "../lib/crypto";
 import {
   WorkstreamReaderAudienceSchema,
   type WorkstreamReaderAudience,
 } from "../lib/audience-containment";
-import {
-  assertDurableObjectJurisdiction,
-  durableObjectStubForWorkspace,
-} from "../lib/durable-object-namespace";
+import { assertDurableObjectJurisdiction } from "../lib/durable-object-namespace";
 import { withDurableObjectSelf } from "../lib/durable-object-self";
 import { uuidV7 } from "../lib/uuid-v7";
 import {
@@ -123,10 +116,10 @@ import {
   readWorkstreamAuthorityControl,
 } from "../services/workstream-authority";
 import {
-  WorkstreamRegionalEffectAckSchema,
-  type WorkstreamRegionalEffectEnvelope,
-} from "./workstream-regional-effect";
-import { automationAgentName, substreamAgentName, substreamLoopId, workspaceDOName, workstreamDOName } from "./names";
+  EFFECT_QUEUE_MESSAGE_MAX_BYTES,
+  type ConversationEffectEnvelope,
+} from "@rally/contracts/conversation-effects";
+import { conversationObjectName, substreamLoopId } from "./names";
 import { WorkstreamObjectStore } from "./workstream-object-storage";
 import type { SequencedSemanticRealtimeReference } from "./workstream-semantic-realtime-outbox";
 import { WorkstreamTerminalStorage } from "./workstream-terminal-storage";
@@ -211,7 +204,6 @@ import { DurableAgentDrain, DurableAgentKeepAlive } from "./durable-agent-runtim
 import {
   objectPortRpcResult,
   responseToRpcResult,
-  rpcResultBody,
   type DurableObjectRpcResult,
   type ObjectPortOutcome,
 } from "./rpc-result";
@@ -237,7 +229,8 @@ function isPersistedElicitationOutcome(value: unknown): boolean {
 const SocketAttachmentSchema = z.object({
   connectionId: z.string().uuid(),
   workspaceId: WorkspaceIdSchema,
-  workstreamId: WorkstreamIdSchema,
+  /** The conversation parent's id, of either kind. */
+  workstreamId: IdSchema,
   substreamId: SubstreamIdSchema,
   userId: UserIdSchema,
   // Present on current connections so a prepared ticket-transit snapshot can
@@ -261,6 +254,12 @@ const SocketAttachmentSchema = z.object({
   // A hover-warmed socket may receive canonical state but cannot settle the
   // reader's unseen marker until the renderer commits navigation.
   speculative: z.boolean().default(false),
+  /**
+   * The parent decided this at admission: an archived parent's conversations
+   * stay readable and refuse every write, so a child never outlives its
+   * parent's archive. Absent on attachments from before the decision existed.
+   */
+  parentArchived: z.boolean().default(false),
   /** A `request_snapshot` from this socket is assembling; broadcasts skip it. */
   snapshotInFlight: z.boolean().default(false),
   transcriptSnapshot: z.object({
@@ -272,7 +271,9 @@ const SocketAttachmentSchema = z.object({
 
 const SocketAdmissionPreparationSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema,
-  workstreamId: WorkstreamIdSchema,
+  /** The parent this conversation belongs to; `workstreamId` is its id whatever the kind. */
+  parentKind: ConversationParentKindSchema,
+  workstreamId: IdSchema,
   substreamId: SubstreamIdSchema,
   userId: UserIdSchema,
   sessionId: z.string().min(1).max(200),
@@ -290,7 +291,9 @@ export type SocketAdmissionPreparation = z.infer<typeof SocketAdmissionPreparati
 
 const SocketUpgradeIdentitySchema = z.object({
   workspaceId: WorkspaceIdSchema,
-  workstreamId: WorkstreamIdSchema,
+  /** Sent by the Worker from the ticket; absent only on a self-addressed upgrade, which reads the stored kind. */
+  parentKind: ConversationParentKindSchema.optional(),
+  workstreamId: IdSchema,
   substreamId: SubstreamIdSchema,
   userId: UserIdSchema,
   sessionId: z.string().min(1).max(200),
@@ -298,6 +301,7 @@ const SocketUpgradeIdentitySchema = z.object({
   ticketExpiresAt: z.coerce.number().int().positive(),
   afterSequence: z.coerce.number().int().nonnegative().optional(),
   speculative: z.literal("true").transform(() => true).optional().default(false),
+  parentArchived: z.literal("true").transform(() => true).optional().default(false),
   admissionVersion: z.coerce.number().int().optional(),
   authorityGeneration: z.coerce.number().int().nonnegative().optional(),
   role: z.enum(["owner", "admin", "member"]).optional(),
@@ -322,7 +326,10 @@ const RuntimeReaderAudienceRequestSchema = z.strictObject({
 });
 const RuntimeBootstrapRequestSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema,
-  workstreamId: WorkstreamIdSchema,
+  parentKind: ConversationParentKindSchema,
+  parentId: IdSchema,
+  /** Which of the parent's conversations this object is; the main one by default. */
+  substreamId: z.union([z.literal("0"), IdSchema]).optional(),
   generation: z.number().int().positive(),
 });
 const RuntimeDispatchRequestSchema = WorkstreamWorkflowInputSchema;
@@ -540,6 +547,13 @@ const AGENT_TIMER_ALARM_KIND = "agent_timer";
 const AGENT_TIMER_ALARM_LIMIT = 100;
 type SocketAttachment = z.infer<typeof SocketAttachmentSchema>;
 
+/** An archived parent's conversations are read-only; the Worker's writable client refuses the same way. */
+function assertParentWritable(attachment: SocketAttachment): void {
+  if (attachment.parentArchived) {
+    throw new ApiError(409, "conversation_parent_archived", "This conversation is archived and no longer accepts changes");
+  }
+}
+
 function recognizableSocketCreateMessage(decoded: unknown): {
   operationId: string;
   clientMessageId: string;
@@ -665,7 +679,7 @@ function userFromRow(row: UserRow): User {
   };
 }
 
-export { substreamAgentName };
+export { conversationObjectName };
 
 /**
  * This object's own name, or `null` while its identity is not yet fully its own.
@@ -680,14 +694,14 @@ export { substreamAgentName };
  */
 export function substreamSelfObjectName(
   region: Region,
-  identity: { workspaceId: WorkspaceId; workstreamId: WorkstreamId } | null,
+  identity: { workspaceId: WorkspaceId; parentId: string } | null,
   externalSubstreamId: string | null,
 ): string | null {
   if (!identity || externalSubstreamId === null) return null;
-  return substreamAgentName(
+  return conversationObjectName(
     region,
     identity.workspaceId,
-    identity.workstreamId,
+    identity.parentId,
     asSubstreamId(externalSubstreamId),
   );
 }
@@ -776,30 +790,6 @@ export function planSocketReplay(
  * authoritative for its own transcript and loop state; REST is a recovery
  * surface, never a second writer.
  */
-/**
- * The automation object's answer, re-parsed at this boundary.
- *
- * A Durable Object RPC return crosses a serialization boundary like any other
- * network call, and this one decides whether people are interrupted.
- */
-const AutomationRunDispositionSchema = z.strictObject({
-  disposition: z.enum(["done", "deliver", "expose_workstream"]),
-  reason: z.string(),
-  source: z.enum(["classified", "default"]),
-});
-
-/**
- * `automation_delivery_receipts.outcome_code` is 160 characters and is read by
- * people, so the reason is carried whole where it fits and cut where it does
- * not — a truncated sentence still says more than the bare code it replaces.
- */
-function withheldOutcomeCode(reason: string): string {
-  const trimmed = reason.trim();
-  if (!trimmed) return "delivery_withheld";
-  const carried = `delivery_withheld: ${trimmed}`;
-  return carried.length <= 160 ? carried : `${carried.slice(0, 157)}...`;
-}
-
 /**
  * The first frames of a thrown error, taken as *frames* rather than as the
  * first six lines.
@@ -1095,7 +1085,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const identity = this.objectStore.identity();
     if (!identity) throw new Error("substream_loop_identity_unavailable");
     const substreamId = this.externalSubstreamId();
-    const loopId = substreamLoopId(asWorkstreamId(identity.workstreamId), substreamId);
+    const loopId = substreamLoopId(asWorkstreamId(identity.parentId), substreamId);
     const bindStateRevision = this.transcript.readBindProjection(loopId)?.stateRevision ?? 0;
     return this.loop.ensureLoop({ loopId, bindStateRevision, now: Date.now() });
   }
@@ -1198,7 +1188,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       this.ensureSubstreamIdentity(preparation.substreamId);
       this.objectStore.ensureIdentity({
         workspaceId: preparation.workspaceId,
-        workstreamId: preparation.workstreamId,
+        parentKind: preparation.parentKind,
+        parentId: preparation.workstreamId,
       }, this.env.AVALON_REGION);
     } catch {
       return { outcome: "refused" };
@@ -1415,14 +1406,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       return this.acceptEvent(request);
     }
 
-    if (request.method === "POST" && url.pathname === "/internal/regional-effect-ack") {
-      return this.acceptRegionalEffectAck(request);
-    }
-
-    if (request.method === "POST" && url.pathname === "/internal/regional-effect-delivery") {
-      return this.readRegionalEffect(request);
-    }
-
     if (request.method === "POST" && url.pathname === "/internal/product") {
       return this.acceptProductRequest(request);
     }
@@ -1462,7 +1445,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       const identity = this.objectStore.identity();
       if (!parsed.success || !identity
         || identity.workspaceId !== parsed.data.workspaceId
-        || identity.workstreamId !== parsed.data.workstreamId) {
+        || identity.parentId !== parsed.data.workstreamId) {
         return jsonResponse({ error: "substream_timer_identity_mismatch" }, 409);
       }
       try {
@@ -1481,7 +1464,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       const identity = this.objectStore.identity();
       if (!identity) return jsonResponse({ viewers: [] });
       return jsonResponse({
-        viewers: await this.loadViewers(identity.workspaceId, identity.workstreamId),
+        viewers: await this.loadViewers(identity.workspaceId, identity.parentId),
       });
     }
 
@@ -1523,7 +1506,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const identity = this.objectStore.identity();
     if (!identity
       || identity.workspaceId !== request.workspaceId
-      || identity.workstreamId !== request.workstreamId
+      || identity.parentId !== request.workstreamId
       || this.externalSubstreamId() !== "0"
       || request.region !== this.env.AVALON_REGION) {
       return { outcome: "skipped" as const, reason: "workstream_identity_mismatch" };
@@ -1543,16 +1526,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     };
     try {
       const outcome = await this.product.applyQueuedBatchUpdate(auth, request);
-      // Bulk archive reaches the room through this path and never through
-      // `update`, so hanging the fan-out on `update` alone left every
-      // bulk-archived room's automations active — still firing schedules and
-      // still executing connector writes under a frozen principal, while
-      // delivery into the room was refused as archived. The effects continued
-      // and nothing but a log line said so.
-      if (request.update.kind === "archive" && outcome === "applied") {
-        const identity = this.objectStore.identity();
-        if (identity) await this.applyArchiveToOwnedAutomations(identity, true);
-      }
       return { outcome, reason: null };
     } catch (error) {
       if (error instanceof ApiError && error.status === 404) {
@@ -1583,10 +1556,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       workstreamId: z.string().min(1),
       substreamId: z.union([z.literal("0"), z.string().min(1)]),
       resourceId: z.string().min(1),
-      authorityGeneration: z.number().int().positive(),
-      deliveryId: z.string().min(1),
+      registrationId: z.string().min(1),
       event: z.strictObject({
         id: z.string().min(1),
+        eventSequence: z.number().int().positive(),
         eventType: z.string().min(1),
         title: z.string().min(1),
         summary: z.string(),
@@ -1595,11 +1568,14 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         audienceUserIds: z.array(z.string().min(1)),
       }),
     }).parse(input);
-    const clientMessageId = `resource-update:${request.deliveryId}`;
+    // The receipt is the event and the registration that matched it: the same
+    // event redelivered for the same watch is one row, and the same event
+    // matched by a second watch on another resource is another.
+    const clientMessageId = `resource-update:${request.event.id}:${request.registrationId}`;
     const identity = this.objectStore.identity();
     if (!identity
       || identity.workspaceId !== request.workspaceId
-      || identity.workstreamId !== request.workstreamId
+      || identity.parentId !== request.workstreamId
       || this.externalSubstreamId() !== request.substreamId) {
       return { outcome: "refused", code: "workstream_destination_mismatch" };
     }
@@ -1627,12 +1603,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     });
     return this.product.commitRuntimeMutation(() => {
       const authority = this.ctx.storage.sql.exec<{
-        authority_generation: number;
         archived_at: number | null;
-      }>(`SELECT authority_generation, archived_at FROM workstream WHERE id = 1`).toArray()[0];
-      if (!authority || authority.authority_generation !== request.authorityGeneration) {
-        return { outcome: "refused" as const, code: "workstream_authority_generation_stale" };
-      }
+      }>(`SELECT archived_at FROM workstream WHERE id = 1`).toArray()[0];
+      if (!authority) return { outcome: "refused" as const, code: "workstream_not_found" };
       if (authority.archived_at !== null) {
         return { outcome: "refused" as const, code: "workstream_archived" };
       }
@@ -1687,7 +1660,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const identity = this.objectStore.identity();
     if (!identity
       || identity.workspaceId !== request.workspaceId
-      || identity.workstreamId !== request.workstreamId
+      || identity.parentId !== request.workstreamId
       || this.externalSubstreamId() !== "0") {
       return { outcome: "refused", code: "workstream_destination_mismatch" };
     }
@@ -1729,88 +1702,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * Tell this room that the person one of its automations runs as has lost
-   * access, once.
-   *
-   * A `system` row: Rally noting something that happened *to* this work stream,
-   * which is the opposite call from an activation — that one is a message with
-   * an author, and the contrast is deliberate.
-   *
-   * Idempotent on the automation and the outgoing principal, which is the
-   * property that matters: an automation firing hourly finds the same dead
-   * binding every hour and must not write an hourly card.
-   *
-   * **It is not edited in place.** The design also asks for the card to be
-   * updated as providers are repaired, naming only what is still missing, and
-   * the transcript has no update path — it is append-only canonical facts, and
-   * inventing mutation for one row would be a change to what a transcript is.
-   * So a partial repair leaves the original card standing rather than
-   * narrowing it, and the card names what was unreachable when it was written.
-   */
-  async appendPrincipalUnavailableCard(input: unknown): Promise<{
-    outcome: "appended" | "replayed" | "refused";
-    code: string;
-  }> {
-    await this.initialized;
-    const request = z.strictObject({
-      schemaVersion: z.literal(1),
-      workspaceId: z.string().min(1),
-      workstreamId: z.string().min(1),
-      authorityGeneration: z.number().int().positive(),
-      occurredAt: z.number().int().nonnegative(),
-      card: AutomationPrincipalUnavailableV1Schema,
-    }).parse(input);
-    const card = request.card;
-    const clientMessageId =
-      `automation:${card.automationId}:principal:${card.outgoingUserId}`;
-    const identity = this.objectStore.identity();
-    if (!identity
-      || identity.workspaceId !== request.workspaceId
-      || identity.workstreamId !== request.workstreamId
-      || this.externalSubstreamId() !== "0") {
-      return { outcome: "refused", code: "workstream_destination_mismatch" };
-    }
-    if (this.messages.messageByClientId({ clientMessageId })) {
-      return { outcome: "replayed", code: "automation_principal_card_replayed" };
-    }
-    const who = card.outgoingUserName ?? "The person it ran as";
-    const prepared = await this.messages.prepareMessage({
-      messageId: uuidV7(request.occurredAt),
-      clientMessageId,
-      authorType: "system",
-      authorUserId: null,
-      externalActorJson: null,
-      messageType: "system",
-      // The text stands alone for every reader that has no card: a Slack
-      // mirror, a notification, a client that does not know this kind yet.
-      text: `${card.automationName} cannot reach ${card.unreachableProviders.join(", ")}.`
-        + ` ${who} no longer has access.`,
-      structuredContentJson: JSON.stringify(card),
-      producedByRunId: null,
-      now: request.occurredAt,
-    });
-    return this.product.commitRuntimeMutation(() => {
-      const authority = this.ctx.storage.sql.exec<{
-        authority_generation: number;
-        archived_at: number | null;
-      }>(`SELECT authority_generation, archived_at FROM workstream WHERE id = 1`).toArray()[0];
-      if (!authority || authority.authority_generation !== request.authorityGeneration) {
-        return { outcome: "refused" as const, code: "workstream_authority_generation_stale" };
-      }
-      if (authority.archived_at !== null) {
-        return { outcome: "refused" as const, code: "workstream_archived" };
-      }
-      const appended = this.messages.appendPreparedMessage(prepared);
-      return {
-        outcome: appended.outcome === "replayed" ? "replayed" as const : "appended" as const,
-        code: appended.outcome === "replayed"
-          ? "automation_principal_card_replayed"
-          : "automation_principal_card_appended",
-      };
-    }, true);
-  }
-
-  /**
    * An automation's result, delivered into the work stream that owns it.
    *
    * Delivery here means a run, not a row. The result is admitted as loop input
@@ -1844,7 +1735,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const identity = this.objectStore.identity();
     if (!identity
       || identity.workspaceId !== request.workspaceId
-      || identity.workstreamId !== request.workstreamId
+      || identity.parentId !== request.workstreamId
       || this.externalSubstreamId() !== "0") {
       return { outcome: "refused", code: "workstream_destination_mismatch" };
     }
@@ -1902,7 +1793,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const identity = this.objectStore.identity();
     if (!identity
       || identity.workspaceId !== request.workspaceId
-      || identity.workstreamId !== request.workstreamId
+      || identity.parentId !== request.workstreamId
       || this.externalSubstreamId() !== "0") return null;
     return WorkstreamReaderAudienceSchema.parse(this.product.readerAudience());
   }
@@ -1985,7 +1876,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     }
     const identity = this.objectStore.identity();
     if (!identity || identity.workspaceId !== parsed.data.workspaceId
-      || identity.workstreamId !== parsed.data.workstreamId
+      || identity.parentId !== parsed.data.workstreamId
       || this.externalSubstreamId() !== "0") {
       return responseToRpcResult(jsonResponse({ error: "external_message_identity_mismatch" }, 409));
     }
@@ -2008,7 +1899,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     }
     const identity = this.objectStore.identity();
     if (!identity || identity.workspaceId !== parsed.data.workspaceId
-      || identity.workstreamId !== parsed.data.workstreamId
+      || identity.parentId !== parsed.data.workstreamId
       || this.externalSubstreamId() !== "0") {
       return responseToRpcResult(jsonResponse({ error: "external_message_identity_mismatch" }, 409));
     }
@@ -2046,7 +1937,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const identity = this.objectStore.identity();
     if (!identity
       || identity.workspaceId !== parsed.workspaceId
-      || identity.workstreamId !== parsed.workstreamId) {
+      || identity.parentId !== parsed.workstreamId) {
       throw new Error("substream_timer_identity_mismatch");
     }
     this.ensureSubstreamIdentity(parsed.substreamId);
@@ -2118,14 +2009,14 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    * table rather than fail.
    */
   private objectPortRefusal(
-    request: { workspaceId: string; workstreamId: string },
+    request: { workspaceId: string; workstreamId: string; substreamId?: string | undefined },
     identityMismatchCode: string,
   ): ObjectPortOutcome | null {
     const identity = this.objectStore.identity();
     if (!identity
       || identity.workspaceId !== request.workspaceId
-      || identity.workstreamId !== request.workstreamId
-      || this.externalSubstreamId() !== "0") {
+      || identity.parentId !== request.workstreamId
+      || this.externalSubstreamId() !== (request.substreamId ?? "0")) {
       return { status: 409, payload: { ok: false, error: identityMismatchCode } };
     }
     if (!this.objectStore.isAuthoritative()) {
@@ -2442,8 +2333,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const identity = this.objectStore.identity();
     if (!identity
       || identity.workspaceId !== input.workspaceId
-      || identity.workstreamId !== input.workstreamId
-      || this.externalSubstreamId() !== "0") {
+      || identity.parentId !== input.workstreamId
+      || this.externalSubstreamId() !== (input.substreamId ?? "0")) {
       throw new TerminalObjectPortError(input.operation, {
         code: "workstream_terminal_identity_mismatch",
         message: "Avalon's Terminal authority rejected an internal request because it was routed to the wrong work stream. Retrying the same operation will not repair the route.",
@@ -2557,7 +2448,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const identity = this.objectStore.identity();
     if (!identity
       || identity.workspaceId !== input.workspaceId
-      || identity.workstreamId !== input.workstreamId
+      || identity.parentId !== input.workstreamId
       || this.externalSubstreamId() !== "0") {
       throw new Error("workstream_runtime_identity_mismatch");
     }
@@ -2600,6 +2491,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     }
     try {
       this.product.bootstrapRuntimeAuthority(parsed.data);
+      // What this object durably is, written with its root: every endpoint
+      // compares the substream a request names against it, so a child
+      // conversation must know its own id before its first port call.
+      this.ensureSubstreamIdentity(parsed.data.substreamId ?? "0");
       return jsonResponse({ ok: true });
     } catch (error) {
       return jsonResponse({
@@ -2659,7 +2554,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const identity = this.objectStore.identity();
     if (!identity
       || identity.workspaceId !== parsed.data.workspaceId
-      || identity.workstreamId !== parsed.data.workstreamId) {
+      || identity.parentId !== parsed.data.parentId) {
       return jsonResponse({ error: "substream_run_identity_mismatch" }, 409);
     }
     const substreamId = parsed.data.substreamId ?? asSubstreamId("0");
@@ -2704,7 +2599,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     if (flow === null) return this.runProductRequest(parsed.data, noFlowSpan);
     const workstreamId = parsed.data.operation === "initialize"
       ? parsed.data.input.workstreamId
-      : this.objectStore.identity()?.workstreamId;
+      : this.objectStore.identity()?.parentId;
     return inFlowSpan(this.env, `workstream.room.${parsed.data.operation}`, {
       flow,
       component: "substream_do",
@@ -2802,14 +2697,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       if (request.operation === "update") {
         const result = await this.product.update(current, request.input);
         for (const event of result.events) await this.publishLocalProductEvent(identity, event);
-        // Archiving a room is a decision about the room, and the automations it
-        // owns follow it. After the commit rather than inside it: each one is
-        // its own object, and the work stream's own state must be settled
-        // before anything reads it back.
-        if (typeof request.input?.archived === "boolean") {
-          await this.applyArchiveToOwnedAutomations(identity, request.input.archived);
-          if (!request.input.archived) await this.armNextAlarm();
-        }
+        // Archiving a room is a decision about the room; the automations it
+        // owns follow it from WorkspaceDO when the directory row's archive
+        // state lands there, so nothing here reaches into another object.
+        if (request.input?.archived === false) await this.armNextAlarm();
         return jsonResponse(result.workstream);
       }
       if (request.operation === "acknowledge_read") {
@@ -2861,7 +2752,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           } catch (error) {
             logWarn(this.env, "substream_elicitation_activation_wakeup_failed", {
               workspace_id: current.workspaceId,
-              workstream_id: identity.workstreamId,
+              workstream_id: identity.parentId,
               substream_id: this.externalSubstreamId(),
               elicitation_id: request.elicitationId,
               reason: diagnosticErrorCode(error, "activation_wakeup_failed"),
@@ -2877,7 +2768,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           } catch (error) {
             logWarn(this.env, "substream_elicitation_publication_failed_after_commit", {
               workspace_id: current.workspaceId,
-              workstream_id: identity.workstreamId,
+              workstream_id: identity.parentId,
               substream_id: this.externalSubstreamId(),
               elicitation_id: request.elicitationId,
               reason: diagnosticErrorCode(error, "elicitation_publication_failed"),
@@ -2898,7 +2789,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         // 500 cost a debugging round during the dispatch outage.
         logError(this.env, "workstream_product_request_failed", {
           workspace_id: this.objectStore.identity()?.workspaceId,
-          workstream_id: this.objectStore.identity()?.workstreamId,
+          workstream_id: this.objectStore.identity()?.parentId,
           substream_id: this.externalSubstreamId(),
           reason: error instanceof Error ? error.message : "unknown",
         });
@@ -2962,7 +2853,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       if (this.agentDrain.abandonActive()) {
         logWarn(this.env, "substream_loop_stale_drain_reclaimed", {
           workspace_id: this.objectStore.identity()?.workspaceId,
-          workstream_id: this.objectStore.identity()?.workstreamId,
+          workstream_id: this.objectStore.identity()?.parentId,
           substream_id: this.externalSubstreamId(),
           execution_id: loop?.active_execution_id ?? null,
           execution_epoch: loop?.active_execution_epoch ?? null,
@@ -2973,7 +2864,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       (ownsDrain) => this.drainPersistentLoop(ownsDrain).catch((error: unknown) => {
         logWarn(this.env, "substream_loop_drain_failed", {
           workspace_id: this.objectStore.identity()?.workspaceId,
-          workstream_id: this.objectStore.identity()?.workstreamId,
+          workstream_id: this.objectStore.identity()?.parentId,
           substream_id: this.externalSubstreamId(),
           reason: error instanceof Error ? error.message : "unknown",
         });
@@ -2986,7 +2877,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private async drainPersistentLoop(ownsDrain: () => boolean): Promise<void> {
     while (ownsDrain()) {
       this.agentDrain.touch();
-      await this.flushDueRegionalEffects();
+      await this.drainRegionalEffects();
       if (!ownsDrain()) return;
 
       const preparation = await this.product.resumeOldestInputPreparation();
@@ -2998,7 +2889,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       if (!ownsDrain()) return;
       this.activeLoopExecution = activation.execution;
       try {
-        const identity = { workspaceId: activation.input.workspaceId, workstreamId: activation.input.workstreamId };
+        const identity = { workspaceId: activation.input.workspaceId, parentId: activation.input.parentId };
         await this.product.recordWorkflowStarted(
           activation.input.harnessRunId,
           `substream-loop:${activation.input.loopId}:${activation.execution.runId}`,
@@ -3050,7 +2941,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         }
         logWarn(this.env, "substream_loop_execution_failed", {
           workspace_id: activation.input.workspaceId,
-          workstream_id: activation.input.workstreamId,
+          workstream_id: activation.input.parentId,
           substream_id: activation.input.substreamId ?? "0",
           execution_id: activation.execution.runId,
           execution_epoch: activation.execution.executionEpoch,
@@ -3120,12 +3011,12 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       const input = WorkstreamWorkflowInputSchema.parse({
         region: this.env.AVALON_REGION,
         workspaceId: asWorkspaceId(identity.workspaceId),
-        workstreamId: asWorkstreamId(identity.workstreamId),
+        parentKind: identity.parentKind,
+        parentId: identity.parentId,
         substreamId: asSubstreamId(this.externalSubstreamId()),
         loopId: loop.loop_id,
         harnessRunId: runId,
         triggerMessageId: pending.prepared_turn_id,
-        automationSubscriptionId: null,
         activityId: null,
         executionPrincipal: authorization.executionPrincipal,
         ...(authorization.telemetryOperationId
@@ -3271,7 +3162,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       (ownsDrain) => this.drainExternalSettlements(ownsDrain).catch((error: unknown) => {
         logWarn(this.env, "substream_external_settlement_drain_failed", {
           workspace_id: this.objectStore.identity()?.workspaceId,
-          workstream_id: this.objectStore.identity()?.workstreamId,
+          workstream_id: this.objectStore.identity()?.parentId,
           substream_id: this.externalSubstreamId(),
           reason: error instanceof Error ? error.message : "unknown",
         });
@@ -3314,7 +3205,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       }
       const executionEnv = this.localRuntimeEnvironment(
         parsed.data.workspaceId,
-        parsed.data.workstreamId,
+        parsed.data.parentId,
         parsed.data.substreamId ?? "0",
       );
       let outcome: AgentTerminalOutcome;
@@ -3351,7 +3242,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const result = await this.runAgentExecution(input);
     logInfo(this.env, "agent_run_outcome", {
       workspace_id: input.workspaceId,
-      workstream_id: input.workstreamId,
+      workstream_id: input.parentId,
       substream_id: input.substreamId ?? "0",
       harness_run_id: input.harnessRunId,
       status: result.status,
@@ -3374,7 +3265,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       // Global cutover that was eighteen hours of silence.
       logWarn(this.env, "agent_run_deferred_for_maintenance", {
         workspace_id: input.workspaceId,
-        workstream_id: input.workstreamId,
+        workstream_id: input.parentId,
         harness_run_id: input.harnessRunId,
         phase: authority.phase,
         generation: authority.generation,
@@ -3383,10 +3274,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     }
     const executionEnv = this.localRuntimeEnvironment(
       input.workspaceId,
-      input.workstreamId,
+      input.parentId,
       input.substreamId ?? "0",
     );
-    const runs = createHarnessRunObjectPort(executionEnv, input.workspaceId, input.workstreamId);
+    const runs = createHarnessRunObjectPort(executionEnv, input.workspaceId, input.parentId);
     const loopExecution = this.activeLoopExecution;
     if (!loopExecution || loopExecution.runId !== input.harnessRunId) {
       throw new Error("substream_loop_execution_context_missing");
@@ -3400,7 +3291,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const recoveryOptions: Parameters<typeof reapStaleHarnessRuns>[1] = {
       receipts: createToolReceiptPortFactory(executionEnv),
       workspaceId: input.workspaceId,
-      workstreamId: input.workstreamId,
+      workstreamId: input.parentId,
       limit: 25,
       onReceiptRepairFailure: (failure) => logWarn(this.env, "harness_residual_receipt_repair_failed", {
         workspace_id: failure.workspaceId,
@@ -3434,7 +3325,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     if (recoverableAttemptId !== null && claim.state === "claimed") {
       logWarn(this.env, "substream_agent_previous_instance_attempt_resumed", {
         workspace_id: input.workspaceId,
-        workstream_id: input.workstreamId,
+        workstream_id: input.parentId,
         substream_id: input.substreamId ?? "0",
         harness_run_id: input.harnessRunId,
         attempt_id: recoverableAttemptId,
@@ -3455,7 +3346,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       // branch is the only place that knows it.
       logWarn(this.env, "agent_run_attempt_busy", {
         workspace_id: input.workspaceId,
-        workstream_id: input.workstreamId,
+        workstream_id: input.parentId,
         harness_run_id: input.harnessRunId,
         lease_expires_at: claim.leaseExpiresAt ?? null,
       });
@@ -3470,7 +3361,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         const recovered = await this.loadTerminalOutcome(executionEnv, input, claim.status);
         logWarn(this.env, "agent_run_adopted_terminal_attempt", {
           workspace_id: input.workspaceId,
-          workstream_id: input.workstreamId,
+          workstream_id: input.parentId,
           harness_run_id: input.harnessRunId,
           claim_status: claim.status,
           recovered_status: recovered.status,
@@ -3479,7 +3370,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       } catch (error) {
         logWarn(this.env, "substream_agent_terminal_recovery_failed", {
           workspace_id: input.workspaceId,
-          workstream_id: input.workstreamId,
+          workstream_id: input.parentId,
           substream_id: input.substreamId ?? "0",
           harness_run_id: input.harnessRunId,
           reason: error instanceof Error ? error.message : "unknown",
@@ -3503,7 +3394,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           input,
           { attemptId, owner: previousInstanceRecoveryOwner(attemptId) },
           stopped,
-          createToolReceiptObjectPort(executionEnv, input.workspaceId, input.workstreamId),
+          createToolReceiptObjectPort(executionEnv, input.workspaceId, input.parentId),
           terminalLoopFence,
         );
         this.recoverableHarnessAttempts.delete(input.harnessRunId);
@@ -3559,7 +3450,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
             ...(this.externalSubstreamId() === "0" ? {
               runtimeResourceAttacher: this.localRuntimeResourceAttacher(
                 input.workspaceId,
-                input.workstreamId,
+                input.parentId,
               ),
             } : {}),
           },
@@ -3574,7 +3465,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       // incident hands back when asked what went wrong.
       logError(this.env, "workstream_harness_threw", {
         workspace_id: input.workspaceId,
-        workstream_id: input.workstreamId,
+        workstream_id: input.parentId,
         substream_id: input.substreamId ?? "0",
         harness_run_id: input.harnessRunId,
         error_code: code,
@@ -3596,7 +3487,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         ...(outcome.error ? { error: outcome.error } : {}),
         memberSafePayload: outcome.error ? { code: outcome.error.code } : {},
       },
-      createToolReceiptObjectPort(executionEnv, input.workspaceId, input.workstreamId),
+      createToolReceiptObjectPort(executionEnv, input.workspaceId, input.parentId),
       terminalLoopFence,
     );
     if (outcome.finalTurnId) {
@@ -4076,7 +3967,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       );
       logWarn(this.env, "substream_agent_settlement_failed", {
         workspace_id: input.workspaceId,
-        workstream_id: input.workstreamId,
+        workstream_id: input.parentId,
         substream_id: input.substreamId ?? "0",
         harness_run_id: input.harnessRunId,
         reason: error instanceof Error ? error.message : "unknown",
@@ -4090,7 +3981,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     input: WorkstreamWorkflowInput,
     status: WorkstreamHarnessResult["status"],
   ): Promise<AgentTerminalOutcome> {
-    const row = await createHarnessRunObjectPort(executionEnv, input.workspaceId, input.workstreamId)
+    const row = await createHarnessRunObjectPort(executionEnv, input.workspaceId, input.parentId)
       .run({ runId: input.harnessRunId });
     const publishedStatus = row?.status === "cancelled" ? "stopped" : row?.status;
     if (!row || row.terminalized_at === null || publishedStatus !== status) {
@@ -4127,7 +4018,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     if (outcome.metrics) {
       recordHarnessRunObservation(this.env, {
         workspaceId: input.workspaceId,
-        workstreamId: input.workstreamId,
+        workstreamId: input.parentId,
         harnessRunId: input.harnessRunId,
         source: "workstream",
         status: outcome.status,
@@ -4137,215 +4028,23 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     }
     await emitCorrelatedRunOutcome(executionEnv, input).catch(() => undefined);
 
-    await this.finalizeAutomation(executionEnv, input, outcome);
     const settlementDiagnosticCode = outcome.cancellationReason !== "superseded_by_follow_up"
       ? await this.deliverAgentRunResult(input, outcome)
       : null;
-    await refreshWorkstreamName(executionEnv, {
-      workspaceId: input.workspaceId,
-      workstreamId: input.workstreamId,
-    });
-    await refreshWorkstreamDescription(executionEnv, {
-      workspaceId: input.workspaceId,
-      workstreamId: input.workstreamId,
-    });
-    return settlementDiagnosticCode;
-  }
-
-  /**
-   * Pause or resume the automations this work stream owns.
-   *
-   * Best effort per automation, and deliberately so: one object refusing —
-   * already paused, paused by a person before the archive, no longer owned —
-   * must not stop the rest, and none of those refusals is a failure. An
-   * automation the archive did not pause is not one unarchiving may start.
-   */
-  private async applyArchiveToOwnedAutomations(
-    identity: { workspaceId: string; workstreamId: string },
-    archived: boolean,
-  ): Promise<void> {
-    const workspace = await durableObjectStubForWorkspace(
-      this.env,
-      this.env.WORKSPACE_DOS,
-      asWorkspaceId(identity.workspaceId),
-      workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(identity.workspaceId)),
-    );
-    const owned = await workspace.automationsOwnedByWorkstream({
-      workspaceId: identity.workspaceId,
-      workstreamId: identity.workstreamId,
-    });
-    for (const entry of owned.automations) {
-      try {
-        const automation = await durableObjectStubForWorkspace(
-          this.env,
-          this.env.AUTOMATION_AGENTS,
-          asWorkspaceId(identity.workspaceId),
-          automationAgentName(
-            this.env.AVALON_REGION,
-            asWorkspaceId(identity.workspaceId),
-            asAutomationId(entry.automationId),
-          ),
-        );
-        const request = {
-          schemaVersion: 1 as const,
-          automationId: entry.automationId,
-          workspaceId: identity.workspaceId,
-          workstreamId: identity.workstreamId,
-        };
-        if (archived) await automation.pauseForArchivedWorkstream(request);
-        else await automation.resumeForUnarchivedWorkstream(request);
-      } catch (error) {
-        logWarn(this.env, "automation_archive_effect_failed", {
-          workspace_id: identity.workspaceId,
-          workstream_id: identity.workstreamId,
-          automation_id: entry.automationId,
-          reason: error instanceof Error ? error.message : "unknown",
-        });
-      }
+    // An automation's conversations are named by the automation, not by a
+    // naming pass over their transcripts, and nothing outside Rally is
+    // waiting on a run's outcome the way Slack waits on a room's.
+    if (input.parentKind !== "automation") {
+      await refreshWorkstreamName(executionEnv, {
+        workspaceId: input.workspaceId,
+        workstreamId: input.parentId,
+      });
+      await refreshWorkstreamDescription(executionEnv, {
+        workspaceId: input.workspaceId,
+        workstreamId: input.parentId,
+      });
     }
-  }
-
-  /**
-   * Tell the owning room when this occurrence's personal bindings are gone.
-   *
-   * The offboarding case the takeover card exists for: somebody leaves, their
-   * personal connections go with them, and an automation the room owns keeps
-   * running on whatever still works. Without this the room learns only from the
-   * shape of the output — a digest that quietly stopped including one source —
-   * which is the failure this whole scope was meant to end.
-   *
-   * Workspace-scoped bindings are never reported: they belong to the workspace
-   * rather than to whoever authorized them, so they did not break.
-   */
-  private async reportUnreachablePrincipal(input: {
-    region: Region;
-    workspaceId: string;
-    owningWorkstreamId: string;
-    frozen: AutomationRunContextV1;
-  }): Promise<void> {
-    const bindings = Object.values(input.frozen.connectorBindings)
-      .filter((value): value is string => typeof value === "string");
-    if (bindings.length === 0) return;
-    const principal = input.frozen.executionPrincipal.userId;
-    // Asked of WorkspaceDO, which owns `connector_connections`. Reading it on
-    // the regional binding raises `no such table`: migration 0090 dropped it
-    // from D1, and the workspace-table routing guard catches exactly that.
-    const workspace = await durableObjectStubForWorkspace(
-      this.env,
-      this.env.WORKSPACE_DOS,
-      asWorkspaceId(input.workspaceId),
-      workspaceDOName(input.region, asWorkspaceId(input.workspaceId)),
-    );
-    const { providers } = await workspace.unreachablePersonalBindings({
-      workspaceId: input.workspaceId,
-      principalUserId: principal,
-      connectionIds: bindings,
-    });
-    if (providers.length === 0) return;
-    // The same fence the activation writes behind, and for the same reason: a
-    // room re-authorized or archived since this run started must not be
-    // written to. It is also required by the card's schema, so omitting it made
-    // every one of these calls throw a ZodError into the caller's catch — the
-    // card was never written at all, and the log line said only that reporting
-    // failed. Reuses the workspace stub the binding check already resolved.
-    const authority = await workspace.workstreamDeliveryAuthority({
-      workspaceId: input.workspaceId,
-      workstreamId: input.owningWorkstreamId,
-    });
-    if (!authority || authority.archived) return;
-    const substream = await durableObjectStubForWorkspace(
-      this.env,
-      this.env.SUBSTREAM_AGENTS,
-      asWorkspaceId(input.workspaceId),
-      substreamAgentName(
-        input.region,
-        asWorkspaceId(input.workspaceId),
-        asWorkstreamId(input.owningWorkstreamId),
-        asSubstreamId("0"),
-      ),
-    );
-    await substream.appendPrincipalUnavailableCard({
-      schemaVersion: 1,
-      workspaceId: input.workspaceId,
-      workstreamId: input.owningWorkstreamId,
-      authorityGeneration: authority.authorityGeneration,
-      occurredAt: Date.now(),
-      card: {
-        type: "automation_principal_unavailable",
-        schemaVersion: 1,
-        automationId: input.frozen.automationId,
-        automationName: input.frozen.definition.name,
-        outgoingUserId: principal,
-        outgoingUserName: null,
-        unreachableProviders: providers,
-      },
-    });
-  }
-
-  /**
-   * Post the result into the owning work stream and start a run on it.
-   *
-   * The fence comes from the workspace directory rather than from the room,
-   * because a re-authorization bumps the directory first; reading the room
-   * would mean learning about the change only after writing into it. A room the
-   * directory does not have, or one it has archived, is not written to at all —
-   * an automation outliving its owner is the case this exists for, and silence
-   * there is the correct outcome.
-   */
-  private async wakeOwningWorkstream(input: {
-    region: Region;
-    workspaceId: string;
-    owningWorkstreamId: string;
-    /** The run's own work stream, which an "open the run" affordance needs. */
-    runWorkstreamId: string;
-    frozen: AutomationRunContextV1;
-    text: string;
-  }): Promise<"delivered" | "authority_unavailable" | "workstream_archived"> {
-    const workspace = await durableObjectStubForWorkspace(
-      this.env,
-      this.env.WORKSPACE_DOS,
-      asWorkspaceId(input.workspaceId),
-      workspaceDOName(input.region, asWorkspaceId(input.workspaceId)),
-    );
-    const authority = await workspace.workstreamDeliveryAuthority({
-      workspaceId: input.workspaceId,
-      workstreamId: input.owningWorkstreamId,
-    });
-    if (!authority) return "authority_unavailable";
-    if (authority.archived) return "workstream_archived";
-    const substream = await durableObjectStubForWorkspace(
-      this.env,
-      this.env.SUBSTREAM_AGENTS,
-      asWorkspaceId(input.workspaceId),
-      substreamAgentName(
-        input.region,
-        asWorkspaceId(input.workspaceId),
-        asWorkstreamId(input.owningWorkstreamId),
-        asSubstreamId("0"),
-      ),
-    );
-    const result = await substream.appendAutomationActivation({
-      schemaVersion: 1,
-      workspaceId: input.workspaceId,
-      workstreamId: input.owningWorkstreamId,
-      authorityGeneration: authority.authorityGeneration,
-      deliveryId: `${input.frozen.runId}:${input.owningWorkstreamId}`,
-      text: input.text,
-      executionPrincipal: input.frozen.executionPrincipal,
-      activation: {
-        type: "automation_activation",
-        schemaVersion: 1,
-        automationId: input.frozen.automationId,
-        automationName: input.frozen.definition.name,
-        runId: input.frozen.runId,
-        runWorkstreamId: input.runWorkstreamId,
-        deliveryId: `${input.frozen.runId}:${input.owningWorkstreamId}`,
-        trigger: { kind: input.frozen.trigger.kind },
-        occurredAt: Date.now(),
-      },
-    });
-    if (result.outcome === "refused") throw new Error(result.code);
-    return "delivered";
+    return settlementDiagnosticCode;
   }
 
   private async deliverAgentRunResult(
@@ -4365,7 +4064,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       // reactions stuck behind an unbounded retry.
       logWarn(this.env, settlementDiagnosticCode, {
         workspace_id: input.workspaceId,
-        workstream_id: input.workstreamId,
+        workstream_id: input.parentId,
         harness_run_id: input.harnessRunId,
         final_turn_id: outcome.finalTurnId,
       });
@@ -4389,185 +4088,16 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       return settlementDiagnosticCode;
     }
 
+    if (input.parentKind === "automation") return settlementDiagnosticCode;
     const slack = new SlackAgentService(this.env);
     await slack.deliverWorkstreamOutcome(
       input.workspaceId,
-      input.workstreamId,
+      input.parentId,
       text,
       `${input.harnessRunId}:${outcome.status}`,
       outcome.status,
     );
-    if (!input.automationSubscriptionId) return settlementDiagnosticCode;
-    const frozen = input.automationRunContext;
-    if (!frozen || frozen.automationId !== input.automationSubscriptionId) {
-      throw new Error("automation_run_context_not_found");
-    }
-    const payloadHash = await sha256(JSON.stringify({
-      runId: frozen.runId,
-      outcomeStatus: outcome.status,
-      text,
-    }));
-    const automation = await durableObjectStubForWorkspace(
-      this.env,
-      this.env.AUTOMATION_AGENTS,
-      asWorkspaceId(input.workspaceId),
-      automationAgentName(
-        input.region,
-        asWorkspaceId(input.workspaceId),
-        asAutomationId(frozen.automationId),
-      ),
-    );
-    // What this result was worth, decided once for the whole occurrence and
-    // before any destination is written. The automation object owns the
-    // decision — it holds the definition, the trigger and what the last few
-    // occurrences were judged to be — and keeps it, so a delivery retry after a
-    // crash reads the same answer rather than judging the run twice.
-    const disposition = text === null
-      // No saved turn, so there is nothing to judge and nothing to send. The
-      // canonical read already decided this; asking a model about an absent
-      // result would be spending an inference to agree with it.
-      ? { disposition: "done" as const, reason: "The run finished without a saved result.", source: "default" as const }
-      : AutomationRunDispositionSchema.parse(await automation.resolveRunDisposition({
-        schemaVersion: 1,
-        automationId: frozen.automationId,
-        workspaceId: input.workspaceId,
-        runId: frozen.runId,
-        result: text,
-      }));
-    const failures: unknown[] = [];
-    // Before anything is decided about the result: if this occurrence ran
-    // without the personal connections it was built on, the room needs to know
-    // that and to be offered the takeover, whatever the result turned out to
-    // be. Only for an automation a room owns — a personal one has nobody but
-    // its owner to tell, and they are the person who left.
-    if (frozen.owningWorkstreamId !== null) {
-      await this.reportUnreachablePrincipal({
-        region: input.region,
-        workspaceId: input.workspaceId,
-        owningWorkstreamId: frozen.owningWorkstreamId,
-        frozen,
-      }).catch((error: unknown) => {
-        // Never at the cost of the delivery. A room that does not learn its
-        // automation is degraded is worse off than one that does; a room that
-        // loses the result as well is worse off still.
-        logWarn(this.env, "automation_principal_report_failed", {
-          workspace_id: input.workspaceId,
-          workstream_id: input.workstreamId,
-          reason: error instanceof Error ? error.message : "unknown",
-        });
-      });
-    }
-    // An occurrence worth reading in full. Nothing is created: the run already
-    // finished in its own work stream, and this stops that one row being
-    // hidden from the sidebar. It reaches nobody the automation could not
-    // already reach, so it is not a delivery and gets no receipt.
-    if (disposition.disposition === "expose_workstream") {
-      // Null stays null: a context frozen before the scope was recorded reveals
-      // the run without widening who can see it.
-      const scope = frozen.scope === "workstream" ? null : frozen.scope;
-      const workspace = await durableObjectStubForWorkspace(
-        this.env,
-        this.env.WORKSPACE_DOS,
-        asWorkspaceId(input.workspaceId),
-        workspaceDOName(input.region, asWorkspaceId(input.workspaceId)),
-      );
-      const exposed = await workspace.exposeAutomationRunWorkstream({
-        workspaceId: input.workspaceId,
-        workstreamId: input.workstreamId,
-        scope,
-      });
-      if (!exposed.exposed) {
-        // Not a failure to retry. Every refusal it can give — the run's work
-        // stream is gone, or somebody archived it — is a decision that stands.
-        logWarn(this.env, "automation_run_not_exposed", {
-          workspace_id: input.workspaceId,
-          workstream_id: input.workstreamId,
-          reason: exposed.outcomeCode,
-        });
-      }
-    }
-    // The room that owns this automation, woken with the result as a message.
-    // The only destination an automation has. It used to sit beside a set of
-    // chosen ones — email, a Slack DM — and it outlived them because it was
-    // never chosen: it follows from ownership. Everything outside Rally is now
-    // the run's own to send, with its own tools, inside the loop; this is the
-    // one delivery that starts a run rather than writing somewhere outside.
-    if (frozen.owningWorkstreamId !== null && text !== null) {
-      const owningWorkstreamId = frozen.owningWorkstreamId;
-      const targetKey = `workstream:${owningWorkstreamId}`;
-      try {
-        const state = disposition.disposition === "deliver"
-          ? await this.wakeOwningWorkstream({
-              region: input.region,
-              workspaceId: input.workspaceId,
-              owningWorkstreamId,
-              runWorkstreamId: input.workstreamId,
-              frozen,
-              text,
-            })
-          : "skipped" as const;
-        await automation.recordDeliveryReceipt({
-          schemaVersion: 1,
-          automationId: frozen.automationId,
-          workspaceId: input.workspaceId,
-          runId: frozen.runId,
-          workstreamId: input.workstreamId,
-          targetKey,
-          payloadHash,
-          state: state === "delivered" ? "delivered" : "skipped",
-          outcomeCode: state === "delivered"
-            ? "delivery_completed"
-            : disposition.disposition === "done"
-              ? withheldOutcomeCode(disposition.reason)
-              : state,
-        });
-      } catch (failure) {
-        failures.push(failure);
-        await automation.recordDeliveryReceipt({
-          schemaVersion: 1,
-          automationId: frozen.automationId,
-          workspaceId: input.workspaceId,
-          runId: frozen.runId,
-          workstreamId: input.workstreamId,
-          targetKey,
-          payloadHash,
-          state: "failed",
-          outcomeCode: "delivery_failed",
-        }).catch(() => undefined);
-      }
-    }
-    for (const failure of failures) {
-      logWarn(this.env, "automation_result_delivery_failed", {
-        workspace_id: input.workspaceId,
-        workstream_id: input.workstreamId,
-        reason: failure instanceof Error ? failure.message : "unknown",
-      });
-    }
-    if (failures.length > 0) throw failures[0];
     return settlementDiagnosticCode;
-  }
-
-  private async finalizeAutomation(
-    executionEnv: Env,
-    input: WorkstreamWorkflowInput,
-    outcome: AgentTerminalOutcome,
-  ): Promise<void> {
-    if (!input.automationSubscriptionId) return;
-    // The run is an object-local execution receipt; the regional `harness_runs`
-    // table this fence once read is retired. The receipt port is the same
-    // authority the rest of settlement trusts.
-    const receipt = await createHarnessRunObjectPort(
-      executionEnv,
-      input.workspaceId,
-      input.workstreamId,
-    ).run({ runId: input.harnessRunId });
-    const receiptStatus = receipt?.status === "cancelled" ? "stopped" : receipt?.status;
-    if (!receipt || receipt.terminalized_at === null || receiptStatus !== outcome.status) {
-      throw new Error("automation_run_terminal_fence_missing");
-    }
-    // The full, content-free child projection travels through the existing
-    // WorkstreamDO outbox and WorkspaceDO effect path. Updating a parent table
-    // from the child would recreate the split authority this lifecycle removes.
   }
 
   private localRuntimeEnvironment(
@@ -4595,9 +4125,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const resident = (
       outcome: (body: unknown) => Promise<ObjectPortOutcome>,
     ): LocalAuthorityExecutor => async (operation, args) => (
-      await outcome({ workspaceId, workstreamId, operation, args })
+      await outcome({ workspaceId, workstreamId, substreamId, operation, args })
     ).payload as { ok?: boolean; value?: unknown; error?: string };
-    return withLocalWorkstreamAuthorities(routed, workspaceId, workstreamId, {
+    return withLocalWorkstreamAuthorities(routed, workspaceId, workstreamId, substreamId, {
       harnessRun: resident((body) => this.harnessRunOperationOutcome(body)),
       identity: resident((body) => this.identityOperationOutcome(body)),
       message: resident((body) => this.messageOperationOutcome(body)),
@@ -4608,6 +4138,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       terminal: (operation, args) => this.runTerminalOperation({
         workspaceId,
         workstreamId,
+        substreamId,
         operation,
         args,
       } as TerminalOperationRequest) as Promise<unknown>,
@@ -4769,27 +4300,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     return true;
   }
 
-  private async acceptRegionalEffectAck(request: Request): Promise<Response> {
-    const parsed = WorkstreamRegionalEffectAckSchema.safeParse(await request.json());
-    if (!parsed.success) return jsonResponse({ error: "invalid_regional_effect_ack" }, 400);
-    return jsonResponse({
-      ok: true,
-      removed: this.objectStore.acknowledgeRegionalEffect(
-        parsed.data.messageId,
-        parsed.data.payloadHash,
-      ),
-    });
-  }
-
-  private async readRegionalEffect(request: Request): Promise<Response> {
-    const parsed = WorkstreamRegionalEffectAckSchema.safeParse(await request.json());
-    if (!parsed.success) return jsonResponse({ error: "invalid_regional_effect_request" }, 400);
-    const effect = this.objectStore.regionalEffect(parsed.data.messageId, parsed.data.payloadHash);
-    return effect
-      ? jsonResponse(effect)
-      : jsonResponse({ error: "regional_effect_not_found" }, 404);
-  }
-
   override async webSocketMessage(socket: WebSocket, message: ArrayBuffer | string): Promise<void> {
     await this.storageReady;
     const raw = typeof message === "string" ? message : new TextDecoder().decode(message);
@@ -4948,6 +4458,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       if (!this.objectStore.isRealtimeWritable()) {
         throw new ApiError(503, "workstream_maintenance", "Work streams are temporarily unavailable");
       }
+      assertParentWritable(attachment);
       const auth = await this.socketViewerAuth(attachment);
       if (!auth) {
         disconnect(socket, 1012, "Reconnect for substream commands");
@@ -5124,6 +4635,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         if (!this.objectStore.isRealtimeWritable()) {
           throw new ApiError(503, "workstream_maintenance", "Work streams are temporarily unavailable");
         }
+        assertParentWritable(attachment);
         if (!attachment.sessionId || !attachment.role) {
           // A socket admitted before this command path existed has no role in
           // its hibernation attachment. A normal reconnect obtains a fresh
@@ -5208,7 +4720,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         // client-visible failure whose retry can only replay the same row.
         logWarn(this.env, "substream_message_activation_wakeup_failed", {
           workspace_id: auth.workspaceId,
-          workstream_id: this.objectStore.identity()?.workstreamId,
+          workstream_id: this.objectStore.identity()?.parentId,
           client_message_id: input.clientMessageId,
           reason: error instanceof Error ? error.message : "unknown",
         });
@@ -5432,9 +4944,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   }
 
   private async publishLocalProductEvent(
-    attachment: Pick<SocketAttachment, "workspaceId" | "workstreamId">,
+    attachment: { workspaceId: string } & ({ workstreamId: string } | { parentId: string }),
     event: Record<string, unknown>,
   ): Promise<"published" | "deferred"> {
+    const parentId = "parentId" in attachment ? attachment.parentId : attachment.workstreamId;
     const response = await this.acceptEvent(new Request(
       "https://room.internal/internal/events",
       {
@@ -5442,7 +4955,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         headers: {
           "content-type": "application/json",
           [RALLY_HEADERS.WORKSPACE_ID]: attachment.workspaceId,
-          [RALLY_HEADERS.WORKSTREAM_ID]: attachment.workstreamId,
+          [RALLY_HEADERS.WORKSTREAM_ID]: parentId,
         },
         body: JSON.stringify(event),
       },
@@ -5462,7 +4975,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       const identity = this.objectStore.identity();
       logWarn(this.env, "workstream_resource_resync_failed_after_commit", {
         workspace_id: identity?.workspaceId,
-        workstream_id: identity?.workstreamId,
+        workstream_id: identity?.parentId,
         cause,
         reason: diagnosticErrorCode(error, "resource_resync_failed"),
       });
@@ -5584,39 +5097,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     return (await this.socketAdmissionAuth(attachment))?.auth ?? null;
   }
 
-  /**
-   * Synchronous creation/maintenance fence for effects already committed by
-   * this child. Normal mutations use the alarm; callers that are about to make
-   * a route discoverable must prove the parent has accepted every older fact.
-   */
-  async flushEffectsToWorkstreamDO(): Promise<number> {
-    await this.initialized;
-    let delivered = 0;
-    for (let batch = 0; batch < 400; batch += 1) {
-      // An explicit route fence overrides alarm backoff: a previous ambiguous
-      // RPC may have deferred the exact snapshot this caller has to prove.
-      const effects = this.objectStore.dueRegionalEffects(Number.MAX_SAFE_INTEGER, 100);
-      if (effects.length === 0) break;
-      await this.forwardEffectsToWorkstreamDO(effects);
-      for (const effect of effects) {
-        if (this.objectStore.acknowledgeRegionalEffect(effect.messageId, effect.payloadHash)) {
-          delivered += 1;
-        }
-      }
-    }
-    if (this.objectStore.dueRegionalEffects(Number.MAX_SAFE_INTEGER, 1).length > 0) {
-      throw new Error("substream_parent_effect_flush_limit");
-    }
-    await this.armNextAlarm();
-    logInfo(this.env, "substream_outbox_fence_terminal", {
-      substream_id: this.externalSubstreamId(),
-      delivered_count: delivered,
-      outcome: "forwarded",
-      reason: "parent_outbox_fence_complete",
-    });
-    return delivered;
-  }
-
   protected override migrationPlan(): DurableObjectMigrationPlan {
     return {
       component: WORKSTREAM_OBJECT_SCHEMA_COMPONENT,
@@ -5651,7 +5131,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       attempt,
       fields: {
         workspace_id: identity?.workspaceId ?? null,
-        workstream_id: identity?.workstreamId ?? null,
+        workstream_id: identity?.parentId ?? null,
         alarm_kind: alarm.kind,
         alarm_key: alarm.key,
       },
@@ -5667,7 +5147,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       attempt,
       fields: {
         workspace_id: identity?.workspaceId ?? null,
-        workstream_id: identity?.workstreamId ?? null,
+        workstream_id: identity?.parentId ?? null,
         alarm_kind: alarm.kind,
         alarm_key: alarm.key,
         due_at: new Date(alarm.dueAt).toISOString(),
@@ -5708,18 +5188,18 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     if (!identity) return;
     const executionEnv = this.localRuntimeEnvironment(
       identity.workspaceId,
-      identity.workstreamId,
+      identity.parentId,
       this.externalSubstreamId(),
     );
     const scheduling = createSchedulingObjectPort(
       this.env,
       identity.workspaceId,
-      identity.workstreamId,
+      identity.parentId,
     );
     const wakeup = await loadWorkstreamWakeup(
       scheduling,
       identity.workspaceId,
-      identity.workstreamId,
+      identity.parentId,
       alarm.key,
     );
     if (!wakeup || wakeup.status !== "pending") return;
@@ -5764,7 +5244,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       if (this.externalSettlementDrain.abandonActive()) {
         logWarn(this.env, "substream_external_settlement_stale_drain_reclaimed", {
           workspace_id: this.objectStore.identity()?.workspaceId,
-          workstream_id: this.objectStore.identity()?.workstreamId,
+          workstream_id: this.objectStore.identity()?.parentId,
           substream_id: this.externalSubstreamId(),
         });
       }
@@ -5776,123 +5256,90 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     }
 
     if (nextEffectAt !== null && nextEffectAt <= Date.now()) {
-      const effects = this.objectStore.dueRegionalEffects();
-      if (effects.length > 0) {
-        try {
-          await this.forwardEffectsToWorkstreamDO(effects);
-          let removed = 0;
-          for (const effect of effects) {
-            if (this.objectStore.acknowledgeRegionalEffect(effect.messageId, effect.payloadHash)) {
-              removed += 1;
-            }
-          }
-          logInfo(this.env, "substream_outbox_batch_terminal", {
-            workspace_id: effects[0]?.workspaceId ?? null,
-            workstream_id: effects[0]?.workstreamId ?? null,
-            substream_id: this.externalSubstreamId(),
-            message_ids: effects.map((effect) => effect.messageId),
-            effect_kinds: effects.map((effect) => effect.effect.kind),
-            effect_count: effects.length,
-            removed_count: removed,
-            outcome: "forwarded",
-            reason: "parent_outbox_accepted",
-          });
-        } catch (error) {
-          const retryAt = Date.now() + 5_000;
-          this.objectStore.deferRegionalEffects(effects, retryAt);
-          logWarn(this.env, "substream_outbox_batch_deferred", {
-            workspace_id: effects[0]?.workspaceId ?? null,
-            workstream_id: effects[0]?.workstreamId ?? null,
-            substream_id: this.externalSubstreamId(),
-            message_ids: effects.map((effect) => effect.messageId),
-            effect_kinds: effects.map((effect) => effect.effect.kind),
-            effect_count: effects.length,
-            retry_at: new Date(retryAt).toISOString(),
-            outcome: "deferred",
-            reason: diagnosticErrorCode(error, "parent_forward_failed"),
-            error_name: error instanceof Error ? error.name : typeof error,
-          });
-          await this.ensureAlarmNoLaterThan(retryAt);
-        }
-      }
+      await this.drainRegionalEffects();
     }
 
     this.loopDrainDeferred = await this.drainLoopToCompletion() === "deferred";
   }
 
-  /** Best-effort forward of due effects; the alarm retries whatever defers. */
-  private async flushDueRegionalEffects(): Promise<void> {
-    const effects = this.objectStore.dueRegionalEffects();
-    if (effects.length === 0) return;
-    try {
-      await this.forwardEffectsToWorkstreamDO(effects);
-      let removed = 0;
-      for (const effect of effects) {
-        if (this.objectStore.acknowledgeRegionalEffect(effect.messageId, effect.payloadHash)) {
-          removed += 1;
-        }
+  /**
+   * Send every due effect to the activity Queue, one message each, and delete
+   * the rows the Queue accepted.
+   *
+   * From there retry is the Queue's, and the parent's receipt makes a
+   * redelivery a no-op: nothing loads an effect back from here and nothing
+   * acknowledges one to it. A batch the Queue refused is deferred and the
+   * alarm tries again. An effect too large for one message is dropped with a
+   * warning, because it would be refused on every attempt and nothing here can
+   * shrink it; only `resourceLinks` can push one that far.
+   */
+  private async drainRegionalEffects(): Promise<void> {
+    const due = this.objectStore.dueRegionalEffects(Date.now(), 100);
+    if (due.length === 0) return;
+    const encoder = new TextEncoder();
+    const sendable: ConversationEffectEnvelope[] = [];
+    let batchBytes = 0;
+    for (const effect of due) {
+      const bytes = encoder.encode(JSON.stringify(effect)).byteLength;
+      if (bytes > EFFECT_QUEUE_MESSAGE_MAX_BYTES) {
+        this.objectStore.deleteRegionalEffect(effect.messageId, effect.payloadHash);
+        logWarn(this.env, "conversation_effect_oversized", {
+          workspace_id: effect.workspaceId,
+          workstream_id: effect.parentId,
+          parent_kind: effect.parentKind,
+          substream_id: effect.substreamId,
+          message_id: effect.messageId,
+          effect_kind: effect.effect.kind,
+          bytes,
+          limit_bytes: EFFECT_QUEUE_MESSAGE_MAX_BYTES,
+          outcome: "dropped",
+        });
+        continue;
       }
-      logInfo(this.env, "substream_outbox_flush_terminal", {
-        workspace_id: effects[0]?.workspaceId ?? null,
-        workstream_id: effects[0]?.workstreamId ?? null,
-        substream_id: this.externalSubstreamId(),
-        message_ids: effects.map((effect) => effect.messageId),
-        effect_kinds: effects.map((effect) => effect.effect.kind),
-        effect_count: effects.length,
+      // Cloudflare accepts 100 messages and 256 KB per `sendBatch`; whatever
+      // does not fit stays due and the next alarm takes it.
+      if (sendable.length >= 100 || batchBytes + bytes > 250_000) break;
+      sendable.push(effect);
+      batchBytes += bytes;
+    }
+    if (sendable.length === 0) return;
+    const identity = sendable[0]!;
+    try {
+      await this.env.ACTIVITY_QUEUE.sendBatch(sendable.map((body) => ({ body })));
+      let removed = 0;
+      for (const effect of sendable) {
+        if (this.objectStore.deleteRegionalEffect(effect.messageId, effect.payloadHash)) removed += 1;
+      }
+      logInfo(this.env, "substream_outbox_batch_enqueued", {
+        workspace_id: identity.workspaceId,
+        workstream_id: identity.parentId,
+        parent_kind: identity.parentKind,
+        substream_id: identity.substreamId,
+        message_ids: sendable.map((effect) => effect.messageId),
+        effect_kinds: sendable.map((effect) => effect.effect.kind),
+        effect_count: sendable.length,
         removed_count: removed,
-        outcome: "forwarded",
+        outcome: "queued",
       });
     } catch (error) {
       const retryAt = Date.now() + 5_000;
-      this.objectStore.deferRegionalEffects(effects, retryAt);
-      logWarn(this.env, "substream_outbox_flush_deferred", {
-        workspace_id: effects[0]?.workspaceId ?? null,
-        workstream_id: effects[0]?.workstreamId ?? null,
-        substream_id: this.externalSubstreamId(),
-        message_ids: effects.map((effect) => effect.messageId),
-        effect_kinds: effects.map((effect) => effect.effect.kind),
-        effect_count: effects.length,
+      this.objectStore.deferRegionalEffects(sendable, retryAt);
+      logWarn(this.env, "substream_outbox_batch_deferred", {
+        workspace_id: identity.workspaceId,
+        workstream_id: identity.parentId,
+        parent_kind: identity.parentKind,
+        substream_id: identity.substreamId,
+        message_ids: sendable.map((effect) => effect.messageId),
+        effect_kinds: sendable.map((effect) => effect.effect.kind),
+        effect_count: sendable.length,
         retry_at: new Date(retryAt).toISOString(),
         outcome: "deferred",
-        reason: diagnosticErrorCode(error, "parent_forward_failed"),
+        reason: diagnosticErrorCode(error, "queue_send_failed"),
         error_name: error instanceof Error ? error.name : typeof error,
       });
+      await this.ensureAlarmNoLaterThan(retryAt);
     }
   }
-
-  private async forwardEffectsToWorkstreamDO(
-    effects: readonly WorkstreamRegionalEffectEnvelope[],
-  ): Promise<void> {
-    const firstEffect = effects[0];
-    if (!firstEffect) return;
-    if (effects.some((effect) => (
-      effect.region !== firstEffect.region
-      || effect.workspaceId !== firstEffect.workspaceId
-      || effect.workstreamId !== firstEffect.workstreamId
-      || effect.generation !== firstEffect.generation
-    ))) throw new Error("substream_effect_batch_identity_mismatch");
-    const stub = await durableObjectStubForWorkspace(
-      this.env,
-      this.env.WORKSTREAM_DOS,
-      firstEffect.workspaceId,
-      workstreamDOName(
-        firstEffect.region,
-        firstEffect.workspaceId,
-        firstEffect.workstreamId,
-      ),
-    );
-    for (let offset = 0; offset < effects.length; offset += 25) {
-      const response = await stub.receiveSubstreamEffects({
-        substreamId: this.externalSubstreamId(),
-        envelopes: effects.slice(offset, offset + 25),
-      });
-      if (response.status < 200 || response.status >= 300) {
-        const body = rpcResultBody(response) as { error?: unknown } | null;
-        throw new Error(typeof body?.error === "string" ? body.error : "workstream_parent_effect_failed");
-      }
-    }
-  }
-
 
   override async webSocketClose(
     socket: WebSocket,
@@ -5954,6 +5401,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           readRallyHeader(request.headers, RALLY_HEADERS.WORKSPACE_ID) ?? url.searchParams.get("workspaceId"),
         workstreamId:
           readRallyHeader(request.headers, RALLY_HEADERS.WORKSTREAM_ID) ?? url.searchParams.get("workstreamId"),
+        parentKind: readRallyHeader(request.headers, RALLY_HEADERS.PARENT_KIND),
         substreamId:
           readRallyHeader(request.headers, RALLY_HEADERS.SUBSTREAM_ID) ?? url.searchParams.get("substreamId"),
         userId: readRallyHeader(request.headers, RALLY_HEADERS.USER_ID) ?? url.searchParams.get("userId"),
@@ -5962,6 +5410,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         ticketExpiresAt: readRallyHeader(request.headers, RALLY_HEADERS.SOCKET_TICKET_EXPIRES_AT) ?? null,
         afterSequence: readRallyHeader(request.headers, RALLY_HEADERS.SOCKET_AFTER_SEQUENCE),
         speculative: readRallyHeader(request.headers, RALLY_HEADERS.SOCKET_SPECULATIVE),
+        parentArchived: readRallyHeader(request.headers, RALLY_HEADERS.PARENT_ARCHIVED),
         admissionVersion: readRallyHeader(
           request.headers,
           RALLY_HEADERS.SOCKET_ADMISSION_VERSION,
@@ -5995,7 +5444,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       this.ensureSubstreamIdentity(identity.data.substreamId);
       this.objectStore.ensureIdentity({
         workspaceId: identity.data.workspaceId,
-        workstreamId: identity.data.workstreamId,
+        parentKind: identity.data.parentKind ?? this.objectStore.identity()?.parentKind ?? "workstream",
+        parentId: identity.data.workstreamId,
       }, this.env.AVALON_REGION);
       this.ensurePersistentLoop();
     } catch (error) {
@@ -6082,6 +5532,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       subscribed: false,
       publishPresence: identity.data.afterSequence === undefined,
       speculative: identity.data.speculative,
+      parentArchived: identity.data.parentArchived,
       snapshotInFlight: false,
       transcriptSnapshot: null,
     };
@@ -6164,7 +5615,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       return jsonResponse({ error: "invalid_room_identity" }, 400);
     }
     try {
-      this.objectStore.ensureIdentity(requestIdentity.data, this.env.AVALON_REGION);
+      // An event is published into an object that already knows what it is;
+      // the header names the parent id and the stored row says its kind.
+      this.objectStore.ensureIdentity({
+        workspaceId: requestIdentity.data.workspaceId,
+        parentKind: this.objectStore.identity()?.parentKind ?? "workstream",
+        parentId: requestIdentity.data.workstreamId,
+      }, this.env.AVALON_REGION);
     } catch (error) {
       if (error instanceof Error && error.message === "workstream_object_identity_mismatch") {
         return jsonResponse({ error: "room_identity_mismatch" }, 409);
@@ -6219,7 +5676,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     // people who remain would otherwise keep seeing an evicted reader present.
     if (evicted) {
       const identity = this.objectStore.identity();
-      if (identity) await this.broadcastPresence(identity.workspaceId, identity.workstreamId);
+      if (identity) await this.broadcastPresence(identity.workspaceId, identity.parentId);
     }
     return jsonResponse({ accepted: true, sequence: event.sequence }, 202);
   }
@@ -6933,7 +6390,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     // so closing one here invokes nothing.
     if (evicted) {
       const identity = this.objectStore.identity();
-      if (identity) await this.broadcastPresence(identity.workspaceId, identity.workstreamId);
+      if (identity) await this.broadcastPresence(identity.workspaceId, identity.parentId);
     }
   }
 

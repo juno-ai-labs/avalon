@@ -1,4 +1,4 @@
-import { CreateWorkstreamRequestSchema, asWorkstreamId } from "@rally/contracts";
+import { CreateWorkstreamRequestSchema, asSubstreamId, asWorkstreamId } from "@rally/contracts";
 import type {
   ExecutionPrincipal,
   ProjectSummary,
@@ -10,7 +10,7 @@ import type {
 import { newId } from "@rally/db";
 import type { z } from "zod";
 
-import { workspaceDOName, workstreamDOName, substreamAgentName } from "../durable-objects/names";
+import { workspaceDOName, workstreamDOName } from "../durable-objects/names";
 import type { AuthContext, Env } from "../env";
 import { workstreamImportHash } from "../durable-objects/workstream-import-hash";
 import {
@@ -380,6 +380,39 @@ export class WorkstreamObjectCreationService {
       ],
     ));
 
+    // The parent first. Reserving the main conversation creates the parent's
+    // row and puts a provisional row in the workspace directory synchronously,
+    // so the person about to open this work stream finds it listed before the
+    // child has said anything. Idempotent: a retried create finds the child
+    // already registered and enqueues nothing twice.
+    const workstream = await durableObjectStubForWorkspace(
+      this.env,
+      this.env.WORKSTREAM_DOS,
+      this.auth.workspaceId,
+      workstreamDOName(
+        this.env.AVALON_REGION,
+        this.auth.workspaceId,
+        asWorkstreamId(receipt.workstream_id),
+      ),
+    );
+    await span.step("workstream.create.parent.reserve", () => workstream.reserveChild({
+      workspaceId: this.auth.workspaceId,
+      parentId: receipt.workstream_id,
+      substreamId: asSubstreamId("0"),
+      kind: "main",
+      createdByUserId: this.auth.userId,
+      authorityGeneration: control.generation,
+      directory: {
+        title,
+        description: objective,
+        scope,
+        systemKind: null,
+        emailAddress: email.emailAddress,
+        titleStatus: body.title == null ? "naming" : "settled",
+        createdAt: at,
+      },
+    }));
+
     let created: Awaited<ReturnType<WorkstreamObjectClient["initialize"]>>;
     try {
       created = await span.step("workstream.create.object.initialize", () => client.initialize({
@@ -402,10 +435,6 @@ export class WorkstreamObjectCreationService {
       scope,
       originResourceIds,
       modelOverride: body.modelOverride ?? null,
-      originType: "ad_hoc",
-      automationSubscriptionId: null,
-      automationRunId: null,
-      plannedFor: null,
       systemKind: null,
       createdFromOpportunityId: options.opportunitySnapshot?.opportunityId ?? null,
       opportunityVersion: options.opportunitySnapshot?.version ?? null,
@@ -433,32 +462,6 @@ export class WorkstreamObjectCreationService {
       throw error;
     }
     span.setAttributes({ "rally.harness_run.id": created.harnessRunId });
-    const substream = await durableObjectStubForWorkspace(
-      this.env,
-      this.env.SUBSTREAM_AGENTS,
-      this.auth.workspaceId,
-      substreamAgentName(
-        this.env.AVALON_REGION,
-        this.auth.workspaceId,
-        asWorkstreamId(receipt.workstream_id),
-      ),
-    );
-    await span.step("workstream.create.substream.flush_effects", () => substream.flushEffectsToWorkstreamDO());
-    const workstream = await durableObjectStubForWorkspace(
-      this.env,
-      this.env.WORKSTREAM_DOS,
-      this.auth.workspaceId,
-      workstreamDOName(
-        this.env.AVALON_REGION,
-        this.auth.workspaceId,
-        asWorkstreamId(receipt.workstream_id),
-      ),
-    );
-    await span.step("workstream.create.workstream.flush_directory", () => workstream.flushWorkspaceDirectoryEffects());
-    if (!await span.step("workstream.create.workspace.directory_probe", () => workspace.hasWorkstreamDirectory({
-      workspaceId: this.auth.workspaceId,
-      workstreamId: receipt.workstream_id,
-    }))) throw new Error("workspace_directory_creation_snapshot_missing");
     const activatedAt = new Date().toISOString();
     const activated = await span.step("workstream.create.route.activate", () => this.env.DB.prepare(
       `UPDATE workstream_authority_routes

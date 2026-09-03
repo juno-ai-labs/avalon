@@ -26,7 +26,7 @@ import { z } from "zod";
 
 import type { Env } from "../env";
 import type { SchedulingObjectPort } from "../durable-objects/workstream-scheduling-protocol";
-import { substreamAgentName, workspaceDOName } from "../durable-objects/names";
+import { conversationObjectName, workspaceDOName } from "../durable-objects/names";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 
 /**
@@ -655,7 +655,7 @@ export async function refreshAgentTimerAlarm(
     env,
     env.SUBSTREAM_AGENTS,
     workspaceId,
-    substreamAgentName(
+    conversationObjectName(
       env.AVALON_REGION,
       asWorkspaceId(workspaceId),
       asWorkstreamId(workstreamId),

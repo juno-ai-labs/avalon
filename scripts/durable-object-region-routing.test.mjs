@@ -32,7 +32,7 @@ test("rejects computed, optional, aliased, and typed namespace routing", () => {
   assert.equal(lint(`env.WORKSPACE_DOS["get"]?.(id)`).length, 1);
   assert.equal(lint(`const namespace = env.WORKSTREAM_DOS; namespace.idFromName(name)`).length, 1);
   assert.equal(lint(`const namespace: DurableObjectNamespace = binding; namespace.get(id)`).length, 1);
-  assert.equal(lint(`const { getByName: resolve } = env.WORKSPACE_SCHEDULERS; resolve(name)`).length, 1);
+  assert.equal(lint(`const { getByName: resolve } = env.WORKSTREAM_DOS; resolve(name)`).length, 1);
   assert.equal(lint(`const { SUBSTREAM_AGENTS: agents } = env; agents.get(id)`).length, 1);
   assert.equal(lint(`function route(namespace: DurableObjectNamespace) { namespace.get(id); }`).length, 1);
   assert.equal(lint(`({ WORKSTREAM_DOS }) => WORKSTREAM_DOS.idFromName(name)`).length, 1);

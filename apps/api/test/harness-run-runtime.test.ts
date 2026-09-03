@@ -218,7 +218,7 @@ afterEach(() => {
 });
 
 function input(harnessRunId: HarnessRunId) {
-  return { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID, harnessRunId };
+  return { workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, harnessRunId };
 }
 
 const PARENT_SCOPE = {

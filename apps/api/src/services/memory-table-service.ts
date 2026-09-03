@@ -32,7 +32,6 @@ import {
   type MemoryScope,
 } from "./memory-service";
 import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
-import { executeAutomationMemoryToolForRun } from "./automation-memory-client";
 
 type ColumnType = MemoryTableColumnType;
 
@@ -477,7 +476,7 @@ function mutationRecord(
     operation: args.operation,
     actorPrincipalJson: JSON.stringify(input.executionPrincipal),
     harnessRunId: input.harnessRunId,
-    workstreamId: input.workstreamId,
+    workstreamId: input.parentId,
     rationale: args.rationale,
     inputHash: args.inputHash,
     mutationJson: JSON.stringify(args.mutation),
@@ -748,7 +747,7 @@ async function createTable(
     provenanceJson: JSON.stringify({
       source: "agent",
       harnessRunId: input.harnessRunId,
-      workstreamId: input.workstreamId,
+      workstreamId: input.parentId,
     }),
     // The request's column shape is strict and does not carry the table id the
     // object already has; the id-bearing shape above exists for `pseudoTable`.
@@ -838,7 +837,7 @@ async function insertRows(
       provenanceJson: JSON.stringify({
         source: "agent",
         harnessRunId: input.harnessRunId,
-        workstreamId: input.workstreamId,
+        workstreamId: input.parentId,
         executionPrincipal: input.executionPrincipal,
         rationale: args.rationale,
       }),
@@ -849,7 +848,7 @@ async function insertRows(
         operation: "insert_rows",
         actorPrincipalJson: JSON.stringify(input.executionPrincipal),
         harnessRunId: input.harnessRunId,
-        workstreamId: input.workstreamId,
+        workstreamId: input.parentId,
         rationale: args.rationale,
         inputHash,
         mutationJson: JSON.stringify({ naturalKeyHashes: prepared.map((row) => row.keyHash) }),
@@ -1224,26 +1223,7 @@ export function createMemoryTableTools(env: Env, input: WorkstreamWorkflowInput)
       execute: (raw, context) => invalidateRows(env, input, raw, context),
     },
   ];
-  if (!input.automationRunContext) return tools;
-  const operations = [
-    "table_search",
-    "table_describe",
-    "table_query",
-    "table_create",
-    "table_insert_rows",
-    "table_update_rows",
-    "table_invalidate_rows",
-  ] as const;
-  return tools.map((tool, index) => ({
-    ...tool,
-    execute: async (raw, context) => executeAutomationMemoryToolForRun(
-      env,
-      input,
-      operations[index]!,
-      raw,
-      context.providerIdempotencyKey,
-    ),
-  }));
+  return tools;
 }
 
 export const __memoryTableTesting = {

@@ -2,6 +2,7 @@ import { RALLY_HEADERS } from '@rally/contracts/http-headers';
 import {
   AutomationDetailSchema as WireAutomationDetailSchema,
   AutomationExecutionPrincipalClaimSchema,
+  AutomationRunSchema as WireAutomationRunSchema,
   AutomationSummarySchema as WireAutomationSummarySchema,
   WorkstreamAutomationSummarySchema as WireWorkstreamAutomationSummarySchema,
   WorkstreamBatchAcceptedSchema as WireWorkstreamBatchAcceptedSchema,
@@ -76,7 +77,8 @@ import type {
   AgentModelOverride,
   AutomationDeliveryTargetType,
   AutomationDetail,
-  AutomationRunSummary,
+  AutomationRun,
+  AutomationScope,
   AutomationSummary,
   WorkstreamAutomationSummary,
   BackgroundTask,
@@ -97,9 +99,7 @@ import type {
   PendingWorkspaceInvitation,
   ResourcePage,
   WorkspaceMember,
-  WorkspaceTemplate,
   WorkstreamConnection,
-  WorkstreamDeferredContext,
   WorkstreamBoot,
   WorkstreamDetail,
   ResourceVersion,
@@ -186,12 +186,6 @@ interface RequestOptions<T> {
   requestId?: string;
 }
 
-interface DraftState {
-  attachmentIds: string[];
-  messages: Array<{ role: 'user' | 'assistant'; content: string }>;
-  draft: WireAutomationDraft | null;
-}
-
 export interface MentionIdentity {
   type: 'person' | 'connector';
   label: string;
@@ -216,22 +210,8 @@ const wireWorkstreamAutomationPageSchema = z.object({
   items: z.array(WireWorkstreamAutomationSummarySchema),
 });
 const wireConnectionPageSchema = z.object({ items: z.array(WireConnectionSchema) });
-const wireTemplatePageSchema = z.object({
-  items: z.array(z.object({
-    id: z.string(),
-    name: z.string(),
-    author: z.string(),
-    description: z.string(),
-    usedBy: z.number(),
-    requiredCapabilities: z.array(z.string()),
-    latestVersion: z.number(),
-    activitySources: z.array(z.object({
-      bindingKey: z.string(),
-      connectorType: z.string(),
-      suggestedPluginId: z.string().optional(),
-    })).default([]),
-  })),
-});
+const wireAutomationRunPageSchema = z.object({ items: z.array(WireAutomationRunSchema) });
+const createdAutomationSchema = z.object({ automationId: z.string() });
 const createWorkstreamResponseSchema = z.object({
   workstream: WireWorkstreamSchema,
   turnId: z.string(),
@@ -239,8 +219,6 @@ const createWorkstreamResponseSchema = z.object({
 }).strict();
 const runNowResponseSchema = z.object({
   runId: z.string(),
-  workstreamId: z.string(),
-  harnessRunId: z.string().optional(),
   reused: z.boolean(),
 });
 // The issuing endpoints still put the ticket in the URL for desktop builds
@@ -348,13 +326,7 @@ export function mapWorkstreamSummary(workstream: WireWorkstream): WorkstreamSumm
     titleStatus: workstream.titleStatus,
     objective: workstream.objective,
     ...(workstream.emailAddress ? { emailAddress: workstream.emailAddress } : {}),
-    origin: workstream.originType,
     ...(workstream.createdByUserId ? { createdByUserId: workstream.createdByUserId } : {}),
-    ...(workstream.originLabel ? { automationName: workstream.originLabel } : {}),
-    ...(workstream.automationSubscriptionId
-      ? { automationSubscriptionId: workstream.automationSubscriptionId }
-      : {}),
-    ...(workstream.automationRunId ? { automationRunId: workstream.automationRunId } : {}),
     harnessStatus: normalizeHarnessStatus(workstream.harnessStatus),
     latestAttentionSequenceNumber: workstream.latestAttentionSequenceNumber,
     readThroughSequenceNumber: workstream.readThroughSequenceNumber,
@@ -368,7 +340,6 @@ export function mapWorkstreamSummary(workstream: WireWorkstream): WorkstreamSumm
     createdAt: workstream.createdAt,
     updatedAt: workstream.updatedAt,
     ...(workstream.archivedAt ? { archivedAt: workstream.archivedAt } : {}),
-    ...(workstream.plannedFor ? { plannedFor: workstream.plannedFor } : {}),
     scope: workstream.scope,
     ...(workstream.systemKind ? { systemKind: workstream.systemKind } : {}),
     nextPendingWakeup: workstream.nextPendingWakeup
@@ -440,10 +411,7 @@ export function mapWorkstreamDetail(workstream: WireWorkstreamDetail): Workstrea
     connections: workstream.connections.map(mapConnection),
     backgroundTasks: (workstream.backgroundTasks ?? []).map(mapBackgroundTask),
     openElicitations: workstream.openElicitations.map(mapElicitation),
-    automationRuns: [],
     ...(workstream.modelOverride ? { modelOverride: workstream.modelOverride } : {}),
-    ...(workstream.automationSubscriptionId ? { automationSubscriptionId: workstream.automationSubscriptionId } : {}),
-    ...(workstream.automationRunId ? { automationRunId: workstream.automationRunId } : {}),
     ...(workstream.latestHarnessRunId ? { latestHarnessRunId: workstream.latestHarnessRunId } : {}),
     ...(workstream.latestHarnessRun
       ? {
@@ -475,38 +443,25 @@ function triggerSummary(trigger: WireAutomationDraft['triggers'][number]): strin
   }
 }
 
-function activitySourcesFromTriggers(
-  triggers: WireAutomationDraft['triggers'],
-): Array<{ bindingKey: string; connectorType: string; suggestedPluginId?: string }> {
-  const sources = new Map<string, { bindingKey: string; connectorType: string; suggestedPluginId?: string }>();
-  for (const trigger of triggers) {
-    if (trigger.type !== 'connector_activity' && trigger.type !== 'semantic_activity' && trigger.type !== 'webhook') continue;
-    if (!trigger.sourceBindingKey) continue;
-    sources.set(trigger.sourceBindingKey, {
-      bindingKey: trigger.sourceBindingKey,
-      connectorType: trigger.type === 'webhook' ? 'generic_webhook' : trigger.connectorType ?? '',
-      ...(trigger.suggestedSourcePluginId ? { suggestedPluginId: trigger.suggestedSourcePluginId } : {}),
-    });
-  }
-  return [...sources.values()].filter((source) => source.connectorType);
-}
-
-function mapAutomationRun(run: WireAutomationRun, title: string): AutomationRunSummary {
-  const triggerTime = run.plannedFor ?? run.startedAt ?? run.createdAt;
+function mapAutomationRun(run: WireAutomationRun): AutomationRun {
   const start = run.startedAt ? Date.parse(run.startedAt) : Number.NaN;
   const end = run.completedAt ? Date.parse(run.completedAt) : Number.NaN;
   return {
     id: run.id,
-    workstreamId: run.workstreamId,
-    title,
-    status: normalizeHarnessStatus(run.status),
-    triggerType: ['schedule', 'calendar', 'interval'].includes(run.triggerType)
-      ? 'scheduled'
-      : run.triggerType,
-    triggerTime,
-    ...(run.resultSummary ? { resultSummary: run.resultSummary } : {}),
-    ...(Number.isFinite(start) && Number.isFinite(end) ? { durationMs: end - start } : {}),
+    automationId: run.automationId,
+    triggerType: run.triggerType,
+    status: run.status,
+    plannedFor: run.plannedFor,
+    startedAt: run.startedAt,
+    completedAt: run.completedAt,
+    resultSummary: run.resultSummary,
+    createdAt: run.createdAt,
+    ...(Number.isFinite(start) && Number.isFinite(end) ? { durationMs: Math.max(0, end - start) } : {}),
   };
+}
+
+function mapAutomationScope(scope: z.infer<typeof WireAutomationSummarySchema>['scope']): AutomationScope {
+  return scope === 'personal' ? 'you' : scope;
 }
 
 /** Exported for the workspace socket's sidebar batch, which carries the same wire rows. */
@@ -514,14 +469,14 @@ export function mapAutomationSummary(automation: z.infer<typeof WireAutomationSu
   return {
     id: automation.id,
     name: automation.name,
+    description: automation.description,
     ...(automation.emailAddress ? { emailAddress: automation.emailAddress } : {}),
-    scope: automation.scope === 'personal' ? 'you' : 'workspace',
+    scope: mapAutomationScope(automation.scope),
+    ...(automation.owningWorkstreamId ? { owningWorkstreamId: automation.owningWorkstreamId } : {}),
     status: automation.status,
-    ...(automation.attention ? { attention: automation.attention } : {}),
     ...(automation.nextRunAt ? { nextRunAt: automation.nextRunAt } : {}),
     ...(automation.lastRunAt ? { lastRunAt: automation.lastRunAt } : {}),
     updatedAt: automation.updatedAt,
-    ...(automation.updateAvailable ? { statusMessage: 'Update available' } : {}),
   };
 }
 
@@ -538,63 +493,27 @@ export function mapWorkstreamAutomationSummary(
   return {
     id: automation.id,
     name: automation.name,
+    description: automation.description,
     ...(automation.emailAddress ? { emailAddress: automation.emailAddress } : {}),
     status: automation.status,
-    ...(automation.attention ? { attention: automation.attention } : {}),
     ...(automation.nextRunAt ? { nextRunAt: automation.nextRunAt } : {}),
     ...(automation.lastRunAt ? { lastRunAt: automation.lastRunAt } : {}),
     updatedAt: automation.updatedAt,
-    ...(automation.updateAvailable ? { statusMessage: 'Update available' } : {}),
   };
 }
 
 function mapAutomationDetail(detail: z.infer<typeof WireAutomationDetailSchema>): AutomationDetail {
-  const runs = detail.recentRuns.map((run) => mapAutomationRun(run, detail.name));
-  const schedule = detail.triggers.find((trigger) => trigger.type === 'calendar' || trigger.type === 'interval');
-  const planned = detail.nextPlannedWorkstream;
   return {
     ...mapAutomationSummary(detail),
-    description: detail.description,
-    versionNumber: detail.versionNumber,
-    overview: detail.overview,
-    instructions: detail.instructions,
-    triggerSummary: detail.triggers.map(triggerSummary).join(' · '),
-    ...(schedule ? { scheduleSummary: triggerSummary(schedule) } : {}),
-    capabilities: detail.requiredCapabilities,
-    expectedOutputs: detail.expectedOutputs,
-    recommendedPlugins: detail.recommendedPlugins,
-    defaultPluginIds: detail.defaultPluginIds,
-    activitySourcePluginIds: detail.activitySourcePluginIds,
-    activitySources: activitySourcesFromTriggers(detail.triggers),
-    executionScope: detail.executionPrincipal['type'] === 'workspace' ? 'Workspace' : 'You',
-    runs,
-    ...(detail.templateUpdate
-      ? {
-          templateUpdate: {
-            versionId: detail.templateUpdate.versionId,
-            versionNumber: detail.templateUpdate.versionNumber,
-            overview: detail.templateUpdate.overview,
-            instructions: detail.templateUpdate.instructions,
-            triggerSummary: detail.templateUpdate.triggers.map(triggerSummary).join(' · '),
-            capabilities: detail.templateUpdate.requiredCapabilities,
-            expectedOutputs: detail.templateUpdate.expectedOutputs,
-            recommendedPlugins: detail.templateUpdate.recommendedPlugins,
-            activitySources: activitySourcesFromTriggers(detail.templateUpdate.triggers),
-          },
-        }
-      : {}),
-    ...(planned
-      ? {
-          nextRun: {
-            id: planned.automationRunId ?? planned.id,
-            workstreamId: planned.id,
-            title: planned.title,
-            status: normalizeHarnessStatus(planned.harnessStatus),
-            triggerType: 'scheduled',
-            triggerTime: planned.plannedFor ?? planned.createdAt,
-          },
-        }
-      : {}),
+    lifecycle: detail.lifecycle,
+    authorUserId: detail.authorUserId,
+    runAsUserId: detail.runAsUserId,
+    currentDefinition: detail.currentDefinition,
+    currentDefinitionRevision: detail.currentDefinitionRevision,
+    acceptedDefinitionRevision: detail.acceptedDefinitionRevision,
+    connectorBindings: { ...detail.connectorBindings },
+    triggerSummaries: (detail.currentDefinition?.triggers ?? []).map(triggerSummary),
+    recentRuns: detail.recentRuns.map(mapAutomationRun),
   };
 }
 
@@ -617,8 +536,6 @@ export function redactQuery(path: string): string {
 }
 
 export class RallyApi {
-  private readonly drafts = new Map<string, DraftState>();
-  private readonly automationDetails = new Map<string, z.infer<typeof WireAutomationDetailSchema>>();
   private readonly pendingRunKeys = new Map<string, string>();
 
   private renewCredential: (() => Promise<DesktopSession>) | null = null;
@@ -978,20 +895,28 @@ export class RallyApi {
   }
 
   /**
-   * Create the automation a proposal card names.
+   * "New automation": the object and its conversation, and nothing else.
    *
-   * No body, and no longer any alternative: this is the only way an automation
-   * is created. The draft is on the server, the card holds only what it shows,
-   * and everything creating one needs — its connector bindings, its plugins,
-   * its delivery — is derived there from the stored definition rather than
-   * restated by a client that never held it.
+   * No body, because the draft is written in that conversation. The id that
+   * comes back is the route to open.
    */
-  async acceptProposedAutomation(id: string): Promise<AutomationDetail> {
+  async createAutomation(): Promise<{ automationId: string }> {
+    return this.request('/automations', { method: 'POST', schema: createdAutomationSchema });
+  }
+
+  /**
+   * Apply the current ready revision: the first time this creates the
+   * automation, every later time it re-applies an edit.
+   *
+   * No body: the definition is on the object, written by its conversation, and
+   * everything applying it needs is derived there rather than restated by a
+   * client that never held it.
+   */
+  async acceptAutomation(id: string): Promise<AutomationDetail> {
     const raw = await this.request(`/automations/${encodeURIComponent(id)}/accept`, {
       method: 'POST',
       schema: WireAutomationDetailSchema,
     });
-    this.automationDetails.set(id, raw);
     return mapAutomationDetail(raw);
   }
 
@@ -1012,30 +937,15 @@ export class RallyApi {
 
   async getAutomation(id: string, signal?: AbortSignal): Promise<AutomationDetail> {
     const raw = await this.request(`/automations/${encodeURIComponent(id)}`, { schema: WireAutomationDetailSchema, signal });
-    this.automationDetails.set(id, raw);
     return mapAutomationDetail(raw);
   }
 
-  async adoptAutomationUpdate(
-    id: string,
-    versionId: string,
-    activitySourcePluginIds?: Record<string, string>,
-  ): Promise<AutomationDetail> {
-    const updated = await this.request(`/automation-subscriptions/${encodeURIComponent(id)}/adopt-version`, {
-      method: 'POST',
-      body: { versionId, ...(activitySourcePluginIds ? { activitySourcePluginIds } : {}) },
-      schema: WireAutomationDetailSchema,
+  async getAutomationRuns(id: string, signal?: AbortSignal): Promise<AutomationRun[]> {
+    const page = await this.request(`/automations/${encodeURIComponent(id)}/runs`, {
+      schema: wireAutomationRunPageSchema,
+      signal,
     });
-    this.automationDetails.set(id, updated);
-    return mapAutomationDetail(updated);
-  }
-
-  async shareAutomation(id: string): Promise<{ templateId: string }> {
-    return this.request('/automation-templates', {
-      method: 'POST',
-      body: { automationSubscriptionId: id },
-      schema: z.object({ templateId: z.string() }),
-    });
+    return page.items.map(mapAutomationRun);
   }
 
   async setAutomationStatus(id: string, action: 'pause' | 'resume'): Promise<AutomationDetail> {
@@ -1045,10 +955,13 @@ export class RallyApi {
 
   async deleteAutomation(id: string): Promise<void> {
     await this.requestVoid(`/automations/${encodeURIComponent(id)}`, { method: 'DELETE' });
-    this.automationDetails.delete(id);
   }
 
-  async runAutomation(id: string): Promise<WorkstreamSummary> {
+  /**
+   * Start a run now. The key is reused until the server confirms one, so a
+   * retry after a dropped connection lands on the run it already started.
+   */
+  async runAutomation(id: string): Promise<{ runId: string; reused: boolean }> {
     const idempotencyKey = this.pendingRunKeys.get(id) ?? crypto.randomUUID();
     this.pendingRunKeys.set(id, idempotencyKey);
     const result = await this.request(`/automations/${encodeURIComponent(id)}/run`, {
@@ -1057,25 +970,7 @@ export class RallyApi {
       schema: runNowResponseSchema,
     });
     this.pendingRunKeys.delete(id);
-    return {
-      id: result.workstreamId,
-      title: 'Automation run',
-      titleStatus: 'settled',
-      origin: 'automation',
-      harnessStatus: 'running',
-      scope: 'workspace',
-      lastActivityAt: new Date().toISOString(),
-      latestAttentionSequenceNumber: 0,
-      readThroughSequenceNumber: 0,
-      manualUnreadFromSequenceNumber: null,
-      manualUnreadGeneration: 0,
-      hasUnread: false,
-      firstUnreadSequenceNumber: null,
-      nextPendingWakeup: null,
-      pinPosition: null,
-      participantUserIds: [],
-      participantExtraCount: 0,
-    };
+    return result;
   }
 
   async getWorkOpportunities(signal?: AbortSignal): Promise<WorkOpportunity[]> {
@@ -1469,9 +1364,14 @@ export class RallyApi {
     };
   }
 
-  /** The REST recovery twin of the canonical socket snapshot. */
-  async getWorkstream(id: string, signal?: AbortSignal, openAttemptId?: string): Promise<WorkstreamBoot> {
-    const raw = await this.request(`/workstreams/${encodeURIComponent(id)}`, {
+  /**
+   * The REST recovery twin of the canonical socket snapshot.
+   *
+   * One route for every parent: a work stream and an automation are both
+   * opened through `/conversations`, and the parent decides who may read.
+   */
+  async getConversation(parentId: string, signal?: AbortSignal, openAttemptId?: string): Promise<WorkstreamBoot> {
+    const raw = await this.request(`/conversations/${encodeURIComponent(parentId)}`, {
       schema: WireWorkstreamBootSchema,
       signal,
       ...(openAttemptId ? { headers: { [RALLY_HEADERS.OPERATION_ID]: openAttemptId } } : {}),
@@ -1480,38 +1380,6 @@ export class RallyApi {
       ...mapWorkstreamDetail(raw),
       transcript: raw.transcript,
     };
-  }
-
-
-  async getWorkstreamContext(
-    id: string,
-    automationSubscriptionId?: string,
-    signal?: AbortSignal,
-  ): Promise<WorkstreamDeferredContext> {
-    // `/context` is gone: its only field was `backgroundTasks`, which the detail
-    // has always been shaped to carry and now does. What is left is the
-    // automation, which is a different resource and only exists for some work
-    // streams.
-    const context: WorkstreamDeferredContext = { backgroundTasks: [], automationRuns: [] };
-    if (!automationSubscriptionId) return context;
-    try {
-      const automation = await this.getAutomation(automationSubscriptionId, signal);
-      return {
-        ...context,
-        automationRuns: automation.runs,
-        automationSubscription: {
-          id: automation.id,
-          name: automation.name,
-          scope: automation.scope,
-          status: automation.status,
-          triggerSummary: automation.triggerSummary,
-          executionScope: automation.executionScope,
-        },
-      };
-    } catch (error) {
-      if (error instanceof DOMException && error.name === 'AbortError') throw error;
-      return context;
-    }
   }
 
   async messageMentionPayload(text: string, selected: MentionIdentity[] = []): Promise<Array<{
@@ -1727,17 +1595,17 @@ export class RallyApi {
     return { items: page.items.map(mapResource), nextCursor: page.nextCursor };
   }
 
-  async attachResource(id: string, resourceId: string): Promise<WorkstreamDetail> {
-    await this.request(`/workstreams/${encodeURIComponent(id)}/resources`, {
+  async attachResource(parentId: string, resourceId: string): Promise<WorkstreamDetail> {
+    await this.request(`/conversations/${encodeURIComponent(parentId)}/resources`, {
       method: 'POST',
       body: { resourceId },
       schema: WireWorkstreamResourceSchema,
     });
-    return this.getWorkstream(id);
+    return this.getConversation(parentId);
   }
 
-  async detachResource(workstreamId: string, resourceId: string): Promise<void> {
-    await this.requestVoid(`/workstreams/${encodeURIComponent(workstreamId)}/resources/${encodeURIComponent(resourceId)}`, {
+  async detachResource(parentId: string, resourceId: string): Promise<void> {
+    await this.requestVoid(`/conversations/${encodeURIComponent(parentId)}/resources/${encodeURIComponent(resourceId)}`, {
       method: 'DELETE',
     });
   }
@@ -1748,7 +1616,7 @@ export class RallyApi {
       body: { userId },
       schema: WireParticipantSchema,
     });
-    return this.getWorkstream(id);
+    return this.getConversation(id);
   }
 
   async removeParticipant(id: string, userId: string): Promise<void> {
@@ -1810,8 +1678,9 @@ export class RallyApi {
     return { enabled: false };
   }
 
+  /** A feed ticket for one of a parent's conversations, whichever kind of parent. */
   getSocketTicket(
-    id: string,
+    parentId: string,
     substreamId = '0',
     requestId?: string,
     afterSequence?: number,
@@ -1824,7 +1693,7 @@ export class RallyApi {
     const encodedQuery = queryParams.toString();
     const query = encodedQuery === '' ? '' : `?${encodedQuery}`;
     return this.request(
-      `/workstreams/${encodeURIComponent(id)}/substreams/${encodeURIComponent(substreamId)}/socket${query}`,
+      `/conversations/${encodeURIComponent(parentId)}/substreams/${encodeURIComponent(substreamId)}/socket${query}`,
       { schema: socketTicketSchema, signal, ...(requestId ? { requestId } : {}) },
     );
   }
@@ -1842,34 +1711,6 @@ export class RallyApi {
 
   getTranscriptionSocketTicket(): Promise<SocketTicket> {
     return this.request('/realtime/transcription/socket', { schema: socketTicketSchema });
-  }
-
-  async getWorkspaceTemplates(signal?: AbortSignal): Promise<WorkspaceTemplate[]> {
-    const page = await this.request('/automation-templates', { schema: wireTemplatePageSchema, signal });
-    return page.items.map((template) => ({
-      id: template.id,
-      name: template.name,
-      authorName: template.author,
-      description: template.description,
-      usageCount: template.usedBy,
-      capabilities: template.requiredCapabilities,
-      latestVersion: template.latestVersion,
-      activitySources: template.activitySources,
-    }));
-  }
-
-  async subscribeTemplate(
-    templateId: string,
-    defaultPluginIds: string[],
-    activitySourcePluginIds: Record<string, string>,
-  ): Promise<AutomationDetail> {
-    const raw = await this.request(`/automation-templates/${encodeURIComponent(templateId)}/subscribe`, {
-      method: 'POST',
-      body: { defaultPluginIds, activitySourcePluginIds },
-      schema: WireAutomationDetailSchema,
-    });
-    this.automationDetails.set(raw.id, raw);
-    return mapAutomationDetail(raw);
   }
 
   async getConnections(signal?: AbortSignal): Promise<WorkstreamConnection[]> {
