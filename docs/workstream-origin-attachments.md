@@ -140,10 +140,11 @@ it.
 
 **A connector activity that matches an automation trigger no longer attaches
 anything.** It used to — the object the automation fired on, ownerless, because
-an automation fired and nobody attached anything — from
+an automation fired and nobody attached anything, from
 `startActivityAutomation` in the activity consumer. The durable automation
-lifecycle replaced that producer with `AutomationAgent.provisionNextRun`, which
-attaches a resource only for an inbound-email trigger's opening message. A run
+lifecycle replaced that producer with the automation object's run provisioning
+(`AutomationDO.provisionRun` today), which attaches a resource only for an
+inbound-email trigger's opening message. A run
 fired by a Slack message or a Linear issue therefore starts with no record of the
 object it fired on, and the agent answers about a thread it cannot see — the
 failure the **Invariants** below describe and the one this module exists to
@@ -257,8 +258,8 @@ It deliberately does **not** cover:
   audience remains an immutable content fence; no new cards or links are created.
   See [`contextual-routing.md`](contextual-routing.md).
 - **Inbound email.** An automation run created from an address attaches its email
-  resource itself, from the opening input frozen in its run context; that is
-  `AutomationAgent`'s and is not rewritten here.
+  resource itself, from the opening stored on its run row; that is
+  `AutomationDO`'s and is not rewritten here.
 - **What the model does with the attachment.** The pageable
   `workstream_list_resources` index and bounded read/search tools are
   [`agent-harness.md`](agent-harness.md) and

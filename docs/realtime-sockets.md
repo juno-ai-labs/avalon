@@ -1,15 +1,15 @@
 # Realtime socket admission
 
-Every Rally WebSocket — workspace synchronization/commands, work-stream
-metadata, the direct substream feed, the automation draft feed, and the
-dictation bridge to Azure — is
-opened with a short-lived ticket rather than
+Every Rally WebSocket (workspace synchronization/commands, work-stream
+metadata, the direct conversation feed of a work stream or an automation, and
+the dictation bridge to Azure) is opened with a short-lived ticket rather than
 the session credential. This document owns how a purpose-specific ticket is
 issued, how it reaches the Worker, and how a handshake is accepted or refused.
 What happens *on* an open socket belongs elsewhere: workspace directory serving,
 invalidation, and command routing are `WorkspaceDO`'s, aggregate metadata is `WorkstreamDO`'s,
-feed fan-out/replay/presence is `SubstreamAgent`'s, the automation draft snapshot and compiler stream are
-`AutomationAgent`'s ([`automation-lifecycle.md`](automation-lifecycle.md)), and
+feed fan-out/replay/presence is `SubstreamAgent`'s whichever kind of parent the
+conversation has, who may open a conversation is its parent's
+([`workstream-durable-object.md`](workstream-durable-object.md)), and
 the dictation bridge's audio rules are in
 [`architecture.md`](architecture.md).
 
@@ -25,15 +25,13 @@ connection lifecycle around that admission protocol.
 | Path | Responsibility |
 | --- | --- |
 | `packages/contracts/src/socket-tickets.ts` | The transport: the subprotocol sentinel, the deprecated query parameter, and the shared helpers both sides use. The single source of the wire format. |
-| `apps/api/src/services/socket-service.ts` | Issues and verifies the separate workspace, work-stream-control, substream-feed, and automation ticket audiences, reads the presented ticket, negotiates the response subprotocol, and admits each upgrade. |
-| `apps/api/src/services/workstream-service.ts` | Gates a feed ticket on current visibility/authority and starts the recorded main SubstreamAgent's ticket-scoped admission and snapshot preparation as measurable, failure-isolated request background work. |
+| `apps/api/src/services/socket-service.ts` | Issues and verifies the separate workspace, work-stream-control, and conversation-feed ticket audiences, reads the presented ticket, negotiates the response subprotocol, and admits each upgrade. A feed ticket names the conversation's parent kind (`pk`) and id and carries the parent's archive decision. |
+| `apps/api/src/services/conversation-service.ts` | Gates a feed ticket on the parent's viewer decision and current authority, seats the reader on the conversation, and starts the recorded main SubstreamAgent's ticket-scoped admission and snapshot preparation as measurable, failure-isolated request background work. |
 | `apps/api/src/services/realtime-transcription-service.ts` | The dictation ticket, its WorkspaceDO replay receipt and session lease, and the Azure upgrade. |
-| `apps/api/src/routes/socket.ts` | Workspace, work-stream-control, substream-feed, automation, and dictation upgrade routes. The query ticket is optional here; the service decides what was presented. |
+| `apps/api/src/routes/socket.ts` | Workspace, work-stream-control, conversation-feed (`/socket/conversations/:parentId/:substreamId`), and dictation upgrade routes. The query ticket is optional here; the service decides what was presented. |
 | `apps/api/src/durable-objects/workspace-do.ts` | Accepts the persistent workspace synchronization/command socket, serves authoritative cursor-paged work-stream rows, persists a bounded replay log, and consumes its purpose-specific ticket in SQL. |
 | `apps/api/src/durable-objects/workstream-do.ts` | Accepts the per-work-stream aggregate metadata socket and returns complete viewer-specific snapshots. |
-| `apps/api/src/durable-objects/substream-agent.ts` | Accepts the direct read/stream/download feed and all substream-local commands (message, elicitation answer, pending-input reorder, stop, retry), consumes its distinct ticket in SQL, and admits writes from the identity serialized when the socket was authorized. |
-| `apps/api/src/durable-objects/automation-agent.ts` | Accepts one hibernating socket per automation draft, consumes its ticket in `automation_socket_ticket_receipts`, re-reads the session and membership from D1, and admits only the automation's author. |
-| `apps/desktop/src/renderer/lib/use-automation-agent-socket.ts` | The automation draft feed: ticket request, snapshot fence against the compiler stream, folded narration, heartbeat, and reconnect backoff. |
+| `apps/api/src/durable-objects/substream-agent.ts` | Accepts the direct read/stream/download feed and all substream-local commands (message, elicitation answer, pending-input reorder, stop, retry), consumes its distinct ticket in SQL, admits writes from the identity serialized when the socket was authorized, and refuses every write on a socket whose parent was archived. |
 | `apps/desktop/src/renderer/lib/workspace-socket.tsx` | Keeps the workspace socket alive across navigation, correlates/retries directory-page requests, resumes its waterline, applies current work-stream rows, and invalidates workspace query surfaces. |
 | `apps/api/src/services/sidebar-reads.ts` | The automation and note statements plus row mappings the sidebar opens with, shared by WorkspaceDO's batch and the REST services so the two readings of one table cannot drift. |
 | `apps/desktop/src/renderer/lib/sidebar-list-store.ts` | The one receiver for the sidebar's two pushed lists: the opening batch and every push compare against its per-list waterline ledger rather than writing the caches directly. |
@@ -57,15 +55,17 @@ admission is split in two.
 1. **Issue.** The desktop calls
    `GET /workspace/socket` for workspace sync/commands,
    `GET /workstreams/:id/control-socket` for aggregate metadata,
-   `GET /workstreams/:id/substreams/:substreamId/socket` for the feed,
-   `GET /automations/:id/agent/socket` for an automation draft, or
+   `GET /conversations/:parentId/substreams/:substreamId/socket` for the feed
+   of a work stream's or an automation's conversation, or
    `GET /realtime/transcription/socket`. The Worker checks the caller may open
    that exact purpose and mints a 60-second HS256 JWT binding user, workspace,
    region, one-time `jti`, audience, only the target IDs that purpose requires,
-   the current regional session ID, and — for a feed — the authenticated role
-   plus the current work-stream authority generation. The two work-stream feed routes also
-   return that `jti` as `ticketId` beside the ticket — the id of the credential,
-   never the credential — because the upgrade it authorizes opens a new
+   the current regional session ID, and, for a feed, the parent kind (`pk`),
+   the parent id, the authenticated role, the current authority generation,
+   and whether the parent said it is archived (`parent_archived`). The
+   conversation feed route also returns that `jti` as `ticketId` beside the
+   ticket, the id of the credential and never the credential, because the
+   upgrade it authorizes opens a new
    connection carrying no request id, and it is the only value the issuing
    route, the edge, and the room all hold. See
    [`performance-tracing.md`](performance-tracing.md). Once a main-feed ticket is
@@ -75,9 +75,14 @@ admission is split in two.
    a current D1 session/membership check, and eligible snapshot assembly overlap
    the ticket's transit and client handshake,
    while a failed, revoked, evicted, stale-generation, or unfinished preparation
-   leaves the ordinary regional upgrade checks as the fallback.
-   A non-main UUID is not warmed merely because its parent is visible; product
-   creation must first record that child in the parent directory.
+   leaves the ordinary regional upgrade checks as the fallback. Before any of
+   that, the Worker resolves which kind of parent the id names
+   (`WorkstreamDO.authority` first, then `AutomationDO.authority`, else 404),
+   asks that parent's `authorizeViewer`, and for an automation seats the reader
+   on the conversation, because the parent's rule is wider than the
+   conversation's participant list.
+   A non-main UUID is not warmed merely because its parent is visible; the
+   parent must first have reserved that child.
 2. **Present.** The client opens the socket with the ticket as the second
    protocol: `[rally.ticket.v1, <ticket>]`. Native browser sockets send those
    from the `WebSocket` constructor; Electron's work-stream broker passes the
@@ -107,13 +112,14 @@ admission is split in two.
    sweep the connected set — immediately for a retracting topic, otherwise once
    per 30 seconds — closing the sockets that no longer pass. Neither object
    receives the signed bearer ticket.
-   An automation upgrade reaches the exact `AutomationAgent`, which consumes the
-   ticket id in its own `automation_socket_ticket_receipts`, re-reads the
-   session and active membership from D1 rather than trusting the ticket, and
-   admits only the automation's author — narrower than `GET /automations/:id`,
-   which any member authorized to view a workspace-scoped automation passes. The
-   issuing route already refused a non-author, so the room's own check is the one
-   that survives a session revoked between issue and upgrade.
+   A conversation under an automation, or any substream other than `0`, is
+   admitted on the parent's forwarded decision: the ticket's `pk`, parent id,
+   and `parent_archived` reach the object as `x-rally-parent-kind`,
+   `x-rally-parent-id`, and `x-rally-parent-archived` headers, the object
+   checks them against its own identity row, and an archived parent's
+   conversation is read-only from that socket. An automation parent has no
+   socket of its own: the automation's page holds the conversation feed and
+   nothing else.
    Dictation consumes its `jti` and reserves a session lease in the owning
    WorkspaceDO — one serialized transaction, so two simultaneous upgrades
    cannot both pass the per-user/per-workspace concurrency caps — before
@@ -136,8 +142,8 @@ than silently reading a new fence. Active response/plugin/tool/thinking and
 compaction intervals carry their original UTC start plus the snapshot UTC and
 elapsed baseline; the client advances clocks locally.
 
-All four product objects — WorkspaceDO, WorkstreamDO, SubstreamAgent, and
-AutomationAgent — follow Cloudflare's [WebSocket Hibernation
+All three socket-holding objects, WorkspaceDO, WorkstreamDO, and
+SubstreamAgent, follow Cloudflare's [WebSocket Hibernation
 server pattern](https://developers.cloudflare.com/durable-objects/examples/websocket-hibernation-server/):
 
 - The edge Worker validates the method, route, `Upgrade`, origin, ticket, and
@@ -301,8 +307,8 @@ Every subscribe carries it, cold or resuming. A resume where no topic moved
 still gets one, under `reason: "resume"` with an empty topic list — the one
 event shape allowed to name no topics, because it exists to hand over state
 rather than to report news. That matters because a push can be missed while a
-socket is away and produce no topic at all: an AutomationAgent projecting its
-next run time into `automation_directory` is exactly that — it advances the
+socket is away and produce no topic at all: an AutomationDO projecting its
+next run time into `automation_directory` is exactly that; it advances the
 automations list and its waterline without naming a `workspace_sync` topic. A resume that missed nothing costs the
 bytes and applies nothing, since every list carries the waterline its pushes
 carry and the client's comparison drops it. Receivers must apply the sidebar
@@ -344,10 +350,10 @@ Notes go through `runWorkspaceSql`, the one entry point every write to that
 table passes through — a desktop REST write, a Workflow, and a workspace alarm —
 and `SIDEBAR_LIST_SOURCE_TABLES` maps the written table to the list it
 invalidates. Automations no longer have a workspace-local table to watch: the
-authority is each automation's own `AutomationAgent`, which delivers a
-projection over its outbox, and `applyAutomationProjection` advances the
+authority is each automation's own `AutomationDO`, which delivers its row over
+its outbox and the Queue, and `applyAutomationDirectory` advances the
 `automations` waterline and republishes the list inside the same transaction
-that accepts the projection. Both paths end in the same
+that accepts the row. Both paths end in the same
 `workspace_sidebar_list` push.
 
 That push exists rather than another `workspace_sync` topic for a reason that
@@ -375,8 +381,8 @@ state rows intentionally do not retain every intermediate push for replay.
 
 `WorkstreamDO` always sends a complete snapshot, not a partial patch.
 Common fields are identity, workspace ID, title/title status, description,
-preview, email address, origin, creator, automation subscription/run, planned
-time, exact and normalized state, attention/unread baseline, last activity,
+preview, email address, creator, exact and normalized state, attention/unread
+baseline, last activity,
 completion/archive/create/update timestamps, scope/system kind, next wakeup and
 next Terminal action. Its viewer overlay is participation/listability, unread
 count, mention status, read-through waterline, manual-unread fence/generation,
@@ -526,11 +532,13 @@ client sends one.
   deliberate 401, 403, or 409 into an unhandled 500.
 - **No Durable Object receives the signed bearer ticket.** It is verified
   at the edge and stripped from the subrequest. The feed child consumes the JTI
-  in `durable_inbox_receipts`; WorkspaceDO, WorkstreamDO, and AutomationAgent
+  in `durable_inbox_receipts`; WorkspaceDO and WorkstreamDO
   consume theirs in their own SQL receipt tables. Workspace membership remains in D1 while
   work-stream participation/revocation is projected locally.
 - **Ticket audiences are not interchangeable.** Workspace, aggregate metadata,
-  feed, and automation tickets cannot open one another's sockets. Otherwise a narrow read
+  and feed tickets cannot open one another's sockets, and a feed ticket names
+  its parent kind, so a ticket for one automation's conversation cannot open a
+  work stream's. Otherwise a narrow read
   credential could become a workspace write credential.
 - **Origin is checked before the ticket is read.** An exact match against
   `ALLOWED_ORIGINS`, so a lookalike host cannot spend a ticket.
@@ -592,15 +600,10 @@ namespace helper.
 - **Bad signature, wrong audience, expired** — 401 `invalid_socket_ticket`. The
   ticket lives 60 seconds; a client that stalls between issue and open must ask
   for another.
-- **Wrong audience, region, workspace, work stream, substream, block, or automation** — 403 `socket_ticket_scope_mismatch`.
-- **An automation upgrade whose session no longer authenticates** — the room
-  answers 403 `forbidden`; a replayed ticket id answers 401
-  `socket_ticket_replayed`; a request with an incomplete identity header set
-  answers 401 `automation_socket_identity_required`. A ticket that reaches the
-  room belonging to a member who is not the author is not a shaped refusal: the
-  room's author assertion throws, which the binding surfaces as a 500. It is
-  meant to be unreachable, because the issuing route refuses a non-author before
-  a ticket exists.
+- **Wrong audience, region, workspace, parent, or substream** (403
+  `socket_ticket_scope_mismatch`).
+- **A write on a conversation whose parent is archived** (the object answers
+  409 `conversation_parent_archived` on the socket; the read side stays open).
 - **Disallowed origin** — 403 `socket_origin_forbidden`.
 - **Object refusal** — the object's own JSON status reaches the client unchanged:
   426, 400 `invalid_socket_identity`, 403 `forbidden`, 401
@@ -643,6 +646,7 @@ their client message IDs make reconnect resend idempotent.
 | --- | --- | --- |
 | `packages/contracts/src/socket-tickets.test.ts` | `pnpm --filter @rally/contracts test` | The wire format: offers, parsing, refusal of non-tickets, URL stripping. |
 | `apps/api/test/socket-ticket-transport.test.ts` | `pnpm --filter @rally/api test` | Precedence and the negotiation decision, on Node. |
+| `apps/api/test/workstream-socket-warm.test.ts` | `pnpm --filter @rally/api test` | `ConversationService.socketTicket`: the parent's viewer decision gating the ticket, the parent kind and archive decision on it, and the deferred main-substream warm-up. |
 | `apps/api/test-workers/socket-subprotocol-runtime.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts` | The runtime constraint, on real workerd. |
 | `apps/api/test-workers/durable-object-runtime.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts` | Hibernating WorkspaceDO, WorkstreamDO, and SubstreamAgent attachments/snapshots; authoritative workspace directory application/page/resource queries; eviction; native-RPC envelopes; workspace protocol/session/access close-code separation and payload-free diagnostics; truthful bounded transcript ranges; indivisible-turn payload-free envelopes; revocation; compaction recovery; queued-run coalescing; and ticket replay on real workerd. |
 | `apps/api/test-workers/message-to-output-pipeline.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts` | Fresh message admission and its private receipt on the authenticated SubstreamAgent socket, stable turn identity after hibernation/resend, and the message-to-provider pipeline on real workerd. |
@@ -650,7 +654,7 @@ their client message IDs make reconnect resend idempotent.
 | `apps/desktop/src/renderer/lib/use-workstream-control-socket.test.tsx` | `pnpm --filter @rally/desktop test` | Complete aggregate snapshots, stale waterline rejection, nullable-field clearing, revocation, and reconnect. |
 | `apps/desktop/src/main/realtime-socket-broker.test.ts`, `realtime-socket-ipc.test.ts`, `apps/desktop/src/common/realtime-socket-validation.test.ts` | `pnpm --filter @rally/desktop test` | Ordered PAC fallback, shared frame ceiling, normal-close removal, renderer-owner isolation, shared IPC channels, main-window authorization, and strict main-to-preload events. |
 | `apps/desktop/src/renderer/lib/workstream-socket-pool.test.tsx`, `use-workstream-socket.test.tsx`, `apps/desktop/src/renderer/screens/workstream.test.tsx` | `pnpm --filter @rally/desktop test` | Initial admission for the pooled WorkstreamDO/SubstreamAgent pair, exact-pair reuse for five minutes after switching streams, background/recent overlap, expiry and backward-clock recovery, in-place route reconciliation, direct SubstreamAgent command/feed reconnect, private message receipts, streaming, explicit compaction lifecycle/reconciliation, range merging, oversized-turn placeholder rendering, and scroll thresholds/anchor preservation. |
-| `apps/desktop/src/renderer/lib/use-automation-agent-socket.test.tsx` | `pnpm --filter @rally/desktop test` | The automation draft feed: closing a socket serving another automation and applying nothing it sent, clearing state the moment the subject changes, the agent's own sequence fencing snapshots against the compiler stream, one read per burst of durable events, ping/pong timeout, reconnect backoff, and timer cleanup on unmount. |
+| `apps/api/test-workers/conversation-parent-contract.test.ts` | `pnpm --filter @rally/api test:workers` | `authorizeViewer` on both kinds of parent through the real ticket route, and the archived-parent read-only refusal on a child substream. |
 | `scripts/smoke-local.mjs` | `pnpm smoke:local` | A real handshake end to end, both transports, and the replay status. |
 
 **The trap, and it has already cost one bug:** Node's `Response` refuses status
@@ -682,6 +686,34 @@ the provider's redirect and cannot move; [`security.md`](security.md) records
 what that leaves exposed.
 
 ## Changelog
+
+### 2026-09-03: One feed ticket for every conversation, named by its parent
+
+**What changed:** The feed ticket is issued at
+`GET /conversations/:parentId/substreams/:substreamId/socket` and presented at
+`/socket/conversations/:parentId/:substreamId`, for a work stream's conversation
+and an automation's alike. Its claims carry the parent kind (`pk`) beside the
+parent id, and its admission carries `parent_archived`; the Worker forwards
+both as `x-rally-parent-kind` and `x-rally-parent-archived`, and the
+conversation object refuses writes on an archived parent's socket. The
+automation ticket audience, `GET /automations/:id/agent/socket`, the
+`/socket/automations/:id` upgrade, and the automation object's own socket room
+are gone.
+
+**Why:** The automation object no longer has a conversation of its own to
+serve: its chat is a `SubstreamAgent` under it, exactly as a work stream's
+feed is a `SubstreamAgent` under `WorkstreamDO`. One ticket shape for one kind
+of object is fewer audiences to keep apart, and the parent kind on the ticket
+is what lets the object check it was addressed under the parent it belongs to.
+[`workstream-durable-object.md`](workstream-durable-object.md) carries the
+design.
+
+**Consequences:** The parent's decision is the read admission, carried down
+once at issue; the conversation's participant row is still the write check.
+A change that admits a socket from the participant row alone, or that stops
+forwarding `parent_archived`, reopens writes into an archived parent's
+conversations. The entries below that describe the automation room record what
+was true when they shipped.
 
 ### 2026-09-03 — HyperSight leaves the realtime protocol
 

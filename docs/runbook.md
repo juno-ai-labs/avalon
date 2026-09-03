@@ -80,7 +80,7 @@ document](feature-flags.md#provisioning) has the commands for rebuilding them in
 a fresh account. Each model flag is seeded with the ids already in the
 `OPENROUTER_*` variables. Ace automatically ensures the
 `meeting-recording-enabled`, `suggested-work-enabled`, and
-`automation-workspace-templates-enabled` flags exist with an off default on
+`multiple-workspaces-enabled` flags exist with an off default on
 every merge that deploys it. Changing their targeting happens in Ace rather
 than the Flagship dashboard so connected clients receive the Queue push.
 
@@ -949,7 +949,7 @@ For ordinary releases after both entrypoints exist:
 10. Connect **Google Mail + Calendar** and verify a Gmail read, Gmail draft, Calendar read, and Calendar test-event create/update. Delete the provider-side test fixture afterward.
 11. Connect **Google Drive + Docs + Sheets** and verify a Drive read, native Docs read/write, and native Sheets read/write against disposable fixtures.
 12. Establish the Drive poll baseline, change the test Doc and Sheet, poll again, and confirm `docs.document_changed` and `sheets.spreadsheet_changed` arrive through Drive change-token polling.
-13. Create an automation, run it manually, and verify that a single work stream and run record are reused across a retry.
+13. Create an automation from the sidebar, draft it in its conversation, apply it, run it manually, and verify that a repeated **Run now** with the same idempotency key reuses the one run and its child conversation.
 14. After every successful deployment, run the configured Gitleaks gate, commit the complete verified release transaction, and push the authorized current branch. A deployment is not complete until its source and release metadata are present on the remote. Never stage `.env.local`, generated release bundles, dependency directories, or local Cloudflare state.
 
 Use `pnpm deploy:global` and `pnpm deploy:eu` to publish the regional Workers after the infrastructure prerequisites are satisfied. Do not mark Google capabilities release-ready until the provider credentials and APIs are configured, provider verification is complete where required, and steps 9–12 pass. A failed regional health check blocks desktop distribution for that region.
@@ -962,98 +962,74 @@ Three GitHub Actions workflows carry the mechanical part of this procedure. They
 - `.github/workflows/deploy-api.yml` performs steps 1 and 5–7: eight exact-artifact dry-runs and startup profiles, the shared platform D1 migration chain followed by regional D1 migrations, service-first two-region version upload or direct deployment, artifact-reader-before-API promotion, EU promotion and health, Global service/PostHog/pricing/API promotion and health, and final regional health. The profiles and build manifests are retained even on failure. Before any migration or Worker upload, it fetches a canonical `/app/workspaces/<region>/<workspace>/workstreams/<id>` probe from the live site and requires the work-stream handoff marker; it also requires `latest-mac.yml` on the live update channel to carry the addressed-reader marker written into verified desktop releases. The site, desktop, and API deploy independently on the same merge, so an API run that reaches this gate before either reader—or after a failed reader release—stops safely and is re-run after both are live; the previous API keeps emitting only link shapes deployed readers understand. Wrangler-config, Durable Object migration, Container-image, and first-service releases select direct deployment because Cloudflare Versions cannot establish that platform state; successful releases tag each active version with the immutable verified Git SHA. Its verify matrix shards the workers suite the same way CI does (`api-tests-workers-1-of-n` / `2-of-n`) rather than appending an unsharded `test:workers` onto a Node lane — that split is load, not coverage, and an unsharded full-suite Miniflare is more `reset()` interleave than PR CI ever sees. It runs automatically on every merge to `main` that touches `apps/api`, `packages` (including both D1 migration chains), either lakehouse manifest/provisioner, the lockfile, the workspace file, or the workflow itself; documentation, desktop, and site-only merges do not redeploy. A `workflow_dispatch` run can additionally restrict the regions, skip the migration step, and deploy an arbitrary ref; the verify job resolves that ref once, and the deploy job checks out the resulting immutable SHA so a moving branch cannot change between validation and deployment. It creates any declared Queue that is missing and locally materializes the two pinned Global lakehouse bindings before migrations without calling the Pipelines management API; the EU deploy config intentionally contains no lakehouse binding. Lakehouse creation and drift verification use explicit operator reconciliation. The workflow does not create unrelated resources, confirm regional D1 IDs, create the wildcard artifact DNS record, or set Worker secrets — those steps stay manual and one-time — and it must not be used for the three-stage inbound-email bootstrap or any other release that introduces a new cross-region entrypoint. Those are deployed by hand in the documented order, which means holding such a change out of `main` until the staged rollout is complete.
   Migration 0090 is the one destructive exception to normal migration-first ordering: when it is the sole pending migration, compatible Workers deploy before it. The workflow fails closed if 0090 appears beside any other pending migration, because Wrangler applies the complete pending ledger and must never move an ordinary later migration behind the Worker that may require it.
 - **The durable automation lifecycle cutover ran on 2026-08-28** and its three
-  one-shot deploy steps — the single-region refusal, the preflight, and the
-  apply — have been removed from `deploy-api.yml`. They were deliberately
+  one-shot deploy steps (the single-region refusal, the preflight, and the
+  apply) have been removed from `deploy-api.yml`. Everything it produced was
+  deleted with the first automation object on 2026-09-03 (Wrangler tag `v9`),
+  so the bullet below is history: there is no campaign ledger, no cutover
+  script, and no legacy state left to repair. They were deliberately
   temporary: left in place, the refusal permanently bans an EU-only or
   Global-only deploy in the name of a cutover that has already happened. Both
-  regions ran it in one release. Completion was confirmed per workspace
-  afterwards rather than inferred from the drained queue: Workers Logs carry one
-  `automation_cutover_completed` event for each of the three Global workspaces
-  (EU held none), and zero `workspace_do_schema_hash_mismatch` events. Those
-  events are themselves proof the objects applied through WorkspaceDO v22, since
-  `finalizeAutomationCutover` exists only in the new build and runs after the
-  constructor's migration pass.
-  `scripts/cutover-automation-agents.mjs` is kept as an operator tool rather
-  than deleted, because it is the remedy if a workspace is ever found still
-  holding legacy automation state; `--apply` is idempotent per workspace, so
-  rerunning it against a completed fleet is a no-op.
-  Running it by hand needs the Cloudflare credentials the deploy job used to
-  assert, and two things are worth knowing before you do. **The drain wait is
-  unbounded**: `AUTOMATION_CUTOVER_DRAIN_TIMEOUT_MS` ships as `+Infinity`
-  behind a `LIMIT UNSET` marker
-  ([`adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md)),
-  so the poll has no exit but success. A deterministically failing message is
-  not what hangs it — the command queues carry five retries and a dead-letter
-  queue, and the loop already fails on any rise in the dead-letter count. What
-  hangs it is a drain that is merely slow, or this: **`avalon-<region>-migration-commands`
-  is shared with the migration tracker's "Force a migration" page.** Anyone
-  fanning a Durable Object class into that queue while the script runs keeps
-  the backlog above zero for reasons that have nothing to do with automations,
-  and the script waits on a number that is no longer about its own work. Check
-  the tracker before running it, and read the regional command-queue backlog
-  directly before concluding anything is stuck; the run is idempotent and a
-  rerun resumes where it stopped.
+  regions ran it in one release, and the record of what it did is in this
+  document's history and in the `automation-lifecycle.md` changelog.
 - `.github/workflows/release-desktop-macos.yml` freezes the version-bumped release commit and runs lint, typecheck, the full test suite, and the release invariants on Ubuntu before it claims macOS; the Apple runner then guards the tag, runs the packaged Crashpad fixture, builds, signs, notarizes, staples, and verifies the macOS package, checks both regional APIs, publishes the immutable payloads, promotes the release manifest, records the release config on `main`, and deploys the landing site from `main`'s then-current tip. The health gate can be bypassed only through the `skip_health_gate` dispatch input. It runs automatically on a merge to `main` matching its cheap admission filter; the Ubuntu planner rejects contract-only changes outside the desktop's derived import closure before bumping or claiming macOS. A manual dispatch names an existing tag. Nothing triggers on a tag.
 
-### Cutting a workspace over by hand, and reading the DLQ
+### Debugging an automation
 
-The fleet-wide cutover ran on 2026-08-28 and **there is no cutover workflow left
-to retry** — rerunning `deploy-api.yml` only redeploys the Workers. If a
-workspace is ever found still holding legacy automation state, the remedy is to
-run the retained script directly:
+An automation is one `AutomationDO` per automation, named
+`<region>:<workspace>:automation:<automationId>`, and its conversations are
+`SubstreamAgent`s named `<region>:<workspace>:<automationId>` (the chat) and
+`<region>:<workspace>:<automationId>:<runId>` (each run).
+[`automation-lifecycle.md`](automation-lifecycle.md) owns the object; this is
+where to look when one misbehaves.
 
-```bash
-CLOUDFLARE_ACCOUNT_ID=… CLOUDFLARE_API_TOKEN=… \
-  node scripts/cutover-automation-agents.mjs --apply --workspace=<workspace-id>
-```
+- **"I can't find my automation."** The sidebar lists what
+  `listAutomationDirectory` returns: `workspace` automations and the viewer's
+  own `personal` ones, never a room's. A room's automation is in that room's
+  rail. `GET /automations/:id` reads the object and answers 404 for a deleted
+  one or a viewer the object refuses.
+- **The sidebar row is stale.** The row travels the automation's outbox, the
+  regional activities Queue, and `WorkspaceDO.applyAutomationDirectory`. Read
+  the object's `durable_outbox` (a row there has not been accepted by the
+  Queue yet; `parent_effect_enqueue_failed` says why) and the regional
+  activities dead-letter queue (`conversation_effect_processing_failed` names
+  the message that kept throwing). An `automation_directory_version_conflict`
+  is a producer bug: the same `source_version` carrying two hashes.
+- **Apply refuses.** The code is the answer: `automation_definition_not_ready`
+  (the chat has not submitted a ready draft), `automation_plugin_unavailable`
+  and its binding siblings (the workspace no longer has the connection the draft
+  named), `automation_timezone_invalid`, `automation_recurrence_has_no_future`.
+  A 500 from `POST /automations/:id/accept` is a fault, not a refusal.
+- **A scheduled run did not fire.** Inspect the object's `schedules`
+  (`next_due_at` null means the rule has no future occurrence) and
+  `_internal_durable_alarms` (an `automation_schedule` entry behind its retry
+  gate). `automation_scheduled_alarm_failed` and
+  `automation_scheduled_alarm_stalled` name the entry and the handler's code.
+  A paused automation fires nothing and does not catch up on resume.
+- **An event did not start a run.** `external_event_delivery_terminal` records
+  the admission outcome per registration: `automation_paused`,
+  `automation_event_before_activation_boundary` (the event's sequence is at or
+  below `effective_after_event_sequence`, so it predates the apply that
+  registered the rule), or `automation_occurrence_replayed` (a redelivery). No
+  delivery at all means the matcher found no active registration, which
+  `WorkspaceDO.workspace_external_event_registrations` will show.
+- **Mail did not start a run.** `inbound_email_receipts` on the object holds
+  one row per Resend email id with the refusal code
+  (`automation_not_active`, `automation_email_route_mismatch`,
+  `email_sender_not_authorized`) or the run it admitted.
+- **A run stopped early.** `runs.state` on the object is what its child
+  conversation last reported; `stopped` with the automation `paused` or
+  `deleted` is a pause or delete after admission, and the run's provider writes
+  were refused with "This automation run is no longer running". A run that
+  never left `pending` has an `automation_run` alarm entry behind its gate.
+- **A result never reached the room.** Only a run of a room's automation holds
+  `automation_post_result`, and only the run posts; look for
+  `automation_post_result_refused:<code>` or `automation_owning_room_archived`
+  in the run's tool results. Nothing posts after the run.
 
-**Name the workspace.** Without `--workspace=` the smallest unit is a whole
-region: one command per workspace fanned into
-`avalon-<region>-migration-commands`, waking every WorkspaceDO in it to tell all
-but one that it is already done. That is a herd for a single repair, it shares a
-queue with the migration tracker, and its drain wait is the unbounded one. A
-targeted run sends one message and drains in seconds.
-
-It needs the Cloudflare credentials the deploy job used to assert, and
-`pnpm migrate:automation-agents` runs it in dry-run mode first, which inventories
-both regions and sends nothing. If you do run it region-wide, **check the
-migration tracker before you start**: that queue is shared with its "Force a
-migration" fan-out, and a class-wide force running concurrently holds the backlog
-above zero so the drain loop waits on work that is not yours.
-
-The cutover is roll-forward only. A failed workspace command stays retryable from
-its WorkspaceDO campaign ledger; do not deploy an older Worker or recreate
-removed tables. Record the region, the script's `runId`, and the workspace ID
-from the structured failure before rerunning — the command and every
-import/finalization step are idempotent, so a redelivery is safe and a completed
-campaign is a no-op.
-
-**Reading the dead-letter queues.** `avalon-global-migration-commands-dead-letter`
-and its EU counterpart have no consumer, so nothing drains them and their depth
-is cumulative rather than current — as of 2026-08-29 they hold 787 and 1 messages
-respectively, all from forced-migration runs between 23 and 27 August, none from
-the cutover. That is why the script compares each DLQ against a **baseline taken
-at dispatch** and fails on an increase, rather than on a non-zero count. Read
-them the same way: the delta across a run is the signal, the absolute number is
-history nobody has cleared. Never copy an EU payload into a Global fixture or
-diagnostic.
-
-**A `503 automation_cutover_in_progress` is now a repair, not a wait.** While the
-cutover was running it meant "your turn is coming"; there is no cutover deploy
-any more, so today it means this workspace was carried over and never completed —
-exactly the stranded case the script above is retained for. WorkspaceDO refuses
-to mint an automation id until its campaign row reads `completed`, so a member
-reports "I can't make a new automation" while their existing accepted automations
-keep running from their imported objects. Confirm the campaign state, then run
-the targeted `--apply` for that workspace; do not wait it out. A workspace
-created after the cutover cannot produce this — `WorkspaceDO` seeds its campaign
-row as `completed` when it writes its identity — so this only ever names an
-object that predates 2026-08-28.
-
-Every other automation failure a person can hit has its own status and sentence
-in `apps/api/src/services/automation-agent-errors.ts`; a `500 internal_error`
-from an automation route means the object threw a code that table does not name, or a refusal was raised outside a wrapper that reads it,
-which is a defect rather than a state to wait out.
+Inspect the object through the engineering MCP's raw SQL per
+[`engineering-mcp.md`](engineering-mcp.md); the automation's tables are listed
+in [`workstream-durable-object.md`](workstream-durable-object.md#automationdo).
+Keep retrieved user content out of tickets and logs.
 
 The symbolicator image is the one expensive thing either workflow builds, in the single `crash-symbolicator-container` lane each of them runs it from. Its builder stage compiles `minidump-stackwalk` from source — about three and a half minutes, depending on nothing in this repository — so both workflows run a **Warm the symbolicator image cache** step against a `docker-container` builder before anything builds the image for real. That step is the only one that reads or writes the shared `crash-symbolicator` cache scope; the builds that follow it — the integration lane's own `docker build`, and Wrangler's during a regional deploy — resolve every layer from the warmed builder without naming a cache at all. It warms that builder by **materializing the image** (`load: true`), not by importing cache records alone. A remote cache import is lazy — it resolves the keys without fetching the layers behind them, and BuildKit keeps that only for the solve that imported it — so a cache-only warm-up hands a later, separate `docker build` nothing. That arrangement shipped first and was measured: the warm-up reported every vertex `CACHED` in 2.4s and the lane recompiled the crate from scratch immediately afterwards. Do not revert it to `type=cacheonly` on the reasoning that the image is unused; the image is the point, and its tag is the side effect. `install: true` on `docker/setup-buildx-action` is what points their plain `docker build` at that builder, and it must stay. Buildx now warns that the `docker buildx install` alias it sets is deprecated and names `BUILDX_BUILDER` as the successor; when that alias is finally removed, replace `install: true` with `BUILDX_BUILDER` set to the builder name the setup step outputs, in the same job env the later builds read. Do not simply drop it — a build that silently resolves to the default builder still succeeds, just cold, which is the failure this arrangement exists to make impossible. The warm-up must also stay a JavaScript action rather than a `docker buildx build` line: `type=gha` authenticates with `ACTIONS_RUNTIME_TOKEN`, which the runner injects into actions and never into a `run:` step, so a shell-driven cache silently transfers nothing.
 
@@ -1291,8 +1267,9 @@ request and fails closed — do not delete it, and never edit
 live work-stream-to-object directory: creation writes it, and regional effect
 delivery fences on its `state`/`generation`.
 
-For a missing or stale product fact, inspect the parent
-`WorkstreamDO.durable_outbox` and source child outbox/receipt first. For a
+For a missing or stale product fact, inspect the parent's (`WorkstreamDO` or
+`AutomationDO`) `durable_outbox`, the source child's `durable_outbox`, and the
+parent's `child_effect_receipts` first. For a
 missing sidebar badge/resource route/suggestion feedback row, inspect
 `WorkspaceDO.workspace_workstream_effect_receipts` and the corresponding
 `workspace_workstream_*` row's authority generation, waterline, and UUIDv7
@@ -1301,12 +1278,16 @@ notification, inspect that same
 `WorkspaceDO.workspace_workstream_effect_receipts` table — activity and mention
 effects commit their receipt in the object transaction that commits the event
 or intent — and `WorkspaceDO.workstream_notification_intents`. A receiver
-receipt with no local outbox row means the owning WorkspaceDO transaction
-committed and acknowledged the effect; an outbox row with no receiver receipt
-means Queue/consumer-RPC delivery is still retrying. Both rows with the same
-hash mean only the acknowledgement RPC is retrying. Never delete an object
-outbox row to clear an alert. Repair the receiver/consumer and let the alarm
-resend it. A generation/waterline/hash conflict is a producer bug or
+receipt with no sender outbox row is the normal end state: the sender deleted
+its row when the Queue accepted the message, and the receiver committed the
+effect with its receipt. A sender outbox row that persists means the Queue is
+refusing the send (`substream_outbox_batch_deferred`,
+`parent_effect_enqueue_failed`); no outbox row and no receipt means the Queue
+holds the message or has dead-lettered it
+(`conversation_effect_processing_failed` names the throw). There is no
+acknowledgement RPC to retry. Never delete an object outbox row to clear an
+alert; repair the Queue or the receiver and let the alarm resend it, or
+redrive the dead-letter queue. A generation/waterline/hash conflict is a producer bug or
 restore-generation error and requires quarantine, not last-writer-wins repair.
 Effect receipts and terminal notification shells disappear after 30 days; a
 redelivery older than that converges on the idempotent product identities
@@ -1401,7 +1382,6 @@ Workers Logs remain at full invocation and head sampling. `pnpm cloudflare:obser
 | --- | --- |
 | Failures | `level = error` |
 | Invalid model output | `event = request_failed` and `code = model_output_invalid` |
-| Slow inference | `event = automation_compiler`, `stage = model_response`, and `latency_ms > 10000` |
 | Degraded connector workflows | `event = connector_poll_timeout` or `event = connector_poll_failed` |
 | Rejected model calls | `event = agent_inference_attempt_failed` or `event = structured_inference`, and `provider_error_code` exists |
 | Broken response contracts | `event = request_failed` and `error_name = ZodError` |
@@ -2268,8 +2248,8 @@ harness re-executes the **whole route plan** up to `HARNESS_TRANSPORT_RETRIES`
 times (declared as `1` in both regional Wrangler configs) after a backoff that
 honours `Retry-After` up to 30 seconds. So during an outage elevated latency may
 be Rally waiting rather than a run hanging. **Set `HARNESS_TRANSPORT_RETRIES` to
-`0` and redeploy to stop it everywhere — work streams, inline children, the final
-meeting-notes pass, and the automation compiler all read it** — worth doing when a provider is failing broadly,
+`0` and redeploy to stop it everywhere: work streams, automation runs, inline
+children, and the final meeting-notes pass all read it**, worth doing when a provider is failing broadly,
 because each re-execution charges another failure to the per-workspace circuit
 breaker whose threshold is 3.
 

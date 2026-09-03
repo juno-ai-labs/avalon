@@ -9,7 +9,7 @@ of scheduled alarms per object, and a base class that keeps the object's single
 alarm pointed at the earliest thing on it.
 
 Read this before adding a wake reason to `WorkspaceDO`, `WorkstreamDO`,
-`SubstreamAgent`, or `AutomationAgent`, before changing when any of them fires,
+`SubstreamAgent`, or `AutomationDO`, before changing when any of them fires,
 and before giving a fifth object its own alarm. The objects themselves — their
 hierarchy, schemas, sockets, and effects — belong to
 [`workstream-durable-object.md`](workstream-durable-object.md) and, for
@@ -26,8 +26,8 @@ automations, [`automation-lifecycle.md`](automation-lifecycle.md).
 | `apps/api/src/durable-objects/workspace-alarm-instrumentation.ts` | Content-free WorkspaceDO alarm phase spans and structured rows: fixed phase/kind enums, elapsed times, and the slowest-phase summary. |
 | `apps/api/src/services/workspace-schedule-execution.ts` | What a workspace target actually *does* when it fires — connector polls, digests, watch polls, maintenance, Terminal lifecycle — as plain functions over a context. Automations are no longer among them; each has its own alarm. |
 | `apps/api/src/durable-objects/substream-agent.ts` | Adopts it for a work stream's agent: `agent_timer` entries index `workstream_wakeups`, while execution, external settlement, projection, realtime, and keep-alive deadlines remain derived from their owning rows or lease. |
-| `apps/api/src/durable-objects/workstream-do.ts` | Adopts it for the regional-effect outbox, whose deadline stays derived. |
-| `apps/api/src/durable-objects/automation-agent.ts` | Adopts it for one automation: two stored kinds — `compiler_dispatch` and `automation_schedule` — and two derived lanes, the effect outbox and the next run awaiting provisioning. |
+| `apps/api/src/durable-objects/workstream-do.ts` | Adopts it for the parent outbox, whose deadline stays derived. |
+| `apps/api/src/durable-objects/automation-do.ts` | Adopts it for one automation: two stored kinds, `automation_schedule` and `automation_run`, and the same derived parent-outbox lane `WorkstreamDO` has. |
 
 ## How it works
 
@@ -206,62 +206,24 @@ derived source has no way to carry that distinction.
 
 ### An automation's wake reasons
 
-`AutomationAgent` is the fourth adopter and the smallest. It stores two kinds and
-derives two lanes:
+`AutomationDO` is the fourth adopter. It stores two kinds and derives one lane:
 
 | Reason | Kind | Source |
 | --- | --- | --- |
-| Run the draft compiler for one admitted turn | `compiler_dispatch` (stored) | the compiler run id |
 | Fire one calendar or interval occurrence | `automation_schedule` (stored) | the schedule id |
-| Deliver the next workspace projection or child-archive effect | derived | `MIN(not_before)` over `automation_outbox` |
-| Provision the next claimed occurrence into a child work stream | derived | the oldest pending `automation_runs` row |
+| Provision one admitted occurrence into a child conversation and start its loop | `automation_run` (stored) | the run id |
+| Send the next parent-outbox row to the Queue | derived | `MIN(not_before)` over `durable_outbox` |
 
 The two stored kinds are entries rather than derived instants because each can
-fail on its own: a compiler run that a provider refuses must back off without
-holding a due schedule, and a broken schedule must not hold the compiler. Neither
-is reconciled from a canonical table the way `WorkspaceDO.refreshSchedule` works
-— acceptance, pause, resume, and delete schedule and cancel them explicitly, and
-`executeSchedule` writes its own next occurrence and re-arms before it returns.
-
-`runDueAlarmWork` runs the two derived lanes **independently and collects their
-failures** rather than awaiting them in sequence. Sequential, a run that could not
-be provisioned — a disabled connector, a deleted resource — threw before the
-outbox lane ever ran, so workspace projections stopped and the child-archive
-effects a deletion depends on stopped with them. Each lane now gets its pass and
-the first failure is rethrown afterwards, so the alarm still retries.
-
-An automation's alarm failures log `diagnosticErrorCode(error)` rather than the
-thrown message. This lane runs the compiler and connector tools, so the error
-reaching the hook can carry a provider's prose and, through it, the workspace's
-own retrieved content.
-
-### Workspace phase instrumentation
-
-`WorkspaceDO` wraps the recovery re-arm, authority check, each stored target,
-its two derived phases — activity retention and schedule reconciliation — and
-the final exact re-arm in
-`rally.workspace.scheduled_alarm.phase`. The matching structured rows are
-`workspace_scheduled_alarm_phase_started`, `_completed`, and `_failed`; a final
-`workspace_scheduled_alarm_work_completed` row names the slowest phase and,
-for a stored target, its bounded kind. Durations are compared with the same
-two-second cancellation-recovery horizon used by the pre-work arm.
-
-The fields intentionally contain only fixed enums, counters, booleans, and
-durations. They do not contain a workspace id, alarm key, due time, payload,
-connector value, or error message. Cloudflare already puts the invocation id
-and Durable Object id on the enclosing row and trace, which is enough to find
-the hot instance without copying product identity or content into the custom
-diagnostic. A target error is marked with the fixed
-`workspace_scheduled_alarm_phase_failed` code inside the custom span and the
-original error is rethrown only after that span settles. This matters because
-Cloudflare automatically records errors thrown from span callbacks, including
-details the target supplied.
-
-A started phase with neither a matching completion nor failure means the
-continuation ended while that phase was active. On an already-migrated hot
-object, a `clientDisconnected` alarm invocation with no phase start did not
-enter Rally's alarm work at all; it is a queued runtime delivery, not evidence
-that a particular target was interrupted.
+fail on its own: a run that cannot be provisioned (a disabled connector, a
+deleted resource) must back off without holding a due schedule, and a broken
+schedule must not hold a run. Neither is reconciled from a canonical table the
+way `WorkspaceDO.refreshSchedule` works: apply, pause, resume, and delete
+schedule and cancel schedule entries explicitly, every admitted occurrence arms
+its own run entry for now, and `executeSchedule` writes its own next occurrence
+and re-arms before it returns. The outbox lane is the shared parent drain
+`WorkstreamDO` runs, so a run that cannot be provisioned cannot stop the
+automation's sidebar row from reaching the workspace.
 
 ## Invariants
 
@@ -504,6 +466,24 @@ emitted, and `$workers.durableObjectId` is the platform-owned correlation
 field.
 
 ## Changelog
+
+### 2026-09-03: The automation object stores a run entry per occurrence
+
+**What changed:** `AutomationDO` replaces `AutomationAgent` as the fourth
+adopter. Its stored kinds are `automation_schedule` and `automation_run`; the
+`compiler_dispatch` kind is gone with the compiler, and the "next run awaiting
+provisioning" derived lane became one stored entry per admitted occurrence.
+Its derived lane is the shared parent-outbox drain.
+
+**Why:** [`automation-lifecycle.md`](automation-lifecycle.md) records the
+rebuild. For this document: a stored entry per run gives each occurrence its
+own backoff gate, which the derived "oldest pending row" lane could not, and
+the outbox lane no longer needs a failure-collecting `runDueAlarmWork` of its
+own because provisioning is not in it.
+
+**Consequences:** A pause or delete cancels every `automation_run` entry with
+`cancelScheduledAlarmKind`; a new trigger kind arms its entry through
+`admitOccurrence` and nothing else.
 
 ### 2026-09-03 — HyperSight refresh leaves the alarm scheduler
 

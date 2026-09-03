@@ -24,31 +24,34 @@ function NewAutomationScreen(): React.JSX.Element {
   const { api } = useAppSession();
   const navigate = useNavigate();
   const [error, setError] = useState<string | null>(null);
-  const [attempt, setAttempt] = useState(0);
-  // React runs an effect twice in development; one automation per visit is
-  // the point of the route, so the request is fenced on the attempt.
-  const startedAttempt = useRef<number | null>(null);
+  // One request per visit, held in a ref rather than started by the effect
+  // directly: React mounts an effect twice in development, and a request
+  // started by the first run and abandoned by its cleanup would create an
+  // automation nobody is then taken to. The promise survives the re-run, and
+  // the re-run simply waits on it.
+  const creation = useRef<Promise<{ automationId: string }> | null>(null);
   useEffect(() => {
-    if (!api || startedAttempt.current === attempt) return;
-    startedAttempt.current = attempt;
-    let cancelled = false;
-    api.createAutomation()
+    if (!api) return;
+    let mounted = true;
+    creation.current ??= api.createAutomation();
+    creation.current
       .then(({ automationId }) => {
-        if (!cancelled) void navigate(`/automations/${automationId}`, { replace: true });
+        if (mounted) void navigate(`/automations/${automationId}`, { replace: true });
       })
       .catch((cause: unknown) => {
-        if (!cancelled) setError(cause instanceof Error ? cause.message : 'The automation could not be created.');
+        if (!mounted) return;
+        setError(cause instanceof Error ? cause.message : 'The automation could not be created.');
       });
     return () => {
-      cancelled = true;
+      mounted = false;
     };
-  }, [api, attempt, navigate]);
+  }, [api, error, navigate]);
   if (error) {
     return (
       <div className="screen-error-state screen-with-titlebar">
         <div className="screen-drag-strip window-drag" />
         <EmptyState
-          action={<Button onClick={() => { setError(null); setAttempt((current) => current + 1); }}>Try again</Button>}
+          action={<Button onClick={() => { creation.current = null; setError(null); }}>Try again</Button>}
           description={error}
           title="Automation could not be created"
         />

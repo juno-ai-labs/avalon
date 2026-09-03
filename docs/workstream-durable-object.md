@@ -1280,7 +1280,13 @@ kind. `test-workers/conversation-parent-contract.test.ts` exercises
 archived-parent read-only refusal on a child substream. The automation parent
 itself is covered by `test-workers/automation-do.test.ts`,
 `automation-post-result.test.ts`, and `automation-directory.test.ts`, listed in
-[`automation-lifecycle.md`](automation-lifecycle.md#testing).
+[`automation-lifecycle.md`](automation-lifecycle.md#testing). On Node,
+`test/conversation-effect-service.test.ts` covers the consumer's handoff of a
+parent effect into WorkspaceDO and the notification intents behind it,
+`test/workstream-socket-warm.test.ts` covers `ConversationService.socketTicket`
+and the main-substream warm-up it defers, `test/run-authority-validity.test.ts`
+covers the run's `readRunState` check, and `test/scoped-memory.test.ts` covers
+the `automation` memory scope keyed by the parent id.
 `test-workers/workstream-schema-migration.test.ts` upgrades a populated v32
 foreign-key graph through real workerd storage and proves canonical content and
 relations survive with an empty `foreign_key_check`. Node tests cover migration

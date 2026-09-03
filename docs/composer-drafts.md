@@ -19,7 +19,7 @@ the attachment hook, or the cache itself.
 | `apps/desktop/src/renderer/lib/use-draft-text.ts` | The text half: hydration, the debounce, the two commits, `releaseDraft`. |
 | `apps/desktop/src/renderer/lib/use-file-attachments.ts` | The attachment half: restore, re-upload, the ten-file settle. |
 | `apps/desktop/src/renderer/lib/app-session.tsx` | Watches the session and calls `clearAllDrafts` on a scope change. |
-| `apps/desktop/src/renderer/components/workstream-composer.tsx`, `screens/new-workstream.tsx`, `screens/new-automation.tsx` | The three surfaces that cache. |
+| `apps/desktop/src/renderer/components/workstream-composer.tsx`, `screens/new-workstream.tsx`, `screens/automation.tsx` | The three surfaces that cache. An automation's own conversation, once it exists, is a `SubstreamAgent` feed whose composer is keyed like a work stream's by its parent id. |
 
 ## How it works
 
@@ -43,8 +43,10 @@ the same workspace UUID.
 draft automation being written the moment a turn names one — otherwise an unsent
 sentence, and the files staged beside it, follow the screen into the next
 automation. The key moves on a settled turn rather than with the address bar, and
-the text typed while that turn was compiling is carried across by hand;
-[`automation-drafts.md`](automation-drafts.md) has the reasoning.
+the text typed while that turn was running is carried across by hand. The
+automation surface is being rebuilt against `POST /automations`, which creates
+the automation before its conversation opens; the keys here are what
+`draft-keys.ts` still builds.
 
 ### What is stored, and where
 
@@ -145,13 +147,13 @@ disk to try again with.
 
 ### What is not cached
 
-- Automation drafts under construction — the compiled `AutomationDraftResponse`,
-  the assistant conversation, and the plugin or activity-source choices. Only the
-  input component is cached; the conversation is saved on the draft automation
-  itself, which is a real subscription row from its first compiled turn
-  ([`automation-drafts.md`](automation-drafts.md)). The plugin and activity-source
-  choices are cached nowhere, because they are re-derived from the connections in
-  force under the scope in force.
+- Automation drafts under construction: the definition revisions, the
+  conversation, and the plugin or activity-source choices. Only the input
+  component is cached; the conversation is the automation's own substream `0`
+  and the revisions live on its `AutomationDO`
+  ([`automation-lifecycle.md`](automation-lifecycle.md)). The plugin and
+  activity-source choices are cached nowhere, because they are re-derived from
+  the connections in force when a revision is applied.
 - Files that could never be sent. An empty file, or one over the 25 MB limit, is
   shown as failed and never written to disk.
 - Attachments beyond the ten a message may carry, whether they were found on
@@ -192,7 +194,7 @@ own:
 
 | For | Read |
 | --- | --- |
-| The draft automation a New automation conversation is saved on | [`automation-drafts.md`](automation-drafts.md) |
+| The automation a New automation conversation belongs to | [`automation-lifecycle.md`](automation-lifecycle.md) |
 | The create path a submitted draft becomes | [`workstream-creation.md`](workstream-creation.md) |
 | Draft resources, their upload endpoint, and the 24-hour reaper | [`data-model.md`](data-model.md), [`architecture.md`](architecture.md) |
 | What may be written under `userData` at all | [`security.md`](security.md) |

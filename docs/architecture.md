@@ -450,7 +450,7 @@ is durable.
 
 Each run creates a fresh Bind registry. Stable always-active plugins separate
 discovery, time, scoped prose memory, scoped structured tables, work-stream
-operations, and automation architecture; the run registers only the bundles
+operations, and automation drafting; the run registers only the bundles
 applicable to that agent. Each eligible installed connection becomes a
 credential-scoped Bind plugin built from static adapter metadata and narrowed to
 frozen grants. Bound or attached connections can preload; other eligible plugins

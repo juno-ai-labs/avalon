@@ -22,7 +22,7 @@ the thing this module replaced, and it is not to come back.
 | `apps/api/src/services/workspace-service.ts` | `removeMember` and `leaveWorkspace` — end the D1 membership and publish in the same request. Final-member leave suspends the row during atomic workspace abandonment instead of deleting it, but publishes the same membership-wide revocation. |
 | `apps/api/src/services/auth-service.ts` | `logout` — publishes for each session row it revoked. |
 | `apps/api/src/index.ts` | Queue dispatch by name — ahead of the work-stream maintenance gate, so a retraction is never held by it — and `reapExpiredSessions` on the five-minute cron. |
-| `apps/api/src/durable-objects/{workspace-do,workstream-do,substream-agent,automation-agent}.ts` | `revokeSocketAccess` on each socket-holding object. |
+| `apps/api/src/durable-objects/{workspace-do,workstream-do,substream-agent,artifact-host-do}.ts` | `revokeSocketAccess` on each socket-holding object. `AutomationDO` holds no socket; the consumer asks it `listChildren` instead. |
 | `apps/api/wrangler.{global,eu,test}.jsonc` | The `ACCESS_REVOCATION_QUEUE` producer binding and the consumer settings. |
 | `packages/db/migrations/0091_seed_expired_session_revocations.sql` | Marks the expired-session backlog older than seven days revoked so the sweep starts clean, and indexes the query it runs every five minutes. The cutoff matters: marking a row suppresses its announcement forever, and migrations run before the Worker deploys, so anything recent is left for the sweep to announce properly. |
 
@@ -62,8 +62,8 @@ about; each child becomes its own message on the same queue.
 ```
 workspace  ──▶ WorkspaceDO        ──▶ [workstreamIds] + [automationIds] + [artifactIds]
 workstream ──▶ WorkstreamDO       ──▶ [substreamIds]
+automation ──▶ AutomationDO       ──▶ [substreamIds]   (listChildren; it holds no socket)
 substream  ──▶ SubstreamAgent     ──▶ (leaf)
-automation ──▶ AutomationAgent    ──▶ (leaf)
 artifact   ──▶ ArtifactHostDO     ──▶ (leaf)
 ```
 
@@ -92,12 +92,19 @@ reach an object that does not yet name it, and reading `undefined.map` there
 would throw and drop a retraction.
 
 An automation is a *sibling* of the work streams under a workspace rather than a
-child of one: its room belongs to the workspace, so it hangs off the workspace
-hop and is a leaf of its own. Its list comes from `automation_directory` — the
-one place the workspace knows an automation exists — filtered to the person's own
-authored automations when the message names a user, and unfiltered when a
-membership ended and carries none. Only the author can hold an automation socket,
-so authorship is the exact list rather than a generous one.
+child of one, and like a work stream it is a parent of conversations: its own
+chat is substream `0` under it and each run is a further substream, all of them
+`SubstreamAgent`s with sockets. The automation object itself holds no socket,
+so its hop is `AutomationDO.listChildren` and one `substream` message per child,
+keyed by the automation id as the parent. Its list comes from
+`automation_directory`, the one place the workspace knows an automation exists,
+filtered to the person's own authored automations when the message names a
+user and unfiltered when a membership ended and carries none. That filter is
+generous in one direction and not the other: a workspace-scoped automation's
+conversation admits any member, so a reader who is not the author can hold a
+socket the walk does not reach, which is the same generosity gap the
+work-stream list closes by naming every workspace-scoped work stream and this
+list does not yet close.
 
 **Only the object knows its own children.** A work stream's participants and a
 dashboard's blocks live in that object's SQL storage, not in D1, so no query the
@@ -107,15 +114,15 @@ rather than the producer publishing a flat list.
 The lists are deliberately generous. `WorkspaceDO` returns the person's own
 viewer rows plus every workspace-scoped work stream, because a workspace-scoped
 work stream is readable by any member and can therefore hold a socket the object
-never wrote a viewer row for. `WorkstreamDO` names `"0"` — the main substream,
-which keeps its historical name and is never listed in `substream_directory` —
-alongside the directory rows. A hop that finds nothing to close costs one call.
+never wrote a viewer row for. `WorkstreamDO` names every registered child from `conversation_children`,
+which always includes `"0"`, plus any substream that spoke before the registry
+existed. A hop that finds nothing to close costs one call.
 
 ### What each object does
 
-Four of the five `revokeSocketAccess` methods walk `state.getWebSockets()`, read
-the hibernation attachment, and ask `revocationClosesSocket` — one shared
-predicate rather than an inline copy each. Those four roles disagree about their own attachments:
+Three of the four `revokeSocketAccess` methods walk `state.getWebSockets()`, read
+the hibernation attachment, and ask `revocationClosesSocket`, one shared
+predicate rather than an inline copy each. Those roles disagree about their own attachments:
 `SubstreamAgent` alone makes `sessionId` and the admitted `role` optional,
 because sockets accepted before their respective command gateways carry none.
 Written out per role, the natural
@@ -126,15 +133,10 @@ from the rule. Close code
 `WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE` tells the desktop this was a retraction
 rather than a network drop.
 
-`AutomationAgent` is the fifth, and it does **not** use the shared predicate: it
-compares the attachment inline. The two agree on every socket the room can
-actually hold, because an automation attachment always carries a `sessionId`,
-and they disagree on the one case that predicate exists for — an attachment with
-no session, which the shared rule closes and the inline copy skips. Nothing
-produces such an attachment here today. It should be reading
-`revocationClosesSocket` like its four siblings; a schema change that made
-`sessionId` optional would otherwise exempt automation rooms from every logout
-and expiry, which is precisely the bug that made the shared predicate exist.
+`AutomationDO` has no `revokeSocketAccess` at all: it holds no socket, and the
+consumer asks it `listChildren` and fans out one substream hop per child, so
+the conversations under it close through `SubstreamAgent`'s shared predicate
+like every other conversation.
 
 `SubstreamAgent` re-broadcasts presence afterwards, because `webSocketClose`
 fires only for a *client*-initiated close: without it the people still in the
@@ -194,9 +196,10 @@ own:
 - **What flows over a socket while it is open.** That is
   [`choosing-sockets-or-rest.md`](choosing-sockets-or-rest.md).
 - **The object hierarchy itself.** [`workstream-durable-object.md`](workstream-durable-object.md)
-  owns the work-stream-down objects and
-  [`automation-lifecycle.md`](automation-lifecycle.md) owns `AutomationAgent`;
-  this module adds one method to each.
+  owns the conversation parents and the conversations under them, and
+  [`automation-lifecycle.md`](automation-lifecycle.md) owns `AutomationDO`;
+  this module adds one method to each socket-holding object and reads the
+  parent contract's `listChildren` from the one that holds none.
 - **Choosing a queue over RPC for a new hop.** [`choosing-queues-or-rpc.md`](choosing-queues-or-rpc.md)
   owns that decision and records this one.
 
@@ -277,7 +280,7 @@ Callers: any Worker code that ends access calls `publishAccessRevocation`. The
 
 | Suite | What it proves |
 | --- | --- |
-| `pnpm --filter @rally/api exec vitest run test/access-revocation.test.ts` | The producers write and publish, the guards refuse, the route refuses a foreign workspace, the consumer's fan-out publishes the right children — one message per automation the workspace names, and the automation hop stopping as a leaf — and a failed hop retries while an unreadable one is acknowledged. Runs against the checked-in migrations through `sqlite-d1`. |
+| `pnpm --filter @rally/api exec vitest run test/access-revocation.test.ts` | The producers write and publish, the guards refuse, the route refuses a foreign workspace, the consumer's fan-out publishes the right children (one message per automation the workspace names, and one substream hop per child the automation lists), and a failed hop retries while an unreadable one is acknowledged. Runs against the checked-in migrations through `sqlite-d1`. |
 | `pnpm --filter @rally/api test:workers` | `revokeSocketAccess` on real workerd: sockets actually close, a session-scoped revocation closes only the windows that presented it, and each object names its children. `test-workers/queue-dispatch.test.ts` covers the Worker's own queue entry point, which cannot be imported in the Node suite because it pulls in `cloudflare:workers`. |
 
 Traps:
@@ -327,6 +330,28 @@ would be a way into somebody else's workspace.
   somebody kept access they should have lost.
 
 ## Changelog
+
+### 2026-09-03: The automation hop lists children instead of closing a room
+
+**What changed:** The `automation` target resolves `AutomationDO`, asks it
+`listChildren`, and publishes one `substream` hop per child with the automation
+id as the parent; the automation object has no `revokeSocketAccess`. The
+`workstream` hop names the children `conversation_children` registers, plus any
+that spoke before the registry existed.
+
+**Why:** The automation object stopped holding a socket: its chat and its runs
+are `SubstreamAgent`s under it, and the parent contract's `listChildren` is
+what any parent answers. Reusing the substream hop means a conversation closes
+the same way whichever kind of parent it has, through the one shared predicate,
+which also retires the inline attachment comparison the previous entry of
+2026-08-28 recorded as a divergence to fix.
+
+**Consequences:** The workspace's automation list is still filtered by
+authorship when a user is named, while an automation's conversation admits more
+than its author for a workspace-scoped automation, so a non-author reader's
+socket on such a conversation is outside the walk until that filter is widened
+the way the work-stream list's is. Recorded rather than fixed here: it is the
+list's generosity to change, not the hop's.
 
 ### 2026-09-03 — HyperSight leaves the revocation hierarchy
 
