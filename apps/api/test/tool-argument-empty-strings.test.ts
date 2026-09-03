@@ -35,8 +35,63 @@ function stringCursorSchema(tool: ToolDefinition, name: string): Record<string, 
   if (!CURSOR_PARAMETERS.has(name)) return null;
   const schema = propertySchema(tool, name);
   if (!schema) return null;
-  const types = Array.isArray(schema.type) ? schema.type : [schema.type];
-  return types.includes("string") ? schema : null;
+  const found = stringBranch(schema, 0);
+  // A shape this helper cannot read is a hard failure, not a skip. The sweep
+  // below reports the cursors that *are* permissive; a cursor it silently
+  // stopped matching leaves the tool uncovered and the suite green, which is
+  // the worse of the two outcomes and the one that actually happened when
+  // Google's cursors moved to `anyOf`.
+  if (found === "unreadable") {
+    throw new Error(`Unrecognized cursor schema shape for ${tool.name}.${name}: ${JSON.stringify(schema)}`);
+  }
+  return found;
+}
+
+/**
+ * The string alternative of a cursor declaration, however it is spelled.
+ *
+ * Flat (`type: ["string", "null"]`) and union (`anyOf: [{string}, {null}]`)
+ * both occur, and the constraint that matters — `minLength` — sits on whichever
+ * branch carries the string.
+ *
+ * Three outcomes, and the middle one is the point. A declaration that states a
+ * type and it is not `string` is not a string cursor at all — Slack's
+ * `read_message_context.after` is a count — so it is `null`, skipped, correct.
+ * A declaration this helper cannot read is `"unreadable"`, which the caller
+ * throws on: a cursor it silently stopped matching leaves the tool uncovered
+ * and the suite green, which is what happened when Google's cursors moved to
+ * `anyOf`.
+ */
+function stringBranch(
+  schema: Record<string, unknown>,
+  depth: number,
+): Record<string, unknown> | null | "unreadable" {
+  if (depth > 4) return "unreadable";
+  const declared = (Array.isArray(schema.type) ? schema.type : [schema.type])
+    .filter((value): value is string => typeof value === "string");
+  if (declared.includes("string")) return schema;
+  if (declared.length > 0) return null;
+
+  const branches = Array.isArray(schema.anyOf)
+    ? schema.anyOf
+    : Array.isArray(schema.oneOf)
+      ? schema.oneOf
+      : null;
+  if (!branches?.length) return "unreadable";
+  let sawUnreadable = false;
+  for (const branch of branches) {
+    // A branch that is not a schema object is not a branch this helper can rule
+    // on, and skipping it quietly is the same silent pass the throw above
+    // exists to stop.
+    if (!branch || typeof branch !== "object" || Array.isArray(branch)) {
+      sawUnreadable = true;
+      continue;
+    }
+    const nested = stringBranch(branch as Record<string, unknown>, depth + 1);
+    if (nested === "unreadable") sawUnreadable = true;
+    else if (nested !== null) return nested;
+  }
+  return sawUnreadable ? "unreadable" : null;
 }
 
 function connectorTools(): Array<{ connector: string; tool: ToolDefinition }> {

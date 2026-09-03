@@ -2498,8 +2498,20 @@ describe("connectors", () => {
       "drive.search",
     ]);
     for (const tool of paginated) {
-      const properties = (tool.inputSchema as { properties: Record<string, { description?: string }> }).properties;
-      const description = properties.pageToken?.description ?? "";
+      const properties = (tool.inputSchema as {
+        properties: Record<string, { description?: string; anyOf?: Array<{ type?: string; minLength?: number }> }>;
+      }).properties;
+      const pageToken = properties.pageToken!;
+      // Declared as a union with `null`, because omitting the key is not a move
+      // these callers reliably make and a value is. A bare optional string sent
+      // one run hunting through `"x"`, `" "`, `"undefined"` and `"/"` for
+      // something that would satisfy `minLength: 1`.
+      expect(pageToken.anyOf?.map((branch) => branch.type), `${tool.name} pageToken`)
+        .toEqual(["string", "null"]);
+      // On the string branch, not the top: it is what makes the harness drop a
+      // blanked argument instead of forwarding `""` to the provider.
+      expect(pageToken.anyOf?.[0]?.minLength, `${tool.name} pageToken`).toBe(1);
+      const description = pageToken.description ?? "";
       // Matched case-insensitively: the wording is edited for tone, and an
       // assertion pinned to a capital letter fails a rewrite that kept every
       // word. What has to survive an edit is the instruction, not its casing.
@@ -2542,6 +2554,72 @@ describe("connectors", () => {
       message: "Google API failed (400); it rejected the `pageToken` argument",
       details: { reason: "invalid_parameter", field: "pageToken" },
     });
+  });
+
+  it("holds the executor's cursor bound to the one the schema advertises", async () => {
+    // The schema promises a ceiling and the parse enforces one; nothing made
+    // them the same number until they shared a declaration. A caller told 2000
+    // and refused at 500 would be refused by Rally for obeying us.
+    const declared = googleTools.find((tool) => tool.name === "drive.search")!;
+    const properties = (declared.inputSchema as {
+      properties: Record<string, { anyOf?: Array<{ maxLength?: number }> }>;
+    }).properties;
+    const maxLength = properties.pageToken?.anyOf?.[0]?.maxLength;
+    expect(maxLength).toBe(2_000);
+
+    const fetcher: typeof fetch = async () => googleJson({ files: [] });
+    const context = {
+      connection: googleConnection(["drive.read"]),
+      principal: { type: "user" as const, userId: TEST_USER_ID },
+      signal: neverAborts(),
+    };
+    // One under the ceiling is accepted, one over is refused, so the assertion
+    // pins the boundary rather than merely that some bound exists.
+    await expect(googleAdapter(fetcher).executeTool(
+      "drive.search",
+      { query: "portfolio", pageToken: "t".repeat(maxLength!) },
+      context,
+    )).resolves.toBeDefined();
+    await expect(googleAdapter(fetcher).executeTool(
+      "drive.search",
+      { query: "portfolio", pageToken: "t".repeat(maxLength! + 1) },
+      context,
+    )).rejects.toThrow(/pageToken/u);
+  });
+
+  // Every one of the four, because the parse that turns `null` into absence is
+  // written out per tool rather than shared: covering `drive.search` alone
+  // proves one copy of four.
+  it.each([
+    ["gmail.search", { query: "unread" }, ["gmail.read"], { messages: [] }],
+    ["calendar.list_calendars", {}, ["calendar.read"], { items: [] }],
+    [
+      "calendar.list_events",
+      { calendarId: "primary", timeMin: "2026-01-01T00:00:00Z", timeMax: "2026-01-02T00:00:00Z" },
+      ["calendar.read"],
+      { items: [] },
+    ],
+    ["drive.search", { query: "portfolio" }, ["drive.read"], { files: [] }],
+  ] as const)("reads a null cursor as the first page for %s", async (tool, args, scopes, body) => {
+    const requested: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      requested.push(requestUrl(input).toString());
+      return googleJson(body);
+    };
+    await googleAdapter(fetcher).executeTool(
+      tool,
+      { ...args, pageToken: null },
+      {
+        connection: googleConnection([...scopes]),
+        principal: { type: "user", userId: TEST_USER_ID },
+        signal: neverAborts(),
+      }
+    );
+    // The call runs, and Google is never handed the caller's `null`. Asserted
+    // over every request rather than a single one, because a tool may resolve
+    // a calendar or hydrate a hit before it gets to the listing.
+    expect(requested.length).toBeGreaterThan(0);
+    expect(requested.filter((url) => url.includes("pageToken"))).toEqual([]);
   });
 
   it("refuses to name an argument the tool would itself reject", async () => {
