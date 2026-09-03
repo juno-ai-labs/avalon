@@ -3,18 +3,16 @@
 /**
  * A work stream's *ordinary* harness run, chosen against real object storage.
  *
- * Two kinds of row live in `runs` beside the runs a member started: an inline
- * child, which a tool spawns and which carries `parent_tool_call_id`, and a
- * HyperSight block's own run, which carries `origin = 'block_dashboard_block'`.
- * Every reader that means "the run this work stream is on" excludes both.
- * Selecting one of them hands a subscriber a run it is not watching, and hands
- * a scheduler a run it must not reuse.
+ * Inline children live in `runs` beside the roots a member started and carry
+ * `parent_tool_call_id`. Every reader that means "the run this work stream is
+ * on" excludes them. Selecting one hands a subscriber a run it is not watching
+ * and hands a scheduler a run it must not reuse.
  *
  * This replaces a suite that asserted four call sites' SQL *text*. That suite
  * could only fail when a string moved — which is exactly what happened: the
  * query moved into the object and the assertion was retargeted at the new
  * spelling rather than at the rule. The rule is asserted here instead, against
- * the object that decides it, with the fixture ordered so that dropping either
+ * the object that decides it, with the fixture ordered so dropping the
  * exclusion returns the wrong run rather than none.
  */
 
@@ -34,7 +32,6 @@ import {
 
 const SESSION_ID = "00000000-0000-7000-8000-0000000009b1";
 const ORDINARY = "00000000-0000-7000-8000-0000000009a1";
-const HYPERSIGHT = "00000000-0000-7000-8000-0000000009a2";
 const INLINE_CHILD = "00000000-0000-7000-8000-0000000009a3";
 
 const auth = {
@@ -175,7 +172,7 @@ async function latestRunId(stub: DurableObjectStub<SubstreamAgent>): Promise<str
 }
 
 describe("the ordinary harness run a work stream reports", () => {
-  it("is the member's run, not the newer HyperSight run or inline child", async () => {
+  it("is the member's run, not the newer inline child", async () => {
     const { stub, workstreamId } = agent();
     await openWorkstream(stub, workstreamId);
     await runInDurableObject(stub, (_instance, state) => {
@@ -186,11 +183,6 @@ describe("the ordinary harness run a work stream reports", () => {
         origin: "user_message",
         parentToolCallId: null,
         createdAt: 1_000,
-      });
-      seedRun(state, HYPERSIGHT, {
-        origin: "block_dashboard_block",
-        parentToolCallId: null,
-        createdAt: 2_000,
       });
       seedRun(state, INLINE_CHILD, {
         origin: "tool_call",
@@ -208,7 +200,7 @@ describe("the ordinary harness run a work stream reports", () => {
     });
   });
 
-  it("reports nothing rather than a HyperSight run when that is all there is", async () => {
+  it("reports nothing rather than an inline child when that is all there is", async () => {
     const { stub, workstreamId } = agent();
     await openWorkstream(stub, workstreamId);
     await runInDurableObject(stub, (_instance, state) => {
@@ -216,11 +208,6 @@ describe("the ordinary harness run a work stream reports", () => {
       // whose only rows are machinery has no run to show, and saying so is the
       // difference between an empty status and a member watching a block's run
       // as though it were their own.
-      seedRun(state, HYPERSIGHT, {
-        origin: "block_dashboard_block",
-        parentToolCallId: null,
-        createdAt: 2_000,
-      });
       seedRun(state, INLINE_CHILD, {
         origin: "tool_call",
         parentToolCallId: "call-1",
@@ -241,18 +228,12 @@ describe("the ordinary harness run a work stream reports", () => {
         parentToolCallId: null,
         createdAt: 1_000,
       });
-      // Between the two machinery rows in time, so the exclusions cannot be
-      // mistaken for the ordering: a reader that kept them but ranked by
-      // insertion order would still pick the older ordinary run.
+      // Older than the inline child, so the exclusion cannot be mistaken for
+      // ordering: a reader that kept the child would return the wrong row.
       seedRun(state, newerOrdinary, {
         origin: "user_message",
         parentToolCallId: null,
         createdAt: 2_500,
-      });
-      seedRun(state, HYPERSIGHT, {
-        origin: "block_dashboard_block",
-        parentToolCallId: null,
-        createdAt: 2_000,
       });
       seedRun(state, INLINE_CHILD, {
         origin: "tool_call",

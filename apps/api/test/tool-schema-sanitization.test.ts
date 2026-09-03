@@ -63,9 +63,9 @@ const workflowInput = (): WorkstreamWorkflowInput => ({
  * `FIRECRAWL_API_KEY` is set because `createFirecrawlWebTools` returns `[]`
  * without one, so an empty environment silently drops `web_search`/`web_fetch`
  * from a walk that claims to cover everything. The automation creator's four
- * tools and the HyperSight submission tool are added by hand for the same
- * reason: both are built against run state rather than registered, so nothing
- * that walks a registry can see them. `EXPECTED_TOOLS` below fails loudly if
+ * tools are added by hand because they are built against run state rather than
+ * registered, so nothing that walks a registry can see them. `EXPECTED_TOOLS`
+ * below fails loudly if
  * any of these stop arriving, because a shrinking surface is exactly how this
  * guard would go quietly green while a tool regressed.
  */
@@ -84,9 +84,6 @@ function everyAuthoredToolSchema(): { name: string; schema: Record<string, unkno
     ...AVALON_SKILL_TOOL_DEFINITIONS,
     ...AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS,
   ].map((definition) => ({ name: label(definition), schema: definition.inputSchema }));
-  const blockDashboard = __integrationTesting
-    .blockDashboardSubmissionPlugin({ markdown: null }, async () => undefined)
-    .tools.map((tool) => ({ name: label(tool.definition), schema: tool.definition.inputSchema }));
   const terminal = TERMINAL_TOOL_DEFINITIONS
     .map((definition) => ({ name: `terminal.${definition.name}`, schema: definition.inputSchema }));
   const registry = createTestConnectorRegistry();
@@ -95,7 +92,7 @@ function everyAuthoredToolSchema(): { name: string; schema: Record<string, unkno
       name: `${manifest.type}.${definition.name}`,
       schema: definition.inputSchema,
     })));
-  const walked = [...core, ...discovery, ...blockDashboard, ...terminal, ...connectors]
+  const walked = [...core, ...discovery, ...terminal, ...connectors]
     .map((entry) => ({ name: entry.name, schema: entry.schema as Record<string, unknown> }));
 
   // Asserted here rather than in one `it`, so no check can run against a set
@@ -121,7 +118,6 @@ const EXPECTED_TOOLS = [
   "web.fetch:fetch",
   "rally.automation.plugins.list:plugins_list",
   "rally.automation.submit:submit_draft",
-  "rally.block-dashboard.submit:submit_block",
   "terminal.import_resource",
   "notion.create_comment",
   "x.get_user_timeline",

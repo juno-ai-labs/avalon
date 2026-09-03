@@ -109,11 +109,13 @@ describe('Ace deployment contract', () => {
 
     expect(deploy).toContain("const migrationDomain = 'migrations.internal.rallywith.ai'");
     expect(deploy).toContain("const aceDomain = 'ace.internal.rallywith.ai'");
-    expect(deploy).toContain("ensureFlag('hypersight-enabled'");
     expect(deploy).toContain("ensureFlag('meeting-recording-enabled'");
     expect(deploy).toContain("ensureFlag('suggested-work-enabled'");
     expect(deploy).toContain("ensureFlag('automation-workspace-templates-enabled'");
     expect(deploy).toContain("ensureFlag('multiple-workspaces-enabled'");
+    expect(deploy).toContain("retireFlag('hypersight-enabled')");
+    expect(deploy).toContain("retireFlag('agent-model-block-dashboard')");
+    expect(deploy).toMatch(/async function retireFlag[\s\S]*method: 'DELETE'/u);
     expect(deploy).toContain('variations: { off: false, on: true }');
     for (const model of MANAGED_MODELS) {
       expect(deploy, `${model.key} is provisioned before Ace deploys`).toContain(`ensureModelFlag('${model.key}'`);

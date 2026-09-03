@@ -174,7 +174,7 @@ describe("forceMigration", () => {
 
   it("has a dispatcher for every class the tracker may name", () => {
     expect(Object.keys(migrationCommandDispatchers(env)).sort())
-      .toEqual(["BlockDashboardAgent", "SubstreamAgent", "WorkspaceDO", "WorkstreamDO"]);
+      .toEqual(["SubstreamAgent", "WorkspaceDO", "WorkstreamDO"]);
   });
 
   it("refuses a class this Worker does not deploy", async () => {

@@ -18,10 +18,6 @@ loop: an automation's compiler run keeps no Bind projection, and a run picked
 back up after an eviction re-enters the model from the stored conversation. See
 [`automation-lifecycle.md`](automation-lifecycle.md).
 
-The user-facing dashboard is **HyperSight**. Its harness role, plugin wire
-prefix, durable owner, persistence rows, and terminal error codes use the
-internal `block_dashboard` / `BlockDashboardAgent` name.
-
 ## Where the code lives
 
 | Path | Responsibility |
@@ -122,9 +118,7 @@ before execution terminalization. If the host reservation survived but
 `assistant_reserved` did not, recovery commits that missing edge first and then
 settles it; neither step invokes the provider, and either may be safely resumed
 after a crash.
-Stream and checkpoint events for participant loops carry that
-same sequence. A generic host such as HyperSight has no participant sequence
-but still keeps one stable loop identity.
+Stream and checkpoint events for participant loops carry that same sequence.
 
 ### Addressing
 
@@ -235,7 +229,7 @@ Interactive multi-round work starts with a short plan and reports meaningful pha
 
 An automation run's final message is what Rally posts to the work stream that owns the automation, when one does, so the run is told that room as the single entry in the automation context's `resultDelivery` and told not to post the result there itself. When the list is empty, which it is for every personal and workspace automation, the same `# Result delivery` section says so and tells the run that any sending its instructions ask for is its own work, done with its tools inside the run; left silent, a run that *describes* emailing a summary has not emailed it. The section is rendered only for automation runs — as a standing bullet it was charged to every interactive run, where the list is absent and a rule about it can only be resolved and then ignored. [`automation-lifecycle.md`](automation-lifecycle.md) owns why an automation has no destinations of its own.
 
-A document-shaped request is written as a Markdown file in the work stream's terminal workspace and published as a generated resource, rather than streamed into the transcript (`DOCUMENT_GENERATION_POLICY`, `prompts/document-generation.ts`). The section carries the document-type trigger, the narration discipline, the same-path revision rule with its import recovery, the participant override in both directions, and the inline fallback when the workspace cannot be reached. It names no tool: the Terminal plugin's activated system message already carries the write-beneath-the-resource-directory-then-publish mechanics, and this section renders before that plugin loads. It is standing platform policy on every work-stream run, with an explicit output-surface tie-breaker: an externally delivered run includes the complete usable result in its final message because recipients cannot open Rally resource embeds, while a HyperSight block run skips publication and submits finished Markdown through its required block tool. [`terminal-workspaces.md`](terminal-workspaces.md) owns the publish path the normal work-stream rule steers into.
+A document-shaped request is written as a Markdown file in the work stream's terminal workspace and published as a generated resource, rather than streamed into the transcript (`DOCUMENT_GENERATION_POLICY`, `prompts/document-generation.ts`). The section carries the document-type trigger, the narration discipline, the same-path revision rule with its import recovery, the participant override in both directions, and the inline fallback when the workspace cannot be reached. It names no tool: the Terminal plugin's activated system message already carries the write-beneath-the-resource-directory-then-publish mechanics, and this section renders before that plugin loads. It is standing platform policy on every work-stream run, with an explicit output-surface tie-breaker: an externally delivered run includes the complete usable result in its final message because recipients cannot open Rally resource embeds. [`terminal-workspaces.md`](terminal-workspaces.md) owns the publish path the normal work-stream rule steers into.
 
 The same module's **Sites** section is the site-shaped equivalent: a request whose natural output is a page or a small app becomes a *directory* of files, published as a live artifact people open. It carries only the trigger and the two rules a model gets wrong without it — publish the directory rather than a file inside it, and a request for a new thing is a new site at a new path — plus the pointer to the skill. The build craft is hundreds of lines and would be charged to every request, so it ships as the loadable `building-live-sites` skill and is read at the moment it matters. Like the document half it is standing rather than gated, and falls back the same way when the sandbox cannot be reached. [`live-web-artifacts.md`](live-web-artifacts.md) owns what a published directory becomes and how it is served.
 
@@ -352,12 +346,8 @@ Three bounds keep a looping model from loading its way into a context-limit erro
 
 The package ships three skills of its own (`BUILT_IN_SKILLS` in `@rally/agent-harness`), for a host with no library yet: `deep-research`, `writing-an-email`, and `scheduling-a-calendar-event`. The latter two are deliberately provider-agnostic — they name no connector and no tool, because the failures they exist to prevent (an address composed from a name and a domain, a fact quoted from memory, a guest list replaced when one attendee was meant to be added, a write reported as done without a result confirming it) belong to the task rather than to any one provider, and the next mail or calendar connector will carry them too. Neither sets an `ownerPlugin`, so neither implies that loading it granted the connection it describes.
 
-All three are offered to every production run the API starts — ad-hoc,
-automation, and HyperSight block alike. Nothing is withheld by surface. A skill
-is advice, and what a surface may *do* is settled in the tool loop: HyperSight
-composes `rejectToolModesBeforeCall(["write"], …)` into its `beforeToolCall`, so
-a write-mode tool is refused before it runs no matter what the model has read.
-Withholding a skill would hide advice without removing authority. Offering is
+All three are offered to every production run the API starts. Nothing is withheld by surface. A skill
+is advice, and what a surface may *do* is settled in the tool loop. Offering is
 not activation: a run sees only the catalog line until it loads one, and loading
 grants no authority. It is an ordinary `HarnessSkill` and not a second source:
 a host still chooses to put it in `skills`, and the frozen-scope rule is
@@ -684,14 +674,13 @@ the request path supplies trace data but does not silently alter that account
 setting.
 
 Every classified provider attempt appends an immutable operational
-`inference_attempts` row in the owning `SubstreamAgent` or
-`BlockDashboardAgent`, with its turn/route cursor, provider and model, routing
+`inference_attempts` row in the owning `SubstreamAgent`, with its turn/route cursor, provider and model, routing
 decision, outcome, latency, available token/cache/cost counters, and hashed
 credential/workspace identities. Harness-run usage also stores turn/tool
 timings and counts. Provider error bodies and credentials are not retained in
 that recovery ledger. For Global workspaces, the Global lakehouse separately
 uses the closed source vocabulary `workstream`, `automation_compiler`,
-`inline_child`, `block_dashboard`, and `meeting_notes` for analytical capture.
+`inline_child`, and `meeting_notes` for analytical capture.
 EU workspaces intentionally have no analytical inference capture.
 
 The harness also emits lossless events that the Global host sends to the
@@ -753,24 +742,6 @@ walks every tool in the connector registry and fails on any that reaches the
 generic row or that describes a `write` in passive words, so a connector added
 later either names its tools with a recognized verb or declares its own prose.
 
-### HyperSight blocks
-
-A HyperSight block run is the same harness with a different terminal product: it renders one block of shared Markdown for a work stream's dashboard, on a schedule, with no transcript or interactive participant of its own. A user may watch read-only state and streamed output over the block agent's direct socket while the dashboard is visible, but cannot send a message, pause it, or answer an elicitation. One stable `BlockDashboardAgent` owns each block's complete loop. WorkstreamDO owns configuration and fan-out; the block agent resolves main `SubstreamAgent("0")` directly through typed object ports for its run/receipt state and a frozen model-array interval: exact compaction event (or array start) through a complete tool-safe upper sequence. It never executes in the source agent, the parent, or a Workflow. Three things follow.
-
-It is read-only through `rejectToolModesBeforeCall(["write"], …)`, and it cannot
-pause — a run that reaches `needs_input` fails with
-`block_dashboard_input_unavailable`, because there is no one to answer.
-
-Its output is a tool call. The block is exactly the `markdown` argument passed to the `rally:block-dashboard` plugin's `submit_block`, and assistant text is discarded. Taking the block from the run's trailing text instead made every preamble, apology, and "here is the block:" part of the dashboard; an argument with a schema cannot drift that way. The tool is `mode: "read"` — it settles Rally's own record and reaches no provider, the same reason the automation architect's draft submission is a read — so the write ban above does not lock the run out of its own output.
-
-A turn that would end without that call gets one `onTurnWouldEnd` message asking for it, and only one: a block that will not submit twice running is a failed block, and nagging further only spends the run's ceilings. If it still never submits, the run is recorded `failed` with `block_dashboard_block_not_submitted` rather than completed-and-empty, so a block that renders nothing says why.
-
-HyperSight shares the root run policy: 1,000 routed model attempts and no aggregate
-tool-call, cost, or task-scale wall-time ceiling. Its read-only tool policy and inability to pause remain independent
-of resource policy. Each terminal refresh contributes one aggregate summary to
-the root-run Analytics Engine dataset, so future ceilings can be selected from
-the measured distributions rather than assumed in advance.
-
 ### Child agents
 
 Inline child Bind execution inside a parent `SubstreamAgent` is disabled. It
@@ -804,8 +775,8 @@ reachable store still holds.
 **A run in a work stream an automation created, carrying no subscription of its
 own, is none of those**, and the run's own `automationSubscriptionId` — not the
 work stream's origin — is what decides which it is. That covers more than a
-member's reply: an elicitation answer, a manual retry, a HyperSight block
-dispatch, and, least obviously, the automation's *own* continuation through a
+member's reply: an elicitation answer, a manual retry, and, least obviously,
+the automation's *own* continuation through a
 scheduled wake-up, because `launchWorkstreamHarness` declares no subscription
 either. Their search authority includes workspace memory, plus that member's own
 when a person is behind it; message runs exercise that authority only through an
@@ -1032,9 +1003,6 @@ participants remain deferred product work.
   receipts replay without another provider call.
 - **An ambiguous external write is never blindly repeated**, and limits never
   silently reinterpret a write as successful.
-- **A run's output is what a schema captured, not its trailing text.** A HyperSight
-  block is exactly the `markdown` argument to `submit_block`; assistant text is
-  discarded.
 - **A child can never widen the parent's frozen scope**, is read-only by a tool-loop
   hook rather than by what it was given, and cannot recurse.
 - **The model never selects a memory scope.** `memory_search` accepts exactly one
@@ -1099,7 +1067,7 @@ and general child participants remain deferred product work.
 
 ## Failure modes and limits
 
-Root ordinary work-stream and HyperSight runs allow 1,000 model iterations and have no tool-call, wall-clock, or cost ceiling. An ordinary work-stream loop otherwise continues until completion, elicitation, its safe-boundary stop, ambiguous write, lease or authority loss, context failure, or provider failure. HyperSight and generic execution receipts may additionally end through durable receipt cancellation; HyperSight converts elicitation and a missing block submission into its own terminal failures. Per-tool time and plugin-catalog tokens remain bounded, and request establishment, time to first token, and inter-chunk idle time have separate watchdogs. Deliberately bounded one-shot callers such as meeting notes and automation compilation retain their own independent ceilings. Active plugin count, active tool-schema bytes, model-visible tool-result bytes, and replay payload bytes are not capped by the agent runtime. Web results, fetched bytes, and attachments remain independently bounded by their owning tools. Live context size comes only from OpenRouter's returned prompt and completion token counts; Rally does not estimate it from serialized bytes. After a completed provider turn exceeds 80% of the selected model's OpenRouter `context_length` (with Monad's 200,000-token fallback when the catalog is unavailable), Bind replaces the whole live context beneath the system prompt with one synthetic user message carrying an LLM continuation summary; no earlier message survives verbatim. Work-stream checkpoints store one principal-and-resource-inventory-revision-scoped summary regionally with the durable sequence boundary. The live checkpoint and every authorized replay append a freshly rendered, fixed-size resource inventory before newer messages; a scope mismatch falls back to durable transcript replay only within its 2,000-message and 4-MiB serialized preflight bounds. [`context-compaction.md`](context-compaction.md) owns that policy — the threshold, the summary prompt, the deterministic appendix, the checkpoint shape, and the stored row — and is the document to read and update before changing any of them.
+Root ordinary work-stream runs allow 1,000 model iterations and have no tool-call, wall-clock, or cost ceiling. A work-stream loop otherwise continues until completion, elicitation, its safe-boundary stop, ambiguous write, lease or authority loss, context failure, or provider failure. Per-tool time and plugin-catalog tokens remain bounded, and request establishment, time to first token, and inter-chunk idle time have separate watchdogs. Deliberately bounded one-shot callers such as meeting notes and automation compilation retain their own independent ceilings. Active plugin count, active tool-schema bytes, model-visible tool-result bytes, and replay payload bytes are not capped by the agent runtime. Web results, fetched bytes, and attachments remain independently bounded by their owning tools. Live context size comes only from OpenRouter's returned prompt and completion token counts; Rally does not estimate it from serialized bytes. After a completed provider turn exceeds 80% of the selected model's OpenRouter `context_length` (with Monad's 200,000-token fallback when the catalog is unavailable), Bind replaces the whole live context beneath the system prompt with one synthetic user message carrying an LLM continuation summary; no earlier message survives verbatim. Work-stream checkpoints store one principal-and-resource-inventory-revision-scoped summary regionally with the durable sequence boundary. The live checkpoint and every authorized replay append a freshly rendered, fixed-size resource inventory before newer messages; a scope mismatch falls back to durable transcript replay only within its 2,000-message and 4-MiB serialized preflight bounds. [`context-compaction.md`](context-compaction.md) owns that policy — the threshold, the summary prompt, the deterministic appendix, the checkpoint shape, and the stored row — and is the document to read and update before changing any of them.
 
 A published document is readable in the desktop client, and was not until 2026-08-27. A generated resource appears in the work-stream rail under **Artifacts**, and its detail panel now renders the resource's readable content beneath the metadata, through `/resources/:id/preview` — the same authorized route `AttachmentLightbox` uses, which materializes extracted text for a file that is not already text. The gap that remains is narrower: the rail resolves an inspector target only from the loaded work stream's own resources, so a document cited from *another* work stream still has nowhere to open. [`markdown-rendering.md`](markdown-rendering.md) owns the citation half of this and records the same limit.
 
@@ -1182,7 +1150,6 @@ proof.
 | `apps/api/test-workers/agent-run-dispatch-reliability.test.ts`, `agent-run-lifecycle.test.ts` | The real-workerd stable-loop state machine: singleton identity, pending-input FIFO and delivery mode, activation replay, alarm recovery after eviction, live-lease exclusion, expired-owner takeover, deferred retry on the same cycle and receipt, and exact execution fences through terminal settlement. |
 | `apps/api/test-workers/message-to-output-pipeline.test.ts` | The real-workerd product-to-provider path, including provider-failure reservation settlement into a canonical error pill, a scheduled activation-only input on an already-initialized Bind projection, exact provider-body inclusion, pre-execution launch replay after eviction, and terminal replay without a second source fact, execution receipt, provider boundary, or inference attempt. |
 | `apps/api/test-workers/substream-message-queue.test.ts` | The real-workerd multi-input queue, including proof that a deliberately blocked external settlement does not prevent the next queued input from reaching the provider and that the independent settlement lane subsequently drains. |
-| `apps/api/test/agent-run-dispatch-queue.test.ts`, `apps/api/test-workers/durable-object-runtime.test.ts` | The separate HyperSight block dispatch ledger: durable wake derivation, reclaim ordering, and direct terminal settlement refusing an obsolete lease token without changing the successor's token, outcome, or stream checkpoint. It does not model SubstreamAgent execution. |
 | `apps/api/test/harness-liveness-monitor-lifecycle.test.ts` | Heartbeats, expiry reaping, and the compare-and-swap that fails an abandoned attempt. |
 | `apps/api/test/tool-transcript-durability.test.ts` | That a successful result is durable before Bind observes it, and that receipts replay. |
 | `apps/api/test/core-tool-idempotency.test.ts` | Receipt identity, plan hashes, and the `ambiguous_external_write` path. |
@@ -1194,7 +1161,6 @@ proof.
 | `apps/api/test/model-protocol-transcript.test.ts` | Historical tool-pair reconstruction, including sanitized structured failure recovery after resume. |
 | `apps/api/test/workstream-transcript-storage.test.ts` | Atomic activation-input admission under the exact execution/Bind fence, full-provenance replay checks, pending-input suppression, ordered multi-input commits, idempotency across compaction, repair of a host reservation missing its Bind edge, and stop winning a steer-preparation race without consuming input. |
 | `apps/api/test/digest-run-context.test.ts` | A scheduled digest's hidden brief becomes an explicit derived activation input with stable logical identity instead of disappearing on loop resume. |
-| `apps/api/test/block-dashboard-submission.test.ts` | The single nudge, the `block_dashboard_block_not_submitted` failure, and the discarded trailing text. |
 | `apps/api/test/workstream-wakeup.test.ts` | Both time forms, the bounds, idempotency, typed refusal codes and remediation, the pending sidebar marker, and claim-before-launch. |
 | `apps/api/test/bind-host-durability.test.ts` | Host-only boundaries around activation persistence, ambiguous halts, and attachment grounding, including the validation-versus-content-failure distinction and post-start validation receipt reuse. |
 | `apps/api/test/attachment-tool-receipts.test.ts` | Exact derivative and completed-output-reference dependency fencing, replay reauthorization, all-or-nothing multi-image registration, and successor-safe mismatch cleanup. |
@@ -1241,6 +1207,19 @@ silently return every test to the shared key while each still passes alone.
 
 ## Changelog
 
+### 2026-09-03 — The harness no longer has a HyperSight execution mode
+
+**What changed:** The Block Dashboard role, prompt/plugin surface, run origin,
+result-delivery path, and scheduling hooks were removed from the harness.
+
+**Why:** Retaining a dormant harness mode would keep the feature executable
+through internal callers after its product surface disappeared.
+
+**Consequences:** Work-stream, automation, and inline-child runs use the same
+remaining harness boundaries without HyperSight-specific branching.
+
+Shipped in #541.
+
 ### 2026-09-03 — A run delivers its own result, and no trigger narrows its tools
 
 **What changed:** The `# Result delivery` section of the work-stream system
@@ -1283,6 +1262,8 @@ reaches the model as a bare code again. The authoring text and the run prompt
 describe the same contract from two ends, so a change to where results go edits
 both.
 
+Shipped in #541.
+
 ### 2026-09-03 — Gemini 3.8 Flash defaults to low reasoning
 
 **What changed:** `google/gemini-3.8-flash` joined `x-ai/grok-4.6` in the
@@ -1305,6 +1286,8 @@ per-role value misses a Gemini fallback selected after another model failed.
 **Consequences:** A caller that wants Gemini 3.8 Flash at a different effort
 must ask for it explicitly, exactly as for Grok 4.6. Older Gemini Flash models
 are not in the registry and continue to send no reasoning field.
+
+Shipped in #541.
 
 ### 2026-09-03 — A rejection keeps the body it came in
 
@@ -1409,6 +1392,8 @@ in the log — which is the one place EU sees it. Widening `detail` into a gener
 dump of the response is how the distinction between "what the provider said
 about our request" and "our request" would be lost.
 
+Shipped in #541.
+
 ### 2026-09-03 — The assembled memory-recall query is bounded before run setup uses it
 
 **What changed:** `freezeRunMemoryContext` clamps its query to
@@ -1444,6 +1429,7 @@ appends the objective first and the triggering message last, so what is dropped
 is the tail of a long message rather than the objective. Reordering those parts
 would change what truncation costs.
 
+Shipped in #541.
 
 ### 2026-09-02 — A deploy no longer kills the runs it interrupts
 

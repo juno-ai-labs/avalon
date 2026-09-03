@@ -37,7 +37,6 @@ import {
   seedWorkstreamRun,
   seedWorkstreamObjectRoot,
   testWorkstreamObjectStore,
-  testBlockDashboardPort,
   testHarnessRunPort,
   testMessagePort,
   testToolReceiptPort,
@@ -143,7 +142,6 @@ interface RuntimeFixture {
   /** Regional D1 for automation delivery settlement, never work-stream state. */
   binding: D1Database;
   receipts: ReturnType<typeof testToolReceiptPort>;
-  blocks: ReturnType<typeof testBlockDashboardPort>;
   runs: ReturnType<typeof testHarnessRunPort>;
   messages: ReturnType<typeof testMessagePort>;
   /** The raw object database, for the rare normalized-table statement. */
@@ -194,7 +192,6 @@ function fixture(): RuntimeFixture {
     // The receipt operations no longer take a database handle: the lease fence
     // moved inside the object, so they take the port instead.
     receipts: testToolReceiptPort(objectDatabase),
-    blocks: testBlockDashboardPort(objectDatabase),
     runs: testHarnessRunPort(objectDatabase),
     messages: testMessagePort(objectDatabase),
   };
@@ -430,11 +427,11 @@ describe("durable harness attempt runtime", () => {
     await heartbeatHarnessAttempt(sqlite.runs, RUN_ONE, first.lease);
     await expect(terminalizeHarnessAttempt(sqlite.runs, input(RUN_ONE), first.lease, {
       status: "completed",
-    }, sqlite.receipts, sqlite.blocks)).rejects.toThrow("final_turn_required");
+    }, sqlite.receipts )).rejects.toThrow("final_turn_required");
     await expect(terminalizeHarnessAttempt(sqlite.runs, input(RUN_ONE), first.lease, {
       status: "completed",
       finalTurnId: `${RUN_ONE}:turn:1`,
-    }, sqlite.receipts, sqlite.blocks)).rejects.toThrow("final_turn_not_persisted");
+    }, sqlite.receipts )).rejects.toThrow("final_turn_not_persisted");
     const beforePublish = Date.now();
     await persistHarnessHostOutcome(sqlite.runs, input(RUN_ONE), first.lease, {
       turnId: `${RUN_ONE}:turn:1`,
@@ -455,11 +452,11 @@ describe("durable harness attempt runtime", () => {
     expect(await terminalizeHarnessAttempt(sqlite.runs, input(RUN_ONE), first.lease, {
       status: "completed",
       finalTurnId: `${RUN_ONE}:turn:1`,
-    }, sqlite.receipts, sqlite.blocks)).toBe("terminalized");
+    }, sqlite.receipts )).toBe("terminalized");
     expect(await terminalizeHarnessAttempt(sqlite.runs, input(RUN_ONE), first.lease, {
       status: "completed",
       finalTurnId: `${RUN_ONE}:turn:1`,
-    }, sqlite.receipts, sqlite.blocks)).toBe("already_terminal");
+    }, sqlite.receipts )).toBe("already_terminal");
     expect(sqlite.object.prepare(
       "SELECT COUNT(*) AS count FROM run_lifecycle_events WHERE run_id = ? AND event_key = 'terminal'",
     ).get(RUN_ONE)).toEqual({ count: 1 });
@@ -495,97 +492,6 @@ describe("durable harness attempt runtime", () => {
     expect(heartbeatLoop).toHaveBeenCalledTimes(2);
   });
 
-  it("runs HyperSight blocks beside each other and the interactive executor, without workstream state", async () => {
-    const sqlite = fixture();
-    openDatabases.push(sqlite.database);
-    const runThree = asHarnessRunId("00000000-0000-4000-8000-000000000005");
-    const runFour = asHarnessRunId("00000000-0000-4000-8000-000000000006");
-    const runFive = asHarnessRunId("00000000-0000-4000-8000-000000000007");
-    // A run's origin is immutable through the compat surface (the update
-    // trigger deliberately carries no origin arm); shape the fixture rows on
-    // the normalized table directly.
-    sqlite.objectDatabase.exec(
-      "UPDATE runs SET origin = 'block_dashboard_block', status = 'admitted'",
-    );
-    sqlite.object.exec("UPDATE workstream SET exact_state = 'idle' WHERE id = 1");
-    seedWorkstreamRun(sqlite.objectDatabase, { id: runThree, status: "admitted",
-      origin: "human_message", executionPrincipalJson: '{"type":"user","userId":"user-runtime"}' });
-    seedWorkstreamRun(sqlite.objectDatabase, { id: runFour, status: "admitted",
-      origin: "block_dashboard_block",
-      executionPrincipalJson: `{"type":"workspace","workspaceId":"${WORKSPACE_ID}"}` });
-    seedWorkstreamRun(sqlite.objectDatabase, { id: runFive, status: "admitted",
-      origin: "human_message", executionPrincipalJson: '{"type":"user","userId":"user-runtime"}' });
-
-    // The claim SQL never fenced block-origin runs against each other — their
-    // serialization lives in `block_dashboard_block_runs` — and object schema
-    // v9 encodes the same exemption into `runs_mutating_substream_uq`. Before
-    // v9 the second block claim (and a block claim beside a running
-    // interactive holder) surfaced as a UNIQUE violation thrown through the
-    // port instead of a claim.
-    const firstBlock = await claimHarnessAttempt(sqlite.runs, input(RUN_ONE), {
-      attemptId: "attempt-block-dashboard-one",
-      owner: "owner-block-dashboard-one",
-    });
-    expect(firstBlock.state).toBe("claimed");
-    if (firstBlock.state !== "claimed") throw new Error("expected claimed block attempt");
-    expect((await claimHarnessAttempt(sqlite.runs, input(RUN_TWO), {
-      attemptId: "attempt-block-dashboard-two",
-      owner: "owner-block-dashboard-two",
-    })).state).toBe("claimed");
-    // A block run never moves the member-facing work stream state.
-    expect(sqlite.object.prepare(
-      "SELECT exact_state FROM workstream WHERE id = 1",
-    ).get()).toEqual({ exact_state: "idle" });
-
-    // A block run terminalizes against its persisted HyperSight result rather
-    // than a transcript message.
-    sqlite.object.exec(`
-      -- The object's own columns. The compat views that projected id,
-      -- workspace_id and ISO timestamps are gone, so a fixture written in that
-      -- vocabulary would be seeding the thing this slice deleted.
-      INSERT INTO block_dashboard_configuration_versions
-        (configuration_version_id, version_number, blocks_json, created_by_user_id, created_at)
-      VALUES ('block-serialize-version', 1,
-              '[{"id":"block-serialize","prompt":"Summarize"}]', 'user-runtime', 1787000000000);
-      INSERT INTO block_dashboard_block_runs
-        (block_run_id, configuration_version_id, block_id, prompt,
-         trigger_sequence, run_id, status, created_at)
-      VALUES ('block-serialize-run', 'block-serialize-version', 'block-serialize', 'Summarize', 1,
-              '${RUN_ONE}', 'queued', 1787000000000);
-      UPDATE block_dashboard_block_runs SET status = 'completed', markdown = '# Done'
-       WHERE run_id = '${RUN_ONE}'
-    `);
-    expect(await terminalizeHarnessAttempt(sqlite.runs, input(RUN_ONE), firstBlock.lease, {
-      status: "completed",
-    }, sqlite.receipts, sqlite.blocks)).toBe("terminalized");
-    expect(sqlite.object.prepare(
-      "SELECT exact_state FROM workstream WHERE id = 1",
-    ).get()).toEqual({ exact_state: "idle" });
-
-    // The interactive executor claims while a block run (RUN_TWO) still holds
-    // its lease — the interactive fence ignores block-origin actives — and a
-    // further block claim runs beside the interactive holder.
-    const interactive = await claimHarnessAttempt(sqlite.runs, input(runThree), {
-      attemptId: "attempt-interactive",
-      owner: "owner-interactive",
-    });
-    expect(interactive.state).toBe("claimed");
-    expect(sqlite.object.prepare(
-      "SELECT exact_state FROM workstream WHERE id = 1",
-    ).get()).toEqual({ exact_state: "running" });
-    expect((await claimHarnessAttempt(sqlite.runs, input(runFour), {
-      attemptId: "attempt-block-dashboard-four",
-      owner: "owner-block-dashboard-four",
-    })).state).toBe("claimed");
-    // Interactive concurrency is still the claim's own fence: a second
-    // interactive claim reports the graceful busy the scheduler retries on,
-    // never a UNIQUE violation through the port.
-    expect((await claimHarnessAttempt(sqlite.runs, input(runFive), {
-      attemptId: "attempt-interactive-two",
-      owner: "owner-interactive-two",
-    })).state).toBe("busy");
-  });
-
   it("keeps the workstream running while a superseding interactive turn is pending", async () => {
     const sqlite = fixture();
     openDatabases.push(sqlite.database);
@@ -606,7 +512,6 @@ describe("durable harness attempt runtime", () => {
       original.lease,
       { status: "stopped" },
       sqlite.receipts,
-      sqlite.blocks,
     )).resolves.toBe("terminalized");
     expect(sqlite.object.prepare(
       "SELECT exact_state FROM workstream WHERE id = 1",
@@ -617,62 +522,6 @@ describe("durable harness attempt runtime", () => {
       owner: "owner-replacement",
     });
     expect(replacement.state).toBe("claimed");
-  });
-
-  it("terminalizes a HyperSight result without a transcript message or workstream status change", async () => {
-    const sqlite = fixture();
-    openDatabases.push(sqlite.database);
-    // The compat surface has no harness-run delete (production never deletes a
-    // run through the port); clearing the fixture row goes to the normalized
-    // table directly.
-    sqlite.objectDatabase.prepare("DELETE FROM runs WHERE run_id = ?").run(RUN_TWO);
-    // Origin is immutable through the compat surface; shape the row on the
-    // normalized table directly.
-    sqlite.objectDatabase.prepare(
-      "UPDATE runs SET origin = 'block_dashboard_block', status = 'admitted', model = 'x-ai/grok-4.3' WHERE run_id = ?",
-    ).run(RUN_ONE);
-    sqlite.object.exec(`
-      UPDATE workstream SET exact_state = 'completed' WHERE id = 1;
-      -- The object's own columns. The compat views that projected id,
-      -- workspace_id and ISO timestamps are gone, so a fixture written in that
-      -- vocabulary would be seeding the thing this slice deleted.
-      INSERT INTO block_dashboard_configuration_versions
-        (configuration_version_id, version_number, blocks_json, created_by_user_id, created_at)
-      VALUES ('block-dashboard-runtime-version', 1,
-              '[{"id":"block-runtime","prompt":"Summarize"}]', 'user-runtime', 1787000000000);
-      INSERT INTO block_dashboard_block_runs
-        (block_run_id, configuration_version_id, block_id, prompt,
-         trigger_sequence, run_id, status, created_at)
-      VALUES ('block-dashboard-runtime-run', 'block-dashboard-runtime-version', 'block-runtime', 'Summarize', 12,
-              '${RUN_ONE}', 'queued', 1787000000000);
-    `);
-
-    const claim = await claimHarnessAttempt(sqlite.runs, input(RUN_ONE), {
-      attemptId: "attempt-block-dashboard",
-      owner: "owner-block-dashboard",
-    });
-    if (claim.state !== "claimed") throw new Error("expected claimed HyperSight attempt");
-    expect(sqlite.object.prepare(
-      "SELECT exact_state FROM workstream WHERE id = 1",
-    ).get()).toEqual({ exact_state: "completed" });
-    sqlite.object.prepare(
-      "UPDATE block_dashboard_block_runs SET status = 'completed', markdown = '# Current view' WHERE run_id = ?",
-    ).run(RUN_ONE);
-
-    await expect(terminalizeHarnessAttempt(
-      sqlite.runs,
-      input(RUN_ONE),
-      claim.lease,
-      { status: "completed" },
-      sqlite.receipts,
-      sqlite.blocks,
-    )).resolves.toBe("terminalized");
-    expect(sqlite.object.prepare(
-      "SELECT status, final_turn_id FROM runs WHERE run_id = ?",
-    ).get(RUN_ONE)).toEqual({ status: "completed", final_turn_id: null });
-    expect(sqlite.object.prepare(
-      "SELECT exact_state FROM workstream WHERE id = 1",
-    ).get()).toEqual({ exact_state: "completed" });
   });
 
   it("fences final-turn writes and recovers a final persisted before terminalization", async () => {
@@ -736,7 +585,7 @@ describe("durable harness attempt runtime", () => {
     expect(await terminalizeHarnessAttempt(sqlite.runs, input(RUN_ONE), recovery.lease, {
       status: "completed",
       finalTurnId: `${RUN_ONE}:turn:1`,
-    }, sqlite.receipts, sqlite.blocks)).toBe("terminalized");
+    }, sqlite.receipts )).toBe("terminalized");
   });
 
   it.each([
@@ -988,10 +837,8 @@ describe("durable harness attempt runtime", () => {
 
     expect(await reapStaleHarnessRuns(sqlite.runs, {
       receipts: () => sqlite.receipts,
-      blocks: () => sqlite.blocks,
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
-      automationDatabase: sqlite.binding,
     })).toEqual([RUN_ONE]);
     expect(sqlite.object.prepare("SELECT status, lease_owner FROM runs WHERE run_id = ?").get(RUN_ONE))
       .toEqual({ status: "failed", lease_owner: null });
@@ -1114,28 +961,11 @@ describe("durable harness attempt runtime", () => {
     } satisfies typeof sqlite.receipts;
     const repairFailures: unknown[] = [];
 
-    // BlockDashboard has receipt authority but deliberately no automation
-    // database. It must leave an ordinary automation root for Substream's
-    // fully-authorized sweep, both before and after terminalization.
     expect(await reapStaleHarnessRuns(sqlite.runs, {
       receipts: () => flakyReceipts,
-      blocks: () => sqlite.blocks,
-      workspaceId: WORKSPACE_ID,
-      workstreamId: WORKSTREAM_ID,
-      automationDatabase: null,
-    })).toEqual([]);
-    expect(sqlite.object.prepare(
-      "SELECT status FROM runs WHERE run_id = ?",
-    ).get(RUN_ONE)).toEqual({ status: "running" });
-    expect(settlementCalls).toBe(0);
-
-    expect(await reapStaleHarnessRuns(sqlite.runs, {
-      receipts: () => flakyReceipts,
-      blocks: () => sqlite.blocks,
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
       onReceiptRepairFailure: (failure) => repairFailures.push(failure),
-      automationDatabase: sqlite.binding,
     })).toEqual([RUN_ONE]);
     expect(repairFailures).toEqual([{
       phase: "stale_root",
@@ -1160,19 +990,8 @@ describe("durable harness attempt runtime", () => {
     ).get(automationRunId)).toEqual({ status: "running" });
     expect(await reapStaleHarnessRuns(sqlite.runs, {
       receipts: () => flakyReceipts,
-      blocks: () => sqlite.blocks,
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
-      automationDatabase: null,
-    })).toEqual([]);
-    expect(settlementCalls).toBe(1);
-
-    expect(await reapStaleHarnessRuns(sqlite.runs, {
-      receipts: () => flakyReceipts,
-      blocks: () => sqlite.blocks,
-      workspaceId: WORKSPACE_ID,
-      workstreamId: WORKSTREAM_ID,
-      automationDatabase: sqlite.binding,
     })).toEqual([]);
     expect(sqlite.object.prepare(
       "SELECT status, error_json FROM tool_effects WHERE effect_intent_id = ?",
@@ -1191,55 +1010,6 @@ describe("durable harness attempt runtime", () => {
       result_summary: null,
     });
     expect(settlementCalls).toBe(2);
-  });
-
-  it("lets a BlockDashboard-only sweep reap and reconcile a stale HyperSight root", async () => {
-    const sqlite = fixture();
-    openDatabases.push(sqlite.database);
-    sqlite.objectDatabase.prepare(
-      "UPDATE runs SET origin = 'block_dashboard_block' WHERE run_id = ?",
-    ).run(RUN_ONE);
-    const claim = await claimHarnessAttempt(sqlite.runs, input(RUN_ONE), {
-      attemptId: "attempt-stale-hypersight",
-      owner: "owner-stale-hypersight",
-    });
-    if (claim.state !== "claimed") throw new Error("expected claimed HyperSight attempt");
-    await persistToolExecutionPlan(sqlite.receipts, claim.lease, {
-      invocationId: "invocation-stale-hypersight",
-      harnessRunId: RUN_ONE,
-      workspaceId: WORKSPACE_ID,
-      workstreamId: WORKSTREAM_ID,
-      toolCallId: "call-stale-hypersight",
-      toolName: "terminal_run_command",
-      inputHash: "stale-hypersight-input",
-      input: { command: "sleep 60" },
-      plan: { operation: "command.run", mode: "write", idempotency: "record_before_execute" },
-      mode: "write",
-    });
-    sqlite.object.prepare(
-      "UPDATE runs SET lease_expires_at = 1577836800000 WHERE run_id = ?",
-    ).run(RUN_ONE);
-
-    expect(await reapStaleHarnessRuns(sqlite.runs, {
-      receipts: () => sqlite.receipts,
-      blocks: () => sqlite.blocks,
-      workspaceId: WORKSPACE_ID,
-      workstreamId: WORKSTREAM_ID,
-      automationDatabase: null,
-    })).toEqual([RUN_ONE]);
-    expect(sqlite.object.prepare(
-      "SELECT status, terminalized_at FROM runs WHERE run_id = ?",
-    ).get(RUN_ONE)).toMatchObject({ status: "failed" });
-    expect(sqlite.object.prepare(
-      "SELECT status, error_json FROM tool_effects WHERE effect_intent_id = ?",
-    ).get("invocation-stale-hypersight")).toEqual({
-      status: "ambiguous",
-      error_json: '{"code":"ambiguous_external_write","message":"The parent run lost its durable lease while an external write was in flight"}',
-    });
-    expect(sqlite.object.prepare(
-      `SELECT COUNT(*) AS count FROM run_lifecycle_events
-        WHERE run_id = ? AND event_key = 'residual_receipts_settled'`,
-    ).get(RUN_ONE)).toEqual({ count: 1 });
   });
 
   it("steps over an unsettleable terminal repair and still reaps stale work behind it", async () => {
@@ -1270,7 +1040,7 @@ describe("durable harness attempt runtime", () => {
     } satisfies typeof sqlite.receipts;
     await expect(terminalizeHarnessAttempt(sqlite.runs, input(RUN_ONE), stopped.lease, {
       status: "stopped",
-    }, failBeforeSettlement, sqlite.blocks)).rejects.toThrow("receipt_rpc_unavailable");
+    }, failBeforeSettlement )).rejects.toThrow("receipt_rpc_unavailable");
 
     const stale = await claimHarnessAttempt(sqlite.runs, input(RUN_TWO), {
       attemptId: "attempt-behind-unsettleable-repair",
@@ -1292,12 +1062,10 @@ describe("durable harness attempt runtime", () => {
     } satisfies typeof sqlite.receipts;
     expect(await reapStaleHarnessRuns(sqlite.runs, {
       receipts: () => refusingReceipts,
-      blocks: () => sqlite.blocks,
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
       limit: 1,
       onReceiptRepairFailure: (failure) => repairFailures.push(failure),
-      automationDatabase: sqlite.binding,
     })).toEqual([RUN_TWO]);
     expect(repairFailures).toEqual([{
       phase: "terminal_repair",
@@ -1359,10 +1127,8 @@ describe("durable harness attempt runtime", () => {
     } satisfies typeof sqlite.receipts;
     expect(await reapStaleHarnessRuns(sqlite.runs, {
       receipts: () => flakyReceipts,
-      blocks: () => sqlite.blocks,
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
-      automationDatabase: sqlite.binding,
     })).toEqual([RUN_ONE]);
     sqlite.database.prepare(
       `UPDATE automation_runs
@@ -1372,10 +1138,8 @@ describe("durable harness attempt runtime", () => {
 
     expect(await reapStaleHarnessRuns(sqlite.runs, {
       receipts: () => flakyReceipts,
-      blocks: () => sqlite.blocks,
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
-      automationDatabase: sqlite.binding,
     })).toEqual([]);
     expect(sqlite.database.prepare(
       "SELECT status, completed_at, result_summary FROM automation_runs WHERE id = ?",
@@ -2935,7 +2699,7 @@ describe("durable harness attempt runtime", () => {
       status: "stopped",
       error: { code: "run_cancelled", message: "The member stopped this run" },
       memberSafePayload: { code: "run_cancelled" },
-    }, sqlite.receipts, sqlite.blocks)).toBe("terminalized");
+    }, sqlite.receipts )).toBe("terminalized");
 
     expect(sqlite.object.prepare(
       `SELECT status, cancellation_requested_at, terminalized_at, lease_owner
@@ -3044,7 +2808,7 @@ describe("durable harness attempt runtime", () => {
       status: "stopped",
       error: { code: "run_cancelled", message: "The member stopped this run" },
       memberSafePayload: { code: "run_cancelled" },
-    }, sqlite.receipts, sqlite.blocks)).resolves.toBe("terminalized");
+    }, sqlite.receipts )).resolves.toBe("terminalized");
     expect(sqlite.object.prepare(
       "SELECT status, terminalized_at FROM runs WHERE run_id = ?",
     ).get(RUN_ONE)).toMatchObject({ status: "cancelled" });
@@ -3130,7 +2894,6 @@ describe("durable harness attempt runtime", () => {
       claim.lease,
       outcome,
       flakyReceipts,
-      sqlite.blocks,
     )).rejects.toThrow("lost_receipt_rpc_response");
     expect(sqlite.object.prepare(
       "SELECT status, terminalized_at FROM runs WHERE run_id = ?",
@@ -3158,7 +2921,6 @@ describe("durable harness attempt runtime", () => {
       claim.lease,
       outcome,
       flakyReceipts,
-      sqlite.blocks,
     )).resolves.toBe("already_terminal");
     expect(sqlite.object.prepare(
       "SELECT status, error_json FROM tool_effects WHERE effect_intent_id = ?",
@@ -3209,7 +2971,7 @@ describe("durable harness attempt runtime", () => {
       status: "failed",
       error: { code: "tool_receipt_persistence_failed", message: "A required host persistence port failed" },
       memberSafePayload: { code: "tool_receipt_persistence_failed" },
-    }, sqlite.receipts, sqlite.blocks)).toBe("terminalized");
+    }, sqlite.receipts )).toBe("terminalized");
 
     expect(sqlite.object.prepare(
       "SELECT status, error_json FROM tool_effects WHERE effect_intent_id = ?",
@@ -3260,7 +3022,7 @@ describe("durable harness attempt runtime", () => {
     expect(await terminalizeHarnessAttempt(sqlite.runs, input(RUN_ONE), claim.lease, {
       status: "completed",
       finalTurnId: `${RUN_ONE}:turn:1`,
-    }, sqlite.receipts, sqlite.blocks)).toBe("terminalized");
+    }, sqlite.receipts )).toBe("terminalized");
 
     expect(sqlite.object.prepare(
       "SELECT status FROM tool_effects WHERE effect_intent_id = ?",
@@ -3313,7 +3075,7 @@ describe("durable harness attempt runtime", () => {
       status: "failed",
       error: { code: "harness_execution_failed", message: "The Avalon harness could not complete this run" },
       memberSafePayload: { code: "harness_execution_failed" },
-    }, flakyReceipts, sqlite.blocks)).rejects.toThrow("lost_receipt_rpc_response");
+    }, flakyReceipts )).rejects.toThrow("lost_receipt_rpc_response");
     expect(sqlite.object.prepare(
       "SELECT status FROM runs WHERE run_id = ?",
     ).get(RUN_ONE)).toEqual({ status: "failed" });
@@ -3326,10 +3088,8 @@ describe("durable harness attempt runtime", () => {
     // close this card.
     expect(await reapStaleHarnessRuns(sqlite.runs, {
       receipts: () => flakyReceipts,
-      blocks: () => sqlite.blocks,
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
-      automationDatabase: sqlite.binding,
     })).toEqual([]);
     expect(settlementCalls).toBe(2);
     expect(sqlite.object.prepare(
@@ -3384,7 +3144,7 @@ describe("durable harness attempt runtime", () => {
     expect(await terminalizeHarnessAttempt(sqlite.runs, input(RUN_ONE), claim.lease, {
       status: "needs_input",
       memberSafePayload: {},
-    }, sqlite.receipts, sqlite.blocks)).toBe("terminalized");
+    }, sqlite.receipts )).toBe("terminalized");
 
     expect(sqlite.object.prepare(
       "SELECT status, error_json FROM tool_effects WHERE effect_intent_id = ?",
@@ -3456,11 +3216,9 @@ describe("durable harness attempt runtime", () => {
     // budget would return here having reaped nothing.
     expect(await reapStaleHarnessRuns(sqlite.runs, {
       receipts: () => sqlite.receipts,
-      blocks: () => sqlite.blocks,
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
       limit: 1,
-      automationDatabase: sqlite.binding,
     })).toEqual([RUN_ONE]);
     expect(sqlite.object.prepare(
       "SELECT tool_status FROM canonical_conversation_turn_details WHERE id = ?",
@@ -3504,10 +3262,8 @@ describe("durable harness attempt runtime", () => {
     } satisfies typeof sqlite.receipts;
     expect(await reapStaleHarnessRuns(sqlite.runs, {
       receipts: () => losingReceipts,
-      blocks: () => sqlite.blocks,
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
-      automationDatabase: sqlite.binding,
     })).toEqual([RUN_ONE]);
     expect(sqlite.object.prepare(
       "SELECT status FROM tool_effects WHERE effect_intent_id = ?",
@@ -3520,7 +3276,7 @@ describe("durable harness attempt runtime", () => {
       status: "failed",
       error: { code: "harness_execution_failed", message: "The Avalon harness could not complete this run" },
       memberSafePayload: { code: "harness_execution_failed" },
-    }, sqlite.receipts, sqlite.blocks)).toBe("already_terminal");
+    }, sqlite.receipts )).toBe("already_terminal");
     expect(sqlite.object.prepare(
       "SELECT status, error_json FROM tool_effects WHERE effect_intent_id = ?",
     ).get("invocation-reaped-then-returned")).toEqual({
@@ -3565,7 +3321,6 @@ describe("durable harness attempt runtime", () => {
         memberSafePayload: { code: "run_cancelled" },
       },
       countingPort(sqlite.receipts, calls),
-      sqlite.blocks,
     )).resolves.toBe("terminalized");
 
     expect(sqlite.object.prepare(
@@ -3624,7 +3379,7 @@ describe("durable harness attempt runtime", () => {
       status: "stopped",
       error: { code: "run_cancelled", message: "The member stopped this run" },
       memberSafePayload: { code: "run_cancelled" },
-    }, sqlite.receipts, sqlite.blocks)).rejects.toThrow("durable attempt lease");
+    }, sqlite.receipts )).rejects.toThrow("durable attempt lease");
     expect(sqlite.object.prepare(
       "SELECT status, error_json FROM tool_effects WHERE effect_intent_id = ?",
     ).get("invocation-stop-lease-boundary")).toEqual({
@@ -3693,7 +3448,7 @@ describe("durable harness attempt runtime", () => {
     await expect(terminalizeHarnessAttempt(sqlite.runs, input(RUN_ONE), claim.lease, {
       status: "stopped",
       error: { code: "obsolete", message: "An obsolete executor cannot terminalize" },
-    }, sqlite.receipts, sqlite.blocks)).rejects.toMatchObject({ code: "run_ownership_lost" });
+    }, sqlite.receipts )).rejects.toMatchObject({ code: "run_ownership_lost" });
 
     expect(sqlite.object.prepare(
       "SELECT status, legacy_attempt_id AS attempt_id, lease_owner, terminalized_at FROM runs WHERE run_id = ?",
@@ -3741,10 +3496,8 @@ describe("durable harness attempt runtime", () => {
 
     expect(await reapStaleHarnessRuns(racingRuns, {
       receipts: () => sqlite.receipts,
-      blocks: () => sqlite.blocks,
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
-      automationDatabase: sqlite.binding,
     })).toEqual([]);
     expect(intercepted).toBe(true);
     expect(sqlite.object.prepare(
@@ -3772,7 +3525,7 @@ describe("durable harness attempt runtime", () => {
 
     await expect(terminalizeHarnessAttempt(sqlite.runs, input(RUN_ONE), claim.lease, {
       status: "completed",
-    }, sqlite.receipts, sqlite.blocks)).rejects.toThrow("final_turn_required");
+    }, sqlite.receipts )).rejects.toThrow("final_turn_required");
     seedCanonicalConversationTurn(sqlite.object, {
       turnId: "human-final",
       clientMessageId: "human-final",
@@ -3786,7 +3539,7 @@ describe("durable harness attempt runtime", () => {
     await expect(terminalizeHarnessAttempt(sqlite.runs, input(RUN_ONE), claim.lease, {
       status: "completed",
       finalTurnId: "human-final",
-    }, sqlite.receipts, sqlite.blocks)).rejects.toThrow("final_turn_not_persisted");
+    }, sqlite.receipts )).rejects.toThrow("final_turn_not_persisted");
     expect(sqlite.object.prepare(
       "SELECT terminalized_at FROM runs WHERE run_id = ?",
     ).get(RUN_ONE)).toEqual({ terminalized_at: null });
@@ -3831,7 +3584,7 @@ describe("durable harness attempt runtime", () => {
     await expect(terminalizeHarnessAttempt(sqlite.runs, input(RUN_ONE), claim.lease, {
       status: "completed",
       finalTurnId: `${RUN_ONE}:turn:1`,
-    }, sqlite.receipts, sqlite.blocks)).resolves.toBe("terminalized");
+    }, sqlite.receipts )).resolves.toBe("terminalized");
 
     expect(sqlite.object.prepare(
       `SELECT turn.actor, payload.payload_json, event.attempt_id
@@ -3957,7 +3710,6 @@ describe("inline child-run durability", () => {
       claim.lease,
       { status: "completed", finalTurnId: `${continuationId}:turn:1` },
       sqlite.receipts,
-      sqlite.blocks,
     )).toBe("terminalized");
   });
 
@@ -4452,10 +4204,8 @@ describe("inline child-run durability", () => {
 
     expect(await reapStaleHarnessRuns(sqlite.runs, {
       receipts: () => sqlite.receipts,
-      blocks: () => sqlite.blocks,
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
-      automationDatabase: sqlite.binding,
     })).toEqual([]);
     expect(await loadInlineChildResult(sqlite.runs, input(RUN_ONE), options.parentToolCallId))
       .toMatchObject({ state: "running", childInput: child.childInput });
@@ -4518,10 +4268,8 @@ describe("inline child-run durability", () => {
 
     expect(await reapStaleHarnessRuns(racingRuns, {
       receipts: () => sqlite.receipts,
-      blocks: () => sqlite.blocks,
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
-      automationDatabase: sqlite.binding,
     })).toEqual([]);
     expect(revived).toBe(true);
     expect(sqlite.object.prepare(
@@ -4618,10 +4366,8 @@ describe("inline child-run durability", () => {
 
     expect(await reapStaleHarnessRuns(sqlite.runs, {
       receipts: () => sqlite.receipts,
-      blocks: () => sqlite.blocks,
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
-      automationDatabase: sqlite.binding,
     })).toEqual([child.childInput.harnessRunId]);
     expect(sqlite.object.prepare(
       "SELECT exact_state FROM workstream WHERE id = 1",
@@ -4751,11 +4497,9 @@ describe("inline child-run durability", () => {
 
     expect(await reapStaleHarnessRuns(sqlite.runs, {
       receipts: () => flakyReceipts,
-      blocks: () => sqlite.blocks,
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
       onReceiptRepairFailure: (failure) => repairFailures.push(failure),
-      automationDatabase: sqlite.binding,
     })).toEqual([child.childInput.harnessRunId]);
     expect(repairFailures).toEqual([{
       phase: "stale_child",
@@ -4778,10 +4522,8 @@ describe("inline child-run durability", () => {
 
     expect(await reapStaleHarnessRuns(sqlite.runs, {
       receipts: () => flakyReceipts,
-      blocks: () => sqlite.blocks,
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
-      automationDatabase: sqlite.binding,
     })).toEqual([]);
     expect(sqlite.object.prepare(
       "SELECT status, error_json FROM tool_effects WHERE effect_intent_id = ?",
@@ -4816,10 +4558,8 @@ describe("inline child-run durability", () => {
 
     expect(await reapStaleHarnessRuns(sqlite.runs, {
       receipts: () => sqlite.receipts,
-      blocks: () => sqlite.blocks,
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
-      automationDatabase: sqlite.binding,
     })).toEqual([child.childInput.harnessRunId]);
     expect(await loadInlineChildResult(sqlite.runs, input(RUN_ONE), "tool-cancelled-child-cleanup"))
       .toEqual({
@@ -4833,59 +4573,6 @@ describe("inline child-run durability", () => {
     expect(sqlite.object.prepare(
       "SELECT exact_state FROM workstream WHERE id = 1",
     ).get()).toEqual({ exact_state: "running" });
-  });
-
-  it("repairs a HyperSight orphan while reaping a run that has no block of its own", async () => {
-    const sqlite = fixture();
-    openDatabases.push(sqlite.database);
-    // RUN_TWO's block was stranded: its run is terminal in the object, but the
-    // settlement that would have closed the block never landed. Nothing finds
-    // it again — the reaper selects `status = 'running' AND terminalized_at IS
-    // NULL`, which a terminalized run no longer matches.
-    sqlite.objectDatabase.exec(`
-      INSERT INTO block_dashboard_configuration_versions
-        (configuration_version_id, version_number, blocks_json, created_by_user_id, created_at)
-      VALUES ('orphan-version', 1, '[{"id":"orphan","prompt":"Summarize"}]',
-              'user-runtime', 1787000000000);
-      INSERT INTO block_dashboard_block_runs
-        (block_run_id, configuration_version_id, block_id, prompt,
-         trigger_sequence, run_id, status, created_at)
-      VALUES ('orphan-block-run', 'orphan-version', 'orphan', 'Summarize', 1,
-              '${RUN_TWO}', 'running', 1787000000000);
-      UPDATE runs SET origin = 'block_dashboard_block', status = 'failed',
-                      terminalized_at = 1787000000000
-       WHERE run_id = '${RUN_TWO}'
-    `);
-    const claim = await claimHarnessAttempt(sqlite.runs, input(RUN_ONE), {
-      attemptId: "attempt-orphan-repair",
-      owner: "owner-orphan-repair",
-    });
-    expect(claim.state).toBe("claimed");
-    sqlite.object.prepare(
-      "UPDATE runs SET lease_expires_at = 1577836800000 WHERE run_id = ?",
-    ).run(RUN_ONE);
-
-    // RUN_ONE is an ordinary run with no block at all. The sweep still reaches
-    // the block authority, because the repair is what needs reaching, not this
-    // run's own block — a work stream whose later stale runs happen to be
-    // ordinary ones would otherwise keep its orphan forever.
-    expect(await reapStaleHarnessRuns(sqlite.runs, {
-      receipts: () => sqlite.receipts,
-      blocks: () => sqlite.blocks,
-      workspaceId: WORKSPACE_ID,
-      workstreamId: WORKSTREAM_ID,
-      automationDatabase: sqlite.binding,
-    })).toEqual([RUN_ONE]);
-    expect(sqlite.objectDatabase.prepare(
-      `SELECT status, completed_at, json_extract(error_json, '$.code') AS code
-         FROM block_dashboard_block_runs WHERE block_run_id = 'orphan-block-run'`,
-    ).get()).toEqual({
-      status: "failed",
-      // Its own run's terminal instant, and the repair's own reason: nobody
-      // established that *this* block's run lost a lease.
-      completed_at: 1787000000000,
-      code: "block_run_orphaned",
-    });
   });
 
   it("does not clean up a child snapshot whose lease is renewed inside the reap transaction", async () => {
@@ -4935,10 +4622,8 @@ describe("inline child-run durability", () => {
 
     expect(await reapStaleHarnessRuns(racingRuns, {
       receipts: () => sqlite.receipts,
-      blocks: () => sqlite.blocks,
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
-      automationDatabase: sqlite.binding,
     })).toEqual([]);
     expect(intercepted).toBe(true);
     expect(sqlite.object.prepare(

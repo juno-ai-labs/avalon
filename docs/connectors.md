@@ -1063,6 +1063,8 @@ instances' in the poll response. Nothing per-chunk may reach the payload,
 exactly as before: the master is the only source for a series activity, and a
 representative instance is used only when there is no master at all.
 
+Shipped in #541.
+
 ### 2026-09-02 — One edit to a recurring series is one activity
 
 **What changed:** `pollCalendarChanges` now accumulates a poll's raw Calendar

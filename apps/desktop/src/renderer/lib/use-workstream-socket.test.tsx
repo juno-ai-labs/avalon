@@ -9,7 +9,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, renderHook } from '@testing-library/react';
 import type { PropsWithChildren } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { BlockDashboard, BlockDashboardPreference, Message, WorkstreamBoot, WorkstreamDetail, WorkstreamSummary } from './types';
+import type { Message, WorkstreamBoot, WorkstreamDetail, WorkstreamSummary } from './types';
 import { setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 import {
   applyActiveStreamCheckpoints,
@@ -1679,138 +1679,6 @@ describe('useWorkstreamSocket', () => {
       .toEqual([25]);
   });
 
-  it('applies personal and shared HyperSight updates without letting stale runs win', async () => {
-    vi.stubGlobal('WebSocket', FakeWebSocket);
-    const queryClient = new QueryClient();
-    const workstreamId = '00000000-0000-7000-8000-000000000301';
-    const versionId = '00000000-0000-7000-8000-000000000302';
-    const blockId = '00000000-0000-7000-8000-000000000303';
-    const initial: BlockDashboard = {
-      versionId,
-      versionNumber: 1,
-      blocks: [{ id: blockId, prompt: 'Summarize', latestRun: null }],
-      updatedAt: '2026-08-07T12:00:00.000Z',
-    };
-    queryClient.setQueryData(['block-dashboard', workstreamId], initial);
-    queryClient.setQueryData<BlockDashboardPreference>(['block-dashboard-preference', workstreamId], {
-      visible: false,
-      updatedAt: null,
-    });
-    const api = socketApiWith({
-      getSocketTicket: vi.fn(async () => ({
-        url: `wss://api.rally.test/workstreams/${workstreamId}`,
-        ticket: 'socket-ticket',
-        protocols: socketTicketProtocols('socket-ticket'),
-      })),
-    });
-    renderHook(() => useWorkstreamSocket(api, workstreamId, true), {
-      wrapper: createWrapper(queryClient),
-    });
-
-    await flushPromises();
-    const socket = FakeWebSocket.instances[0]!;
-    act(() => socket.open());
-    act(() => socket.message({
-      type: 'block_dashboard_block_run_updated',
-      sequence: 1,
-      occurredAt: '2026-08-07T12:00:01.000Z',
-      run: {
-        id: '00000000-0000-7000-8000-000000000304',
-        blockId,
-        configurationVersionId: versionId,
-        triggerSequence: 1,
-        status: 'completed',
-        markdown: '- First result',
-        error: null,
-        createdAt: '2026-08-07T12:00:01.000Z',
-        startedAt: '2026-08-07T12:00:02.000Z',
-        completedAt: '2026-08-07T12:00:03.000Z',
-      },
-    }));
-    expect(queryClient.getQueryData<BlockDashboard>(['block-dashboard', workstreamId])?.blocks[0]?.latestRun)
-      .toMatchObject({ status: 'completed', markdown: '- First result' });
-
-    act(() => socket.message({
-      type: 'block_dashboard_block_run_updated',
-      sequence: 2,
-      occurredAt: '2026-08-07T12:00:04.000Z',
-      run: {
-        id: '00000000-0000-7000-8000-000000000305',
-        blockId,
-        configurationVersionId: versionId,
-        triggerSequence: 3,
-        status: 'completed',
-        markdown: 'Newest result',
-        error: null,
-        createdAt: '2026-08-07T12:00:03.000Z',
-        startedAt: '2026-08-07T12:00:03.000Z',
-        completedAt: '2026-08-07T12:00:04.000Z',
-      },
-    }));
-    act(() => socket.message({
-      type: 'block_dashboard_block_run_updated',
-      sequence: 3,
-      occurredAt: '2026-08-07T12:00:05.000Z',
-      run: {
-        id: '00000000-0000-7000-8000-000000000309',
-        blockId,
-        configurationVersionId: versionId,
-        triggerSequence: 2,
-        status: 'completed',
-        markdown: 'Late stale result',
-        error: null,
-        createdAt: '2026-08-07T12:00:02.000Z',
-        startedAt: '2026-08-07T12:00:03.000Z',
-        completedAt: '2026-08-07T12:00:05.000Z',
-      },
-    }));
-    expect(queryClient.getQueryData<BlockDashboard>(['block-dashboard', workstreamId])?.blocks[0]?.latestRun?.markdown)
-      .toBe('Newest result');
-
-    act(() => socket.message({
-      type: 'block_dashboard_block_run_updated',
-      sequence: 4,
-      occurredAt: '2026-08-07T12:00:05.000Z',
-      run: {
-        id: '00000000-0000-7000-8000-000000000310',
-        blockId,
-        configurationVersionId: '00000000-0000-7000-8000-000000000399',
-        triggerSequence: 4,
-        status: 'completed',
-        markdown: 'Other configuration result',
-        error: null,
-        createdAt: '2026-08-07T12:00:04.000Z',
-        startedAt: '2026-08-07T12:00:04.000Z',
-        completedAt: '2026-08-07T12:00:05.000Z',
-      },
-    }));
-    expect(queryClient.getQueryData<BlockDashboard>(['block-dashboard', workstreamId])?.blocks[0]?.latestRun?.markdown)
-      .toBe('Newest result');
-
-    const next: BlockDashboard = {
-      versionId: '00000000-0000-7000-8000-000000000306',
-      versionNumber: 2,
-      blocks: [{ id: blockId, prompt: 'List decisions', latestRun: null }],
-      updatedAt: '2026-08-07T12:00:05.000Z',
-    };
-    act(() => socket.message({
-      type: 'block_dashboard_configuration_updated',
-      sequence: 5,
-      occurredAt: '2026-08-07T12:00:05.000Z',
-      blockDashboard: next,
-    }));
-    expect(queryClient.getQueryData<BlockDashboard>(['block-dashboard', workstreamId])).toEqual(next);
-
-    act(() => socket.message({
-      type: 'block_dashboard_preference_updated',
-      occurredAt: '2026-08-07T12:00:06.000Z',
-      preference: { visible: true, updatedAt: '2026-08-07T12:00:06.000Z' },
-    }));
-    expect(queryClient.getQueryData<BlockDashboardPreference>(['block-dashboard-preference', workstreamId]))
-      .toEqual({ visible: true, updatedAt: '2026-08-07T12:00:06.000Z' });
-
-  });
-
   it('jitters heartbeat and exponential reconnect timing within bounded windows', () => {
     expect(socketHeartbeatDelay(() => 0)).toBe(45_000);
     expect(socketHeartbeatDelay(() => 0.999)).toBeGreaterThanOrEqual(54_000);
@@ -3120,7 +2988,6 @@ describe('useWorkstreamSocket', () => {
     } as WorkstreamDetail);
     queryClient.setQueryData(['ordered-transcript', workstreamId], { snapshotId: 'sensitive' });
     queryClient.setQueryData(transcriptOverlaysQueryKey(workstreamId), [{ sensitive: true }]);
-    queryClient.setQueryData(['block-dashboard', workstreamId], { blocks: [{ sensitive: true }] });
     queryClient.setQueryData(workstreamFeedSourceQueryKey(workstreamId), 'socket_snapshot');
     queryClient.setQueryData(workstreamSocketSnapshotGenerationQueryKey(workstreamId), 1);
     setCachedWorkstreams(queryClient, [
@@ -3155,7 +3022,6 @@ describe('useWorkstreamSocket', () => {
     expect(queryClient.getQueryData(['workstream', workstreamId])).toBeUndefined();
     expect(queryClient.getQueryData(['ordered-transcript', workstreamId])).toBeUndefined();
     expect(queryClient.getQueryData(transcriptOverlaysQueryKey(workstreamId))).toBeUndefined();
-    expect(queryClient.getQueryData(['block-dashboard', workstreamId])).toBeUndefined();
     expect(queryClient.getQueryData(workstreamFeedSourceQueryKey(workstreamId))).toBeUndefined();
     expect(queryClient.getQueryData(workstreamSocketSnapshotGenerationQueryKey(workstreamId))).toBeUndefined();
     expect(queryClient.getQueryData<WorkstreamSummary[]>(['workstreams'])).toEqual([
