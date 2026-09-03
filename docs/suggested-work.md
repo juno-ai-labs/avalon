@@ -56,6 +56,25 @@ inclusion so that a new connector's activity is offered until somebody finds a
 reason not to, and it withholds only this surface: excluded activity is still
 logged, still routes to watches and automations, and still reaches the feed.
 
+**This is not the digest's partition, and must not become it.** Every connector
+manifest already sorts its event types into `digestible` and `operational`
+([`connector-digestibility.md`](connector-digestibility.md)), and 142 of the 205
+declared types are operational. Admission withholds five. The two questions are
+different, and the gap between them is where a suggestion lives: "would a person
+want this read back to them on a schedule" is No for `drive.file_changed` and
+`linear.comment.update`, while "is there work here" may well be Yes.
+`activity-consumer.ts` records that boundary, and inheriting the partition
+would withhold all 142.
+
+What admission does borrow is the **floor**. A type this gate withholds must be
+one its own connector already declined to call news, so this can never be the
+stricter of the two, and it cannot end up contradicting a manifest that later
+reclassifies a type. `work-opportunity-batching.test.ts` binds that to the
+registry: it fails if the gate withholds a digestible type, if the five it
+withholds change, or if a prefix stops matching any declared type at all —
+which is how a family renamed at the connector surfaces here rather than as a
+bill.
+
 Calendar changes are deliberately not on it. The other 18,000 events that day
 were `calendar.event_changed`, and that was a connector defect rather than a
 property of the activity: one edit to a recurring series arrived as one
@@ -436,7 +455,11 @@ whether the member is currently looking: the scheduler already declines
 dormant members, and the tiering is where attention belongs.
 
 **Consequences:** A check run or a workflow run can no longer become a
-suggestion, however meaningful. A member's set can now be up to
+suggestion, however meaningful. The gate is bound to the connector manifests as
+a floor rather than copied from them, so it cannot silently disagree with a
+connector's own classification; review asked whether the exclusion duplicated
+the digest partition, and the answer recorded above is that it deliberately
+withholds five where that partition withholds 142. A member's set can now be up to
 thirty minutes behind the admissions that changed it, unless one of the
 immediate triggers fires (a suggestion naming them, a dismissal, a start) or
 they open the home screen to an unranked or holed set, which repairs in two
