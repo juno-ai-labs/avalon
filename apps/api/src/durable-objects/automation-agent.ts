@@ -752,6 +752,54 @@ export const AUTOMATION_AGENT_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMig
       updated_at INTEGER NOT NULL
     ) STRICT`,
   ],
+}, {
+  version: 13,
+  description: "an automation has no destinations of its own",
+  statements: [
+    // A run context is frozen and `AutomationRunContextV1Schema` is strict, so
+    // a stored context still carrying `deliveryTargets` would stop parsing the
+    // moment the field left the contract — every claimed-but-unexecuted run,
+    // and every historical row the detail path reads. Rewriting them is what
+    // makes removing the field safe rather than a deferred outage. `json_remove`
+    // is a no-op on a context that never had the key, so this is idempotent
+    // across the resume the runner performs after a failed later group.
+    `UPDATE automation_runs
+        SET context_json = json_remove(context_json, '$.deliveryTargets')
+      WHERE json_extract(context_json, '$.deliveryTargets') IS NOT NULL`,
+    // A rebuild rather than a DROP COLUMN, because SQLite refuses to drop a
+    // column named in a CHECK constraint and `delivery_targets_json` carries
+    // one. Same shape as the v9 rebuild directly above, and for the same
+    // reason: the table holds one row, so the copy is exact and cheap.
+    `CREATE TABLE automation_acceptance_v13 (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      definition_revision INTEGER NOT NULL,
+      request_hash TEXT NOT NULL,
+      scope TEXT NOT NULL CHECK (scope IN ('personal', 'workspace', 'workstream')),
+      owning_workstream_id TEXT,
+      default_plugin_ids_json TEXT NOT NULL CHECK (json_valid(default_plugin_ids_json)),
+      activity_source_plugin_ids_json TEXT NOT NULL CHECK (json_valid(activity_source_plugin_ids_json)),
+      connector_bindings_json TEXT NOT NULL CHECK (json_valid(connector_bindings_json)),
+      model_override TEXT,
+      evaluator_projection_json TEXT NOT NULL CHECK (json_valid(evaluator_projection_json)),
+      evaluator_source_hash TEXT NOT NULL,
+      effective_after_event_sequence INTEGER,
+      accepted_at INTEGER NOT NULL,
+      activated_at INTEGER,
+      CHECK ((scope = 'workstream') = (owning_workstream_id IS NOT NULL))
+    ) STRICT`,
+    `INSERT INTO automation_acceptance_v13
+       (id, definition_revision, request_hash, scope, owning_workstream_id,
+        default_plugin_ids_json, activity_source_plugin_ids_json, connector_bindings_json,
+        model_override, evaluator_projection_json,
+        evaluator_source_hash, effective_after_event_sequence, accepted_at, activated_at)
+     SELECT id, definition_revision, request_hash, scope, owning_workstream_id,
+            default_plugin_ids_json, activity_source_plugin_ids_json, connector_bindings_json,
+            model_override, evaluator_projection_json,
+            evaluator_source_hash, effective_after_event_sequence, accepted_at, activated_at
+       FROM automation_acceptance`,
+    `DROP TABLE automation_acceptance`,
+    `ALTER TABLE automation_acceptance_v13 RENAME TO automation_acceptance`,
+  ],
 }];
 
 /**
