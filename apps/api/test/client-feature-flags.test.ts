@@ -247,7 +247,6 @@ describe("client feature flags", () => {
     await expect(resolveClientFeatureFlags(envWithAccounts(), auth(staffUserId)))
       .resolves.toEqual({
         developerSettings: false,
-        hypersightEnabled: false,
         meetingRecordingEnabled: false,
         suggestedWorkEnabled: false,
         automationWorkspaceTemplatesEnabled: false,
@@ -268,7 +267,6 @@ describe("client feature flags", () => {
     await expect(resolveClientFeatureFlags(env, auth(staffUserId)))
       .resolves.toEqual({
         developerSettings: false,
-        hypersightEnabled: false,
         meetingRecordingEnabled: false,
         suggestedWorkEnabled: false,
         automationWorkspaceTemplatesEnabled: false,
@@ -379,7 +377,6 @@ describe("client feature flags", () => {
         "automation-workspace-templates-enabled",
         "developer-settings",
         "digests-enabled",
-        "hypersight-enabled",
         "live-artifacts-enabled",
         "meeting-recording-enabled",
         "multiple-workspaces-enabled",
@@ -421,7 +418,6 @@ describe("GET /feature-flags", () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
       developerSettings: true,
-      hypersightEnabled: true,
       meetingRecordingEnabled: true,
       suggestedWorkEnabled: true,
       automationWorkspaceTemplatesEnabled: true,
@@ -448,7 +444,6 @@ describe("GET /feature-flags", () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
       developerSettings: false,
-      hypersightEnabled: false,
       meetingRecordingEnabled: false,
       suggestedWorkEnabled: false,
       automationWorkspaceTemplatesEnabled: false,

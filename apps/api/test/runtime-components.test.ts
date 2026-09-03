@@ -11,7 +11,6 @@ import {
 import {
   applyActiveStreamCheckpointEvent,
   distinctNonParticipantViewers,
-  isPersonalEventAudience,
   planSocketReplay,
   splitActiveStreamCheckpointText,
   substreamAgentName,
@@ -648,11 +647,6 @@ describe("runtime component invariants", () => {
     )).toBe(
       "eu:00000000-0000-4000-8000-00000000000a:00000000-0000-4000-8000-00000000000b"
     );
-  });
-
-  it("delivers personal room events only to the authenticated target user", () => {
-    expect(isPersonalEventAudience("user-one", "user-one")).toBe(true);
-    expect(isPersonalEventAudience("user-two", "user-one")).toBe(false);
   });
 
   it("locks Durable Object IDs and first placement to the product region", () => {

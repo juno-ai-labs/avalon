@@ -227,20 +227,6 @@ describe("the window a scheduled digest run is given", () => {
     });
   });
 
-  it("gives a HyperSight run its block submission surface", async () => {
-    const env = envFor(seededDatabase());
-
-    const context = await loadRunPromptContext(env, workflowInput({
-      reason: "block_dashboard_block",
-      digestDeliveryId: null,
-      triggerMessageId: null,
-    }), lease, workstream);
-
-    expect(context.systemPrompt).toContain("# HyperSight block output");
-    expect(context.systemPrompt).toContain("Submit the finished Markdown through the block submission tool");
-    expect(context.systemPrompt).not.toContain("# External delivery output");
-  });
-
   it("never carries the window in the system prompt", async () => {
     const env = envFor(seededDatabase());
 

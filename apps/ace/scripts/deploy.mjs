@@ -120,7 +120,6 @@ function run(command, args, options = {}) {
 
 const audience = await ensureAccessApplication();
 await Promise.all([
-  ensureFlag('hypersight-enabled', 'True shows HyperSight surfaces in Electron; false hides them without changing API availability.'),
   ensureFlag('meeting-recording-enabled', 'True shows meeting-recording actions in Electron; false hides them without changing API availability.'),
   ensureFlag('suggested-work-enabled', 'True shows Suggested Work surfaces in Electron; false hides them without changing API availability.'),
   ensureFlag('automation-workspace-templates-enabled', 'True shows workspace-template surfaces in Electron; false hides them without changing API availability.'),
@@ -133,7 +132,6 @@ await Promise.all([
   ensureModelFlag('agent-model-workstream', 'Runs the main participant-visible work stream and the structured attachment-summary pass: reasons over transcripts, calls tools, and streams answers.', 'x-ai/grok-4.3', ['google/gemini-3.6-flash']),
   ensureModelFlag('agent-model-inline-child', 'Runs a bounded read-only child task delegated by a work-stream agent and returns the result to its parent.', 'x-ai/grok-4.3', ['google/gemini-3.6-flash']),
   ensureModelFlag('agent-model-automation-compiler', 'Turns an automation setup conversation into the saved automation definition, schedule, scope, and delivery plan.', 'x-ai/grok-4.5', ['google/gemini-3.6-flash']),
-  ensureModelFlag('agent-model-block-dashboard', 'Refreshes one shared read-only Markdown dashboard block from a reproducible interval of the work-stream transcript.', 'x-ai/grok-4.3', []),
   ensureModelFlag('agent-model-meeting-notes', 'Produces the live and final meeting-note passes from captured transcript segments.', 'x-ai/grok-4.3', ['google/gemini-3.6-flash']),
   ensureModelFlag('agent-model-addressing-classifier', 'Decides whether a message is for the agent, people, both, or uncertain before a work-stream run starts.', 'google/gemini-2.5-flash-lite', ['google/gemini-3.6-flash']),
   ensureModelFlag('agent-model-workstream-naming', 'Creates the short work-stream title from the opening request while the creator waits.', 'google/gemini-2.5-flash-lite', ['google/gemini-3.6-flash']),

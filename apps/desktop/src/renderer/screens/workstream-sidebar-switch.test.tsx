@@ -6,12 +6,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const api = vi.hoisted(() => ({
   clientFeatureFlags: vi.fn(),
-  getBlockDashboard: vi.fn(),
   getConnections: vi.fn(),
   getWorkspaceMembers: vi.fn(),
   getWorkstream: vi.fn(),
   getWorkstreamContext: vi.fn(),
-  updateBlockDashboardPreference: vi.fn(),
 }));
 const retainedSocket = vi.hoisted(() => vi.fn());
 
@@ -20,7 +18,7 @@ vi.mock('../lib/app-session', () => ({
 }));
 
 vi.mock('../lib/use-client-feature-flags', () => ({
-  useClientFeatureFlags: () => ({ data: { hypersightEnabled: true } }),
+  useClientFeatureFlags: () => ({ data: {} }),
 }));
 
 vi.mock('../lib/workstream-socket-pool', () => ({
@@ -57,13 +55,10 @@ vi.mock('../lib/use-transcript-follow', () => ({
   }),
 }));
 
-vi.mock('../lib/use-block-dashboard-sockets', () => ({
-  useBlockDashboardSockets: () => new Map(),
-}));
 
 import { WorkstreamScreen } from './workstream';
 import { useUiStore } from '../lib/ui-store';
-import type { BlockDashboardPreference, WorkstreamBoot, WorkstreamDetail } from '../lib/types';
+import type { WorkstreamBoot, WorkstreamDetail } from '../lib/types';
 
 const firstWorkstreamId = '00000000-0000-7000-8000-000000000801';
 const secondWorkstreamId = '00000000-0000-7000-8000-000000000802';
@@ -158,20 +153,14 @@ function switchWorkstream(): void {
   fireEvent.click(screen.getByRole('button', { name: 'Switch work stream' }));
 }
 
-function returnToFirstWorkstream(): void {
-  fireEvent.click(screen.getByRole('button', { name: 'Return to the first work stream' }));
-}
 
 describe('the right sidebar does not follow a work-stream switch', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    useUiStore.setState({ railOpen: false, railVariant: 'context', inspector: null, blockDashboardOpen: false });
+    useUiStore.setState({ railOpen: false, railVariant: 'context', inspector: null });
     api.getWorkstreamContext.mockResolvedValue({ backgroundTasks: [], automationRuns: [] });
     api.getWorkspaceMembers.mockResolvedValue([]);
     api.getConnections.mockResolvedValue([]);
-    api.getBlockDashboard.mockResolvedValue({ blocks: [], updatedAt: null });
-    api.updateBlockDashboardPreference.mockImplementation(async (_id: string, visible: boolean) =>
-      ({ visible, updatedAt: null }));
     retainedSocket.mockReturnValue({
       activeCompaction: null,
       createMessage: vi.fn(),
@@ -215,98 +204,4 @@ describe('the right sidebar does not follow a work-stream switch', () => {
     expect(useUiStore.getState().railLeaving).toBeNull();
   });
 
-  it('hands the shell no sidebar to lay out when the switch closes HyperSight', async () => {
-    renderScreen();
-    await screen.findByText('First work stream');
-    fireEvent.click(screen.getByRole('button', { name: 'Show HyperSight' }));
-    await waitFor(() => expect(screen.getByRole('complementary', { name: 'HyperSight' })).toBeInTheDocument());
-
-    switchWorkstream();
-
-    await screen.findByText('Second work stream');
-    expect(document.querySelector('.rail-surface')).toBeNull();
-    // Both halves of what AppShell lays the main pane out against. The screen
-    // is the only thing that knows HyperSight has the slot, so a mirror that
-    // catches up after paint leaves the arriving feed padded for a panel that
-    // is not there.
-    expect(useUiStore.getState().blockDashboardOpen).toBe(false);
-    expect(useUiStore.getState().railLeaving).toBeNull();
-  });
-
-  it('leaves HyperSight closed in the work stream switched to, whatever its stored preference says', async () => {
-    renderScreen((queryClient) => {
-      queryClient.setQueryData<BlockDashboardPreference>(
-        ['block-dashboard-preference', secondWorkstreamId],
-        { visible: true, updatedAt: null },
-      );
-    });
-    await screen.findByText('First work stream');
-
-    switchWorkstream();
-
-    await screen.findByText('Second work stream');
-    expect(screen.queryByRole('complementary', { name: 'HyperSight' })).not.toBeInTheDocument();
-    // The preference is the person's, not a piece of window state: the switch
-    // declines to open the panel without writing that choice back.
-    expect(api.updateBlockDashboardPreference).not.toHaveBeenCalled();
-  });
-
-  it('still opens HyperSight when the work stream now on screen asks for it', async () => {
-    renderScreen();
-    await screen.findByText('First work stream');
-
-    fireEvent.click(screen.getByRole('button', { name: 'Show HyperSight' }));
-
-    await waitFor(() => expect(screen.getByRole('complementary', { name: 'HyperSight' })).toBeInTheDocument());
-  });
-
-  // Yielding the sidebar is written back; arriving at a stream that merely has
-  // the preference stored is not yielding anything, and writing it would erase
-  // the person's toggle on every device they use.
-  it('does not write away a HyperSight preference this visit never displaced', async () => {
-    renderScreen();
-    await screen.findByText('First work stream');
-    fireEvent.click(screen.getByRole('button', { name: 'Show HyperSight' }));
-    await waitFor(() => expect(screen.getByRole('complementary', { name: 'HyperSight' })).toBeInTheDocument());
-    switchWorkstream();
-    await screen.findByText('Second work stream');
-    returnToFirstWorkstream();
-    await screen.findByText('First work stream');
-    api.updateBlockDashboardPreference.mockClear();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Work-stream context' }));
-
-    await waitFor(() => expect(useUiStore.getState().railOpen).toBe(true));
-    expect(api.updateBlockDashboardPreference).not.toHaveBeenCalled();
-  });
-
-  it('still writes the preference back when the inspector takes the slot from HyperSight', async () => {
-    renderScreen();
-    await screen.findByText('First work stream');
-    fireEvent.click(screen.getByRole('button', { name: 'Show HyperSight' }));
-    await waitFor(() => expect(screen.getByRole('complementary', { name: 'HyperSight' })).toBeInTheDocument());
-    api.updateBlockDashboardPreference.mockClear();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Work-stream context' }));
-
-    await waitFor(() =>
-      expect(api.updateBlockDashboardPreference).toHaveBeenCalledWith(firstWorkstreamId, false));
-  });
-
-  it('treats coming back to a work stream as a new visit, not the one that opened HyperSight', async () => {
-    renderScreen();
-    await screen.findByText('First work stream');
-    fireEvent.click(screen.getByRole('button', { name: 'Show HyperSight' }));
-    await waitFor(() => expect(screen.getByRole('complementary', { name: 'HyperSight' })).toBeInTheDocument());
-
-    switchWorkstream();
-    await screen.findByText('Second work stream');
-    returnToFirstWorkstream();
-
-    await screen.findByText('First work stream');
-    // The preference this visit wrote is still `visible`, so only the visit
-    // record keeps the panel from reopening on a feed nobody asked it for.
-    await waitFor(() =>
-      expect(screen.queryByRole('complementary', { name: 'HyperSight' })).not.toBeInTheDocument());
-  });
 });

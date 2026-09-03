@@ -100,8 +100,7 @@ inspection and repair are the product requirement. Product code must continue
 to use typed domain RPCs and must never depend on this surface.
 
 AutomationAgent inherits inspection through the requested scheduler hierarchy,
-but no automation MCP tool is registered. BlockDashboardAgent does not inherit
-the scheduler and remains outside this inspection surface.
+but no automation MCP tool is registered.
 
 The Worker does not retain query history, cache results, copy databases, or
 provide a D1 fallback. It also does not turn Access identity into Rally product
@@ -191,6 +190,17 @@ Changing that managed provider list remains an explicit Access administration
 decision.
 
 ## Changelog
+
+### 2026-09-03 — Engineering inspection exposes no HyperSight controls
+
+**What changed:** HyperSight configuration and runtime concepts were removed
+from the documented engineering inspection surface.
+
+**Why:** An operational interface must reflect live authorities; retaining
+retired controls would invite writes that no product path can observe.
+
+**Consequences:** Existing regional and read-only inspection boundaries are
+unchanged.
 
 ### 2026-08-30 — Admit hosted origins to the MCP transport
 

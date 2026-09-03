@@ -1,5 +1,4 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { IconAugmentedReality } from '@tabler/icons-react';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import {
@@ -89,7 +88,6 @@ import { useTextClipped } from '../lib/use-text-clipped';
 import { TRANSCRIPT_END_SLACK, useTranscriptFollow } from '../lib/use-transcript-follow';
 import { useWorkstreamFeedOpenTelemetry } from '../lib/use-workstream-feed-open-telemetry';
 import { useWorkstreamSendReadyTelemetry } from '../lib/use-workstream-send-ready-telemetry';
-import { useBlockDashboardSockets } from '../lib/use-block-dashboard-sockets';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { JumpToLatestButton, RunStoppedNotice } from '../components/conversation-follow';
 import { type RailPanel, type RailVariant, useUiStore } from '../lib/ui-store';
@@ -102,7 +100,7 @@ import {
   invalidateCachedWorkstreamDetails,
   setCachedWorkstreams,
 } from '../lib/workstreams-cache';
-import type { ElicitationData, HarnessRunMetadata, HarnessStatus, BlockDashboard, BlockDashboardPreference, Message, Participant, ResourceVersion, WorkspaceMember, WorkstreamBoot, WorkstreamDetail, WorkstreamResource } from '../lib/types';
+import type { ElicitationData, HarnessRunMetadata, HarnessStatus, Message, Participant, ResourceVersion, WorkspaceMember, WorkstreamBoot, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import { AgentCompactionIndicator, AgentWorkTiming, type AgentWorkTimingProps } from '../components/agent-work-timing';
 import { InspectorRail } from '../components/inspector-rail';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
@@ -112,7 +110,6 @@ import { queueAuthorMember, type ComposerQueueItem } from '../components/compose
 import { MessageFeed, useMessageFeedVirtualizer } from '../components/message-feed';
 import { ConnectorConnectionsProvider } from '../components/connector-mentions';
 import { WorkstreamComposer } from '../components/workstream-composer';
-import { BlockDashboardPanel, BlockDashboardRail } from '../components/block-dashboard-panel';
 import { useRailCrossFade } from '../components/rail-surface';
 
 /**
@@ -234,36 +231,6 @@ export function workstreamPayloadBelongsToRoute(
 ): boolean {
   return workstream?.id === routeWorkstreamId
     && transcript !== undefined;
-}
-
-/**
- * Which panel holds the right sidebar. The inspector rail's open state is local
- * and immediate, while HyperSight's is a preference write that can fail and roll
- * back, so the rail holds the slot until that write settles: a failed write can
- * leave the stored preference disagreeing with the screen, never two panels
- * stacked in one slot with both controls reading as open.
- *
- * HyperSight's preference is stored per work stream and outlives the visit that
- * set it, so it only holds the slot once this visit has opened it. Switching
- * work streams is a move to another feed, not to its sidebar: a stream left
- * with HyperSight open must not hand a sidebar to the next stream opened from
- * it, and the preference itself is left alone so the toggle still means what it
- * did.
- *
- * `openedThisVisit` is this window's own toggle, so the gate answers the same
- * way to every other way the preference can arrive: the control socket's boot
- * frame, and a change made on another device while this stream is on screen.
- * None of them open the panel here. That is the same rule rather than a gap in
- * it — a sidebar opens where somebody asked for it, and this window was not
- * asked. The preference is still read, still written, and still what the toggle
- * beside the reader acts on.
- */
-export function blockDashboardHoldsSidebar(
-  preferenceVisible: boolean,
-  railOpen: boolean,
-  openedThisVisit: boolean,
-): boolean {
-  return preferenceVisible && !railOpen && openedThisVisit;
 }
 
 export function manualElicitationResponse(
@@ -473,24 +440,18 @@ const RENAME_HINT = 'Double-click to rename';
 export function WorkstreamHeader({
   workstream,
   socketState,
-  blockDashboardOpen,
-  blockDashboardAvailable = false,
   onAddParticipant,
   onOpenRail,
   onRename,
-  onToggleBlockDashboard,
   presentUserIds = [],
   currentUserId = null,
   workspaceTarget,
 }: {
   workstream: WorkstreamDetail;
   socketState: SocketState;
-  blockDashboardOpen: boolean;
-  blockDashboardAvailable?: boolean;
   onAddParticipant: () => void;
   onOpenRail: (variant: RailVariant) => void;
   onRename: (title: string) => Promise<void>;
-  onToggleBlockDashboard: () => void;
   presentUserIds?: readonly string[];
   currentUserId?: string | null;
   workspaceTarget: WorkspaceTarget | null;
@@ -755,18 +716,6 @@ export function WorkstreamHeader({
           <UserPlus aria-hidden="true" size={13} />
           <span className="sr-only">Add participant</span>
         </button>
-        {/* The two controls that own the right sidebar sit side by side, in the
-            order the panels themselves are named. */}
-        {blockDashboardAvailable && (
-          <IconButton
-            className={clsx('panel-toggle', 'block-dashboard-toggle', blockDashboardOpen && 'is-active')}
-            aria-pressed={blockDashboardOpen}
-            label={blockDashboardOpen ? 'Hide HyperSight' : 'Show HyperSight'}
-            onClick={onToggleBlockDashboard}
-          >
-            <IconAugmentedReality size={16} stroke={1.7} />
-          </IconButton>
-        )}
         <IconButton
           aria-pressed={showing('context')}
           className={clsx('panel-toggle', showing('context') && 'is-active')}
@@ -937,22 +886,10 @@ export function WorkstreamScreen(): React.JSX.Element {
   const openRail = useUiStore((state) => state.openRail);
   const storeRailOpen = useUiStore((state) => state.railOpen);
   const railScope = useUiStore((state) => state.railScope);
-  const setBlockDashboardOpen = useUiStore((state) => state.setBlockDashboardOpen);
   const setRailLeaving = useUiStore((state) => state.setRailLeaving);
   const setRailScope = useUiStore((state) => state.setRailScope);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
-  // Whether HyperSight was opened during this visit to this work stream. Its
-  // stored preference is per work stream and survives the visit that set it, so
-  // the panel is only allowed the sidebar in the visit that asked for it; the
-  // route is part of the record so that leaving a work stream and coming back
-  // is a new visit rather than a continuation of the one that opened it. Reset
-  // while rendering rather than from an effect, so the first frame of a work
-  // stream is never the previous one's panel.
-  const [blockDashboardVisit, setBlockDashboardVisit] = useState<{ workstreamId: string; opened: boolean }>(
-    { workstreamId: id, opened: false },
-  );
-  if (blockDashboardVisit.workstreamId !== id) setBlockDashboardVisit({ workstreamId: id, opened: false });
   const [participantDialogOpen, setParticipantDialogOpen] = useState(false);
   const [resourceDialogOpen, setResourceDialogOpen] = useState(false);
   const [resourceSearch, setResourceSearch] = useState('');
@@ -1217,57 +1154,11 @@ export function WorkstreamScreen(): React.JSX.Element {
   // just left; every path that opens the rail writes the store, and each is
   // honoured from the moment the scope names this stream.
   const railOpen = storeRailOpen && railScope === id;
-  // No request of its own. The independently-started control socket writes the
-  // preference when it arrives; until then the dashboard is simply closed and
-  // the feed remains fully usable. What arrives is no longer an open on its
-  // own, either: the visit gate below is what the boot frame now meets, so a
-  // stream is reached closed however its preference reads.
-  const blockDashboardPreference = useQuery<BlockDashboardPreference | null>({
-    queryKey: ['block-dashboard-preference', id],
-    queryFn: async () => null,
-    enabled: false,
-    initialData: null,
-    staleTime: Number.POSITIVE_INFINITY,
-  });
-  const blockDashboardPreferred = blockDashboardPreference.data?.visible ?? false;
-  const blockDashboardOpenedThisVisit = blockDashboardVisit.workstreamId === id && blockDashboardVisit.opened;
-  const blockDashboardOpen = featureFlags.data?.hypersightEnabled === true
-    && blockDashboardHoldsSidebar(blockDashboardPreferred, railOpen, blockDashboardOpenedThisVisit);
-  // Handing the sidebar from one panel to the other keeps the panel that lost
-  // it on screen a moment longer, fading out over the one that took it while
-  // the slot animates between their two widths. Scoped to the work stream, so
-  // that a switch is not a hand-off: there is no panel taking the slot in the
-  // stream arrived at, and dissolving the previous stream's panel over its feed
-  // would lay that feed out around a sidebar for as long as the fade lasts.
+  // A route switch is not a sidebar hand-off: scope the fade to the work stream
+  // so the previous stream's inspector never dissolves over the arriving feed.
   const railLeaving = useRailCrossFade<RailPanel>(
-    blockDashboardOpen ? 'block-dashboard' : railOpen ? 'inspector' : null,
+    railOpen ? 'inspector' : null,
     id,
-  );
-  const blockDashboard = useQuery({
-    queryKey: ['block-dashboard', id],
-    queryFn: ({ signal }) => api!.getBlockDashboard(id, signal),
-    enabled: Boolean(api && id && blockDashboardOpen),
-    staleTime: 5_000,
-  });
-  const reportedHyperSightOpen = useRef<string | null>(null);
-  useEffect(() => {
-    if (!blockDashboardOpen) {
-      reportedHyperSightOpen.current = null;
-      return;
-    }
-    if (!blockDashboard.data || reportedHyperSightOpen.current === id) return;
-    reportedHyperSightOpen.current = id;
-    reportTelemetryProductIntent({
-      kind: 'hypersight_opened',
-      workstreamId: id,
-      blockCount: telemetryCountBucket(blockDashboard.data.blocks.length),
-    });
-  }, [blockDashboard.data, blockDashboardOpen, id]);
-  const blockDashboardConnectionStates = useBlockDashboardSockets(
-    api,
-    id,
-    blockDashboard.data?.blocks.map((block) => block.id) ?? [],
-    Boolean(api && id && blockDashboardOpen && blockDashboard.isSuccess),
   );
   const members = useQuery({
     queryKey: ['workspace-members'],
@@ -1642,80 +1533,12 @@ export function WorkstreamScreen(): React.JSX.Element {
     },
   });
 
-  const updateBlockDashboard = useMutation({
-    mutationFn: (blocks: Array<{ id: string; prompt: string }>) => {
-      const current = queryClient.getQueryData<BlockDashboard>(['block-dashboard', id]) ?? blockDashboard.data;
-      if (!current) throw new Error('HyperSight is not ready yet.');
-      return api!.updateBlockDashboard(id, {
-        expectedVersionNumber: current.versionNumber,
-        blocks,
-      });
-    },
-    onSuccess: (updated) => {
-      queryClient.setQueryData(['block-dashboard', id], updated);
-    },
-    onError: () => {
-      void queryClient.invalidateQueries({ queryKey: ['block-dashboard', id], exact: true });
-    },
-  });
-
-  const updateBlockDashboardPreference = useMutation({
-    mutationFn: (visible: boolean) => api!.updateBlockDashboardPreference(id, visible),
-    onMutate: async (visible) => {
-      await queryClient.cancelQueries({ queryKey: ['block-dashboard-preference', id], exact: true });
-      const previous = queryClient.getQueryData<BlockDashboardPreference>(['block-dashboard-preference', id]);
-      queryClient.setQueryData<BlockDashboardPreference>(['block-dashboard-preference', id], {
-        visible,
-        updatedAt: previous?.updatedAt ?? null,
-      });
-      return { previous };
-    },
-    onError: (_error, _visible, context) => {
-      queryClient.setQueryData(['block-dashboard-preference', id], context?.previous);
-    },
-    onSuccess: (preference) => {
-      queryClient.setQueryData(['block-dashboard-preference', id], preference);
-    },
-  });
-  const { mutate: persistBlockDashboardPreference } = updateBlockDashboardPreference;
-
-  // HyperSight and the inspector rail share the right sidebar and are never
-  // open together. HyperSight's visibility is a stored personal preference
-  // rather than window state, so yielding the sidebar to the rail is written
-  // back the same way the toggle is. What that preference no longer decides is
-  // arrival: it is recorded against this visit as well, so the stream this
-  // toggle is used in opens the panel and the next stream reached from it does
-  // not.
-  const setBlockDashboardVisible = useCallback((visible: boolean): void => {
-    if (visible) closeRail();
-    setBlockDashboardVisit({ workstreamId: id, opened: visible });
-    persistBlockDashboardPreference(visible);
-  }, [closeRail, id, persistBlockDashboardPreference]);
-
-  // Yielding the sidebar is written back, but only by the stream HyperSight is
-  // actually showing in. The stored preference outlives the visit that set it,
-  // so a stream reached from that one can hold `visible` with nothing on
-  // screen; writing `false` from there would erase the person's toggle, on this
-  // device and every other, for a panel this visit never displaced.
-  const openRailVariant = useCallback((variant: RailVariant): void => {
-    openRail(variant);
-    if (blockDashboardOpen) persistBlockDashboardPreference(false);
-  }, [blockDashboardOpen, openRail, persistBlockDashboardPreference]);
-
-  // The shell lays the main pane out against whichever panel holds the right
-  // sidebar, and only this screen knows whether HyperSight has it — or which
-  // panel is still fading out of it. Layout effects, like the close they
-  // describe: what the shell is told and what this screen renders have to reach
-  // the same frame, or a switch away from an open panel paints the arriving
-  // feed padded for a sidebar that is no longer drawn beside it.
-  useLayoutEffect(() => {
-    setBlockDashboardOpen(blockDashboardOpen);
-  }, [blockDashboardOpen, setBlockDashboardOpen]);
+  // The shell needs to know whether the inspector is still fading out so it
+  // reserves the same width for that final frame.
   useLayoutEffect(() => {
     setRailLeaving(railLeaving);
     return () => setRailLeaving(null);
   }, [railLeaving, setRailLeaving]);
-  useEffect(() => () => setBlockDashboardOpen(false), [setBlockDashboardOpen]);
 
   const stop = useMutation({
     mutationFn: () => socketConnection.stopHarness(),
@@ -2237,16 +2060,10 @@ export function WorkstreamScreen(): React.JSX.Element {
   return (
     <ConnectorConnectionsProvider connections={connections.data}>
     <div className="workstream-screen">
-      {/* The HyperSight preference is independent metadata, never an open or
-          interaction gate. The control is optimistic even before the control
-          socket's first metadata frame arrives. */}
       <WorkstreamHeader
-        blockDashboardAvailable={featureFlags.data?.hypersightEnabled === true}
-        blockDashboardOpen={blockDashboardOpen}
         onAddParticipant={() => setParticipantDialogOpen(true)}
-        onOpenRail={openRailVariant}
+        onOpenRail={openRail}
         onRename={(title) => renameWorkstream.mutateAsync(title).then(() => undefined)}
-        onToggleBlockDashboard={() => setBlockDashboardVisible(!blockDashboardOpen)}
         currentUserId={session?.user.id ?? null}
         workspaceTarget={session?.workspace ? {
           region: session.workspace.region,
@@ -2256,32 +2073,6 @@ export function WorkstreamScreen(): React.JSX.Element {
         socketState={socketState}
         workstream={displayedDetail}
       />
-      {blockDashboardOpen || railLeaving === 'block-dashboard' ? (
-        <BlockDashboardRail
-          blockCount={blockDashboard.data?.blocks.length ?? 0}
-          leaving={railLeaving === 'block-dashboard'}
-          onClose={() => setBlockDashboardVisible(false)}
-        >
-          {blockDashboard.data ? (
-            <BlockDashboardPanel
-              connectionStates={blockDashboardConnectionStates}
-              error={updateBlockDashboard.error?.message ?? blockDashboard.error?.message}
-              blockDashboard={blockDashboard.data}
-              onChange={(blocks) => updateBlockDashboard.mutateAsync(blocks).then(() => undefined)}
-              pending={updateBlockDashboard.isPending}
-            />
-          ) : blockDashboard.error ? (
-            <div className="block-dashboard-load-state">
-              <InlineError>{blockDashboard.error.message}</InlineError>
-              <Button onClick={() => void blockDashboard.refetch()}><RefreshCcw size={14} /> Try again</Button>
-            </div>
-          ) : (
-            <div className="block-dashboard-load-state">
-              <LoadingState label="Opening HyperSight…" />
-            </div>
-          )}
-        </BlockDashboardRail>
-      ) : null}
       {/* Focusable so the transcript can be scrolled from the keyboard at all.
           Chromium gives Page Up, Home, and the arrows to a scroller only when it
           can take focus, and the composer takes it when a work stream opens — so

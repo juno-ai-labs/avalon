@@ -20,7 +20,7 @@ vi.mock('../lib/app-session', () => ({
 }));
 
 vi.mock('../lib/use-client-feature-flags', () => ({
-  useClientFeatureFlags: () => ({ data: { hypersightEnabled: false } }),
+  useClientFeatureFlags: () => ({ data: {} }),
 }));
 
 vi.mock('../lib/workstream-socket-pool', () => ({
@@ -55,10 +55,6 @@ vi.mock('../lib/use-transcript-follow', () => ({
     scrollTo: vi.fn(),
     scrollToEnd: scrollTranscriptToEnd,
   }),
-}));
-
-vi.mock('../lib/use-block-dashboard-sockets', () => ({
-  useBlockDashboardSockets: () => new Map(),
 }));
 
 import { WorkstreamScreen } from './workstream';

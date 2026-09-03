@@ -192,7 +192,6 @@
     "bindings": [
       { "name": "SUBSTREAM_AGENTS", "class_name": "SubstreamAgent" },
       { "name": "AUTOMATION_AGENTS", "class_name": "AutomationAgent" },
-      { "name": "BLOCK_DASHBOARD_AGENTS", "class_name": "BlockDashboardAgent" },
       { "name": "WORKSTREAM_DOS", "class_name": "WorkstreamDO" },
       { "name": "WORKSPACE_DOS", "class_name": "WorkspaceDO" },
       { "name": "CRASH_SYMBOLICATOR", "class_name": "CrashSymbolicatorContainer" },
@@ -228,7 +227,8 @@
     { "tag": "v4", "deleted_classes": ["WorkspaceScheduler"] },
     { "tag": "v5", "new_sqlite_classes": ["SlackReactionTicker"] },
     { "tag": "v6", "new_sqlite_classes": ["AutomationAgent"] },
-    { "tag": "v7", "new_sqlite_classes": ["ArtifactHostDO"] }
+    { "tag": "v7", "new_sqlite_classes": ["ArtifactHostDO"] },
+    { "tag": "v8", "deleted_classes": ["BlockDashboardAgent"] }
   ],
   "queues": {
     "producers": [

@@ -246,7 +246,6 @@ export const AGENT_MODEL_ROLES = [
   "workstream",
   "inline_child",
   "automation_compiler",
-  "block_dashboard",
   "meeting_notes",
   "addressing_classifier",
   "workstream_naming",
@@ -262,7 +261,6 @@ export const AGENT_MODEL_FLAG_KEYS: Readonly<Record<AgentModelRole, string>> = {
   workstream: "agent-model-workstream",
   inline_child: "agent-model-inline-child",
   automation_compiler: "agent-model-automation-compiler",
-  block_dashboard: "agent-model-block-dashboard",
   meeting_notes: "agent-model-meeting-notes",
   addressing_classifier: "agent-model-addressing-classifier",
   workstream_naming: "agent-model-workstream-naming",
@@ -413,8 +411,6 @@ export const CONTROL_TOWER_REFRESH_SECONDS = {
 export const ClientFeatureFlagsSchema = z.object({
   /** Whether Application → Developer may be offered on this device. */
   developerSettings: z.boolean().default(false),
-  /** Whether HyperSight surfaces are shown in Electron for this person. */
-  hypersightEnabled: z.boolean().default(false),
   /** Whether meeting-recording actions are shown in Electron for this person. */
   meetingRecordingEnabled: z.boolean().default(false),
   /** Whether Suggested Work surfaces are shown in Electron for this person. */
@@ -459,7 +455,6 @@ export const ClientFeatureFlagsSchema = z.object({
 
 /** Product flags Ace is allowed to manage and publish to connected clients. */
 export const ProductFeatureFlagKeySchema = z.enum([
-  "hypersight-enabled",
   "meeting-recording-enabled",
   "suggested-work-enabled",
   "automation-workspace-templates-enabled",
@@ -1136,63 +1131,6 @@ export const ElicitationSchema = z.object({
   answeredByUserId: IdSchema.nullable(),
   createdAt: TimestampSchema,
   answeredAt: TimestampSchema.nullable()
-});
-
-export const BlockDashboardBlockRunStatusSchema = z.enum([
-  "queued",
-  "running",
-  "completed",
-  "failed",
-  "stopped"
-]);
-export const BlockDashboardBlockRunSchema = z.object({
-  id: IdSchema,
-  blockId: IdSchema,
-  configurationVersionId: IdSchema,
-  triggerSequence: z.number().int().nonnegative(),
-  status: BlockDashboardBlockRunStatusSchema,
-  markdown: z.string().nullable(),
-  error: z.object({ code: z.string(), message: z.string() }).nullable(),
-  createdAt: TimestampSchema,
-  startedAt: TimestampSchema.nullable(),
-  completedAt: TimestampSchema.nullable()
-});
-export const BlockDashboardBlockSchema = z.object({
-  id: IdSchema,
-  prompt: z.string().max(12_000),
-  latestRun: BlockDashboardBlockRunSchema.nullable()
-});
-export const BlockDashboardSchema = z.object({
-  versionId: IdSchema.nullable(),
-  versionNumber: z.number().int().nonnegative(),
-  blocks: z.array(BlockDashboardBlockSchema).max(24),
-  updatedAt: TimestampSchema.nullable()
-});
-export const BlockDashboardPreferenceSchema = z.object({
-  visible: z.boolean(),
-  updatedAt: TimestampSchema.nullable()
-});
-export const UpdateBlockDashboardPreferenceRequestSchema = z.strictObject({
-  visible: z.boolean()
-});
-export const UpdateBlockDashboardRequestSchema = z.strictObject({
-  expectedVersionNumber: z.number().int().nonnegative(),
-  blocks: z.array(z.strictObject({
-    id: IdSchema,
-    prompt: z.string().max(12_000)
-  })).max(24)
-}).superRefine((value, context) => {
-  const seen = new Set<string>();
-  value.blocks.forEach((block, index) => {
-    if (seen.has(block.id)) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "HyperSight block IDs must be unique",
-        path: ["blocks", index, "id"]
-      });
-    }
-    seen.add(block.id);
-  });
 });
 
 export const WorkstreamDetailSchema = WorkstreamSchema.extend({
@@ -2034,11 +1972,7 @@ export const CreateWebhookConnectionRequestSchema = z.object({
  *
  * Normal opens subscribe directly and paint the first snapshot. This response
  * remains for an explicit unavailable-state retry and is assembled by the same
- * room code so recovery cannot drift. The viewer-specific WorkstreamDO
- * `blockDashboardPreference` metadata is deliberately absent: its control
- * socket starts independently and an optional panel preference must not
- * lengthen either feed admission or REST recovery.
- * That preference continues to arrive on the WorkstreamDO control socket.
+ * room code so recovery cannot drift.
  */
 export const WorkstreamBootSchema = WorkstreamDetailSchema.extend({
   transcript: WorkstreamTranscriptSnapshotSchema,
@@ -2489,21 +2423,6 @@ export const WorkstreamControlMetadataSchema = z.strictObject({
     manualUnreadFromSequenceNumber: z.number().int().nonnegative().nullable(),
     manualUnreadGeneration: z.number().int().nonnegative(),
     latestMentionSequenceNumber: z.number().int().nonnegative(),
-    /**
-     * Whether this viewer has the HyperSight panel open.
-     *
-     * Carried on the boot frame because it was a REST request of its own on the
-     * work-stream open path, and the object answering it is the one already
-     * assembling this message. It rides here rather than on the SubstreamAgent
-     * snapshot for the same reason: WorkstreamDO owns the row, so putting it on
-     * the child's frame would need a cross-object call on the critical path —
-     * which is the cost being removed.
-     *
-     * Optional for rollout skew: a Worker that predates it still sends this
-     * frame, and requiring it would make the whole frame unparseable — costing
-     * the reader every field on it, not just this one.
-     */
-    blockDashboardPreference: BlockDashboardPreferenceSchema.optional(),
   }),
 });
 
@@ -2511,23 +2430,11 @@ export const WorkstreamControlSocketClientEventSchema = z.strictObject({
   type: z.literal("subscribe"),
 });
 
-export const WorkstreamControlSocketEventSchema = z.discriminatedUnion("type", [
-  z.strictObject({
-    type: z.literal("workstream_metadata"),
-    occurredAt: TimestampSchema,
-    metadata: WorkstreamControlMetadataSchema,
-  }),
-  z.strictObject({
-    type: z.literal("block_dashboard_configuration_updated"),
-    occurredAt: TimestampSchema,
-    blockDashboard: BlockDashboardSchema,
-  }),
-  z.strictObject({
-    type: z.literal("block_dashboard_preference_updated"),
-    occurredAt: TimestampSchema,
-    preference: BlockDashboardPreferenceSchema,
-  }),
-]);
+export const WorkstreamControlSocketEventSchema = z.strictObject({
+  type: z.literal("workstream_metadata"),
+  occurredAt: TimestampSchema,
+  metadata: WorkstreamControlMetadataSchema,
+});
 
 export type WorkspaceSyncTopic = z.infer<typeof WorkspaceSyncTopicSchema>;
 export type WorkspaceSocketClientEvent = z.infer<typeof WorkspaceSocketClientEventSchema>;
@@ -2648,9 +2555,6 @@ export const ActiveStreamCheckpointSchema = ActiveStreamCheckpointBaseSchema.and
 }));
 export const ActiveStreamCheckpointsSchema = z.array(ActiveStreamCheckpointSchema).max(1);
 
-/** HyperSight blocks are not participant transcript turns and have no position. */
-export const BlockDashboardStreamCheckpointSchema = ActiveStreamCheckpointBaseSchema;
-
 /** The one context-compaction operation currently owned by an agent DO. */
 export const AgentCompactionStateSchema = z.strictObject({
   harnessRunId: IdSchema,
@@ -2661,42 +2565,6 @@ export const AgentCompactionStateSchema = z.strictObject({
 });
 export type AgentCompactionState = z.infer<typeof AgentCompactionStateSchema>;
 
-/**
- * Each HyperSight block is an independent agent authority, so its live run
- * state is delivered by that block's own hibernating socket rather than being
- * copied through the WorkstreamDO control socket. It reuses the same durable
- * stream checkpoint shape as SubstreamAgent so reconnect replacement semantics
- * stay identical across all agent sockets.
- */
-export const BlockDashboardBlockSocketClientEventSchema = z.strictObject({
-  type: z.literal("subscribe"),
-});
-
-export const BlockDashboardBlockSocketEventSchema = z.discriminatedUnion("type", [
-  z.strictObject({
-    type: z.literal("block_dashboard_block_snapshot"),
-    occurredAt: TimestampSchema,
-    blockId: IdSchema,
-    run: BlockDashboardBlockRunSchema.nullable(),
-    streamCheckpoint: BlockDashboardStreamCheckpointSchema.nullable(),
-  }),
-  z.strictObject({
-    type: z.literal("block_dashboard_block_run_updated"),
-    occurredAt: TimestampSchema,
-    blockId: IdSchema,
-    run: BlockDashboardBlockRunSchema,
-  }),
-  z.strictObject({
-    type: z.literal("block_dashboard_block_stream_checkpoint"),
-    occurredAt: TimestampSchema,
-    blockId: IdSchema,
-    blockRunId: IdSchema,
-    streamCheckpoint: BlockDashboardStreamCheckpointSchema.nullable(),
-  }),
-]);
-
-export type BlockDashboardBlockSocketClientEvent = z.infer<typeof BlockDashboardBlockSocketClientEventSchema>;
-export type BlockDashboardBlockSocketEvent = z.infer<typeof BlockDashboardBlockSocketEventSchema>;
 /**
  * The close code the work-stream room uses when it disconnects a socket whose
  * reader may no longer see the work stream.
@@ -2828,8 +2696,6 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
   // consumer uses the payload.
   ServerEventBaseSchema.extend({ type: z.literal("activity_suggestion_created"), suggestion: z.unknown() }),
   ServerEventBaseSchema.extend({ type: z.literal("activity_suggestion_resolved"), suggestion: z.unknown() }),
-  ServerEventBaseSchema.extend({ type: z.literal("block_dashboard_configuration_updated"), blockDashboard: BlockDashboardSchema }),
-  ServerEventBaseSchema.extend({ type: z.literal("block_dashboard_block_run_updated"), run: BlockDashboardBlockRunSchema }),
   ServerEventBaseSchema.extend({
     type: z.literal("resync_required"),
     reason: z.enum(["history_unavailable", "snapshot_expired", "sequence_ahead"]),
@@ -2854,15 +2720,6 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
      * frame valid, and an older Worker's uncorrelated frame still parses.
      */
     requestId: IdSchema.nullable().default(null),
-  })
-]);
-
-/** Events delivered to one authenticated user and intentionally excluded from room replay sequencing. */
-export const PersonalSocketEventSchema = z.discriminatedUnion("type", [
-  z.object({
-    type: z.literal("block_dashboard_preference_updated"),
-    occurredAt: TimestampSchema,
-    preference: BlockDashboardPreferenceSchema
   })
 ]);
 
@@ -3548,12 +3405,6 @@ export type BackgroundTask = z.infer<typeof BackgroundTaskSchema>;
 export type Elicitation = z.infer<typeof ElicitationSchema>;
 export type WorkOpportunity = z.infer<typeof WorkOpportunitySchema>;
 export type WorkOpportunityPage = z.infer<typeof WorkOpportunityPageSchema>;
-export type BlockDashboard = z.infer<typeof BlockDashboardSchema>;
-export type BlockDashboardBlock = z.infer<typeof BlockDashboardBlockSchema>;
-export type BlockDashboardBlockRun = z.infer<typeof BlockDashboardBlockRunSchema>;
-export type BlockDashboardPreference = z.infer<typeof BlockDashboardPreferenceSchema>;
-export type UpdateBlockDashboardPreferenceRequest = z.infer<typeof UpdateBlockDashboardPreferenceRequestSchema>;
-export type UpdateBlockDashboardRequest = z.infer<typeof UpdateBlockDashboardRequestSchema>;
 export type AutomationDraft = z.infer<typeof AutomationDraftSchema>;
 export type AutomationMemoryTable = z.infer<typeof AutomationMemoryTableSchema>;
 export type AutomationMemoryTableColumn = z.infer<typeof AutomationMemoryTableColumnSchema>;
@@ -3586,9 +3437,7 @@ export type WorkstreamSocketCommandResult = z.infer<typeof WorkstreamSocketComma
 export type WorkstreamMessageDeliveryState = z.infer<typeof WorkstreamMessageDeliveryStateSchema>;
 export type WorkstreamMessageAdmissionReceipt = z.infer<typeof WorkstreamMessageAdmissionReceiptSchema>;
 export type ActiveStreamCheckpoint = z.infer<typeof ActiveStreamCheckpointSchema>;
-export type BlockDashboardStreamCheckpoint = z.infer<typeof BlockDashboardStreamCheckpointSchema>;
 export type ServerSocketEvent = z.infer<typeof ServerSocketEventSchema>;
-export type PersonalSocketEvent = z.infer<typeof PersonalSocketEventSchema>;
 export type GenerateMeetingNotesRequest = z.infer<typeof GenerateMeetingNotesRequestSchema>;
 export type MeetingNotesResponse = z.infer<typeof MeetingNotesResponseSchema>;
 export type NormalizedActivity = z.infer<typeof NormalizedActivitySchema>;

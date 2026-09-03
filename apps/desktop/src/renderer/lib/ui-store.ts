@@ -1,8 +1,8 @@
 import { create } from 'zustand';
 
 export type RailVariant = 'context' | 'runs';
-/** Which of the two panels the right sidebar's one slot is being laid out for. */
-export type RailPanel = 'block-dashboard' | 'inspector';
+/** The panel occupying the right sidebar slot. */
+export type RailPanel = 'inspector';
 export interface RailInspector {
   type: 'resource' | 'connection' | 'task' | 'run';
   id: string;
@@ -15,8 +15,6 @@ interface UiState {
   railVariant: RailVariant;
   railWidth: number;
   inspector: RailInspector | null;
-  blockDashboardOpen: boolean;
-  blockDashboardWidth: number;
   railLeaving: RailPanel | null;
   railScope: string | null;
   setSidebarOpen: (open: boolean) => void;
@@ -26,19 +24,12 @@ interface UiState {
   setRailVariant: (variant: RailVariant) => void;
   setRailWidth: (width: number) => void;
   inspect: (inspector: RailInspector | null) => void;
-  // HyperSight and the inspector rail share the right sidebar slot, and only
-  // one of them is ever open. Which one is open is a personal, per-work-stream
-  // preference the API owns, so the work-stream screen mirrors it here for the
-  // shell to lay out against rather than deciding it.
-  setBlockDashboardOpen: (open: boolean) => void;
-  setBlockDashboardWidth: (width: number) => void;
   // A panel that has lost the slot is still on screen for its fade, so the
   // shell has to keep laying out against it: dropping the room it occupies, or
   // re-targeting the slot at the other panel's width, would reflow the screen
   // underneath something the person can still see.
   setRailLeaving: (panel: RailPanel | null) => void;
-  // Each panel keeps its own width per work stream: a wide HyperSight in one
-  // stream must not narrow the inspector in another. Screens outside a work
+  // The inspector keeps its width per work stream. Screens outside a work
   // stream pass null and share one bucket.
   setRailScope: (scope: string | null) => void;
 }
@@ -51,7 +42,6 @@ export const MAX_SIDEBAR_WIDTH = 480;
 export const DEFAULT_SIDEBAR_WIDTH = 300;
 const SIDEBAR_WIDTH_STORAGE_KEY = 'rally.sidebar-width';
 const RAIL_WIDTH_STORAGE_PREFIX = 'rally.rail-width';
-const BLOCK_DASHBOARD_WIDTH_STORAGE_PREFIX = 'rally.block-dashboard-width';
 
 function clampSidebarWidth(width: number): number {
   return Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, width));
@@ -114,8 +104,6 @@ export const useUiStore = create<UiState>((set, get) => ({
   railVariant: 'context',
   railWidth: loadRailWidth(RAIL_WIDTH_STORAGE_PREFIX, null),
   inspector: null,
-  blockDashboardOpen: false,
-  blockDashboardWidth: loadRailWidth(BLOCK_DASHBOARD_WIDTH_STORAGE_PREFIX, null),
   railLeaving: null,
   railScope: null,
   setSidebarOpen: (sidebarOpen) => set({ sidebarOpen }),
@@ -136,16 +124,9 @@ export const useUiStore = create<UiState>((set, get) => ({
     set({ railWidth });
   },
   inspect: (inspector) => set({ inspector }),
-  setBlockDashboardOpen: (blockDashboardOpen) => set({ blockDashboardOpen }),
-  setBlockDashboardWidth: (width) => {
-    const blockDashboardWidth = clampRailWidth(width);
-    saveRailWidth(BLOCK_DASHBOARD_WIDTH_STORAGE_PREFIX, get().railScope, blockDashboardWidth);
-    set({ blockDashboardWidth });
-  },
   setRailLeaving: (railLeaving) => set({ railLeaving }),
   setRailScope: (railScope) => set({
     railScope,
     railWidth: loadRailWidth(RAIL_WIDTH_STORAGE_PREFIX, railScope),
-    blockDashboardWidth: loadRailWidth(BLOCK_DASHBOARD_WIDTH_STORAGE_PREFIX, railScope),
   }),
 }));

@@ -29,8 +29,6 @@ import {
   type AutomationSetEvaluatorRulesMutation,
   type AutomationRunContextV1,
 } from "@rally/contracts";
-import {
-} from "@rally/agent-harness";
 import { z } from "zod";
 import { sha256 } from "../lib/crypto";
 import { assertDurableObjectJurisdiction } from "../lib/durable-object-namespace";
@@ -55,7 +53,6 @@ import { validateDraftEvaluatorRules } from "../services/external-event-evaluato
 import { WorkstreamEmailRoutingService } from "../services/workstream-email-routing-service";
 import { attachWorkstreamRuntimeResource } from "../services/workstream-object-client";
 import { workstreamImportHash } from "./workstream-import-hash";
-import { AGENT_RUN_DISPATCH_LEASE_MS } from "./agent-run-dispatch-queue";
 import {
   SCHEDULED_ALARM_SCHEMA_STATEMENTS,
   ScheduledDurableObject,
@@ -123,6 +120,12 @@ const RUN_PROJECTION_STATES = Object.keys(RUN_EXECUTION_STATE) as [
 const MIGRATION_COMPONENT = "automation_agent";
 const COMPILER_DISPATCH_ALARM_KIND = "compiler_dispatch";
 const AUTOMATION_SCHEDULE_ALARM_KIND = "automation_schedule";
+/**
+ * How long an outbox delivery owns its row before a later alarm may retry it.
+ * This is the existing five-minute durable rediscovery lease, now named for
+ * the only live consumer instead of retaining the retired dashboard queue.
+ */
+const AUTOMATION_OUTBOX_DELIVERY_LEASE_MS = 5 * 60_000;
 const DEFAULT_AUTOMATION_EMAIL_MAX_RUNS_PER_HOUR = 30;
 
 const AutomationInboundEmailAdmissionSchema = z.strictObject({
@@ -2959,7 +2962,7 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
         `UPDATE automation_outbox
             SET state = 'delivering', attempt = attempt + 1,
                 not_before = ?, updated_at = ? WHERE effect_id = ?`,
-        now + AGENT_RUN_DISPATCH_LEASE_MS,
+        now + AUTOMATION_OUTBOX_DELIVERY_LEASE_MS,
         now,
         row.effect_id,
       );

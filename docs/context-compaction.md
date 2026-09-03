@@ -96,10 +96,7 @@ the exact same run/sequence event is idempotent; a later compaction appends a ne
 identity instead of destroying a fence an already-dispatched derived run holds.
 
 A normal later run loads the latest eligible row for that principal and compares
-its recorded inventory revision. A derived HyperSight run carries the exact
-checkpoint run, sequence, and content hash selected by main
-`SubstreamAgent("0")`; missing or changed state fails closed rather than sliding
-to “latest.” When the authorized resource set changed, it ignores the checkpoint
+its recorded inventory revision. When the authorized resource set changed, it ignores the checkpoint
 and replays the uncompacted transcript instead of exposing a stale summary. That
 fallback is capped at 2,000 messages and 4 MiB of serialized protocol content;
 larger history fails with `context_limit_exceeded` before a provider request.
@@ -278,6 +275,17 @@ results.
   every routed model.
 
 ## Changelog
+
+### 2026-09-03 — Compaction has no HyperSight caller
+
+**What changed:** HyperSight-specific context preparation and refresh behavior
+were removed from the compaction call graph.
+
+**Why:** A deleted feature must not remain as a special caller that changes
+ordinary substream context semantics.
+
+**Consequences:** Compaction now serves only live agent-loop paths; its durable
+checkpoint rules are unchanged.
 
 ### 2026-08-27 — Legacy checkpoint storage retired without rewriting edges
 
