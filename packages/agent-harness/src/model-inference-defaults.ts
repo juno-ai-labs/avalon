@@ -14,6 +14,7 @@ export interface ModelInferenceDefaults {
  */
 export const MODEL_INFERENCE_DEFAULTS: Readonly<Record<string, ModelInferenceDefaults>> = {
   "x-ai/grok-4.6": { reasoningEffort: "low" },
+  "google/gemini-3.8-flash": { reasoningEffort: "low" },
 };
 
 export function modelDefaultReasoningEffort(
