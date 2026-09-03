@@ -382,8 +382,74 @@ function googleFileFamilyError(
   );
 }
 
+/**
+ * The argument a Google rejection names, when it names one.
+ *
+ * Google reports an invalid argument in the legacy `error.errors[]` shape,
+ * carrying `locationType: "parameter"` and the argument's name in `location`.
+ * Rally's failure said only `Google API failed (400)`, which named nothing a
+ * caller could act on: a run that guessed a `pageToken` value sent an invalid
+ * cursor eight times over, varying every argument except the one Google was
+ * refusing, and then abandoned Drive and answered from public web search.
+ *
+ * Only an identifier-shaped `location` is forwarded. The name travels to the
+ * model through `field` on the structured-failure allowlist, which is for
+ * recovery context rather than provider text, and Google is free to put a query
+ * fragment or a path in that slot for a different error class. A value that
+ * does not look like an argument name is dropped rather than relayed, so the
+ * shape of a rejection can never carry member content out of the provider.
+ */
+function googleRejectedParameter(details: unknown): string | null {
+  if (!details || typeof details !== "object") return null;
+  const error = (details as { error?: unknown }).error;
+  if (!error || typeof error !== "object") return null;
+  const errors = (error as { errors?: unknown }).errors;
+  if (!Array.isArray(errors)) return null;
+  for (const entry of errors) {
+    if (!entry || typeof entry !== "object") continue;
+    const { locationType, location } = entry as { locationType?: unknown; location?: unknown };
+    if (locationType !== "parameter") continue;
+    if (typeof location === "string" && /^[A-Za-z][A-Za-z0-9_.]{0,63}$/u.test(location)) return location;
+  }
+  return null;
+}
+
 export const GoogleFileWriteAuthorizationGuidance =
   "Only files with writableByRally=true are eligible for Docs or Sheets write tools; files created through this connection are writable, but an arbitrary Drive search result might be read-only under Google's per-file authorization.";
+
+/**
+ * What a paginated Google tool says about its cursor parameter.
+ *
+ * Every other parameter on these tools carries a description, and a run got
+ * every one of them right — a valid `fileType`, a valid `orderBy`, a valid
+ * RFC 3339 `modifiedAfter` — while sending `"/"`, `"1"`, and `"next"` for the
+ * one that carried none. A cursor is the single argument whose value cannot be
+ * reasoned out from its name and its bounds: `maxResults` needs no description
+ * because `minimum`/`maximum` on a field called "max results" already say what
+ * it is, and nothing about `minLength`/`maxLength` says where a token comes
+ * from. Google rejects an invented one with a 400 that fails the call before it
+ * searches, so the guess costs the whole request rather than degrading it.
+ *
+ * `repeatedArguments` names what must not change across a page, because the
+ * token encodes the query it was issued for. Google does not re-run a changed
+ * search when given a cursor, it resumes the old one — a silent wrong answer,
+ * which is worse than the error an invalid token produces.
+ *
+ * The last page is stated as `null` rather than as an absent key because
+ * `readString` returns `null`, and that is the shape all four tools emit.
+ * Describing a key that is never absent as "absent" would leave a model to
+ * resolve the contradiction against what it sees; X shipped a repair for a
+ * model reading a falsy cursor as another page and paging forever.
+ */
+function googlePageTokenDescription(repeatedArguments: readonly string[]): string {
+  const quoted = repeatedArguments.map((name) => `\`${name}\``);
+  const unchanged = quoted.length === 0
+    ? ""
+    : quoted.length === 1
+      ? `, repeating that call's ${quoted[0]} unchanged`
+      : `, repeating that call's ${quoted.slice(0, -1).join(", ")} and ${quoted[quoted.length - 1]} unchanged`;
+  return `Continue an earlier call: pass back the exact \`nextPageToken\` string a previous call to this tool returned${unchanged}. It is an opaque cursor — a long provider-generated string, not a page number, an offset, or an index — so never construct, guess, shorten, or increment one. Omit it for the first page. A result whose \`nextPageToken\` is \`null\` is the last page: stop there rather than calling it again.`;
+}
 
 export const googleTools: ToolDefinition[] = [
   {
@@ -413,7 +479,12 @@ export const googleTools: ToolDefinition[] = [
             "Gmail search query. Supports Gmail's operators, for example from:dana@example.com, to:, cc:, subject:, newer_than:30d, older_than:1y, has:attachment, in:anywhere, is:unread, and OR / parentheses / \"quoted phrases\". Prefer an operator query over bare keywords, which match message bodies and return far too much.",
         },
         maxResults: { type: "integer", minimum: 1, maximum: 25 },
-        pageToken: { type: "string", minLength: 1, maxLength: 2_000 }
+        pageToken: {
+          type: "string",
+          minLength: 1,
+          maxLength: 2_000,
+          description: googlePageTokenDescription(["query"]),
+        }
       },
       required: ["query"]
     }
@@ -498,7 +569,12 @@ export const googleTools: ToolDefinition[] = [
       additionalProperties: false,
       properties: {
         maxResults: { type: "integer", minimum: 1, maximum: 250 },
-        pageToken: { type: "string", minLength: 1, maxLength: 2_000 }
+        pageToken: {
+          type: "string",
+          minLength: 1,
+          maxLength: 2_000,
+          description: googlePageTokenDescription([]),
+        }
       }
     }
   },
@@ -517,7 +593,12 @@ export const googleTools: ToolDefinition[] = [
         timeMax: { type: "string", minLength: 1, format: "date-time" },
         query: { type: "string", minLength: 1 },
         maxResults: { type: "integer", minimum: 1, maximum: 100 },
-        pageToken: { type: "string", minLength: 1, maxLength: 2_000 }
+        pageToken: {
+          type: "string",
+          minLength: 1,
+          maxLength: 2_000,
+          description: googlePageTokenDescription(["calendarId", "timeMin", "timeMax", "query"]),
+        }
       },
       required: ["timeMin", "timeMax"]
     }
@@ -587,7 +668,12 @@ export const googleTools: ToolDefinition[] = [
           description: "Result order. Defaults to relevance.",
         },
         maxResults: { type: "integer", minimum: 1, maximum: 100 },
-        pageToken: { type: "string", minLength: 1, maxLength: 2_000 }
+        pageToken: {
+          type: "string",
+          minLength: 1,
+          maxLength: 2_000,
+          description: googlePageTokenDescription(["query", "fileType", "modifiedAfter"]),
+        }
       }
     }
   },
@@ -1162,7 +1248,16 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
             payload: details
           });
         }
-        throw new ConnectorError("provider_error", `Google API failed (${response.status})`, details);
+        const rejectedParameter = googleRejectedParameter(details);
+        throw new ConnectorError(
+          "provider_error",
+          rejectedParameter
+            ? `Google API failed (${response.status}); it rejected the \`${rejectedParameter}\` argument`
+            : `Google API failed (${response.status})`,
+          rejectedParameter
+            ? { reason: "invalid_parameter", field: rejectedParameter, payload: details }
+            : details
+        );
       }
       return response;
     };
