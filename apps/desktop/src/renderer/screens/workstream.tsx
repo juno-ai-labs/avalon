@@ -97,7 +97,11 @@ import { type SocketState, type WorkstreamMessageDeliveryMode } from '../lib/use
 import { useRetainedWorkstreamSocket, useWorkstreamSocketOpenContext } from '../lib/workstream-socket-pool';
 import { useWorkspaceSocket } from '../lib/workspace-socket';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
-import { setCachedWorkstreams } from '../lib/workstreams-cache';
+import {
+  evictCachedWorkstream,
+  invalidateCachedWorkstreamDetails,
+  setCachedWorkstreams,
+} from '../lib/workstreams-cache';
 import type { ElicitationData, HarnessRunMetadata, HarnessStatus, BlockDashboard, BlockDashboardPreference, Message, Participant, ResourceVersion, WorkspaceMember, WorkstreamBoot, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import { AgentCompactionIndicator, AgentWorkTiming, type AgentWorkTimingProps } from '../components/agent-work-timing';
 import { InspectorRail } from '../components/inspector-rail';
@@ -1609,7 +1613,7 @@ export function WorkstreamScreen(): React.JSX.Element {
       void queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
       if (member.id === session?.user.id && previous?.scope === 'personal') {
         setParticipantDialogOpen(false);
-        queryClient.removeQueries({ queryKey: ['workstream', id], exact: true });
+        evictCachedWorkstream(queryClient, id);
         void navigate('/workstreams/new', { replace: true });
       }
     },
@@ -1806,7 +1810,7 @@ export function WorkstreamScreen(): React.JSX.Element {
     mutationFn: (automationId: string) => api!.claimAutomationExecutionPrincipal(automationId),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['workstream-automations', id] });
-      void queryClient.invalidateQueries({ queryKey: ['workstream', id] });
+      void invalidateCachedWorkstreamDetails(queryClient, id);
     },
   });
 

@@ -85,9 +85,11 @@ import {
   identityAttributes,
   inDurableObjectPhase,
   inFlowSpan,
+  inSpan,
   noFlowSpan,
   type FlowSpan,
   type PerfFlow,
+  type TracedSpan,
 } from "../observability/tracing";
 import { latestMigrationVersion } from "./migration-reporting";
 import {
@@ -619,7 +621,10 @@ function recognizableSocketMutation(decoded: unknown): {
   return {
     command: command.data,
     operationId: operationId.data,
-    ...(typeof clientMessageId === "string" ? { clientMessageId } : {}),
+    ...(typeof clientMessageId === "string"
+      && clientMessageId.length >= 1 && clientMessageId.length <= 120
+      ? { clientMessageId }
+      : {}),
   };
 }
 
@@ -2940,6 +2945,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         // before anything reads it back.
         if (typeof request.input?.archived === "boolean") {
           await this.applyArchiveToOwnedAutomations(identity, request.input.archived);
+          if (!request.input.archived) await this.armNextAlarm();
         }
         return jsonResponse(result.workstream);
       }
@@ -2987,13 +2993,33 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           request.input,
         );
         if (result.activationRequest) {
-          await this.requestPersistentLoopActivation(result.activationRequest);
+          try {
+            await this.requestPersistentLoopActivation(result.activationRequest);
+          } catch (error) {
+            logWarn(this.env, "substream_elicitation_activation_wakeup_failed", {
+              workspace_id: current.workspaceId,
+              workstream_id: identity.workstreamId,
+              substream_id: this.externalSubstreamId(),
+              elicitation_id: request.elicitationId,
+              reason: diagnosticErrorCode(error, "activation_wakeup_failed"),
+            });
+          }
         }
-        if (result.elicitation) {
-          await this.publishLocalProductEvent(identity, {
-            type: "elicitation_answered",
-            elicitation: result.elicitation,
-          });
+        if (result.inserted && result.elicitation) {
+          try {
+            await this.publishLocalProductEvent(identity, {
+              type: "elicitation_answered",
+              elicitation: result.elicitation,
+            });
+          } catch (error) {
+            logWarn(this.env, "substream_elicitation_publication_failed_after_commit", {
+              workspace_id: current.workspaceId,
+              workstream_id: identity.workstreamId,
+              substream_id: this.externalSubstreamId(),
+              elicitation_id: request.elicitationId,
+              reason: diagnosticErrorCode(error, "elicitation_publication_failed"),
+            });
+          }
         }
         await this.flushSemanticRealtimeOutboxBestEffort();
         return jsonResponse({ elicitation: result.elicitation });
@@ -3182,6 +3208,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     execution: { runId: string; leaseOwner: string; executionEpoch: number };
   } | null> {
     const now = Date.now();
+    const authority = this.state.storage.sql.exec<{ archived_at: number | null }>(
+      `SELECT archived_at FROM workstream WHERE id = 1`,
+    ).toArray()[0];
+    if (authority && authority.archived_at !== null) return null;
     let loop = this.ensurePersistentLoop();
     if (loop.status === "executing") {
       if (loop.lease_expires_at === null || loop.active_execution_id === null
@@ -4919,13 +4949,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
 
     const recognizableCreate = recognizableSocketCreateMessage(decoded);
     if (recognizableCreate?.overLong) {
-      socket.send(JSON.stringify(WorkstreamSocketCommandResultSchema.parse({
+      this.sendSocketCommandResult(socket, {
         type: "client_command_failed",
         command: "create_message",
         operationId: recognizableCreate.operationId,
         clientMessageId: recognizableCreate.clientMessageId,
         error: { status: 400, code: "message_too_long", message: MESSAGE_TOO_LONG_MESSAGE },
-      })));
+      });
       return;
     }
 
@@ -4933,7 +4963,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     if (!parsed.success) {
       const recognizableMutation = recognizableSocketMutation(decoded);
       if (recognizableMutation) {
-        socket.send(JSON.stringify(WorkstreamSocketCommandResultSchema.parse({
+        this.sendSocketCommandResult(socket, {
           type: "client_command_failed",
           command: recognizableMutation.command,
           operationId: recognizableMutation.operationId,
@@ -4941,7 +4971,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
             ? { clientMessageId: recognizableMutation.clientMessageId }
             : {}),
           error: { status: 400, code: "invalid_event", message: "The socket event is not valid." },
-        })));
+        });
         return;
       }
       this.sendError(socket, "invalid_event", "The socket event is not valid.");
@@ -5036,6 +5066,29 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     command: Exclude<z.infer<typeof ClientSocketEventSchema>,
       { type: "subscribe" | "mark_opened" | "request_snapshot" | "load_transcript_range" | "create_message" }>,
   ): Promise<void> {
+    await inSpan("workstream.room.substream_command", {
+      "rally.component": "substream_do",
+      ...identityAttributes({
+        workspaceId: attachment.workspaceId,
+        workstreamId: attachment.workstreamId,
+        substreamId: attachment.substreamId,
+        userId: attachment.userId,
+        sessionId: attachment.sessionId,
+      }),
+      "rally.transport": "substream_socket",
+      "rally.socket.connection_id": attachment.connectionId,
+      "rally.socket.command": command.type,
+      "rally.socket.operation_id": command.operationId,
+    }, async (span) => this.mutateSocketSubstreamInSpan(socket, attachment, command, span));
+  }
+
+  private async mutateSocketSubstreamInSpan(
+    socket: WebSocket,
+    attachment: SocketAttachment,
+    command: Exclude<z.infer<typeof ClientSocketEventSchema>,
+      { type: "subscribe" | "mark_opened" | "request_snapshot" | "load_transcript_range" | "create_message" }>,
+    span: TracedSpan,
+  ): Promise<void> {
     try {
       if (!this.objectStore.isRealtimeWritable()) {
         throw new ApiError(503, "workstream_maintenance", "Work streams are temporarily unavailable");
@@ -5049,61 +5102,100 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       if (!identity) throw new ApiError(404, "workstream_not_found", "Work stream not found");
 
       if (command.type === "answer_elicitation") {
-        const result = await this.product.answerElicitation(auth, command.elicitationId, command.payload);
-        if (result.activationRequest) await this.requestPersistentLoopActivation(result.activationRequest);
-        if (result.elicitation) {
-          await this.publishLocalProductEvent(identity, {
-            type: "elicitation_answered",
-            elicitation: result.elicitation,
-          });
+        const result = await this.product.answerElicitationForAdmittedSocket(
+          auth,
+          command.elicitationId,
+          command.payload,
+        );
+        if (result.activationRequest) {
+          try {
+            await this.requestPersistentLoopActivation(result.activationRequest);
+          } catch (error) {
+            logWarn(this.env, "substream_elicitation_activation_wakeup_failed", {
+              workspace_id: attachment.workspaceId,
+              workstream_id: attachment.workstreamId,
+              substream_id: attachment.substreamId,
+              elicitation_id: command.elicitationId,
+              reason: diagnosticErrorCode(error, "activation_wakeup_failed"),
+            });
+          }
+        }
+        if (result.inserted && result.elicitation) {
+          try {
+            await this.publishLocalProductEvent(identity, {
+              type: "elicitation_answered",
+              elicitation: result.elicitation,
+            });
+          } catch (error) {
+            logWarn(this.env, "substream_elicitation_publication_failed_after_commit", {
+              workspace_id: attachment.workspaceId,
+              workstream_id: attachment.workstreamId,
+              substream_id: attachment.substreamId,
+              elicitation_id: command.elicitationId,
+              reason: diagnosticErrorCode(error, "elicitation_publication_failed"),
+            });
+          }
         }
         await this.flushSemanticRealtimeOutboxBestEffort();
-        socket.send(JSON.stringify(WorkstreamSocketCommandResultSchema.parse({
+        this.sendSocketCommandResult(socket, {
           type: "client_command_succeeded",
           command: command.type,
           operationId: command.operationId,
           ...(result.elicitation ? { elicitation: result.elicitation } : {}),
-        })));
+        });
         return;
       }
       if (command.type === "reorder_pending_inputs") {
-        const result = await this.product.reorderPendingInputs(
+        const result = await this.product.reorderPendingInputsForAdmittedSocket(
           auth,
           command.operationId,
           command.inputIds,
         );
         await this.flushSemanticRealtimeOutboxBestEffort();
-        socket.send(JSON.stringify(WorkstreamSocketCommandResultSchema.parse({
+        this.sendSocketCommandResult(socket, {
           type: "client_command_succeeded",
           command: command.type,
           operationId: command.operationId,
           pendingInputs: result.pendingInputs,
-        })));
+        });
         return;
       }
       if (command.type === "stop_harness") {
-        await this.product.stop(auth, command.operationId);
-        socket.send(JSON.stringify(WorkstreamSocketCommandResultSchema.parse({
+        await this.product.stopForAdmittedSocket(auth, command.operationId);
+        this.sendSocketCommandResult(socket, {
           type: "client_command_succeeded",
           command: command.type,
           operationId: command.operationId,
-        })));
+        });
         return;
       }
 
-      const result = await this.product.retry(auth, asHarnessRunId(command.operationId));
-      await this.requestPersistentLoopActivation(result.activationRequest);
-      socket.send(JSON.stringify(WorkstreamSocketCommandResultSchema.parse({
+      const result = await this.product.retryForAdmittedSocket(
+        auth,
+        asHarnessRunId(command.operationId),
+      );
+      try {
+        await this.requestPersistentLoopActivation(result.activationRequest);
+      } catch (error) {
+        logWarn(this.env, "substream_retry_activation_wakeup_failed", {
+          workspace_id: attachment.workspaceId,
+          workstream_id: attachment.workstreamId,
+          substream_id: attachment.substreamId,
+          harness_run_id: result.harnessRunId,
+          reason: diagnosticErrorCode(error, "activation_wakeup_failed"),
+        });
+      }
+      this.sendSocketCommandResult(socket, {
         type: "client_command_succeeded",
         command: command.type,
         operationId: command.operationId,
         harnessRunId: result.harnessRunId,
-      })));
+      });
     } catch (error) {
       const safe = error instanceof ApiError
         ? error
         : new ApiError(500, "substream_command_failed", "The substream command could not be completed");
-      socket.send(JSON.stringify(WorkstreamSocketCommandResultSchema.parse({
+      this.sendSocketCommandResult(socket, {
         type: "client_command_failed",
         command: command.type,
         operationId: command.operationId,
@@ -5113,7 +5205,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           message: safe.message,
           ...(safe.details ? { details: safe.details } : {}),
         },
-      })));
+      });
       if (!(error instanceof ApiError)) {
         logWarn(this.env, "substream_socket_command_failed", {
           workspace_id: attachment.workspaceId,
@@ -5125,6 +5217,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           reason: error instanceof Error ? error.message : "unknown",
         });
       }
+      span.setError(safe.code, safe.message);
+      span.setAttributes({ "http.response.status_code": safe.status });
     }
   }
 
@@ -5176,20 +5270,20 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           ...command.payload,
           telemetryOperationId: command.operationId,
         }, span, true);
-        socket.send(JSON.stringify(WorkstreamSocketCommandResultSchema.parse({
+        this.sendSocketCommandResult(socket, {
           type: "client_command_succeeded",
           command: "create_message",
           operationId: command.operationId,
           clientMessageId: command.payload.clientMessageId,
           turn: result.turn,
           deliveryState: result.deliveryState,
-        })));
+        });
         span.mark("workstream.room.create_message.respond");
       } catch (error) {
         const safe = error instanceof ApiError
           ? error
           : new ApiError(500, "message_write_failed", "The message could not be sent");
-        socket.send(JSON.stringify(WorkstreamSocketCommandResultSchema.parse({
+        this.sendSocketCommandResult(socket, {
           type: "client_command_failed",
           command: "create_message",
           operationId: command.operationId,
@@ -5200,7 +5294,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
             message: safe.message,
             ...(safe.details ? { details: safe.details } : {}),
           },
-        })));
+        });
         if (!(error instanceof ApiError)) {
           logWarn(this.env, "substream_socket_create_message_failed", {
             workspace_id: attachment.workspaceId,
@@ -6440,6 +6534,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     // migration. The receipt scan below must run either way: deriving the next
     // alarm only when the singleton exists is how a claimed run stops
     // contributing a due time and stalls with nothing left to rediscover it.
+    const authority = this.state.storage.sql.exec<{ archived_at: number | null }>(
+      `SELECT archived_at FROM workstream WHERE id = 1`,
+    ).toArray()[0];
+    if (authority && authority.archived_at !== null) return null;
     const loop = this.loop.loop();
     if (loop?.status === "executing") return loop.lease_expires_at;
     if (loop && this.loop.pendingInputs().length > 0) return now;
@@ -7015,7 +7113,24 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       message,
       requestId
     });
-    socket.send(JSON.stringify(event));
+    this.sendSocketFrame(socket, JSON.stringify(event));
+  }
+
+  /** A closed socket is a delivery miss, not a second command failure. */
+  private sendSocketFrame(socket: WebSocket, encoded: string): boolean {
+    try {
+      socket.send(encoded);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private sendSocketCommandResult(socket: WebSocket, result: unknown): boolean {
+    return this.sendSocketFrame(
+      socket,
+      JSON.stringify(WorkstreamSocketCommandResultSchema.parse(result)),
+    );
   }
 
   /**

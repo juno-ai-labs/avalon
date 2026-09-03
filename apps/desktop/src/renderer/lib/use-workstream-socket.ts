@@ -71,7 +71,7 @@ import {
 } from './transcript';
 import type { HarnessStatus, BlockDashboard, BlockDashboardPreference, Message, WorkstreamDetail, WorkstreamSummary } from './types';
 import { withDerivedUnread } from './workstream-state-store';
-import { evictCachedWorkstream, setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
+import { evictCachedSubstream, setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 import { useWorkstreamSocketResumeState, type StreamCursor } from './workstream-socket-resume';
 import { useWorkstreamControlSocket } from './use-workstream-control-socket';
 
@@ -860,7 +860,18 @@ export function useWorkstreamSocket(
     const sendPendingSubstreamCommands = (target: RealtimeSocket | null = socket): void => {
       if (target?.readyState !== REALTIME_SOCKET_OPEN) return;
       for (const pending of pendingSubstreamCommands.values()) {
-        target.send(JSON.stringify(pending.command));
+        try {
+          target.send(JSON.stringify(pending.command));
+        } catch {
+          // The readyState check and send are not atomic. Preserve every entry
+          // for the next connection; the close path owns reconnect scheduling.
+          try {
+            target.close();
+          } catch {
+            // A socket which already became terminal has nothing left to close.
+          }
+          return;
+        }
       }
     };
     const rejectPendingSubstreamCommands = (error: Error): void => {
@@ -869,11 +880,27 @@ export function useWorkstreamSocket(
     };
     const submitSubstreamCommand = (
       command: SubstreamMutationCommand,
-    ): Promise<SuccessfulSubstreamMutation> => new Promise((resolve, reject) => {
-      pendingSubstreamCommands.set(command.operationId, { command, resolve, reject });
-      sendPendingSubstreamCommands();
-      void connect();
-    });
+    ): Promise<SuccessfulSubstreamMutation> => {
+      if (accessRevoked) {
+        return Promise.reject(new ApiError(
+          'You can no longer access this work stream.',
+          403,
+          'workstream_access_revoked',
+        ));
+      }
+      if (openingTerminal) {
+        return Promise.reject(new ApiError(
+          'The live connection timed out before the substream command could be sent.',
+          408,
+          'workstream_socket_open_timeout',
+        ));
+      }
+      return new Promise((resolve, reject) => {
+        pendingSubstreamCommands.set(command.operationId, { command, resolve, reject });
+        sendPendingSubstreamCommands();
+        void connect();
+      });
+    };
     let reconnectTimer: number | null = null;
     let heartbeatTimer: number | null = null;
     let pongTimer: number | null = null;
@@ -1464,8 +1491,10 @@ export function useWorkstreamSocket(
             );
           queryClient.setQueryData<WorkstreamDetail>(detailQueryKey, (current) =>
             current ? advance(current) : current);
-          setCachedWorkstreams(queryClient, (current) => current?.map((workstream) =>
-            workstream.id === workstreamId ? advance(workstream) : workstream));
+          if (substreamId === '0') {
+            setCachedWorkstreams(queryClient, (current) => current?.map((workstream) =>
+              workstream.id === workstreamId ? advance(workstream) : workstream));
+          }
         }
       } else if (event.type === 'transcript_activity_upserted') {
         queryClient.setQueryData<WorkstreamTranscriptSnapshot>(
@@ -1752,7 +1781,8 @@ export function useWorkstreamSocket(
       activeTicketAbort = null;
       ticketRequestInFlight = false;
       setState('unavailable');
-      evictCachedWorkstream(queryClient, workstreamId);
+      setSendReady(false);
+      evictCachedSubstream(queryClient, workstreamId, substreamId);
     };
 
     const scheduleReconnect = (): void => {
@@ -1773,6 +1803,7 @@ export function useWorkstreamSocket(
     const connect = async (): Promise<void> => {
       if (
         closedByEffect
+        || accessRevoked
         || openingTerminal
         || ticketRequestInFlight
         || canonicalResyncInFlight
@@ -1834,6 +1865,12 @@ export function useWorkstreamSocket(
           socketTelemetry.disconnected({ attempts: attempts.current, retrying });
           if (!retrying) {
             openingTerminal = true;
+            rejectPendingSubstreamCommands(new ApiError(
+              'The live connection timed out before the substream command completed.',
+              408,
+              'workstream_socket_open_timeout',
+            ));
+            setSendReady(false);
             setOpeningError('The live connection timed out after 3 attempts.');
             setState('unavailable');
             return;

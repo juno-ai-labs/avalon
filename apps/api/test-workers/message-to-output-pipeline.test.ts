@@ -1486,8 +1486,16 @@ describe("a member's message travels the whole pipeline", () => {
       const runCount = state.storage.sql.exec<{ count: number }>(
         `SELECT COUNT(*) AS count FROM runs`,
       ).one().count;
+      await expect(productService.retry(AUTH, asHarnessRunId(executionId))).rejects.toMatchObject({
+        status: 409,
+        code: "substream_command_idempotency_conflict",
+      });
       const retryRunId = asHarnessRunId("00000000-0000-7000-8000-0000000000f1");
-      const retry = await productService.retry(AUTH, retryRunId);
+      const [retry, concurrentReplay] = await Promise.all([
+        productService.retry(AUTH, retryRunId),
+        productService.retry(AUTH, retryRunId),
+      ]);
+      expect(concurrentReplay).toEqual(retry);
 
       expect(retry).toMatchObject({
         activationRequest: {
@@ -1827,9 +1835,18 @@ describe("a member's message travels the whole pipeline", () => {
     };
     const first = await product(stub, { operation: "create_message", auth: AUTH, input });
     const repeat = await product(stub, { operation: "create_message", auth: AUTH, input });
+    const conflict = await product(stub, {
+      operation: "create_message",
+      auth: AUTH,
+      input: { ...input, text: "different message under the reused id" },
+    });
 
     expect(first.status).toBe(200);
     expect(repeat.status).toBe(200);
+    expect(conflict).toMatchObject({
+      status: 409,
+      body: { error: "substream_message_idempotency_conflict" },
+    });
     // The replay returns the same future turn and admits neither a duplicate
     // pending input nor any message-owned run.
     expect((repeat.body.turn as { turnId: string }).turnId)
@@ -2001,6 +2018,29 @@ describe("a member's message travels the whole pipeline", () => {
     socket.close(1000, "done");
   });
 
+  it("keeps a malformed mutation correlated when its optional client id is oversized", async () => {
+    const stub = agentStub();
+    await initializeWorkstream(stub, "first message");
+    const { socket } = await openSubscribedSocket(
+      stub,
+      "00000000-0000-7000-8000-0000000005d3",
+    );
+    const receipt = nextSocketCommandOutcome(socket);
+    socket.send(JSON.stringify({
+      type: "answer_elicitation",
+      operationId: "00000000-0000-7000-8000-0000000005d4",
+      payload: { clientMessageId: "x".repeat(121) },
+    }));
+
+    expect(await receipt).toMatchObject({
+      type: "client_command_failed",
+      command: "answer_elicitation",
+      operationId: "00000000-0000-7000-8000-0000000005d4",
+      error: { code: "invalid_event" },
+    });
+    socket.close(1000, "done");
+  });
+
   it("rejects an oversized message without closing its substream socket", async () => {
     const stub = agentStub();
     const opened = await initializeWorkstream(stub, "first message");
@@ -2077,6 +2117,22 @@ describe("a member's message travels the whole pipeline", () => {
       stub,
       "00000000-0000-7000-8000-0000000005be",
     );
+    await runInDurableObject(stub, (instance) => {
+      const target = instance as unknown as {
+        product: { authorize: () => Promise<never> };
+        requestPersistentLoopActivation: () => Promise<never>;
+        publishLocalProductEvent: () => Promise<never>;
+      };
+      target.product.authorize = async () => {
+        throw new Error("socket_elicitation_reauthorized_workspace_membership");
+      };
+      target.requestPersistentLoopActivation = async () => {
+        throw new Error("injected_elicitation_activation_failure");
+      };
+      target.publishLocalProductEvent = async () => {
+        throw new Error("injected_elicitation_publication_failure");
+      };
+    });
     const command = {
       type: "answer_elicitation",
       operationId: "00000000-0000-7000-8000-0000000005bf",
@@ -2091,6 +2147,10 @@ describe("a member's message travels the whole pipeline", () => {
       operationId: command.operationId,
       elicitation: { id: elicitationId, status: "answered", answer: "yes" },
     });
+    const sequenceAfterFirst = await runInDurableObject(stub, (_instance, state) =>
+      state.storage.sql.exec<{ event_sequence: number }>(
+        `SELECT event_sequence FROM realtime_state WHERE id = 1`,
+      ).one().event_sequence);
     const replayReceipt = nextSocketCommandOutcome(socket);
     socket.send(JSON.stringify(command));
     expect(await replayReceipt).toMatchObject({
@@ -2099,12 +2159,77 @@ describe("a member's message travels the whole pipeline", () => {
       operationId: command.operationId,
       elicitation: { id: elicitationId, status: "answered" },
     });
+    expect(await runInDurableObject(stub, (_instance, state) =>
+      state.storage.sql.exec<{ event_sequence: number }>(
+        `SELECT event_sequence FROM realtime_state WHERE id = 1`,
+      ).one().event_sequence)).toBe(sequenceAfterFirst);
+    const conflictReceipt = nextSocketCommandOutcome(socket);
+    socket.send(JSON.stringify({
+      ...command,
+      operationId: "00000000-0000-7000-8000-0000000005d5",
+      payload: { answer: "no" },
+    }));
+    expect(await conflictReceipt).toMatchObject({
+      type: "client_command_failed",
+      command: "answer_elicitation",
+      error: { code: "elicitation_response_idempotency_conflict" },
+    });
+    const customConflictReceipt = nextSocketCommandOutcome(socket);
+    socket.send(JSON.stringify({
+      ...command,
+      operationId: "00000000-0000-7000-8000-0000000005d6",
+      payload: { answer: "yes", customResponse: "changed metadata" },
+    }));
+    expect(await customConflictReceipt).toMatchObject({
+      type: "client_command_failed",
+      command: "answer_elicitation",
+      error: { code: "elicitation_response_idempotency_conflict" },
+    });
     await runInDurableObject(stub, (_instance, state) => {
       expect(state.storage.sql.exec(
         `SELECT status, answer_json FROM elicitation_requests WHERE elicitation_id = ?`,
         elicitationId,
       ).one()).toEqual({ status: "answered", answer_json: JSON.stringify("yes") });
     });
+    socket.close(1000, "done");
+  });
+
+  it("acknowledges a durable retry when its eager wake-up fails", async () => {
+    const stub = agentStub();
+    const opened = await initializeWorkstream(stub, "first message");
+    await settledRun(stub, opened.body.harnessRunId as string);
+    await waitForLoopRelease(stub);
+    const { socket } = await openSubscribedSocket(
+      stub,
+      "00000000-0000-7000-8000-0000000005db",
+    );
+    await runInDurableObject(stub, (instance) => {
+      const target = instance as unknown as {
+        product: { authorize: () => Promise<never> };
+        requestPersistentLoopActivation: () => Promise<never>;
+      };
+      target.product.authorize = async () => {
+        throw new Error("socket_retry_reauthorized_workspace_membership");
+      };
+      target.requestPersistentLoopActivation = async () => {
+        throw new Error("injected_retry_activation_failure");
+      };
+    });
+    const operationId = "00000000-0000-7000-8000-0000000005dc";
+    const receipt = nextSocketCommandOutcome(socket);
+    socket.send(JSON.stringify({ type: "retry_harness", operationId }));
+
+    expect(await receipt).toMatchObject({
+      type: "client_command_succeeded",
+      command: "retry_harness",
+      operationId,
+      harnessRunId: operationId,
+    });
+    expect(await runInDurableObject(stub, (_instance, state) =>
+      state.storage.sql.exec<{ status: string; origin: string }>(
+        `SELECT status, origin FROM runs WHERE run_id = ?`,
+        operationId,
+      ).one())).toEqual({ status: "admitted", origin: "manual_retry" });
     socket.close(1000, "done");
   });
 
@@ -2116,6 +2241,12 @@ describe("a member's message travels the whole pipeline", () => {
       stub,
       "00000000-0000-7000-8000-0000000005c0",
     );
+    await runInDurableObject(stub, (instance) => {
+      const target = instance as unknown as { product: { authorize: () => Promise<never> } };
+      target.product.authorize = async () => {
+        throw new Error("socket_reorder_reauthorized_workspace_membership");
+      };
+    });
     await runInDurableObject(stub, (_instance, state) => {
       holdLoopExecuting(state, { loopId: substreamLoopId(WORKSTREAM_ID) });
     });
@@ -2209,6 +2340,12 @@ describe("a member's message travels the whole pipeline", () => {
       stub,
       "00000000-0000-7000-8000-0000000005c8",
     );
+    await runInDurableObject(stub, (instance) => {
+      const target = instance as unknown as { product: { authorize: () => Promise<never> } };
+      target.product.authorize = async () => {
+        throw new Error("socket_stop_reauthorized_workspace_membership");
+      };
+    });
     const command = {
       type: "stop_harness",
       operationId: "00000000-0000-7000-8000-0000000005c9",
@@ -2246,6 +2383,74 @@ describe("a member's message travels the whole pipeline", () => {
         `SELECT active_execution_id, stop_requested_at FROM substream_loops WHERE id = 1`,
       ).one())).toEqual({ active_execution_id: "newer-execution", stop_requested_at: null });
     socket.close(1000, "done");
+  });
+
+  it("archives and fences the active loop in one durable transition", async () => {
+    const stub = agentStub();
+    const opened = await initializeWorkstream(stub, "first message");
+    await settledRun(stub, opened.body.harnessRunId as string);
+    await runInDurableObject(stub, (_instance, state) => {
+      holdLoopExecuting(state, { loopId: substreamLoopId(WORKSTREAM_ID) });
+    });
+
+    const archived = await product(stub, {
+      operation: "update",
+      auth: AUTH,
+      input: { archived: true },
+    });
+    expect(archived.status).toBe(200);
+    expect(await runInDurableObject(stub, async (instance, state) => {
+      const loop = state.storage.sql.exec<{
+        stop_requested_at: number | null;
+        stop_reason: string | null;
+      }>(
+        `SELECT stop_requested_at, stop_reason FROM substream_loops WHERE id = 1`,
+      ).one();
+      const claim = await (instance as unknown as {
+        claimPersistentLoopExecution: () => Promise<unknown>;
+      }).claimPersistentLoopExecution();
+      return { loop, claim };
+    })).toEqual({
+      loop: {
+        stop_requested_at: expect.any(Number),
+        stop_reason: "workstream_archived",
+      },
+      claim: null,
+    });
+  });
+
+  it("does not claim an admitted retry while its room is archived", async () => {
+    const stub = agentStub();
+    const opened = await initializeWorkstream(stub, "first message");
+    await settledRun(stub, opened.body.harnessRunId as string);
+    await waitForLoopRelease(stub);
+    const retryRunId = asHarnessRunId("00000000-0000-7000-8000-0000000005da");
+    await runInDurableObject(stub, async (instance) => {
+      const productService = (instance as unknown as {
+        product: WorkstreamObjectProductService;
+      }).product;
+      await productService.retry(AUTH, retryRunId);
+    });
+
+    expect((await product(stub, {
+      operation: "update",
+      auth: AUTH,
+      input: { archived: true },
+    })).status).toBe(200);
+    await runDurableObjectAlarm(stub);
+
+    expect(await runInDurableObject(stub, async (instance, state) => ({
+      claim: await (instance as unknown as {
+        claimPersistentLoopExecution: () => Promise<unknown>;
+      }).claimPersistentLoopExecution(),
+      runStatus: state.storage.sql.exec<{ status: string }>(
+        `SELECT status FROM runs WHERE run_id = ?`,
+        retryRunId,
+      ).one().status,
+      loopStatus: state.storage.sql.exec<{ status: string }>(
+        `SELECT status FROM substream_loops WHERE id = 1`,
+      ).one().status,
+    }))).toEqual({ claim: null, runStatus: "admitted", loopStatus: "idle" });
   });
 
   it("acknowledges durable admission when the eager loop wake-up fails", async () => {

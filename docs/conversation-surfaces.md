@@ -69,6 +69,26 @@ prove layout, focus, scroll position, or overlap.
 
 ## Changelog
 
+### 2026-09-03 — Child feed state cannot leak into or outlive its parent cache
+
+**What changed:** Child transcript turns no longer advance the parent's flat
+sidebar attention row. Access revocation evicts only the addressed child, while
+parent archive/removal clears every child cache family. Shared detail
+invalidation fans out across both the stable main-room key and the child
+namespace.
+
+**Why:** Introducing an independently keyed child feed made the old parent-only
+prefix invalidation incomplete and let a child turn change unread state on a
+different conversation.
+
+**Considered and rejected:** Returning child data to parent-shaped keys would
+restore cross-substream cache collisions. Leaving cleanup to cache expiry would
+retain data after access or the parent lifecycle ended.
+
+**Consequences:** Parent, child, and sibling caches remain isolated during live
+updates, while parent lifecycle mutations still invalidate or remove the whole
+owned family.
+
 ### 2026-09-02 — Work-stream conversation controls use their substream connection
 
 **What changed:** the shared work-stream socket adapter now exposes message,

@@ -408,6 +408,9 @@ describe('useWorkstreamSocket', () => {
     });
 
     await flushPromises();
+    const pendingCommand = expect(result.current.stopHarness()).rejects.toMatchObject({
+      code: 'workstream_socket_open_timeout',
+    });
     expect(WORKSTREAM_OPEN_TIMEOUT_ATTEMPTS).toBe(3);
     expect([
       workstreamOpenTimeoutMs(0),
@@ -446,6 +449,11 @@ describe('useWorkstreamSocket', () => {
     await act(async () => vi.advanceTimersByTimeAsync(1));
     expect(result.current.state).toBe('unavailable');
     expect(result.current.openingError).toBe('The live connection timed out after 3 attempts.');
+    expect(result.current.sendReady).toBe(false);
+    await pendingCommand;
+    await expect(result.current.stopHarness()).rejects.toMatchObject({
+      code: 'workstream_socket_open_timeout',
+    });
     await act(async () => vi.advanceTimersByTimeAsync(120_000));
     expect(getSocketTicket).toHaveBeenCalledTimes(3);
 
@@ -980,6 +988,56 @@ describe('useWorkstreamSocket', () => {
     await expect(retry).resolves.toEqual({ harnessRunId: retryRunId });
   });
 
+  it('rejects failed and mismatched private command receipts', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const workstreamId = '00000000-0000-7000-8000-000000000627';
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
+      })),
+    });
+    const { result } = renderHook(() => useWorkstreamSocket(api, workstreamId, true), {
+      wrapper: createWrapper(),
+    });
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+
+    const stopped = result.current.stopHarness();
+    await flushPromises();
+    const stopCommand = sentFrames(socket).find((frame): frame is Extract<ClientSocketEvent, {
+      type: 'stop_harness';
+    }> => frame.type === 'stop_harness')!;
+    act(() => socket.message({
+      type: 'client_command_failed',
+      command: 'stop_harness',
+      operationId: stopCommand.operationId,
+      error: { status: 409, code: 'execution_changed', message: 'Execution changed.' },
+    }));
+    await expect(stopped).rejects.toMatchObject({
+      status: 409,
+      code: 'execution_changed',
+      message: 'Execution changed.',
+    });
+
+    const retried = result.current.retryHarness();
+    await flushPromises();
+    const retryCommand = sentFrames(socket).find((frame): frame is Extract<ClientSocketEvent, {
+      type: 'retry_harness';
+    }> => frame.type === 'retry_harness')!;
+    act(() => socket.message({
+      type: 'client_command_succeeded',
+      command: 'stop_harness',
+      operationId: retryCommand.operationId,
+    }));
+    await expect(retried).rejects.toMatchObject({
+      status: 500,
+      code: 'substream_command_receipt_mismatch',
+    });
+  });
+
   it('isolates a child feed from the main cache and recovers it through its own socket', async () => {
     vi.useFakeTimers();
     vi.spyOn(Math, 'random').mockReturnValue(0);
@@ -992,6 +1050,10 @@ describe('useWorkstreamSocket', () => {
     queryClient.setQueryData(['workstream', workstreamId], mainDetail);
     queryClient.setQueryData(['ordered-transcript', workstreamId], mainTranscript);
     queryClient.setQueryData(['transcript-overlays', workstreamId], [{ main: true }]);
+    setCachedWorkstreams(queryClient, [{
+      ...mainDetail,
+      title: 'Parent sidebar row',
+    }]);
     const getSocketTicket = vi.fn((
       ...args: Parameters<WorkstreamSocketApi['getSocketTicket']>
     ) => {
@@ -1004,7 +1066,7 @@ describe('useWorkstreamSocket', () => {
     });
     const getWorkstream = vi.fn(async () => workstreamBoot({ id: workstreamId }));
     const api = socketApiWith({ getSocketTicket, getWorkstream });
-    renderHook(() => useWorkstreamSocket(
+    const { result } = renderHook(() => useWorkstreamSocket(
       api,
       workstreamId,
       true,
@@ -1034,9 +1096,18 @@ describe('useWorkstreamSocket', () => {
       .toEqual(emptyTranscriptSnapshot());
 
     act(() => first.message({
-      type: 'resync_required',
+      type: 'transcript_turn_upserted',
       sequence: 6,
-      latestSequence: 6,
+      occurredAt: '2026-07-31T20:00:00.000Z',
+      turn: transcriptTurn(1, 'Child-only turn'),
+    }));
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.title)
+      .toBe('Parent sidebar row');
+
+    act(() => first.message({
+      type: 'resync_required',
+      sequence: 7,
+      latestSequence: 7,
       occurredAt: '2026-07-31T20:00:00.000Z',
       reason: 'history_unavailable',
       activeStreams: [],
@@ -1049,6 +1120,39 @@ describe('useWorkstreamSocket', () => {
     expect(getSocketTicket).toHaveBeenCalledTimes(2);
     expect(getSocketTicket.mock.calls[1]?.[1]).toBe(substreamId);
     expect(getSocketTicket.mock.calls[1]?.[3]).toBe(0);
+
+    queryClient.setQueryData(
+      ['substream-transcript-overlays', workstreamId, substreamId],
+      [{ child: true }],
+    );
+    queryClient.setQueryData(
+      ['substream-workstream-feed-source', workstreamId, substreamId],
+      'socket_snapshot',
+    );
+    queryClient.setQueryData(
+      ['substream-workstream-socket-snapshot-generation', workstreamId, substreamId],
+      1,
+    );
+    act(() => FakeWebSocket.instances[1]!.close(1008));
+    await flushPromises();
+    expect(queryClient.getQueryData(['workstream', workstreamId])).toBe(mainDetail);
+    expect(queryClient.getQueryData(['substream-workstream', workstreamId, substreamId]))
+      .toBeUndefined();
+    expect(queryClient.getQueryData(['substream-ordered-transcript', workstreamId, substreamId]))
+      .toBeUndefined();
+    expect(queryClient.getQueryData(['substream-transcript-overlays', workstreamId, substreamId]))
+      .toBeUndefined();
+    expect(queryClient.getQueryData(['substream-workstream-feed-source', workstreamId, substreamId]))
+      .toBeUndefined();
+    expect(queryClient.getQueryData([
+      'substream-workstream-socket-snapshot-generation', workstreamId, substreamId,
+    ])).toBeUndefined();
+    await expect(result.current.stopHarness()).rejects.toMatchObject({
+      status: 403,
+      code: 'workstream_access_revoked',
+    });
+    expect(result.current.sendReady).toBe(false);
+    expect(FakeWebSocket.instances).toHaveLength(2);
   });
 
   it('rejects a pending message when an older worker returns an uncorrelated command error', async () => {
