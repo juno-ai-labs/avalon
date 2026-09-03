@@ -803,8 +803,13 @@ the only way an automation is created, and `acceptDraft` no longer accepts
 `automationAcceptanceSelections` reads all three off the stored definition.
 `automationDraftAcceptanceBlocker` is one predicate called by
 `admitAuthoredDraft` and again by `prepareAcceptance`. Five previously untabled
-codes gained rows. The model's `requestedDelivery` vocabulary narrows to
-`email`. `isExternalEventTrigger` becomes a type predicate.
+codes gained rows, as this entry first landed; two of them,
+`automation_evaluator_source_binding_mismatch` and
+`automation_evaluator_connection_missing`, were removed again the same day once
+the predicate made them unreachable, and `requestedDelivery`, which this entry
+first narrowed to `email`, left the draft entirely in the entry above, so
+neither of those two changes survives on `main`. `isExternalEventTrigger`
+becomes a type predicate.
 
 **Why:** the create wizard was deleted on 2026-09-01, and the request schema it
 was shaped for outlived it. Every field in that schema was a question only the

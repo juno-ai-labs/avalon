@@ -492,10 +492,12 @@ merely because the From address resembles a workspace member. Friendly addresses
 are immutable and permanently reserved so a stale sender can never reach a
 different work stream.
 
-Automation email may start a read-only run, but the sender match remains defense
-in depth rather than authenticated identity. Those runs receive no external
-connector writes and no outbound web tools, and an atomic per-address hourly
-budget bounds model spend if an address leaks or a sender is spoofed.
+Automation email may start a run, and the sender match against active
+membership is the only control on it: since 2026-09-03 such a run holds the same
+connector and web tools as every other automation run, for the reasons the
+changelog entry of that date records, so a From address that passes the screen
+steers a run that can write and send. An atomic per-address hourly budget bounds
+model spend if an address leaks or a sender is spoofed.
 
 Audit events cover sign-in and session changes, membership, connector
 authorization and revocation, external writes, automation changes, suggestion
