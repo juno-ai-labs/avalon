@@ -936,6 +936,116 @@ server's own URL rather than an account at a provider, which is what a reconnect
 is matched against. And a connector may now be registered in a region with no
 credentials configured at all: the custom MCP adapter needs only a callback URI.
 
+### 2026-09-03 — A Google cursor says where it comes from, and a rejection names the argument
+
+**What changed:** The `pageToken` parameter on `gmail.search`,
+`calendar.list_calendars`, `calendar.list_events`, and `drive.search` carries a
+description: echo back the exact `nextPageToken` a previous call returned,
+holding that call's other arguments unchanged, never construct one, and stop when
+`nextPageToken` is `null`. Separately, a Google rejection that names an argument
+now reaches the caller as `field` on the structured failure, with the argument
+named in the message, instead of a bare `Google API failed (400)`.
+
+**Why:** Drive search failed for a work stream all afternoon and the agent
+answered from public web search instead, having been told only that Google
+returned a 400. Every `drive.search` call it made carried a `pageToken` it had
+invented — `"/"`, then `"1"`, then `"next"`. Google rejects an unrecognized
+cursor before it searches anything, so each call failed whole rather than
+degrading. Ninety-three model turns hit this on 2026-09-03 and seventy-seven on
+2026-08-28; no `drive.search` carrying an invented cursor has ever succeeded.
+
+Two independent gaps produced it. The first is that `pageToken` was the only
+parameter on those tools with no description, and in the failing run the model
+got every described parameter right — a valid `fileType`, a valid `orderBy`, a
+valid RFC 3339 `modifiedAfter` — while guessing the one that had none. A cursor
+is the argument whose value cannot be reasoned out from its name and its bounds:
+`maxResults` needs no prose because `minimum`/`maximum` on a field called "max
+results" already say what it is, and nothing about `minLength`/`maxLength` says
+that a token has to come from a previous result. Real tokens are opaque
+provider state — a Drive one runs 464 characters behind a `~!!~` sentinel, a
+Calendar one is base64 protobuf carrying a resume instant and record id, a Gmail
+one is twenty digits with a significant leading zero — so no shape a model could
+reasonably guess is a valid one.
+
+The second gap is why one wrong guess cost eight round trips instead of one. The
+adapter already captured Google's error body, which names the refused argument
+in `error.errors[].location`, but forwarded it through `readStructuredFailure`,
+whose allowlist Google's shape matches on no key. The model received
+`{"code":"provider_error"}` and a status code, so it kept the invalid cursor and
+varied everything around it until it gave up on the connector entirely. This
+half is not specific to pagination, and it is the half that makes any future
+wrong argument recoverable in one turn.
+
+The last page is described as `nextPageToken: null` rather than as an absent
+key, because `readString` returns `null` and that is the shape all four tools
+emit — 1240 turns in a week's archive show it. Describing a key that is never
+absent as "absent" would leave a caller to resolve the contradiction against
+what it sees.
+
+The name Google puts in `location` is its own *HTTP parameter*, which for most
+of these is not the tool's argument: `drive.search` sends `maxResults` as
+`pageSize`, and three tools send a `query` as `q`. Relayed as-is it would name
+`q`, a key every one of these tools rejects outright, reproducing the same loop
+one layer down — so each tool carries a map from Google's parameter back to its
+own argument and a parameter with no entry is dropped. Drive's `q` is
+deliberately absent, being composed from three arguments at once, and `orderBy`
+belongs to Drive alone: `calendar.list_events` sends that parameter too, but
+Rally fixes its value, so it is not the caller's to correct. The lookup only
+ever yields one of Rally's own literals, so no provider text reaches a model
+through this path and no bound on the provider's string is needed to keep it so.
+
+The naming is gated on a 400. Drive reports a deleted, trashed, or unshared
+file with the same `errors[]` shape and `location: "fileId"`; read as an
+argument fault, a 404 would tell a caller its id was malformed when the file is
+simply unreachable, and send it back to re-derive an id it had right.
+
+**Considered and rejected:** Validating the token — rejecting one Rally did not
+issue. Doing it properly means tracking issued cursors per run, which is durable
+state for a stateless parameter, and doing it cheaply means guessing at the shape
+of a value the provider documents as opaque. The observed lengths make the
+cheap version actively wrong: a single floor cannot fit both a 20-character
+Gmail cursor and a 464-character Drive one, and any "reject values that look
+like numbers" rule rejects every valid Gmail cursor. Also rejected: dropping
+`pageToken` from the model-facing schema. Google returned a real
+`nextPageToken` in 1307 turns of the same archive, so pagination is genuinely
+reachable and removing it would silently truncate large searches at
+`maxResults`. Also rejected: putting the guidance in the plugin system message
+or its worked examples, which are read when choosing a tool rather than when
+filling an argument, and which would carry it for Drive alone.
+
+One sentence covers all four tools rather than a per-tool list of the arguments
+to hold. The list came first and was wrong on its second day: `orderBy` was
+missed on `drive.search`, which is exactly the silent resume the clause exists
+to prevent, and a reviewer caught it rather than the code. A rule that names
+every argument cannot be short by one, and the machinery that assembled four
+near-identical sentences was more than the difference was worth. The cost is
+that a caller is told to hold `maxResults` steady too, where Google would in
+fact allow it to vary between pages; steady is safe, and one sentence that is
+slightly over-strict beats four that can each go stale.
+
+**Consequences:** A new paginated Google tool that ships a bare `pageToken`
+fails `index.test.ts`, which asserts the set of tools exposing one and that each
+describes it; extending that set is a deliberate edit rather than an omission.
+A tool that starts sending a new caller-controlled parameter has to add it to
+`GOOGLE_TOOL_ARGUMENT_BY_PARAMETER` or a rejection of it goes unnamed — the
+quiet direction, and the one chosen deliberately over naming a key the tool
+would refuse. The mapping is per tool rather than adapter-wide precisely
+because `orderBy` means different things across two of them.
+
+`maxLength: 2_000` on these cursors is now a measured bound rather than an
+arbitrary one, with roughly four times the longest observed token; if a provider
+cursor ever exceeded it, Rally would reject a *valid* token as its own
+validation error and paging would stop dead at that page.
+
+The presentation defect found in the same investigation is deliberately not
+fixed here: two Drive-capable Google connections render byte-identical plugin
+descriptions, because `connectorPluginPresentation` derives them from granted
+scopes and never reads the connection's own `display_name`, which already
+carries the account. A model choosing between them is choosing blind, and in the
+same run it picked one that could not see the requested folder and got a 404
+before it ever reached the 400s. That is a different subsystem in
+`apps/api/src/services/integrations.ts` and wants its own change.
+
 ### 2026-09-03 — A series activity is built from its master
 
 **What changed:** `pollCalendarChanges` reads the series master once per
