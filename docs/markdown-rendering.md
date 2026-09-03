@@ -886,6 +886,18 @@ judged only on text that has already arrived and a skeleton once drawn is never
 taken back. The remaining give is a real citation that follows an escape in one
 run; it keeps the literal marker that surface had before this feature.
 
+**Follow-up, third round:** two review findings that were not defects are
+recorded here so the next reader does not re-derive them. A tail ending
+`…[^ava\n` is *not* missed by the end-anchored open pattern — remark strips a
+paragraph's trailing newline, so the text node ends at the marker — and
+`…[^ava more`, where text follows, is prose containing a bracket rather than a
+reference being typed, which is why the anchor is right to reject it; both are
+now pinned by tests. And the module-shared `FOOTNOTE_REFERENCE` is not a
+`lastIndex` hazard: its readers use `matchAll` (which clones) and `replace`
+(which resets), while `exec` — the one call that would advance it — always takes
+a fresh copy from the factory. That rule is now written at the constant, because
+it is the kind of thing a later refactor breaks silently.
+
 **What a future change has to respect:** the skeleton is streaming-only. A
 settled reference nothing ever defined must stay literal text, because a
 permanent skeleton promises a source that is never coming; `still` and `glance`

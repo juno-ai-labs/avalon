@@ -358,7 +358,8 @@ interface MarkdownRewriteNode {
   data?: {
     hName?: string;
     hProperties?: Record<string, unknown>;
-    hChildren?: unknown[];
+    /** `never[]` because the only element built this way is empty: a skeleton has nothing to say. */
+    hChildren?: never[];
   };
 }
 
