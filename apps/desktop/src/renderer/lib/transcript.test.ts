@@ -2342,6 +2342,40 @@ describe('collapseSettledWorkIntoAccordion', () => {
       .toEqual(['thought-one', 'act-response']);
   });
 
+  it('keeps a multi-drawer response\'s total in the header when its last answer folds nothing', () => {
+    // `collapsed.length === 0` with drawers already built earlier in the
+    // response: the total has no drawer of its own to go to, and the drawers it
+    // does not describe must not get it either.
+    const collapsed = collapseSettledWorkIntoAccordion([
+      said('human-one'),
+      thinking('thought-one'),
+      answer('turn-1', { id: 'turn-1:text', workSummary: undefined }),
+      answer('turn-2'),
+    ]);
+
+    expect(collapsed.map((message) => message.messageType))
+      .toEqual(['text', 'work_accordion', 'text', 'text']);
+    expect(collapsed[1]!.workAccordion?.durationMs).toBeNull();
+    expect(collapsed[3]!.workSummary).toEqual({ durationMs: 2_477_000 });
+  });
+
+  it('holds a stretch open for a plugin run still marked active, not only a live timer', () => {
+    // A plugin run is anchored at its own last call inside `run.turnId`, so a
+    // run still reading active in one turn sits above an answer arriving in the
+    // next. Its mark is still pulsing; it does not go in a closed drawer.
+    const collapsed = collapseSettledWorkIntoAccordion([
+      thinking('thought-one'),
+      plugin('plugin-slack', 'Slack', { pluginActivity: {
+        groupKey: 'name:Slack', name: 'Slack', icon: 'plug', active: true, durationMs: 7_000,
+        activeVerb: 'Using Slack', completedVerb: 'Used Slack',
+      } }),
+      answer('turn-1', { workSummary: undefined }),
+    ]);
+
+    expect(collapsed.map((message) => message.messageType))
+      .toEqual(['thought', 'plugin_activity', 'text']);
+  });
+
   it('carries an unknown total and a recovered accuracy through to the drawer', () => {
     const collapsed = collapseSettledWorkIntoAccordion([
       thinking('thought-one'),
