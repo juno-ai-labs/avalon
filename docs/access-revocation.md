@@ -341,6 +341,8 @@ exist.
 **Consequences:** Revocation still closes WorkspaceDO, WorkstreamDO, and
 SubstreamAgent access. Historical migration records remain immutable.
 
+Shipped in #541.
+
 ### 2026-09-01 — Closing the room socket ends its message authority
 
 **What changed:** The SubstreamAgent socket now spends its admitted attachment

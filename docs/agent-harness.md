@@ -1067,7 +1067,7 @@ and general child participants remain deferred product work.
 
 ## Failure modes and limits
 
-Root ordinary work-stream runs allow 1,000 model iterations and have no tool-call, wall-clock, or cost ceiling. A work-stream loop otherwise continues until completion, elicitation, its safe-boundary stop, ambiguous write, lease or authority loss, context failure, provider failure, or durable receipt cancellation. Per-tool time and plugin-catalog tokens remain bounded, and request establishment, time to first token, and inter-chunk idle time have separate watchdogs. Deliberately bounded one-shot callers such as meeting notes and automation compilation retain their own independent ceilings. Active plugin count, active tool-schema bytes, model-visible tool-result bytes, and replay payload bytes are not capped by the agent runtime. Web results, fetched bytes, and attachments remain independently bounded by their owning tools. Live context size comes only from OpenRouter's returned prompt and completion token counts; Rally does not estimate it from serialized bytes. After a completed provider turn exceeds 80% of the selected model's OpenRouter `context_length` (with Monad's 200,000-token fallback when the catalog is unavailable), Bind replaces the whole live context beneath the system prompt with one synthetic user message carrying an LLM continuation summary; no earlier message survives verbatim. Work-stream checkpoints store one principal-and-resource-inventory-revision-scoped summary regionally with the durable sequence boundary. The live checkpoint and every authorized replay append a freshly rendered, fixed-size resource inventory before newer messages; a scope mismatch falls back to durable transcript replay only within its 2,000-message and 4-MiB serialized preflight bounds. [`context-compaction.md`](context-compaction.md) owns that policy — the threshold, the summary prompt, the deterministic appendix, the checkpoint shape, and the stored row — and is the document to read and update before changing any of them.
+Root ordinary work-stream runs allow 1,000 model iterations and have no tool-call, wall-clock, or cost ceiling. A work-stream loop otherwise continues until completion, elicitation, its safe-boundary stop, ambiguous write, lease or authority loss, context failure, or provider failure. Per-tool time and plugin-catalog tokens remain bounded, and request establishment, time to first token, and inter-chunk idle time have separate watchdogs. Deliberately bounded one-shot callers such as meeting notes and automation compilation retain their own independent ceilings. Active plugin count, active tool-schema bytes, model-visible tool-result bytes, and replay payload bytes are not capped by the agent runtime. Web results, fetched bytes, and attachments remain independently bounded by their owning tools. Live context size comes only from OpenRouter's returned prompt and completion token counts; Rally does not estimate it from serialized bytes. After a completed provider turn exceeds 80% of the selected model's OpenRouter `context_length` (with Monad's 200,000-token fallback when the catalog is unavailable), Bind replaces the whole live context beneath the system prompt with one synthetic user message carrying an LLM continuation summary; no earlier message survives verbatim. Work-stream checkpoints store one principal-and-resource-inventory-revision-scoped summary regionally with the durable sequence boundary. The live checkpoint and every authorized replay append a freshly rendered, fixed-size resource inventory before newer messages; a scope mismatch falls back to durable transcript replay only within its 2,000-message and 4-MiB serialized preflight bounds. [`context-compaction.md`](context-compaction.md) owns that policy — the threshold, the summary prompt, the deterministic appendix, the checkpoint shape, and the stored row — and is the document to read and update before changing any of them.
 
 A published document is readable in the desktop client, and was not until 2026-08-27. A generated resource appears in the work-stream rail under **Artifacts**, and its detail panel now renders the resource's readable content beneath the metadata, through `/resources/:id/preview` — the same authorized route `AttachmentLightbox` uses, which materializes extracted text for a file that is not already text. The gap that remains is narrower: the rail resolves an inspector target only from the loaded work stream's own resources, so a document cited from *another* work stream still has nowhere to open. [`markdown-rendering.md`](markdown-rendering.md) owns the citation half of this and records the same limit.
 
@@ -1218,6 +1218,8 @@ through internal callers after its product surface disappeared.
 **Consequences:** Work-stream, automation, and inline-child runs use the same
 remaining harness boundaries without HyperSight-specific branching.
 
+Shipped in #541.
+
 ### 2026-09-03 — A run delivers its own result, and no trigger narrows its tools
 
 **What changed:** The `# Result delivery` section of the work-stream system
@@ -1260,6 +1262,8 @@ reaches the model as a bare code again. The authoring text and the run prompt
 describe the same contract from two ends, so a change to where results go edits
 both.
 
+Shipped in #541.
+
 ### 2026-09-03 — Gemini 3.8 Flash defaults to low reasoning
 
 **What changed:** `google/gemini-3.8-flash` joined `x-ai/grok-4.6` in the
@@ -1282,6 +1286,8 @@ per-role value misses a Gemini fallback selected after another model failed.
 **Consequences:** A caller that wants Gemini 3.8 Flash at a different effort
 must ask for it explicitly, exactly as for Grok 4.6. Older Gemini Flash models
 are not in the registry and continue to send no reasoning field.
+
+Shipped in #541.
 
 ### 2026-09-03 — A rejection keeps the body it came in
 
@@ -1386,6 +1392,8 @@ in the log — which is the one place EU sees it. Widening `detail` into a gener
 dump of the response is how the distinction between "what the provider said
 about our request" and "our request" would be lost.
 
+Shipped in #541.
+
 ### 2026-09-03 — The assembled memory-recall query is bounded before run setup uses it
 
 **What changed:** `freezeRunMemoryContext` clamps its query to
@@ -1421,6 +1429,7 @@ appends the objective first and the triggering message last, so what is dropped
 is the tail of a long message rather than the objective. Reordering those parts
 would change what truncation costs.
 
+Shipped in #541.
 
 ### 2026-09-02 — A deploy no longer kills the runs it interrupts
 

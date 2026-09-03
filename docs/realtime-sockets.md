@@ -694,6 +694,8 @@ and would keep deleted Durable Object authority addressable.
 **Consequences:** Workspace, work-stream control, and substream sockets are the
 complete realtime topology.
 
+Shipped in #541.
+
 ### 2026-09-03 — A durable command is acknowledged independently of its socket
 
 **What changed:** Substream mutation handlers use the identity already admitted
@@ -716,6 +718,8 @@ Command liveness remains the socket lifecycle's responsibility.
 **Consequences:** A lost receipt is a delivery miss, not a second mutation
 outcome. Reconnect resends the same operation id, while terminal inability to
 open rejects the queue instead of leaving promises pending forever.
+
+Shipped in #541.
 
 ### 2026-09-02 — Child feed recovery stays inside the addressed SubstreamAgent
 

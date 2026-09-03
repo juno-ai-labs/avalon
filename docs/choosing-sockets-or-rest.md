@@ -809,6 +809,8 @@ transport as compatibility code would leave a writable path into retired state.
 **Consequences:** Work-stream control and substream room sockets describe the
 complete live realtime surface.
 
+Shipped in #541.
+
 ### 2026-09-02 — Substream-local commands move together onto the child socket
 
 **What changed:** elicitation answers, pending-input reorder, stop, and retry

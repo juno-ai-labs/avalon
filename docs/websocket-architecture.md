@@ -460,6 +460,8 @@ would obscure which objects and connections actually own realtime state.
 **Consequences:** The diagram and invariants now cover only workspace,
 work-stream control, and addressed substream connections.
 
+Shipped in #541.
+
 ### 2026-09-02 — Child mutations move onto their owning substream socket
 
 **What changed:** An addressed SubstreamAgent connection now carries message

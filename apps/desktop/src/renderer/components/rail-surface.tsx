@@ -7,12 +7,11 @@ import { RailResizeHandle } from './rail-resize-handle';
  * How long a panel that has just lost the right sidebar stays on screen fading
  * out. The stylesheet animates over the same span, so the two have to agree.
  */
-export const RAIL_CROSSFADE_MS = 190;
+export const RAIL_EXIT_FADE_MS = 190;
 
 /**
- * Which panel is leaving the right sidebar, for as long as it is still fading
- * out — over the panel that replaced it, or over nothing when the sidebar was
- * dismissed. Opening it has nothing to fade from.
+ * Whether the right sidebar is still fading after it was dismissed. Opening
+ * it has nothing to fade from.
  *
  * `scope` names what the panels belong to — the work stream, for the sidebar
  * the work-stream screen owns. A panel does not fade out of a scope it is no
@@ -22,39 +21,30 @@ export const RAIL_CROSSFADE_MS = 190;
  * the old one, including a fade already running. Callers with one scope leave
  * it out.
  */
-export function useRailCrossFade<PanelId extends string>(
-  activeId: PanelId | null,
+export function useRailExitFade(
+  open: boolean,
   scope?: string | null,
-): PanelId | null {
+): boolean {
   const [shownScope, setShownScope] = useState(scope);
-  const [shownId, setShownId] = useState(activeId);
-  // The same panel can start a second fade while its first one is still
-  // pending — close it, reopen it, then hand the slot away. Storing the id
-  // alone would be an equal value, React would bail out of the update, and the
-  // effect below would keep the first fade's timer, which then ends the second
-  // fade early. The count makes every departure a distinct value.
-  const [leaving, setLeaving] = useState<{ id: PanelId; departure: number } | null>(null);
+  const [shownOpen, setShownOpen] = useState(open);
+  const [departure, setDeparture] = useState<number | null>(null);
 
   if (shownScope !== scope) {
     setShownScope(scope);
-    setShownId(activeId);
-    setLeaving(null);
-  } else if (shownId !== activeId) {
-    setShownId(activeId);
-    if (shownId !== null) {
-      setLeaving((current) => ({ id: shownId, departure: (current?.departure ?? 0) + 1 }));
-    }
+    setShownOpen(open);
+    setDeparture(null);
+  } else if (shownOpen !== open) {
+    setShownOpen(open);
+    setDeparture(open ? null : (departure ?? 0) + 1);
   }
 
   useEffect(() => {
-    if (leaving === null) return;
-    const timer = window.setTimeout(() => setLeaving(null), RAIL_CROSSFADE_MS);
+    if (departure === null) return;
+    const timer = window.setTimeout(() => setDeparture(null), RAIL_EXIT_FADE_MS);
     return () => window.clearTimeout(timer);
-  }, [leaving]);
+  }, [departure]);
 
-  // A panel that takes the slot back before its own fade is over is on screen
-  // as itself, not as its own ghost.
-  return leaving === null || leaving.id === activeId ? null : leaving.id;
+  return departure !== null && !open;
 }
 
 interface RailSurfaceProps {
@@ -126,10 +116,9 @@ export function RailSurface({
         onDragOver={dropTarget?.onDragOver}
         onDrop={dropTarget?.onDrop}
         onKeyDown={(event) => {
-          // A block prompt's dialog is portalled to the document body, but a
-          // React synthetic event still bubbles up the React tree to here — so
-          // without this, dismissing that dialog would also close the sidebar.
-          // Only Escapes raised inside the sidebar itself close it.
+          // Portalled controls owned by the panel can still bubble through the
+          // React tree to here. Only Escapes raised inside the visible sidebar
+          // close it.
           if (event.key !== 'Escape' || !event.currentTarget.contains(event.target as Node)) return;
           onClose();
         }}

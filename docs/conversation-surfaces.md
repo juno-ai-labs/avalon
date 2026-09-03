@@ -89,6 +89,8 @@ retain data after access or the parent lifecycle ended.
 updates, while parent lifecycle mutations still invalidate or remove the whole
 owned family.
 
+Shipped in #541.
+
 ### 2026-09-02 — Work-stream conversation controls use their substream connection
 
 **What changed:** the shared work-stream socket adapter now exposes message,

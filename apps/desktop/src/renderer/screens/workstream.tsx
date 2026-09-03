@@ -90,7 +90,7 @@ import { useWorkstreamFeedOpenTelemetry } from '../lib/use-workstream-feed-open-
 import { useWorkstreamSendReadyTelemetry } from '../lib/use-workstream-send-ready-telemetry';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { JumpToLatestButton, RunStoppedNotice } from '../components/conversation-follow';
-import { type RailPanel, type RailVariant, useUiStore } from '../lib/ui-store';
+import { type RailVariant, useUiStore } from '../lib/ui-store';
 import { type SocketState, type WorkstreamMessageDeliveryMode } from '../lib/use-workstream-socket';
 import { useRetainedWorkstreamSocket, useWorkstreamSocketOpenContext } from '../lib/workstream-socket-pool';
 import { useWorkspaceSocket } from '../lib/workspace-socket';
@@ -110,7 +110,7 @@ import { queueAuthorMember, type ComposerQueueItem } from '../components/compose
 import { MessageFeed, useMessageFeedVirtualizer } from '../components/message-feed';
 import { ConnectorConnectionsProvider } from '../components/connector-mentions';
 import { WorkstreamComposer } from '../components/workstream-composer';
-import { useRailCrossFade } from '../components/rail-surface';
+import { useRailExitFade } from '../components/rail-surface';
 
 /**
  * The cache key for one resource's version history.
@@ -1156,10 +1156,7 @@ export function WorkstreamScreen(): React.JSX.Element {
   const railOpen = storeRailOpen && railScope === id;
   // A route switch is not a sidebar hand-off: scope the fade to the work stream
   // so the previous stream's inspector never dissolves over the arriving feed.
-  const railLeaving = useRailCrossFade<RailPanel>(
-    railOpen ? 'inspector' : null,
-    id,
-  );
+  const railLeaving = useRailExitFade(railOpen, id);
   const members = useQuery({
     queryKey: ['workspace-members'],
     queryFn: ({ signal }) => api!.getWorkspaceMembers(signal),
@@ -1537,7 +1534,7 @@ export function WorkstreamScreen(): React.JSX.Element {
   // reserves the same width for that final frame.
   useLayoutEffect(() => {
     setRailLeaving(railLeaving);
-    return () => setRailLeaving(null);
+    return () => setRailLeaving(false);
   }, [railLeaving, setRailLeaving]);
 
   const stop = useMutation({
@@ -2239,7 +2236,7 @@ export function WorkstreamScreen(): React.JSX.Element {
           ?? detachResource.error?.message
           ?? refreshResource.error?.message
           ?? attachResource.error?.message}
-        leaving={railLeaving === 'inspector'}
+        leaving={railLeaving}
         onAddParticipant={() => setParticipantDialogOpen(true)}
         onAddResource={() => setResourceDialogOpen(true)}
         onDetachResource={(resource) => detachResource.mutateAsync(resource)}

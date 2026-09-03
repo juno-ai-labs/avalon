@@ -1413,8 +1413,16 @@ work, not merely hiding the panel behind a flag. Keeping the old subsystem
 disabled was rejected because it would retain callable routes and object state.
 
 **Consequences:** Existing objects replay the immutable historical schema and
-then apply the destructive forward cleanup. The live hierarchy is WorkspaceDO
-to WorkstreamDO to SubstreamAgent, with no dashboard sibling or child.
+then apply the destructive forward cleanup. The cleanup removes HyperSight's
+generic harness rows and non-cascading receipt children before dropping its own
+tables, so a stranded run cannot keep the work stream running or become its
+latest retry target. The live hierarchy is WorkspaceDO to WorkstreamDO to
+SubstreamAgent, with no dashboard sibling or child. Deleting the Wrangler class
+is irreversible: rollback may restore code, but it cannot restore that
+namespace's deleted objects or the object-local state removed by these forward
+migrations.
+
+Shipped in #541.
 
 ### 2026-09-03 — A stored automation run context has no delivery targets
 
@@ -1433,6 +1441,8 @@ migration rather than a tolerant read, for the reason recorded in
 field every future reader has to know to ignore. Proved in
 `apps/api/test/workstream-object-schema.test.ts` by storing a pre-v37 receipt,
 applying the schema, and parsing the row through `WorkstreamWorkflowInputSchema`.
+
+Shipped in #541.
 
 ### 2026-09-03 — Socket replay and archive state are enforced by the owning substream
 
@@ -1466,6 +1476,8 @@ the reversible fence keeps it dormant and lets unarchive resume it.
 **Consequences:** Live admitted sockets survive a regional membership-read
 outage until the revocation plane closes them. Exact replays converge, changed
 replays return a conflict, and an archived room cannot spend or call tools.
+
+Shipped in #541.
 
 ### 2026-09-02 — Child identity and ambiguous command replay are fenced end to end
 

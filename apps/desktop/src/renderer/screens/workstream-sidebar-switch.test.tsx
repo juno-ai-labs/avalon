@@ -120,20 +120,16 @@ function WorkstreamRouteControls(): React.JSX.Element {
       <button onClick={() => void navigate(`/workstreams/${secondWorkstreamId}`)} type="button">
         Switch work stream
       </button>
-      <button onClick={() => void navigate(`/workstreams/${firstWorkstreamId}`)} type="button">
-        Return to the first work stream
-      </button>
     </>
   );
 }
 
-function renderScreen(seed?: (queryClient: QueryClient) => void): QueryClient {
+function renderScreen(): QueryClient {
   const queryClient = new QueryClient({
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
   });
   seedWorkstream(queryClient, firstWorkstreamId, 'First work stream');
   seedWorkstream(queryClient, secondWorkstreamId, 'Second work stream');
-  seed?.(queryClient);
   render(
     <Tooltip.Provider>
       <QueryClientProvider client={queryClient}>
@@ -185,8 +181,7 @@ describe('the right sidebar does not follow a work-stream switch', () => {
     expect(useUiStore.getState().inspector).toBeNull();
   });
 
-  // The rail's own close animation dissolves it over the panel that took the
-  // slot. A switch has no such panel: the fade would run over another work
+  // A route switch must not run the rail's close animation over another work
   // stream's transcript, with the shell holding that stream's feed narrow for
   // as long as it lasted.
   it('leaves no panel fading over the work stream switched to', async () => {
@@ -201,7 +196,7 @@ describe('the right sidebar does not follow a work-stream switch', () => {
     expect(document.querySelector('.rail-surface')).toBeNull();
     // What AppShell lays the feed out against, so a leaking value here reserves
     // the sidebar's width over a work stream that has no sidebar.
-    expect(useUiStore.getState().railLeaving).toBeNull();
+    expect(useUiStore.getState().railLeaving).toBe(false);
   });
 
 });

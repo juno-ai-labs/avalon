@@ -812,6 +812,44 @@ describe("the Workstream Durable Object relational schema", () => {
         workerVersionId: "worker-before",
         now: 1_000,
       });
+      seedWorkstreamObjectRoot(database, {
+        workspaceId: WORKSPACE_ID,
+        workstreamId: WORKSTREAM_ID,
+      }, 1_000);
+      const retiredRunId = "00000000-0000-7000-8000-000000000038";
+      const ordinaryRunId = "00000000-0000-7000-8000-000000000039";
+      seedWorkstreamRun(database, {
+        id: retiredRunId,
+        origin: "block_dashboard_block",
+        status: "admitted",
+        createdAt: 1_000,
+      });
+      seedWorkstreamRun(database, {
+        id: ordinaryRunId,
+        origin: "member_message",
+        status: "completed",
+        createdAt: 900,
+      });
+      database.exec(`
+        INSERT INTO block_dashboard_configuration_versions
+          (configuration_version_id, version_number, blocks_json, created_by_user_id, created_at)
+        VALUES ('configuration-38', 1, '[]', '${AUTHOR_ID}', 1000);
+        INSERT INTO block_dashboard_block_runs
+          (block_run_id, configuration_version_id, block_id, prompt,
+           trigger_sequence, run_id, status, created_at)
+        VALUES ('block-run-38', 'configuration-38', 'block-38', 'Retired prompt',
+                1, '${retiredRunId}', 'queued', 1000);
+        INSERT INTO run_lifecycle_events
+          (event_id, run_id, attempt_id, event_key, event_type,
+           member_safe_payload_json, created_at)
+        VALUES ('event-38', '${retiredRunId}', 'attempt-38', 'admitted',
+                'admitted', '{}', 1000);
+        INSERT INTO elicitation_requests
+          (elicitation_id, run_id, prompt, response_type, options_json, tool_call_id,
+           minimum_selections, status, created_at)
+        VALUES ('elicitation-38', '${retiredRunId}', 'Question', 'text', '[]', 'tool-call-38',
+                0, 'pending', 1000);
+      `);
       database.prepare(
         `INSERT INTO due_work
            (job_key, kind, due_at, epoch, payload_json, attempts, updated_at)
@@ -831,6 +869,16 @@ describe("the Workstream Durable Object relational schema", () => {
       expect(database.prepare(
         `SELECT COUNT(*) AS count FROM due_work WHERE job_key = 'block_dashboard_refresh'`,
       ).get()).toEqual({ count: 0 });
+      expect(database.prepare(
+        `SELECT run_id FROM runs ORDER BY run_id`,
+      ).all()).toEqual([{ run_id: ordinaryRunId }]);
+      expect(database.prepare(
+        `SELECT COUNT(*) AS count FROM run_lifecycle_events WHERE run_id = ?`,
+      ).get(retiredRunId)).toEqual({ count: 0 });
+      expect(database.prepare(
+        `SELECT COUNT(*) AS count FROM elicitation_requests WHERE run_id = ?`,
+      ).get(retiredRunId)).toEqual({ count: 0 });
+      expect(database.prepare(`PRAGMA foreign_key_check`).all()).toEqual([]);
     } finally {
       database.close();
     }

@@ -2,7 +2,6 @@ import { create } from 'zustand';
 
 export type RailVariant = 'context' | 'runs';
 /** The panel occupying the right sidebar slot. */
-export type RailPanel = 'inspector';
 export interface RailInspector {
   type: 'resource' | 'connection' | 'task' | 'run';
   id: string;
@@ -15,7 +14,7 @@ interface UiState {
   railVariant: RailVariant;
   railWidth: number;
   inspector: RailInspector | null;
-  railLeaving: RailPanel | null;
+  railLeaving: boolean;
   railScope: string | null;
   setSidebarOpen: (open: boolean) => void;
   setSidebarWidth: (width: number) => void;
@@ -25,10 +24,9 @@ interface UiState {
   setRailWidth: (width: number) => void;
   inspect: (inspector: RailInspector | null) => void;
   // A panel that has lost the slot is still on screen for its fade, so the
-  // shell has to keep laying out against it: dropping the room it occupies, or
-  // re-targeting the slot at the other panel's width, would reflow the screen
-  // underneath something the person can still see.
-  setRailLeaving: (panel: RailPanel | null) => void;
+  // shell has to keep laying out against it; dropping the room it occupies
+  // would reflow the screen underneath something the person can still see.
+  setRailLeaving: (leaving: boolean) => void;
   // The inspector keeps its width per work stream. Screens outside a work
   // stream pass null and share one bucket.
   setRailScope: (scope: string | null) => void;
@@ -104,7 +102,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   railVariant: 'context',
   railWidth: loadRailWidth(RAIL_WIDTH_STORAGE_PREFIX, null),
   inspector: null,
-  railLeaving: null,
+  railLeaving: false,
   railScope: null,
   setSidebarOpen: (sidebarOpen) => set({ sidebarOpen }),
   setSidebarWidth: (width) => {
