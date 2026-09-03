@@ -37,7 +37,6 @@ const eventDrivenDraft = {
   }],
   requiredCapabilities: [],
   expectedOutputs: [],
-  requestedDelivery: [],
   defaultBehavior: {},
   recommendedPlugins: [],
   memoryTables: [],

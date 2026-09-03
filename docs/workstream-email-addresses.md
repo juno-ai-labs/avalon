@@ -22,10 +22,7 @@ reservation path, or what inbound mail is allowed to do when it arrives.
 | `apps/api/src/durable-objects/automation-agent.ts` | An accepted automation's half of all of that: `automation_email_route` holds the issued address, `screenInboundEmail` refuses a message before anything is stored, and `admitInboundEmail` re-checks everything inside the transaction that consumes the hourly budget and writes the receipt. |
 | `apps/api/src/inbound-email-regional-bridge.ts` | The one verified Resend event handed to the owning region. |
 | `apps/api/src/routes/resend.ts` | The Global receiving webhook. |
-| `apps/api/src/services/automation-email-service.ts` | Outbound automation results by email. |
-| `apps/api/src/services/automation-email-content.ts` | The result email's shell, importable without the Worker's bindings. |
 | `apps/api/src/services/email-markdown.ts` | The Markdown renderer both Rally emails share; owned by [`digests.md`](digests.md). |
-| `scripts/preview-automation-email.mjs` | Rendering the result email for somebody to look at. |
 | `apps/api/src/services/user-delivery.ts` | The connector-declared personal delivery surfaces beside it. |
 
 ## How it works
@@ -190,85 +187,38 @@ the fallback emits `email_route_migration_domain_fallback` for operations.
 
 ### Outbound automation results
 
-The addresses above are inbound. Separately, a personal automation may copy each
-run's result outward, and may change that afterwards from the automation itself:
-`PATCH /automations/:id` takes the whole destination set, and only the owner's own
-request is accepted. Every run always lands in its own Rally work stream — that
-is the canonical record and is not a destination the creator can turn off. On top
-of it the creator may freeze email to their own account address and one
-connector-provided personal surface, chosen on the create screen, changed afterwards
-from the automation, and stored as the acceptance row's frozen `deliveryTargets`
-inside its `AutomationAgent`. Which connectors offer such a surface is the
-connector's own declaration rather than a list held by the create screen; see
-[connector architecture](connectors.md#delivering-automation-results-to-a-person).
-Slack's Agent DM is the one shipped today.
+The addresses above are inbound. Rally no longer sends an automation's result
+anywhere on its behalf.
 
-Email delivery resolves the author's account address at the moment the set is
-written and stores that literal address, so a later account change cannot silently
-redirect results. **The send re-checks that address as well as the membership**:
-if the recipient's account email no longer matches the frozen one, the result is
-skipped rather than re-targeted. An automation outlives the address it was
-accepted with, and a corporate mailbox reassigned to a different person is the
-case that matters — the run was authorized to mail a named address, and quietly
-sending its contents somewhere else is not the smaller surprise.
-This section describes behaviour that was unreachable in production between
-migration 0090 and 2026-08-31: `AutomationAgent` read the connector rows from
-regional D1, which no longer had them, so every attempt to save a connector
-destination answered `500`. See the changelog in
-[`automation-lifecycle.md`](automation-lifecycle.md).
+Until 2026-09-03 a personal automation could freeze email to its owner's account
+address and one connector-provided personal surface as `deliveryTargets`, edit
+them through `PATCH /automations/:id`, and have a loop after each run mail the
+result through Resend with a per-run per-target receipt. All of that is gone:
+the request field, the frozen targets, the `PATCH` route, the desktop editor,
+the result email and its template and preview script, and the child's delivery
+loop. `automation_delivery_receipts` survives for the one destination that was
+never chosen — the room that owns a `workstream`-scoped automation, which is
+woken with the result and is still gated by the disposition classifier.
 
-**Every edit re-resolves the whole set** — `PATCH /automations/:id`
-takes the complete destination list and rewrites it, so a Slack link that has gone
-stale or an account address that has changed is picked up by the next edit, and a
-destination whose connection is disabled or whose identity link is gone refuses
-the edit rather than being half-stored. Each result is sent through Resend from
-the notification sender —
-`RESEND_NOTIFICATION_FROM_EMAIL`, which is set in both Workers' vars; unset, it
-falls back to the transactional sender and a morning briefing arrives from the
-invitations address. Delivery is keyed for idempotency on the automation, the
-run, and the channel — `rally-automation-result/<automationId>/<runId>/email` —
-and the automation records one `automation_delivery_receipts` row per
-`(run, target)`, so a retry cannot mail the same result twice and a receipt whose
-payload hash differs from the recorded one is a conflict rather than a second
-send. Empty results and the "nothing
-qualified" phrasings suppressed for Slack are suppressed for email too.
+What replaced it is the run itself. An automation's instructions say where a
+result should reach, the run holds the connector tools it was bound, and sending
+is part of doing the work, inside the loop. The system prompt's result-delivery
+section says so in both directions: it names the owning room when there is one,
+so the run does not post there twice, and says outright that nothing sends for
+it when there is not, so a run that merely describes an email has not sent one.
+[`automation-lifecycle.md`](automation-lifecycle.md) owns the reasoning; the
+short form is that the judgement about where a result goes belongs with the
+judgement about what it says, and the old shape could not express either
+"email the finance team, and DM me only if it is urgent" or the case where the
+person who would choose a connection is no longer in the flow.
 
-The result email carries no `Reply-To`. Replying used to reach the automation's
-own inbound address; it now reaches the notification sender, which nobody reads.
-That is a regression the frozen-context delivery path did not carry across, not a
-decision — the address is still in the object, one RPC away from the child that
-sends the mail.
-
-**The run itself is told where Rally will send its result.** The active targets
-are loaded into the automation's prompt context as `resultDelivery`, and the
-platform policy forbids sending, drafting, or posting a copy of the result to any
-destination listed there. Without it a run whose instructions say "email me the
-briefing" reads that as a step, sends it through the mail connector, and Rally
-then mails the same result to the frozen target — two copies from two senders. The
-compiler is the other half: it writes a destination into `expectedOutputs` rather
-than a provider send into `instructions`.
-
-**The body is the run's final message, which is Markdown**, rendered into email
-HTML by `apps/api/src/services/email-markdown.ts` — the same renderer the digest
-uses. A mail client renders no Markdown of its own, so text that is escaped and
-line-broken instead reaches the reader as `## Heading` and `**bold**`.
-
-The frozen destinations, the per-run per-target delivery receipts, and the
-inbound email receipts all live in the automation's own object. The generated run
-sends its own result and reports each destination back through
-`recordDeliveryReceipt`, which refuses a target the run's frozen context does not
-name; the parent never sees the result bytes. The regional sender uses a stable
-provider idempotency key. A delivery path needing a
-multi-destination lease has to model one — the `external_delivery_attempts`
-ledger reserved for it was retired unused — and D1 does not retain an outbound
-payload or delivery-state projection.
-
-A permanently rejected address is no longer marked. The old path set the delivery
-target `needs_input` and surfaced it on the automation so the same failure did not
-repeat silently on every run; the receipt records `failed` with an outcome code
-and nothing reads it back onto the automation. Re-establishing that surface means
-projecting the failed receipt into the attention code the directory already
-carries.
+Two consequences for this document's subject. The result email carried no
+`Reply-To`, which was recorded here as a regression; there is no result email
+now, so there is nothing to reply to and nothing to fix. And a permanently
+rejected recipient address is no longer a state Rally can observe, because Rally
+is not the sender: a run whose send fails sees the tool's own error and can say
+so in its result, which the room or the person reads, rather than a receipt
+nothing projected onto the automation.
 
 ### The frozen v1 vocabulary
 
@@ -502,7 +452,6 @@ registry, and what happens to mail addressed to one. It does not own:
 | `apps/api/test/automation-run-context.test.ts` | That a run is told its frozen destinations — email, Slack by id, a `needs_input` Slack target Rally still delivers to — told nothing when a target cannot deliver, and told them in a fixed order. |
 | `apps/api/test-workers/automation-agent.test.ts` | On real workerd: that acceptance reserves and stores the address, and that a delivery receipt is refused for a target the run's frozen context does not name. |
 | `apps/api/test/health-env-contract.test.ts` | That the probe says when notification mail is falling back to the transactional sender. |
-| `scripts/preview-automation-email.test.mjs` | The preview's flags, and that its sample still carries the constructs this email has rendered wrong. |
 
 Run one with
 `pnpm --filter @rally/api exec vitest run test/workstream-email-address.test.ts`
@@ -530,6 +479,26 @@ Deepening or flattening the nesting is therefore safe as long as at least two
 hashes remain; changing the words after them is not.
 
 ## Changelog
+
+### 2026-09-03 — Rally stops sending automation results
+
+**What changed:** The outbound half of this document is retired. Automation
+delivery targets, `PATCH /automations/:id`, `automation-email-service.ts`,
+`automation-email-content.ts`, `scripts/preview-automation-email.mjs`, and the
+child's external delivery loop are deleted; the "Outbound automation results"
+section now records that and what replaced it. Inbound addressing, screening,
+and receipts are unchanged. `email-markdown.ts` stays, owned by digests.
+
+**Why:** an automation has no destinations of its own any more — a run sends
+what its instructions ask for, with the connector tools it was bound, inside the
+loop. The full reasoning, the security trade, and the migration that made it
+safe are in [`automation-lifecycle.md`](automation-lifecycle.md)'s entry of the
+same date; this entry exists so a reader of the email document is not left with
+a section describing a sender that no longer exists.
+
+**Consequences:** the missing `Reply-To` recorded above as a regression is moot,
+and a permanently rejected recipient is no longer something Rally can mark,
+because Rally is no longer the sender.
 
 ### 2026-08-29 — The inbound receipt lease becomes one typed claim
 

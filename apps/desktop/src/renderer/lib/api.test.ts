@@ -162,7 +162,6 @@ const wireAutomationDetail = {
   memoryTables: [],
   defaultPluginIds: [],
   activitySourcePluginIds: {},
-  deliveryTargets: [],
   templateUpdate: null,
   nextPlannedWorkstream: null,
   recentRuns: [],

@@ -806,7 +806,6 @@ describe("connector tools selected for harness runs", () => {
       }],
       requiredCapabilities: [],
       expectedOutputs: [],
-      requestedDelivery: [],
       defaultBehavior: {},
       recommendedPlugins: [],
       memoryTables: [],
