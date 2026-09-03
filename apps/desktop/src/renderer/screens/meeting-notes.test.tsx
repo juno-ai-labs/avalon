@@ -52,7 +52,6 @@ const state = vi.hoisted(() => ({
   },
   featureFlags: {
     developerSettings: false,
-    hypersightEnabled: false,
     meetingRecordingEnabled: true,
     suggestedWorkEnabled: false,
     automationWorkspaceTemplatesEnabled: false,
@@ -159,7 +158,6 @@ describe('MeetingNotesScreen', () => {
     state.dictationWarning = undefined;
     state.featureFlags = {
       developerSettings: false,
-      hypersightEnabled: false,
       meetingRecordingEnabled: true,
       suggestedWorkEnabled: false,
       automationWorkspaceTemplatesEnabled: false,
@@ -172,7 +170,6 @@ describe('MeetingNotesScreen', () => {
     const detail = noteDetail();
     state.api.clientFeatureFlags.mockResolvedValue({
       developerSettings: false,
-      hypersightEnabled: false,
       meetingRecordingEnabled: true,
       controlTowerRefreshSeconds: 60,
     });
@@ -212,7 +209,6 @@ describe('MeetingNotesScreen', () => {
     try {
       state.api.clientFeatureFlags.mockResolvedValue({
         developerSettings: false,
-        hypersightEnabled: false,
         meetingRecordingEnabled: true,
         controlTowerRefreshSeconds: 15,
       });
@@ -471,7 +467,6 @@ describe('MeetingNotesScreen', () => {
     try {
       state.api.clientFeatureFlags.mockResolvedValue({
         developerSettings: false,
-        hypersightEnabled: false,
         meetingRecordingEnabled: true,
         controlTowerRefreshSeconds: 15,
       });
@@ -565,7 +560,6 @@ describe('MeetingNotesScreen', () => {
     state.featureFlags.meetingRecordingEnabled = false;
     state.api.clientFeatureFlags.mockResolvedValue({
       developerSettings: false,
-      hypersightEnabled: false,
       meetingRecordingEnabled: false,
       suggestedWorkEnabled: false,
       automationWorkspaceTemplatesEnabled: false,
@@ -599,13 +593,13 @@ describe('MeetingNotesScreen', () => {
   it('keeps one cadence for the whole meeting once it has settled', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
-      const cadence = deferred<{ developerSettings: boolean; hypersightEnabled: boolean; meetingRecordingEnabled: boolean; controlTowerRefreshSeconds: number }>();
+      const cadence = deferred<{ developerSettings: boolean; meetingRecordingEnabled: boolean; controlTowerRefreshSeconds: number }>();
       state.api.clientFeatureFlags.mockReturnValue(cadence.promise);
       state.commit.mockResolvedValue('Talk.');
 
       const view = render(<Tooltip.Provider><MeetingNotesScreen /></Tooltip.Provider>);
       await screen.findByDisplayValue('Meeting notes');
-      await act(async () => cadence.resolve({ developerSettings: false, hypersightEnabled: false, meetingRecordingEnabled: true, controlTowerRefreshSeconds: 15 }));
+      await act(async () => cadence.resolve({ developerSettings: false, meetingRecordingEnabled: true, controlTowerRefreshSeconds: 15 }));
       await waitFor(() => expect(state.start).toHaveBeenCalledOnce());
       state.dictationState = 'listening';
       view.rerender(<Tooltip.Provider><MeetingNotesScreen /></Tooltip.Provider>);
@@ -615,7 +609,6 @@ describe('MeetingNotesScreen', () => {
       // mid-recording moves the transcript with it.
       state.api.clientFeatureFlags.mockResolvedValue({
         developerSettings: false,
-        hypersightEnabled: false,
         meetingRecordingEnabled: true,
         controlTowerRefreshSeconds: 600,
       });
@@ -634,7 +627,6 @@ describe('MeetingNotesScreen', () => {
   it('describes the cadence it was actually served', async () => {
     state.api.clientFeatureFlags.mockResolvedValue({
       developerSettings: false,
-      hypersightEnabled: false,
       meetingRecordingEnabled: true,
       controlTowerRefreshSeconds: 300,
     });

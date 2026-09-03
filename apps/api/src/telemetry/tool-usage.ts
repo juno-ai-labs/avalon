@@ -24,7 +24,7 @@ export interface AgentToolStartedTelemetryInput {
   pluginId: string;
   capability: string;
   mode: 'read' | 'write';
-  runKind: 'workstream' | 'automation' | 'hypersight' | 'subagent' | 'system';
+  runKind: 'workstream' | 'automation' | 'subagent' | 'system';
 }
 
 /**
@@ -115,7 +115,6 @@ function terminalResult(row: ToolTerminalRow):
 
 function terminalRunKind(row: ToolTerminalRow): AgentToolStartedTelemetryInput['runKind'] {
   if (row.parent_tool_call_id) return 'subagent';
-  if (row.origin === 'block_dashboard_block') return 'hypersight';
   if (row.automation_id) return 'automation';
   if (row.origin === 'scheduled_digest') return 'system';
   return 'workstream';

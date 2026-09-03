@@ -123,7 +123,6 @@ export type DesktopTelemetrySemanticEventName =
   | 'surface_viewed'
   | 'automation_builder_started'
   | 'automation_opened'
-  | 'hypersight_opened'
   | 'workstream_resource_action_completed'
   | 'recording_start_completed'
   | 'recording_terminal'

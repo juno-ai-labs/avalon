@@ -115,8 +115,8 @@ describe('InspectorRail details', () => {
     );
     // The class is the whole contract: `.rail-scroll` in `app.css` owns the
     // scrolling, the reserved gutter and the overscroll containment for this
-    // rail and HyperSight's alike, and renaming it here would take all three
-    // away with nothing else noticing.
+    // rail, and renaming it here would remove those behaviors without anything
+    // else noticing.
     expect(container.querySelector('.rail-scroll')).not.toBeNull();
     const handle = screen.getByRole('separator', { name: 'Resize inspector' });
 

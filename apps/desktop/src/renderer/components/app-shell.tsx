@@ -225,8 +225,6 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   const queryClient = useQueryClient();
   const railOpen = useUiStore((state) => state.railOpen);
   const railWidth = useUiStore((state) => state.railWidth);
-  const blockDashboardOpen = useUiStore((state) => state.blockDashboardOpen);
-  const blockDashboardWidth = useUiStore((state) => state.blockDashboardWidth);
   const railLeaving = useUiStore((state) => state.railLeaving);
   const sidebarWidth = useUiStore((state) => state.sidebarWidth);
   // Replacing rather than pushing, so Back cannot return to an automation that
@@ -238,10 +236,8 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     }
   };
 
-  // HyperSight and the inspector rail are the same slot, so the main pane makes
-  // room for whichever one holds it — including a panel that has lost the slot
-  // and is still fading out, which is on screen and has to be laid out for.
-  const slotHolder = blockDashboardOpen ? 'block-dashboard' : railOpen ? 'inspector' : railLeaving;
+  // The main pane keeps room for an inspector that is still fading out.
+  const slotHolder = railOpen ? 'inspector' : railLeaving;
   const showShellRail = slotHolder !== null && !location.pathname.startsWith('/notes/');
   // Nothing here loads the sidebar. Subscribing to the workspace socket is
   // answered with the whole of it — the first page of work streams, the
@@ -418,7 +414,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   // is on screen, so a panel closing on its own dissolves at its own width
   // rather than resizing to a width nothing is about to show.
   const shellStyle = {
-    '--rail-width': `${slotHolder === 'block-dashboard' ? blockDashboardWidth : railWidth}px`,
+    '--rail-width': `${railWidth}px`,
     '--av-cmp-sidebar-width': `${sidebarWidth}px`,
   } as CSSProperties;
 

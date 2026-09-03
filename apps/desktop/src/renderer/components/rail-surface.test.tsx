@@ -13,12 +13,12 @@ describe('useRailCrossFade', () => {
 
   it('holds the panel that lost the sidebar until its fade is over', () => {
     const { result, rerender } = renderHook(({ id }: { id: string | null }) => useRailCrossFade(id), {
-      initialProps: { id: 'block-dashboard' as string | null },
+      initialProps: { id: 'preview' as string | null },
     });
     expect(result.current).toBeNull();
 
     rerender({ id: 'inspector' });
-    expect(result.current).toBe('block-dashboard');
+    expect(result.current).toBe('preview');
 
     act(() => vi.advanceTimersByTime(RAIL_CROSSFADE_MS));
     expect(result.current).toBeNull();
@@ -39,7 +39,7 @@ describe('useRailCrossFade', () => {
     expect(result.current).toBeNull();
   });
 
-  // HyperSight takes the slot a microtask after the inspector lets go of it, so
+  // Preview takes the slot a microtask after the inspector lets go of it, so
   // the hook sees an empty slot in between. The outgoing panel has to survive it
   // or that direction never cross-fades.
   it('carries the outgoing panel through a slot that is briefly empty mid-hand-off', () => {
@@ -48,7 +48,7 @@ describe('useRailCrossFade', () => {
     });
 
     rerender({ id: null });
-    rerender({ id: 'block-dashboard' });
+    rerender({ id: 'preview' });
     expect(result.current).toBe('inspector');
 
     act(() => vi.advanceTimersByTime(RAIL_CROSSFADE_MS));
@@ -77,7 +77,7 @@ describe('useRailCrossFade', () => {
     rerender({ id: null });
     act(() => vi.advanceTimersByTime(RAIL_CROSSFADE_MS - 10));
     rerender({ id: 'inspector' });
-    rerender({ id: 'block-dashboard' });
+    rerender({ id: 'preview' });
     expect(result.current).toBe('inspector');
 
     // The first departure's timer would have fired here.
@@ -129,7 +129,7 @@ describe('useRailCrossFade', () => {
       { initialProps: { id: 'inspector' as string | null, scope: 'workstream-one' } },
     );
 
-    rerender({ id: 'block-dashboard', scope: 'workstream-one' });
+    rerender({ id: 'preview', scope: 'workstream-one' });
     expect(result.current).toBe('inspector');
 
     act(() => vi.advanceTimersByTime(RAIL_CROSSFADE_MS));
@@ -143,11 +143,11 @@ describe('useRailCrossFade', () => {
       initialProps: { id: 'inspector' as string | null },
     });
 
-    rerender({ id: 'block-dashboard' });
+    rerender({ id: 'preview' });
     expect(result.current).toBe('inspector');
 
     rerender({ id: 'inspector' });
-    expect(result.current).toBe('block-dashboard');
+    expect(result.current).toBe('preview');
 
     act(() => vi.advanceTimersByTime(RAIL_CROSSFADE_MS));
     expect(result.current).toBeNull();
@@ -158,12 +158,12 @@ describe('RailSurface', () => {
   function renderSurface(leaving: boolean): void {
     render(
       <RailSurface
-        label="HyperSight"
+        label="Preview"
         leaving={leaving}
         onClose={vi.fn()}
         onResize={vi.fn()}
-        resizeLabel="Resize HyperSight"
-        scrimLabel="Dismiss HyperSight"
+        resizeLabel="Resize Preview"
+        scrimLabel="Dismiss Preview"
         width={360}
       >
         <div>panel</div>
@@ -174,9 +174,9 @@ describe('RailSurface', () => {
   it('gives the sidebar one scrim and one grab handle while it holds the slot', () => {
     renderSurface(false);
 
-    expect(screen.getByRole('complementary', { name: 'HyperSight' })).not.toHaveClass('is-leaving');
-    expect(screen.getByRole('button', { name: 'Dismiss HyperSight' })).toBeInTheDocument();
-    expect(screen.getByRole('separator', { name: 'Resize HyperSight' })).toBeInTheDocument();
+    expect(screen.getByRole('complementary', { name: 'Preview' })).not.toHaveClass('is-leaving');
+    expect(screen.getByRole('button', { name: 'Dismiss Preview' })).toBeInTheDocument();
+    expect(screen.getByRole('separator', { name: 'Resize Preview' })).toBeInTheDocument();
   });
 
   // The panel on its way out is on screen over the one that replaced it, so a
@@ -185,10 +185,10 @@ describe('RailSurface', () => {
   it('leaves the scrim, the handle, and every control to the panel that took over', () => {
     renderSurface(true);
 
-    const surface = screen.getByRole('complementary', { name: 'HyperSight', hidden: true });
+    const surface = screen.getByRole('complementary', { name: 'Preview', hidden: true });
     expect(surface).toHaveClass('is-leaving');
     expect(surface).toHaveAttribute('inert');
-    expect(screen.queryByRole('button', { name: 'Dismiss HyperSight', hidden: true })).not.toBeInTheDocument();
-    expect(screen.queryByRole('separator', { name: 'Resize HyperSight', hidden: true })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Dismiss Preview', hidden: true })).not.toBeInTheDocument();
+    expect(screen.queryByRole('separator', { name: 'Resize Preview', hidden: true })).not.toBeInTheDocument();
   });
 });

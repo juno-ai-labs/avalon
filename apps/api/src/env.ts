@@ -29,15 +29,12 @@ import type { ArtifactHostDO } from "./durable-objects/artifact-host-do";
 import type { SubstreamAgent } from "./durable-objects/substream-agent";
 import type { WorkspaceDO } from "./durable-objects/workspace-do";
 import type { WorkstreamDO } from "./durable-objects/workstream-do";
-import type { BlockDashboardAgent } from "./durable-objects/block-dashboard-agent";
 import type { AutomationAgent } from "./durable-objects/automation-agent";
 import type { DurableObjectMigrationReport } from "@rally/contracts/durable-object-migrations";
 import type { TelemetryOperatorPrincipal } from './telemetry/operator-auth';
 import type { DocumentProcessingRpcBinding } from './services/document-processing-contract';
 import type { TerminalProviderRpcBinding } from './services/terminal/provider-rpc-contract';
 import type { TelemetryDeliveryRpcBinding } from './telemetry/telemetry-delivery-contract';
-
-export const BLOCK_DASHBOARD_MODEL = "x-ai/grok-4.3";
 
 export interface Env {
   DB: D1Database;
@@ -63,7 +60,6 @@ export interface Env {
   FLAGS?: Flagship;
   SUBSTREAM_AGENTS: DurableObjectNamespace<SubstreamAgent>;
   AUTOMATION_AGENTS: DurableObjectNamespace<AutomationAgent>;
-  BLOCK_DASHBOARD_AGENTS: DurableObjectNamespace<BlockDashboardAgent>;
   WORKSTREAM_DOS: DurableObjectNamespace<WorkstreamDO>;
   WORKSPACE_DOS: DurableObjectNamespace<WorkspaceDO>;
   CRASH_SYMBOLICATOR: DurableObjectNamespace<CrashSymbolicatorContainer>;
@@ -342,7 +338,6 @@ const EnvContractSchema = z.object({
   TELEMETRY_DELIVERY: binding<TelemetryDeliveryRpcBinding>().optional(),
   SUBSTREAM_AGENTS: binding<DurableObjectNamespace<SubstreamAgent>>(),
   AUTOMATION_AGENTS: binding<DurableObjectNamespace<AutomationAgent>>(),
-  BLOCK_DASHBOARD_AGENTS: binding<DurableObjectNamespace<BlockDashboardAgent>>(),
   WORKSTREAM_DOS: binding<DurableObjectNamespace<WorkstreamDO>>(),
   WORKSPACE_DOS: binding<DurableObjectNamespace<WorkspaceDO>>(),
   CRASH_SYMBOLICATOR: binding<DurableObjectNamespace<CrashSymbolicatorContainer>>(),

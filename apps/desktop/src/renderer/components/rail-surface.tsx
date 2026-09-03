@@ -14,12 +14,6 @@ export const RAIL_CROSSFADE_MS = 190;
  * out — over the panel that replaced it, or over nothing when the sidebar was
  * dismissed. Opening it has nothing to fade from.
  *
- * A hand-off does not always reach this hook as one change: BlockDashboard taking
- * the slot is a preference write that settles a microtask after the inspector
- * has already let go, so the slot is briefly empty in between. Carrying the
- * outgoing panel through that gap is what makes both directions cross-fade
- * rather than only the one that happens to change hands in a single commit.
- *
  * `scope` names what the panels belong to — the work stream, for the sidebar
  * the work-stream screen owns. A panel does not fade out of a scope it is no
  * longer in: it has nothing to dissolve into there, and holding it on screen
@@ -86,10 +80,8 @@ interface RailSurfaceProps {
 }
 
 /**
- * The right sidebar's frame, shared by HyperSight and the inspector rail. Only
- * one of them holds the slot at a time, so the frame owns everything that is
- * about the slot rather than its contents: the scrim, the grab handle beside
- * it, focus, Escape, and the width the stylesheet animates between panels.
+ * The right sidebar's frame owns everything about the slot rather than its
+ * contents: the scrim, grab handle, focus, Escape, and width animation.
  */
 export function RailSurface({
   label,

@@ -3,15 +3,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { socketTicketProtocols, SOCKET_TICKET_SUBPROTOCOL } from "@rally/contracts/socket-tickets";
 import { ApiError } from "../src/lib/api-error";
 import {
-  BlockDashboardBlockSocketService,
-  issueBlockDashboardBlockSocketTicket,
   issueSocketTicket,
   issueWorkstreamControlSocketTicket,
   issueWorkspaceSocketTicket,
   SocketService,
   socketTicketFromRequest,
   verifySocketTicket,
-  verifyBlockDashboardBlockSocketTicket,
   verifyWorkstreamControlSocketTicket,
   verifyWorkspaceSocketTicket,
   withNegotiatedSubprotocol,
@@ -212,12 +209,6 @@ describe("socket ticket transport", () => {
     await expect(issueWorkspaceSocketTicket(env, connector)).rejects.toMatchObject(refusal);
     await expect(issueWorkstreamControlSocketTicket(env, connector, "00000000-0000-7000-8000-000000000724"))
       .rejects.toMatchObject(refusal);
-    await expect(issueBlockDashboardBlockSocketTicket(
-      env,
-      connector,
-      "00000000-0000-7000-8000-000000000724",
-      "00000000-0000-7000-8000-000000000725",
-    )).rejects.toMatchObject(refusal);
   });
 
   it("routes one workspace-scoped sync and command ticket to WorkspaceDO", async () => {
@@ -313,66 +304,6 @@ describe("socket ticket transport", () => {
       workstreamId,
     });
     await expect(verifyWorkspaceSocketTicket(env, ticket))
-      .rejects.toMatchObject({ code: "invalid_socket_ticket" });
-  });
-
-  it("routes a purpose-scoped block ticket only to its BlockDashboardAgent", async () => {
-    const sessionId = "00000000-0000-7000-8000-000000000731";
-    const userId = asUserId("00000000-0000-7000-8000-000000000732");
-    const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000733");
-    const workstreamId = "00000000-0000-7000-8000-000000000734";
-    const blockId = "00000000-0000-7000-8000-000000000735";
-    const initializeBlock = vi.fn(async () => undefined);
-    const blockFetch = vi.fn(async (request: Request) => {
-      expect(request.headers.get("x-rally-block-dashboard-block-id")).toBe(blockId);
-      expect(request.headers.get("x-rally-session-id")).toBe(sessionId);
-      expect(request.headers.get("sec-websocket-protocol")).toBeNull();
-      return Response.json({ error: "socket_ticket_replayed" }, { status: 401 });
-    });
-    const env = createTestEnv({
-      APP_ENV: "test",
-      AVALON_REGION: "global",
-      ALLOWED_ORIGINS: "app://avalon",
-      SESSION_SIGNING_KEY: "socket-ticket-test-signing-key",
-      BLOCK_DASHBOARD_AGENTS: createCloudflareTestBinding<Env["BLOCK_DASHBOARD_AGENTS"]>({
-        idFromName: () => createTestDurableObjectId("block-dashboard-block-do-id"),
-        get: () => ({ fetch: blockFetch, initializeBlock }),
-      }),
-    });
-    const auth = { sessionId, userId, workspaceId, region: "global", role: "member" } as const;
-    const ticket = await issueBlockDashboardBlockSocketTicket(env, auth, workstreamId, blockId);
-    const request = new Request(
-      `https://api.avalon.test/workstreams/${workstreamId}/block-dashboard/blocks/${blockId}`,
-      {
-        headers: {
-          Origin: "app://avalon",
-          Upgrade: "websocket",
-          "Sec-WebSocket-Protocol": socketTicketProtocols(ticket).join(", "),
-        },
-      },
-    );
-
-    const response = await new BlockDashboardBlockSocketService(env).upgrade(
-      workstreamId,
-      blockId,
-      undefined,
-      request,
-    );
-
-    expect(response.status).toBe(401);
-    expect(initializeBlock).toHaveBeenCalledWith({
-      region: "global",
-      workspaceId,
-      workstreamId,
-      blockId,
-    });
-    expect(blockFetch).toHaveBeenCalledOnce();
-    await expect(verifyBlockDashboardBlockSocketTicket(env, ticket)).resolves.toMatchObject({
-      workspaceId,
-      workstreamId,
-      blockId,
-    });
-    await expect(verifyWorkstreamControlSocketTicket(env, ticket))
       .rejects.toMatchObject({ code: "invalid_socket_ticket" });
   });
 

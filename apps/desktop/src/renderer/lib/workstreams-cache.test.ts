@@ -81,8 +81,6 @@ describe('setCachedWorkstreams', () => {
       'workstream-feed-source',
       'workstream-socket-snapshot-generation',
       'workstream-context',
-      'block-dashboard',
-      'block-dashboard-preference',
       'terminal-workstream',
     ];
     const childPrefixes = [

@@ -12,8 +12,6 @@ import {
   ConnectorOAuthAttemptSchema as WireConnectorOAuthAttemptSchema,
   ConnectorOAuthStartSchema as WireConnectorOAuthStartSchema,
   CursorPageSchema,
-  BlockDashboardPreferenceSchema as WireBlockDashboardPreferenceSchema,
-  BlockDashboardSchema as WireBlockDashboardSchema,
   NoteDetailSchema as WireNoteDetailSchema,
   NoteCursorSchema as WireNoteCursorSchema,
   NoteSummarySchema as WireNoteSummarySchema,
@@ -83,8 +81,6 @@ import type {
   DigestSchedule,
   ElicitationData,
   HarnessStatus,
-  BlockDashboard,
-  BlockDashboardPreference,
   NoteDetail,
   NoteSummary,
   NoteTranscriptSegment,
@@ -1484,33 +1480,6 @@ export class RallyApi {
   }
 
 
-  async getBlockDashboard(id: string, signal?: AbortSignal): Promise<BlockDashboard> {
-    return this.request(`/workstreams/${encodeURIComponent(id)}/block-dashboard`, {
-      schema: WireBlockDashboardSchema,
-      signal,
-    });
-  }
-
-
-  async updateBlockDashboardPreference(id: string, visible: boolean): Promise<BlockDashboardPreference> {
-    return this.request(`/workstreams/${encodeURIComponent(id)}/block-dashboard/preference`, {
-      method: 'PUT',
-      body: { visible },
-      schema: WireBlockDashboardPreferenceSchema,
-    });
-  }
-
-  async updateBlockDashboard(
-    id: string,
-    input: { expectedVersionNumber: number; blocks: Array<{ id: string; prompt: string }> },
-  ): Promise<BlockDashboard> {
-    return this.request(`/workstreams/${encodeURIComponent(id)}/block-dashboard`, {
-      method: 'PUT',
-      body: input,
-      schema: WireBlockDashboardSchema,
-    });
-  }
-
   async getWorkstreamContext(
     id: string,
     automationSubscriptionId?: string,
@@ -1866,13 +1835,6 @@ export class RallyApi {
       schema: socketTicketSchema,
       ...(requestId ? { requestId } : {}),
     });
-  }
-
-  getBlockDashboardBlockSocketTicket(id: string, blockId: string): Promise<SocketTicket> {
-    return this.request(
-      `/workstreams/${encodeURIComponent(id)}/block-dashboard/blocks/${encodeURIComponent(blockId)}/socket`,
-      { schema: socketTicketSchema },
-    );
   }
 
   getTranscriptionSocketTicket(): Promise<SocketTicket> {

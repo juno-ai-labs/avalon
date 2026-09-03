@@ -7,7 +7,7 @@ import {
   type AgentModelRole,
   type AgentModelRouting,
 } from "@rally/contracts";
-import { BLOCK_DASHBOARD_MODEL, type Env } from "../env";
+import type { Env } from "../env";
 import { logStructuredEvent } from "../observability/logger";
 import {
   loadFlagTargetingAttributes,
@@ -78,13 +78,6 @@ export function defaultAgentModelRouting(env: Env, role: AgentModelRole): AgentM
     case "workstream_description":
     case "automation_result_disposition":
       return { model: modelId(env.OPENROUTER_STRUCTURED_MODEL), fallbackModels };
-    case "block_dashboard":
-      // No fallbacks by default: a block that routes onward mid-configuration
-      // can change voice between refreshes, so routing is something an operator
-      // turns on for HyperSight deliberately rather than the state it starts in.
-      // This is the checked-in default, not an invariant — a `fallbackModels`
-      // served by `agent-model-block-dashboard` is honoured like any other role's.
-      return { model: BLOCK_DASHBOARD_MODEL, fallbackModels: [] };
     default: {
       const exhaustive: never = role;
       throw new Error(`Unhandled agent model role: ${String(exhaustive)}`);
@@ -316,7 +309,7 @@ export function automationModelOverride(
 /**
  * The route plan for a pinned model. An override carries no fallbacks: it is a
  * request to observe one specific model, and routing onward would answer a
- * question nobody asked — the same reason HyperSight pins rather than routes.
+ * question nobody asked.
  */
 export function pinnedModelRouting(model: string): AgentModelRouting {
   return { model, fallbackModels: [] };

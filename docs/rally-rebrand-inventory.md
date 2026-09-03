@@ -151,7 +151,6 @@ renaming the emitter does not move a dashboard.
 | OpenTelemetry span attributes (68 distinct) | `rally.*` | Saved trace queries filtering `avalon.*` stop matching. Traces are short-lived, so this ages out on its own. |
 | PostHog app namespace | `app.rally.desktop` | Partitions existing desktop events from new ones under `$app_namespace`. |
 | Plugin ids (16 distinct) | `rally:*`, `rally_*`, `rally.skills` | `plugin_activation_hints.plugin_id` in the work-stream Durable Object stores canonical ids, so every existing work stream loses its preload hints once — a soft optimization that re-populates on the next activation. `run_plugin_activations` also stores them; a lookup miss re-authorizes rather than throwing. The `AVALON_*_PLUGIN_ID` env var *names* are section 4 and unchanged. |
-| Capability names | `rally.block-dashboard.submit` and siblings | None — model-facing, minted per run. |
 | Socket ticket sentinel | `rally.ticket.v1` | None. `avalon.ticket.v1` is accepted inbound and echoed back; see below. |
 | Public-site anonymous epoch key | `rally.site.anonymous-epoch.v1` | A returning visitor gets a fresh anonymous epoch once. |
 
@@ -427,6 +426,17 @@ with this repository. The two halves of that line have different owners.
   which is not the same as the order the work should happen in.
 
 ## Changelog
+
+### 2026-09-03 — HyperSight is removed rather than renamed again
+
+**What changed:** The inventory no longer treats HyperSight or Block Dashboard
+as a live Rally surface.
+
+**Why:** The product feature, runtime, and operator controls were deleted, so a
+remaining rename task would misstate the work left to do.
+
+**Consequences:** Historical entries retain the names that were accurate when
+those changes shipped.
 
 ### 2026-08-25 — The person-notification emails and both Resend senders
 

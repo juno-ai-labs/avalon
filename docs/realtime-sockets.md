@@ -1,23 +1,17 @@
 # Realtime socket admission
 
 Every Rally WebSocket — workspace synchronization/commands, work-stream
-metadata, the direct substream feed, derived HyperSight block output, the
-automation draft feed, and the
+metadata, the direct substream feed, the automation draft feed, and the
 dictation bridge to Azure — is
 opened with a short-lived ticket rather than
 the session credential. This document owns how a purpose-specific ticket is
 issued, how it reaches the Worker, and how a handshake is accepted or refused.
 What happens *on* an open socket belongs elsewhere: workspace directory serving,
 invalidation, and command routing are `WorkspaceDO`'s, aggregate metadata is `WorkstreamDO`'s,
-feed fan-out/replay/presence is `SubstreamAgent`'s, derived block streaming is
-`BlockDashboardAgent`'s, the automation draft snapshot and compiler stream are
+feed fan-out/replay/presence is `SubstreamAgent`'s, the automation draft snapshot and compiler stream are
 `AutomationAgent`'s ([`automation-lifecycle.md`](automation-lifecycle.md)), and
 the dictation bridge's audio rules are in
 [`architecture.md`](architecture.md).
-
-The feature is still labelled **HyperSight** in the application. Its internal
-socket owner, ticket audience, event types, query keys, and URL path use
-`BlockDashboard` / `block-dashboard`; there is no legacy `/hypersight` route.
 
 The promise it makes is narrow and worth stating plainly: a socket is opened
 only by someone who just proved, over an authenticated HTTP request, that they
@@ -31,13 +25,12 @@ connection lifecycle around that admission protocol.
 | Path | Responsibility |
 | --- | --- |
 | `packages/contracts/src/socket-tickets.ts` | The transport: the subprotocol sentinel, the deprecated query parameter, and the shared helpers both sides use. The single source of the wire format. |
-| `apps/api/src/services/socket-service.ts` | Issues and verifies the separate workspace, work-stream-control, substream-feed, HyperSight-block, and automation ticket audiences, reads the presented ticket, negotiates the response subprotocol, and admits each upgrade. |
+| `apps/api/src/services/socket-service.ts` | Issues and verifies the separate workspace, work-stream-control, substream-feed, and automation ticket audiences, reads the presented ticket, negotiates the response subprotocol, and admits each upgrade. |
 | `apps/api/src/services/workstream-service.ts` | Gates a feed ticket on current visibility/authority and starts the recorded main SubstreamAgent's ticket-scoped admission and snapshot preparation as measurable, failure-isolated request background work. |
 | `apps/api/src/services/realtime-transcription-service.ts` | The dictation ticket, its WorkspaceDO replay receipt and session lease, and the Azure upgrade. |
-| `apps/api/src/routes/socket.ts` | Workspace, work-stream-control, substream-feed, HyperSight-block, automation, and dictation upgrade routes. The query ticket is optional here; the service decides what was presented. |
+| `apps/api/src/routes/socket.ts` | Workspace, work-stream-control, substream-feed, automation, and dictation upgrade routes. The query ticket is optional here; the service decides what was presented. |
 | `apps/api/src/durable-objects/workspace-do.ts` | Accepts the persistent workspace synchronization/command socket, serves authoritative cursor-paged work-stream rows, persists a bounded replay log, and consumes its purpose-specific ticket in SQL. |
 | `apps/api/src/durable-objects/workstream-do.ts` | Accepts the per-work-stream aggregate metadata socket and returns complete viewer-specific snapshots. |
-| `apps/api/src/durable-objects/block-dashboard-agent.ts` | Accepts one hibernating socket per visible configured block and returns its durable run plus active-output checkpoint. |
 | `apps/api/src/durable-objects/substream-agent.ts` | Accepts the direct read/stream/download feed and all substream-local commands (message, elicitation answer, pending-input reorder, stop, retry), consumes its distinct ticket in SQL, and admits writes from the identity serialized when the socket was authorized. |
 | `apps/api/src/durable-objects/automation-agent.ts` | Accepts one hibernating socket per automation draft, consumes its ticket in `automation_socket_ticket_receipts`, re-reads the session and membership from D1, and admits only the automation's author. |
 | `apps/desktop/src/renderer/lib/use-automation-agent-socket.ts` | The automation draft feed: ticket request, snapshot fence against the compiler stream, folded narration, heartbeat, and reconnect backoff. |
@@ -47,7 +40,6 @@ connection lifecycle around that admission protocol.
 | `apps/desktop/src/renderer/lib/use-workstreams-query.ts` | Pages the work-stream directory beyond the first, which the connect payload delivers; it does not fetch page one and widens the list only when Debug enabled asks for system rows. |
 | `apps/desktop/src/renderer/lib/use-workstream-control-socket.ts` | Applies complete waterlined WorkstreamDO metadata snapshots to detail and sidebar caches. |
 | `apps/desktop/src/renderer/lib/workstream-state-store.ts` | Shared common/viewer and WorkspaceDO-directory waterline ledgers used by both parent sockets; independently rejects stale state fields and older pin/page fields. |
-| `apps/desktop/src/renderer/lib/use-block-dashboard-sockets.ts` | Opens block sockets only while HyperSight is visible, applies full stream checkpoints, rejects stale revisions, and reconnects without duplicate text. |
 | `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Keeps a pooled, substream-addressed SubstreamAgent feed, resends idempotent child commands after reconnect until their private operation receipts arrive, explicitly disables legacy feed-derived presence, and invokes the separate WorkstreamDO control lifecycle. |
 | `packages/contracts/src/workstream-transcript.ts` | Ordered turn/block, snapshot-fenced range, gap coverage, and nested UTC activity contracts used by the SubstreamAgent feed. |
 | `apps/desktop/src/renderer/lib/workstream-socket-pool.tsx` | Owns the work-stream sockets above the route, gives each mounted owner one opaque lease ID shared by its control/feed starts, warms one presence-free control/feed pair after a one-second sidebar hover, and retains recently viewed pairs without remounting their connection hooks. |
@@ -65,8 +57,7 @@ admission is split in two.
 1. **Issue.** The desktop calls
    `GET /workspace/socket` for workspace sync/commands,
    `GET /workstreams/:id/control-socket` for aggregate metadata,
-   `GET /workstreams/:id/substreams/:substreamId/socket` for the feed, or
-   `GET /workstreams/:id/block-dashboard/blocks/:blockId/socket` for a block agent,
+   `GET /workstreams/:id/substreams/:substreamId/socket` for the feed,
    `GET /automations/:id/agent/socket` for an automation draft, or
    `GET /realtime/transcription/socket`. The Worker checks the caller may open
    that exact purpose and mints a 60-second HS256 JWT binding user, workspace,
@@ -116,10 +107,6 @@ admission is split in two.
    sweep the connected set — immediately for a retracting topic, otherwise once
    per 30 seconds — closing the sockets that no longer pass. Neither object
    receives the signed bearer ticket.
-   A HyperSight upgrade reaches the exact block agent after the edge verifies
-   D1 membership and WorkstreamDO authorizes the block/viewer pair. The block
-   consumes its own ticket receipt and persists only the bounded authorization
-   timestamp in the hibernation attachment.
    An automation upgrade reaches the exact `AutomationAgent`, which consumes the
    ticket id in its own `automation_socket_ticket_receipts`, re-reads the
    session and active membership from D1 rather than trusting the ticket, and
@@ -149,8 +136,8 @@ than silently reading a new fence. Active response/plugin/tool/thinking and
 compaction intervals carry their original UTC start plus the snapshot UTC and
 elapsed baseline; the client advances clocks locally.
 
-All five product objects — WorkspaceDO, WorkstreamDO, SubstreamAgent,
-BlockDashboardAgent, and AutomationAgent — follow Cloudflare's [WebSocket Hibernation
+All four product objects — WorkspaceDO, WorkstreamDO, SubstreamAgent, and
+AutomationAgent — follow Cloudflare's [WebSocket Hibernation
 server pattern](https://developers.cloudflare.com/durable-objects/examples/websocket-hibernation-server/):
 
 - The edge Worker validates the method, route, `Upgrade`, origin, ticket, and
@@ -202,8 +189,7 @@ Semicolon-delimited directives retain their order: a failed pre-open attempt
 advances to the next resolved proxy, and `DIRECT` is available only when policy
 returned it. Node and the two object endpoints use one shared 1 MB maximum
 application-frame size instead of `ws`'s 100 MB default.
-While the HyperSight panel is visible it additionally maintains one direct socket per
-configured block. Switching away keeps the exact metadata/feed socket pair
+Switching away keeps the exact metadata/feed socket pair
 mounted for at least five minutes, so returning to a recently viewed work stream
 does not spend another ticket request, handshake, subscribe, or snapshot. The
 five-minute clock restarts each time the work stream leaves the foreground;
@@ -280,7 +266,7 @@ complete topic catalog is:
 | `activity` | Connector activity ingestion that can change opportunity generation or activity-derived UI. |
 | `work_opportunities` | Suggested work/actions, audience, version, accepted/dismissed state, and resulting work-stream directory changes. |
 | `workstream_directory` | Invalidates WorkspaceDO cursor-page membership/order and pin changes. Normal common/viewer state transitions instead push the current waterlined row directly. D1 is never a list fallback. |
-| `viewer_preferences` | Telemetry, HyperSight, and other current-user workspace preference surfaces. |
+| `viewer_preferences` | Telemetry and other current-user workspace preference surfaces. |
 | `feature_flags` | Effective client feature gates when a workspace-scoped producer explicitly publishes a change. |
 
 Electron sends `list_workstreams` with a stable request ID, bounded limit,
@@ -409,34 +395,6 @@ path therefore updates an open header immediately, while the workspace path
 updates an inactive row, sidebar group, unread badge, or You Are Mentioned view.
 No interval polling participates in convergence.
 
-The WorkstreamDO socket carries shared HyperSight configuration and the current
-viewer's HyperSight preference. Each configured block has a direct
-`BlockDashboardAgent` socket for queued/running/terminal state, token output,
-and reconnect snapshots. This is a block-result channel, not a conversation
-feed: it accepts no user messages and exposes no source transcript.
-
-The block agent commits the same `ActiveStreamCheckpoint` shape used by
-`SubstreamAgent` before it sends a frame. Its initial snapshot always includes
-the checkpoint field. That field is a complete text, turn/epoch, stream
-sequence, and checkpoint revision only for the matching committed in-flight
-run; it is `null` for queued/terminal runs or when no checkpoint has committed,
-and the run state/result is then authoritative.
-Live frames carry complete checkpoints rather than token-sized rows. Electron
-replaces visible text from a newer checkpoint and rejects an older revision;
-it never concatenates a reconnect snapshot to cached text. The shared harness
-batcher limits publication to the 100 ms/2,048-character boundary (at most the
-10 fps tier), so 100 tokens/second does not mean 100 socket frames or SQL rows
-per second.
-
-Authorization is not on that high-frequency path at all. A block socket is
-authorized when it connects and holds until something closes it; the agent does
-not re-ask on a timer. WorkstreamDO still commands an immediate block-socket
-sweep when a block is removed from the dashboard, which is its own fact rather
-than a D1 one. Losing access is carried instead by the
-[access-revocation queue](access-revocation.md), which reaches every object
-holding one of that person's sockets. Every checkpoint broadcast therefore stays
-local to the execution owner.
-
 Those retained metadata/feed sockets are deliberately not presence. Electron
 main reports whether the Rally application has any focused window; each
 renderer combines that with its own document/window focus and active route,
@@ -544,11 +502,10 @@ payload-free `blocksOmitted` envelope rendered as a placeholder.
 
 The legacy workspace, work-stream, substream, and dictation issuers still return
 a URL containing `?ticket=` because a desktop build released before the
-subprotocol scheme reads exactly that field. The HyperSight issuer is new and
-returns only a clean URL. The shared upgrade service still accepts the query on
+subprotocol scheme reads exactly that field. The shared upgrade service still accepts the query on
 legacy-compatible routes; the header wins when both are present. The current
 renderer strips any legacy query at the point it parses a ticket, so no current
-client sends one and no block-ticket bearer is ever issued in a URL.
+client sends one.
 
 ## Invariants
 
@@ -569,11 +526,11 @@ client sends one and no block-ticket bearer is ever issued in a URL.
   deliberate 401, 403, or 409 into an unhandled 500.
 - **No Durable Object receives the signed bearer ticket.** It is verified
   at the edge and stripped from the subrequest. The feed child consumes the JTI
-  in `durable_inbox_receipts`; WorkspaceDO, WorkstreamDO,
-  BlockDashboardAgent, and AutomationAgent consume theirs in their own SQL receipt tables. Workspace membership remains in D1 while
+  in `durable_inbox_receipts`; WorkspaceDO, WorkstreamDO, and AutomationAgent
+  consume theirs in their own SQL receipt tables. Workspace membership remains in D1 while
   work-stream participation/revocation is projected locally.
 - **Ticket audiences are not interchangeable.** Workspace, aggregate metadata,
-  feed, block-agent, and automation tickets cannot open one another's sockets. Otherwise a narrow read
+  feed, and automation tickets cannot open one another's sockets. Otherwise a narrow read
   credential could become a workspace write credential.
 - **Origin is checked before the ticket is read.** An exact match against
   `ALLOWED_ORIGINS`, so a lookalike host cannot spend a ticket.
@@ -687,12 +644,11 @@ their client message IDs make reconnect resend idempotent.
 | `packages/contracts/src/socket-tickets.test.ts` | `pnpm --filter @rally/contracts test` | The wire format: offers, parsing, refusal of non-tickets, URL stripping. |
 | `apps/api/test/socket-ticket-transport.test.ts` | `pnpm --filter @rally/api test` | Precedence and the negotiation decision, on Node. |
 | `apps/api/test-workers/socket-subprotocol-runtime.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts` | The runtime constraint, on real workerd. |
-| `apps/api/test-workers/durable-object-runtime.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts` | Hibernating WorkspaceDO, WorkstreamDO, SubstreamAgent, and BlockDashboardAgent attachments/snapshots; authoritative workspace directory application/page/resource queries; eviction; native-RPC envelopes; workspace protocol/session/access close-code separation and payload-free diagnostics; truthful bounded transcript ranges; indivisible-turn payload-free envelopes; revocation; compaction recovery; block checkpoint recovery/revocation; queued-run coalescing; and ticket replay on real workerd. |
+| `apps/api/test-workers/durable-object-runtime.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts` | Hibernating WorkspaceDO, WorkstreamDO, and SubstreamAgent attachments/snapshots; authoritative workspace directory application/page/resource queries; eviction; native-RPC envelopes; workspace protocol/session/access close-code separation and payload-free diagnostics; truthful bounded transcript ranges; indivisible-turn payload-free envelopes; revocation; compaction recovery; queued-run coalescing; and ticket replay on real workerd. |
 | `apps/api/test-workers/message-to-output-pipeline.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts` | Fresh message admission and its private receipt on the authenticated SubstreamAgent socket, stable turn identity after hibernation/resend, and the message-to-provider pipeline on real workerd. |
 | `apps/desktop/src/renderer/lib/workspace-socket.test.tsx`, `use-workstreams-query.test.tsx`, `workstream-state-store.test.ts` | `pnpm --filter @rally/desktop test` | One persistent workspace connection, truthful terminal errors for access/session/protocol closes, correlated directory pages/pagination, immediate offline page rejection, waterline resume, stale/duplicate rejection across both sockets, independent common/viewer ordering, and idempotent command resend. |
 | `apps/desktop/src/renderer/lib/use-workstream-control-socket.test.tsx` | `pnpm --filter @rally/desktop test` | Complete aggregate snapshots, stale waterline rejection, nullable-field clearing, revocation, and reconnect. |
 | `apps/desktop/src/main/realtime-socket-broker.test.ts`, `realtime-socket-ipc.test.ts`, `apps/desktop/src/common/realtime-socket-validation.test.ts` | `pnpm --filter @rally/desktop test` | Ordered PAC fallback, shared frame ceiling, normal-close removal, renderer-owner isolation, shared IPC channels, main-window authorization, and strict main-to-preload events. |
-| `apps/desktop/src/renderer/lib/use-block-dashboard-sockets.test.tsx` | `pnpm --filter @rally/desktop test` | Full-checkpoint replacement without duplicated text, stale revision rejection, ticket and short-lived-socket reconnect backoff, permanent stop on `1008`, offline/online recovery, removed-block closure, and ping/pong timeout. |
 | `apps/desktop/src/renderer/lib/workstream-socket-pool.test.tsx`, `use-workstream-socket.test.tsx`, `apps/desktop/src/renderer/screens/workstream.test.tsx` | `pnpm --filter @rally/desktop test` | Initial admission for the pooled WorkstreamDO/SubstreamAgent pair, exact-pair reuse for five minutes after switching streams, background/recent overlap, expiry and backward-clock recovery, in-place route reconciliation, direct SubstreamAgent command/feed reconnect, private message receipts, streaming, explicit compaction lifecycle/reconciliation, range merging, oversized-turn placeholder rendering, and scroll thresholds/anchor preservation. |
 | `apps/desktop/src/renderer/lib/use-automation-agent-socket.test.tsx` | `pnpm --filter @rally/desktop test` | The automation draft feed: closing a socket serving another automation and applying nothing it sent, clearing state the moment the subject changes, the agent's own sequence fencing snapshots against the compiler stream, one read per burst of durable events, ping/pong timeout, reconnect backoff, and timer cleanup on unmount. |
 | `scripts/smoke-local.mjs` | `pnpm smoke:local` | A real handshake end to end, both transports, and the replay status. |
@@ -726,6 +682,17 @@ the provider's redirect and cannot move; [`security.md`](security.md) records
 what that leaves exposed.
 
 ## Changelog
+
+### 2026-09-03 — HyperSight leaves the realtime protocol
+
+**What changed:** Dashboard socket tickets, audiences, events, room routes,
+service admission, renderer hooks, and reconnect state were removed.
+
+**Why:** A dormant socket protocol is still an externally reachable contract
+and would keep deleted Durable Object authority addressable.
+
+**Consequences:** Workspace, work-stream control, and substream sockets are the
+complete realtime topology.
 
 ### 2026-09-03 — A durable command is acknowledged independently of its socket
 

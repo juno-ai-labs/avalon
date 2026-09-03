@@ -1,11 +1,9 @@
 # Workspace, work-stream, and substream Durable Objects
 
 Rally's regional stateful hierarchy is `WorkspaceDO -> WorkstreamDO ->
-{SubstreamAgent, BlockDashboardAgent}`. There is one `WorkspaceDO` per
-workspace, one non-agent `WorkstreamDO` per work stream, one `SubstreamAgent`
-per independently addressable model context, and one `BlockDashboardAgent`
-per stable configured HyperSight block. The main conversation is external
-substream `0`.
+SubstreamAgent`. There is one `WorkspaceDO` per workspace, one non-agent
+`WorkstreamDO` per work stream, and one `SubstreamAgent` per independently
+addressable model context. The main conversation is external substream `0`.
 
 AutomationAgent is a sibling product authority rather than another node in this
 work-stream hierarchy. It installs the same
@@ -13,14 +11,8 @@ work-stream hierarchy. It installs the same
 conversation, and provisions private SubstreamAgent-backed work streams for
 accepted runs. See [`automation-lifecycle.md`](automation-lifecycle.md).
 
-`BlockDashboard` is the internal architecture and protocol name for the
-user-facing **HyperSight** feature. Durable Object classes, bindings, object
-names, SQL tables, RPC contracts, socket audiences, and `/block-dashboard`
-routes use the internal name; rendered labels, accessibility copy, and model-
-visible product copy continue to say HyperSight.
-
-All four Durable Object classes in this subsystem (`WorkspaceDO`,
-`WorkstreamDO`, `SubstreamAgent`, and `BlockDashboardAgent`) use SQLite-backed
+All three Durable Object classes in this subsystem (`WorkspaceDO`,
+`WorkstreamDO`, and `SubstreamAgent`) use SQLite-backed
 namespaces and explicit SQL only.
 Durable Object key/value persistence is forbidden by lint. `WorkspaceDO` is the
 authoritative cross-work-stream directory and inverted-index owner, first-party
@@ -46,13 +38,10 @@ serve workspace product state or transcripts after cutover.
 | `apps/api/src/services/sidebar-reads.ts` | The one statement and row mapping per sidebar list, used by WorkspaceDO's batch read and by the REST services that route back into it. |
 | `apps/api/src/workflows/work-opportunity.ts` | Retryable admission and ranking compute using fenced WorkspaceDO RPC inputs and settlements. |
 | `apps/api/src/durable-objects/workspace-directory-protocol.ts` | Runtime-validated typed RPC contracts for cross-work-stream lists, visibility, scheduling, resource lookup, routing, feedback, and child effect application. |
-| `apps/api/src/durable-objects/workstream-do.ts` | Non-agent aggregation of child directory/user effects, HyperSight configuration and refresh fan-out, complete metadata WebSocket snapshots, and the regional delivery outbox. |
+| `apps/api/src/durable-objects/workstream-do.ts` | Non-agent aggregation of child directory/user effects, complete metadata WebSocket snapshots, and the regional delivery outbox. |
 | `apps/api/src/durable-objects/substream-agent.ts` | Authoritative substream SQL, direct Bind loop, hibernating feed and child-command socket, streaming checkpoints, timers, pending-input delivery, and child-to-parent effect RPC. |
 | `apps/api/src/durable-objects/substream-loop-storage.ts` | Singleton loop lifecycle, execution-epoch and lease fencing, prepared-input admission/delivery state, subordinate execution receipts, and exact assistant-turn sequence reservations. |
-| `apps/api/src/durable-objects/block-dashboard-agent.ts` | One durable Bind execution owner per stable HyperSight block, including dispatch recovery, keep-alive, fenced source-runtime access, resumable token checkpoints, hibernating block sockets, and result settlement. |
-| `apps/api/src/durable-objects/durable-agent-runtime.ts` | Shared reference-counted keep-alive and single-flight drain primitives used by both agent Durable Objects. |
-| `apps/api/src/durable-objects/agent-run-dispatch-queue.ts` | The HyperSight block agent's leased dispatch claim and row-derived wake-up calculation. Substream execution is owned by `substream_loops`, not this queue. |
-| `apps/api/src/durable-objects/block-dashboard-protocol.ts` | Runtime-validated WorkstreamDO control, block dispatch, result, and maintenance-import contracts. |
+| `apps/api/src/durable-objects/durable-agent-runtime.ts` | Reference-counted keep-alive and single-flight drain primitives used by agent Durable Objects. |
 | `apps/api/src/durable-objects/rpc-result.ts` | Shared typed native-RPC status/body envelope used where former internal HTTP handlers must preserve status semantics without `stub.fetch()`. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | Normalized `SubstreamAgent` schema and append-only schema versions. |
 | `apps/api/src/durable-objects/workstream-transcript-storage.ts`, `workstream-transcript-protocol.ts` | Canonical transcript facts, participant and exact Bind-loop orderings, snapshot-fenced ranges, activity intervals, compaction replacement, and the typed object port. |
@@ -66,7 +55,7 @@ serve workspace product state or transcripts after cutover.
 | `apps/api/src/durable-objects/migration-reporting.ts` | `withMigrationReport`, which wraps every constructor's migration call and reports the outcome to `avalon-migration-tracker`. See [`durable-object-migration-tracking.md`](durable-object-migration-tracking.md). |
 | `apps/api/src/lib/durable-object-namespace.ts` | The only product-object stub resolver; applies jurisdiction, persisted workspace affinity, explicit singleton fallback, and runtime jurisdiction validation. |
 | `apps/api/src/lib/durable-object-self.ts` | Where an object recognizes *itself* — by the id a name resolves to, against the id it has held since its constructor — so a shared helper addressing "the object that owns this work stream" reaches the caller directly instead of leaving it over RPC and coming back. Every Durable Object class registers here in its constructor. |
-| `apps/api/src/runtime/local-authorities.ts` | The one boundary where an object declares what it owns about a work stream — its messages, resources, harness runs, receipts, scheduling, blocks, identity rows, and Terminal — installed on the environment a run is handed, so no port below has to discover whether its authority is local. Holds the ownership rule the endpoints enforce. |
+| `apps/api/src/runtime/local-authorities.ts` | The one boundary where an object declares what it owns about a work stream — its messages, resources, harness runs, receipts, scheduling, identity rows, and Terminal — installed on the environment a run is handed, so no port below has to discover whether its authority is local. Holds the ownership rule the endpoints enforce. |
 | `apps/api/src/lib/uuid-v7.ts` | RFC 9562 UUIDv7 generation for cross-socket/Queue event identities; ordering correctness remains in authority-local waterlines. |
 | `apps/api/src/services/workstream-object-client.ts` | Typed Worker-to-`SubstreamAgent` product RPCs. |
 | `apps/api/src/services/workstream-regional-effect-service.ts` | Queue consumer handoff into WorkspaceDO for directory/user/feedback/activity/notification effects. |
@@ -75,8 +64,7 @@ serve workspace product state or transcripts after cutover.
 | `scripts/eslint-rules/durable-object-region-routing.mjs` | Rejects direct/aliased namespace construction and use of the low-level region-only resolver. |
 | `scripts/eslint-rules/durable-object-native-rpc.mjs` | Rejects internal Durable Object `fetch()` calls; HTTP `fetch()` remains for WebSocket upgrades and genuine HTTP flows. |
 | `scripts/eslint-rules/durable-object-sync-transaction.mjs` | Rejects explicit or type-resolvable Promise-returning callbacks passed to `transactionSync`, `commitRuntimeMutation`, or `commitWithRegionalEffects`. |
-| `packages/db/migrations/0043_hypersight.sql` | Immutable deployed HyperSight baseline; its complete filename is the migration identity and must not change. |
-| `packages/db/migrations/0078_rename_hypersight_to_block_dashboard.sql` | Forward-only rename from the deployed `hypersight_*` D1 vocabulary to internal `block_dashboard_*` identifiers. |
+| `packages/db/migrations/0043_hypersight.sql`, `0078_rename_hypersight_to_block_dashboard.sql` | Immutable historical migrations retained byte-for-byte after feature removal. They are migration ledger, not live product authority. |
 | `packages/db/migrations/0079_workstream_do_authority_cutover.sql` | Maintenance control, routes, import receipts, identity anchors, and permanent legacy-product/pin writer fences. |
 | `packages/db/migrations/0080_workstream_do_regional_effects.sql` | Legacy causally fenced notification-intent shells; the activity/mention effect replay receipt is object-local (`workspace_workstream_effect_receipts`), never a D1 row. |
 | `packages/db/migrations/0081_workstream_do_full_serving.sql` | Serving-contract attestation and idempotent workspace-driven work-stream creation receipts; it intentionally creates no directory projection tables. |
@@ -144,8 +132,7 @@ Participant turns, activity changes, and pending-input admission/removal also
 advance the room cursor and insert a reference into the object's existing
 durable outbox in that same transaction. Delivery hydrates the canonical row;
 it does not persist a second transcript payload. The outbox row is removed only
-after the frame has been offered to the room and, for a turn change, the
-HyperSight refresh intent is durable. A crash in any later window therefore
+after the frame has been offered to the room. A crash in any later window therefore
 replays the same room sequence, while a lower pending canonical sequence holds
 back ephemeral stream/presence frames. Reconnect snapshots remain the recovery
 authority and client cursors make a repeated sequence idempotent.
@@ -195,8 +182,6 @@ WorkspaceDO       <region>:<workspace-id>                    in WORKSPACE_DOS
 WorkstreamDO      <region>:<workspace-id>:<workstream-id>    in WORKSTREAM_DOS
 SubstreamAgent 0  <region>:<workspace-id>:<workstream-id>    in SUBSTREAM_AGENTS
 SubstreamAgent N  <region>:<workspace-id>:<workstream-id>:<substream-id>
-HyperSight block  <region>:<workspace-id>:<workstream-id>:block-dashboard:<block-id>
-                                                              in BLOCK_DASHBOARD_AGENTS
 ```
 
 The name is not a residency boundary. Staging and production first restrict the
@@ -219,10 +204,8 @@ scrubs the imported workspace-product rows before activating each route, and
 never serves an unrestricted predecessor as fallback.
 
 `WorkspaceDO` owns workspace synchronization/commands, all workspace-scoped
-product domains, and the authoritative cross-work-stream directory. `WorkstreamDO` owns aggregate metadata plus
-HyperSight configuration, refresh fan-out, and published block state; it never runs a model. `SubstreamAgent` owns its
-transcript and full conversation loop. Each `BlockDashboardAgent` owns the
-durable execution lifecycle for one stable dashboard block. An external
+product domains, and the authoritative cross-work-stream directory. `WorkstreamDO` owns aggregate metadata and never runs a model. `SubstreamAgent` owns its
+transcript and full conversation loop. An external
 substream ID is immutable once recorded in
 `substream_agent_identity`; an object addressed under another ID fails closed.
 
@@ -236,12 +219,9 @@ not permission to create an empty child.
 ### Control plane and data plane
 
 `WorkspaceDO` and `WorkstreamDO` are the low-volume control plane. They admit
-workspace commands, own workspace resources/policies/product scheduling and directory aggregation, coordinate
-HyperSight refreshes, and provide the authoritative list/sidebar path plus the
+workspace commands, own workspace resources/policies/product scheduling and directory aggregation, and provide the authoritative list/sidebar path plus the
 parent outboxes for notification and regional delivery effects. `SubstreamAgent` is the
-fine-grained data-plane shard for one ordered conversation and agent loop;
-`BlockDashboardAgent` is the independent execution shard for one derived
-dashboard block.
+fine-grained data-plane shard for one ordered conversation and agent loop.
 
 The Worker routes feed WebSockets, transcript reads, stream checkpoints, and
 other high-volume substream operations directly to the named child. It never
@@ -272,13 +252,6 @@ owning child. Excessive substreams multiply sockets, SQLite databases, alarms,
 projection traffic, and authorization surfaces without creating a useful
 context boundary.
 
-HyperSight blocks are not substreams. They do not own a user-visible ordered
-message array, accept user messages, or compact independently visible history.
-Their direct desktop socket carries only block state/result and resumable token
-output, never the source conversation feed. They are stable derived views over a fenced source
-transcript. Making one a `SubstreamAgent` would invent a second conversation and
-blur user-authored history with unattended dashboard computation.
-
 ### Desktop synchronization and command paths
 
 The desktop holds four independent hibernating WebSocket roles:
@@ -298,10 +271,6 @@ one substream `0` connection for the same proactive and retained work-stream set
   -> create_message / answer_elicitation / reorder_pending_inputs
   -> stop_harness / retry_harness for that already-admitted substream
   <- private correlated command receipt
-
-one connection per configured HyperSight block while its panel is visible
-  <- BlockDashboardAgent run snapshot / stream checkpoint / result
-  <- direct reconnect replacement; no source conversation or user commands
 
 user create_message after creation
   -> retained SubstreamAgent socket
@@ -369,20 +338,17 @@ about, which the consumer turns into further messages. See
 that, and nothing here is to grow a second one.
 
 Losing access to *one work stream* is a different fact, held in that object's own
-SQL, and the object enforces it itself: `WorkstreamDO.broadcastMetadata` and
-`broadcastBlockDashboardEvent` close a socket whose `canRead` has gone false, and
+SQL, and the object enforces it itself: `WorkstreamDO.broadcastMetadata` closes a socket whose `canRead` has gone false, and
 `SubstreamAgent` does the same when an event narrows visibility. These read no
 D1 and add no round trip. Without them a reader excluded by a scope change keeps
 receiving the live transcript, the title, and the preview until the window
 closes, which can be days.
 
-All four socket roles use short-lived, audience-specific, single-use tickets. The
+All three socket roles use short-lived, audience-specific, single-use tickets. The
 edge Worker verifies the signed ticket and passes only verified headers to the
 object. `WorkspaceDO` consumes tickets in `workspace_socket_ticket_receipts`,
 `WorkstreamDO` uses `workstream_socket_ticket_receipts`, and `SubstreamAgent`
-uses `durable_inbox_receipts`. Each `BlockDashboardAgent` uses
-`block_dashboard_socket_ticket_receipts`. A ticket for one purpose cannot be replayed
-or used for another.
+uses `durable_inbox_receipts`. A ticket for one purpose cannot be replayed or used for another.
 
 New work-stream creation is deliberately not a client-side create-then-send
 sequence. The desktop's idempotent `POST /workstreams` includes the opening
@@ -454,8 +420,7 @@ but its run ID is never the loop ID. Alarms derive recovery from the executing
 singleton, its lease, and linked non-terminal receipts. Callers only admit an
 input or request activation; they do not hand correctness to an abandoned
 in-memory promise. `run_steering` and the SubstreamAgent-local
-`agent_run_dispatches` table are retired. The identically named HyperSight
-block-agent dispatch ledger remains a separate authority.
+`agent_run_dispatches` table are retired.
 
 A terminal `runs` row can remain externally unsettled without remaining
 executable. Its canonical transcript and loop terminalization release the
@@ -472,84 +437,10 @@ executes inside the SubstreamAgent, and a stack whose authority is not
 than routed to retired code. Non-workstream agent loops keep their generic
 Workflow abstraction; the retirement changed only the work-stream-down runtime.
 
-### HyperSight block agents
-
-A refresh starts in main `SubstreamAgent("0")`, which debounces transcript
-changes and freezes a provider-valid model-array interval. Its lower boundary is
-the exact completed compaction checkpoint identity and content hash, or array
-start when no eligible checkpoint exists. Its upper boundary is the highest
-canonical semantic sequence before any pending tool call; a completed tool row
-is a legal upper fence because projection emits its assistant call and tool
-result together. The source sends this complete fence in one `schedule_refresh`
-control RPC to `WorkstreamDO`; it does not enumerate blocks itself. The parent
-owns the configuration version and therefore atomically creates one block run
-and durable dispatch-outbox row per non-empty configured block.
-
-Each outbox row resolves a stable `BlockDashboardAgent` name using the
-workspace's jurisdiction and placement affinity. That object runs the complete
-read-only Bind loop directly. It does not use the Agents SDK or a Cloudflare
-Workflow. `BlockDashboardAgent` talks directly to `SubstreamAgent("0")` through
-typed transcript, run, receipt, and block-dashboard ports. It resolves the
-transcript fence there and stores the harness attempt, scope, inference
-attempts, tool receipts, and terminal runtime record beside the source data they reference. The block DO's
-own SQL dispatch row is the durable execution and recovery boundary, so an
-eviction does not require the parent or source to retain an in-memory promise.
-It permits at most one unsettled running dispatch. When a fresher refresh
-arrives, all older queued dispatches are durably terminalized as
-`block_dashboard_run_superseded`; the current running dispatch is allowed to settle
-and only the newest queued refresh remains eligible to start. This bounds stale
-paid inference without pretending an already-started provider call can be
-atomically cancelled. Freshness is a causal tuple of configuration version,
-source trigger sequence, source creation time, and stable run ID—not child
-arrival order. WorkstreamDO also enforces per-block head-of-line delivery, so a
-retried older outbox row cannot arrive after and displace a newer row.
-
-Executable queued/running rows and terminal-result settlement receipts use
-separate drain lanes. Fresh inference is selected before stale terminal receipt
-retries; a failed result RPC leaves a terminal row with its own retry deadline
-and never reserves the single running slot. This keeps a long settlement
-backlog from starving the newest useful refresh.
-
-Results settle in the opposite direction to `WorkstreamDO`, not to the source
-feed. The parent accepts only increasing, hash-consistent result versions and
-updates its authoritative dashboard run. Live queued/running/terminal state and
-token output travel directly from the execution owner to Electron; the initial
-socket snapshot includes the committed full checkpoint, so reconnect replaces
-rather than concatenates partial text. Thus the exact paths are:
-
-```text
-SubstreamAgent("0") -- trigger + transcript fence --> WorkstreamDO
-WorkstreamDO -- versioned durable fan-out --> BlockDashboardAgent(block-id)
-BlockDashboardAgent -- typed object ports --> SubstreamAgent("0")
-BlockDashboardAgent -- versioned result settlement --> WorkstreamDO
-BlockDashboardAgent -- state + stream checkpoints --> Electron
-```
-
-Block authorization is intentionally outside the checkpoint hot path. Admission
-checks current regional membership plus WorkstreamDO's strict block/viewer
-authorization RPC, then records the decision time in the hibernation attachment.
-A live socket is not revalidated afterwards: it holds until the
-[access-revocation queue](access-revocation.md) closes it, or the block itself is
-removed from the configuration, which WorkstreamDO still sweeps for at the
-configuration-change site. Token/checkpoint broadcasts therefore remain
-object-local; they do not issue a D1 or parent RPC per frame.
-
-This is intentionally not a direct source-to-block dispatch. The source owns
-message order, not block configuration, user preference, block status, or
-workstream-level WebSocket state. Giving it the fan-out would duplicate the
-parent's configuration and outbox or make refresh correctness depend on a hot
-transcript object. The direct source/block relationship is the high-volume
-data path; the parent remains the low-volume control and publication plane.
-Saving a new block configuration follows the same rule: WorkstreamDO commits a
-singleton, coalescing `block_dashboard_source_refresh_outbox` row before contacting
-main `SubstreamAgent("0")`. A crash after configuration commit therefore delays
-the refresh but cannot silently lose it.
-
 ### Keep-alive without the Agents SDK
 
 `DurableAgentKeepAlive.keepAlive()` and `.while()` are a narrow custom port of
-the useful Agents SDK lifecycle behavior shared by `SubstreamAgent` and
-`BlockDashboardAgent`. The first reference ensures an alarm no later than 30
+the useful Agents SDK lifecycle behavior used by `SubstreamAgent`. The first reference ensures an alarm no later than 30
 seconds; nested long operations share it; the final idempotent disposer
 recomputes the alarm only from durable work. The in-isolate drain is
 deduplication only: it never suppresses persisted scheduling, and its result is
@@ -569,15 +460,13 @@ After five minutes without progress, the agent checks durable execution state;
 only when no live lease remains does it abandon the stranded promise and start
 a fenced successor. The late predecessor cannot clear the successor because
 the single-flight promise and persistent execution epoch are identity-fenced.
-For a substream, recovery increments `substream_loops.active_execution_epoch`;
-the block agent retains its separate dispatch lease and reads the source
-WorkstreamDO's runtime lease.
+For a substream, recovery increments `substream_loops.active_execution_epoch`.
 
 The keep-alive alarm lowers the chance of eviction during a long model request,
 external API wait, or computation. It is not correctness state. If a substream
 is evicted anyway, the loop lease/epoch, linked execution receipt, persisted
 Bind head, tool receipts, streaming checkpoint, and reserved final-turn slot
-drive recovery. A HyperSight block uses its own `agent_run_dispatches` ledger.
+drive recovery.
 
 ### Streaming and reconnect
 
@@ -844,11 +733,8 @@ canonical `parts` rows remain available for product history. Substreams are not
 created to hide or archive compacted history.
 
 Completed checkpoints are retained as immutable event identities by projection
-key, run, and compacted-through sequence. Ordinary runs choose the latest
-eligible authorized checkpoint. A derived HyperSight run instead carries one
-exact checkpoint identity plus hash and fails closed if that event is absent or
-changed. It receives exact tool calls and exact tool results from the raw suffix
-after that checkpoint; tools before it survive only through the intentionally
+key, run, and compacted-through sequence. Runs choose the latest eligible
+authorized checkpoint. Tools before it survive only through the intentionally
 lossy summary. Messages committed during compaction remain above the frozen
 waterline and join a later projection only when the run's upper fence admits
 them.
@@ -856,11 +742,8 @@ them.
 ### Timers and Daytona
 
 Agent-created one-shot timers live in `workstream_wakeups` inside the exact
-`SubstreamAgent` that created them. `due_work` contains child-local derived jobs
-such as the debounced HyperSight refresh signal. One source alarm is set to the
-earliest regional effect, refresh signal, run dispatch, agent timer, or
-keep-alive heartbeat. WorkstreamDO separately alarms for block-dispatch outbox
-retry, and each block agent alarms for its own run/recovery heartbeat. A due
+`SubstreamAgent` that created them. One source alarm is set to the earliest
+regional effect, run dispatch, agent timer, or keep-alive heartbeat. A due
 timer admits work into the same agent that created it, preserving its transcript
 and authority.
 
@@ -970,10 +853,6 @@ upgrades because that platform flow must return a 101 `Response`; lint rejects
 | --- | --- | --- | --- |
 | WorkspaceDO/Worker | SubstreamAgent | typed RPC | idempotent child product transaction, pending loop input, or subordinate execution receipt |
 | SubstreamAgent | WorkstreamDO | typed RPC | child `durable_outbox`; parent receipt/aggregate/outbox transaction |
-| SubstreamAgent("0") | WorkstreamDO | typed RPC | child pending refresh plus parent fan-out rows |
-| WorkstreamDO | BlockDashboardAgent | typed RPC | parent dispatch outbox; block dispatch ledger |
-| BlockDashboardAgent | SubstreamAgent("0") | typed RPC | block run ledger plus source-local runtime/tool receipts |
-| BlockDashboardAgent | WorkstreamDO | typed RPC | terminal outcome retained until the parent result receipt accepts it |
 | regional Worker | regional Queue | Cloudflare Queue | a generic member-visible work-stream filter is resolved once in WorkspaceDO, then one bounded update event is published per selected work stream |
 | regional Queue Worker | SubstreamAgent("0") | typed RPC | an idempotent, receipt-backed mark-read or archive transaction against that work stream's authoritative SQLite state; membership is rechecked at delivery |
 | WorkstreamDO | regional Worker | Cloudflare Queue | every directory/user/feedback/activity/mention change is retained in the parent outbox; the message is an opaque UUIDv7 wake-up |
@@ -1067,8 +946,7 @@ receipts, never unbounded constructor work. `durable-utils` is intentionally not
 a dependency.
 
 The runner is *called* from `MigratableDurableObject`, the base every class in
-this hierarchy extends — directly for `BlockDashboardAgent`, and through
-`ScheduledDurableObject` for the other three. A subclass declares its schema
+this hierarchy extends through `ScheduledDurableObject`. A subclass declares its schema
 once, in `migrationPlan()`, and says when it is ready, in `migrationsReady()`;
 in exchange it gets the report to the migration tracker and a public
 `forceMigration` RPC without writing either. Both members are abstract, so a new
@@ -1112,7 +990,7 @@ misrouted product statement now fails because the table or column is absent.
 - **Child-to-parent and parent-to-workspace effects are hash-deduplicated and versioned.** RPC retries, Queue ordering, and delivery uniqueness are not trusted.
 - **Nothing may `await` between a sync waterline's allocation and its send.** The waterline is a monotonic counter and the desktop discards anything at or below the last one it applied, so a publication that allocated first has to send first. `publishSync` allocates in `transactionSync` and sends in the same synchronous run, which is what makes that true; an `await` between the two opens the input gate and lets a later publication overtake, and the desktop then silently drops the parked payload along with every topic it named. This is not hypothetical — it is the bug the revalidation sweep shipped, recorded in the changelog.
 - **No publish path asks D1 anything.** Losing workspace access is carried by the queue in [`access-revocation.md`](access-revocation.md) and by nothing else — no object polls, revalidates on a timer, or re-reads `workspace_members` before sending. Putting a D1 query back on a publish path is where the waterline ordering bug came from, and the transcript feed would pay it per token frame. An object enforcing its *own* SQL — `canRead`, `product.canRead` — is not that: it is synchronous, local, and answers a question no queue message carries.
-- **D1 workspace membership is rechecked for every WorkspaceDO operation and every WorkstreamDO/BlockDashboardAgent admission.** SubstreamAgent's fallback admission does the same. Its prepared fast path rechecks session/membership during ticket transit and spends that result only when the signed identity, role, one-time ticket, expiry, cursor, and authority generation exactly match the room's single request-scoped in-memory preparation; every upgrade still reads current regional maintenance authority. A constant-size revocation fence prevents older in-flight preparation from reappearing. The accepted post-preparation/pre-fan-out revocation window is recorded in [`security.md`](security.md). A direct substream message spends the authority already admitted to that exact socket; it does not re-ask D1. The revocation queue closes that socket when the authority ends, and object-local participation is still checked by the message transaction.
+- **D1 workspace membership is rechecked for every WorkspaceDO operation and every WorkstreamDO admission.** SubstreamAgent's fallback admission does the same. Its prepared fast path rechecks session/membership during ticket transit and spends that result only when the signed identity, role, one-time ticket, expiry, cursor, and authority generation exactly match the room's single request-scoped in-memory preparation; every upgrade still reads current regional maintenance authority. A constant-size revocation fence prevents older in-flight preparation from reappearing. The accepted post-preparation/pre-fan-out revocation window is recorded in [`security.md`](security.md). A direct substream message spends the authority already admitted to that exact socket; it does not re-ask D1. The revocation queue closes that socket when the authority ends, and object-local participation is still checked by the message transaction.
 - **A SubstreamAgent cold wake separates storage readiness from runtime recovery.** Schema, repositories, and durable identity gate socket admission. Lease repair and alarm re-arming begin immediately under `waitUntil` and have their own trace phase, but an accepted read socket does not await them. Any operation that can mutate or run agent work still waits for full initialization. A failed recovery attempt is not cached forever: that caller sees the failure and the next mutation retries the idempotent recovery.
 - **A product request names its auth principal, and each is verified against the fact that owns it.** (An *auth* principal — who is asking — is distinct from the run's `ExecutionPrincipal`, which names whose authority a run spends.) A login session (`principal` absent) is re-verified against its `sessions` row joined to membership, which is what makes a revoked login stop working mid-flight. A connector principal (`principal: "connector"`, connector ingress only) has no session row — its standing authority is the connector link, verified by the Worker on the very message being delivered — so the object re-checks membership alone (`connectorPrincipalAuth`) and refuses staleness as `connector_member_revoked`. Sockets never carry a connector principal; tickets are issued to login sessions only.
 - **Participant removal leaves an active reader.** Any authorized current reader may remove themself or another participant, but the target check, active count, and state change share one object-local transaction. A client-side disabled action is only presentation; without the authority check, two racing removals could leave a private work stream nobody can open.
@@ -1199,9 +1077,8 @@ plus inaccessible-work-stream rejection, typed native-RPC success/conflict envel
 complete initial directory delivery across all four live execution states even
 past 1,250 combined rows, presence-free proactive feed subscriptions,
 snapshot-fenced canonical transcript ranges without room-cursor movement,
-range revocation, compaction recovery, HyperSight checkpoint recovery/revocation, socket
-revocation across all four roles, obsolete queued
-run coalescing, stale-arrival rejection, per-block parent head-of-line delivery,
+range revocation, compaction recovery, socket revocation across all current roles,
+obsolete queued run coalescing and stale-arrival rejection,
 ticket replay, and retired message-page refusal. Direct child message admission,
 its private receipt, and hibernation resend are covered in
 `test-workers/message-to-output-pipeline.test.ts`.
@@ -1267,8 +1144,7 @@ survives reconnect and reaches the composer acknowledgement.
 Desktop tests cover canonical range merging, paged-history retention across a
 snapshot refresh, rejection and retry of an in-flight old-fence range,
 stream-specific completion, reconnect queueing, range errors, scroll
-threshold/anchor preservation, compaction reconciliation, and HyperSight
-full-checkpoint replacement. `scripts/durable-object-native-rpc.test.mjs`
+threshold/anchor preservation and compaction reconciliation. `scripts/durable-object-native-rpc.test.mjs`
 proves the custom lint rule rejects direct, computed, aliased, optional, and
 typed-stub internal fetches without flagging unrelated HTTP clients.
 `scripts/durable-object-sync-transaction.test.mjs` proves explicit async and
@@ -1298,8 +1174,7 @@ WebSockets use hibernation attachments and therefore have no `sockets` table.
 No RPC or Queue send happens inside a local SQL transaction: the source commits
 a fact plus an outbox intent, and the receiver commits its mutation plus a
 hash-checked receipt. Work-stream common/viewer state transitions are never
-coalesced; specialized replaceable HyperSight refresh/dispatch rows document
-their own narrower coalescing rules. An inflight row is retained because it may
+coalesced. An inflight row is retained because it may
 already have committed across the object boundary.
 
 ### `WorkspaceDO`
@@ -1380,12 +1255,6 @@ remain bounded and exclude the supplemented rows.
 | `workstream_state_changes` | Immutable bounded tail of common and `user:<id>` aggregate rows. `waterline` orders one key; UUIDv7 `event_id` is carried over both socket paths for tracing/deduplication. |
 | `durable_outbox` | Hash-checked aggregate or immutable effect waiting for Cloudflare Queue delivery/ack, discriminated by a CHECK-enumerated `effect_kind` column (the drain filters and priority-orders on it; the class is never re-derived from JSON). Every common/viewer state change keeps its own row; the payload itself never enters Queue. Deliberately no dead-letter lane, unlike the child outbox: directory state is latest-wins per key and effects apply idempotently, so a permanently failing receiver is a quarantine-class event rather than a per-message disposal. |
 | `workstream_socket_ticket_receipts` | Consumed metadata-socket ticket IDs, users, expiry, and consumption time. |
-| `block_dashboard_configuration_versions` | Append-only shared block definitions and optimistic configuration version. This is the product authority for which stable block agents exist. |
-| `block_dashboard_block_runs` | Parent-visible queued/running/terminal block state keyed by block run, configuration, block, and transcript trigger. |
-| `block_dashboard_user_preferences` | Viewer-specific dashboard visibility, kept with the WorkstreamDO socket authority that publishes it. |
-| `block_dashboard_dispatch_outbox` | One retryable, affinity-routed dispatch per block run; deletion means the named block agent durably accepted it. |
-| `block_dashboard_block_result_receipts` | Highest accepted result version and hash per block run, preventing a stale retry from rolling back terminal state. |
-| `block_dashboard_source_refresh_outbox` | Singleton coalescing configuration-to-main-substream refresh intent; its retry deadline participates in WorkstreamDO's one native alarm. |
 
 The child tables are inputs to `workstream_metadata` and the aggregate
 projection. No SQL crosses object databases; the child sends an authenticated
@@ -1402,12 +1271,6 @@ same-millisecond IDs in random order, so freshness always compares authority
 generation and the relevant common/viewer waterline, never UUID lexical order
 alone.
 
-HyperSight uses a second parent-owned relationship: the source child sends one
-fenced refresh signal, the parent fans out stable block dispatches, each block
-agent reads and writes its Bind runtime ledger through the source child's typed
-internal SQL port, and versioned results settle back into the parent. No SQL
-join crosses an object boundary.
-
 ### `SubstreamAgent`
 
 | Table group | Meaning and relationships |
@@ -1423,7 +1286,6 @@ join crosses an object boundary.
 | `transcript_compaction_checkpoints`, `description_refresh_state` | Sequence/revision-fenced context derivations. Checkpoints reference immutable model-only facts per principal/run/sequence so a derived run can bind an exact compaction event rather than mutable “latest” state. |
 | `workstream_wakeups`, `due_work` | Agent-created timers and other child-local alarm jobs. |
 | `workstream_resource_links`, `resource_inventory_revision` | Links to workspace resources with a CHECK-constrained relationship (`attachment`, `message_attachment`, `origin`, `generated`, `inbound_email`, or `context`) and the authorization revision every relationship change advances. `generated` derives artifact direction; every other value derives source direction. |
-| `block_dashboard_configuration_versions`, `block_dashboard_block_runs`, `block_dashboard_user_preferences` | Source-runtime compatibility records used by the Bind harness and maintenance import. WorkstreamDO is the post-cutover product authority for configuration, published run state, and viewer preference. |
 | `terminal_workspace`, `terminal_tasks`, `terminal_imported_resources`, `terminal_repository`, `terminal_publication_grants`, `repository_publications` | Durable Rally state for the Daytona-backed Terminal plugin. |
 | `projection_keys`, `durable_outbox`, `durable_inbox_receipts` | Versioned child-to-parent effects and inbound dedupe such as feed tickets. |
 
@@ -1444,26 +1306,6 @@ cutover. Their definitions remain only inside immutable migration v1 history so 
 new object can replay the shipped fingerprint before the later migration drops
 them. They are not a forward read, write, telemetry, or development-fixture
 path.
-
-### `BlockDashboardAgent`
-
-| Table | Key and relationship |
-| --- | --- |
-| `_sql_schema_migrations` | Immutable block-agent schema history. |
-| `block_dashboard_block_identity` | Singleton immutable region/workspace/work-stream/block identity. A mismatched dispatch fails closed. |
-| `agent_run_dispatches` | One durable dispatch per block run with the causal freshness tuple (`configuration_version_number`, `trigger_sequence`, `source_created_at`) as declared columns the run-queue ordering reads, queued/running/terminal state, attempt count, retry deadline, and terminal result waiting to settle into WorkstreamDO. Settled terminal rows age out after 180 days; the freshness-pinned run is never reaped. |
-| `latest_dispatch_freshness` | Singleton causal high-water mark for configuration version, source trigger, source time, and run ID. It makes late-retry rejection constant-time even when the immutable dispatch history is large. |
-| `agent_stream_checkpoint` | Singleton full-output checkpoint for the active dispatch, foreign-keyed to `agent_run_dispatches`; revision, epoch, sequence, text, and update time allow exact reconnect replacement without replaying token deltas. Terminal completion deletes it after the final result is durable. |
-| `block_dashboard_socket_ticket_receipts` | One-time block-socket ticket consumption with expiry cleanup, separate from every other socket audience. |
-
-The block agent stores no source transcript or user preference. It stores only
-its derived active-output checkpoint while a run is in progress. Its dispatch identity
-points to the source main substream and parent WorkstreamDO by stable names; the
-workspace route supplies the same jurisdiction and affinity to all three. Bind
-runtime rows live in main `SubstreamAgent("0")` because they reference its
-transcript, resources, compaction scope, and tool receipts. The local dispatch
-row is what makes the block agent—not the source or parent—the active execution
-owner and recovery coordinator.
 
 ### `_internal_durable_alarms`
 
@@ -1524,7 +1366,7 @@ Health endpoints report role and object-local database bytes. Migration errors
 include component/version reason. Inspect `_sql_schema_migrations`,
 `workspace_directory_state`, `workspace_workstream_effect_receipts`,
 `substream_loops`, pending inputs, assistant reservations, linked execution
-receipts, BlockDashboardAgent `agent_run_dispatches`, attempt leases, child and
+receipts, attempt leases, child and
 parent `durable_outbox`, WorkspaceDO external-delivery attempts, and authority
 route/generation before retrying a quarantined object. The maintenance control
 plane can quarantine a failed route;
@@ -1557,6 +1399,22 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-09-03 — HyperSight is removed from the durable hierarchy
+
+**What changed:** The BlockDashboardAgent class, WorkstreamDO coordination
+routes, SubstreamAgent dashboard run path, protocols, services, alarms, and UI
+were deleted. WorkstreamDO schema v5 and SubstreamAgent schema v38 remove their
+feature tables, and Worker migration v8 deletes the retired Durable Object
+class.
+
+**Why:** Complete feature removal requires eliminating authority and durable
+work, not merely hiding the panel behind a flag. Keeping the old subsystem
+disabled was rejected because it would retain callable routes and object state.
+
+**Consequences:** Existing objects replay the immutable historical schema and
+then apply the destructive forward cleanup. The live hierarchy is WorkspaceDO
+to WorkstreamDO to SubstreamAgent, with no dashboard sibling or child.
 
 ### 2026-09-03 — A stored automation run context has no delivery targets
 

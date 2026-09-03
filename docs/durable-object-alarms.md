@@ -26,7 +26,7 @@ automations, [`automation-lifecycle.md`](automation-lifecycle.md).
 | `apps/api/src/durable-objects/workspace-alarm-instrumentation.ts` | Content-free WorkspaceDO alarm phase spans and structured rows: fixed phase/kind enums, elapsed times, and the slowest-phase summary. |
 | `apps/api/src/services/workspace-schedule-execution.ts` | What a workspace target actually *does* when it fires — connector polls, digests, watch polls, maintenance, Terminal lifecycle — as plain functions over a context. Automations are no longer among them; each has its own alarm. |
 | `apps/api/src/durable-objects/substream-agent.ts` | Adopts it for a work stream's agent: `agent_timer` entries index `workstream_wakeups`, while execution, external settlement, projection, realtime, and keep-alive deadlines remain derived from their owning rows or lease. |
-| `apps/api/src/durable-objects/workstream-do.ts` | Adopts it for regional-effect and block-dashboard outboxes, all of which stay derived. |
+| `apps/api/src/durable-objects/workstream-do.ts` | Adopts it for the regional-effect outbox, whose deadline stays derived. |
 | `apps/api/src/durable-objects/automation-agent.ts` | Adopts it for one automation: two stored kinds — `compiler_dispatch` and `automation_schedule` — and two derived lanes, the effect outbox and the next run awaiting provisioning. |
 
 ## How it works
@@ -504,6 +504,17 @@ emitted, and `$workers.durableObjectId` is the platform-owned correlation
 field.
 
 ## Changelog
+
+### 2026-09-03 — HyperSight refresh leaves the alarm scheduler
+
+**What changed:** The dashboard refresh lane, its due-work row, retry state, and
+alarm derivation were removed from WorkstreamDO and SubstreamAgent.
+
+**Why:** A retired feature must not wake objects or compete with agent-loop and
+delivery work.
+
+**Consequences:** Schema migration deletes any pending dashboard refresh; the
+remaining alarm arbitration covers only live lifecycle work.
 
 ### 2026-09-01 — Substream external settlement becomes an independent derived lane
 

@@ -18,7 +18,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 37;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 38;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -544,9 +544,8 @@ const WORKSTREAM_SCHEMA_V1 = [
   `CREATE INDEX IF NOT EXISTS parts_pending_input_idx
      ON parts(substream_id, sequence_number)
      WHERE role = 'user' AND turn_id IS NULL`,
-  // The HyperSight context fence asks for the earliest pending tool call on
-  // every refresh-eligible event; pending rows are few, so the partial index
-  // answers MIN() without ranging over the whole transcript.
+  // Historical derived-content refreshes asked for the earliest pending tool
+  // call on each source. Migration 38 removes this retired partial index.
   `CREATE INDEX IF NOT EXISTS parts_pending_tool_fence_idx
      ON parts(substream_id, sequence_number)
      WHERE kind = 'tool_call' AND tool_status = 'pending'`,
@@ -2779,6 +2778,17 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
               IS NOT NULL`,
     ],
   },
+  {
+    version: 38,
+    description: "remove retired block dashboard state and refresh scheduling",
+    statements: [
+      `DELETE FROM due_work WHERE job_key = 'block_dashboard_refresh'`,
+      `DROP TABLE IF EXISTS block_dashboard_block_runs`,
+      `DROP TABLE IF EXISTS block_dashboard_configuration_versions`,
+      `DROP TABLE IF EXISTS block_dashboard_user_preferences`,
+      `DROP INDEX IF EXISTS parts_pending_tool_fence_idx`,
+    ],
+  },
 ];
 
 /**
@@ -4074,8 +4084,7 @@ export function workstreamObjectSchemaImplementationHash(
  * module, because the class is the only thing an operator reading the tracker
  * can match against the fleet. Derived, not equal: `_do` comes from the two
  * sibling keys whose classes end in `DO` (`workstream_do`, `workspace_do`)
- * rather than from `SubstreamAgent`, and `block_dashboard_block_agent` carries
- * a `block` its own class does not. The key said `workstream` while this
+ * rather than from `SubstreamAgent`. The key said `workstream` while this
  * history belonged to `WorkstreamRoom` and kept saying it through the class
  * rename, which left the only key derived from nothing still in the codebase
  * sitting next to `workstream_do` — a genuinely different object — under a name

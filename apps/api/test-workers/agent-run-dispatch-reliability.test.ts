@@ -9,17 +9,15 @@
  * workerd tests assert those product invariants through real SQLite
  * transactions, object eviction, and alarm restoration.
  *
- * BlockDashboardAgent intentionally retains its independent dispatch ledger.
- * Its regression coverage remains at the bottom of this file.
  */
 
 import { env } from "cloudflare:workers";
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { asBlockId, asSubstreamId } from "@rally/contracts";
+import { asSubstreamId } from "@rally/contracts";
 
-import { blockDashboardAgentName, substreamAgentName } from "../src/durable-objects/names";
+import { substreamAgentName } from "../src/durable-objects/names";
 import { SubstreamLoopStorage } from "../src/durable-objects/substream-loop-storage";
 import type { WorkstreamObjectProductService } from "../src/durable-objects/workstream-object-product";
 import {
@@ -57,15 +55,6 @@ function substreamStub(): DurableObjectStub {
   return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(name));
 }
 
-function blockStub(): DurableObjectStub {
-  unique += 1;
-  const blockId = asBlockId(
-    `00000000-0000-7000-8000-${String(unique).padStart(11, "0")}1`,
-  );
-  const name = blockDashboardAgentName("global", WORKSPACE_ID, WORKSTREAM_ID, blockId);
-  return env.BLOCK_DASHBOARD_AGENTS.get(env.BLOCK_DASHBOARD_AGENTS.idFromName(name));
-}
-
 async function readySubstream(): Promise<DurableObjectStub> {
   const stub = substreamStub();
   await boot(stub);
@@ -73,10 +62,6 @@ async function readySubstream(): Promise<DurableObjectStub> {
   return stub;
 }
 
-async function bootBlock(stub: DurableObjectStub): Promise<void> {
-  const response = await stub.fetch("https://block-dashboard.test/health");
-  await response.arrayBuffer();
-}
 
 const RUN_A = "00000000-0000-7000-8000-0000000005a1";
 const RUN_B = "00000000-0000-7000-8000-0000000005a2";
@@ -459,131 +444,5 @@ describe("singleton loop durability", () => {
         `SELECT next_execution_sequence FROM substream_loops WHERE id = 1`,
       ).one()).toEqual({ next_execution_sequence: 2 });
     });
-  });
-});
-
-async function activeBlockDrainHeartbeatOutcome(
-  stub: DurableObjectStub,
-  release: () => void,
-): Promise<"returned" | "joined"> {
-  return runInDurableObject(stub, async (instance) => {
-    const heartbeatDrain = (instance as unknown as {
-      drainRunsToCompletion(): Promise<"drained" | "deferred">;
-    }).drainRunsToCompletion();
-    let returned = false;
-    void heartbeatDrain.then(() => { returned = true; });
-    await Promise.resolve();
-    await Promise.resolve();
-    const joined = !returned;
-    if (joined) release();
-    await heartbeatDrain;
-    return joined ? "joined" : "returned";
-  });
-}
-
-describe("the same guarantees hold for a HyperSight block run", () => {
-  function seedBlockDispatch(
-    state: DurableObjectState,
-    row: {
-      availableAt?: number;
-      leaseToken?: string | null;
-      leaseExpiresAt?: number | null;
-    } = {},
-  ): void {
-    state.storage.sql.exec(
-      `INSERT INTO agent_run_dispatches
-         (block_run_id, dispatch_json, configuration_version_number, trigger_sequence,
-          source_created_at, state, attempt, available_at, started_at,
-          lease_token, lease_expires_at, created_at, updated_at)
-       VALUES ('block-run', '{}', 1, 0, 1, 'running', 1, ?, 1, ?, ?, 1, 1)`,
-      row.availableAt ?? 1,
-      row.leaseToken ?? null,
-      row.leaseExpiresAt ?? null,
-    );
-  }
-
-  it("recovers a block run whose owner vanished mid-flight", async () => {
-    const stub = blockStub();
-    await bootBlock(stub);
-    await runInDurableObject(stub, async (_instance, state) => {
-      seedBlockDispatch(state, {
-        availableAt: Date.now() + 60 * 60_000,
-        leaseToken: "owner-that-died",
-        leaseExpiresAt: Date.now() + 10 * 60_000,
-      });
-      await state.storage.deleteAlarm();
-    });
-
-    await evictDurableObject(stub);
-    await bootBlock(stub);
-    await runInDurableObject(stub, async (_instance, state) => {
-      const row = state.storage.sql.exec<{ lease_token: string | null }>(
-        `SELECT lease_token FROM agent_run_dispatches WHERE block_run_id = 'block-run'`,
-      ).toArray()[0]!;
-      expect(row.lease_token).toBeNull();
-      const alarm = await state.storage.getAlarm();
-      expect(alarm).not.toBeNull();
-      expect(alarm!).toBeLessThanOrEqual(Date.now() + 60_000);
-    });
-  });
-
-  it("stops waking once no block dispatch is left to run", async () => {
-    const stub = blockStub();
-    await bootBlock(stub);
-    await runInDurableObject(stub, async (_instance, state) => {
-      state.storage.sql.exec(
-        `INSERT INTO agent_run_dispatches
-           (block_run_id, dispatch_json, configuration_version_number, trigger_sequence,
-            source_created_at, state, attempt, available_at, started_at, completed_at,
-            terminal_outcome_json, settled_at, created_at, updated_at)
-         VALUES ('block-done', '{}', 1, 0, 1, 'completed', 1, 1, 1, 1, NULL, 1, 1, 1)`,
-      );
-      await state.storage.deleteAlarm();
-    });
-
-    await evictDurableObject(stub);
-    await bootBlock(stub);
-    await runInDurableObject(stub, async (_instance, state) => {
-      expect(await state.storage.getAlarm()).toBeNull();
-    });
-  });
-
-  it("returns without busy-looping when a block heartbeat sees an active drain", async () => {
-    const stub = blockStub();
-    await bootBlock(stub);
-    let release!: () => void;
-    const held = new Promise<void>((resolve) => { release = resolve; });
-
-    await runInDurableObject(stub, (instance, state) => {
-      seedBlockDispatch(state, {
-        availableAt: 1,
-        leaseToken: "active-block-drain",
-        leaseExpiresAt: 1,
-      });
-      const drain = (instance as unknown as {
-        agentDrain: {
-          resume(operation: () => Promise<void>, settled: () => void): Promise<void>;
-        };
-      }).agentDrain;
-      void drain.resume(() => held, () => undefined);
-    });
-
-    const outcome = await activeBlockDrainHeartbeatOutcome(stub, release);
-    if (outcome === "joined") {
-      expect(outcome).toBe("returned");
-      return;
-    }
-
-    const heartbeatStartedAt = Date.now();
-    await runInDurableObject(stub, async (instance) => {
-      await (instance as unknown as { alarm(): Promise<void> }).alarm();
-    });
-    const nextAlarm = await runInDurableObject(stub, (_instance, state) =>
-      state.storage.getAlarm());
-    release();
-
-    expect(outcome).toBe("returned");
-    expect(nextAlarm).not.toBeNull();
-    expect(nextAlarm!).toBeGreaterThanOrEqual(heartbeatStartedAt + 20_000);
   });
 });

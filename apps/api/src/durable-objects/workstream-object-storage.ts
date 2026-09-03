@@ -2,19 +2,18 @@ import {
   AgentCompactionStateSchema,
   ActiveStreamCheckpointsSchema,
   ServerSocketEventSchema,
-  WorkspaceIdSchema,
-  WorkstreamIdSchema,
   asWorkspaceId,
   asWorkstreamId,
   type AgentCompactionState,
   type ActiveStreamCheckpoint,
   type ServerSocketEvent,
+  type WorkspaceId,
+  type WorkstreamId,
 } from "@rally/contracts";
 import { z } from "zod";
 
 import { uuidV7 } from "../lib/uuid-v7";
 import { applyWorkstreamObjectSchema } from "./workstream-object-schema";
-import { BlockDashboardContextFenceSchema } from "./block-dashboard-protocol";
 import {
   WorkstreamRegionalEffectSchema,
   WorkstreamRegionalEffectEnvelopeSchema,
@@ -31,23 +30,11 @@ import {
   type SequencedSemanticRealtimeReference,
 } from "./workstream-semantic-realtime-outbox";
 
-const BLOCK_DASHBOARD_JOB_KEY = "block_dashboard_refresh";
 const ACTIVE_OUTPUT_CHUNK_MAX_BYTES = 60 * 1024;
 const SOCKET_TICKET_RECEIPT_RETENTION_MS = 5 * 60_000;
 const REGIONAL_EFFECT_CHANNEL = "regional_effect_v1";
 const REGIONAL_EFFECT_RETRY_BASE_MS = 5_000;
 const REGIONAL_EFFECT_RETRY_MAX_MS = 5 * 60_000;
-
-const RoomIdentitySchema = z.object({
-  workspaceId: WorkspaceIdSchema,
-  workstreamId: WorkstreamIdSchema,
-});
-
-const PendingBlockDashboardRefreshSchema = RoomIdentitySchema.extend({
-  triggerSequence: z.number().int().nonnegative(),
-  contextFence: BlockDashboardContextFenceSchema,
-  firstQueuedAt: z.number().int().nonnegative(),
-});
 
 interface RealtimeStateRow extends Record<string, SqlStorageValue> {
   event_sequence: number;
@@ -76,14 +63,6 @@ interface ActiveCompactionRow extends Record<string, SqlStorageValue> {
   compaction_index: number;
   trigger: "manual" | "auto";
   started_at: number;
-}
-
-interface DueWorkRow extends Record<string, SqlStorageValue> {
-  payload_json: string;
-}
-
-interface DueWorkTimeRow extends Record<string, SqlStorageValue> {
-  due_at: number;
 }
 
 interface RegionalEffectOutboxRow extends Record<string, SqlStorageValue> {
@@ -118,8 +97,10 @@ export interface RegionalEffectCommand {
   dependsOnProjectionKey?: string;
 }
 
-export type WorkstreamObjectIdentity = z.infer<typeof RoomIdentitySchema>;
-export type PendingBlockDashboardRefresh = z.infer<typeof PendingBlockDashboardRefreshSchema>;
+export interface WorkstreamObjectIdentity {
+  workspaceId: WorkspaceId;
+  workstreamId: WorkstreamId;
+}
 
 function first<T extends Record<string, SqlStorageValue>>(
   cursor: SqlStorageCursor<T>,
@@ -532,8 +513,8 @@ export class WorkstreamObjectStore {
    * left out is the one nothing else covers: the wake-up mutations still reach
    * `commitRuntimeMutation` and so keep the generation check by their own
    * route, while the writes that do not — compaction checkpoints, plugin
-   * activation hints, both description-evaluation writes, and the receipt and
-   * block-dashboard writes beside them — would have had no generation fence at
+   * activation hints, both description-evaluation writes, and the receipt
+   * writes beside them — would have had no generation fence at
    * all. `isRealtimeWritable` deliberately admits generation zero; that is
    * room state, and this is not.
    */
@@ -672,61 +653,6 @@ export class WorkstreamObjectStore {
       );
       return result.toArray().length === 1;
     });
-  }
-
-  pendingBlockDashboardRefresh(): PendingBlockDashboardRefresh | null {
-    const row = first(this.storage.sql.exec<DueWorkRow>(
-      `SELECT payload_json FROM due_work WHERE job_key = ?`,
-      BLOCK_DASHBOARD_JOB_KEY,
-    ));
-    if (!row) return null;
-    const parsed = PendingBlockDashboardRefreshSchema.safeParse(JSON.parse(row.payload_json));
-    return parsed.success ? parsed.data : null;
-  }
-
-  nextBlockDashboardDueAt(): number | null {
-    const row = first(this.storage.sql.exec<DueWorkTimeRow>(
-      `SELECT due_at FROM due_work WHERE job_key = ?`,
-      BLOCK_DASHBOARD_JOB_KEY,
-    ));
-    return row?.due_at ?? null;
-  }
-
-  putPendingBlockDashboardRefresh(pending: PendingBlockDashboardRefresh, dueAt: number): void {
-    this.storage.sql.exec(
-      `INSERT INTO due_work(job_key, kind, due_at, epoch, payload_json, attempts, last_error_code, updated_at)
-       VALUES (?, 'block_dashboard_refresh', ?, 0, ?, 0, NULL, ?)
-       ON CONFLICT(job_key) DO UPDATE SET
-         due_at = excluded.due_at,
-         payload_json = excluded.payload_json,
-         last_error_code = NULL,
-         updated_at = excluded.updated_at`,
-      BLOCK_DASHBOARD_JOB_KEY,
-      dueAt,
-      JSON.stringify(pending),
-      Date.now(),
-    );
-  }
-
-  deletePendingBlockDashboardRefresh(): void {
-    this.storage.sql.exec(`DELETE FROM due_work WHERE job_key = ?`, BLOCK_DASHBOARD_JOB_KEY);
-  }
-
-  failPendingBlockDashboardRefresh(pending: PendingBlockDashboardRefresh, dueAt: number): void {
-    this.storage.sql.exec(
-      `INSERT INTO due_work(job_key, kind, due_at, epoch, payload_json, attempts, last_error_code, updated_at)
-       VALUES (?, 'block_dashboard_refresh', ?, 0, ?, 1, 'refresh_failed', ?)
-       ON CONFLICT(job_key) DO UPDATE SET
-         due_at = excluded.due_at,
-         payload_json = excluded.payload_json,
-         attempts = due_work.attempts + 1,
-         last_error_code = excluded.last_error_code,
-         updated_at = excluded.updated_at`,
-      BLOCK_DASHBOARD_JOB_KEY,
-      dueAt,
-      JSON.stringify(pending),
-      Date.now(),
-    );
   }
 
   /**

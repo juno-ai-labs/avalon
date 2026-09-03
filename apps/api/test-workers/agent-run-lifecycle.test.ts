@@ -153,17 +153,6 @@ describe("admitting a subordinate execution receipt", () => {
     });
   });
 
-  it("keeps HyperSight block execution on its separate agent", async () => {
-    const stub = await readyAgent();
-    await runInDurableObject(stub, (_instance, state) => seedRun(state, RUN_A));
-
-    await expect(activate(stub, runInput(RUN_A, {
-      reason: "block_dashboard_block",
-    }))).resolves.toMatchObject({
-      status: 409,
-      payload: { error: "block_dashboard_runs_require_block_agent" },
-    });
-  });
 });
 
 describe("executing the singleton loop", () => {
