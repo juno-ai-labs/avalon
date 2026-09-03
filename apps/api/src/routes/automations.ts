@@ -9,7 +9,6 @@ import {
   AutomationSummarySchema,
   WorkstreamAutomationSummarySchema,
   ActivitySourceBindingKeySchema,
-  CreateAutomationRequestSchema,
   IdSchema,
   ModelPluginIdSchema,
 } from "@rally/contracts";
@@ -90,11 +89,6 @@ automationRoutes.get("/workstream/:workstreamId", zValidator("param", z.object({
   await new AutomationAgentService(c.env, getAuth(c))
     .listForWorkstream(c.req.valid("param").workstreamId),
 )));
-automationRoutes.post("/", zValidator("json", CreateAutomationRequestSchema), async (c) => {
-  const input = c.req.valid("json");
-  const detail = await new AutomationAgentService(c.env, getAuth(c)).accept(input);
-  return c.json(AutomationDetailSchema.parse(detail), 201);
-});
 automationRoutes.get("/:id", zValidator("param", idParam), async (c) =>
   c.json(AutomationDetailSchema.parse(
     await new AutomationAgentService(c.env, getAuth(c)).detail(c.req.valid("param").id),
@@ -115,8 +109,10 @@ automationRoutes.post("/:id/run", zValidator("param", idParam), zValidator("head
 // The claimant is always the caller, so this body is empty by design: a field
 // naming somebody else would let one person lend a colleague's credentials to a
 // standing automation.
-// The feed card's accept. Takes no body: the draft is on the object, and the
-// card carries only what it shows.
+// The only way an automation is created. Takes no body: the draft is on the
+// object, the card carries only what it shows, and everything acceptance needs
+// is derived from the stored definition. `POST /automations` stood beside this
+// for the create wizard deleted on 2026-09-01 and outlived its last caller.
 automationRoutes.post("/:id/accept", zValidator("param", idParam), async (c) =>
   c.json(AutomationDetailSchema.parse(
     await new AutomationAgentService(c.env, getAuth(c))

@@ -10,6 +10,8 @@ import {
   ActivitySourcePluginIdsSchema,
   ModelPluginIdSchema,
   ScopeSchema,
+  automationAcceptanceSelections,
+  automationDraftAcceptanceBlocker,
   isExternalEventTrigger,
   AutomationSetEvaluatorRulesInputV1Schema,
   AutomationSetEvaluatorRulesMutationSchema,
@@ -25,7 +27,6 @@ import {
   type AutomationDraft,
   type AutomationDraftTurnAdmissionRequest,
   type AutomationDetail,
-  type AutomationSetEvaluatorRulesInputV1,
   type AutomationSetEvaluatorRulesMutation,
   type AutomationRunContextV1,
 } from "@rally/contracts";
@@ -162,9 +163,13 @@ const AutomationAcceptDraftRequestSchema = z.strictObject({
    * a `workstream` acceptance, because the card is the room's to accept.
    */
   participantOfOwningWorkstream: z.boolean().default(false),
-  defaultPluginIds: z.array(ModelPluginIdSchema),
-  activitySourcePluginIds: ActivitySourcePluginIdsSchema,
-  deliveryTargets: AutomationDeliveryTargetSetSchema,
+  /**
+   * Bindings, plugins and delivery are deliberately absent: they are read off
+   * the stored definition by `automationAcceptanceSelections`. A request that
+   * could restate them would be a second source of truth for a fact the draft
+   * already settled, and the last caller able to fill them in was deleted with
+   * the create wizard.
+   */
   modelOverride: AgentModelOverrideSchema.nullable(),
   /**
    * The caller's workspace membership role, resolved by the Worker.
@@ -757,23 +762,6 @@ export const AUTOMATION_AGENT_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMig
  * type, which is most of what tells a summary of a candidate email apart from a
  * summary of a spreadsheet save.
  */
-/**
- * Whether a definition needs evaluator rules and does not have them.
- *
- * Submission and acceptance both refuse on this, and the defect each exists to
- * catch is what happens when they disagree: a draft the first admits and the
- * second refuses reaches a person as a proposal whose Create button cannot
- * work. They shared a written invariant before and drifted anyway, so they
- * share the predicate now — a missing set and an explicit empty one are one
- * answer here, because the tool documents `[]` as the way to clear rules.
- */
-function evaluatorRulesMissing(
-  draft: AutomationDraft,
-  rules: AutomationSetEvaluatorRulesInputV1 | null,
-): boolean {
-  return draft.triggers.some(isExternalEventTrigger) && (rules?.evaluators.length ?? 0) === 0;
-}
-
 function automationTriggerSummary(trigger: AutomationRunContextV1["trigger"]): string | null {
   switch (trigger.kind) {
     case "external_event": return trigger.eventType;
@@ -1115,22 +1103,28 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
     // submission overwrite one would edit a running automation from a
     // conversation.
     if (existing && this.lifecycle() !== "draft") throw new Error("automation_not_draft");
-    // `prepareAcceptance`'s own condition, applied here instead. An event-driven
-    // draft whose rules are absent or empty is one Create can only refuse, and
-    // by then the refusal has nowhere to go: the drafting loop has ended, and
-    // what is left is a proposal card whose button never works. Refusing the
-    // submission puts it back inside that loop, where a rejected tool call is
-    // repaired and retried. Only a `ready` draft is held to it — a partial
-    // submission paired with a clarifying question has not chosen its rules
-    // yet, and acceptance refuses it on `ready` alone anyway.
+    // `prepareAcceptance`'s own conditions, applied here instead, through the
+    // one predicate both ends call. A draft Create can only refuse is one whose
+    // refusal has nowhere to go: the drafting loop has ended, and what is left
+    // is a proposal card whose button never works. Refusing the submission puts
+    // it back inside that loop, where a rejected tool call is repaired and
+    // retried and the person is asked rather than shown a dead button. Only a
+    // `ready` draft is held to it — a partial submission paired with a
+    // clarifying question has not chosen its rules yet, and acceptance refuses
+    // it on `ready` alone anyway.
+    //
+    // The predicate answers only what the draft settles for itself. Whether a
+    // plugin it names still resolves to a healthy connection is the present's
+    // question, not the draft's, and stays at acceptance.
     //
     // Below the two refusals above rather than ahead of them: all three are
     // pure reads that write nothing, so the "nothing is committed" property
     // holds either way, and a submission that is both rules-less and aimed at
     // the wrong identity should answer with the sharper of the two.
-    if (request.draft.ready && evaluatorRulesMissing(request.draft, request.evaluatorRules)) {
-      throw new Error("automation_evaluator_rules_required");
-    }
+    const blocker = request.draft.ready
+      ? automationDraftAcceptanceBlocker(request.draft, request.evaluatorRules)
+      : null;
+    if (blocker) throw new Error(blocker);
     const created = !existing;
     const revision = this.state.storage.transactionSync(() => {
       if (created) {
@@ -1272,8 +1266,8 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
           requestHash,
           input.scope,
           input.owningWorkstreamId,
-          JSON.stringify(input.defaultPluginIds),
-          JSON.stringify(input.activitySourcePluginIds),
+          JSON.stringify(prepared.selections.defaultPluginIds),
+          JSON.stringify(prepared.selections.activitySourcePluginIds),
           JSON.stringify(prepared.connectorBindings),
           JSON.stringify(prepared.deliveryTargets),
           input.modelOverride,
@@ -3019,6 +3013,7 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
     input: z.infer<typeof AutomationAcceptDraftRequestSchema>,
     definition: AutomationDraft,
   ): Promise<{
+    selections: ReturnType<typeof automationAcceptanceSelections>;
     connectorBindings: Record<string, string>;
     deliveryTargets: AutomationRunContextV1["deliveryTargets"];
     evaluators: unknown[];
@@ -3030,9 +3025,18 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       nextDueAt: number;
     }>;
   }> {
+    // Derived from the definition, never from the request. The wizard that used
+    // to ask a member for these is gone, and the drafting loop had already
+    // answered them with more evidence than a request field carries: a ready
+    // draft's activity trigger names the plugin the model loaded and inspected
+    // against a live connection activation, and its recommended plugins were
+    // held to the same rule. The request field's last caller could not answer,
+    // so it sent `{}` and acceptance read that as "bound to nothing" — which is
+    // how the proposal card came to refuse every external-event draft.
+    const selections = automationAcceptanceSelections(definition);
     const selectedPluginIds = [...new Set([
-      ...input.defaultPluginIds,
-      ...Object.values(input.activitySourcePluginIds),
+      ...selections.defaultPluginIds,
+      ...Object.values(selections.activitySourcePluginIds),
     ])];
     // `status <> 'disabled'` is what makes the collapse below deterministic.
     // `connector_connections_active_model_plugin_id_uq` is partial on
@@ -3078,7 +3082,10 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       connectorBindings[pluginId] = connection.id;
     }
 
-    const deliveryTargets = await this.resolveDeliveryTargets(input);
+    const deliveryTargets = await this.resolveDeliveryTargets({
+      ...input,
+      deliveryTargets: selections.deliveryTargets,
+    });
 
     const externalTriggers = definition.triggers.filter(isExternalEventTrigger);
     const staged = this.state.storage.sql.exec<{ evaluator_rules_json: string | null }>(
@@ -3102,10 +3109,13 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
     const rules = rulesJson
       ? AutomationSetEvaluatorRulesInputV1Schema.parse(JSON.parse(rulesJson))
       : AutomationSetEvaluatorRulesInputV1Schema.parse({ schemaVersion: 1, evaluators: [] });
-    if (evaluatorRulesMissing(definition, rules)) {
-      throw new Error("automation_evaluator_rules_required");
-    }
-    const selectedByBinding = new Map(Object.entries(input.activitySourcePluginIds));
+    // The draft settles what a draft can, through the predicate `admitAuthoredDraft`
+    // already applied. Re-asked here rather than trusted from submission,
+    // because a definition can be revised after it was admitted and this is the
+    // boundary that must not accept one it would not have admitted.
+    const blocker = automationDraftAcceptanceBlocker(definition, rules);
+    if (blocker) throw new Error(blocker);
+    const selectedByBinding = new Map(Object.entries(selections.activitySourcePluginIds));
     const registry = connectorRegistryForEnv(this.env);
     const inspectedPlugins = new Map<string, {
       pluginId: string;
@@ -3241,7 +3251,7 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
         nextDueAt: next.getTime(),
       });
     }
-    return { connectorBindings, deliveryTargets, evaluators, evaluatorSourceHash, schedules };
+    return { selections, connectorBindings, deliveryTargets, evaluators, evaluatorSourceHash, schedules };
   }
 
   private recordDraftMutation(input: {
