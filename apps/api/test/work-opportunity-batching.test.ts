@@ -201,7 +201,7 @@ describe("suggested-work aggregation", () => {
     ]);
   });
 
-  it("withholds CI status and calendar-instance activity from every admission window", async () => {
+  it("withholds CI status activity from every admission window", async () => {
     const database = migratedDatabase();
     seed(database);
     const activityId = "00000000-0000-7000-8000-000000000121";
@@ -262,7 +262,6 @@ describe("suggested-work aggregation", () => {
       "github.workflow_run.requested",
       "github.workflow_run.in_progress",
       "github.workflow_run.completed",
-      "calendar.event_changed",
     ]) {
       expect(isSuggestedWorkCandidateEventType(excluded), excluded).toBe(false);
     }
@@ -270,6 +269,9 @@ describe("suggested-work aggregation", () => {
       "github.pull_request.opened",
       "github.pull_request_review.submitted",
       "github.push",
+      // One series edit is one activity per connection since the connector's
+      // 2026-09-02 collapse, and a moved or cancelled meeting can be work.
+      "calendar.event_changed",
       "calendar.event_completed",
       "email.received",
       "linear.issue.update",
