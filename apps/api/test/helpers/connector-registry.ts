@@ -20,6 +20,7 @@ import { createConnectorRegistry, type ConnectorRegistry } from "@rally/connecto
 const oauth = { clientId: "client", clientSecret: "secret", redirectUri: "https://api.example.com/callback" };
 
 export const testRegistryConfig: Parameters<typeof createConnectorRegistry>[0] = {
+  customMcp: { redirectUri: "https://api.example.com/callback" },
   granola: { redirectUri: "https://api.example.com/callback" },
   google: oauth,
   github: {

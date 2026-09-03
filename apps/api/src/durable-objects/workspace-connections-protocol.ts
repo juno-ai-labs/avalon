@@ -1,4 +1,4 @@
-import { IdSchema } from "@rally/contracts";
+import { ConnectorOAuthProviders, IdSchema } from "@rally/contracts";
 import { z } from "zod";
 
 /**
@@ -25,8 +25,14 @@ import { z } from "zod";
 const TimestampSchema = z.string().datetime({ offset: true });
 const RegionSchema = z.enum(["global", "eu"]);
 
-/** The providers the attempt table's CHECK constraint admits. */
-const OAuthProviderSchema = z.enum(["google", "github", "granola", "linear", "notion", "slack"]);
+/**
+ * The providers the attempt table's CHECK constraint admits.
+ *
+ * Read from the contract rather than restated: the two lists have to move
+ * together, and the object's CHECK is widened by a migration in the same change
+ * that adds a value here.
+ */
+const OAuthProviderSchema = z.enum(ConnectorOAuthProviders);
 const OAuthAttemptStatusSchema = z.enum(["pending", "succeeded", "denied", "failed"]);
 
 /** Attempt ids are 32-byte URL-safe random tokens, not UUIDs. */

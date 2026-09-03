@@ -268,7 +268,7 @@ export interface WorkstreamConnection {
   /** API states only; `missing` is derived by the renderer from an empty resolved list. */
   status: 'healthy' | 'reconnect_required' | 'disabled';
   capabilities?: string[];
-  settingsKind?: 'github_repository_access';
+  settingsKind?: 'github_repository_access' | 'custom_mcp_tools';
   /** Set when this connection can hand automation results to the signed-in user. */
   userDelivery?: AutomationUserDelivery;
 }

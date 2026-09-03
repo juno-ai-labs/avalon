@@ -38,6 +38,7 @@ import type { Region } from './types';
 import { invalidateCachedWorkstreamDetails } from './workstreams-cache';
 
 const connectorProviderNames = {
+  custom_mcp: 'The MCP server',
   google: 'Google',
   github: 'GitHub',
   granola: 'Granola',

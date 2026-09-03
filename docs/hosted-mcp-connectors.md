@@ -260,6 +260,44 @@ patch a historical snapshot into Rally.
 
 ## Changelog
 
+### 2026-09-03 — A hosted server can be named by a connection rather than by source
+
+**What changed:** `createHostedMcpPassthrough` accepts a `serverUrl` resolver as
+well as a fixed URL, authenticates a request with headers rather than only a
+bearer token (`withRequestAuth` beside `withAccessToken`, both through
+`HostedMcpRequestAuth`), takes an optional `selectTools` narrowing applied at
+discovery *and* to the fresh catalog read before every `tools/call`, and lets a
+declaration opt into trusting the authorization server its protected resource
+advertises. `HostedMcpAuthorization.begin` takes an optional `serverUrl` for the
+same reason. The first user is the custom MCP connector documented in
+[`custom-mcp-connectors.md`](custom-mcp-connectors.md).
+
+**Why:** Every provider here is one Rally shipped a declaration for, so the
+endpoint, the credential shape, and the trusted OAuth origins could all be
+literals. A server somebody configures has none of those: the URL arrives with
+the connection, the credential may be a header a person pasted rather than a
+token Rally minted, and there is no origin list to check an authorization server
+against — RFC 9728 exists precisely so the resource can name its own. Adding a
+second MCP transport for that case would have meant a second place for a
+provider's contract to diverge from what the model was shown.
+
+**Considered and rejected:** Applying a tool narrowing only at discovery. The
+call path re-lists the catalog anyway, and a filter that ran only at activation
+would let a surface loaded before a policy narrowed still spend a withheld
+write. Keeping `withAccessToken` as the single credential shape and passing a
+synthetic token for header authentication was rejected for the obvious reason:
+the value is not a token and every layer beneath would have had to pretend it
+was.
+
+**Consequences:** A provider Rally ships should keep naming its
+`allowedAuthorizationOrigins`; `trustAdvertisedAuthorizationServer` is for a
+server whose only trust anchor is the URL a person typed, and turning it on for
+a first-party provider would remove a real check. `call()` still requires an
+adapter-level endpoint and throws for a resolver-based declaration, because it
+has no connection to resolve one from. The collision check before a call still
+runs over the *whole* catalog rather than the narrowed one: a name a policy hid
+still collides.
+
 ### 2026-09-02 — The root-schema correction moved to the wire and now merges
 
 **What changed:** The trust-model bullet above no longer describes

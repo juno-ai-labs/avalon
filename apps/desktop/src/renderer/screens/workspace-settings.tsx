@@ -18,6 +18,7 @@ import {
   Power,
   RefreshCcw,
   Search,
+  ServerCog,
   ShieldCheck,
   Trash2,
   UserRound,
@@ -37,7 +38,11 @@ import {
   type ButtonHTMLAttributes,
   type ReactNode,
 } from 'react';
-import type { ConnectorOAuthProvider, ConnectorOAuthStart } from '@rally/contracts';
+import type {
+  ConnectorOAuthProvider,
+  ConnectorOAuthStart,
+  CustomMcpToolPolicy,
+} from '@rally/contracts';
 import { parseDesktopSettingsSection } from '../../common/settings';
 import type { DesktopSettingsSection } from '../../common/settings';
 import type { DesktopApplicationSettings, DesktopTelemetryInspectorEntry } from '../../common/desktop';
@@ -66,6 +71,7 @@ type SettingsSection = DesktopSettingsSection;
 type ConnectionFilter = 'all' | 'connected' | 'not_connected';
 
 const connectorProviderName: Record<ConnectorOAuthProvider, string> = {
+  custom_mcp: 'Custom MCP server',
   google: 'Google',
   github: 'GitHub',
   granola: 'Granola',
@@ -85,6 +91,7 @@ const reconnectableConnectorTypes = new Set<WorkstreamConnection['connectorType'
 
 const installedConnectorTypes = new Set<WorkstreamConnection['connectorType']>([
   ...reconnectableConnectorTypes,
+  'custom_mcp',
   'generic_webhook',
   'x',
 ]);
@@ -312,6 +319,15 @@ const connectorProviders = [
     capabilities: ['notion.read', 'notion.insert', 'notion.update', 'notion.comment.read', 'notion.comment.insert'],
   },
   {
+    id: 'custom-mcp' as const,
+    provider: 'custom_mcp' as const,
+    name: 'Custom MCP server',
+    description: 'Any Model Context Protocol server, by URL. Authorize it with OAuth or your own request headers; its tools are discovered live rather than listed here.',
+    icon: ServerCog,
+    scopes: ['you', 'workspace'] as const,
+    capabilities: [],
+  },
+  {
     id: 'generic-webhook' as const,
     provider: 'generic_webhook' as const,
     name: 'Inbound webhook',
@@ -374,11 +390,28 @@ function providerHasConnectionForScope(
   );
 }
 
+/**
+ * Whether one of these is ever enough.
+ *
+ * Every other card names one provider, so a second connection to it is a
+ * second account and the card says "already installed". A custom MCP card
+ * names no server at all — the whole point is that a workspace connects
+ * several — so the card stays offering another one however many exist.
+ */
+function providerAllowsManyConnections(
+  provider: (typeof connectorProviders)[number],
+): boolean {
+  return provider.provider === 'custom_mcp';
+}
+
 function providerHasAvailableUnconnectedScope(
   provider: (typeof connectorProviders)[number],
   connections: WorkstreamConnection[],
   isAdmin: boolean,
 ): boolean {
+  if (providerAllowsManyConnections(provider)) {
+    return provider.scopes.some((scope) => scope === 'you' || isAdmin);
+  }
   return provider.scopes.some((scope) =>
     (scope === 'you' || isAdmin) && !providerHasConnectionForScope(provider, connections, scope),
   );
@@ -388,6 +421,7 @@ function providerHasActiveWorkspaceConnection(
   provider: (typeof connectorProviders)[number],
   connections: WorkstreamConnection[],
 ): boolean {
+  if (providerAllowsManyConnections(provider)) return false;
   return connections.some((connection) =>
     connection.connectorType === provider.provider &&
     connection.scope === 'workspace' &&
@@ -558,6 +592,15 @@ export function WorkspaceSettingsScreen({
   } | null>(null);
   const [webhookCopied, setWebhookCopied] = useState<'endpoint' | 'secret' | null>(null);
   const [webhookRotationTarget, setWebhookRotationTarget] = useState<WorkstreamConnection | null>(null);
+  const [customMcpModalScope, setCustomMcpModalScope] = useState<'you' | 'workspace' | null>(null);
+  const [customMcpName, setCustomMcpName] = useState('');
+  const [customMcpServerUrl, setCustomMcpServerUrl] = useState('');
+  const [customMcpAuthMode, setCustomMcpAuthMode] = useState<'oauth' | 'headers'>('oauth');
+  const [customMcpHeaders, setCustomMcpHeaders] = useState<Array<{ name: string; value: string }>>(
+    [{ name: '', value: '' }],
+  );
+  const [customMcpToolPolicy, setCustomMcpToolPolicy] = useState<CustomMcpToolPolicy>('all_tools');
+  const [customMcpSettingsConnectionId, setCustomMcpSettingsConnectionId] = useState<string | null>(null);
   const [leaveConfirmationOpen, setLeaveConfirmationOpen] = useState(false);
   const timezoneOptions = useMemo(
     () => [...new Set([...supportedTimezones, userTimezone, workspaceTimezone])].sort(),
@@ -596,6 +639,13 @@ export function WorkspaceSettingsScreen({
     )),
     [connections.data],
   );
+  const customMcpSettingsConnections = useMemo(
+    () => (connections.data ?? []).filter((connection) => (
+      connection.settingsKind === 'custom_mcp_tools'
+      && connection.status !== 'disabled'
+    )),
+    [connections.data],
+  );
   useEffect(() => {
     if (
       githubSettingsConnectionId
@@ -623,6 +673,33 @@ export function WorkspaceSettingsScreen({
     },
     onError: async () => {
       await queryClient.invalidateQueries({ queryKey: ['github-repository-access', githubSettingsConnectionId] });
+    },
+  });
+  useEffect(() => {
+    if (
+      customMcpSettingsConnectionId
+      && customMcpSettingsConnections.some((connection) => connection.id === customMcpSettingsConnectionId)
+    ) return;
+    setCustomMcpSettingsConnectionId(customMcpSettingsConnections[0]?.id ?? null);
+  }, [customMcpSettingsConnectionId, customMcpSettingsConnections]);
+  // The catalog is read live from a third-party server on every open, so it is
+  // never served from cache: a tool the server withdrew an hour ago is exactly
+  // what somebody opening this screen is trying to find out about.
+  const customMcpSettings = useQuery({
+    queryKey: ['custom-mcp-settings', customMcpSettingsConnectionId],
+    queryFn: ({ signal }) => api!.getCustomMcpSettings(customMcpSettingsConnectionId!, signal),
+    enabled: Boolean(api && activeSection === 'custom-mcp' && customMcpSettingsConnectionId),
+    staleTime: 0,
+  });
+  const updateCustomMcpToolPolicy = useMutation({
+    mutationFn: (toolPolicy: CustomMcpToolPolicy) => (
+      api!.updateCustomMcpToolPolicy(customMcpSettingsConnectionId!, toolPolicy)
+    ),
+    onSuccess: (settings) => {
+      queryClient.setQueryData(['custom-mcp-settings', settings.connectionId], settings);
+    },
+    onError: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['custom-mcp-settings', customMcpSettingsConnectionId] });
     },
   });
   const terminalSettings = useQuery({
@@ -745,6 +822,51 @@ export function WorkspaceSettingsScreen({
       void queryClient.invalidateQueries({ queryKey: ['connections'] });
     },
   });
+  const customMcpRequestHeaders = (): Record<string, string> => Object.fromEntries(
+    customMcpHeaders
+      .map((header) => [header.name.trim(), header.value.trim()] as const)
+      .filter(([name, value]) => name.length > 0 && value.length > 0),
+  );
+  const customMcpFormComplete = Boolean(
+    customMcpName.trim()
+    && /^https:\/\/\S+$/u.test(customMcpServerUrl.trim())
+    && (customMcpAuthMode === 'oauth' || Object.keys(customMcpRequestHeaders()).length > 0),
+  );
+  const connectCustomMcp = useMutation({
+    mutationFn: async () => {
+      const scope = customMcpModalScope ?? 'you';
+      const input = {
+        displayName: customMcpName.trim(),
+        scope,
+        serverUrl: customMcpServerUrl.trim(),
+        toolPolicy: scope === 'workspace' ? customMcpToolPolicy : ('all_tools' as const),
+      };
+      if (customMcpAuthMode === 'headers') {
+        await api!.createCustomMcpConnection({ ...input, requestHeaders: customMcpRequestHeaders() });
+        return { kind: 'direct' as const };
+      }
+      const authorization = await api!.startCustomMcpConnection(input);
+      await desktopBridge().openExternal(authorization.url);
+      return { kind: 'oauth' as const, authorization };
+    },
+    onMutate: () => {
+      setConnectorOAuthMessage(null);
+      setConnectorOAuthError(null);
+    },
+    onSuccess: (result) => {
+      setCustomMcpModalScope(null);
+      if (result.kind === 'direct') {
+        void queryClient.invalidateQueries({ queryKey: ['connections'] });
+        return;
+      }
+      setPendingConnectorOAuth({
+        attemptId: result.authorization.attemptId,
+        provider: 'custom_mcp',
+        region: workspace.region,
+        workspaceId: workspace.id,
+      });
+    },
+  });
   const rotateWebhookSecret = useMutation({
     mutationFn: (connection: WorkstreamConnection) => api!.rotateWebhookSecret(connection.id),
     onSuccess: (result) => setWebhookSecretResult(result),
@@ -862,15 +984,32 @@ export function WorkspaceSettingsScreen({
               }]
             : [item]),
         };
+    // Beneath Connections like GitHub's, and only once a server is connected:
+    // a pane whose whole content is one server's live tool catalog has nothing
+    // to say until there is a server.
+    const withCustomMcp = group.label !== 'Settings' || customMcpSettingsConnections.length === 0
+      ? withGithub
+      : {
+          ...withGithub,
+          items: withGithub.items.flatMap((item) => item.id === 'connections'
+            ? [item, {
+                id: 'custom-mcp' as const,
+                label: 'MCP tools',
+                searchTerms: 'mcp model context protocol server tools read only write custom',
+                icon: ServerCog,
+                child: true,
+              }]
+            : [item]),
+        };
     // Dropped from the list entirely rather than shown disabled: their digest
     // has in fact stopped arriving (`fireDigestSchedule` reads this same flag
     // and returns `flag_disabled`), but there is no copy in this screen for a
     // paused state, and an absent section is still an honest answer to "is
     // this available to me."
     return digestSettingsAvailable
-      ? withGithub
-      : { ...withGithub, items: withGithub.items.filter((item) => item.id !== 'digest') };
-  }), [githubSettingsConnections.length, digestSettingsAvailable]);
+      ? withCustomMcp
+      : { ...withCustomMcp, items: withCustomMcp.items.filter((item) => item.id !== 'digest') };
+  }), [githubSettingsConnections.length, customMcpSettingsConnections.length, digestSettingsAvailable]);
   const filteredNavigation = useMemo(() => {
     const query = navigationQuery.trim().toLowerCase();
     if (!query) return settingsNavigationWithConnectors;
@@ -1036,6 +1175,16 @@ export function WorkspaceSettingsScreen({
     workspaceSocket?.state,
     workspaceSocket?.topicWaterlines.connector_oauth_attempts,
   ]);
+
+  const openCustomMcpModal = (scope: 'you' | 'workspace'): void => {
+    connectCustomMcp.reset();
+    setCustomMcpName('');
+    setCustomMcpServerUrl('');
+    setCustomMcpAuthMode('oauth');
+    setCustomMcpHeaders([{ name: '', value: '' }]);
+    setCustomMcpToolPolicy('all_tools');
+    setCustomMcpModalScope(scope);
+  };
 
   const copyInvitation = async (): Promise<void> => {
     if (!createdUrl) return;
@@ -1613,6 +1762,10 @@ export function WorkspaceSettingsScreen({
                                   disabled={personalConnectDisabled}
                                   label="Connect for me"
                                   onClick={() => {
+                                    if (provider.provider === 'custom_mcp') {
+                                      openCustomMcpModal('you');
+                                      return;
+                                    }
                                     if (provider.provider === 'generic_webhook') {
                                       setWebhookModalScope('you');
                                       setWebhookDisplayName('Inbound webhook');
@@ -1633,6 +1786,10 @@ export function WorkspaceSettingsScreen({
                                 disabled={workspaceConnectDisabled}
                                 label="Connect workspace"
                                 onClick={() => {
+                                  if (provider.provider === 'custom_mcp') {
+                                    openCustomMcpModal('workspace');
+                                    return;
+                                  }
                                   if (provider.provider === 'granola') {
                                     setGranolaWorkspaceModalOpen(true);
                                     return;
@@ -1815,6 +1972,124 @@ export function WorkspaceSettingsScreen({
                 ) : null}
                 {(githubRepositorySettings.error || updateGitHubRepositorySettings.error) && (
                   <InlineError>{githubRepositorySettings.error?.message ?? updateGitHubRepositorySettings.error?.message}</InlineError>
+                )}
+              </section>
+            )}
+
+            {activeSection === 'custom-mcp' && (
+              <section aria-labelledby="settings-title" className="settings-pane settings-custom-mcp-pane">
+                <div className="settings-pane-heading">
+                  <h2>MCP tools</h2>
+                  <p>What each connected MCP server currently offers, and how much of it Rally may use.</p>
+                </div>
+                {customMcpSettingsConnections.length > 1 && (
+                  <label className="settings-field settings-custom-mcp-connection">
+                    <span>Connection</span>
+                    <select
+                      aria-label="MCP connection"
+                      onChange={(event) => setCustomMcpSettingsConnectionId(event.currentTarget.value)}
+                      value={customMcpSettingsConnectionId ?? ''}
+                    >
+                      {customMcpSettingsConnections.map((connection) => (
+                        <option key={connection.id} value={connection.id}>
+                          {connection.displayName} · {connection.scope === 'you' ? 'Personal' : 'Workspace'}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                {customMcpSettings.isLoading ? (
+                  <div className="settings-loading"><LoaderCircle aria-hidden="true" className="spin" size={15} /> Reading this server’s tools…</div>
+                ) : customMcpSettings.data ? (
+                  <>
+                    <div className="settings-list-card">
+                      <div className="settings-preference-row">
+                        <span className="settings-row-icon"><ServerCog aria-hidden="true" size={18} /></span>
+                        <span className="settings-row-copy">
+                          <strong>{customMcpSettings.data.serverUrl}</strong>
+                          <small>
+                            {customMcpSettings.data.authMode === 'oauth'
+                              ? 'Authorized through the server’s own OAuth. Rally registered itself as a client and holds a token for this connection.'
+                              : 'Authenticated with the request headers configured for this connection. Rally never shows their values again.'}
+                          </small>
+                        </span>
+                        {customMcpSettings.data.authMode === 'oauth'
+                          && (customMcpSettings.data.scope === 'personal' || isAdmin) && (
+                          <Button
+                            disabled={reconnectConnection.isPending || Boolean(pendingConnectorOAuth)}
+                            onClick={() => {
+                              const connection = customMcpSettingsConnections
+                                .find((candidate) => candidate.id === customMcpSettings.data.connectionId);
+                              if (connection) setReconnectTarget(connection);
+                            }}
+                          >
+                            <RefreshCcw aria-hidden="true" size={14} />
+                            Authorize again
+                          </Button>
+                        )}
+                      </div>
+                      <label className="settings-preference-row">
+                        <span className="settings-row-icon"><ShieldCheck aria-hidden="true" size={18} /></span>
+                        <span className="settings-row-copy">
+                          <strong>Tools Rally may use</strong>
+                          <small>
+                            {customMcpSettings.data.toolPolicyEditable
+                              ? 'Read-only exposes just the tools this server marks as read-only. Every remaining tool still asks before it runs — the marking is the server’s own claim, not something Rally can verify.'
+                              : 'A personal connection is only ever yours and acts with your own identity on that server, so it exposes everything the server offers you.'}
+                          </small>
+                        </span>
+                        <select
+                          aria-label="Tools Rally may use"
+                          disabled={!customMcpSettings.data.toolPolicyEditable || updateCustomMcpToolPolicy.isPending}
+                          onChange={(event) => updateCustomMcpToolPolicy.mutate(
+                            event.currentTarget.value as CustomMcpToolPolicy,
+                          )}
+                          value={customMcpSettings.data.toolPolicy}
+                        >
+                          <option value="all_tools">All tools</option>
+                          <option value="read_only_tools">Read-only tools</option>
+                        </select>
+                      </label>
+                    </div>
+                    <div className="settings-custom-mcp-tool-heading">
+                      <div>
+                        <strong>Tools</strong>
+                        <small>
+                          {customMcpSettings.data.toolsUnavailable
+                            ? 'Read live from the server each time this screen opens.'
+                            : `${customMcpSettings.data.tools.filter((tool) => tool.available).length} of ${customMcpSettings.data.tools.length} available to Rally right now`}
+                        </small>
+                      </div>
+                    </div>
+                    <div className="settings-list-card settings-custom-mcp-tool-list">
+                      {customMcpSettings.data.toolsUnavailable ? (
+                        <EmptyState
+                          description={customMcpSettings.data.toolsUnavailable}
+                          title="This server’s tools could not be read"
+                        />
+                      ) : customMcpSettings.data.tools.length === 0 ? (
+                        <EmptyState
+                          description="The server responded but advertises no tools."
+                          title="No tools offered"
+                        />
+                      ) : customMcpSettings.data.tools.map((tool) => (
+                        <div className="settings-custom-mcp-tool-row" key={tool.name}>
+                          <span>
+                            <strong>{tool.name}</strong>
+                            <small>{tool.description || 'This server gave the tool no description.'}</small>
+                          </span>
+                          <Badge>{tool.readOnly ? 'Read-only' : tool.destructive ? 'Destructive' : 'Write'}</Badge>
+                          <Badge>{tool.available ? 'Available' : 'Withheld'}</Badge>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="settings-section-copy settings-custom-mcp-footnote">
+                      Tool names, descriptions, and markings come from the server itself and are shown as it sent them. Rally treats them as information, never as instructions, and every tool call still asks for confirmation before it runs.
+                    </p>
+                  </>
+                ) : null}
+                {(customMcpSettings.error || updateCustomMcpToolPolicy.error) && (
+                  <InlineError>{customMcpSettings.error?.message ?? updateCustomMcpToolPolicy.error?.message}</InlineError>
                 )}
               </section>
             )}
@@ -2152,6 +2427,151 @@ export function WorkspaceSettingsScreen({
           {(createWebhookConnection.error || rotateWebhookSecret.error) && (
             <InlineError>{createWebhookConnection.error?.message ?? rotateWebhookSecret.error?.message}</InlineError>
           )}
+        </Modal>
+        <Modal
+          description={customMcpModalScope === 'workspace'
+            ? 'Everyone in this workspace will be able to use this server’s tools, acting through the one authorization set up here.'
+            : 'Only you will be able to use this server’s tools, acting as whoever you authorize as.'}
+          footer={(
+            <>
+              <Button
+                disabled={connectCustomMcp.isPending}
+                onClick={() => setCustomMcpModalScope(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                className="button-primary"
+                disabled={!customMcpFormComplete || connectCustomMcp.isPending}
+                onClick={() => connectCustomMcp.mutate()}
+              >
+                {connectCustomMcp.isPending && <LoaderCircle aria-hidden="true" className="spin" size={14} />}
+                {customMcpAuthMode === 'oauth' ? 'Authorize server' : 'Add server'}
+              </Button>
+            </>
+          )}
+          onOpenChange={(open) => {
+            if (open || connectCustomMcp.isPending) return;
+            setCustomMcpModalScope(null);
+          }}
+          open={customMcpModalScope !== null}
+          title="Connect an MCP server"
+        >
+          <label className="form-field" htmlFor="custom-mcp-name">
+            <span>Name</span>
+            <input
+              autoFocus
+              id="custom-mcp-name"
+              maxLength={180}
+              onChange={(event) => setCustomMcpName(event.currentTarget.value)}
+              placeholder="Acme docs"
+              value={customMcpName}
+            />
+            <small>How this connection is listed in Rally. The server is never asked what it is called.</small>
+          </label>
+          <label className="form-field" htmlFor="custom-mcp-url">
+            <span>Server URL</span>
+            <input
+              id="custom-mcp-url"
+              onChange={(event) => setCustomMcpServerUrl(event.currentTarget.value)}
+              placeholder="https://mcp.example.com/mcp"
+              spellCheck={false}
+              value={customMcpServerUrl}
+            />
+            <small>The Streamable HTTP endpoint, over HTTPS. Rally checks it responds before saving anything.</small>
+          </label>
+          <label className="form-field" htmlFor="custom-mcp-auth-mode">
+            <span>Authorization</span>
+            <select
+              id="custom-mcp-auth-mode"
+              onChange={(event) => setCustomMcpAuthMode(event.currentTarget.value as 'oauth' | 'headers')}
+              value={customMcpAuthMode}
+            >
+              <option value="oauth">Sign in through the server (OAuth)</option>
+              <option value="headers">Send request headers I provide</option>
+            </select>
+            <small>
+              {customMcpAuthMode === 'oauth'
+                ? customMcpModalScope === 'workspace'
+                  ? 'You authorize once, in your browser. The workspace shares the resulting token, so everybody reaches the server as the account you sign in with.'
+                  : 'You authorize in your browser and Rally holds the resulting token for you alone.'
+                : 'Sent with every request to this server and encrypted at rest. Rally never shows them again or returns them to this app.'}
+            </small>
+          </label>
+          {customMcpAuthMode === 'headers' && (
+            <div className="settings-list-card settings-custom-mcp-headers">
+              {customMcpHeaders.map((header, index) => (
+                <div className="settings-custom-mcp-header-row" key={index}>
+                  <label className="form-field">
+                    <span className="sr-only">Header name</span>
+                    <input
+                      aria-label={`Header ${index + 1} name`}
+                      onChange={(event) => {
+                        // Read before the updater runs: React clears
+                        // `currentTarget` once the handler returns, and the
+                        // updater is called after that.
+                        const name = event.currentTarget.value;
+                        setCustomMcpHeaders((current) => current.map((entry, position) => (
+                          position === index ? { ...entry, name } : entry
+                        )));
+                      }}
+                      placeholder="Authorization"
+                      spellCheck={false}
+                      value={header.name}
+                    />
+                  </label>
+                  <label className="form-field">
+                    <span className="sr-only">Header value</span>
+                    <input
+                      aria-label={`Header ${index + 1} value`}
+                      autoComplete="off"
+                      onChange={(event) => {
+                        // Read before the updater runs: React clears
+                        // `currentTarget` once the handler returns, and the
+                        // updater is called after that.
+                        const value = event.currentTarget.value;
+                        setCustomMcpHeaders((current) => current.map((entry, position) => (
+                          position === index ? { ...entry, value } : entry
+                        )));
+                      }}
+                      placeholder="Bearer …"
+                      spellCheck={false}
+                      type="password"
+                      value={header.value}
+                    />
+                  </label>
+                  <button
+                    aria-label={`Remove header ${index + 1}`}
+                    disabled={customMcpHeaders.length === 1}
+                    onClick={() => setCustomMcpHeaders((current) => current.filter((_, position) => position !== index))}
+                    type="button"
+                  >
+                    <Trash2 aria-hidden="true" size={14} />
+                  </button>
+                </div>
+              ))}
+              <Button
+                onClick={() => setCustomMcpHeaders((current) => [...current, { name: '', value: '' }])}
+              >
+                Add another header
+              </Button>
+            </div>
+          )}
+          {customMcpModalScope === 'workspace' && (
+            <label className="form-field" htmlFor="custom-mcp-tool-policy">
+              <span>Tools Rally may use</span>
+              <select
+                id="custom-mcp-tool-policy"
+                onChange={(event) => setCustomMcpToolPolicy(event.currentTarget.value as CustomMcpToolPolicy)}
+                value={customMcpToolPolicy}
+              >
+                <option value="all_tools">All tools</option>
+                <option value="read_only_tools">Read-only tools</option>
+              </select>
+              <small>Changeable later. Read-only keeps just the tools the server marks read-only; either way every call asks first.</small>
+            </label>
+          )}
+          {connectCustomMcp.error && <InlineError>{connectCustomMcp.error.message}</InlineError>}
         </Modal>
         <Modal
           description="A workspace-wide Granola connection requires a Workspace API key. Personal Granola connections use browser sign-in and do not need a key."

@@ -34,16 +34,33 @@ export {
   withProviderReauthorization,
 } from "./provider-utils";
 export {
+  CUSTOM_MCP_CONNECTOR_TYPE,
+  CustomMcpAgentPluginDescriptor,
+  CustomMcpCapabilities,
+  createCustomMcpConnector,
+  customMcpConnectionConfig,
+  customMcpToolIsReadOnly,
+  customMcpToolPolicy,
+  listCustomMcpToolInventory,
+  selectCustomMcpTools,
+  type CustomMcpConnectorConfig,
+  type CustomMcpToolSummary,
+} from "./custom-mcp";
+export {
   createHostedMcpPassthrough,
+  hostedMcpBearerAuth,
+  HOSTED_MCP_DEFAULT_RESPONSE_BYTES,
   type AuthorizedHostedMcpPassthrough,
   type HostedMcpAuthorization,
   type HostedMcpOAuthConfig,
   type HostedMcpOAuthState,
   type HostedMcpPassthrough,
   type HostedMcpPassthroughConfig,
+  type HostedMcpRequestAuth,
   type HostedMcpTokenResponse,
   type HostedMcpTool,
 } from "./hosted-mcp";
+import { createCustomMcpConnector, type CustomMcpConnectorConfig } from "./custom-mcp";
 import { createGitHubConnector, type GitHubConnectorConfig } from "./github";
 import { createGranolaConnector, type GranolaConnectorConfig } from "./granola";
 import { createLinearConnector, type LinearConnectorConfig } from "./linear";
@@ -4748,6 +4765,7 @@ export function connectorSupportsSurface(
 
 export function createConnectorRegistry(input: {
   observer?: ConnectorObserver;
+  customMcp?: CustomMcpConnectorConfig;
   granola?: GranolaConnectorConfig;
   google?: GoogleConnectorConfig;
   github?: GitHubConnectorConfig;
@@ -4757,6 +4775,14 @@ export function createConnectorRegistry(input: {
   x?: XConnectorConfig;
 } = {}): ConnectorRegistry {
   const adapters: ConnectorAdapter[] = [createGenericWebhookConnector()];
+  if (input.customMcp) adapters.push(createCustomMcpConnector({
+    ...input.customMcp,
+    fetch: instrumentConnectorFetch(
+      "custom_mcp",
+      input.customMcp.fetch ?? globalThis.fetch,
+      input.observer,
+    ),
+  }));
   if (input.granola) adapters.push(createGranolaConnector({
     ...input.granola,
     fetch: instrumentConnectorFetch(

@@ -26,6 +26,7 @@ const supportConnectorPages = [
   { provider: 'slack', slug: 'slack', title: 'Slack' },
   { provider: 'generic_webhook', slug: 'inbound-webhook', title: 'Inbound webhook' },
   { provider: 'x', slug: 'x', title: 'Public X' },
+  { provider: 'custom_mcp', slug: 'custom-mcp', title: 'Custom MCP server' },
 ] as const;
 
 const supportPagePaths = [

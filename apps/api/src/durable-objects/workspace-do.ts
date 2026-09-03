@@ -712,6 +712,7 @@ import { WORKSPACE_PRODUCT_SCHEMA_STATEMENTS } from "./workspace-product-schema"
 import {
   SLACK_REACTION_COLUMN_STATEMENTS,
   WORKSPACE_DOMAIN_SCHEMA_STATEMENTS,
+  workspaceIdentityFencesFor,
 } from "./workspace-domain-schema";
 import {
   WorkspaceActivityEventCursorRequestSchema,
@@ -1094,6 +1095,32 @@ function automationDirectoryWorkspaceIdentityGuards(): string[] {
       BEGIN SELECT RAISE(ABORT, 'workspace_identity_mismatch'); END`,
   ];
 }
+
+/**
+ * Every table whose rows a `DROP TABLE connector_connections` would take with
+ * it — twelve that cascade and `connector_oauth_attempts`, whose connection
+ * pointer would be nulled. Migration 31 copies each one out and back around
+ * the parent's replacement.
+ *
+ * A list rather than a query over `sqlite_schema`: a migration's statements are
+ * hashed into every object's receipt, so what it does has to be decided in
+ * source rather than by whatever an individual database happens to hold.
+ */
+const CONNECTOR_CONNECTION_DEPENDENTS = [
+  "connector_oauth_attempts",
+  "slack_agent_contexts",
+  "slack_agent_feedback",
+  "slack_agent_pending_prompts",
+  "slack_agent_policies",
+  "slack_agent_sessions",
+  "slack_agent_thread_claims",
+  "slack_delivery_preferences",
+  "slack_ingress_jobs",
+  "slack_link_challenges",
+  "slack_unfurled_links",
+  "slack_user_links",
+  "webhook_receipts",
+] as const;
 
 export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigration[] = [{
   version: 1,
@@ -2419,6 +2446,127 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
     // whatever the debounce said. `settleRanking` re-arms `due_at` from here.
     `ALTER TABLE suggested_work_sets ADD COLUMN pending_due_at INTEGER
       CHECK (pending_due_at IS NULL OR pending_due_at >= 0)`,
+  ],
+}, {
+  version: 31,
+  description: "connector connections and OAuth attempts admit a configured MCP server",
+  statements: [
+    // `connector_type` and `provider` are CHECK vocabularies, and SQLite cannot
+    // widen one in place. `connector_connections` is the harder of the two:
+    // thirteen tables cascade from it and one nulls, so the implicit delete
+    // inside `DROP TABLE` would take a workspace's Slack sessions, unfurls,
+    // ingress jobs and webhook receipts with it.
+    //
+    // The children are therefore *held* rather than rebuilt: each is copied to
+    // a scratch table, the parent is replaced, and the rows are put back. That
+    // keeps foreign keys enforced for the whole migration — `PRAGMA
+    // foreign_keys = OFF` is silently a no-op once an object event has already
+    // touched SQLite, so a rebuild that relies on it drops the children for
+    // real — and it means this migration never restates a child's schema,
+    // which is the other way a rebuild loses something: a column added by a
+    // later migration, an index, a trigger, quietly not carried across.
+    ...CONNECTOR_CONNECTION_DEPENDENTS.map((table) => (
+      `CREATE TABLE ${table}_v31_hold AS SELECT * FROM ${table}`
+    )),
+    `CREATE TABLE connector_connections_v31 (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      connector_type TEXT NOT NULL CHECK (connector_type IN ('custom_mcp', 'google', 'generic_webhook', 'github', 'granola', 'linear', 'notion', 'slack', 'x')),
+      scope TEXT NOT NULL CHECK (scope IN ('personal', 'workspace')),
+      owner_user_id TEXT,
+      provider_account_id TEXT,
+      display_name TEXT NOT NULL,
+      encrypted_credentials TEXT,
+      credential_iv TEXT,
+      credential_key_version INTEGER,
+      credential_refresh_lease_id TEXT,
+      credential_refresh_lease_expires_at TEXT,
+      granted_scopes_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(granted_scopes_json)),
+      status TEXT NOT NULL DEFAULT 'healthy' CHECK (status IN ('healthy', 'needs_reconnect', 'error', 'disabled')),
+      cursor_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(cursor_json)),
+      config_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(config_json)),
+      last_sync_at TEXT,
+      next_poll_at TEXT,
+      error_json TEXT CHECK (error_json IS NULL OR json_valid(error_json)),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      model_plugin_id TEXT NOT NULL,
+      CHECK ((scope = 'personal' AND owner_user_id IS NOT NULL) OR (scope = 'workspace' AND owner_user_id IS NULL))
+    ) STRICT`,
+    `INSERT INTO connector_connections_v31
+       (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id, display_name,
+        encrypted_credentials, credential_iv, credential_key_version,
+        credential_refresh_lease_id, credential_refresh_lease_expires_at,
+        granted_scopes_json, status, cursor_json, config_json, last_sync_at, next_poll_at,
+        error_json, created_at, updated_at, model_plugin_id)
+     SELECT id, workspace_id, connector_type, scope, owner_user_id, provider_account_id, display_name,
+            encrypted_credentials, credential_iv, credential_key_version,
+            credential_refresh_lease_id, credential_refresh_lease_expires_at,
+            granted_scopes_json, status, cursor_json, config_json, last_sync_at, next_poll_at,
+            error_json, created_at, updated_at, model_plugin_id
+       FROM connector_connections`,
+    // Empties every dependent, which is why they are held above. The rename
+    // then puts the replacement under the name they all still reference.
+    `DROP TABLE connector_connections`,
+    `ALTER TABLE connector_connections_v31 RENAME TO connector_connections`,
+    // Dropped with the old table, so recreated with it — the identity fences
+    // included, since they are the only guard stopping a row from another
+    // workspace reaching this object's connector table.
+    `CREATE INDEX connector_connections_poll_idx
+      ON connector_connections(status, next_poll_at, id)`,
+    `CREATE INDEX connector_connections_provider_account_idx
+      ON connector_connections(connector_type, provider_account_id, status)`,
+    `CREATE UNIQUE INDEX connector_connections_active_model_plugin_id_uq
+      ON connector_connections(model_plugin_id) WHERE status != 'disabled'`,
+    ...workspaceIdentityFencesFor("connector_connections"),
+    // Emptied first because the parent's replacement does not leave every
+    // dependent empty: twelve cascade to nothing, while `connector_oauth_attempts`
+    // nulls its pointer and keeps the row, which the hold would then duplicate.
+    // Deleting makes the restore mean the same thing for both.
+    ...CONNECTOR_CONNECTION_DEPENDENTS.flatMap((table) => [
+      `DELETE FROM ${table}`,
+      `INSERT INTO ${table} SELECT * FROM ${table}_v31_hold`,
+      `DROP TABLE ${table}_v31_hold`,
+    ]),
+    // The attempt vocabulary is the same widening one step earlier in the flow:
+    // a custom MCP authorization writes its pending receipt here before the
+    // person reaches the server's consent screen. Nothing references this
+    // table, so it is an ordinary rebuild.
+    `CREATE TABLE connector_oauth_attempts_v31 (
+      id TEXT PRIMARY KEY,
+      region TEXT NOT NULL CHECK (region IN ('global', 'eu')),
+      provider TEXT NOT NULL CHECK (provider IN ('custom_mcp', 'google', 'github', 'granola', 'linear', 'notion', 'slack')),
+      user_id TEXT NOT NULL,
+      workspace_id TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('pending', 'succeeded', 'denied', 'failed')),
+      connection_id TEXT REFERENCES connector_connections(id) ON DELETE SET NULL,
+      error_code TEXT,
+      expires_at TEXT NOT NULL,
+      completed_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      telemetry_operation_id TEXT,
+      telemetry_event_version INTEGER NOT NULL DEFAULT 1,
+      telemetry_scope TEXT,
+      telemetry_capability_count INTEGER,
+      telemetry_reconnect INTEGER NOT NULL DEFAULT 0
+    ) STRICT`,
+    `INSERT INTO connector_oauth_attempts_v31
+       (id, region, provider, user_id, workspace_id, status, connection_id, error_code,
+        expires_at, completed_at, created_at, updated_at, telemetry_operation_id,
+        telemetry_event_version, telemetry_scope, telemetry_capability_count, telemetry_reconnect)
+     SELECT id, region, provider, user_id, workspace_id, status, connection_id, error_code,
+            expires_at, completed_at, created_at, updated_at, telemetry_operation_id,
+            telemetry_event_version, telemetry_scope, telemetry_capability_count, telemetry_reconnect
+       FROM connector_oauth_attempts`,
+    `DROP TABLE connector_oauth_attempts`,
+    `ALTER TABLE connector_oauth_attempts_v31 RENAME TO connector_oauth_attempts`,
+    `CREATE INDEX connector_oauth_attempts_expiry_idx
+      ON connector_oauth_attempts(status, expires_at, id)`,
+    `CREATE UNIQUE INDEX connector_oauth_attempts_telemetry_operation_idx
+      ON connector_oauth_attempts(telemetry_operation_id)
+      WHERE telemetry_operation_id IS NOT NULL`,
+    ...workspaceIdentityFencesFor("connector_oauth_attempts"),
   ],
 }];
 

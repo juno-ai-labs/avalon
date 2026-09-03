@@ -8,6 +8,7 @@ import {
   WorkstreamBatchPreviewSchema as WireWorkstreamBatchPreviewSchema,
   ClientFeatureFlagsSchema as WireClientFeatureFlagsSchema,
   ConnectionSchema as WireConnectionSchema,
+  CustomMcpConnectionSettingsSchema as WireCustomMcpConnectionSettingsSchema,
   GitHubRepositoryAccessSettingsSchema as WireGitHubRepositoryAccessSettingsSchema,
   ConnectorOAuthAttemptSchema as WireConnectorOAuthAttemptSchema,
   ConnectorOAuthStartSchema as WireConnectorOAuthStartSchema,
@@ -41,6 +42,8 @@ import {
   type Connection as WireConnection,
   type ConnectorOAuthAttempt,
   type ConnectorOAuthStart,
+  type CustomMcpConnectionSettings,
+  type CustomMcpToolPolicy,
   type Elicitation as WireElicitation,
   type Resource as WireResource,
   ResourceRevisionSchema as WireResourceRevisionSchema,
@@ -1973,6 +1976,79 @@ export class RallyApi {
       headers: { [RALLY_HEADERS.OPERATION_ID]: operationId },
       body: { scope: scope === 'you' ? 'personal' : 'workspace', capabilities },
       schema: WireConnectorOAuthStartSchema,
+    });
+  }
+
+  async createCustomMcpConnection(input: {
+    displayName: string;
+    scope: 'you' | 'workspace';
+    serverUrl: string;
+    requestHeaders: Record<string, string>;
+    toolPolicy: CustomMcpToolPolicy;
+  }): Promise<WorkstreamConnection> {
+    reportTelemetryProductIntent({
+      kind: 'connector_setup_requested_v2', connector: 'custom_mcp',
+      scope: input.scope === 'you' ? 'personal' : 'workspace',
+      method: 'api_key', capabilityCount: telemetryCountBucket(1),
+    });
+    const response = await this.request('/connections/custom-mcp', {
+      method: 'POST',
+      body: {
+        displayName: input.displayName,
+        scope: input.scope === 'you' ? 'personal' : 'workspace',
+        serverUrl: input.serverUrl,
+        requestHeaders: input.requestHeaders,
+        toolPolicy: input.toolPolicy,
+      },
+      schema: z.object({ connection: WireConnectionSchema }),
+    });
+    return mapConnection(response.connection);
+  }
+
+  async startCustomMcpConnection(input: {
+    displayName: string;
+    scope: 'you' | 'workspace';
+    serverUrl: string;
+    toolPolicy: CustomMcpToolPolicy;
+  }): Promise<ConnectorOAuthStart> {
+    const operationId = uuidV7();
+    reportTelemetryProductIntent({
+      kind: 'connector_setup_requested_v2', connector: 'custom_mcp',
+      scope: input.scope === 'you' ? 'personal' : 'workspace',
+      method: 'oauth', capabilityCount: telemetryCountBucket(1),
+      operationId,
+    });
+    return this.request('/connections/custom-mcp/start?telemetryVersion=2&desktopHandoffVersion=2', {
+      method: 'POST',
+      headers: { [RALLY_HEADERS.OPERATION_ID]: operationId },
+      body: {
+        displayName: input.displayName,
+        scope: input.scope === 'you' ? 'personal' : 'workspace',
+        serverUrl: input.serverUrl,
+        toolPolicy: input.toolPolicy,
+      },
+      schema: WireConnectorOAuthStartSchema,
+    });
+  }
+
+  async getCustomMcpSettings(
+    connectionId: string,
+    signal?: AbortSignal,
+  ): Promise<CustomMcpConnectionSettings> {
+    return this.request(`/connections/${encodeURIComponent(connectionId)}/custom-mcp/tools`, {
+      schema: WireCustomMcpConnectionSettingsSchema,
+      signal,
+    });
+  }
+
+  async updateCustomMcpToolPolicy(
+    connectionId: string,
+    toolPolicy: CustomMcpToolPolicy,
+  ): Promise<CustomMcpConnectionSettings> {
+    return this.request(`/connections/${encodeURIComponent(connectionId)}/custom-mcp/tool-policy`, {
+      method: 'PUT',
+      body: { toolPolicy },
+      schema: WireCustomMcpConnectionSettingsSchema,
     });
   }
 

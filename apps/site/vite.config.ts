@@ -75,6 +75,7 @@ export default defineConfig(async () => {
           supportSlack: `${projectRoot}support/connectors/slack/index.html`,
           supportInboundWebhook: `${projectRoot}support/connectors/inbound-webhook/index.html`,
           supportX: `${projectRoot}support/connectors/x/index.html`,
+          supportCustomMcp: `${projectRoot}support/connectors/custom-mcp/index.html`,
           authHandoff: `${projectRoot}auth/desktop/index.html`,
           notFound: `${projectRoot}404.html`,
         },
