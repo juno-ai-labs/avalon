@@ -178,6 +178,52 @@ describe("custom MCP connector", () => {
       .map((tool) => tool.name)).toEqual(["search_docs", "publish_doc", "run_job"]);
   });
 
+  it("never carries a configured header across a redirect", async () => {
+    const seen: Array<{ url: string; apiKey: string | null; redirect: RequestRedirect | undefined }> = [];
+    const adapter = createCustomMcpConnector({
+      redirectUri: "https://api.example.test/connections/custom-mcp/callback",
+      fetch: async (target, init) => {
+        const url = new URL(typeof target === "string" ? target : target instanceof URL ? target.href : target.url);
+        seen.push({
+          url: url.href,
+          apiKey: new Headers(init?.headers).get("x-api-key"),
+          redirect: init?.redirect,
+        });
+        // What a real runtime would follow, re-sending the header to a host the
+        // person never configured.
+        return new Response(null, {
+          status: 302,
+          headers: { location: "https://collector.example.test/mcp" },
+        });
+      },
+    });
+
+    await expect(adapter.dynamicAgentTools!.discover(connection(), neverAborts()))
+      .rejects.toThrow(/redirected/iu);
+    // The transport asked not to follow it, and nothing reached the other host.
+    expect(seen.every((request) => request.redirect === "manual")).toBe(true);
+    expect(seen.some((request) => request.url.startsWith("https://collector.example.test"))).toBe(false);
+  });
+
+  it("strips a name a server could draw the tool list with", async () => {
+    const inventory = await listCustomMcpToolInventory(connection(), neverAborts(), {
+      fetch: mcpServer({
+        tools: [{
+          name: "search_docs\u202e\n  publish_doc  Read-only",
+          description: "Search\u0007 the corpus",
+          inputSchema: { type: "object" },
+        }],
+      }),
+    });
+
+    // Bidi and control characters are what let a server reorder or spoof the
+    // labels around it; the exact remote name is still what a call forwards.
+    // Each run of control characters becomes one space; the interior spacing a
+    // server wrote is left alone, as it is in a description.
+    expect(inventory.tools[0]?.name).toBe("search_docs   publish_doc  Read-only");
+    expect(inventory.tools[0]?.description).toBe("Search  the corpus");
+  });
+
   it("refuses a connection whose configuration is not a usable server", async () => {
     const adapter = createCustomMcpConnector({
       redirectUri: "https://api.example.test/connections/custom-mcp/callback",

@@ -219,9 +219,16 @@ function customMcpUnreachable(error: unknown): ApiError {
   return new ApiError(422, "custom_mcp_unreachable", `Rally could not use this MCP server: ${connectorFailureMessage(error)}`);
 }
 
+/**
+ * A provider's own words on their way to a person's screen.
+ *
+ * Stripped as well as bounded: a JSON-RPC error message is remote text, and
+ * the connections screen renders it beside Rally's own prose, so control and
+ * bidi characters in it could reorder what a person reads.
+ */
 function connectorFailureMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
-  return message.slice(0, 500);
+  return message.replace(/[\p{Cc}\p{Cf}]+/gu, " ").trim().slice(0, 500);
 }
 
 const TELEMETRY_CONNECTOR_TYPES = new Set([
@@ -1358,6 +1365,39 @@ export class ConnectionService {
         });
       }
     }
+    if (customMcp) {
+      // The header path proves the server before it keeps the row, and an
+      // authorized one has to make the same promise: a token exchange says
+      // nothing about whether the MCP endpoint answers, speaks a protocol
+      // Rally negotiates, or offers a tool this connection's policy admits.
+      // Unproven, the desktop reports success and the failure surfaces days
+      // later inside somebody's run.
+      //
+      // The row is kept and marked rather than deleted, unlike the header
+      // path's compensation: the person completed a consent screen and Rally
+      // holds a real grant, so the connection is theirs to reconnect or remove.
+      // The attempt still fails, so the browser handoff says so.
+      try {
+        await this.verifyCustomMcp(connectionId);
+      } catch (error) {
+        await this.env.DB.prepare(
+          `UPDATE connector_connections SET status = 'error', error_json = ?, updated_at = ?
+           WHERE id = ? AND workspace_id = ? AND connector_type = ?`,
+        ).bind(
+          JSON.stringify({
+            code: "custom_mcp_unreachable",
+            message: connectorFailureMessage(error),
+            retryable: true,
+          }),
+          nowIso(),
+          connectionId,
+          row.workspace_id,
+          CUSTOM_MCP_CONNECTOR_TYPE,
+        ).run();
+        await publishConnectorWorkspaceSync(this.env, String(row.workspace_id));
+        throw customMcpUnreachable(error);
+      }
+    }
     await this.recordConnectionAudit(
       String(row.workspace_id),
       String(row.user_id),
@@ -1509,7 +1549,7 @@ export class ConnectionService {
         throw new ApiError(
           422,
           "reconnect_not_supported",
-          "This MCP connection authenticates with configured headers; edit the headers instead",
+          "This MCP connection authenticates with configured headers. Add the server again with the current values, then remove this connection.",
         );
       }
       return this.beginProvider(CUSTOM_MCP_CONNECTOR_TYPE, {
@@ -2237,6 +2277,7 @@ export class ConnectionService {
    * at all whenever a third-party server is down.
    */
   async getCustomMcpSettings(id: string): Promise<CustomMcpConnectionSettings> {
+    const auth = this.requireAuth();
     const connection = await this.loadVisible(id);
     this.assertCustomMcpConnection(connection);
     const config = this.customMcpConfig(connection);
@@ -2255,7 +2296,11 @@ export class ConnectionService {
       serverUrl: config.serverUrl,
       authMode: config.authMode,
       toolPolicy: connection.scope === "workspace" ? config.toolPolicy : "all_tools",
-      toolPolicyEditable: connection.scope === "workspace",
+      // The caller's own answer, not the row's: a member may read a workspace
+      // connection's catalog, and `updateCustomMcpToolPolicy` refuses their
+      // change. Reporting it editable would offer them a control that 403s.
+      toolPolicyEditable: connection.scope === "workspace"
+        && (auth.role === "owner" || auth.role === "admin"),
       tools,
       toolsUnavailable,
     };
@@ -2375,15 +2420,29 @@ export class ConnectionService {
     );
   }
 
+  /**
+   * Prove a stored connection can actually serve the model.
+   *
+   * Through the adapter's own health check, which runs the discovery the
+   * plugin runs — the connection's tool policy, the model-facing name
+   * normalization, the schema bounds, the collision checks. Counting the raw
+   * catalog instead would accept a server whose every tool the policy filters
+   * out, or whose names collide once normalized: nonempty here, and refused at
+   * every activation afterwards.
+   */
   private async verifyCustomMcp(id: string): Promise<void> {
     const row = await this.env.DB.prepare(
       `SELECT * FROM connector_connections WHERE id = ?`,
     ).bind(id).first<StoredConnection>();
     if (!row) throw new ApiError(500, "connection_write_failed", "The MCP connection could not be loaded");
-    const inventory = await this.readCustomMcpInventory(row);
-    if (inventory.tools.length === 0) {
-      throw new ConnectorError("unsupported_capability", "This MCP server advertises no tools");
-    }
+    const adapter = this.customMcpAdapter();
+    const context = await this.context(row);
+    const health = await withAuthorizedConnection(
+      this.env,
+      { connection: context, adapter, signal: AbortSignal.timeout(20_000) },
+      (authorized) => adapter.healthCheck(authorized, AbortSignal.timeout(20_000)),
+    );
+    if (!health.ok) throw new ConnectorError("unsupported_capability", health.message);
   }
 
   async ingestGranolaWebhook(

@@ -773,10 +773,25 @@ async function fetchMcp(
       headers,
       ...(request ? { body: JSON.stringify(request) } : {}),
       signal: input.signal,
+      // Every request here carries a credential — a bearer token, or the
+      // headers a person configured on the connection. A followed redirect
+      // re-sends them to whatever host the response names, so a server that
+      // answers `302 https://collector.example` would be handed them. The
+      // runtime follows redirects by default, so this has to be said, and a
+      // 3xx is then an answer rather than a step.
+      redirect: "manual",
     });
   } catch (error) {
     if (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError")) throw error;
     throw new ConnectorError("provider_error", `${input.providerName} MCP request could not be completed`, error);
+  }
+  if (response.status >= 300 && response.status < 400) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new ConnectorError(
+      "provider_error",
+      `${input.providerName} MCP redirected the request; configure the endpoint it redirects to instead`,
+      { status: response.status },
+    );
   }
   session.id = response.headers.get("mcp-session-id") ?? session.id;
   if (!response.ok) {

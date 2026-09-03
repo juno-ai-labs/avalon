@@ -47,6 +47,13 @@ export const CustomMcpCapabilities = {
  */
 const MAX_CUSTOM_MCP_DESCRIPTION_CHARS = 4_000;
 
+/**
+ * Bounds: characters of one remote tool name shown in the connections screen.
+ * Mirrors the 200 the MCP tool schema already admits, so a name is bounded on
+ * the screen by exactly what the protocol bounds it by.
+ */
+const MAX_CUSTOM_MCP_TOOL_NAME_CHARS = 200;
+
 export interface CustomMcpConnectorConfig {
   /** The exact redirect URI Rally registers through dynamic client registration. */
   redirectUri: string;
@@ -363,7 +370,12 @@ export async function listCustomMcpToolInventory(
   return {
     policy,
     tools: listed.map((tool) => ({
-      name: tool.name,
+      // Sanitized for the screen, not for the wire: `tools/call` still receives
+      // the exact remote name through the discovery path. A name is untrusted
+      // remote text like a description, and the schema admits any non-empty
+      // string — including newlines and bidi controls, which would let a server
+      // reorder or spoof the labels around it in the tool list.
+      name: boundedRemoteText(tool.name, MAX_CUSTOM_MCP_TOOL_NAME_CHARS) || tool.name.slice(0, MAX_CUSTOM_MCP_TOOL_NAME_CHARS),
       description: boundedToolDescription(tool),
       readOnly: customMcpToolIsReadOnly(tool),
       destructive: tool.annotations?.destructiveHint === true,
@@ -373,15 +385,17 @@ export async function listCustomMcpToolInventory(
 }
 
 /**
- * A remote description reaches a person's screen here, so it is bounded and
- * stripped of the control characters that would let a server draw over the
- * surrounding interface.
+ * Remote text on its way to a person's screen: bounded, and stripped of the
+ * control and formatting characters that would otherwise let a server draw over
+ * the interface around it.
  */
+export function boundedRemoteText(value: string, maxChars: number): string {
+  const text = value.replace(/[\p{Cc}\p{Cf}]+/gu, " ").trim();
+  return text.length > maxChars ? `${text.slice(0, maxChars - 1)}\u2026` : text;
+}
+
 function boundedToolDescription(tool: HostedMcpTool): string {
-  const text = (tool.description ?? "").replace(/[\p{Cc}\p{Cf}]+/gu, " ").trim();
-  return text.length > MAX_CUSTOM_MCP_DESCRIPTION_CHARS
-    ? `${text.slice(0, MAX_CUSTOM_MCP_DESCRIPTION_CHARS - 1)}\u2026`
-    : text;
+  return boundedRemoteText(tool.description ?? "", MAX_CUSTOM_MCP_DESCRIPTION_CHARS);
 }
 
 async function customMcpInventoryAuth<T>(
