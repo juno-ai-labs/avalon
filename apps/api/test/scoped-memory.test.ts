@@ -13,6 +13,9 @@ import {
   resolveMemoryAccess,
 } from "../src/services/memory-service";
 import { createMemoryTableTools } from "../src/services/memory-table-service";
+import { validateToolArguments } from "@rally/agent-harness";
+import { MEMORY_RECALL_QUERY_LIMIT } from "@rally/contracts";
+import { z } from "zod";
 import { createCloudflareTestBinding, createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 import { createTestWorkspaceDO, workspaceObjectRpcs } from "./helpers/workspace-object-rpcs";
 import {
@@ -757,6 +760,40 @@ describe("scoped agent memory", () => {
     ]);
   });
 
+  it("bounds the assembled recall query to what the recall receivers accept", async () => {
+    const { env } = fixture();
+    const runInput = input("owner");
+
+    // The query is assembled from run content — the objective, the trigger
+    // context, and the whole text of the triggering message — so an automation
+    // triggered by a long email built one past the automation memory tool's
+    // 2000-character bound. That parse threw inside run setup, before the frozen
+    // scope and before any inference, so the run failed identically on every
+    // attempt and stayed failed. Clamping here is what the receiving schema
+    // requires, and it has to happen before the persisted text and the hash so a
+    // replay freezes the same query.
+    const frozen = await freezeRunMemoryContext(
+      routedEnv(env, runInput),
+      runInput,
+      { attemptId: "attempt-owner", owner: "lease-owner" },
+      `${"trigger email body ".repeat(400)}`,
+    );
+
+    // Read back off the frozen row rather than the argument, so this asserts
+    // what the run will actually replay and what the recall surfaces were sent.
+    // Asserted against the shared bound rather than a literal, because the
+    // bound is the whole point: the automation receiver rejects anything past
+    // it, and rejecting is what escaped run setup.
+    //
+    // This exercises the workspace branch. `freezeRunMemoryContext` picks the
+    // automation branch on `automationRunContext`, which this fixture does not
+    // populate and which needs an `AUTOMATION_AGENTS` binding to reach — so
+    // what is proved here is that the query handed to *either* recall surface
+    // now satisfies the bound, not that the automation call itself succeeds.
+    expect(frozen.query.length).toBe(MEMORY_RECALL_QUERY_LIMIT);
+    expect(() => z.string().max(MEMORY_RECALL_QUERY_LIMIT).parse(frozen.query)).not.toThrow();
+  });
+
   it("freezes recalled results and the context hash for deterministic retries", async () => {
     const { objectDatabase, env } = fixture();
     const runInput = input("owner");
@@ -1145,5 +1182,29 @@ describe("scoped agent memory", () => {
       { query: "private ledger" },
       toolContext(member, "member-table-search"),
     )).toMatchObject({ output: { tables: [] } });
+  });
+
+  it("tells the model table_search's query bound rather than only enforcing it", async () => {
+    const { env } = fixture();
+    const search = tableTool(env, input("owner"), "search");
+    const tooLong = { query: "a".repeat(2_001) };
+
+    // The bound the executor has always enforced, now also declared. Asserted
+    // through `validateToolArguments` — the harness's own reader of the
+    // published schema — because that is the function whose verdict decides
+    // whether a rejected call is reported to the model as its arguments or
+    // filed as the tool's own data problem. While the schema said only
+    // `string`, it saw nothing wrong and the model was told to retry the same
+    // 2001-character query.
+    expect(validateToolArguments(tooLong, search.definition.inputSchema)).not.toBeNull();
+    expect(validateToolArguments({ query: "a".repeat(2_000) }, search.definition.inputSchema)).toBeNull();
+    // What the hook uniquely catches, now that the bound is declared: the
+    // declared schema has no notion of `.trim()`, so whitespace satisfies
+    // `minLength: 1` and is refused only by the executor's parse.
+    const blank = { query: "   " };
+    expect(validateToolArguments(blank, search.definition.inputSchema)).toBeNull();
+    expect(search.validateInput?.(blank)).not.toBeNull();
+    expect(search.validateInput?.(tooLong)).not.toBeNull();
+    await expect(search.execute(tooLong, toolContext(input("owner"), "table-search-too-long"))).rejects.toThrow();
   });
 });
