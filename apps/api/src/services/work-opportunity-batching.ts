@@ -52,19 +52,32 @@ async function enqueue(env: Env, input: EnqueueInput): Promise<void> {
  * connection. A meeting being moved or cancelled is the kind of thing that
  * produces work, so it stays a candidate.
  *
- * The GitHub manifest already classifies exactly these families as
- * `operational` ("Continuous integration. Its own history, in its own tab."),
- * and this list repeats that judgement rather than reading it, on purpose:
- * `activity-consumer.ts` records that Suggested Work reads activity
- * independently of the digest and must not inherit that notification choice.
- * Digestibility is an inclusion list that fails closed, because a withheld
- * digest costs nothing. This is the deliberate opposite — an exclusion list
- * that fails open — because a connector added later should be offered as work
- * until somebody finds a reason not to. Excluded activity is still logged,
- * still routes to watches and automations, and still reaches the activity
- * feed; only the speculative home-screen surface is withheld.
+ * Every connector manifest already partitions its event types into
+ * `digestible` and `operational`, and 142 of the 205 declared types are
+ * operational — including exactly these two families. This list is not that
+ * partition and must not become it. `activity-consumer.ts` records why:
+ * Suggested Work reads the same activity independently and must not inherit
+ * the digest's notification choice. The two questions differ, and the gap is
+ * where a suggestion lives — "would a person want this read back to them on a
+ * schedule" is No for `drive.file_changed` and `linear.comment.update`, while
+ * "is there work here" may well be Yes. Inheriting the partition would
+ * withhold all 142.
+ *
+ * What is borrowed instead is the *floor*: a type this gate withholds must be
+ * one its connector already called operational, so this can never be the
+ * stricter of the two, and it cannot drift into contradicting a manifest that
+ * later reclassifies a type as news. `work-opportunity-batching.test.ts` binds
+ * that to the registry rather than to a reviewer noticing.
+ *
+ * The shape is the digest gate's opposite on purpose. Digestibility is an
+ * inclusion list that fails closed, because a withheld digest costs nothing.
+ * This is an exclusion list that fails open, because a connector added later
+ * should be offered as work until somebody finds a reason not to. Excluded
+ * activity is still logged, still routes to watches and automations, and still
+ * reaches the activity feed; only the speculative home-screen surface is
+ * withheld.
  */
-const SUGGESTED_WORK_EXCLUDED_EVENT_TYPE_PREFIXES: readonly string[] = [
+export const SUGGESTED_WORK_EXCLUDED_EVENT_TYPE_PREFIXES: readonly string[] = [
   "github.check_run.",
   "github.workflow_run.",
 ];
