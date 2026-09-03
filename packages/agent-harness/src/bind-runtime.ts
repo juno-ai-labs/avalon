@@ -82,7 +82,6 @@ import {
   type ModelToolDefinition,
   type AzureModelPricing,
   type OpenRouterProviderError,
-  type ProviderErrorBody,
   type PluginAuthorization,
   type PluginAuthorizationOccasion,
   type RunHarnessInput,
@@ -2283,19 +2282,9 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             failureKind: classified.kind,
             ...(error instanceof OpenRouterError || error instanceof AzureOpenAIError
               ? (() => {
-                const details = error.details as {
-                  providerError?: OpenRouterProviderError;
-                  providerErrorBody?: ProviderErrorBody;
-                } | undefined;
-                return {
-                  ...(details?.providerError ? { providerError: details.providerError } : {}),
-                  // Archive-only, and the only place the provider's own sentence
-                  // survives: the ledger row beside this one keeps a
-                  // classification, which cannot say *what* was rejected.
-                  ...(details?.providerErrorBody
-                    ? { providerErrorBody: details.providerErrorBody }
-                    : {}),
-                };
+                const providerError = (error.details as { providerError?: OpenRouterProviderError } | undefined)
+                  ?.providerError;
+                return providerError ? { providerError } : {};
               })()
               : {}),
           }));

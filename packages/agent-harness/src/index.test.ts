@@ -19,7 +19,6 @@ import {
   memberSafeHarnessFailureMessage,
   OpenRouterClient,
   openRouterProviderError,
-  providerErrorBody,
   rejectToolModesBeforeCall,
   renderAddressingMessages,
   runHarness,
@@ -697,7 +696,7 @@ describe("agent harness", () => {
       error: {
         code: 400,
         message: "Provider returned error",
-        metadata: { provider_name: "Google", raw: "verbatim echo of the rejected prompt" },
+        metadata: { provider_name: "Google", raw: "the upstream's own account of the refusal" },
       },
     }, { status: 400 })) as unknown as typeof fetch;
     const client = new OpenRouterClient({
@@ -717,23 +716,20 @@ describe("agent harness", () => {
       },
     })).rejects.toMatchObject({ name: "OpenRouterError", status: 400 });
 
+    // A gateway's own `message` is boilerplate and the upstream's real sentence
+    // sits in `metadata.raw`, so the classification is kept *and* the body it
+    // arrived in, rather than one field picked per provider.
     const failure = diagnostics.find((diagnostic) => diagnostic.success === false);
     expect(failure?.providerError).toEqual({
       code: 400,
       providerName: "Google",
-    });
-    // The classification every log-facing reader takes stays free of provider
-    // prose, whatever the envelope carried.
-    expect(JSON.stringify(failure?.providerError)).not.toContain("verbatim echo");
-    // The body travels beside it for the inference archive alone. A gateway
-    // puts the upstream's own sentence in `metadata.raw`, so a classification
-    // without the body cannot say what the upstream actually objected to.
-    expect(failure?.providerErrorBody).toEqual({
-      error: {
-        code: 400,
-        message: "Provider returned error",
-        metadata: { provider_name: "Google", raw: "verbatim echo of the rejected prompt" },
-      },
+      detail: JSON.stringify({
+        error: {
+          code: 400,
+          message: "Provider returned error",
+          metadata: { provider_name: "Google", raw: "the upstream's own account of the refusal" },
+        },
+      }),
     });
   });
 
@@ -763,8 +759,7 @@ describe("agent harness", () => {
     // Nothing here classifies: the refusal never reached the envelope the
     // classifier reads, so the bytes are the only account of it.
     const failure = diagnostics.find((diagnostic) => diagnostic.success === false);
-    expect(failure?.providerError).toBeUndefined();
-    expect(failure?.providerErrorBody).toBe("upstream gateway refused");
+    expect(failure?.providerError).toEqual({ detail: "upstream gateway refused" });
   });
 
   it("carries an Azure rejection body naming the tool the deployment refused", async () => {
@@ -792,8 +787,10 @@ describe("agent harness", () => {
       name: "AzureOpenAIError",
       status: 400,
       details: {
-        providerError: { code: "invalid_function_parameters" },
-        providerErrorBody: rejection,
+        providerError: {
+          code: "invalid_function_parameters",
+          detail: JSON.stringify(rejection),
+        },
       },
     });
   });
@@ -815,37 +812,29 @@ describe("agent harness", () => {
     }, () => {})).rejects.toMatchObject({
       name: "AzureOpenAIError",
       details: {
-        providerErrorKind: "text",
-        providerErrorBody: "<html>upstream gateway refused</html>",
+        providerError: { detail: "<html>upstream gateway refused</html>" },
       },
     });
   });
 
-  it("drops provider-controlled prose from error classifications", () => {
-    expect(openRouterProviderError({ error: { code: 400, message: "x".repeat(5_000) } }))
-      .toEqual({ code: 400 });
-    expect(openRouterProviderError({ error: { message: 12 } })).toBeUndefined();
-    expect(openRouterProviderError("not an envelope")).toBeUndefined();
-    expect(openRouterProviderError({ choices: [] })).toBeUndefined();
-  });
-
-  it("keeps a rejection body whenever the provider sent one", () => {
-    // Unenveloped and unparsed bodies are exactly the cases a classification
-    // cannot describe, so the body keeps them verbatim rather than shaping them.
-    expect(providerErrorBody({ error: { code: 400, message: "why" } }))
-      .toEqual({ error: { code: 400, message: "why" } });
-    expect(providerErrorBody({ detail: "no error envelope" })).toEqual({ detail: "no error envelope" });
-    expect(providerErrorBody("plain text refusal")).toBe("plain text refusal");
-    // Text that parses to an object is archived as the object; text that parses
-    // to anything else keeps the bytes the provider actually sent.
-    expect(providerErrorBody('{"error":{"code":400}}')).toEqual({ error: { code: 400 } });
-    expect(providerErrorBody('[{"error":"list"}]')).toBe('[{"error":"list"}]');
-    // Nothing to say is not a body: an empty object or blank text would archive
-    // a field that reads as evidence and holds none.
-    expect(providerErrorBody({})).toBeUndefined();
-    expect(providerErrorBody("   ")).toBeUndefined();
-    expect(providerErrorBody(null)).toBeUndefined();
-    expect(providerErrorBody([{ error: "list" }])).toBeUndefined();
+  it("classifies a rejection where it can, and keeps the body either way", () => {
+    // Response text and an already-decoded envelope classify the same way.
+    expect(openRouterProviderError('{"error":{"code":400,"message":"why"}}'))
+      .toEqual({ code: 400, detail: '{"error":{"code":400,"message":"why"}}' });
+    expect(openRouterProviderError({ error: { code: 400, message: "why" } }))
+      .toEqual({ code: 400, detail: '{"error":{"code":400,"message":"why"}}' });
+    // A body the classifier cannot read is exactly when the body is the whole
+    // diagnosis, so it survives with no classification beside it.
+    expect(openRouterProviderError("upstream gateway refused"))
+      .toEqual({ detail: "upstream gateway refused" });
+    expect(openRouterProviderError({ error: { message: 12 } }))
+      .toEqual({ detail: '{"error":{"message":12}}' });
+    // Nothing to say is not a rejection: an empty or blank body would record a
+    // field that reads as evidence and holds none.
+    expect(openRouterProviderError({})).toBeUndefined();
+    expect(openRouterProviderError("   ")).toBeUndefined();
+    expect(openRouterProviderError(null)).toBeUndefined();
+    expect(openRouterProviderError(undefined)).toBeUndefined();
   });
 
   it("carries the provider's rejection classification off a failed stream", async () => {

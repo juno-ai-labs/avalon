@@ -1723,6 +1723,7 @@ export async function classifyWorkstreamMessage(
           failure_kind: diagnostic.failureKind,
           provider_error_code: diagnostic.providerError?.code,
             provider_error_provider: diagnostic.providerError?.providerName,
+            provider_error_detail: diagnostic.providerError?.detail,
           validation_issues: diagnostic.validationIssues,
         },
       );
