@@ -2500,8 +2500,11 @@ describe("connectors", () => {
     for (const tool of paginated) {
       const properties = (tool.inputSchema as { properties: Record<string, { description?: string }> }).properties;
       const description = properties.pageToken?.description ?? "";
+      // Matched case-insensitively: the wording is edited for tone, and an
+      // assertion pinned to a capital letter fails a rewrite that kept every
+      // word. What has to survive an edit is the instruction, not its casing.
       expect(description, `${tool.name} pageToken`).toContain("nextPageToken");
-      expect(description, `${tool.name} pageToken`).toContain("never construct");
+      expect(description.toLowerCase(), `${tool.name} pageToken`).toContain("never construct");
       // Stated as the `null` these tools actually emit. A description of an
       // absent key would contradict what the caller sees on every last page.
       expect(description, `${tool.name} pageToken`).toContain("`nextPageToken` is `null`");
@@ -2539,6 +2542,79 @@ describe("connectors", () => {
       message: "Google API failed (400); it rejected the `pageToken` argument",
       details: { reason: "invalid_parameter", field: "pageToken" },
     });
+  });
+
+  it("refuses to name an argument the tool would itself reject", async () => {
+    // Drive sends `query`, `fileType` and `modifiedAfter` as one `q`, so a
+    // rejection of `q` names no single argument to change — and `q` is not an
+    // argument `drive.search` accepts, so relaying it would send a caller after
+    // a key its own strict schema refuses.
+    const fetcher: typeof fetch = async () => googleJson({
+      error: {
+        code: 400,
+        message: "Invalid Value",
+        errors: [{ domain: "global", reason: "invalid", locationType: "parameter", location: "q" }],
+      },
+    }, 400);
+    await expect(googleAdapter(fetcher).executeTool(
+      "drive.search",
+      { query: "portfolio" },
+      {
+        connection: googleConnection(["drive.read"]),
+        principal: { type: "user", userId: TEST_USER_ID },
+        signal: neverAborts(),
+      }
+    )).rejects.toMatchObject({ code: "provider_error", message: "Google API failed (400)" });
+  });
+
+  it("maps a refused Google parameter back to the argument the caller passed", async () => {
+    // Drive's `pageSize` is Rally's `maxResults`; naming Google's spelling
+    // would be naming a key `drive.search` does not accept.
+    const fetcher: typeof fetch = async () => googleJson({
+      error: {
+        code: 400,
+        message: "Invalid Value",
+        errors: [{ domain: "global", reason: "invalid", locationType: "parameter", location: "pageSize" }],
+      },
+    }, 400);
+    await expect(googleAdapter(fetcher).executeTool(
+      "drive.search",
+      { query: "portfolio", maxResults: 100 },
+      {
+        connection: googleConnection(["drive.read"]),
+        principal: { type: "user", userId: TEST_USER_ID },
+        signal: neverAborts(),
+      }
+    )).rejects.toMatchObject({
+      code: "provider_error",
+      message: "Google API failed (400); it rejected the `maxResults` argument",
+      details: { reason: "invalid_parameter", field: "maxResults" },
+    });
+  });
+
+  it("reads a status other than 400 as something other than a bad argument", async () => {
+    // Drive reports a deleted, trashed, or unshared file with the same
+    // `errors[]` shape a bad argument uses, so status is what separates "you
+    // sent the wrong thing" from "it is not there". The location below is a
+    // mapped one deliberately: `drive.get_metadata` passes no argument mapping
+    // at all, so it could not reach the naming path whatever the status, and a
+    // test written against it would pass with this rule deleted.
+    const fetcher: typeof fetch = async () => googleJson({
+      error: {
+        code: 404,
+        message: "File not found",
+        errors: [{ domain: "global", reason: "notFound", locationType: "parameter", location: "pageToken" }],
+      },
+    }, 404);
+    await expect(googleAdapter(fetcher).executeTool(
+      "drive.search",
+      { query: "portfolio" },
+      {
+        connection: googleConnection(["drive.read"]),
+        principal: { type: "user", userId: TEST_USER_ID },
+        signal: neverAborts(),
+      }
+    )).rejects.toMatchObject({ code: "provider_error", message: "Google API failed (404)" });
   });
 
   it("does not relay a rejection whose location is not an argument name", async () => {
