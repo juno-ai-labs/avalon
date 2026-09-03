@@ -142,10 +142,23 @@ unchanged where anything else becomes an outage, and `withAccountIdentity` in
 `app-session.tsx` opens the browser for the sign-in, tells the row or dialog
 that started it — which keeps its spinner with "Finish signing in to Rally in
 your browser" beneath — and runs the same request again once the callback has
-been exchanged for the credential. Choosing the row again opens the browser
-again and the earlier attempt stands down; a callback that reports failure
-lands as the row's error, and so does a sign-in that never reached the
-browser ("Rally could not open the sign-in page"). A renewal of the identity
+been exchanged for the credential. The waiter is keyed by the attempt main
+minted: choosing the row again starts a newer attempt, main honours only
+that one from then on, and the earlier waiter stands down the moment the
+newer attempt exists — before its browser opens, so a launch that fails
+leaves nothing parked. A callback from a superseded attempt is stale and
+settles nothing; one that reports failure lands as the row's error, and so
+does a sign-in that never reached the browser ("Rally could not open the
+sign-in page"). The create dialog can be left or resubmitted while it
+waits; leaving it abandons the creation and not the sign-in, which restores
+the credential all the same if it lands. The startup activation of a
+discovered workspace and an addressed link into another workspace take the
+same path; the opening state says where the person is expected, and a link
+relies on the browser showing Rally's sign-in page, because the only
+surface a link has is the notice window, whose title reads as a failure and
+which the main window cannot take down once the link has opened. A link
+waits for its sign-in outside the deep-link queue, which the sign-in's own
+callback must be free to come through. A renewal of the identity
 credential that the service refuses for good — the surrender in
 [Credential renewal](#credential-renewal) — answers the request that needed
 it with the same code, so the click that discovered the credential was dead
@@ -415,7 +428,22 @@ United States; the product has two regions, not a global one.
 keeping the guard, which leaves every switch at the mercy of a query the
 renderer might be holding stale. A timeout on the wait for the browser,
 which is a limit with a number nobody has chosen; the row stays chosen and
-can be chosen again instead.
+can be chosen again instead. A progress notice for an addressed link in the
+notice window, whose title reads as a failure and which the main window
+cannot take down once the link has opened.
+
+**Review adjustments, same day:** The waiter is keyed by attempt and stood
+down as soon as main honours a newer attempt, so a callback from a
+superseded tab settles nothing and a launch that fails leaves nothing
+parked; the activation mark that holds the shell up during a switch is
+compared by identity before it is cleared, so a superseded attempt cannot
+clear a newer one's; the shell's error write carries the same attempt check
+as its other writes; the create dialog can be resubmitted or left while it
+waits, abandoning the creation and not the sign-in; the startup activation
+says where the person is expected and an addressed link signs in in place,
+waiting outside the deep-link queue its own callback arrives through; and
+the invitation email, the setup-required screen, and the telemetry
+diagnostics say United States or US as well.
 
 **Consequences:** An action that needs the identity credential goes through
 `withAccountIdentity` rather than reading the directory's `identity`, which
@@ -424,7 +452,9 @@ activation code is thrown as one; `workspaceActivationBridgeError` passes it
 through and wraps everything else as an outage. A terminal renewal of the
 identity credential is reported as that code too, by `identityRenewalFailure`
 in main, so surrendering the credential and asking for the sign-in are one
-answer rather than two clicks.
+answer rather than two clicks. Anything that settles a sign-in must name the
+attempt it heard from, and nothing may wait for a sign-in from inside the
+deep-link queue.
 
 ### 2026-09-02 — A session's life slides with use, under a ninety-day ceiling
 

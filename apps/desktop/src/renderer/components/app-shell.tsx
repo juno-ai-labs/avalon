@@ -224,6 +224,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     getOnboardingState,
     invitationApi,
     pendingInvitation,
+    abandonAccountSignIn,
     session,
     signOut,
   } = useAppSession();
@@ -474,6 +475,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
               void workspaceDirectory.refetch();
               if (attentionWorkspaces.length > 0) void workspaceAttention.refetch();
             }}
+            onAbandonSignIn={abandonAccountSignIn}
             onInvitationPromptDismiss={clearPendingInvitation}
             onOpenSettings={() => { void desktopBridge().openSettings(); }}
             onSignOut={() => { void signOut().catch(() => undefined); }}
@@ -495,7 +497,9 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
                 });
                 return true;
               } catch (error) {
-                if (error instanceof AccountSignInSupersededError) return false;
+                // A superseded attempt, or one whose row a newer attempt has
+                // since taken over, has nothing left to say about that row.
+                if (error instanceof AccountSignInSupersededError || switchAttemptRef.current !== attempt) return false;
                 const code = error instanceof Error && 'code' in error ? String(error.code) : undefined;
                 const message = error instanceof Error ? error.message : '';
                 const activationFailure = workspaceActivationFailureCode(error);

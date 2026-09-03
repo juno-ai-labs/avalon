@@ -2129,8 +2129,9 @@ async function createDevelopmentSession(input: unknown): Promise<DesktopSession>
  * one: the renderer signs in from the action that asked, in the same click,
  * rather than reporting an outage and signing in on the next.
  */
-function identityRenewalFailure(error: unknown): unknown {
-  return refreshFailureIsTerminal(error) ? accountReconnectRequiredFailure() : error;
+function identityRenewalFailure(error: unknown): Error {
+  if (refreshFailureIsTerminal(error)) return accountReconnectRequiredFailure();
+  return error instanceof Error ? error : new Error(String(error));
 }
 
 async function requireOnboardingIdentitySession(): Promise<WireSession> {
@@ -2292,6 +2293,8 @@ async function getOnboardingState(): Promise<DesktopWorkspaceOnboardingState> {
       workspaces: await workspaceDirectoryRows(lastWorkspaceDiscovery?.workspaces ?? []),
       invitations: lastWorkspaceDiscovery?.invitations ?? [],
       identity: identityStored ? 'unavailable' : 'reconnect_required',
+      // A sentence for the no-workspace gate, which shows this as it is; the
+      // coded failure's own detail is written for a caption, without the stop.
       identityError: !identityStored
         ? 'Sign in to Rally again to continue.'
         : error instanceof Error ? error.message : 'Rally could not check your workspaces.',

@@ -3,10 +3,10 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  FINISH_SIGN_IN_IN_BROWSER,
   UNREAD_ACTIVITY_DESCRIPTION,
   WorkspaceAccountMenu,
 } from './workspace-account-menu';
+import { AccountSignInSupersededError, FINISH_SIGN_IN_IN_BROWSER } from '../lib/app-session';
 import { desktopWorkspaceIdentityKey } from '../../common/desktop';
 
 const currentUser = { id: 'user-1', name: 'Ada', email: 'ada@example.com', timezone: 'America/New_York' };
@@ -35,6 +35,7 @@ function renderMenu(overrides: Partial<React.ComponentProps<typeof WorkspaceAcco
     onDeclineInvitation: vi.fn(async () => undefined),
     onInvitationPromptDismiss: vi.fn(),
     onMenuOpen: vi.fn(),
+    onAbandonSignIn: vi.fn(),
     onOpenSettings: vi.fn(),
     onSignOut: vi.fn(),
     onSwitchWorkspace: vi.fn(async () => true),
@@ -248,7 +249,67 @@ describe('workspace account menu', () => {
     act(() => progress!.onSignInRequired());
 
     expect(within(create).getByText(FINISH_SIGN_IN_IN_BROWSER)).toBeVisible();
-    expect(within(create).getByRole('button', { name: 'Create workspace' })).toBeDisabled();
+    // The person may have closed the browser instead: both ways out stay open.
+    expect(within(create).getByRole('button', { name: 'Create workspace' })).toBeEnabled();
+    expect(within(create).getByRole('button', { name: 'Cancel' })).toBeEnabled();
+  });
+
+  it('lets a creation that waits on the browser be tried again, and drops the earlier attempt quietly', async () => {
+    let progress: { onSignInRequired: () => void } | null = null;
+    let rejectFirst: ((error: Error) => void) | null = null;
+    const onCreateWorkspace = vi.fn()
+      .mockImplementationOnce((
+        _input: { name: string; region: 'global' | 'eu' },
+        _operationId: string,
+        hooks: { onSignInRequired: () => void },
+      ) => new Promise<void>((_resolve, reject) => {
+        progress = hooks;
+        rejectFirst = reject;
+      }))
+      .mockImplementationOnce(() => new Promise<void>(() => undefined));
+    const props = renderMenu({ onCreateWorkspace });
+    openMenu();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Create a workspace' }));
+    const create = await screen.findByRole('dialog', { name: 'Create a workspace' });
+    fireEvent.change(within(create).getByLabelText('Workspace name'), { target: { value: 'Field Notes' } });
+    fireEvent.click(within(create).getByRole('button', { name: 'Create workspace' }));
+    await waitFor(() => expect(progress).not.toBeNull());
+    expect(within(create).getByRole('button', { name: 'Cancel' })).toBeDisabled();
+    act(() => progress!.onSignInRequired());
+    expect(await within(create).findByText(FINISH_SIGN_IN_IN_BROWSER)).toBeVisible();
+
+    fireEvent.click(within(create).getByRole('button', { name: 'Create workspace' }));
+    await waitFor(() => expect(onCreateWorkspace).toHaveBeenCalledTimes(2));
+    // The first attempt stands down as a newer sign-in supersedes it, and says
+    // nothing in the dialog the second attempt now owns.
+    act(() => rejectFirst!(new AccountSignInSupersededError()));
+    await act(async () => { await Promise.resolve(); });
+    expect(within(create).queryByText(/newer sign-in/u)).not.toBeInTheDocument();
+    expect(within(create).getByRole('button', { name: 'Cancel' })).toBeDisabled();
+    expect(props.onAbandonSignIn).not.toHaveBeenCalled();
+  });
+
+  it('abandons the creation, not the sign-in, when the dialog is closed while waiting on the browser', async () => {
+    let progress: { onSignInRequired: () => void } | null = null;
+    const onCreateWorkspace = vi.fn((
+      _input: { name: string; region: 'global' | 'eu' },
+      _operationId: string,
+      hooks: { onSignInRequired: () => void },
+    ) => new Promise<void>(() => { progress = hooks; }));
+    const props = renderMenu({ onCreateWorkspace });
+    openMenu();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Create a workspace' }));
+    const create = await screen.findByRole('dialog', { name: 'Create a workspace' });
+    fireEvent.change(within(create).getByLabelText('Workspace name'), { target: { value: 'Field Notes' } });
+    fireEvent.click(within(create).getByRole('button', { name: 'Create workspace' }));
+    await waitFor(() => expect(progress).not.toBeNull());
+    act(() => progress!.onSignInRequired());
+    expect(await within(create).findByText(FINISH_SIGN_IN_IN_BROWSER)).toBeVisible();
+
+    fireEvent.click(within(create).getByRole('button', { name: 'Cancel' }));
+
+    expect(props.onAbandonSignIn).toHaveBeenCalledOnce();
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Create a workspace' })).not.toBeInTheDocument());
   });
 
   it('submits workspace creation with Enter but leaves an IME composition alone', async () => {
