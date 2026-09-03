@@ -951,6 +951,23 @@ emit — 1240 turns in a week's archive show it. Describing a key that is never
 absent as "absent" would leave a caller to resolve the contradiction against
 what it sees.
 
+The name Google puts in `location` is its own *HTTP parameter*, which for most
+of these is not the tool's argument: `drive.search` sends `maxResults` as
+`pageSize`, and three tools send a `query` as `q`. Relayed as-is it would name
+`q`, a key every one of these tools rejects outright, reproducing the same loop
+one layer down — so each tool carries a map from Google's parameter back to its
+own argument and a parameter with no entry is dropped. Drive's `q` is
+deliberately absent, being composed from three arguments at once, and `orderBy`
+belongs to Drive alone: `calendar.list_events` sends that parameter too, but
+Rally fixes its value, so it is not the caller's to correct. The lookup only
+ever yields one of Rally's own literals, so no provider text reaches a model
+through this path and no bound on the provider's string is needed to keep it so.
+
+The naming is gated on a 400. Drive reports a deleted, trashed, or unshared
+file with the same `errors[]` shape and `location: "fileId"`; read as an
+argument fault, a 404 would tell a caller its id was malformed when the file is
+simply unreachable, and send it back to re-derive an id it had right.
+
 **Considered and rejected:** Validating the token — rejecting one Rally did not
 issue. Doing it properly means tracking issued cursors per run, which is durable
 state for a stateless parameter, and doing it cheaply means guessing at the shape
@@ -968,13 +985,16 @@ filling an argument, and which would carry it for Drive alone.
 **Consequences:** A new paginated Google tool that ships a bare `pageToken`
 fails `index.test.ts`, which asserts the set of tools exposing one and that each
 describes it; extending that set is a deliberate edit rather than an omission.
-Only an identifier-shaped `location` is relayed, because Google puts a query
-fragment in that slot for some error classes and a search term is the caller's
-own content — a name that does not look like an argument is dropped rather than
-passed to the model. `maxLength: 2_000` on these cursors is now a measured
-bound rather than an arbitrary one, with roughly four times the longest observed
-token; if a provider cursor ever exceeded it, Rally would reject a *valid* token
-as its own validation error and paging would stop dead at that page.
+A tool that starts sending a new caller-controlled parameter has to add it to
+`GOOGLE_TOOL_ARGUMENT_BY_PARAMETER` or a rejection of it goes unnamed — the
+quiet direction, and the one chosen deliberately over naming a key the tool
+would refuse. The mapping is per tool rather than adapter-wide precisely
+because `orderBy` means different things across two of them.
+
+`maxLength: 2_000` on these cursors is now a measured bound rather than an
+arbitrary one, with roughly four times the longest observed token; if a provider
+cursor ever exceeded it, Rally would reject a *valid* token as its own
+validation error and paging would stop dead at that page.
 
 The presentation defect found in the same investigation is deliberately not
 fixed here: two Drive-capable Google connections render byte-identical plugin
