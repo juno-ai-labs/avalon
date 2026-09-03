@@ -4,6 +4,7 @@ import {
   AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS,
   AVALON_DISCOVERY_TOOL_DEFINITIONS,
   AVALON_SKILL_TOOL_DEFINITIONS,
+  droppedNullableBranches,
   nonObjectRootSchema,
   nonObjectRootUnionBranches,
   weakenedCompositionBranches,
@@ -142,6 +143,30 @@ describe("tool schema sanitization", () => {
       nonObjectRootSchema(schema).map((path) => `${name}: ${path}`));
 
     expect(rejected).toEqual([]);
+  });
+
+  it("delivers the null branch every Google cursor authors, in the one spelling that survives", () => {
+    // The fix these four carry is that "no cursor" is expressible as a value.
+    // It is expressible only if the null branch reaches the model, and the
+    // sanitizer collapses `type: ["string", "null"]` to `type: "string"`,
+    // moving the nullability into the description — a schema forbidding the
+    // value beside prose permitting it, which is the conflict the fix exists to
+    // end. Written as an assertion because two automated reviews read the two
+    // spellings as equivalent, which is what a reviewer's head is bad at and a
+    // test is good at.
+    const google = createTestConnectorRegistry().get("google");
+    const paginated = google.agentPlugin.tools.filter((tool) => (
+      Object.hasOwn((tool.inputSchema as { properties?: Record<string, unknown> }).properties ?? {}, "pageToken")
+    ));
+    expect(paginated.map((tool) => tool.name)).toEqual([
+      "gmail.search",
+      "calendar.list_calendars",
+      "calendar.list_events",
+      "drive.search",
+    ]);
+    expect(paginated.flatMap((tool) => droppedNullableBranches(
+      tool.inputSchema as Record<string, unknown>,
+    ).map((finding) => `${tool.name}.${finding}`))).toEqual([]);
   });
 
   it("leaves no tool with a composition branch the sanitizer strips a constraint from", () => {

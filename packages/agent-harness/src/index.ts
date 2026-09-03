@@ -76,6 +76,7 @@ export {
   type BindSystemProjection,
 } from "./bind-loop-projection";
 export {
+  droppedNullableBranches,
   nonObjectRootSchema,
   nonObjectRootUnionBranches,
   readableRootUnionBranch,
