@@ -502,6 +502,25 @@ describe("AutomationAgent", () => {
     })).resolves.toMatchObject({ id: AUTOMATION_ID, name: "Weekday digest", status: "active" });
   });
 
+  it("creates the automation a proposal card offers, from its id alone", async () => {
+    // The card's own entry point, which builds the create request server-side
+    // rather than taking one. It built `modelOverride: null` for a field whose
+    // schema is an `optional()` enum, so `accept`'s re-parse threw a `ZodError`
+    // outside every mapping and the boundary answered `500 internal_error` /
+    // "An unexpected error occurred" — for every press of every card, with
+    // nothing for the person to do about it.
+    //
+    // Asserted through the service rather than the schema: what failed was the
+    // request this constructs, and a schema test would only restate the literal
+    // beside it.
+    const definition = readyDefinition("Daily joke");
+    await seedReadyDraft(definition);
+    await pinWorkspaceIdentity();
+
+    await expect(authorService().acceptAuthoredDraft(AUTOMATION_ID))
+      .resolves.toMatchObject({ id: AUTOMATION_ID, name: "Daily joke", status: "active" });
+  });
+
   it("answers a directory membership refusal as 403, not a 500 and not a conflict", async () => {
     // `list` reached WorkspaceDO outside `withAutomationErrors` for the same
     // reason `accept` did, so a member removed from the workspace between
