@@ -207,38 +207,6 @@ describe("inference lakehouse", () => {
     ]));
   });
 
-  it("drops provider-controlled prose before archiving an error classification", async () => {
-    const { env, objects, pointers } = fixture();
-
-    await captureStructuredInferenceDiagnostic(env, {
-      source: "workstream_naming",
-      workspaceId: "workspace-1",
-    }, {
-      stage: "complete",
-      schemaName: "name",
-      model: "structured/model",
-      attempt: 0,
-      fallbackAttempt: 0,
-      repairAttempt: 0,
-      inferenceRequestId: "failed-request",
-      success: false,
-      failureKind: "provider_error",
-      providerError: {
-        code: 400,
-        providerName: "Google",
-        message: "verbatim echo of the rejected prompt",
-      } as never,
-    });
-
-    const archived = JSON.parse(objects.get(
-      (pointers[0] as { objectKey: string }).objectKey,
-    )!) as InferenceLakehouseRecord;
-    expect(archived.error).toEqual({
-      providerError: { code: 400, providerName: "Google" },
-    });
-    expect(JSON.stringify(archived)).not.toContain("verbatim echo");
-  });
-
   it("archives the rejection body a classification code cannot describe", async () => {
     const { env, objects, pointers } = fixture();
     // The 2 September Sol failure. `invalid_function_parameters` reached every
@@ -267,16 +235,20 @@ describe("inference lakehouse", () => {
       latencyMs: 1386,
       disposition: "fallback",
       failureKind: "http",
-      providerError: { code: "invalid_function_parameters" },
-      providerErrorBody: rejection,
+      providerError: {
+        code: "invalid_function_parameters",
+        detail: JSON.stringify(rejection),
+      },
     });
 
     const archived = JSON.parse(objects.get(
       (pointers[0] as { objectKey: string }).objectKey,
     )!) as InferenceLakehouseRecord;
     expect(archived.error).toEqual({
-      providerError: { code: "invalid_function_parameters" },
-      providerErrorBody: rejection,
+      providerError: {
+        code: "invalid_function_parameters",
+        detail: JSON.stringify(rejection),
+      },
     });
   });
 
@@ -297,7 +269,7 @@ describe("inference lakehouse", () => {
       latencyMs: 120,
       disposition: "failed",
       failureKind: "http",
-      providerErrorBody: "<html>upstream gateway refused</html>",
+      providerError: { detail: "<html>upstream gateway refused</html>" },
     });
 
     // No classification to pair it with is precisely when the body is the only
@@ -305,7 +277,9 @@ describe("inference lakehouse", () => {
     const archived = JSON.parse(objects.get(
       (pointers[0] as { objectKey: string }).objectKey,
     )!) as InferenceLakehouseRecord;
-    expect(archived.error).toEqual({ providerErrorBody: "<html>upstream gateway refused</html>" });
+    expect(archived.error).toEqual({
+      providerError: { detail: "<html>upstream gateway refused</html>" },
+    });
   });
 
   it("uses the canonical main substream for workstream inference without an explicit identity", async () => {

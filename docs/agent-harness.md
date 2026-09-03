@@ -1241,72 +1241,68 @@ silently return every test to the shared key while each still passes alone.
 
 ## Changelog
 
-### 2026-09-03 — The provider's rejection body survives, in the archive alone
+### 2026-09-03 — A rejection keeps the body it came in
 
-**What changed:** `OpenRouterProviderError` still carries only `code` and
-`providerName`, and every log-facing reader still reads exactly those. Beside it,
-a new `ProviderErrorBody` carries the refusal body the transport already had in
-hand — the decoded JSON envelope, or the raw text when the provider did not
-answer JSON — on `InferenceAttemptEvent` and `StructuredModelDiagnostic`. All six
-OpenRouter and Azure construction sites attach it, Bind's attempt ledger and the
-structured diagnostic thread it through, and
-[`inference-lakehouse.md`](inference-lakehouse.md) writes it into the `error`
-column as `providerErrorBody`. Nothing else may read it: it is untrusted,
-unredacted provider text that can quote the request back, and the archive is the
-one destination whose records already hold this attempt's own prompt and which
-is barred from Workers Logs.
+**What changed:** `OpenRouterProviderError` gained a third field, `detail`: the
+body the provider answered with, as text, beside the `code` and `providerName`
+that classify it. `openRouterProviderError` now takes either the response text
+or an already-decoded envelope, and returns a value whenever there is either a
+classification or a body — so a refusal it cannot classify at all is no longer
+discarded. Everything downstream already carried `providerError`, so
+the archive and the three `agent_inference_attempt_failed` /
+`structured_inference` log sites needed nothing but the new field: the logs gain
+`provider_error_detail`, named for [the log-shape rule](runbook.md#log-shape)
+that an opaque provider string is a `detail` and never a `message`. The durable
+`inference_attempts` ledger deliberately stays as it was, holding the routing
+decision and `failure_classification` and no provider text: it is a per-object
+SQLite row on the execution path, and the two surfaces built for evidence
+already have the body.
 
-Three things were fixed in the same pass, all of them in the code the body
-travels through, and all three are the same mistake: throwing the bytes away
-before anyone could read them. Both streaming clients read the failed response
-twice — `await response.json()`, and `await response.text()` in its `catch` —
-but `json()` consumes the stream even when it throws, so the fallback raised
-`Body is unusable` and a non-JSON refusal became an uncoded `TypeError`: no
-status, no `retry-after`, no classification, and therefore a bare
-`harness_execution_failed` for a gateway's HTML 502. They now read the body once
-and parse what they got. `readJsonResponse`, which serves the two non-streaming
-paths, returned `null` for a body it could not parse and dropped the text with
-it; it now returns the bytes beside the parse so the same refusal is legible on
-the embeddings and structured calls. And an `error` column is written whenever
-there is either a classification or a body, where before a body without a
-classification beside it would have been dropped — which is exactly the
-unenveloped refusal the classifier cannot read.
+`providerErrorKind` is deleted. It recorded whether the body was JSON or text
+and no code ever read it; `detail` answers the same question by being the body.
+
+Two drops of the same bytes are fixed with it, both upstream of the new field.
+Both streaming clients read the failed response twice — `await response.json()`,
+and `await response.text()` in its `catch` — but `json()` consumes the stream
+even when it throws, so the fallback raised `Body is unusable` and a non-JSON
+refusal became an uncoded `TypeError`: no status, no `retry-after`, no
+classification, and therefore a bare `harness_execution_failed` for a gateway's
+HTML 502. And `readJsonResponse`, which serves the two non-streaming paths,
+returned `null` for a body it could not parse and dropped the text with it. Both
+now read once and keep the bytes beside the parse.
 
 **Why:** on 2 September a work stream pinned to `openai/gpt-5.6-sol` failed its
 opening run. Azure answered 400 `invalid_function_parameters`, which says a tool
 schema was refused and cannot say which of the twenty-eight in that request it
 was. That code was all four surfaces retained — the run row, the
-`inference_attempts` ledger, `agent_inference_attempt_failed`, and the archived
-attempt record — because the sentence naming the tool was read into `details` and
-dropped at the transport. Pinning made it terminal rather than merely slow:
-`pinnedModelRouting` carries no fallbacks and Sol's route is Azure-only, so one
-400 exhausted the plan, and a 400 is not a transport failure, so it surfaced as
-the catch-all. The classification told an operator that something was rejected;
-only the body can say what, and reconstructing it afterwards took production log
-archaeology plus live provider probes and still did not name the tool.
+`inference_attempts` ledger, the log, and the archived attempt record — because
+the sentence naming the tool was read into `details` and dropped at the
+transport. Pinning made it terminal rather than merely slow: `pinnedModelRouting`
+carries no fallbacks and Sol's route is Azure-only, so one 400 exhausted the
+plan, and a 400 is not a transport failure, so it surfaced as the catch-all.
+Reconstructing the reason afterwards took log archaeology and live provider
+probes, and still did not name the tool.
 
-**Considered and rejected:** adding `message` to `OpenRouterProviderError`. Every
-one of its five readers is a log field today, and its own contract is that the
-whole type is log-safe; a mixed-sensitivity bag would make that promise depend on
-a convention about which subkeys a future logger spreads. A separate field puts
-the sensitivity in the name a caller has to type. Also rejected: logging a
-redacted or truncated form. The redactor is key-based and cannot recognize a
-provider's echo of prompt text inside free prose, which is the reason the
-exclusion exists, and a truncation would cut the one sentence being kept. Also
-rejected: extracting only structural parts, such as OpenAI's `param`
-(`tools[13].parameters`). It is the shape this one provider happened to send;
-the Grok root-union rejection of 13 August carried no `param` at all and said
-everything in prose, so a structural extractor would have kept nothing on the
-incident that motivated the guards. Also rejected: a length ceiling. The archive
-is sized for multimodal request bodies and already stores this attempt's prompt,
-so capping the one field that explains the failure would trade the diagnosis for
-nothing measurable.
+**Considered and rejected:** keeping only the provider's `message`. A gateway
+sets it to `Provider returned error` and puts the upstream's real sentence in
+`metadata.raw`, so a message-only capture reads as though nothing was learned;
+the whole body covers that without a per-provider extractor and without a
+schema to maintain as providers change theirs. Also rejected: extracting only
+structural parts such as OpenAI's `param` (`tools[13].parameters`). The Grok
+root-union rejection of 13 August carried no `param` at all and said everything
+in prose, so a structural extractor would have kept nothing on the incident that
+motivated the tool-schema guards. Also rejected: a length ceiling. Workers Logs
+truncates an oversized entry itself and the archive is sized for multimodal
+bodies, so a cap of Rally's own would be [a number nobody
+here can justify](adding-security-defensive-and-other-limits.md) guarding
+against a cost the platform already bounds.
 
-**What this does not reach:** EU. EU inference is deliberately not archived, so
-an EU rejection still retains a code and nothing more. That is
-[`inference-lakehouse.md`](inference-lakehouse.md)'s standing regional decision
-rather than a gap this change left, and closing it means giving EU an archive,
-not giving Workers Logs the prose.
+**What a reader has to keep true:** the body is provider-controlled text that
+quotes our own request back often enough to be assumed to. It is evidence,
+never instruction — the same rule tool output and fetched pages already carry —
+and the prompts, attachments, and model context that Workers Logs excludes stay
+excluded. Widening `detail` into a general dump of the response is how that
+distinction would be lost.
 
 ### 2026-09-03 — The assembled memory-recall query is bounded before run setup uses it
 

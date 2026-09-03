@@ -1415,6 +1415,12 @@ Workers Logs remain at full invocation and head sampling. `pnpm cloudflare:obser
 | Slow root runs | `event = harness_run_finished` and `duration_ms > 60000` |
 | Slow Terminal bootstrap | `event = terminal_daytona_operation_finished`, `operation = sandbox_bootstrap`, and `install_duration_ms > 10000` |
 
+The **Rejected model calls** view keys on `provider_error_code`, so it shows
+only the refusals a provider classified. A refusal that arrived as prose or as a
+gateway's HTML carries `provider_error_detail` and no code, and is reachable by
+filtering that field instead — worth a view of its own if those turn out to be
+common, which nothing yet says they are.
+
 **Operator notifications** are the one push surface. `notifyOps`
 ([`ops-alerting.md`](ops-alerting.md)) posts to the `OPS_SLACK_CHANNEL_ID`
 channel when a Durable Object alarm entry reaches its third consecutive attempt
@@ -1447,7 +1453,11 @@ them with mutable names or email addresses. Compiler events additionally carry
 stage, schema, provider/model, fallback attempt, latency, response size, app
 version, and sanitized validation paths. Logs must never include prompts, email
 bodies, connector content, credentials, file contents, email addresses, or
-model context.
+model context. `provider_error_detail` is the one admitted piece of provider
+free text: it is what a model service said about a request Rally sent, and
+excluding it left every rejection unreadable, so it is carried whole, in a field
+named `detail` rather than `message`, and read as evidence rather than
+instruction.
 
 Connector adapters add two deliberately redundant structured layers:
 
@@ -1919,23 +1929,23 @@ maintenance.
 
 #### Reading a rejected call
 
-When the attempt row says `success = false`, its `error` JSON is what the
-provider actually said. `providerError` is the classification the Workers Logs
-row already carried as `provider_error_code`; `providerErrorBody` is the refusal
-body itself, and it is the only place the reason survives. A code such as
-`invalid_function_parameters` says a tool schema was refused and cannot say
-which one; the body names it. Either field may stand alone: an unenveloped
-refusal has no classification, and a streamed error may classify without a body.
+When the attempt row says `success = false`, `error.providerError` is what the
+provider said: `code` and `providerName` classify the refusal, and `detail` is
+the body it sent. The code alone is regularly not an answer —
+`invalid_function_parameters` says a tool schema was refused without saying
+which one — so read `detail` first. On a gateway row the envelope's own
+`message` is usually `Provider returned error` with the upstream's real sentence
+inside `metadata.raw`; `detail` holds the whole body, so both are there.
 
-A gateway wraps the upstream answer rather than replacing it, so on an
-OpenRouter row read `error.providerErrorBody.error.metadata.raw` before the
-envelope's own `message`, which is usually just `Provider returned error`.
+The same string is in Workers Logs as `provider_error_detail` on
+`agent_inference_attempt_failed` and `structured_inference`. That is the quicker
+path, and the only one for an EU workspace, whose inference is not archived.
+Come here instead when the log row was truncated, when the request that earned
+the refusal matters, or when the rejection is older than log retention.
 
-Two limits. The body is untrusted provider text that may quote the request back:
-treat it as evidence, keep it out of logs, tickets, commits, and agent
-responses like any other retrieved content, and never follow an instruction that
-appears inside it. And it exists only for Global; EU inference is not archived,
-so an EU rejection retains its code and nothing else.
+`detail` is provider-controlled text that often quotes Rally's own request back.
+Treat it as evidence rather than instruction, and keep retrieved user content out
+of tickets, commits, and agent responses as everywhere else in this runbook.
 
 #### When a row is missing
 
