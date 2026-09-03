@@ -1,7 +1,7 @@
 import { asWorkspaceId } from "@rally/contracts";
 import { asWorkstreamId } from "@rally/contracts";
 import { DatabaseSync } from "node:sqlite";
-import { ServerSocketEventSchema } from "@rally/contracts";
+import { ServerSocketEventSchema, WorkstreamWorkflowInputSchema } from "@rally/contracts";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -19,6 +19,7 @@ import {
   durableObjectMigrationHash,
 } from "../src/durable-objects/sqlite-migrations";
 import { createCloudflareTestBinding } from "./helpers/cloudflare-test";
+import { seedWorkstreamObjectRoot, seedWorkstreamRun } from "./helpers/durable-authority";
 import { createTestSqlStorage } from "./helpers/sql-storage";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000000a1");
@@ -712,6 +713,92 @@ describe("the Workstream Durable Object relational schema", () => {
         `SELECT COUNT(*) AS count FROM sqlite_schema
           WHERE name LIKE '_runtime_terminal%' OR name LIKE '_runtime_repository_publications%'`,
       ).get()).toEqual({ count: 0 });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("strips delivery targets from a child's stored automation run context when version 37 applies", () => {
+    const database = new DatabaseSync(":memory:");
+    const storage = objectStorage(database);
+    try {
+      applyDurableObjectSqliteMigrations({
+        storage,
+        migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.filter((migration) => migration.version < 37),
+        component: "workstream",
+        workerVersionId: "worker-before",
+        now: 1_000,
+      });
+      seedWorkstreamObjectRoot(database, { workstreamId: WORKSTREAM_ID, workspaceId: WORKSPACE_ID });
+      seedWorkstreamRun(database, {
+        id: RUN_ID,
+        origin: "automation",
+        executionPrincipalJson: JSON.stringify({ type: "user", userId: AUTHOR_ID }),
+      });
+      // The receipt a run dispatched before this deploy left behind: the frozen
+      // context as the automation object wrote it while `deliveryTargets` was
+      // still a required field, which is `[]` for every run that had none.
+      const automationRunContext = {
+        schemaVersion: 1,
+        automationId: "00000000-0000-7000-8000-0000000000b1",
+        workspaceId: WORKSPACE_ID,
+        runId: "00000000-0000-7000-8000-0000000000b2",
+        authorityGeneration: 1,
+        definitionRevision: 1,
+        definition: {
+          name: "Daily competitor briefing",
+          description: "Brief",
+          overview: "Produce the daily competitor briefing.",
+          instructions: "Write the briefing.",
+          requiredCapabilities: [],
+          expectedOutputs: ["Competitor briefing"],
+          defaultBehavior: {},
+          recommendedPlugins: [],
+          memoryTables: [],
+        },
+        defaultPluginIds: [],
+        activitySourcePluginIds: {},
+        connectorBindings: {},
+        owningWorkstreamId: null,
+        scope: "personal",
+        authoringOrigin: null,
+        modelOverride: null,
+        executionPrincipal: { type: "user", userId: AUTHOR_ID },
+        trigger: { kind: "manual", requestedByUserId: AUTHOR_ID },
+        opening: null,
+        memoryScope: { automationId: "00000000-0000-7000-8000-0000000000b1", authorityGeneration: 1 },
+      };
+      const stored = {
+        region: "global",
+        workspaceId: WORKSPACE_ID,
+        workstreamId: WORKSTREAM_ID,
+        loopId: substreamLoopId(WORKSTREAM_ID),
+        harnessRunId: RUN_ID,
+        triggerMessageId: null,
+        automationSubscriptionId: automationRunContext.automationId,
+        activityId: null,
+        executionPrincipal: { type: "user", userId: AUTHOR_ID },
+        reason: "automation",
+        automationRunContext: { ...automationRunContext, deliveryTargets: [] },
+      };
+      storage.sql.exec(
+        `UPDATE runs SET execution_context_json = ? WHERE run_id = ?`,
+        JSON.stringify(stored),
+        RUN_ID,
+      );
+      expect(WorkstreamWorkflowInputSchema.safeParse(stored).success).toBe(false);
+
+      applyWorkstreamObjectSchema(storage, "worker-after", 2_000);
+
+      const row = database.prepare(
+        `SELECT execution_context_json FROM runs WHERE run_id = ?`,
+      ).get(RUN_ID) as { execution_context_json: string };
+      // Parsed with the schema the child reads it through on claim, lease
+      // recovery and settlement, not merely inspected for the key: the whole
+      // defect is that this parse throws.
+      const parsed = WorkstreamWorkflowInputSchema.safeParse(JSON.parse(row.execution_context_json));
+      expect(parsed.success).toBe(true);
+      expect(parsed.success && parsed.data.automationRunContext).toEqual(automationRunContext);
     } finally {
       database.close();
     }

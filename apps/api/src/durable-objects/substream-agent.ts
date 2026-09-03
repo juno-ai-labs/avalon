@@ -108,12 +108,8 @@ import {
   runWorkstreamHarness,
   type WorkstreamHarnessResult,
 } from "../services/integrations";
-import { deliverFrozenAutomationResultEmail } from "../services/automation-email-service";
 import { settleDigestRun } from "../services/digest-run-settlement";
-import {
-  canonicalExternalResultText,
-  deliverCanonicalExternalResult,
-} from "../services/external-result-delivery";
+import { canonicalExternalResultText } from "../services/external-result-delivery";
 import { SlackAgentService } from "../services/slack-agent-service";
 import { refreshWorkstreamDescription } from "../services/workstream-description-service";
 import { refreshWorkstreamName } from "../services/workstream-naming-service";
@@ -4459,7 +4455,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     input: WorkstreamWorkflowInput,
     outcome: AgentTerminalOutcome,
   ): Promise<string | null> {
-    const workspaceEnv = withWorkspaceRuntimeDatabase(this.env, input.workspaceId);
     const finalMessage = outcome.finalTurnId
       ? await this.product.messageForRuntime(outcome.finalTurnId)
       : null;
@@ -4543,71 +4538,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         result: text,
       }));
     const failures: unknown[] = [];
-    for (const target of frozen.deliveryTargets) {
-      const targetKey = target.type === "email"
-        ? `email:${target.emailAddress.toLocaleLowerCase()}`
-        : `slack_agent_dm:${target.connectionId}:${target.slackTeamId}:${target.slackUserId}`;
-      try {
-        const state = disposition.disposition === "done"
-          ? "skipped" as const
-          : await deliverCanonicalExternalResult(text, (savedText) => target.type === "email"
-          ? deliverFrozenAutomationResultEmail(workspaceEnv, {
-              workspaceId: input.workspaceId,
-              automationSubscriptionId: frozen.automationId,
-              automationRunId: frozen.runId,
-              workstreamId: input.workstreamId,
-              recipientEmail: target.emailAddress,
-              recipientUserId: frozen.executionPrincipal.userId,
-              title: frozen.definition.name,
-              text: savedText,
-              outcomeStatus: outcome.status,
-            })
-          : slack.deliverFrozenAutomationResult({
-              workspaceId: input.workspaceId,
-              automationId: frozen.automationId,
-              automationRunId: frozen.runId,
-              workstreamId: input.workstreamId,
-              recipientUserId: frozen.executionPrincipal.userId,
-              connectionId: target.connectionId,
-              slackTeamId: target.slackTeamId,
-              slackUserId: target.slackUserId,
-              title: frozen.definition.name,
-              text: savedText,
-              outcomeStatus: outcome.status,
-            }));
-        await automation.recordDeliveryReceipt({
-          schemaVersion: 1,
-          automationId: frozen.automationId,
-          workspaceId: input.workspaceId,
-          runId: frozen.runId,
-          workstreamId: input.workstreamId,
-          targetKey,
-          payloadHash,
-          state: state === "skipped" ? "skipped" : "delivered",
-          // The reason rides on the receipt so the run history says *why* a
-          // destination got nothing, in the classifier's own words, rather than
-          // leaving a bare `skipped` to be interpreted.
-          outcomeCode: state !== "skipped"
-            ? "delivery_completed"
-            : disposition.disposition === "done"
-              ? withheldOutcomeCode(disposition.reason)
-              : "delivery_suppressed",
-        });
-      } catch (failure) {
-        failures.push(failure);
-        await automation.recordDeliveryReceipt({
-          schemaVersion: 1,
-          automationId: frozen.automationId,
-          workspaceId: input.workspaceId,
-          runId: frozen.runId,
-          workstreamId: input.workstreamId,
-          targetKey,
-          payloadHash,
-          state: "failed",
-          outcomeCode: "delivery_failed",
-        }).catch(() => undefined);
-      }
-    }
     // Before anything is decided about the result: if this occurrence ran
     // without the personal connections it was built on, the room needs to know
     // that and to be offered the takeover, whatever the result turned out to
@@ -4660,9 +4590,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       }
     }
     // The room that owns this automation, woken with the result as a message.
-    // Not one of `deliveryTargets`: those are destinations somebody chose, and
-    // this one follows from ownership. It is also the only "delivery" that
-    // starts a run rather than writing to somewhere outside Rally.
+    // The only destination an automation has. It used to sit beside a set of
+    // chosen ones — email, a Slack DM — and it outlived them because it was
+    // never chosen: it follows from ownership. Everything outside Rally is now
+    // the run's own to send, with its own tools, inside the loop; this is the
+    // one delivery that starts a run rather than writing somewhere outside.
     if (frozen.owningWorkstreamId !== null && text !== null) {
       const owningWorkstreamId = frozen.owningWorkstreamId;
       const targetKey = `workstream:${owningWorkstreamId}`;

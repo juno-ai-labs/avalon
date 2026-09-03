@@ -112,7 +112,7 @@ in D1 today, where they prove nothing about the routed reads they sit beside.
 
 Seed those tables in the object that owns them — `initializeWorkspace`, then
 `runInDurableObject(workspaceStub(), …)`. Where the absence is the point,
-`test-workers/automation-delivery-targets.test.ts` asserts it in its first test
+`test-workers/automation-acceptance-bindings.test.ts` asserts it in its first test
 rather than trusting a comment to survive.
 `apps/api/test/durable-object-workspace-table-routing.test.ts` is the matching
 guard on the production side.

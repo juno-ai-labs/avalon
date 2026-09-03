@@ -1,20 +1,24 @@
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 
 /**
- * Where AutomationAgent reads the connector rows a delivery destination is
- * made of.
+ * Where AutomationAgent reads the connector rows a plugin binding is made of.
  *
- * `connector_connections` and `slack_user_links` are WorkspaceDO tables —
- * migration 0090 dropped them from regional D1 — so the object has to reach
- * them through the workspace runtime port rather than through its own `env.DB`.
- * Reading them on the regional binding raised `no such table`, which is not one
- * of this object's snake_case codes, so `withAutomationErrors` let it through
- * as `500 internal_error`: saving a Slack destination on an automation answered
- * "An unexpected error occurred", and choosing a connector plugin failed the
- * same way at acceptance.
+ * `connector_connections` is a WorkspaceDO table — migration 0090 dropped it
+ * from regional D1 — so the object has to reach it through the workspace
+ * runtime port rather than through its own `env.DB`. Reading it on the regional
+ * binding raised `no such table`, which is not one of this object's snake_case
+ * codes, so `withAutomationErrors` let it through as `500 internal_error`:
+ * choosing a connector plugin failed at acceptance with "An unexpected error
+ * occurred".
  *
- * These tests keep the two tables where they actually live and nowhere else, so
- * a statement pointed back at D1 fails here the way it failed in production.
+ * These tests keep the table where it actually lives and nowhere else, so a
+ * statement pointed back at D1 fails here the way it failed in production.
+ *
+ * This file used to cover delivery destinations as well, read from the same
+ * tables. Automations no longer have destinations of their own: a run sends
+ * its own result with its own connector tools, and the only thing that follows
+ * from the automation itself is the room that owns it. What remains here is the
+ * half that was never about delivery — binding the plugins a draft recommends.
  */
 
 import { env } from "cloudflare:workers";
@@ -31,7 +35,6 @@ import type { Env } from "../src/env";
 /** Its own workspace: a shared id makes this file queue behind its siblings. */
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000d7000");
 const AUTHOR_ID = asUserId("00000000-0000-7000-8000-0000000d7001");
-const OTHER_USER_ID = asUserId("00000000-0000-7000-8000-0000000d7004");
 const AUTOMATION_ID = asAutomationId("00000000-0000-7000-8000-0000000d7002");
 /** The room the fixture drafts in, since a draft always has one now. */
 const AUTHORING_WORKSTREAM_ID = "00000000-0000-7000-8000-0000000d7020";
@@ -50,7 +53,6 @@ const DEFINITION = {
   triggers: [{ type: "manual" as const }],
   requiredCapabilities: [],
   expectedOutputs: [],
-  requestedDelivery: [],
   defaultBehavior: {},
   recommendedPlugins: [],
   memoryTables: [],
@@ -159,8 +161,13 @@ async function mutateWorkspaceObject(statements: Array<[string, ...unknown[]]>):
 
 /** An accepted, active automation, ready to have its destinations changed. */
 async function acceptAutomation(input: {
-  defaultPluginIds: string[];
-  deliveryTargets: Array<{ type: "email" } | { type: "slack_agent_dm"; connectionId: string }>;
+  /**
+   * What the draft recommends, because that is where acceptance now reads the
+   * plugins it binds. It used to be a field on the accept request; the last
+   * caller that could fill one in went with the create wizard, so the draft is
+   * the only source left and the only one that was ever authoritative.
+   */
+  recommendedPluginIds: string[];
 }): Promise<void> {
   await runInDurableObject(automationStub(), async (instance: AutomationAgent) => {
     (instance as unknown as { workspace(): unknown }).workspace = async () => ({
@@ -176,7 +183,14 @@ async function acceptAutomation(input: {
       authorUserId: AUTHOR_ID,
       region: "global",
       authoredInWorkstreamId: AUTHORING_WORKSTREAM_ID,
-      draft: DEFINITION,
+      draft: {
+        ...DEFINITION,
+        recommendedPlugins: input.recommendedPluginIds.map((pluginId) => ({
+          pluginId,
+          recommendedTools: [],
+          reason: "Needed by this automation",
+        })),
+      },
     });
     await instance.acceptDraft({
       schemaVersion: 1,
@@ -185,9 +199,6 @@ async function acceptAutomation(input: {
       authorUserId: AUTHOR_ID,
       definitionRevision: 1,
       scope: "personal",
-      defaultPluginIds: input.defaultPluginIds,
-      activitySourcePluginIds: {},
-      deliveryTargets: input.deliveryTargets,
       modelOverride: null,
     });
   });
@@ -208,172 +219,8 @@ describe("AutomationAgent delivery targets", () => {
       .rejects.toThrow(/no such table: slack_user_links/u);
   });
 
-  it("saves a Slack destination from the workspace object's connector rows", async () => {
-    await acceptAutomation({ defaultPluginIds: [], deliveryTargets: [] });
-
-    await runInDurableObject(automationStub(), async (instance: AutomationAgent, state) => {
-      const detail = await instance.updateDeliveryTargets({
-        automationId: AUTOMATION_ID,
-        workspaceId: WORKSPACE_ID,
-        userId: AUTHOR_ID,
-        deliveryTargets: [
-          { type: "email" },
-          { type: "slack_agent_dm", connectionId: SLACK_CONNECTION_ID },
-        ],
-      });
-
-      expect(detail.deliveryTargets).toEqual([
-        { type: "email", connectionId: null, displayName: AUTHOR_EMAIL, status: "active" },
-        {
-          type: "slack_agent_dm",
-          connectionId: SLACK_CONNECTION_ID,
-          // The projection deliberately does not carry the provider's id here;
-          // the frozen identity below is where it lives.
-          displayName: "Slack direct message",
-          status: "active",
-        },
-      ]);
-
-      // The identity is frozen onto the automation, not re-derived per run: the
-      // send needs the Slack team and user the link named at the time it was
-      // chosen.
-      expect(JSON.parse(state.storage.sql.exec<{ delivery_targets_json: string }>(
-        `SELECT delivery_targets_json FROM automation_acceptance WHERE id = 1`,
-      ).one().delivery_targets_json)).toEqual([
-        { type: "email", emailAddress: AUTHOR_EMAIL },
-        {
-          type: "slack_agent_dm",
-          connectionId: SLACK_CONNECTION_ID,
-          slackTeamId: SLACK_TEAM_ID,
-          slackUserId: SLACK_USER_ID,
-        },
-      ]);
-    });
-  });
-
-  it("removes a destination without disturbing the one that stays", async () => {
-    await acceptAutomation({
-      defaultPluginIds: [],
-      deliveryTargets: [
-        { type: "email" },
-        { type: "slack_agent_dm", connectionId: SLACK_CONNECTION_ID },
-      ],
-    });
-
-    // What the screen sends when one box is unticked: the whole remaining set,
-    // which still names the connector destination the object has to re-resolve.
-    await runInDurableObject(automationStub(), async (instance: AutomationAgent) => {
-      const detail = await instance.updateDeliveryTargets({
-        automationId: AUTOMATION_ID,
-        workspaceId: WORKSPACE_ID,
-        userId: AUTHOR_ID,
-        deliveryTargets: [{ type: "slack_agent_dm", connectionId: SLACK_CONNECTION_ID }],
-      });
-
-      expect(detail.deliveryTargets).toEqual([{
-        type: "slack_agent_dm",
-        connectionId: SLACK_CONNECTION_ID,
-        displayName: "Slack direct message",
-        status: "active",
-      }]);
-    });
-  });
-
-  it("refuses a destination whose connection the workspace object does not have", async () => {
-    await acceptAutomation({ defaultPluginIds: [], deliveryTargets: [] });
-
-    await runInDurableObject(automationStub(), async (instance: AutomationAgent) => {
-      await expect(instance.updateDeliveryTargets({
-        automationId: AUTOMATION_ID,
-        workspaceId: WORKSPACE_ID,
-        userId: AUTHOR_ID,
-        deliveryTargets: [{
-          type: "slack_agent_dm",
-          connectionId: "00000000-0000-7000-8000-0000000d70ff",
-        }],
-      })).rejects.toThrow("automation_delivery_connection_unavailable");
-    });
-  });
-
-  /**
-   * The clauses below decide whose Slack identity gets frozen onto an
-   * automation, and each is one `&&` away from silently addressing the wrong
-   * person. `slackUserIsLinked` already shipped that mistake once — see the
-   * boundary note in `workspace-runtime-database.ts` — so each disjunct gets a
-   * row that only it refuses.
-   */
-  it("refuses a connection the requester does not have a Slack link for", async () => {
-    await mutateWorkspaceObject([[
-      `UPDATE slack_user_links SET user_id = ?, slack_user_id = 'U0SOMEONEELSE' WHERE id = ?`,
-      OTHER_USER_ID,
-      SLACK_LINK_ID,
-    ]]);
-    await acceptAutomation({ defaultPluginIds: [], deliveryTargets: [] });
-
-    await runInDurableObject(automationStub(), async (instance: AutomationAgent) => {
-      await expect(instance.updateDeliveryTargets({
-        automationId: AUTOMATION_ID,
-        workspaceId: WORKSPACE_ID,
-        userId: AUTHOR_ID,
-        deliveryTargets: [{ type: "slack_agent_dm", connectionId: SLACK_CONNECTION_ID }],
-      })).rejects.toThrow("automation_delivery_identity_unavailable");
-    });
-  });
-
-  it("refuses a connection whose Slack link is no longer active", async () => {
-    await mutateWorkspaceObject([
-      [`UPDATE slack_user_links SET status = 'disabled' WHERE id = ?`, SLACK_LINK_ID],
-    ]);
-    await acceptAutomation({ defaultPluginIds: [], deliveryTargets: [] });
-
-    await runInDurableObject(automationStub(), async (instance: AutomationAgent) => {
-      await expect(instance.updateDeliveryTargets({
-        automationId: AUTOMATION_ID,
-        workspaceId: WORKSPACE_ID,
-        userId: AUTHOR_ID,
-        deliveryTargets: [{ type: "slack_agent_dm", connectionId: SLACK_CONNECTION_ID }],
-      })).rejects.toThrow("automation_delivery_identity_unavailable");
-    });
-  });
-
-  it("refuses a disabled connection", async () => {
-    await mutateWorkspaceObject([
-      [`UPDATE connector_connections SET status = 'disabled' WHERE id = ?`, SLACK_CONNECTION_ID],
-    ]);
-    await acceptAutomation({ defaultPluginIds: [], deliveryTargets: [] });
-
-    await runInDurableObject(automationStub(), async (instance: AutomationAgent) => {
-      await expect(instance.updateDeliveryTargets({
-        automationId: AUTOMATION_ID,
-        workspaceId: WORKSPACE_ID,
-        userId: AUTHOR_ID,
-        deliveryTargets: [{ type: "slack_agent_dm", connectionId: SLACK_CONNECTION_ID }],
-      })).rejects.toThrow("automation_delivery_connection_unavailable");
-    });
-  });
-
-  // The authorization clause of the three: somebody else's personal connection
-  // is not a destination this automation's author may bind.
-  it("refuses a personal connection owned by someone else", async () => {
-    await mutateWorkspaceObject([[
-      `UPDATE connector_connections SET scope = 'personal', owner_user_id = ? WHERE id = ?`,
-      OTHER_USER_ID,
-      SLACK_CONNECTION_ID,
-    ]]);
-    await acceptAutomation({ defaultPluginIds: [], deliveryTargets: [] });
-
-    await runInDurableObject(automationStub(), async (instance: AutomationAgent) => {
-      await expect(instance.updateDeliveryTargets({
-        automationId: AUTOMATION_ID,
-        workspaceId: WORKSPACE_ID,
-        userId: AUTHOR_ID,
-        deliveryTargets: [{ type: "slack_agent_dm", connectionId: SLACK_CONNECTION_ID }],
-      })).rejects.toThrow("automation_delivery_connection_unavailable");
-    });
-  });
-
   it("binds a connector plugin at acceptance from the workspace object's connections", async () => {
-    await acceptAutomation({ defaultPluginIds: ["plugin_slack"], deliveryTargets: [] });
+    await acceptAutomation({ recommendedPluginIds: ["plugin_slack"] });
 
     await runInDurableObject(automationStub(), (_instance: AutomationAgent, state) => {
       expect(JSON.parse(state.storage.sql.exec<{ connector_bindings_json: string }>(
@@ -385,7 +232,7 @@ describe("AutomationAgent delivery targets", () => {
   // The acceptance-side refusal, which reads the same rows as the binding above
   // and would equally have raised `no such table` before the fix.
   it("refuses acceptance for a plugin the workspace object has no connection for", async () => {
-    await expect(acceptAutomation({ defaultPluginIds: ["plugin_absent"], deliveryTargets: [] }))
+    await expect(acceptAutomation({ recommendedPluginIds: ["plugin_absent"] }))
       .rejects.toThrow("automation_plugin_unavailable");
   });
 
@@ -408,7 +255,7 @@ describe("AutomationAgent delivery targets", () => {
       NOW,
     ]]);
 
-    await acceptAutomation({ defaultPluginIds: ["plugin_slack"], deliveryTargets: [] });
+    await acceptAutomation({ recommendedPluginIds: ["plugin_slack"] });
 
     await runInDurableObject(automationStub(), (_instance: AutomationAgent, state) => {
       expect(JSON.parse(state.storage.sql.exec<{ connector_bindings_json: string }>(
@@ -421,7 +268,7 @@ describe("AutomationAgent delivery targets", () => {
   // only half of that: `withAutomationErrors` is the hop that turned the D1
   // failure into `500 internal_error`, and only a real stub exercises it.
   it("answers the service with a detail rather than an unmapped server fault", async () => {
-    await acceptAutomation({ defaultPluginIds: [], deliveryTargets: [] });
+    await acceptAutomation({ recommendedPluginIds: [] });
     // Annotated, not cast: the workers-suite `env` already satisfies `Env`, and
     // the lint rule is right that a cast here would hide binding drift.
     const testEnv: Env = env;
@@ -433,15 +280,9 @@ describe("AutomationAgent delivery targets", () => {
       role: "member",
     });
 
-    await expect(service.updateDeliveryTargets(AUTOMATION_ID, [
-      { type: "email" },
-      { type: "slack_agent_dm", connectionId: SLACK_CONNECTION_ID },
-    ])).resolves.toMatchObject({
+    await expect(service.detail(AUTOMATION_ID)).resolves.toMatchObject({
       id: AUTOMATION_ID,
-      deliveryTargets: [
-        { type: "email", connectionId: null, displayName: AUTHOR_EMAIL },
-        { type: "slack_agent_dm", connectionId: SLACK_CONNECTION_ID },
-      ],
+      status: "active",
     });
   });
 });

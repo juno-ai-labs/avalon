@@ -1,10 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import type { Message } from "@rally/contracts";
 
 import {
   canonicalExternalResultText,
-  deliverCanonicalExternalResult,
 } from "../src/services/external-result-delivery";
 
 const baseMessage: Message = {
@@ -52,12 +51,4 @@ describe("canonical external result rendering", () => {
     })).toBeNull();
   });
 
-  it("does not call an external destination when canonical text is absent", async () => {
-    const deliver = vi.fn(async () => "delivered" as const);
-
-    await expect(deliverCanonicalExternalResult(null, deliver)).resolves.toBe("skipped");
-    expect(deliver).not.toHaveBeenCalled();
-    await expect(deliverCanonicalExternalResult("Saved result", deliver)).resolves.toBe("delivered");
-    expect(deliver).toHaveBeenCalledWith("Saved result");
-  });
 });
