@@ -887,7 +887,7 @@ export class AutomationDO extends ConversationParentDurableObject {
     let authorized = row.scope === "workspace"
       || row.author_user_id === request.userId
       || row.run_as_user_id === request.userId;
-    if (!authorized && row.scope === "workstream" && row.owning_workstream_id) {
+    if (!authorized && row.scope === "workstream" && row.owning_workstream_id === null) {
       const workspace = await durableObjectStubForWorkspace(
         this.env,
         this.env.WORKSPACE_DOS,
@@ -1267,6 +1267,7 @@ export class AutomationDO extends ConversationParentDurableObject {
     const now = Date.now();
     const schedules = this.schedules().map((schedule) => schedule.schedule_id);
     this.state.storage.transactionSync(() => {
+      this.stopOpenRuns(now);
       this.state.storage.sql.exec(
         `UPDATE automation SET lifecycle = 'paused', paused_by = ?, updated_at = ? WHERE id = 1`,
         by,
