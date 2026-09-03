@@ -4590,9 +4590,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       }
     }
     // The room that owns this automation, woken with the result as a message.
-    // Not one of `deliveryTargets`: those are destinations somebody chose, and
-    // this one follows from ownership. It is also the only "delivery" that
-    // starts a run rather than writing to somewhere outside Rally.
+    // The only destination an automation has. It used to sit beside a set of
+    // chosen ones — email, a Slack DM — and it outlived them because it was
+    // never chosen: it follows from ownership. Everything outside Rally is now
+    // the run's own to send, with its own tools, inside the loop; this is the
+    // one delivery that starts a run rather than writing somewhere outside.
     if (frozen.owningWorkstreamId !== null && text !== null) {
       const owningWorkstreamId = frozen.owningWorkstreamId;
       const targetKey = `workstream:${owningWorkstreamId}`;

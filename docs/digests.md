@@ -23,7 +23,7 @@ mention, or changing what a connector can deliver to a person.
 | Email HTML | `apps/api/src/services/digest-email-content.ts` |
 | Markdown → email HTML | `apps/api/src/services/email-markdown.ts`, shared with automation results |
 | Which lines are code, for both of the above | `packages/contracts/src/markdown-code.ts` — see [`markdown-code.md`](markdown-code.md) |
-| Rendering the email for real people, to look at | `scripts/preview-digest-email.mjs`; the automation result's equivalent is `scripts/preview-automation-email.mjs` |
+| Rendering the email for real people, to look at | `scripts/preview-digest-email.mjs` |
 | Settings screen | `apps/desktop/src/renderer/components/digest-settings.tsx` |
 | The work-stream list every renderer surface shares | `apps/desktop/src/renderer/lib/use-workstreams-query.ts`, served by `WorkspaceDO` |
 | Rendering the email for real people, to look at | `scripts/preview-digest-email.mjs` |
