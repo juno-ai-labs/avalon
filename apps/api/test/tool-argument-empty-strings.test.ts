@@ -35,8 +35,24 @@ function stringCursorSchema(tool: ToolDefinition, name: string): Record<string, 
   if (!CURSOR_PARAMETERS.has(name)) return null;
   const schema = propertySchema(tool, name);
   if (!schema) return null;
-  const types = Array.isArray(schema.type) ? schema.type : [schema.type];
-  return types.includes("string") ? schema : null;
+  // A cursor declared as `anyOf: [{string, minLength: 1}, {null}]` — the shape
+  // that lets a caller spell "no cursor" as a value rather than an omission —
+  // carries its `minLength` on the string branch, not at the top. Reading only
+  // the top level does not fail here, it stops matching: the tool drops out of
+  // the sweep and the guard passes without checking anything. Descending keeps
+  // the union form covered by the rule the flat form has always been under.
+  const branches = Array.isArray(schema.anyOf)
+    ? schema.anyOf
+    : Array.isArray(schema.oneOf)
+      ? schema.oneOf
+      : [schema];
+  for (const branch of branches) {
+    if (!branch || typeof branch !== "object" || Array.isArray(branch)) continue;
+    const candidate = branch as Record<string, unknown>;
+    const types = Array.isArray(candidate.type) ? candidate.type : [candidate.type];
+    if (types.includes("string")) return candidate;
+  }
+  return null;
 }
 
 function connectorTools(): Array<{ connector: string; tool: ToolDefinition }> {
