@@ -325,7 +325,7 @@ Docs and Sheets operations use their native provider APIs. Docs reads return bou
 
 The production-approved Google scope set uses `drive.readonly` for Drive discovery and native Docs/Sheets reads, and `drive.file` for native writes. Newly created Docs and Sheets can be edited. An existing file is writable only after it has been explicitly opened or shared with Rally under Google's per-file authorization model; an arbitrary existing file discovered through Drive search remains read-only. Rally does not yet include a Google Picker flow for granting that per-file write access. Drive search and metadata results expose `isAppAuthorized`, `canEdit`, and the derived `writableByRally`; Docs/Sheets update tools preflight the same metadata and fail with `details.reason = drive_file_not_writable` without attempting a mutation when either condition is false or the file is invisible to a `drive.file`-only token. This preflight is a fail-closed model-guidance and user-experience guard, not the security boundary: Google enforces the current authorization again when it receives the mutation.
 
-Google activity ingestion is polling-only. Gmail, Calendar, and Drive are independent named activity streams under one connection. Each commits its own provider-native high-watermark—Gmail history IDs, Calendar sync/completion tokens, or Drive change page tokens—only after its canonical activities are persisted. A transient failure in one stream preserves that stream's checkpoint without forcing successful sibling streams to replay; the scheduler uses the earliest backlog or retry deadline. Gmail and Calendar are digestible streams and Drive is not: a change feed reports a save, so a document written over an afternoon is one piece of news and dozens of events. `email.received`, `calendar.event_changed`, and `calendar.event_completed` are the digestible activity types; `email.updated` is a label or read-state change on mail already seen. Drive change polling classifies Google Workspace MIME types into `docs.document_changed` and `sheets.spreadsheet_changed`; other files produce `drive.file_changed`. Consequently `drive.read` is included in the Drive + Docs + Sheets preset and is the event source for Docs and Sheets changes. Operators can follow each normalized poll result into WorkspaceDO at `connector_event_authority_ingested`, before its Queue processing begins. Rally does not currently register Gmail Pub/Sub watches, Calendar notification channels, Drive push notifications, or any other Google webhook. Rally resource watches route the normalized polled activity and must not be confused with provider push delivery. Calendar change polling expands recurring events into instances, so one edit to a series returns every instance Google holds for it. An instance is therefore reported against its series rather than on its own: one `calendar.event_changed` activity per edit, carrying `seriesChange: true`, identified by the master event in `providerResourceId` and its entity key, and keyed on the master's id together with the edit's `updated` timestamp. An occurrence edited on its own carries its own `updated`, so it is a distinct edit of the series and gets its own activity rather than folding into the series-wide one. A burst is larger than the 150 items one poll fetches, so the same identity is re-emitted on later polls and the workspace's dedupe absorbs the repeats. Two rules follow from that, and both are load-bearing. An instance is classified by what it is and never by how many of its siblings landed in the same chunk, or the same edit would be reported differently depending on where the page boundary fell. And the activity's content must be identical in every chunk, because a repeated identity whose payload hash differs is refused at ingest — so the series carries none of what varies between the occurrences it covers: no instance start or end, no instance `htmlLink`, no overriding location, and each guest without the per-occurrence `responseStatus`. Each Google activity type declares the attached resource its events are *about* — `sheets.spreadsheet_changed` a `google_sheet`, `docs.document_changed` a `google_doc`, `drive.file_changed` a `drive_file`, and both mail events a `gmail_thread` — because the registration reconciler builds an evaluator set from those relationships and a type that declares none routes nothing, however many watches exist. The relationship names the watched entity itself rather than a container it sits in, which is why `file` and `thread` exist beside Notion's `page` in `ConnectorResourceRelationshipSchema`.
+Google activity ingestion is polling-only. Gmail, Calendar, and Drive are independent named activity streams under one connection. Each commits its own provider-native high-watermark—Gmail history IDs, Calendar sync/completion tokens, or Drive change page tokens—only after its canonical activities are persisted. A transient failure in one stream preserves that stream's checkpoint without forcing successful sibling streams to replay; the scheduler uses the earliest backlog or retry deadline. Gmail and Calendar are digestible streams and Drive is not: a change feed reports a save, so a document written over an afternoon is one piece of news and dozens of events. `email.received`, `calendar.event_changed`, and `calendar.event_completed` are the digestible activity types; `email.updated` is a label or read-state change on mail already seen. Drive change polling classifies Google Workspace MIME types into `docs.document_changed` and `sheets.spreadsheet_changed`; other files produce `drive.file_changed`. Consequently `drive.read` is included in the Drive + Docs + Sheets preset and is the event source for Docs and Sheets changes. Operators can follow each normalized poll result into WorkspaceDO at `connector_event_authority_ingested`, before its Queue processing begins. Rally does not currently register Gmail Pub/Sub watches, Calendar notification channels, Drive push notifications, or any other Google webhook. Rally resource watches route the normalized polled activity and must not be confused with provider push delivery. Calendar change polling expands recurring events into instances, so one edit to a series returns every instance Google holds for it. An instance is therefore reported against its series rather than on its own: one `calendar.event_changed` activity per edit, carrying `seriesChange: true`, built from the series master — read once per changed series per poll with `events.get` — and keyed on the master's id together with the master's own `updated`. Because the content is the master's, the activity carries the series' real start and end, its link, its location, its `recurrence` rule (in `metadata`), and each guest's series-level RSVP. An instance whose `updated` is after the master's was edited on its own and is reported as that occurrence, with that occurrence's times, keyed on its own etag; an instance whose `updated` is at or before the master's belongs to the edit the master records, or to an older one it has since superseded, and either way is reported against the master as it now stands. A burst is larger than the 150 items one poll fetches, so the same identity is re-emitted on later polls and the workspace's dedupe absorbs the repeats. Two rules follow from that, and both are load-bearing. An instance is classified by comparing its own `updated` to the master's, never by how many of its siblings landed in the same chunk, or the same edit would be reported differently depending on where the page boundary fell. And the activity's content must be identical in every chunk, because a repeated identity whose payload hash differs is refused at ingest — which is exactly what building it from the master, and nothing from the instances, guarantees: the master for a given `updated` is one fixed record. When the master cannot be read (a purged series, or a body that is not the master asked for) the series is reported from a representative instance keyed on the instances' `updated`, and then carries only what every instance agrees on: no start or end, no link, no overriding location, and each guest without the per-occurrence `responseStatus`. Each Google activity type declares the attached resource its events are *about* — `sheets.spreadsheet_changed` a `google_sheet`, `docs.document_changed` a `google_doc`, `drive.file_changed` a `drive_file`, and both mail events a `gmail_thread` — because the registration reconciler builds an evaluator set from those relationships and a type that declares none routes nothing, however many watches exist. The relationship names the watched entity itself rather than a container it sits in, which is why `file` and `thread` exist beside Notion's `page` in `ConnectorResourceRelationshipSchema`.
 
 A revoked refresh grant marks the connection `needs_reconnect`. Production smoke tests should create a Gmail draft rather than send unsolicited mail. A personal Gmail send tool is available only to its owner; if an administrator creates a workspace-scoped Gmail connection through the backend, its granted send capability rolls down to every work stream like every other workspace capability.
 
@@ -904,6 +904,54 @@ one to a fixture list to make a new adapter pass — declare the exemption in th
 fixture table instead, where it is reviewable.
 
 ## Changelog
+
+### 2026-09-03 — A series activity is built from its master
+
+**What changed:** `pollCalendarChanges` reads the series master once per
+changed series per poll (`events.get`, the same field set as the sync page
+plus `recurrence`) and builds the `calendar.event_changed` activity from it,
+keyed `calendar:<calendarId>:<master id>:series:<master updated>`. The activity
+now carries the series' real start and end, `htmlLink`, location, a
+`metadata.recurrence` rule, and each guest's series-level `responseStatus`. An
+instance is classified against the master: `updated` after the master's is an
+occurrence edited on its own, reported as that occurrence with its real times
+on its own etag; `updated` at or before the master's is reported against the
+master as it now stands. A master that cannot be read — 404, 410, or a body
+whose `id` is not the one asked for — falls back to the representative-instance
+activity of the previous entry, keyed on the instances' `updated` and carrying
+only what every instance agrees on.
+
+**Why:** The previous entry could only carry the title. The same identity is
+re-emitted from chunks that see different instances, and the workspace refuses
+a repeated identity whose payload differs, so the payload could hold nothing an
+instance decides. That left the feed, the digests, and Suggested Work with "a
+recurring event changed" and no time, link, or place, and left a cancelled
+series titled "Untitled event" because stripped instances carry no summary.
+Reading the master makes the payload a pure function of the master for a given
+`updated`, which is one fixed record however the burst is chunked, and the
+master is where the series' times, rule, and RSVPs actually live.
+
+**Considered and rejected:** Deriving a canonical schedule from any one
+instance — its wall-clock time of day and duration — which needs no fetch. An
+exception whose time was overridden and whose `updated` the master edit also
+bumped would then differ from its siblings, and which instance a chunk led with
+would decide the payload again. Rewriting an instance's `htmlLink` into the
+master's by re-encoding its `eid`: the encoding is undocumented. Keying the
+stale-chunk case on the instances' own `updated` with the newer master's
+content: two chunks of one edit would then disagree once the master moved.
+
+**Consequences:** One extra request per changed series per poll, against a
+150-item page; the master reads for a poll are sequential and the cost is
+bounded by the number of distinct series in the page, which is small. The
+classification assumes what the production bursts showed — that a series-wide
+edit stamps every instance with the master's `updated` — so an instance whose
+`updated` runs ahead of the master's is taken to be an occurrence edit. If
+Google ever stamps instances later than the master, a series edit would be
+reported per instance again; the symptom is the same burst this and the
+previous entry describe, and the check is the master's `updated` against its
+instances' in the poll response. Nothing per-chunk may reach the payload,
+exactly as before: the master is the only source for a series activity, and a
+representative instance is used only when there is no master at all.
 
 ### 2026-09-02 — One edit to a recurring series is one activity
 
