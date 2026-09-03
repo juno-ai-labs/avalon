@@ -144,6 +144,23 @@ type ProviderContentPart = Exclude<ProviderUserMessage["content"], string>[numbe
 
 const OPENROUTER_PROVIDER = providerIdSchema.parse("openrouter");
 const AZURE_PROVIDER = providerIdSchema.parse("azure");
+/**
+ * How many entries Azure accepts in one request's `tools` array. Not a ceiling
+ * this repository chose and not one it enforces: Azure rejects the request
+ * itself, before reading any tool, and the number is copied from the rejection
+ * observed against the `gpt-5.6-sol` deployment on 3 September 2026:
+ *
+ *   400 array_above_max_length — Invalid 'tools': array too long. Expected an
+ *   array with maximum length 128, but got an array with length 136 instead.
+ *
+ * It is here only so the rejection is named before it happens. A provider HTTP
+ * failure that Bind cannot classify as a transport defect reaches a run as a
+ * bare `harness_execution_failed`, so without this the log says nothing about
+ * which of the 136 authored tools was one too many. Truncating the list
+ * instead would silently take capabilities away from the model, which is a
+ * product decision and not one a diagnostic gets to make.
+ */
+const AZURE_MAX_TOOLS_PER_REQUEST = 128;
 const MODEL_ROUTE_REGISTRY = parseModelRouteRegistry({
   version: "provider-router-v1",
   unboundDefault: { mode: "only", provider: "openrouter" },
@@ -2138,6 +2155,20 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
               : {}),
             ...(trace ?? {}),
           };
+          if (
+            candidate.providerId === AZURE_PROVIDER
+            && wireTools.length > AZURE_MAX_TOOLS_PER_REQUEST
+          ) {
+            // Observational only — the dispatch below is unchanged, and a host
+            // that leaves this port unwired still gets the same 400.
+            await args.input.onProviderToolLimitExceeded?.({
+              provider: candidate.providerId,
+              model: candidate.canonicalModelId,
+              providerInvocationModel: candidate.providerInvocationModel,
+              toolCount: wireTools.length,
+              toolLimit: AZURE_MAX_TOOLS_PER_REQUEST,
+            });
+          }
           await args.input.onInferenceRequest?.({
             inferenceRequestId,
             turnId: args.turnId,

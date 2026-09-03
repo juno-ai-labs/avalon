@@ -4092,6 +4092,106 @@ describe("agent harness", () => {
     });
   });
 
+  it("names Azure's tool-array cap before Azure rejects the request for it", async () => {
+    // Azure counts `tools` before it reads any of them and answers `400
+    // array_above_max_length`. Bind cannot classify that as a transport defect,
+    // so the run surfaces as a bare `harness_execution_failed` saying nothing
+    // about how many tools it sent. The port is what makes the cause nameable;
+    // it changes nothing about the dispatch, which is why the request below
+    // still goes out and still completes.
+    const bulkPlugin = (canonicalId: string, modelId: string, count: number): HarnessPlugin => ({
+      canonicalId,
+      modelId,
+      shortWireName: modelId,
+      description: "Bulk",
+      preload: true,
+      explicit: false,
+      tools: Array.from({ length: count }, (_unused, index) => ({
+        definition: {
+          name: `probe${index}`,
+          description: "Probe",
+          capability: "probe.read",
+          mode: "read" as const,
+          idempotency: "safe" as const,
+          inputSchema: { type: "object", additionalProperties: false },
+        },
+        execute: async () => ({ output: {}, summary: "Probed" }),
+      })),
+    });
+    const bodies: Array<{ tools?: unknown[] }> = [];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)) as { tools?: unknown[] });
+      return streamResponse([
+        { choices: [{ delta: { content: "done" }, finish_reason: "stop" }] },
+        // Azure's route requires a final usage frame before it will settle.
+        { choices: [], usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 } },
+      ]);
+    }) as typeof fetch;
+    const exceeded: unknown[] = [];
+
+    const outcome = await runHarness({
+      ...runInput(fetcher, {
+        primaryModel: "openai/gpt-5.6-sol",
+        azure: { endpoint: "https://monad-prod-resource.services.ai.azure.com", apiKey: "azure-key" },
+        workspaceId: "workspace-azure-tool-cap",
+      }),
+      corePlugins: [bulkPlugin("rally:bulk", "bulk", 129)],
+      onProviderToolLimitExceeded: (event) => { exceeded.push(event); },
+    });
+
+    expect(outcome).toMatchObject({ status: "completed" });
+    const sentToolCount = bodies[0]!.tools!.length;
+    expect(sentToolCount).toBeGreaterThan(128);
+    expect(exceeded).toEqual([{
+      provider: "azure",
+      model: "openai/gpt-5.6-sol",
+      providerInvocationModel: "gpt-5.6-sol",
+      toolCount: sentToolCount,
+      toolLimit: 128,
+    }]);
+  });
+
+  it("stays silent about the tool-array cap for a provider that has no such cap", async () => {
+    // The same oversized catalogue routed to OpenRouter, which accepts it. A
+    // report keyed on the tool count alone rather than on the chosen provider
+    // would cry wolf on every OpenRouter turn.
+    const bulkPlugin: HarnessPlugin = {
+      canonicalId: "rally:bulk-open",
+      modelId: "bulkopen",
+      shortWireName: "bulkopen",
+      description: "Bulk",
+      preload: true,
+      explicit: false,
+      tools: Array.from({ length: 129 }, (_unused, index) => ({
+        definition: {
+          name: `probe${index}`,
+          description: "Probe",
+          capability: "probe.read",
+          mode: "read" as const,
+          idempotency: "safe" as const,
+          inputSchema: { type: "object", additionalProperties: false },
+        },
+        execute: async () => ({ output: {}, summary: "Probed" }),
+      })),
+    };
+    const bodies: Array<{ tools?: unknown[] }> = [];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)) as { tools?: unknown[] });
+      return streamResponse([{ choices: [{ delta: { content: "done" }, finish_reason: "stop" }] }]);
+    }) as typeof fetch;
+    const onProviderToolLimitExceeded = vi.fn();
+
+    const outcome = await runHarness({
+      ...runInput(fetcher, { workspaceId: "workspace-openrouter-tool-cap" }),
+      corePlugins: [bulkPlugin],
+      onProviderToolLimitExceeded,
+    });
+
+    expect(outcome).toMatchObject({ status: "completed" });
+    expect(bodies[0]!.tools!.length).toBeGreaterThan(128);
+    expect(onProviderToolLimitExceeded).not.toHaveBeenCalled();
+  });
+
   it("stops instead of retrying when a record-before-execute write response is invalid", async () => {
     const fetcher = vi.fn(async () => streamResponse([{
       choices: [{

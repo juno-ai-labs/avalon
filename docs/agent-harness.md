@@ -1121,6 +1121,24 @@ Bounded callers use `run_wall_time_limit_exceeded`, `run_iteration_limit_exceede
 
 When every route candidate answers with a transport fault the provider owns — no response, a 408, a 429, a 5xx, or a successful HTTP stream whose bounded provider error code is `unavailable`, `service_unavailable`, or a numeric 408/429/5xx — the run fails as `provider_unavailable`, kind `provider`, and not as `harness_execution_failed`. An OpenAI-compatible endpoint can accept the HTTP request and disclose an outage only in a later SSE error envelope. The two named machine codes classify as `server_error`; numeric codes reuse Bind's HTTP taxonomy but admit only timeout, rate-limit, and server-error categories. The same provider traversal and whole-plan retry rules then apply despite the successful surrounding status. Other statusless stream codes, including numeric request, credential, and credit failures, stay terminal because a blanket retry would hide the owner of the fault. When the circuit breaker had already opened and no request went out at all, the run fails as `provider_circuit_open`, kind `routing`: Bind's executor reports that as `no_viable_endpoints` carrying no error, and letting that emptiness fall through to the generic bucket reinstated the misattribution during exactly the minute an outage was worst — the first run in a workspace named accurately, every run behind it blamed on Rally. The two codes stay separate because the breaker opens on 401/402/403 as readily as on a 5xx, so a refusal cannot be attributed to the provider without knowing why it opened, which the breaker does not record. The distinction is the whole point of the code: `harness_execution_failed` means Rally’s own defect and gives a member no reason to try again, so filing an upstream outage under it sends whoever reads the failure to the wrong system. A 400 stays generic, because the request shape is ours; 401, 402, and 403 stay generic too, because the credential or the credit is ours. A refusal from the platform Rally runs *on* is neither: Cloudflare bounds how deep one request may recurse through Workers and how many subrequests one invocation may make, and enforces both by refusing whichever call asks next — a D1 read, a Durable Object hop, a fetch. That run fails as `platform_limit_exceeded`, kind `platform`, decided in `FatalHarnessPortError` from the platform's own wording rather than at the call site, because the port that happened to ask is in no position to know. Filing it under that port's code is not a naming quibble: on 2026-08-24 a work stream died reporting `tool_receipt_persistence_failed` when nothing about the receipt had failed, and the investigation started in the receipt authority. Bind's `isRetriableAttemptError` is the authority for the split, minus completion defects, which are the model answering badly rather than the provider failing to answer.
 
+Azure counts a request's `tools` array before it reads any of it and rejects
+anything over **128** entries with `400 array_above_max_length`. That is the
+provider's own limit, and a 400 stays generic by the rule above, so a run whose
+only defect is an oversized catalogue arrives as `harness_execution_failed`
+saying nothing about how many tools it sent. This repository authors 136 tools
+and so is already past that number in the aggregate, though no single run has
+yet activated them all. `onProviderToolLimitExceeded` closes the gap between
+those two facts: when a request is about to be dispatched to Azure with more
+tools than Azure accepts, the harness reports the provider, model, tool count,
+and the cap, and the work-stream host logs
+`harness_provider_tool_limit_exceeded` at `error` — which puts it in the
+Failures saved view without a new view of its own. The port is observational:
+the request goes out unchanged and Azure still decides. Truncating the array
+here would silently take capabilities away from the model, which is a product
+decision rather than one a diagnostic gets to make, and the 128 is copied from
+the rejection rather than chosen. OpenRouter has no equivalent cap, so the
+report is keyed on the chosen provider and not on the count alone.
+
 Before that failure is reached, the harness re-executes the **whole route plan** up to `transportRetries` times, which the work-stream host sets from `HARNESS_TRANSPORT_RETRIES` (declared as `1` in both regional Wrangler configs; `0` disables it, which is why it is read through `countEnv` rather than `numericEnv` — the latter rejects zero). The wait is a clamped backoff honouring `Retry-After` up to `TRANSPORT_RETRY_MAX_DELAY_MS`, and it is skipped entirely when the run's remaining wall clock cannot hold the wait plus a **worst-case replay of the whole plan** — every candidate, each able to spend its establishment timeout and then its time-to-first-token timeout, because the stream watchdog only opens once the response head lands. Reserving less lets a bounded caller's retry manufacture the deadline it defers to, and the outage is then reported as `run_wall_time_limit_exceeded`. Root work-stream runs set no wall clock and are unaffected. This is the host-side retry Bind's disposition matrix expects rather than a second guess at its ordering: the matrix answers a retriable transport fault by traversing to the next provider and then the fallback model, and gives it no same-endpoint budget, because with somewhere to traverse to there is no reason to wait. A plan with nowhere to go therefore had no recovery at all — and a work stream pinned from the developer-mode model selector is exactly that plan, since [`feature-flags.md`](feature-flags.md) has an override carry no fallbacks by design. The retry is skipped once output or an external effect has reached a surface that cannot be retracted, the same rule the executor applies to traversal. Each re-execution records another failure against the shared per-workspace circuit breaker, whose threshold is 3, which is why the budget is small by default: a larger one trades one run's recovery for opening the endpoint on every other run in the workspace. Each attempt appends to the owning execution object's `inference_attempts` ledger and emits its own lakehouse terminal record, so a retried turn is visible as more than one attempt sharing a `turn_id`.
 
 A tool that throws reaches the model as a failed tool result. Where the thrown error carries a machine-readable half — a `code`, and `details` such as which identifier family was expected, that a connection must be reconnected, or which values were available — that half travels in the failure's `data` field, the slot declared for structured recovery context, so the remediation a tool attached is readable by the caller that has to act on it. Keys outside the result variant's own fields are discarded when the message is encoded, so this is not somewhere a caller may improvise.
@@ -1240,6 +1258,37 @@ Nothing pins `breakerScope`, so deleting that one property from `routePlan` woul
 silently return every test to the shared key while each still passes alone.
 
 ## Changelog
+
+### 2026-09-03 — Azure's 128-tool request cap is named before Azure enforces it
+
+**What changed:** A new `onProviderToolLimitExceeded` port on `RunHarnessInput`.
+Bind's per-candidate attempt reports through it when a request bound for Azure
+carries more than `AZURE_MAX_TOOLS_PER_REQUEST` (128) wire tools, and both
+harness call sites in `integrations.ts` — the root run and the inline child —
+log `harness_provider_tool_limit_exceeded` at `error`.
+
+**Why:** Azure rejects an oversized `tools` array before reading any of it, with
+`400 array_above_max_length`, measured against the `gpt-5.6-sol` deployment
+while verifying the full authored tool surface after the root-schema repair
+shipped. A 400 is deliberately generic in the classification above — the request
+shape is ours — so the run reaches a member as `harness_execution_failed`, and
+the count that caused it appears nowhere. The repository authors 136 tools
+against a 128 cap, so the arithmetic is already over the line even though no
+single run has activated them all; the first run that does would have failed
+with no way to tell why from the logs. `error` rather than `warn` because the
+run is going to fail, and because the existing Failures saved view
+(`level = error`) then carries it with no new view to create.
+
+**What a future change has to respect:** this is a report, not an enforcement
+point. The request is dispatched unchanged and Azure decides, because the
+alternatives — truncating the array, or dropping tools by some priority — take
+capabilities away from the model, which is a product decision and needs a rule
+about which tools lose. The 128 is copied from the provider's rejection rather
+than chosen here, so it moves when Azure's does and nothing else should read it
+as a budget. The check is keyed on `candidate.providerId`, not on the count:
+OpenRouter accepts the same catalogue, and a count-only check would fire on
+every OpenRouter turn once the catalogue grows. The port stays optional; a host
+that leaves it unwired gets exactly the behavior it had before.
 
 ### 2026-09-03 — The assembled memory-recall query is bounded before run setup uses it
 

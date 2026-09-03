@@ -3279,6 +3279,18 @@ export async function runWorkstreamHarness(
         issues,
       });
     },
+    onProviderToolLimitExceeded: (event) => {
+      logStructuredEvent(env, "error", "harness_provider_tool_limit_exceeded", {
+        request_id: input.harnessRunId,
+        workspace_id: input.workspaceId,
+        workstream_id: input.workstreamId,
+        provider: event.provider,
+        model: event.model,
+        provider_invocation_model: event.providerInvocationModel,
+        tool_count: event.toolCount,
+        tool_limit: event.toolLimit,
+      });
+    },
     onProgress: () => {
       void liveness.pulse("stream_progress").catch((error) => stopController.abort(error));
     },
@@ -4931,6 +4943,19 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
               workspace_id: childInput.workspaceId,
               workstream_id: childInput.workstreamId,
               issues,
+            });
+          },
+          onProviderToolLimitExceeded: (event) => {
+            logStructuredEvent(options.env, "error", "harness_provider_tool_limit_exceeded", {
+              request_id: childInput.harnessRunId,
+              parent_request_id: parentInput.harnessRunId,
+              workspace_id: childInput.workspaceId,
+              workstream_id: childInput.workstreamId,
+              provider: event.provider,
+              model: event.model,
+              provider_invocation_model: event.providerInvocationModel,
+              tool_count: event.toolCount,
+              tool_limit: event.toolLimit,
             });
           },
           onBestEffortEventDropped: (event) => {

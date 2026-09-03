@@ -3246,6 +3246,19 @@ export interface RunHarnessInput {
   onInferenceAttempt?: (attempt: InferenceAttemptEvent) => void | Promise<void>;
   onTranscriptIssues?: (issues: Array<{ kind: string; index?: number; healed?: boolean }>) => void | Promise<void>;
   /**
+   * Reports that a request is about to be dispatched with more tools than the
+   * chosen provider accepts. Purely observational: the request goes out
+   * unchanged and the provider decides. Unwired, the rejection still happens,
+   * it is just unnamed.
+   */
+  onProviderToolLimitExceeded?: (event: {
+    provider: string;
+    model: string;
+    providerInvocationModel: string;
+    toolCount: number;
+    toolLimit: number;
+  }) => void | Promise<void>;
+  /**
    * Required by transcript-aware hosts. The callback must durably commit the
    * transition before resolving; Bind will not accept the corresponding message
    * or replacement into its private loop until it does.
