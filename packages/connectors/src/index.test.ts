@@ -2556,6 +2556,37 @@ describe("connectors", () => {
     });
   });
 
+  it("holds the executor's cursor bound to the one the schema advertises", async () => {
+    // The schema promises a ceiling and the parse enforces one; nothing made
+    // them the same number until they shared a declaration. A caller told 2000
+    // and refused at 500 would be refused by Rally for obeying us.
+    const declared = googleTools.find((tool) => tool.name === "drive.search")!;
+    const properties = (declared.inputSchema as {
+      properties: Record<string, { anyOf?: Array<{ maxLength?: number }> }>;
+    }).properties;
+    const maxLength = properties.pageToken?.anyOf?.[0]?.maxLength;
+    expect(maxLength).toBe(2_000);
+
+    const fetcher: typeof fetch = async () => googleJson({ files: [] });
+    const context = {
+      connection: googleConnection(["drive.read"]),
+      principal: { type: "user" as const, userId: TEST_USER_ID },
+      signal: neverAborts(),
+    };
+    // One under the ceiling is accepted, one over is refused, so the assertion
+    // pins the boundary rather than merely that some bound exists.
+    await expect(googleAdapter(fetcher).executeTool(
+      "drive.search",
+      { query: "portfolio", pageToken: "t".repeat(maxLength!) },
+      context,
+    )).resolves.toBeDefined();
+    await expect(googleAdapter(fetcher).executeTool(
+      "drive.search",
+      { query: "portfolio", pageToken: "t".repeat(maxLength! + 1) },
+      context,
+    )).rejects.toThrow(/pageToken/u);
+  });
+
   // Every one of the four, because the parse that turns `null` into absence is
   // written out per tool rather than shared: covering `drive.search` alone
   // proves one copy of four.
