@@ -164,10 +164,14 @@ activation resumes rather than restarting:
    and the acceptance timezone; write
    `automation_acceptance` with a hash of the request; write the schedules
    paused; materialize the definition's memory tables; move the lifecycle to
-   `activating`. A second acceptance with a different request hash is refused
-   with `automation_acceptance_conflict`; an identical retry is idempotent, and
-   the authorizing role is deliberately excluded from the hash so a second admin
-   retrying is not treated as a different request.
+   `activating`. A second acceptance is refused with
+   `automation_acceptance_conflict` when it names a different definition
+   revision, scope, or owning room than the row holds; one that names the same
+   three is the same acceptance retried, whatever the shape of the request that
+   first wrote the row. The stored hash is the fence the activation step checks,
+   not the test a retry is held to: the request shape has changed once already,
+   and a retry judged on the hash would strand any object a deploy caught
+   `activating`.
 2. **Install and commit.** Register the evaluators with WorkspaceDO, which
    answers with an `effectiveAfterEventSequence`; arm one alarm entry per
    schedule; reserve the automation's permanent email address in the Global
@@ -444,9 +448,10 @@ telemetry storage — not a product-state fallback.
 - **Nothing crosses an object boundary except identifiers, generations, versions,
   and hashes.** The delivery Queue message names a delivery, not an event body;
   the child returns a receipt, not a result.
-- **Acceptance is idempotent on its request hash and nothing else.** Two
-  acceptances that differ in any hashed field are a conflict; identical ones are
-  the same acceptance retried.
+- **Acceptance is idempotent on the facts the row stores.** Two acceptances
+  that differ in definition revision, scope, or owning room are a conflict;
+  ones that agree on all three are the same acceptance retried, across a change
+  in the request's shape.
 - **The socket is the author's.** A workspace-scoped automation is readable by
   every member and manageable by owners and admins, but its live draft room
   admits only `author_user_id`. Widening it would put an unaccepted draft's

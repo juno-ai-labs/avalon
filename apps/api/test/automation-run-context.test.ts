@@ -230,9 +230,12 @@ describe("what an automation run is told about its own delivery", () => {
     // No room owns it, so Rally posts its result nowhere: the run does the
     // sending the task asks for, and the context must not imply somebody else
     // already sent it. Whoever it sends to reads the result outside Rally, so
-    // the run is also told that an embed will not reach them.
+    // the run is also told that an embed will not reach them — on the surface
+    // that says the sending is its own, never the one that says Rally sends
+    // the final message, which would contradict the delivery section.
     expect(context.systemPrompt).toContain('"resultDelivery": []');
-    expect(context.systemPrompt).toContain("# External delivery output");
+    expect(context.systemPrompt).toContain("# Sending the result yourself");
+    expect(context.systemPrompt).not.toContain("# External delivery output");
   });
 
   it("names the owning room as the one destination Rally posts to", async () => {
@@ -248,6 +251,7 @@ describe("what an automation run is told about its own delivery", () => {
     expect(context.systemPrompt).toContain(`"destination": "${WORKSTREAM}"`);
     expect(context.systemPrompt).toContain('"channel": "workstream"');
     expect(context.systemPrompt).not.toContain("# External delivery output");
+    expect(context.systemPrompt).not.toContain("# Sending the result yourself");
   });
 
 });

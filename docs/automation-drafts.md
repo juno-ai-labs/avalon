@@ -189,14 +189,12 @@ author's zone when the author named one, and their own when nobody did.
   its connector tools; Rally posts the result nowhere but the room that owns the
   automation. The former `requestedDelivery` field is gone, and a stored draft
   that still carries it parses with the key stripped.
-- **A destination is not a step.** Rally sends each run's final message to the
-  destinations chosen on the automation, so the compiler writes "email me the
-  briefing" into `expectedOutputs` and never into `instructions` as a
-  `gmail.send` call. An automation whose instructions do the sending delivers
-  the result twice, from two senders, and the second copy is the one nobody
-  asked for. The run-time half of this — the destinations the run is told about
-  and forbidden to write to — is in
-  [work-stream and automation email addresses](workstream-email-addresses.md#outbound-automation-results).
+- **A send is a step.** "Email me the briefing" belongs in `instructions`, with
+  its recipient, because the run is what performs it; an instruction that only
+  says to prepare the result produces a run that prepares it and sends nothing.
+  The one send the compiler must not write is a post to the owning room, which
+  Rally makes itself; the run-time half of that rule is the `# Result delivery`
+  section described in [`agent-harness.md`](agent-harness.md).
 - **The saved transcript ends with the reply on screen.** The service appends the
   assistant message it streamed. Persisting only the request's messages would
   resume every draft one turn behind what its author last read.

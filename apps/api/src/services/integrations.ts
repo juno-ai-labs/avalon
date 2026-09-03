@@ -5346,9 +5346,10 @@ async function loadRunPromptContext(
   memoryContextHash: string | null;
 }> {
   // An automation the room does not own sends its own result outward, so its
-  // final message is read wherever it sent it, not in Rally. Decided from the
-  // owning room directly rather than from the shape of `resultDelivery`, which
-  // now names only that room and so would answer this exactly backwards.
+  // result is read wherever it sent it, not in Rally, and nothing sends its
+  // final message for it. Decided from the owning room directly rather than
+  // from the shape of `resultDelivery`, which now names only that room and so
+  // would answer this exactly backwards.
   let automationSendsOutward = false;
   let automationContext:
     | {
@@ -5564,9 +5565,10 @@ async function loadRunPromptContext(
         : input.reason === "inbound_email"
           || Boolean(input.digestDeliveryId)
           || Boolean(input.slackOrigin)
-          || automationSendsOutward
           ? "external_delivery"
-          : "workstream",
+          : automationSendsOutward
+            ? "self_delivery"
+            : "workstream",
       ...(input.slackOrigin ? { slackOrigin: input.slackOrigin } : {}),
       ...(automationContext ? { automation: automationContext } : {}),
     }),

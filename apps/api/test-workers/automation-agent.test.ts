@@ -455,6 +455,69 @@ describe("AutomationAgent", () => {
     });
   });
 
+  it("resumes an activation a pre-deploy request left behind, whatever hash it stored", async () => {
+    // The acceptance row stores a digest of the request that wrote it, and the
+    // request's shape has changed once already: the id-only door dropped three
+    // fields. An object a deploy caught `activating` therefore holds a hash no
+    // request of the new shape can reproduce. Judged on the hash, every retry
+    // was `automation_acceptance_conflict` and the object stayed stuck for
+    // good; judged on the facts the row stores, the retry is the same
+    // acceptance and finishes it. The stored hash is kept untouched, because
+    // the activation step still uses it as its fence.
+    await seedReadyDraft(readyDefinition("Manual helper"));
+    const stub = automationStub();
+    await runInDurableObject(stub, async (instance: AutomationAgent, state) => {
+      (instance as unknown as { workspace(): unknown }).workspace = async () => ({
+        applyExternalEventRegistrations: async () => ({
+          applied: true,
+          effectiveAfterEventSequence: 7,
+        }),
+        applyAutomationProjection: async () => ({ applied: true }),
+      });
+      state.storage.sql.exec(
+        `INSERT INTO automation_acceptance
+           (id, definition_revision, request_hash, scope, owning_workstream_id,
+            default_plugin_ids_json, activity_source_plugin_ids_json, connector_bindings_json,
+            model_override, evaluator_projection_json,
+            evaluator_source_hash, accepted_at, activated_at)
+         VALUES (1, 1, 'sha256:pre-deploy-request-shape', 'personal', NULL, '[]', '{}', '{}',
+                 NULL, '[]', 'sha256:evaluators', 100, NULL)`,
+      );
+      state.storage.sql.exec(
+        `UPDATE automation_state
+            SET lifecycle = 'activating', accepted_definition_revision = 1 WHERE id = 1`,
+      );
+
+      const detail = await instance.acceptDraft({
+        schemaVersion: 1,
+        automationId: AUTOMATION_ID,
+        workspaceId: WORKSPACE_ID,
+        authorUserId: AUTHOR_ID,
+        definitionRevision: 1,
+        scope: "personal",
+        modelOverride: null,
+      });
+
+      expect(detail).toMatchObject({ id: AUTOMATION_ID, status: "active" });
+      expect(state.storage.sql.exec<{ lifecycle: string; request_hash: string }>(
+        `SELECT state.lifecycle, acceptance.request_hash
+           FROM automation_state state JOIN automation_acceptance acceptance ON acceptance.id = 1
+          WHERE state.id = 1`,
+      ).one()).toEqual({ lifecycle: "active", request_hash: "sha256:pre-deploy-request-shape" });
+
+      // A retry that names a different acceptance is still a conflict.
+      await expect(instance.acceptDraft({
+        schemaVersion: 1,
+        automationId: AUTOMATION_ID,
+        workspaceId: WORKSPACE_ID,
+        authorUserId: AUTHOR_ID,
+        definitionRevision: 2,
+        scope: "personal",
+        modelOverride: null,
+      })).rejects.toThrow("automation_acceptance_conflict");
+    });
+  });
+
   it("creates the automation a proposal card offers, from its id alone", async () => {
     // The card's own entry point, which builds the create request server-side
     // rather than taking one. It built `modelOverride: null` for a field whose
