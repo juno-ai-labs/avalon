@@ -15,13 +15,13 @@ one of them silently missed the others; the changelog records what that cost.
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `MarkdownBody` — the only place `react-markdown` is mounted — and its component overrides: `MarkdownCode`, `MarkdownCodeBlock`, `MarkdownTable`, heading collapse, and the `a`, `img`, `li` and `section` renderers that hand a node to the citation matrix. |
+| `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `MarkdownBody` — the only place `react-markdown` is mounted — and its component overrides: `MarkdownCode`, `MarkdownCodeBlock`, `MarkdownTable`, heading collapse, and the `a`, `img`, `li` and `section` renderers that hand a node to the citation matrix. Also the two remark rewrites over the parsed tree: `remarkHtmlBreaks`, and the streaming-only `remarkPendingCitations` that stands a skeleton where a footnote reference has no definition yet. |
 | `apps/desktop/src/renderer/components/markdown-mermaid.tsx` | The asynchronous Mermaid SVG render, strict untrusted-input configuration, active-token configuration, and source fallback. Mermaid's module-wide configuration and render calls are serialized here so two diagrams cannot race one another's theme. |
 | `apps/desktop/src/renderer/components/markdown-mermaid-theme.ts` | Maps Mermaid's rendering roles onto the active computed Rally design tokens. It owns no palette and does not branch on an appearance id. |
 | `apps/desktop/src/renderer/lib/markdown-collapse.ts` | Which h2–h6 start a collapsible section, and which nested headings stay in the body. Shared by the renderer and the **Worked for** collapse-all control so they cannot disagree about the ids. |
 | `apps/desktop/src/renderer/components/markdown-collapse.tsx` | The accordion chrome: chevron, 3-line preview, expand/collapse-all, and the React context that holds which sections a reader has closed while a later heading streams in. |
 | `apps/desktop/src/renderer/components/markdown-citations.tsx` | The citation matrix — every scheme in every position — and the chip, embed card, footnote pill and identity card it renders. |
-| `packages/contracts/src/citations.ts` | The protocol itself: the scheme allowlist, the footnote definition grammar, the image-syntax announcement scan, and the plain-text rewrite that outbound email and Slack delivery send instead. |
+| `packages/contracts/src/citations.ts` | The protocol itself: the scheme allowlist, the footnote definition grammar, the reference patterns every reader of raw `[^label]` text shares (`footnoteReferencePattern`, and `openFootnoteReferencePattern` for one still arriving), the image-syntax announcement scan, and the plain-text rewrite that outbound email and Slack delivery send instead. |
 | `packages/contracts/src/markdown-code.ts` | Which lines of a markdown string are code, which `splitStreamingMarkdown` and the citation rewrite both read rather than each deciding. See [`markdown-code.md`](markdown-code.md). |
 | `apps/desktop/src/renderer/lib/use-citations.ts` | What a cited resource resolves to and where clicking one goes. |
 | `apps/desktop/src/renderer/lib/use-auto-open-embedded-resource.ts` | Auto-opening the inspector onto the latest embed card in the last two text turns of a work stream. |
@@ -393,6 +393,18 @@ footnote rendering, and the section renders only what was left. In the common
 all-citations case nothing renders at the bottom at all, which is the vertical
 space the feature exists to reclaim.
 
+**While a turn streams, a reference whose definition has not arrived wears the
+pill's own box with the number not yet in it** — `.citation-pill-pending`, the
+same tint, border, padding and raise as the pill, holding a shimmering block
+where the digit goes. What is under [Streaming](#streaming) is why it exists:
+until the definition lands, remark-gfm reads `[^avalon]` as ordinary text, and
+raw markup in the middle of a paragraph is the one thing a reader of a grounded
+answer should never see. The skeleton is `aria-hidden`, because it names
+nothing; the source reaches assistive technology when the pill arrives with its
+label. It is drawn only while `streaming` is on: a settled reference nothing
+ever defined keeps its literal marker, since there is no source coming and a
+permanent skeleton would promise one.
+
 The dispatch is a **matrix, not an if-chain**: three
 `Record<CitationScheme, …>` tables, one per position, so a scheme added to the
 protocol is a type error until somebody has decided what it looks like as a
@@ -466,9 +478,63 @@ Streaming rendering is therefore an approximation the settled re-render
 heals when heading collapse is off: each settled list item renders as its own
 single-item list while the message streams (ordered numbering survives via the
 `start` attribute; a loose item renders tight — without its paragraph wrapper
-— until the turn completes), and a reference link or a GFM footnote whose
-definition arrives in a later segment renders literally until then. The
-commit that ends the stream renders the source whole again.
+— until the turn completes), and a reference link whose definition arrives in a
+later segment renders literally until then. The commit that ends the stream
+renders the source whole again.
+
+A **footnote** reference is the one seam that does not wait, because the wait is
+too long to look at. A model writes `[^avalon]` mid-sentence and the
+`[^avalon]: [file](resource://…)` that defines it at the bottom of the answer,
+so remark-gfm reads the marker as text for most of the turn's life and the
+reader watches raw `[^avalon]` sit in a paragraph. Two hoisted plugin lists —
+`STREAMING_REMARK_PLUGINS` for a settled segment, `STREAMING_TAIL_REMARK_PLUGINS`
+for the open tail — add `remarkPendingCitations` on top of the settled list, and
+it replaces such a marker with the pending pill above. The tail's variant also
+covers the reference that is still being *typed*: the document's last text leaf,
+when it ends in a `[^` whose bracket has not closed, which is the same raw
+markup arriving one character at a time.
+
+That rewrite asks the document no questions and reads no definitions, which is
+what keeps both lists hoisted constants that the settled segments' memo can
+compare by identity. A reference this parse *can* resolve is already a
+`footnoteReference` node and never reaches a text node, so "still a `[^…]` in
+the text" is exactly "not resolved here" — decided by the parser rather than
+restated. Code is skipped for free: an inline span and a fenced block hold their
+source as their own `value`, not as text children, so a message explaining
+footnote syntax grows no skeletons. Where the pill actually resolves *before*
+settle is the collapse path below, which copies definitions onto the fragments
+that do not carry them; that is the path the main transcript takes.
+
+**A text node is the decoded run, so the rewrite checks it against its own
+source span before believing it.** `\[^avalon]` and `&#91;^avalon]` both reach
+a plugin as the characters `[^avalon]` — micromark consumes the escape and the
+entity before any transformer runs — and covering those would put a skeleton
+over syntax somebody escaped in order to *show*, then take it away at settle
+when the whole source is re-parsed and the escape is honoured.
+`undecodedPrefixLength` compares the node's characters against
+`source.slice(start, end)` and returns the length of their common prefix: the
+point up to which nothing has been decoded. A match ending at or before it came
+from literal characters; a match reaching past it is left alone.
+
+**A prefix, not a verdict on the run** — and the difference is a flicker, not a
+nicety. A run-level verdict drops a real citation's skeleton because an escape
+appears *later in the same paragraph*, which while streaming means the skeleton
+is drawn and then reverts to raw `[^avalon]` as the escape arrives behind it.
+With a prefix, whether a match qualifies depends only on the text before it,
+which has already arrived and cannot change, so a skeleton drawn once is never
+taken back. What a prefix gives up is the case where an escape *precedes* a real
+citation in one run: everything after the escape keeps its literal marker.
+Buying that back means mapping a decoded offset through the escape, which is a
+second decoder to keep in step with micromark's.
+
+**The bare `[` at the end of the tail is dropped, not covered.** One character
+in, the stream has not said whether it opens a citation, a link, a task list's
+box, or nothing; a skeleton there would flash a pill in front of every link,
+and leaving it puts a citation's opening bracket on screen for a frame. Showing
+nothing until the next character decides is the only answer that is right
+whichever it turns out to be, which is why `openFootnoteReferencePattern`
+matches the bracket alone and the caller — not the pattern — decides that a
+bare one draws nothing.
 
 When collapse is on, that whole-document re-parse cannot happen — each
 section is still its own mount after settle — so definitions are copied
@@ -707,9 +773,16 @@ needs it should parse rather than widen the pattern again.
   until 2026-08-12.
 - **A `resource://` target that is malformed, unknown, or invisible to the
   viewer** renders as the citation's label text — no chip, no card, no anchor.
-- **A footnote reference whose definition never arrived** renders literally,
-  which is the existing behavior for a split footnote and is what streaming
-  shows until the message settles.
+- **A footnote reference whose definition never arrived** renders literally on a
+  settled message — the honest rendering of a reference to nothing. While the
+  turn is still streaming the same marker is a pending pill instead, on the bet
+  that a definition is still coming; the commit that ends the stream is what
+  turns an unkept promise back into text.
+- **An escaped or entity-written marker** — `\[^1]`, `&#91;^1]` — renders
+  literally in both, streaming included. So does a real reference that *follows*
+  one in the same text run, which is the deliberate cost of the prefix rule; it
+  is the rendering that surface had before the pending pill existed, not a new
+  degradation. A real reference *before* the escape keeps its skeleton.
 - **A same-length fence nested inside another cuts the outer block while it
   streams.** The shared close rule closes a block on any run of the opener's
   character at least as long, info string or not, where this splitter used to
@@ -764,6 +837,76 @@ The traps, both of which have bitten:
   exercises none of the `ol` selectors.
 
 ## Changelog
+
+### 2026-09-03 — A streaming citation is a skeleton, not raw `[^label]`
+
+**What changed:** `MarkdownBody` renders a streaming body through
+`STREAMING_REMARK_PLUGINS`, and its open tail through
+`STREAMING_TAIL_REMARK_PLUGINS`; both add `remarkPendingCitations`, which
+replaces a `[^label]` left sitting in a text node with a
+`.citation-pill-pending` — the citation pill's own box, tint and raise, holding
+a shimmering block where the number will be. The tail's variant also swallows a
+`[^` whose bracket has not arrived. `SettledMarkdownSegment` takes its remark
+list as a prop so the two lists reach it; both are hoisted, so the memo that
+makes the paced reveal affordable is untouched. `citations.ts` now exports
+`footnoteReferencePattern` and `openFootnoteReferencePattern` so the renderer and
+the grammar cannot drift about what a reference looks like. The pill's shared
+geometry moved into a two-selector rule rather than being restated.
+
+**Why:** A footnote reference is only a reference to a parser that can already
+see its definition, and a model writes the marker mid-sentence and the
+definition at the bottom of the answer. For most of a grounded turn's life,
+then, the reader watched raw `[^avalon]` sit in the middle of a paragraph — on a
+long answer, most of the answer's lifetime, and the one place Rally shows
+somebody its own markup. The pill's box was already the right shape to wait in.
+
+**Considered and rejected:** synthesising a definition for the reference so GFM
+would resolve it, which would have invented a source and renumbered the real
+ones; and letting the plugin consult the message's definitions, which would have
+made both lists per-render closures and re-parsed every settled segment each
+time a definition arrived. The parser already answers the question — a reference
+it resolved is not a text node — so the rewrite needs no knowledge of its own.
+
+**Follow-up in the same change (bot review):** the first version trusted the
+text node's value, which is the *decoded* run — so `\[^1]` and `&#91;^1]`, both
+of which reach a plugin as bare `[^1]`, grew a skeleton over syntax that had
+been escaped in order to be shown, and lost it again at settle. Each run is now
+compared against its own source span. The open-tail pattern also grew the bare
+`[`: it previously began matching at `^`, so the opening bracket of every
+citation appeared for one frame, against this change's own claim. A bare bracket
+draws nothing rather than a pill, because at one character it could equally be a
+link or prose.
+
+**Follow-up, second round:** that source check started as a verdict on the whole
+run, and a live window showed what the tests had not — a real citation's
+skeleton appearing and then *vanishing* mid-turn as an escaped marker streamed
+in behind it in the same paragraph, which is the original defect arriving by the
+other door. The check is now the length of the undecoded prefix, so a match is
+judged only on text that has already arrived and a skeleton once drawn is never
+taken back. The remaining give is a real citation that follows an escape in one
+run; it keeps the literal marker that surface had before this feature.
+
+**Follow-up, third round:** two review findings that were not defects are
+recorded here so the next reader does not re-derive them. A tail ending
+`…[^ava\n` is *not* missed by the end-anchored open pattern — remark strips a
+paragraph's trailing newline, so the text node ends at the marker — and
+`…[^ava more`, where text follows, is prose containing a bracket rather than a
+reference being typed, which is why the anchor is right to reject it; both are
+now pinned by tests. And the module-shared `FOOTNOTE_REFERENCE` is not a
+`lastIndex` hazard: its readers use `matchAll` (which clones) and `replace`
+(which resets), while `exec` — the one call that would advance it — always takes
+a fresh copy from the factory. That rule is now written at the constant, because
+it is the kind of thing a later refactor breaks silently.
+
+**What a future change has to respect:** the skeleton is streaming-only. A
+settled reference nothing ever defined must stay literal text, because a
+permanent skeleton promises a source that is never coming; `still` and `glance`
+never stream and so never draw one. And the pending pill's geometry is shared
+with `.citation-pill` in one rule *because* the line must not move when the
+number lands — restating the padding or the raise in a second rule is how that
+starts twitching. Its inner block is about a digit wide, deliberately between
+the narrowest figure and the widest, since a skeleton cannot know whether it is
+standing in for `1` or for `12`.
 
 ### 2026-09-03 — The dashboard markdown host is removed
 

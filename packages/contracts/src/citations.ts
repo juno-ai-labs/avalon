@@ -242,8 +242,51 @@ function normalizeFootnoteIdentifier(label: string): string {
 
 /** `[^label]: content`, at the start of a line. */
 const FOOTNOTE_DEFINITION = /^ {0,3}\[\^([^\]\s]+)\]:[ \t]*(.*)$/u;
-/** `[^label]` used in the body. Never at the head of a definition — checked first. */
+/**
+ * `[^label]` used in the body. Never at the head of a definition — checked first.
+ *
+ * Shared by the readers in this module, which use it only with `matchAll` and
+ * `replace`: the first clones the regex and the second resets `lastIndex`, so
+ * neither leaves state behind. **`exec` does not** — it advances `lastIndex` on
+ * the regex itself, so a caller that needs one takes a fresh copy from
+ * {@link footnoteReferencePattern}, which is what that factory is for.
+ */
 const FOOTNOTE_REFERENCE = /\[\^([^\]\s]+)\]/gu;
+/**
+ * The same reference, still arriving: an opening `[`, optionally the `^` and
+ * however much of the identifier has been streamed, at the very end of the
+ * text and with no closing bracket yet. Only a surface watching a message grow
+ * has any use for this — a settled message's `[^foo` is text a model wrote and
+ * stays text — but it is the same grammar as the reference above and drifting
+ * from it is how one of them starts recognising a reference the other does not.
+ *
+ * The `^` is optional because the caret is the second character: a reader that
+ * waited for it would put the opening bracket of every citation on screen for
+ * one frame. What a bare `[` at the end *means* is not yet decided — a
+ * citation, a link, a task list's box, a bracket in prose — so this only says
+ * that the text ends mid-construct. The caller decides what to draw, and for a
+ * bare `[` the honest answer is nothing.
+ */
+const OPEN_FOOTNOTE_REFERENCE = /\[(?:\^[^\]\s]*)?$/u;
+
+/**
+ * Matches `[^label]` wherever a reader has to find one in raw text. Capture
+ * group 1 is the identifier before {@link normalizeFootnoteIdentifier}. Fresh
+ * each call so a `/g` lastIndex cannot leak across callers.
+ */
+export function footnoteReferencePattern(): RegExp {
+  return new RegExp(FOOTNOTE_REFERENCE.source, FOOTNOTE_REFERENCE.flags);
+}
+
+/**
+ * Matches the trailing half of a reference whose closing bracket has not
+ * arrived, down to the bare `[` that has not yet said what it opens. Anchored
+ * at the end, so it answers a question only about text that is still growing.
+ */
+export function openFootnoteReferencePattern(): RegExp {
+  return new RegExp(OPEN_FOOTNOTE_REFERENCE.source, OPEN_FOOTNOTE_REFERENCE.flags);
+}
+
 /**
  * An inline link or image, whose target group is what decides the citation.
  *
