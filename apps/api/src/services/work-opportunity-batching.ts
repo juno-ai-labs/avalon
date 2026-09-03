@@ -39,13 +39,18 @@ async function enqueue(env: Env, input: EnqueueInput): Promise<void> {
  * window is opened for it.
  *
  * Everything unclaimed used to be a candidate, and on 2 September 2026 the
- * Juno Labs workspace admitted 50,000 events in a day: 42,000 of them were CI
- * check runs, workflow-run status transitions, and calendar instances. A check
- * run is the status of a commit, not a piece of work for a person; a workflow
- * run is the same status a level up; and a recurring-series edit arrives as one
- * `calendar.event_changed` per expanded instance, so one change to a standing
- * meeting is 730 candidates per attendee. Each one cost a frontier-model
- * admission call whose answer was, overwhelmingly, `ignore`.
+ * Juno Labs workspace admitted 50,000 events in a day: 24,000 of them were CI
+ * check runs and workflow-run status transitions. A check run is the status
+ * of a commit, not a piece of work for a person, and a workflow run is the
+ * same status a level up. Each one cost a frontier-model admission call whose
+ * answer was, overwhelmingly, `ignore`.
+ *
+ * Calendar changes were the other 18,000 that day and are deliberately not
+ * here. That volume was a connector defect — one edit to a recurring series
+ * arrived as one `calendar.event_changed` per expanded instance — and it was
+ * fixed where it arose: since 2026-09-02 a series edit is one activity per
+ * connection. A meeting being moved or cancelled is the kind of thing that
+ * produces work, so it stays a candidate.
  *
  * This is an exclusion list rather than an inclusion list on purpose: a
  * connector added later still offers its activity until somebody finds a
@@ -54,17 +59,14 @@ async function enqueue(env: Env, input: EnqueueInput): Promise<void> {
  * and still reaches the activity feed — only the speculative home-screen
  * surface is withheld.
  */
-const SUGGESTED_WORK_EXCLUDED_EVENT_TYPES: ReadonlyArray<{ readonly prefix: string } | { readonly exact: string }> = [
+const SUGGESTED_WORK_EXCLUDED_EVENT_TYPES: ReadonlyArray<{ readonly prefix: string }> = [
   { prefix: "github.check_run." },
   { prefix: "github.workflow_run." },
-  { exact: "calendar.event_changed" },
 ];
 
 /** Whether an activity of this event type may become a Suggested Work candidate. */
 export function isSuggestedWorkCandidateEventType(eventType: string): boolean {
-  return !SUGGESTED_WORK_EXCLUDED_EVENT_TYPES.some((rule) => (
-    "exact" in rule ? eventType === rule.exact : eventType.startsWith(rule.prefix)
-  ));
+  return !SUGGESTED_WORK_EXCLUDED_EVENT_TYPES.some((rule) => eventType.startsWith(rule.prefix));
 }
 
 export async function enqueueActivityOpportunity(
