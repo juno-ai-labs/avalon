@@ -59,7 +59,7 @@ describe("agent inference logging", () => {
     expect(put).not.toHaveBeenCalled();
   });
 
-  it("records a provider rejection without provider-controlled prose", async () => {
+  it("records what the provider said about a rejection, not only that it refused", async () => {
     const { env } = fixture();
     env.LOG_LEVEL = "info";
     const logged = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -82,7 +82,11 @@ describe("agent inference logging", () => {
       latencyMs: 340,
       disposition: "fallback",
       failureKind: "api",
-      providerError: { code: 400, providerName: "xAI" },
+      providerError: {
+        code: 400,
+        providerName: "xAI",
+        detail: '{"error":{"code":400,"message":"tool parameter root must be an object type"}}',
+      },
     });
 
     expect(logged).toHaveBeenCalledTimes(1);
@@ -96,10 +100,54 @@ describe("agent inference logging", () => {
       failure_kind: "api",
       provider_error_code: 400,
       provider_error_provider: "xAI",
+      provider_error_detail: '{"error":{"code":400,"message":"tool parameter root must be an object type"}}',
     });
+    // `message` stays the logger's own row summary; the provider's string is a
+    // field beside it, which is what the saved views filter on.
     const entry = logged.mock.calls[0]![0] as Record<string, unknown>;
-    expect(entry).not.toHaveProperty("provider_error_message");
-    expect(JSON.stringify(entry)).not.toContain("Provider returned error");
+    expect(entry.message).toBe("agent_inference_attempt_failed");
+    logged.mockRestore();
+  });
+
+  it("gives EU the same reason it gives Global, which archives nothing", async () => {
+    const { env, put } = fixture();
+    env.AVALON_REGION = "eu";
+    env.LOG_LEVEL = "info";
+    const logged = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const logger = createAgentInferenceLogger(env, {
+      workspaceId: "workspace-1",
+      workstreamId: "workstream-1",
+      requestId: "run-1",
+      source: "workstream",
+    });
+
+    await logger.onAttempt({
+      inferenceRequestId: request.inferenceRequestId,
+      success: false,
+      turnId: request.turnId,
+      model: "openai/gpt-5.6-sol",
+      provider: "azure",
+      providerInvocationModel: "gpt-5.6-sol",
+      cursor: { ...request.cursor, endpointAttempt: 1 },
+      latencyMs: 1386,
+      disposition: "fallback",
+      failureKind: "http",
+      providerError: {
+        code: "invalid_function_parameters",
+        detail: '{"error":{"message":"Invalid schema for function \'table_query\'."}}',
+      },
+    });
+
+    // EU inference is deliberately never archived, so the regional log row is
+    // the only account of the refusal there will ever be. It carries the same
+    // string Global's does.
+    expect(put).not.toHaveBeenCalled();
+    expect(logged.mock.calls[0]![0]).toMatchObject({
+      event: "agent_inference_attempt_failed",
+      region: "eu",
+      provider_error_code: "invalid_function_parameters",
+      provider_error_detail: '{"error":{"message":"Invalid schema for function \'table_query\'."}}',
+    });
     logged.mockRestore();
   });
 
