@@ -757,8 +757,8 @@ describe('inspector resource document chrome', () => {
   // will not shrink below the markdown's max-content, and `.rail-scroll`'s
   // `overflow-x: hidden` then clips the unwrapped lines. Naming the column
   // `minmax(0, 1fr)` and giving the scroller and the document host `min-width:
-  // 0` is what makes the preview take the rail rather than the file.
-  // either half here returns the clip.
+  // 0` is what makes the preview take the rail rather than the file; removing
+  // either half returns the clip.
   it('gives the rail a column that can shrink below the document min-content', () => {
     const surface = rule('.rail-surface');
     expect(surface).not.toBeNull();

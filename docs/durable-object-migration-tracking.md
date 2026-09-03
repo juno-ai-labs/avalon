@@ -1,6 +1,6 @@
 # Durable Object migration tracking
 
-Rally runs five Durable Object classes across two regional Workers, and each
+Rally runs four Durable Object classes across two regional Workers, and each
 object applies its own SQLite migration history in its constructor. Nothing in
 Cloudflare's account model can answer the question that follows from that:
 **which objects are on which schema version, and which of them are broken?** A
@@ -54,7 +54,7 @@ happen.
 `withMigrationReport` wraps the migration call in each of the five Durable Object
 constructors. It reads the object's version from the runner's own
 `_sql_schema_migrations` ledger before and after the call, so it works
-identically at the four sites that call the runner directly and at
+identically at the three sites that call the runner directly and at
 `SubstreamAgent`, which reaches it through `WorkstreamObjectStore`'s constructor.
 
 Three outcomes reach the tracker:
@@ -810,6 +810,28 @@ radius of a misclick. It sits an order of magnitude above the largest class, so
 it does not shape the cost of any run somebody means to make.
 
 ## Changelog
+
+### 2026-09-03 — The retired dashboard class leaves the tracked fleet
+
+**What changed:** `BlockDashboardAgent` was removed from the reporting catalog,
+opaque-name allowlist, regional migration-command dispatch, and both production
+Wrangler namespaces. The tracker now describes four live classes and three
+direct migration-runner call sites plus `SubstreamAgent`.
+
+**Why:** HyperSight and its authority were deleted. Continuing to inventory or
+offer force-migration actions for the deleted class would present an absent
+namespace as operational state.
+
+**Considered and rejected:** Keeping a tombstone class in the live catalog.
+Cloudflare's `deleted_classes` migration is already the durable record of the
+retirement, while a live tracker entry would imply that objects could still be
+woken or migrated.
+
+**Consequences:** Historical tracker rows may still name the retired class, but
+new sweeps and commands enumerate only live authorities. Deleting the namespace
+is irreversible; rollback cannot restore its objects.
+
+Shipped in #541.
 
 ### 2026-08-28 — The migration queue carries the one-shot automation cutover
 

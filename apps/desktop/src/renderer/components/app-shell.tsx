@@ -237,8 +237,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   };
 
   // The main pane keeps room for an inspector that is still fading out.
-  const slotHolder = railOpen ? 'inspector' : railLeaving;
-  const showShellRail = slotHolder !== null && !location.pathname.startsWith('/notes/');
+  const showShellRail = (railOpen || railLeaving) && !location.pathname.startsWith('/notes/');
   // Nothing here loads the sidebar. Subscribing to the workspace socket is
   // answered with the whole of it — the first page of work streams, the
   // automations and the notes — and WorkspaceDO pushes each list again whenever

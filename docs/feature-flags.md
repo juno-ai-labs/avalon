@@ -90,7 +90,7 @@ Every model-using agent owns exactly one flag, keyed `agent-model-<agent>`:
 | Work-stream description | `agent-model-workstream-description` | `OPENROUTER_STRUCTURED_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Automation result disposition | `agent-model-automation-result-disposition` | `OPENROUTER_STRUCTURED_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 
-The first five names match the `AgentInferenceSource` values written to the
+The first four names match the `AgentInferenceSource` values written to the
 inference ledger, so a ledger row and a flag key name the same agent. The rest
 are the standalone structured-output agents: message addressing uses the
 agent-harness classifier helper; work-stream naming, the two halves of suggested work, and the
@@ -1126,13 +1126,16 @@ cache entry of its own — three reads is the standing budget for an evaluation.
 ### 2026-09-03 — HyperSight flags and model selection are deleted
 
 **What changed:** The client feature flag, Block Dashboard model role, defaults,
-Ace editor entry, and runtime resolution were removed.
+Ace editor entry, and runtime resolution were removed. Ace deployment also
+deletes the two retired Flagship keys when they still exist.
 
 **Why:** A flag is not a deletion boundary. Keeping one would preserve a
 configurable feature contract even when every visible consumer is gone.
 
-**Consequences:** Old flag values are ignored as unknown data and cannot
-reactivate the feature.
+**Consequences:** Old flag values cannot reactivate the feature, and repeated
+deployments absorb an already-absent key without recreating it.
+
+Shipped in #541.
 
 ### 2026-09-02 — Gemini 3.8 Flash joins with the same access as 3.7 Flash
 

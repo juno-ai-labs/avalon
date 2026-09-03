@@ -516,6 +516,8 @@ delivery work.
 **Consequences:** Schema migration deletes any pending dashboard refresh; the
 remaining alarm arbitration covers only live lifecycle work.
 
+Shipped in #541.
+
 ### 2026-09-01 — Substream external settlement becomes an independent derived lane
 
 **What changed:** `SubstreamAgent` now derives the oldest externally unsettled

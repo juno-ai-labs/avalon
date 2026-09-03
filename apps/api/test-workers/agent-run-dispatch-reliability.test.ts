@@ -13,7 +13,7 @@
 
 import { env } from "cloudflare:workers";
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { asSubstreamId } from "@rally/contracts";
 
@@ -45,6 +45,7 @@ beforeEach(async () => {
 }, 30_000);
 
 let unique = 100;
+const testStubs: DurableObjectStub[] = [];
 
 function substreamStub(): DurableObjectStub {
   unique += 1;
@@ -52,8 +53,23 @@ function substreamStub(): DurableObjectStub {
     `00000000-0000-7000-8000-${String(unique).padStart(12, "0")}`,
   );
   const name = substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID, substreamId);
-  return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(name));
+  const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(name));
+  testStubs.push(stub);
+  return stub;
 }
+
+afterEach(async () => {
+  // These cases deliberately reconstruct due alarms. Drain each object's input
+  // gate and disarm it before Vitest tears down the shared worker; otherwise a
+  // legal alarm RPC can still be resolving when the environment closes.
+  await Promise.all(testStubs.splice(0).map(async (stub) => {
+    try {
+      await runInDurableObject(stub, (_instance, state) => state.storage.deleteAlarm());
+    } catch {
+      // A case may evict the object before it reaches its assertion.
+    }
+  }));
+});
 
 async function readySubstream(): Promise<DurableObjectStub> {
   const stub = substreamStub();

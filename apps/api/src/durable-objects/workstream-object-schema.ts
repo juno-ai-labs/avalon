@@ -2780,9 +2780,29 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
   },
   {
     version: 38,
-    description: "remove retired block dashboard state and refresh scheduling",
+    description: "remove retired block dashboard state, runs, and refresh scheduling",
     statements: [
       `DELETE FROM due_work WHERE job_key = 'block_dashboard_refresh'`,
+      // The retired dashboard used the ordinary harness tables for execution. Its own run
+      // table pointed at those rows, so dropping that child table alone would
+      // strand admitted/running roots which the remaining product selectors
+      // now correctly treat as ordinary runs. Clear the few non-cascading
+      // children first; every other operational child follows the run FK.
+      `DELETE FROM repository_publications
+        WHERE effect_intent_id IN (
+          SELECT effect.effect_intent_id FROM tool_effects effect
+          JOIN runs run ON run.run_id = effect.run_id
+          WHERE run.origin = 'block_dashboard_block'
+        )`,
+      `DELETE FROM tool_effects
+        WHERE run_id IN (
+          SELECT run_id FROM runs WHERE origin = 'block_dashboard_block'
+        )`,
+      `DELETE FROM elicitation_requests
+        WHERE run_id IN (
+          SELECT run_id FROM runs WHERE origin = 'block_dashboard_block'
+        )`,
+      `DELETE FROM runs WHERE origin = 'block_dashboard_block'`,
       `DROP TABLE IF EXISTS block_dashboard_block_runs`,
       `DROP TABLE IF EXISTS block_dashboard_configuration_versions`,
       `DROP TABLE IF EXISTS block_dashboard_user_preferences`,

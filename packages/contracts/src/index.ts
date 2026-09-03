@@ -28,7 +28,6 @@ import {
   WorkspaceIdSchema,
   WorkstreamIdSchema,
 } from "./identifiers";
-import type { BlockIdSchema } from "./identifiers";
 
 import type { AutomationSetEvaluatorRulesInputV1 } from "./automation-evaluators";
 export * from "./automation-evaluators";
@@ -138,7 +137,6 @@ export type WorkstreamId = z.infer<typeof WorkstreamIdSchema>;
 export type HarnessRunId = z.infer<typeof HarnessRunIdSchema>;
 export type UserId = z.infer<typeof UserIdSchema>;
 export type SubstreamId = z.infer<typeof SubstreamIdSchema>;
-export type BlockId = z.infer<typeof BlockIdSchema>;
 export const ScopeSchema = z.enum(["personal", "workspace"]);
 export const HarnessStatusSchema = z.enum([
   "scheduled",
@@ -2883,12 +2881,6 @@ export const SlackSearchAuthorizationSchema = z.strictObject({
   actionToken: z.string().min(1).max(4096)
 });
 
-export const WorkstreamCompactionFenceSchema = z.strictObject({
-  checkpointRunId: IdSchema,
-  compactedThroughSequence: z.number().int().nonnegative(),
-  checkpointHash: z.string().regex(/^fnv1a64:[0-9a-f]{16}$/u),
-});
-
 export const WorkstreamWorkflowInputSchema = z.object({
   region: RegionSchema,
   workspaceId: WorkspaceIdSchema,
@@ -2913,16 +2905,6 @@ export const WorkstreamWorkflowInputSchema = z.object({
    * parsing unchanged.
    */
   transcriptFenceMessageId: IdSchema.nullable().optional(),
-  /**
-   * Immutable lower boundary for the projected model array.
-   *
-   * `undefined` keeps the normal behavior of resolving the latest authorized
-   * checkpoint when the run begins. `null` pins the array to the beginning of
-   * the substream. An object pins one exact completed checkpoint by run,
-   * waterline, and content hash so sibling derived agents cannot observe
-   * different compactions while starting at different times.
-   */
-  compactionFence: WorkstreamCompactionFenceSchema.nullable().optional(),
   automationSubscriptionId: IdSchema.nullable(),
   /**
    * The occurrence snapshot frozen by AutomationAgent before the child exists.
@@ -3450,7 +3432,6 @@ export type SlackOriginAttachment = z.infer<typeof SlackOriginAttachmentSchema>;
 export type SlackOriginNearbyMessage = z.infer<typeof SlackOriginNearbyMessageSchema>;
 export type SlackOriginContext = z.infer<typeof SlackOriginContextSchema>;
 export type WorkstreamWorkflowInput = z.infer<typeof WorkstreamWorkflowInputSchema>;
-export type WorkstreamCompactionFence = z.infer<typeof WorkstreamCompactionFenceSchema>;
 
 export const TerminalNetworkModeSchema = z.enum(["trusted_only", "full_internet"]);
 export const TerminalNetworkVerificationStateSchema = z.enum(["pending", "verified", "failed"]);

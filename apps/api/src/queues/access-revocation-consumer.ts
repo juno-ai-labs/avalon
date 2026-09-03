@@ -156,6 +156,8 @@ export async function applyAccessRevocation(env: Env, message: AccessRevocationM
     return;
   }
 
+  const exhaustiveTarget: never = target;
+  throw new Error(`unsupported_access_revocation_target:${String(exhaustiveTarget)}`);
 }
 
 /** Queue entry point: one hop per message, retried on its own. */

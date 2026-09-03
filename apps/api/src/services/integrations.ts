@@ -83,7 +83,6 @@ import {
   type ServerSocketEvent,
   type ToolInvocation,
   type ToolDefinition,
-  type WorkstreamCompactionFence,
   type WorkstreamWorkflowInput,
 } from "@rally/contracts";
 import { newId, nowIso } from "@rally/db";
@@ -110,10 +109,6 @@ import { markLoopActivationRecorded } from "../lib/loop-activation-signal";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { createChildDeadline, withDeadline } from "../lib/deadline";
-import {
-  contextCompactionCheckpointHash,
-  type ContextCompactionCheckpointIdentity,
-} from "../lib/context-compaction-fence";
 import {
   CHECKPOINT_TEMPLATE_VERSION,
   renderWorkstreamResourceInventoryAggregate,
@@ -1009,28 +1004,12 @@ async function loadWorkstreamContextCompaction(
   workstreamId: string,
   principal: ExecutionPrincipal,
   asOf?: string,
-  fence?: WorkstreamCompactionFence | null,
 ): Promise<WorkstreamContextCompaction | null> {
-  if (fence === null) return null;
   const principalKey = executionPrincipalKey(principal);
-  // Two statements built by string concatenation, because a routed SELECT had
-  // no other way to be either "the newest checkpoint" or "this exact one". The
-  // operation takes the fence as an argument and picks the query itself.
   const row = await transcript.compactionCheckpoint({
     executionPrincipalKey: principalKey,
-    ...(fence === undefined ? {} : {
-      fence: {
-        runId: fence.checkpointRunId,
-        compactedThroughSequence: fence.compactedThroughSequence,
-      },
-    }),
   });
   if (!row || !Number.isSafeInteger(row.compacted_through_sequence) || row.compacted_through_sequence < 0) {
-    if (fence !== undefined) {
-      throw Object.assign(new Error("The frozen compaction checkpoint is no longer available"), {
-        code: "compaction_fence_not_found",
-      });
-    }
     return null;
   }
   const checkpointSourceId = typeof row.checkpoint_fact_id === "string"
@@ -1043,29 +1022,7 @@ async function loadWorkstreamContextCompaction(
   );
   if (row.execution_principal_key !== principalKey
     || row.resource_visibility_fingerprint !== visible.fingerprint) {
-    if (fence !== undefined) {
-      throw Object.assign(new Error("The frozen compaction checkpoint is no longer authorized"), {
-        code: "compaction_fence_not_authorized",
-      });
-    }
     return null;
-  }
-  if (fence !== undefined) {
-    const identity: ContextCompactionCheckpointIdentity = {
-      executionPrincipalKey: row.execution_principal_key,
-      resourceVisibilityFingerprint: row.resource_visibility_fingerprint,
-      checkpointTemplateVersion: row.checkpoint_template_version,
-      checkpointRunId: row.run_id,
-      compactedThroughSequence: row.compacted_through_sequence,
-      messagesJson: row.messages_json,
-      summary: row.summary,
-      model: row.model,
-    };
-    if (contextCompactionCheckpointHash(identity) !== fence.checkpointHash) {
-      throw Object.assign(new Error("The frozen compaction checkpoint changed"), {
-        code: "compaction_fence_changed",
-      });
-    }
   }
   if (row.checkpoint_template_version === CHECKPOINT_TEMPLATE_VERSION) {
     const appendix = renderWorkstreamResourceInventoryAggregate({
@@ -2357,7 +2314,6 @@ export async function runWorkstreamHarness(
         input.workstreamId,
         input.executionPrincipal,
         undefined,
-        input.compactionFence,
       )
     : null;
   const transcript = createMessageObjectPort(env, input.workspaceId, input.workstreamId);
@@ -2821,12 +2777,11 @@ export async function runWorkstreamHarness(
         }),
         onStepSettled: (step) => runtime.persistentLoop!.settleStep(step),
       } : {}),
-      ...{
-        onBindLoopTransition: (transition) => runtime?.persistentLoop
-          ? runtime.persistentLoop.commitBindTransition(transition)
-          : orderedTranscript.commitBindTransition(transition),
-        onBindProviderBoundary: (boundary) => orderedTranscript.recordProviderBoundary(boundary),
-        onBindCompaction: async (commit) => {
+      onBindLoopTransition: (transition) => runtime?.persistentLoop
+        ? runtime.persistentLoop.commitBindTransition(transition)
+        : orderedTranscript.commitBindTransition(transition),
+      onBindProviderBoundary: (boundary) => orderedTranscript.recordProviderBoundary(boundary),
+      onBindCompaction: async (commit) => {
           await liveness.pulse("compaction_persist", true);
           await assertRunAuthorityStillValid(env, input, runAuthoritySnapshot);
           if (!preparedCompactionVisibilityFingerprint) {
@@ -2853,7 +2808,6 @@ export async function runWorkstreamHarness(
             ? runtime.persistentLoop.commitBindCompaction(compaction)
             : orderedTranscript.commitBindCompaction(compaction));
           preparedCompactionVisibilityFingerprint = null;
-        },
       },
       // Offered to every run, never activated by being offered: a run sees only
       // each catalog line until it loads one, and loading adds instructions and
@@ -2861,8 +2815,7 @@ export async function runWorkstreamHarness(
       // withholding a skill would only hide advice, never authority, and
       // a future general skill would be hidden along with it.
       skills: [...BUILT_IN_SKILLS],
-      ...{
-        compaction: {
+      compaction: {
           prepare: async () => {
             await liveness.pulse("compaction_prepare", true);
             await assertRunAuthorityStillValid(env, input, runAuthoritySnapshot);
@@ -2899,7 +2852,6 @@ export async function runWorkstreamHarness(
               inventory: current,
             });
           },
-        },
       },
       corePlugins: harnessTools.corePlugins,
       plugins: harnessTools.plugins,

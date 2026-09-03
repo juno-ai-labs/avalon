@@ -10,7 +10,6 @@ import {
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { __integrationTesting } from "../src/services/integrations";
-import { contextCompactionCheckpointHash } from "../src/lib/context-compaction-fence";
 import {
   createTestD1Database,
   createTestD1PreparedStatement,
@@ -442,86 +441,4 @@ describe("work-stream compaction resource inventory", () => {
     });
   });
 
-  it("loads only the exact frozen compaction and detects changed checkpoint content", async () => {
-    const checkpointRunId = CHECKPOINT_RUN;
-    const stored = {
-      executionPrincipalKey: "workspace:1629dee4-8cc4-4531-81f9-b2be8614e062",
-      resourceVisibilityFingerprint: "inventory:0",
-      checkpointTemplateVersion: 1,
-      checkpointRunId,
-      compactedThroughSequence: 12,
-      messagesJson: JSON.stringify([{ role: "user", content: "old representation" }]),
-      summary: "# Request\nContinue from the frozen point.",
-      model: "test/model",
-    };
-    const { store, transcript, attachments } = objectStore();
-    seedCheckpoint(store, {
-      executionPrincipalKey: stored.executionPrincipalKey,
-      resourceVisibilityFingerprint: stored.resourceVisibilityFingerprint,
-      checkpointTemplateVersion: stored.checkpointTemplateVersion,
-      compactedThroughSequence: stored.compactedThroughSequence,
-      messagesJson: stored.messagesJson,
-      summary: stored.summary,
-      model: stored.model,
-    });
-    // A second checkpoint for the same principal, further along. Without the
-    // fence the read answers with this one; with it, the frozen sequence is
-    // what comes back — which is what makes the fence a fence rather than a
-    // label on whatever is newest.
-    seedCheckpoint(store, {
-      executionPrincipalKey: stored.executionPrincipalKey,
-      resourceVisibilityFingerprint: stored.resourceVisibilityFingerprint,
-      checkpointTemplateVersion: stored.checkpointTemplateVersion,
-      compactedThroughSequence: stored.compactedThroughSequence + 5,
-      messagesJson: JSON.stringify([{ role: "user", content: "newer representation" }]),
-      summary: "# Request\nContinue from the newer point.",
-      model: stored.model,
-    });
-    const database = createTestD1Database({
-      prepare() {
-        return createTestD1PreparedStatement({
-          bind() { return this; },
-          async first<T>() { return { revision: 0 } as T; },
-          async all<T>() { return createTestD1Result<T>({ success: true, results: [] }); },
-        });
-      },
-    });
-    const fence = {
-      checkpointRunId,
-      compactedThroughSequence: stored.compactedThroughSequence,
-      checkpointHash: contextCompactionCheckpointHash(stored),
-    };
-
-    await expect(__integrationTesting.loadWorkstreamContextCompaction(
-      database,
-      transcript,
-      attachments,
-      WORKSPACE,
-      WORKSTREAM,
-      { type: "workspace", workspaceId: asWorkspaceId(WORKSPACE) },
-      AS_OF,
-      fence,
-    )).resolves.toMatchObject({ compactedThroughSequence: 12 });
-    // Unfenced, the same read answers with the later checkpoint.
-    await expect(__integrationTesting.loadWorkstreamContextCompaction(
-      database,
-      transcript,
-      attachments,
-      WORKSPACE,
-      WORKSTREAM,
-      { type: "workspace", workspaceId: asWorkspaceId(WORKSPACE) },
-      AS_OF,
-    )).resolves.toMatchObject({ compactedThroughSequence: 17 });
-
-    await expect(__integrationTesting.loadWorkstreamContextCompaction(
-      database,
-      transcript,
-      attachments,
-      WORKSPACE,
-      WORKSTREAM,
-      { type: "workspace", workspaceId: asWorkspaceId(WORKSPACE) },
-      AS_OF,
-      { ...fence, checkpointHash: "fnv1a64:0000000000000000" },
-    )).rejects.toMatchObject({ code: "compaction_fence_changed" });
-  });
 });

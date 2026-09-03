@@ -896,6 +896,14 @@ through the real endpoint, so a method added without a dispatch entry fails ther
 without anyone remembering to add a case. That is worth copying for the next
 typed port rather than maintaining another hand-written list.
 
+The remaining methods without a workerd RPC exercise are:
+
+| Object | Unexercised |
+| --- | --- |
+| `WorkspaceDO` | `activityEventSource`, `applyWorkstreamRegionalEffect`, `dueWorkstreamDirectory`, `existingOpportunities`, `getOpportunity`, `latestActivityEventCursor`, `notificationDirectoryState`, `opportunityWindow`, `resourceAccess`, `workstreamScheduleTargets` |
+| `SubstreamAgent` | `publishEvent` |
+| `WorkstreamDO` | `acknowledgeRegionalEffect`, `loadRegionalEffect` |
+
 **Uncovered here does not mean untested** — several have Node suites over their
 storage class, which is the right rung for what the SQL decides. It means
 nothing has driven them across the RPC boundary against real workerd, so a

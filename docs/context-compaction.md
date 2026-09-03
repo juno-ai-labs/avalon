@@ -287,6 +287,8 @@ ordinary substream context semantics.
 **Consequences:** Compaction now serves only live agent-loop paths; its durable
 checkpoint rules are unchanged.
 
+Shipped in #541.
+
 ### 2026-08-27 — Legacy checkpoint storage retired without rewriting edges
 
 **What changed:** Schema v32 removes the old checkpoint table after exact

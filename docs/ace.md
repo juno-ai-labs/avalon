@@ -322,12 +322,17 @@ When a save succeeds but clients do not change, inspect in order:
 
 **What changed:** Ace no longer carries the Block Dashboard model role,
 feature-flag payload, queue protocol, deployment binding, or editor controls.
+Its deploy removes the retired `hypersight-enabled` and
+`agent-model-block-dashboard` keys if Flagship still holds them.
 
 **Why:** HyperSight is removed rather than disabled, so leaving an operator
 surface would advertise settings with no runtime consumer.
 
-**Consequences:** Ace manages only live Rally capabilities. Historical
+**Consequences:** Ace manages only live Rally capabilities. Flag retirement is
+idempotent, so later deploys accept the keys already being absent. Historical
 changelog entries still describe the feature while it existed.
+
+Shipped in #541.
 
 ### 2026-09-02 — Sol appears only for completely Azure-routed roles
 

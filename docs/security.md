@@ -782,6 +782,8 @@ surface that is harder to audit than either a live feature or no feature.
 **Consequences:** The existing workspace, work-stream, and substream authority
 boundaries remain; revocation no longer traverses a dashboard child.
 
+Shipped in #541.
+
 ### 2026-09-03 — An inbound-email run is no longer read-only
 
 **What changed:** The three `inbound_email` tool guards in
@@ -817,6 +819,8 @@ connectors accordingly. Anyone re-tightening this should do it for every externa
 trigger at once, and update this invariant and
 [`workstream-email-addresses.md`](workstream-email-addresses.md) in the same
 change.
+
+Shipped in #541.
 
 ### 2026-09-02 — A link to the active workspace uses the session in use
 

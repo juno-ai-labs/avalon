@@ -4716,7 +4716,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
 
   /**
    * Deliver one ordered batch. An outbox row is acknowledged only after the
-   * semantic frame and its dashboard-refresh intent have both been accepted
+   * semantic frame has been accepted
    * locally. Replaying the same sequence after a crash is harmless at the
    * client cursor and is deduplicated in this isolate's replay cache.
    */
