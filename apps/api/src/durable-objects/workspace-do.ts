@@ -14,8 +14,6 @@ import {
   asAutomationId,
   asWorkspaceId,
   IdSchema,
-  MESSAGE_MAX_CHARACTERS,
-  MESSAGE_TOO_LONG_MESSAGE,
   PROJECT_COLOR_KEYS,
   PROJECT_ICON_KEYS,
   UserIdSchema,
@@ -40,7 +38,6 @@ import {
   WORKSTREAM_NAMING_GRACE_MS,
   WorkstreamIdSchema,
   WorkstreamSchema,
-  WorkstreamSocketCommandResultSchema,
   type AutomationAttentionReason,
   type AutomationSummary,
   type WorkstreamAutomationSummary,
@@ -61,7 +58,6 @@ import { z } from "zod";
 
 import type { AuthContext, Env } from "../env";
 import { restrictedActivityUserIds } from "../lib/activity-visibility";
-import { ApiError } from "../lib/api-error";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import {
   assertDurableObjectJurisdiction,
@@ -73,12 +69,10 @@ import {
 import { withDurableObjectSelf } from "../lib/durable-object-self";
 import { uuidV7 } from "../lib/uuid-v7";
 import { diagnosticErrorCode, logInfo, logWarn } from "../observability/logger";
-import { identityAttributes, inFlowSpan } from "../observability/tracing";
 import {
   acceptsNewWorkstreamWork,
   readWorkstreamAuthorityControl,
 } from "../services/workstream-authority";
-import { WorkstreamObjectClient } from "../services/workstream-object-client";
 import { resolveClientFeatureFlagsForSubject } from "../services/client-feature-flags";
 import {
   revocationClosesSocket,
@@ -956,34 +950,6 @@ const SocketIdentitySchema = z.object({
 });
 
 type SocketIdentity = z.infer<typeof SocketIdentitySchema>;
-type CreateMessageCommand = Extract<
-  z.infer<typeof WorkspaceSocketClientEventSchema>,
-  { type: "create_message" }
->;
-
-/**
- * The `clientMessageId` of a `create_message` frame whose text is over the
- * ceiling, or null when the frame is anything else.
- *
- * Reads the decoded JSON rather than a parsed command because the parse is what
- * this runs ahead of. Deliberately narrow: it answers only for a frame that is
- * recognisably a create_message carrying a correlatable id, so anything it is
- * unsure about falls through to the schema and is refused there. The reply is
- * correlated by `clientMessageId`, so a frame without a usable one has nothing
- * to answer to and is left to the parse as well.
- */
-function overLongCreateMessageCommand(decoded: unknown): { clientMessageId: string } | null {
-  if (decoded === null || typeof decoded !== "object") return null;
-  const frame = decoded as { type?: unknown; payload?: unknown };
-  if (frame.type !== "create_message") return null;
-  if (frame.payload === null || typeof frame.payload !== "object") return null;
-  const payload = frame.payload as { text?: unknown; clientMessageId?: unknown };
-  if (typeof payload.text !== "string" || payload.text.length <= MESSAGE_MAX_CHARACTERS) return null;
-  if (typeof payload.clientMessageId !== "string") return null;
-  if (payload.clientMessageId.length < 1 || payload.clientMessageId.length > 120) return null;
-  return { clientMessageId: payload.clientMessageId };
-}
-
 interface WorkspaceSocketAttachment extends SocketIdentity {
   connectionId: string;
   connectedAt: string;
@@ -2553,8 +2519,7 @@ type WorkspaceSocketOperation =
   | "validate"
   | "subscribe"
   | "presence"
-  | "list_workstreams"
-  | "create_message";
+  | "list_workstreams";
 
 interface WorkspaceSocketCloseInput {
   code: number;
@@ -2998,25 +2963,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       });
       return;
     }
-    // Ahead of the parse, and the only bound that is. Every other way this
-    // event can be malformed is a client defect, and closing the socket is the
-    // right answer to one. An over-long message is not a defect — it is a
-    // person who pasted more than Avalon takes — and closing their connection
-    // to say so would drop the transcript they are looking at, tell them
-    // nothing, and reconnect into the same refusal on the next attempt. The
-    // desktop already stops this at the composer; this is what a build that has
-    // not caught up, or a message grown past the ceiling between the two, is
-    // told instead.
-    const overLong = overLongCreateMessageCommand(decoded);
-    if (overLong) {
-      socket.send(JSON.stringify(WorkstreamSocketCommandResultSchema.parse({
-        type: "client_command_failed",
-        command: "create_message",
-        clientMessageId: overLong.clientMessageId,
-        error: { status: 400, code: "message_too_long", message: MESSAGE_TOO_LONG_MESSAGE },
-      })));
-      return;
-    }
     const parsed = WorkspaceSocketClientEventSchema.safeParse(decoded);
     if (!parsed.success) {
       this.closeSocket(socket, attachment, {
@@ -3111,7 +3057,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       })));
       return;
     }
-    await this.createMessage(socket, attachment, parsed.data);
   }
 
   override webSocketClose(socket: WebSocket): void {
@@ -8771,99 +8716,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // are synchronous, so no client event can interleave between them.
     server.serializeAttachment(attachment);
     return new Response(null, { status: 101, webSocket: client });
-  }
-
-  private async createMessage(
-    socket: WebSocket,
-    attachment: WorkspaceSocketAttachment,
-    command: CreateMessageCommand,
-  ): Promise<void> {
-    // A command arrives over an already-open socket, which the platform traces
-    // as its own invocation with no relationship to the HTTP request the
-    // desktop made to open it. `rally.message.client_id` is what joins this
-    // trace to the composer that sent it: the desktop prints the same id, and
-    // the command result comes back keyed by it.
-    return inFlowSpan(this.env, "workstream.message.send", {
-      flow: "workstream_message_send",
-      component: "workspace_do",
-      identity: {
-        workspaceId: attachment.workspaceId,
-        workstreamId: command.workstreamId,
-        userId: attachment.userId,
-        substreamId: command.substreamId,
-      },
-      attributes: {
-        "rally.transport": "workspace_socket",
-        "rally.message.client_id": command.payload.clientMessageId,
-        "rally.message.attachment_count": command.payload.attachmentIds?.length ?? 0,
-      },
-    }, async (span) => {
-      try {
-        const authority = await span.step("workstream.message.authority_read", () =>
-          readWorkstreamAuthorityControl(this.env));
-        if (!acceptsNewWorkstreamWork(authority) || authority.phase !== "durable_object_open") {
-          throw new ApiError(503, "workstream_maintenance", "Work streams are temporarily unavailable");
-        }
-        const auth = await span.step("workstream.message.session_auth", () => this.sessionAuth(attachment));
-        if (auth) span.setAttributes(identityAttributes({
-          analyticsWorkspaceId: auth.analyticsWorkspaceId,
-        }));
-        if (!auth) {
-          span.setError("session_inactive");
-          this.closeSocket(socket, attachment, {
-            code: WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
-            reason: "Session no longer active",
-            cause: "session_inactive",
-            operation: "create_message",
-          });
-          return;
-        }
-        const result = await span.step("workstream.message.object_write", () => new WorkstreamObjectClient(
-          this.env,
-          auth,
-          command.workstreamId,
-          command.substreamId,
-          true,
-        ).createMessage({
-          ...command.payload,
-          telemetryOperationId: command.operationId,
-        }));
-        socket.send(JSON.stringify(WorkstreamSocketCommandResultSchema.parse({
-          type: "client_command_succeeded",
-          command: "create_message",
-          clientMessageId: command.payload.clientMessageId,
-          ...result,
-        })));
-        span.mark("workstream.message.respond");
-      } catch (error) {
-        const safe = error instanceof ApiError
-          ? error
-          : new ApiError(500, "message_write_failed", "The message could not be sent");
-        socket.send(JSON.stringify(WorkstreamSocketCommandResultSchema.parse({
-          type: "client_command_failed",
-          command: "create_message",
-          clientMessageId: command.payload.clientMessageId,
-          error: {
-            status: safe.status,
-            code: safe.code,
-            message: safe.message,
-            ...(safe.details ? { details: safe.details } : {}),
-          },
-        })));
-        if (!(error instanceof ApiError)) {
-          logWarn(this.env, "workspace_socket_create_message_failed", {
-            workspace_id: attachment.workspaceId,
-            workstream_id: command.workstreamId,
-            substream_id: command.substreamId,
-            user_id: attachment.userId,
-            client_message_id: command.payload.clientMessageId,
-            reason: error instanceof Error ? error.message : "unknown",
-          });
-        }
-        span.setError(safe.code, safe.message);
-        span.setAttributes({ "http.response.status_code": safe.status });
-      }
-    });
   }
 
   private applyDirectoryEnvelope(

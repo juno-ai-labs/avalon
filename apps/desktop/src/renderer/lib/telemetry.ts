@@ -31,15 +31,23 @@ export type WorkstreamSocketStartReason =
 /** Renderer-only lineage for the data that completed one sidebar open. */
 export function workstreamFeedSourceQueryKey(
   workstreamId: string,
-): readonly ['workstream-feed-source', string] {
-  return ['workstream-feed-source', workstreamId];
+  substreamId = '0',
+): readonly ['workstream-feed-source', string]
+  | readonly ['substream-workstream-feed-source', string, string] {
+  return substreamId === '0'
+    ? ['workstream-feed-source', workstreamId]
+    : ['substream-workstream-feed-source', workstreamId, substreamId];
 }
 
 /** Monotonic fence that prevents a late REST recovery from replacing a socket snapshot. */
 export function workstreamSocketSnapshotGenerationQueryKey(
   workstreamId: string,
-): readonly ['workstream-socket-snapshot-generation', string] {
-  return ['workstream-socket-snapshot-generation', workstreamId];
+  substreamId = '0',
+): readonly ['workstream-socket-snapshot-generation', string]
+  | readonly ['substream-workstream-socket-snapshot-generation', string, string] {
+  return substreamId === '0'
+    ? ['workstream-socket-snapshot-generation', workstreamId]
+    : ['substream-workstream-socket-snapshot-generation', workstreamId, substreamId];
 }
 
 interface PendingWorkstreamFeedOpen {

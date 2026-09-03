@@ -35,6 +35,7 @@ import {
 import { desktopBridge, type DesktopWorkspaceOnboardingState } from './platform';
 import { abandonPendingWorkstreamFeedOpen, markSurfaceEntrypoint, reportJavascriptError } from './telemetry';
 import type { Region } from './types';
+import { invalidateCachedWorkstreamDetails } from './workstreams-cache';
 
 const connectorProviderNames = {
   google: 'Google',
@@ -782,7 +783,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
             setDeepLinkError(null);
             await Promise.all([
               queryClient.invalidateQueries({ queryKey: ['connections'] }),
-              queryClient.invalidateQueries({ queryKey: ['workstream'] }),
+              invalidateCachedWorkstreamDetails(queryClient),
               queryClient.invalidateQueries({ queryKey: ['automation'] }),
             ]);
             if (intent.target) await bridge.openSettings('connections');

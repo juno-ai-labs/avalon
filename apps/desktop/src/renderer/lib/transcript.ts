@@ -100,8 +100,12 @@ export function setTranscriptElicitationState(
 
 export function transcriptOverlaysQueryKey(
   workstreamId: string,
-): readonly ['transcript-overlays', string] {
-  return ['transcript-overlays', workstreamId];
+  substreamId = '0',
+): readonly ['transcript-overlays', string]
+  | readonly ['substream-transcript-overlays', string, string] {
+  return substreamId === '0'
+    ? ['transcript-overlays', workstreamId]
+    : ['substream-transcript-overlays', workstreamId, substreamId];
 }
 
 type TextMessageInput = Omit<Message, 'messageType' | 'text'> & { text: string };

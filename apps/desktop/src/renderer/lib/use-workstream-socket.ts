@@ -6,6 +6,7 @@ import {
   type AgentCompactionState,
   type ActiveStreamCheckpoint,
   type ClientSocketEvent,
+  type WorkstreamSocketCommandResult,
   type PersonalSocketEvent,
   type ServerSocketEvent,
   type PendingTranscriptInput,
@@ -70,7 +71,7 @@ import {
 } from './transcript';
 import type { HarnessStatus, BlockDashboard, BlockDashboardPreference, Message, WorkstreamDetail, WorkstreamSummary } from './types';
 import { withDerivedUnread } from './workstream-state-store';
-import { evictCachedWorkstream, setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
+import { evictCachedSubstream, setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 import { useWorkstreamSocketResumeState, type StreamCursor } from './workstream-socket-resume';
 import { useWorkstreamControlSocket } from './use-workstream-control-socket';
 
@@ -109,6 +110,14 @@ export interface WorkstreamSocketConnection {
   workspaceSocketState: 'connecting' | 'connected' | 'reconnecting' | 'unavailable';
   activeCompaction: AgentCompactionState | null;
   createMessage(input: CreateWorkstreamMessageInput): Promise<AcceptedWorkstreamTurn>;
+  answerElicitation(
+    elicitationId: string,
+    answer: string | string[] | null,
+    customResponse?: string,
+  ): Promise<void>;
+  reorderPendingInputs(inputIds: string[]): Promise<{ pendingInputs: PendingTranscriptInput[] }>;
+  stopHarness(): Promise<void>;
+  retryHarness(): Promise<{ harnessRunId: string }>;
   loadTranscriptRange(input: {
     snapshotId: string;
     range: TranscriptRange;
@@ -122,10 +131,14 @@ export type AcceptedWorkstreamTurn = WorkstreamMessageAdmissionReceipt['turn']
   & Pick<WorkstreamMessageAdmissionReceipt, 'deliveryState'>;
 
 type CreateMessageSocketCommand = Extract<ClientSocketEvent, { type: 'create_message' }>;
+type SubstreamMutationCommand = Extract<ClientSocketEvent, { operationId: string }>;
+type SuccessfulSubstreamMutation = Extract<WorkstreamSocketCommandResult, {
+  type: 'client_command_succeeded';
+}>;
 
-interface PendingMessageCommand {
-  command: CreateMessageSocketCommand;
-  resolve: (turn: AcceptedWorkstreamTurn) => void;
+interface PendingSubstreamCommand {
+  command: SubstreamMutationCommand;
+  resolve: (result: SuccessfulSubstreamMutation) => void;
   reject: (error: Error) => void;
 }
 
@@ -453,6 +466,25 @@ function runMayStillEmitRealtime(status: WorkstreamDetail['harnessStatus']): boo
   return status === 'running' || status === 'scheduled';
 }
 
+export function workstreamDetailQueryKey(
+  workstreamId: string,
+  substreamId = '0',
+): readonly ['workstream', string] | readonly ['substream-workstream', string, string] {
+  return substreamId === '0'
+    ? ['workstream', workstreamId]
+    : ['substream-workstream', workstreamId, substreamId];
+}
+
+export function orderedTranscriptQueryKey(
+  workstreamId: string,
+  substreamId = '0',
+): readonly ['ordered-transcript', string]
+  | readonly ['substream-ordered-transcript', string, string] {
+  return substreamId === '0'
+    ? ['ordered-transcript', workstreamId]
+    : ['substream-ordered-transcript', workstreamId, substreamId];
+}
+
 /**
  * A harness status change is pushed, not polled, so both views of it take the
  * pushed value in one write: the open work stream's header reads the detail
@@ -465,9 +497,11 @@ export function applyHarnessStatus(
   queryClient: QueryClient,
   workstreamId: string,
   harnessStatus: HarnessStatus,
+  substreamId = '0',
 ): void {
-  queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) =>
+  queryClient.setQueryData<WorkstreamDetail>(workstreamDetailQueryKey(workstreamId, substreamId), (current) =>
     current && current.harnessStatus !== harnessStatus ? { ...current, harnessStatus } : current);
+  if (substreamId !== '0') return;
   setCachedWorkstreams(queryClient, (current) =>
     current?.map((workstream) => workstream.id === workstreamId && workstream.harnessStatus !== harnessStatus
       ? { ...workstream, harnessStatus }
@@ -663,6 +697,7 @@ export function useWorkstreamSocket(
   initialReason: Exclude<WorkstreamSocketStartReason, 'reconnect'> = 'active_workstream',
   socketLeaseId?: string,
   openCommitted = true,
+  substreamId = '0',
 ): WorkstreamSocketConnection {
   const queryClient = useQueryClient();
   const [generatedSocketLeaseId] = useState(() => socketLeaseId ?? uuidV7());
@@ -682,7 +717,7 @@ export function useWorkstreamSocket(
     initialReason,
     resolvedSocketLeaseId,
   );
-  const resumeState = useWorkstreamSocketResumeState(workstreamId);
+  const resumeState = useWorkstreamSocketResumeState(workstreamId, substreamId);
   const [state, setState] = useState<SocketState>('idle');
   const [openingError, setOpeningError] = useState<string>();
   const [openingRetryGeneration, setOpeningRetryGeneration] = useState(0);
@@ -702,6 +737,50 @@ export function useWorkstreamSocket(
   );
   const createMessage = useCallback(
     (input: CreateWorkstreamMessageInput): Promise<AcceptedWorkstreamTurn> => createMessageRef.current(input),
+    [],
+  );
+  const answerElicitationRef = useRef<WorkstreamSocketConnection['answerElicitation']>(
+    () => Promise.reject(new ApiError(
+      'The substream is not ready to answer questions.',
+      409,
+      'workstream_socket_unavailable',
+    )),
+  );
+  const answerElicitation = useCallback<WorkstreamSocketConnection['answerElicitation']>(
+    (...args) => answerElicitationRef.current(...args),
+    [],
+  );
+  const reorderPendingInputsRef = useRef<WorkstreamSocketConnection['reorderPendingInputs']>(
+    () => Promise.reject(new ApiError(
+      'The substream is not ready to reorder queued messages.',
+      409,
+      'workstream_socket_unavailable',
+    )),
+  );
+  const reorderPendingInputs = useCallback<WorkstreamSocketConnection['reorderPendingInputs']>(
+    (inputIds) => reorderPendingInputsRef.current(inputIds),
+    [],
+  );
+  const stopHarnessRef = useRef<WorkstreamSocketConnection['stopHarness']>(
+    () => Promise.reject(new ApiError(
+      'The substream is not ready to stop.',
+      409,
+      'workstream_socket_unavailable',
+    )),
+  );
+  const stopHarness = useCallback<WorkstreamSocketConnection['stopHarness']>(
+    () => stopHarnessRef.current(),
+    [],
+  );
+  const retryHarnessRef = useRef<WorkstreamSocketConnection['retryHarness']>(
+    () => Promise.reject(new ApiError(
+      'The substream is not ready to retry.',
+      409,
+      'workstream_socket_unavailable',
+    )),
+  );
+  const retryHarness = useCallback<WorkstreamSocketConnection['retryHarness']>(
+    () => retryHarnessRef.current(),
     [],
   );
   const loadTranscriptRangeRef = useRef<(input: {
@@ -734,6 +813,18 @@ export function useWorkstreamSocket(
         409,
         'workstream_socket_unavailable',
       ));
+      answerElicitationRef.current = () => Promise.reject(new ApiError(
+        'The substream is not ready to answer questions.', 409, 'workstream_socket_unavailable',
+      ));
+      reorderPendingInputsRef.current = () => Promise.reject(new ApiError(
+        'The substream is not ready to reorder queued messages.', 409, 'workstream_socket_unavailable',
+      ));
+      stopHarnessRef.current = () => Promise.reject(new ApiError(
+        'The substream is not ready to stop.', 409, 'workstream_socket_unavailable',
+      ));
+      retryHarnessRef.current = () => Promise.reject(new ApiError(
+        'The substream is not ready to retry.', 409, 'workstream_socket_unavailable',
+      ));
       loadTranscriptRangeRef.current = () => Promise.reject(new ApiError(
         'The work stream is not ready to load transcript ranges.',
         409,
@@ -741,6 +832,9 @@ export function useWorkstreamSocket(
       ));
       return;
     }
+    const detailQueryKey = workstreamDetailQueryKey(workstreamId, substreamId);
+    const transcriptQueryKey = orderedTranscriptQueryKey(workstreamId, substreamId);
+    const overlaysQueryKey = transcriptOverlaysQueryKey(workstreamId, substreamId);
     let closedByEffect = false;
     const socketTelemetry = realtimeSocketTelemetry('substream_feed');
     // Separate from `closedByEffect`, which means this hook is tearing down. The
@@ -762,16 +856,50 @@ export function useWorkstreamSocket(
       markOpenedSent = true;
     };
     markOpenedRef.current = markOpened;
-    const pendingMessageCommands = new Map<string, PendingMessageCommand>();
-    const sendPendingMessages = (target: RealtimeSocket | null = socket): void => {
+    const pendingSubstreamCommands = new Map<string, PendingSubstreamCommand>();
+    const sendPendingSubstreamCommands = (target: RealtimeSocket | null = socket): void => {
       if (target?.readyState !== REALTIME_SOCKET_OPEN) return;
-      for (const pending of pendingMessageCommands.values()) {
-        target.send(JSON.stringify(pending.command));
+      for (const pending of pendingSubstreamCommands.values()) {
+        try {
+          target.send(JSON.stringify(pending.command));
+        } catch {
+          // The readyState check and send are not atomic. Preserve every entry
+          // for the next connection; the close path owns reconnect scheduling.
+          try {
+            target.close();
+          } catch {
+            // A socket which already became terminal has nothing left to close.
+          }
+          return;
+        }
       }
     };
-    const rejectPendingMessages = (error: Error): void => {
-      for (const pending of pendingMessageCommands.values()) pending.reject(error);
-      pendingMessageCommands.clear();
+    const rejectPendingSubstreamCommands = (error: Error): void => {
+      for (const pending of pendingSubstreamCommands.values()) pending.reject(error);
+      pendingSubstreamCommands.clear();
+    };
+    const submitSubstreamCommand = (
+      command: SubstreamMutationCommand,
+    ): Promise<SuccessfulSubstreamMutation> => {
+      if (accessRevoked) {
+        return Promise.reject(new ApiError(
+          'You can no longer access this work stream.',
+          403,
+          'workstream_access_revoked',
+        ));
+      }
+      if (openingTerminal) {
+        return Promise.reject(new ApiError(
+          'The live connection timed out before the substream command could be sent.',
+          408,
+          'workstream_socket_open_timeout',
+        ));
+      }
+      return new Promise((resolve, reject) => {
+        pendingSubstreamCommands.set(command.operationId, { command, resolve, reject });
+        sendPendingSubstreamCommands();
+        void connect();
+      });
     };
     let reconnectTimer: number | null = null;
     let heartbeatTimer: number | null = null;
@@ -781,9 +909,9 @@ export function useWorkstreamSocket(
     let openingTimedOutAttempts = 0;
     let openingTerminal = false;
     const canonicalCachesAvailable = (): boolean =>
-      queryClient.getQueryData<WorkstreamDetail>(['workstream', workstreamId])?.id === workstreamId
+      queryClient.getQueryData<WorkstreamDetail>(detailQueryKey)?.id === workstreamId
       && queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
-        ['ordered-transcript', workstreamId],
+        transcriptQueryKey,
       ) !== undefined;
     let openingCompleted = canonicalCachesAvailable();
     let connectGeneration = 0;
@@ -841,7 +969,7 @@ export function useWorkstreamSocket(
         if (closedByEffect) return;
         const { changed, backlogRemains } = advanceStreamReveal(streamCursors, performance.now());
         if (changed) {
-          queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(workstreamId), (current) =>
+          queryClient.setQueryData<TranscriptOverlay[]>(overlaysQueryKey, (current) =>
             mapTranscriptOverlayMessages(current, (messages) => applyRevealedText(messages, streamCursors)));
         }
         if (backlogRemains) scheduleReveal();
@@ -856,7 +984,7 @@ export function useWorkstreamSocket(
     const handleVisibilityChange = (): void => {
       if (document.visibilityState !== 'hidden') return;
       if (flushStreamReveal(streamCursors)) {
-        queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(workstreamId), (current) =>
+        queryClient.setQueryData<TranscriptOverlay[]>(overlaysQueryKey, (current) =>
           mapTranscriptOverlayMessages(current, (messages) => applyRevealedText(messages, streamCursors)));
       }
     };
@@ -873,10 +1001,8 @@ export function useWorkstreamSocket(
     let openTrace: PerfTrace | null = null;
 
     createMessageRef.current = async (input): Promise<AcceptedWorkstreamTurn> => {
-      // Keyed by the client message id, which SubstreamAgent records on its own
-      // span as `rally.message.client_id`: the command travels over an
-      // already-open socket the platform traces as its own invocation, so this
-      // is the only value the renderer and the server both hold.
+      // The operation id correlates the private receipt; the client message id
+      // remains the durable write's idempotency key and tracing identity.
       const operationId = uuidV7();
       const trace = startPerfTrace('workstream_message_send', {
         traceId: input.clientId,
@@ -915,22 +1041,43 @@ export function useWorkstreamSocket(
             ...(input.runMode ? { runMode: input.runMode } : {}),
           },
         };
-        const message = await trace.step('command_round_trip', () =>
-          new Promise<AcceptedWorkstreamTurn>((resolve, reject) => {
-            // The durable write is idempotent by clientMessageId. Keep this
-            // command across reconnects and resend the same identity: rejecting
-            // an ambiguous disconnect would invite the composer to mint a new
-            // identity and duplicate an already-accepted message.
-            pendingMessageCommands.set(input.clientId, { command, resolve, reject });
-            sendPendingMessages();
-            void connect();
-          }));
+        const result = await trace.step('command_round_trip', () => submitSubstreamCommand(command));
+        if (result.command !== 'create_message') throw new Error('substream_command_receipt_mismatch');
         trace.end();
-        return message;
+        return { ...result.turn, deliveryState: result.deliveryState };
       } catch (error) {
         trace.end({ outcome: 'failed' });
         throw error;
       }
+    };
+    answerElicitationRef.current = async (elicitationId, answer, customResponse): Promise<void> => {
+      const result = await submitSubstreamCommand({
+        type: 'answer_elicitation',
+        operationId: uuidV7(),
+        elicitationId,
+        payload: answer === null
+          ? { skipped: true }
+          : { answer, ...(customResponse ? { customResponse } : {}) },
+      });
+      if (result.command !== 'answer_elicitation') throw new Error('substream_command_receipt_mismatch');
+    };
+    reorderPendingInputsRef.current = async (inputIds) => {
+      const result = await submitSubstreamCommand({
+        type: 'reorder_pending_inputs',
+        operationId: uuidV7(),
+        inputIds,
+      });
+      if (result.command !== 'reorder_pending_inputs') throw new Error('substream_command_receipt_mismatch');
+      return { pendingInputs: result.pendingInputs };
+    };
+    stopHarnessRef.current = async (): Promise<void> => {
+      const result = await submitSubstreamCommand({ type: 'stop_harness', operationId: uuidV7() });
+      if (result.command !== 'stop_harness') throw new Error('substream_command_receipt_mismatch');
+    };
+    retryHarnessRef.current = async () => {
+      const result = await submitSubstreamCommand({ type: 'retry_harness', operationId: uuidV7() });
+      if (result.command !== 'retry_harness') throw new Error('substream_command_receipt_mismatch');
+      return { harnessRunId: result.harnessRunId };
     };
     // Readiness means the work-stream-specific handler is installed and can
     // hand a command to the room queue. The queue owns reconnecting
@@ -1039,7 +1186,7 @@ export function useWorkstreamSocket(
             left.inputSequence - right.inputSequence
               || (left.inputId < right.inputId ? -1 : left.inputId > right.inputId ? 1 : 0));
         const current = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
-          ['ordered-transcript', workstreamId],
+          transcriptQueryKey,
         );
         if (!current || current.snapshotId !== assembly.snapshotId) {
           pendingInputSnapshot = null;
@@ -1047,12 +1194,12 @@ export function useWorkstreamSocket(
         }
         const complete = { ...current, pendingInputs: inputs };
         queryClient.setQueryData<WorkstreamTranscriptSnapshot>(
-          ['ordered-transcript', workstreamId],
+          transcriptQueryKey,
           complete,
         );
         const canonical = orderedTranscriptMessages(complete, workstreamId);
         queryClient.setQueryData<TranscriptOverlay[]>(
-          transcriptOverlaysQueryKey(workstreamId),
+          overlaysQueryKey,
           (overlays) => reconcileAuthoritativeTranscriptOverlays(
             canonical,
             overlays,
@@ -1086,7 +1233,7 @@ export function useWorkstreamSocket(
           : [];
         if (canonicalResyncActiveStreams.length > 0) {
           const snapshot = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
-            ['ordered-transcript', workstreamId],
+            transcriptQueryKey,
           );
           const streamed = applyActiveStreamCheckpoints(
             [],
@@ -1094,7 +1241,7 @@ export function useWorkstreamSocket(
             workstreamId,
             streamCursors,
           );
-          queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(workstreamId), (current) =>
+          queryClient.setQueryData<TranscriptOverlay[]>(overlaysQueryKey, (current) =>
             canonicalResyncActiveStreams.reduce((next, checkpoint) => {
               const message = streamed.find((candidate) => candidate.id === checkpoint.turnId);
               return message ? upsertSocketEventOverlay(
@@ -1175,12 +1322,12 @@ export function useWorkstreamSocket(
           window.clearTimeout(pending.timeout);
         }
         const current = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
-          ['ordered-transcript', workstreamId],
+          transcriptQueryKey,
         );
         if (current?.snapshotId === event.snapshotId
           && (!pending || pending.snapshotId === event.snapshotId)) {
           queryClient.setQueryData<WorkstreamTranscriptSnapshot>(
-            ['ordered-transcript', workstreamId],
+            transcriptQueryKey,
             mergeTranscriptRange(current, event.result),
           );
           pending?.resolve(event.result);
@@ -1211,7 +1358,7 @@ export function useWorkstreamSocket(
         && (event.type === 'snapshot' || (event.type === 'error' && event.requestId === null));
       if (answersSnapshotRequest) snapshotRequestInFlight = false;
       const currentTranscript = event.type === 'snapshot'
-        ? queryClient.getQueryData<WorkstreamTranscriptSnapshot>(['ordered-transcript', workstreamId])
+        ? queryClient.getQueryData<WorkstreamTranscriptSnapshot>(transcriptQueryKey)
         : undefined;
       // Snapshots are valid at sequence zero and may intentionally replace
       // state at the same sequence after an explicit initial subscription.
@@ -1237,12 +1384,12 @@ export function useWorkstreamSocket(
         };
         setActiveCompaction(event.activeCompaction);
         queryClient.setQueryData<number>(
-          workstreamSocketSnapshotGenerationQueryKey(workstreamId),
+          workstreamSocketSnapshotGenerationQueryKey(workstreamId, substreamId),
           (current) => (current ?? 0) + 1,
         );
-        queryClient.setQueryData(workstreamFeedSourceQueryKey(workstreamId), 'socket_snapshot');
+        queryClient.setQueryData(workstreamFeedSourceQueryKey(workstreamId, substreamId), 'socket_snapshot');
         const detail = mapWorkstreamDetail(event.workstream);
-        queryClient.setQueryData(['workstream', workstreamId], detail);
+        queryClient.setQueryData(detailQueryKey, detail);
         // Only a reconciliation requested on this still-contiguous socket can
         // carry previously loaded ranges across a new snapshot fence. Initial
         // delivery and history-loss recovery have no proof that mutable turns
@@ -1253,7 +1400,7 @@ export function useWorkstreamSocket(
           ? mergeCanonicalTranscriptSnapshot(currentTranscript, event.transcript)
           : event.transcript;
         queryClient.setQueryData<WorkstreamTranscriptSnapshot>(
-          ['ordered-transcript', workstreamId],
+          transcriptQueryKey,
           transcript,
         );
         const canonical = orderedTranscriptMessages(transcript, workstreamId);
@@ -1278,7 +1425,7 @@ export function useWorkstreamSocket(
           ),
         ];
         queryClient.setQueryData<TranscriptOverlay[]>(
-          transcriptOverlaysQueryKey(workstreamId),
+          overlaysQueryKey,
           (current) => reconcileAuthoritativeTranscriptOverlays(
             canonical,
             current,
@@ -1304,7 +1451,7 @@ export function useWorkstreamSocket(
         }
       } else if (event.type === 'loop_input_upserted') {
         queryClient.setQueryData<TranscriptOverlay[]>(
-          transcriptOverlaysQueryKey(workstreamId),
+          overlaysQueryKey,
           (current) => replaceTranscriptOverlay(
             current,
             pendingTranscriptInputOverlay(event.input, workstreamId, {
@@ -1316,21 +1463,21 @@ export function useWorkstreamSocket(
         );
       } else if (event.type === 'loop_input_removed') {
         queryClient.setQueryData<TranscriptOverlay[]>(
-          transcriptOverlaysQueryKey(workstreamId),
+          overlaysQueryKey,
           (current) => removeTranscriptOverlay(current, (overlay) =>
             (overlay.identity.type === 'loop_input' && overlay.identity.inputId === event.inputId)
             || (overlay.identity.type === 'client_message' && overlay.identity.turnId === event.inputId)),
         );
       } else if (event.type === 'transcript_turn_upserted') {
         const next = queryClient.setQueryData<WorkstreamTranscriptSnapshot>(
-          ['ordered-transcript', workstreamId],
+          transcriptQueryKey,
           (current) => current
             ? mergeRealtimeTranscriptTurn(current, event.turn, event.sequence)
             : current,
         );
         if (next) {
           const canonical = orderedTranscriptMessages(next, workstreamId);
-          queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(workstreamId), (current) =>
+          queryClient.setQueryData<TranscriptOverlay[]>(overlaysQueryKey, (current) =>
             transcriptOverlaysWithoutCanonicalMatch(canonical, current ?? []));
           const turnMessages = canonical.filter((message) =>
             message.transcriptTurnId === event.turn.turnId);
@@ -1342,14 +1489,16 @@ export function useWorkstreamSocket(
               (next, message) => advanceWorkstreamAttention(next, message, viewerUserId),
               workstream,
             );
-          queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) =>
+          queryClient.setQueryData<WorkstreamDetail>(detailQueryKey, (current) =>
             current ? advance(current) : current);
-          setCachedWorkstreams(queryClient, (current) => current?.map((workstream) =>
-            workstream.id === workstreamId ? advance(workstream) : workstream));
+          if (substreamId === '0') {
+            setCachedWorkstreams(queryClient, (current) => current?.map((workstream) =>
+              workstream.id === workstreamId ? advance(workstream) : workstream));
+          }
         }
       } else if (event.type === 'transcript_activity_upserted') {
         queryClient.setQueryData<WorkstreamTranscriptSnapshot>(
-          ['ordered-transcript', workstreamId],
+          transcriptQueryKey,
           (current) => current
             ? mergeRealtimeTranscriptActivity(
                 current,
@@ -1373,7 +1522,7 @@ export function useWorkstreamSocket(
         // `settled` when nothing will change it again; the event says which,
         // and neither is a reason to keep waiting.
         const renamed = { title: event.title, titleStatus: event.titleStatus };
-        queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) =>
+        queryClient.setQueryData<WorkstreamDetail>(detailQueryKey, (current) =>
           current ? { ...current, ...renamed } : current);
         setCachedWorkstreams(queryClient, (current) =>
           current?.map((workstream) => workstream.id === workstreamId
@@ -1383,7 +1532,7 @@ export function useWorkstreamSocket(
         // Whoever this change excluded has already been disconnected by the
         // room, so everyone still here may read it and only needs the lock on
         // their sidebar row and the header they are reading to agree.
-        queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) =>
+        queryClient.setQueryData<WorkstreamDetail>(detailQueryKey, (current) =>
           current ? { ...current, scope: event.scope } : current);
         setCachedWorkstreams(queryClient, (current) =>
           current?.map((workstream) => workstream.id === workstreamId
@@ -1393,7 +1542,7 @@ export function useWorkstreamSocket(
         const matchingCursors = new Map([...streamCursors].filter(([, cursor]) =>
           cursor.streamId === event.streamId));
         flushStreamReveal(matchingCursors);
-        queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(workstreamId), (current) => {
+        queryClient.setQueryData<TranscriptOverlay[]>(overlaysQueryKey, (current) => {
           const streamIdByMessageId = new Map((current ?? []).flatMap((overlay) => (
             overlay.provenance.source === 'stream_event'
             || overlay.provenance.source === 'stream_snapshot'
@@ -1421,13 +1570,13 @@ export function useWorkstreamSocket(
           }
         }
       } else if (event.type === 'stream_started' || event.type === 'stream_delta') {
-        queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(workstreamId), (current) =>
+        queryClient.setQueryData<TranscriptOverlay[]>(overlaysQueryKey, (current) =>
           applyStreamingOverlayEvent(current, event, workstreamId, event.transcriptSequence - 1, streamCursors, {
             paced: document.visibilityState !== 'hidden',
           }));
         scheduleReveal();
       } else if (event.type === 'harness_status_changed') {
-        applyHarnessStatus(queryClient, workstreamId, normalizeHarnessStatus(event.status));
+        applyHarnessStatus(queryClient, workstreamId, normalizeHarnessStatus(event.status), substreamId);
         if (event.status !== 'running') setActiveCompaction(null);
         if (
           event.status === 'running'
@@ -1450,9 +1599,9 @@ export function useWorkstreamSocket(
           : current);
       } else if (event.type === 'tool_started' || event.type === 'tool_completed' || event.type === 'tool_failed') {
         const afterTranscriptSequence = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
-          ['ordered-transcript', workstreamId],
+          transcriptQueryKey,
         )?.snapshotThrough ?? 0;
-        queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(workstreamId), (current) => {
+        queryClient.setQueryData<TranscriptOverlay[]>(overlaysQueryKey, (current) => {
           const messageId = `tool-${event.invocation.id}`;
           const existing = (current ?? []).find((overlay) =>
             overlay.identity.type === 'tool_call'
@@ -1481,9 +1630,9 @@ export function useWorkstreamSocket(
       } else if (event.type === 'elicitation_created' || event.type === 'elicitation_answered') {
         const messageId = elicitationMessageId(event.elicitation.id);
         const afterTranscriptSequence = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
-          ['ordered-transcript', workstreamId],
+          transcriptQueryKey,
         )?.snapshotThrough ?? 0;
-        queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(workstreamId), (current) => {
+        queryClient.setQueryData<TranscriptOverlay[]>(overlaysQueryKey, (current) => {
           if (event.elicitation.status === 'cancelled') {
             return removeTranscriptOverlay(current, (overlay) => overlay.identity.type === 'elicitation'
               && overlay.identity.elicitationId === event.elicitation.id);
@@ -1506,7 +1655,7 @@ export function useWorkstreamSocket(
           );
         });
       } else if (event.type === 'participant_added') {
-        queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) => {
+        queryClient.setQueryData<WorkstreamDetail>(detailQueryKey, (current) => {
           if (!current) return current;
           const participant = mapParticipant(event.participant);
           return {
@@ -1517,11 +1666,11 @@ export function useWorkstreamSocket(
           };
         });
       } else if (event.type === 'participant_removed') {
-        queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) =>
+        queryClient.setQueryData<WorkstreamDetail>(detailQueryKey, (current) =>
           current ? { ...current, participants: current.participants.filter((participant) => participant.id !== event.userId) } : current,
         );
       } else if (event.type === 'resource_attached' || event.type === 'resource_updated') {
-        queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) => {
+        queryClient.setQueryData<WorkstreamDetail>(detailQueryKey, (current) => {
           if (!current) return current;
           const resource = mapResource(event.resource);
           const exists = current.resources.some((candidate) => candidate.id === resource.id);
@@ -1632,7 +1781,8 @@ export function useWorkstreamSocket(
       activeTicketAbort = null;
       ticketRequestInFlight = false;
       setState('unavailable');
-      evictCachedWorkstream(queryClient, workstreamId);
+      setSendReady(false);
+      evictCachedSubstream(queryClient, workstreamId, substreamId);
     };
 
     const scheduleReconnect = (): void => {
@@ -1653,6 +1803,7 @@ export function useWorkstreamSocket(
     const connect = async (): Promise<void> => {
       if (
         closedByEffect
+        || accessRevoked
         || openingTerminal
         || ticketRequestInFlight
         || canonicalResyncInFlight
@@ -1714,6 +1865,12 @@ export function useWorkstreamSocket(
           socketTelemetry.disconnected({ attempts: attempts.current, retrying });
           if (!retrying) {
             openingTerminal = true;
+            rejectPendingSubstreamCommands(new ApiError(
+              'The live connection timed out before the substream command completed.',
+              408,
+              'workstream_socket_open_timeout',
+            ));
+            setSendReady(false);
             setOpeningError('The live connection timed out after 3 attempts.');
             setState('unavailable');
             return;
@@ -1742,67 +1899,78 @@ export function useWorkstreamSocket(
       });
       try {
         if (canonicalResyncTarget !== null) {
-          canonicalResyncInFlight = true;
-          try {
-            const targetSequence = canonicalResyncTarget;
-            const canonicalWorkstream = await api.getWorkstream(workstreamId, ticketAbort.signal);
-            if (closedByEffect || generation !== connectGeneration) return;
-            const { transcript: canonicalTranscript, ...detail } = canonicalWorkstream;
-            queryClient.setQueryData(['workstream', workstreamId], detail);
-            queryClient.setQueryData(['ordered-transcript', workstreamId], canonicalTranscript);
-            const mayStillEmitRealtime = runMayStillEmitRealtime(canonicalWorkstream.harnessStatus);
-            setActiveCompaction((current) => mayStillEmitRealtime
-              && current?.harnessRunId === canonicalWorkstream.latestHarnessRunId
-              ? current
-              : null);
-            const validatedActiveStreams = mayStillEmitRealtime
-              ? canonicalResyncActiveStreams.filter((checkpoint) =>
-                  checkpoint.harnessRunId === canonicalWorkstream.latestHarnessRunId)
-              : [];
-            const canonicalMessages = orderedTranscriptMessages(canonicalTranscript, workstreamId);
+          if (substreamId !== '0') {
+            // A child has no parent-workstream REST boot. Reset only this
+            // child's cursor and reconnect from zero so its own object sends
+            // a complete authoritative snapshot.
+            resumeState.lastSequence = 0;
+            effectiveAfterSequence = 0;
             streamCursors.clear();
-            const authoritativeOverlays = [
-              ...canonicalTranscript.pendingInputs.map((input) => pendingTranscriptInputOverlay(
-                input,
-                workstreamId,
-                { source: 'socket_snapshot', snapshotId: canonicalTranscript.snapshotId },
-              )),
-              ...activeStreamCheckpointOverlays(
-                validatedActiveStreams,
-                workstreamId,
-                canonicalTranscript.snapshotId,
-                canonicalTranscript.snapshotThrough,
-                streamCursors,
-              ),
-              ...detailTranscriptOverlays(
-                detail,
-                canonicalTranscript.snapshotId,
-                canonicalTranscript.snapshotThrough,
-                canonicalTranscript.eventSequence,
-              ),
-            ];
-            queryClient.setQueryData<TranscriptOverlay[]>(
-              transcriptOverlaysQueryKey(workstreamId),
-              (current) => reconcileAuthoritativeTranscriptOverlays(
-                canonicalMessages,
-                current,
-                authoritativeOverlays,
-              ),
-            );
-            void Promise.all([
-              queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY }),
-              queryClient.invalidateQueries({ queryKey: ['workstream-context', workstreamId] }),
-              syncBlockDashboardQueries(),
-            ]);
-            resumeState.lastSequence = Math.max(resumeState.lastSequence, targetSequence);
-            if (canonicalResyncTarget === targetSequence) {
-              canonicalResyncTarget = null;
-              canonicalResyncActiveStreams = [];
+            canonicalResyncTarget = null;
+            canonicalResyncActiveStreams = [];
+          } else {
+            canonicalResyncInFlight = true;
+            try {
+              const targetSequence = canonicalResyncTarget;
+              const canonicalWorkstream = await api.getWorkstream(workstreamId, ticketAbort.signal);
+              if (closedByEffect || generation !== connectGeneration) return;
+              const { transcript: canonicalTranscript, ...detail } = canonicalWorkstream;
+              queryClient.setQueryData(detailQueryKey, detail);
+              queryClient.setQueryData(transcriptQueryKey, canonicalTranscript);
+              const mayStillEmitRealtime = runMayStillEmitRealtime(canonicalWorkstream.harnessStatus);
+              setActiveCompaction((current) => mayStillEmitRealtime
+                && current?.harnessRunId === canonicalWorkstream.latestHarnessRunId
+                ? current
+                : null);
+              const validatedActiveStreams = mayStillEmitRealtime
+                ? canonicalResyncActiveStreams.filter((checkpoint) =>
+                    checkpoint.harnessRunId === canonicalWorkstream.latestHarnessRunId)
+                : [];
+              const canonicalMessages = orderedTranscriptMessages(canonicalTranscript, workstreamId);
+              streamCursors.clear();
+              const authoritativeOverlays = [
+                ...canonicalTranscript.pendingInputs.map((input) => pendingTranscriptInputOverlay(
+                  input,
+                  workstreamId,
+                  { source: 'socket_snapshot', snapshotId: canonicalTranscript.snapshotId },
+                )),
+                ...activeStreamCheckpointOverlays(
+                  validatedActiveStreams,
+                  workstreamId,
+                  canonicalTranscript.snapshotId,
+                  canonicalTranscript.snapshotThrough,
+                  streamCursors,
+                ),
+                ...detailTranscriptOverlays(
+                  detail,
+                  canonicalTranscript.snapshotId,
+                  canonicalTranscript.snapshotThrough,
+                  canonicalTranscript.eventSequence,
+                ),
+              ];
+              queryClient.setQueryData<TranscriptOverlay[]>(
+                overlaysQueryKey,
+                (current) => reconcileAuthoritativeTranscriptOverlays(
+                  canonicalMessages,
+                  current,
+                  authoritativeOverlays,
+                ),
+              );
+              void Promise.all([
+                queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY }),
+                queryClient.invalidateQueries({ queryKey: ['workstream-context', workstreamId] }),
+                syncBlockDashboardQueries(),
+              ]);
+              resumeState.lastSequence = Math.max(resumeState.lastSequence, targetSequence);
+              if (canonicalResyncTarget === targetSequence) {
+                canonicalResyncTarget = null;
+                canonicalResyncActiveStreams = [];
+              }
+              completeOpeningFromCanonicalCaches();
+              effectiveAfterSequence = resumeState.lastSequence;
+            } finally {
+              canonicalResyncInFlight = false;
             }
-            completeOpeningFromCanonicalCaches();
-            effectiveAfterSequence = resumeState.lastSequence;
-          } finally {
-            canonicalResyncInFlight = false;
           }
           // A newer resync target can arrive only from the socket being closed,
           // but handle it defensively before issuing another one-time ticket.
@@ -1819,7 +1987,7 @@ export function useWorkstreamSocket(
         // exactly the same span.
         const socketTicket = await api.getSocketTicket(
           workstreamId,
-          '0',
+          substreamId,
           trace.traceId,
           effectiveAfterSequence,
           speculative,
@@ -1893,7 +2061,7 @@ export function useWorkstreamSocket(
             }));
           }
           markOpened();
-          sendPendingMessages(nextSocket);
+          sendPendingSubstreamCommands(nextSocket);
           scheduleStabilityReset(nextSocket);
           scheduleHeartbeat(nextSocket);
         });
@@ -1907,14 +2075,19 @@ export function useWorkstreamSocket(
             const parsed: unknown = JSON.parse(String(messageEvent.data));
             const commandResult = WorkstreamSocketCommandResultSchema.safeParse(parsed);
             if (commandResult.success) {
-              const pending = pendingMessageCommands.get(commandResult.data.clientMessageId);
+              const pending = pendingSubstreamCommands.get(commandResult.data.operationId);
               if (!pending) return;
-              pendingMessageCommands.delete(commandResult.data.clientMessageId);
+              pendingSubstreamCommands.delete(commandResult.data.operationId);
               if (commandResult.data.type === 'client_command_succeeded') {
-                pending.resolve({
-                  ...commandResult.data.turn,
-                  deliveryState: commandResult.data.deliveryState,
-                });
+                if (pending.command.type !== commandResult.data.command) {
+                  pending.reject(new ApiError(
+                    'The substream returned a receipt for a different command.',
+                    500,
+                    'substream_command_receipt_mismatch',
+                  ));
+                } else {
+                  pending.resolve(commandResult.data);
+                }
               } else {
                 pending.reject(new ApiError(
                   commandResult.data.error.message,
@@ -1929,8 +2102,8 @@ export function useWorkstreamSocket(
             if (event.success) {
               if (event.data.type === 'error'
                 && ['workspace_socket_required', 'invalid_event'].includes(event.data.code)
-                && pendingMessageCommands.size > 0) {
-                rejectPendingMessages(new ApiError(
+                && pendingSubstreamCommands.size > 0) {
+                rejectPendingSubstreamCommands(new ApiError(
                   event.data.message,
                   400,
                   event.data.code,
@@ -1987,7 +2160,7 @@ export function useWorkstreamSocket(
               retrying: false,
               cause: 'access_revoked',
             });
-            rejectPendingMessages(new ApiError(
+            rejectPendingSubstreamCommands(new ApiError(
               'You can no longer access this work stream.',
               403,
               'workstream_access_revoked',
@@ -2097,14 +2270,26 @@ export function useWorkstreamSocket(
         409,
         'workstream_socket_unavailable',
       ));
+      answerElicitationRef.current = () => Promise.reject(new ApiError(
+        'The substream is no longer available.', 409, 'workstream_socket_unavailable',
+      ));
+      reorderPendingInputsRef.current = () => Promise.reject(new ApiError(
+        'The substream is no longer available.', 409, 'workstream_socket_unavailable',
+      ));
+      stopHarnessRef.current = () => Promise.reject(new ApiError(
+        'The substream is no longer available.', 409, 'workstream_socket_unavailable',
+      ));
+      retryHarnessRef.current = () => Promise.reject(new ApiError(
+        'The substream is no longer available.', 409, 'workstream_socket_unavailable',
+      ));
       loadTranscriptRangeRef.current = () => Promise.reject(new ApiError(
         'The work stream is no longer available.',
         409,
         'workstream_socket_unavailable',
       ));
       rejectPendingTranscriptRanges('The work stream changed while loading transcript ranges.');
-      rejectPendingMessages(new ApiError(
-        'The work stream changed while sending the message.',
+      rejectPendingSubstreamCommands(new ApiError(
+        'The substream changed while sending a command.',
         409,
         'workstream_socket_unavailable',
       ));
@@ -2130,6 +2315,7 @@ export function useWorkstreamSocket(
     queryClient,
     resolvedSocketLeaseId,
     resumeState,
+    substreamId,
     workstreamId,
   ]);
 
@@ -2143,19 +2329,27 @@ export function useWorkstreamSocket(
       sendReady,
       workspaceSocketState,
       activeCompaction,
+      answerElicitation,
       createMessage,
       loadTranscriptRange,
       requestSnapshot,
+      reorderPendingInputs,
+      retryHarness,
+      stopHarness,
     }),
     [
       activeCompaction,
+      answerElicitation,
       createMessage,
       loadTranscriptRange,
       openingError,
       requestSnapshot,
+      reorderPendingInputs,
       retryOpening,
+      retryHarness,
       sendReady,
       state,
+      stopHarness,
       workspaceSocketState,
     ],
   );

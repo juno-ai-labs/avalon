@@ -29,7 +29,11 @@ import {
 import { beforeEach, describe, expect, it } from "vitest";
 
 import {
+  MESSAGE_MAX_CHARACTERS,
+  MESSAGE_TOO_LONG_MESSAGE,
   WorkstreamWorkflowInputSchema,
+  asHarnessRunId,
+  asSubstreamId,
   asUserId,
   asWorkspaceId,
   asWorkstreamId,
@@ -398,13 +402,14 @@ function nextSocketCommandOutcome(socket: WebSocket): Promise<SocketFrame> {
 async function openSubscribedSocket(
   stub: DurableObjectStub,
   ticketId: string,
+  substreamId = "0",
 ): Promise<{ socket: WebSocket; initial: SocketFrame }> {
   const response = await stub.fetch("https://substream.test/socket", {
     headers: {
       Upgrade: "websocket",
       "x-rally-workspace-id": WORKSPACE_ID,
       "x-rally-workstream-id": WORKSTREAM_ID,
-      "x-rally-substream-id": "0",
+      "x-rally-substream-id": substreamId,
       "x-rally-user-id": USER_ID,
       "x-rally-session-id": SESSION_ID,
       "x-rally-socket-ticket-id": ticketId,
@@ -1453,7 +1458,7 @@ describe("a member's message travels the whole pipeline", () => {
         now: logicalNow,
       }).loop;
 
-      await productService.stop(AUTH);
+      await productService.stop(AUTH, "00000000-0000-7000-8000-0000000005cf");
       const stopped = loops.loop()!;
       expect(stopped).toMatchObject({
         loop_id: substreamLoopId(WORKSTREAM_ID),
@@ -1481,7 +1486,16 @@ describe("a member's message travels the whole pipeline", () => {
       const runCount = state.storage.sql.exec<{ count: number }>(
         `SELECT COUNT(*) AS count FROM runs`,
       ).one().count;
-      const retry = await productService.retry(AUTH);
+      await expect(productService.retry(AUTH, asHarnessRunId(executionId))).rejects.toMatchObject({
+        status: 409,
+        code: "substream_command_idempotency_conflict",
+      });
+      const retryRunId = asHarnessRunId("00000000-0000-7000-8000-0000000000f1");
+      const [retry, concurrentReplay] = await Promise.all([
+        productService.retry(AUTH, retryRunId),
+        productService.retry(AUTH, retryRunId),
+      ]);
+      expect(concurrentReplay).toEqual(retry);
 
       expect(retry).toMatchObject({
         activationRequest: {
@@ -1498,6 +1512,10 @@ describe("a member's message travels the whole pipeline", () => {
           },
         },
       });
+      expect(state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM runs`,
+      ).one().count).toBe(runCount + 1);
+      await expect(productService.retry(AUTH, retryRunId)).resolves.toEqual(retry);
       expect(state.storage.sql.exec<{ count: number }>(
         `SELECT COUNT(*) AS count FROM runs`,
       ).one().count).toBe(runCount + 1);
@@ -1817,9 +1835,18 @@ describe("a member's message travels the whole pipeline", () => {
     };
     const first = await product(stub, { operation: "create_message", auth: AUTH, input });
     const repeat = await product(stub, { operation: "create_message", auth: AUTH, input });
+    const conflict = await product(stub, {
+      operation: "create_message",
+      auth: AUTH,
+      input: { ...input, text: "different message under the reused id" },
+    });
 
     expect(first.status).toBe(200);
     expect(repeat.status).toBe(200);
+    expect(conflict).toMatchObject({
+      status: 409,
+      body: { error: "substream_message_idempotency_conflict" },
+    });
     // The replay returns the same future turn and admits neither a duplicate
     // pending input nor any message-owned run.
     expect((repeat.body.turn as { turnId: string }).turnId)
@@ -1896,6 +1923,78 @@ describe("a member's message travels the whole pipeline", () => {
     socket.close(1000, "done");
   });
 
+  it("admits a message through a non-main child using its external loop identity", async () => {
+    const substreamId = asSubstreamId("00000000-0000-7000-8000-0000000005d0");
+    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID, substreamId),
+    ));
+    const child = stub as unknown as {
+      bootstrapRuntime(input: Record<string, unknown>): Promise<{ status: number }>;
+      executeIdentityOperation(input: Record<string, unknown>): Promise<{ status: number }>;
+    };
+    expect((await child.bootstrapRuntime({
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      generation: 1,
+    })).status).toBe(200);
+    expect((await child.executeIdentityOperation({
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      operation: "provision",
+      args: [{
+        title: "Child conversation",
+        objective: "Exercise one independently owned conversation.",
+        scope: "workspace",
+        originType: "ad_hoc",
+        createdByUserId: USER_ID,
+        participantUserIds: [USER_ID],
+        harnessStatus: "idle",
+        emailAddress: null,
+        emailRouteStatus: null,
+        systemKind: null,
+        automationSubscriptionId: null,
+        automationRunId: null,
+        plannedFor: null,
+        modelOverride: null,
+        now: Date.now(),
+      }],
+    })).status).toBe(200);
+
+    const { socket } = await openSubscribedSocket(
+      stub,
+      "00000000-0000-7000-8000-0000000005d1",
+      substreamId,
+    );
+    const operationId = "00000000-0000-7000-8000-0000000005d2";
+    const receipt = nextSocketCommandOutcome(socket);
+    socket.send(JSON.stringify({
+      type: "create_message",
+      operationId,
+      payload: {
+        text: "child-local message",
+        clientMessageId: "pipeline-child-socket-1",
+        mentions: [],
+        confirmedParticipantUserIds: [],
+        attachmentIds: [],
+      },
+    }));
+    expect(await receipt).toMatchObject({
+      type: "client_command_succeeded",
+      command: "create_message",
+      operationId,
+      clientMessageId: "pipeline-child-socket-1",
+    });
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec<{ loop_id: string }>(
+        `SELECT loop_id FROM substream_loops WHERE id = 1`,
+      ).one().loop_id).toBe(substreamLoopId(WORKSTREAM_ID, substreamId));
+      expect(state.storage.sql.exec<{ id: string }>(
+        `SELECT id FROM substreams ORDER BY id`,
+      ).one().id).toBe("0");
+    });
+    socket.close(1000, "done");
+  });
+
   it("correlates a malformed create command to the pending client message", async () => {
     const stub = agentStub();
     await initializeWorkstream(stub, "first message");
@@ -1917,6 +2016,441 @@ describe("a member's message travels the whole pipeline", () => {
       error: { code: "invalid_event" },
     });
     socket.close(1000, "done");
+  });
+
+  it("keeps a malformed mutation correlated when its optional client id is oversized", async () => {
+    const stub = agentStub();
+    await initializeWorkstream(stub, "first message");
+    const { socket } = await openSubscribedSocket(
+      stub,
+      "00000000-0000-7000-8000-0000000005d3",
+    );
+    const receipt = nextSocketCommandOutcome(socket);
+    socket.send(JSON.stringify({
+      type: "answer_elicitation",
+      operationId: "00000000-0000-7000-8000-0000000005d4",
+      payload: { clientMessageId: "x".repeat(121) },
+    }));
+
+    expect(await receipt).toMatchObject({
+      type: "client_command_failed",
+      command: "answer_elicitation",
+      operationId: "00000000-0000-7000-8000-0000000005d4",
+      error: { code: "invalid_event" },
+    });
+    socket.close(1000, "done");
+  });
+
+  it("rejects an oversized message without closing its substream socket", async () => {
+    const stub = agentStub();
+    const opened = await initializeWorkstream(stub, "first message");
+    await settledRun(stub, opened.body.harnessRunId as string);
+    const { socket } = await openSubscribedSocket(
+      stub,
+      "00000000-0000-7000-8000-0000000005c4",
+    );
+    const rejected = nextSocketCommandOutcome(socket);
+    socket.send(JSON.stringify({
+      type: "create_message",
+      operationId: "00000000-0000-7000-8000-0000000005c5",
+      payload: {
+        text: "x".repeat(MESSAGE_MAX_CHARACTERS + 1),
+        clientMessageId: "pipeline-room-socket-too-long-1",
+        mentions: [],
+        confirmedParticipantUserIds: [],
+        attachmentIds: [],
+      },
+    }));
+    expect(await rejected).toMatchObject({
+      type: "client_command_failed",
+      command: "create_message",
+      operationId: "00000000-0000-7000-8000-0000000005c5",
+      clientMessageId: "pipeline-room-socket-too-long-1",
+      error: {
+        code: "message_too_long",
+        message: MESSAGE_TOO_LONG_MESSAGE,
+      },
+    });
+
+    const accepted = nextSocketCommandOutcome(socket);
+    socket.send(JSON.stringify({
+      type: "create_message",
+      operationId: "00000000-0000-7000-8000-0000000005c6",
+      payload: {
+        text: "the socket stayed open",
+        clientMessageId: "pipeline-room-socket-after-too-long-1",
+        mentions: [],
+        confirmedParticipantUserIds: [],
+        attachmentIds: [],
+      },
+    }));
+    expect(await accepted).toMatchObject({
+      type: "client_command_succeeded",
+      command: "create_message",
+      operationId: "00000000-0000-7000-8000-0000000005c6",
+      clientMessageId: "pipeline-room-socket-after-too-long-1",
+    });
+    socket.close(1000, "done");
+  });
+
+  it("answers an elicitation through its substream socket and safely replays the command", async () => {
+    const stub = agentStub();
+    const opened = await initializeWorkstream(stub, "first message");
+    await settledRun(stub, opened.body.harnessRunId as string);
+    const elicitationId = "00000000-0000-7000-8000-0000000005bd";
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO elicitation_requests
+           (elicitation_id, run_id, tool_call_id, prompt, response_type, options_json,
+            minimum_selections, maximum_selections, target_user_id, status,
+            answer_json, answered_by_user_id, external_actor_json, created_at, answered_at)
+         VALUES (?, ?, ?, 'Choose', 'text', '[]', 0, NULL, ?, 'pending',
+                 NULL, NULL, NULL, ?, NULL)`,
+        elicitationId,
+        opened.body.harnessRunId as string,
+        `${opened.body.harnessRunId as string}:turn:1:tool:0`,
+        USER_ID,
+        Date.now(),
+      );
+    });
+    const { socket } = await openSubscribedSocket(
+      stub,
+      "00000000-0000-7000-8000-0000000005be",
+    );
+    await runInDurableObject(stub, (instance) => {
+      const target = instance as unknown as {
+        product: { authorize: () => Promise<never> };
+        requestPersistentLoopActivation: () => Promise<never>;
+        publishLocalProductEvent: () => Promise<never>;
+      };
+      target.product.authorize = async () => {
+        throw new Error("socket_elicitation_reauthorized_workspace_membership");
+      };
+      target.requestPersistentLoopActivation = async () => {
+        throw new Error("injected_elicitation_activation_failure");
+      };
+      target.publishLocalProductEvent = async () => {
+        throw new Error("injected_elicitation_publication_failure");
+      };
+    });
+    const command = {
+      type: "answer_elicitation",
+      operationId: "00000000-0000-7000-8000-0000000005bf",
+      elicitationId,
+      payload: { answer: "yes" },
+    };
+    const firstReceipt = nextSocketCommandOutcome(socket);
+    socket.send(JSON.stringify(command));
+    expect(await firstReceipt).toMatchObject({
+      type: "client_command_succeeded",
+      command: "answer_elicitation",
+      operationId: command.operationId,
+      elicitation: { id: elicitationId, status: "answered", answer: "yes" },
+    });
+    const sequenceAfterFirst = await runInDurableObject(stub, (_instance, state) =>
+      state.storage.sql.exec<{ event_sequence: number }>(
+        `SELECT event_sequence FROM realtime_state WHERE id = 1`,
+      ).one().event_sequence);
+    const replayReceipt = nextSocketCommandOutcome(socket);
+    socket.send(JSON.stringify(command));
+    expect(await replayReceipt).toMatchObject({
+      type: "client_command_succeeded",
+      command: "answer_elicitation",
+      operationId: command.operationId,
+      elicitation: { id: elicitationId, status: "answered" },
+    });
+    expect(await runInDurableObject(stub, (_instance, state) =>
+      state.storage.sql.exec<{ event_sequence: number }>(
+        `SELECT event_sequence FROM realtime_state WHERE id = 1`,
+      ).one().event_sequence)).toBe(sequenceAfterFirst);
+    const conflictReceipt = nextSocketCommandOutcome(socket);
+    socket.send(JSON.stringify({
+      ...command,
+      operationId: "00000000-0000-7000-8000-0000000005d5",
+      payload: { answer: "no" },
+    }));
+    expect(await conflictReceipt).toMatchObject({
+      type: "client_command_failed",
+      command: "answer_elicitation",
+      error: { code: "elicitation_response_idempotency_conflict" },
+    });
+    const customConflictReceipt = nextSocketCommandOutcome(socket);
+    socket.send(JSON.stringify({
+      ...command,
+      operationId: "00000000-0000-7000-8000-0000000005d6",
+      payload: { answer: "yes", customResponse: "changed metadata" },
+    }));
+    expect(await customConflictReceipt).toMatchObject({
+      type: "client_command_failed",
+      command: "answer_elicitation",
+      error: { code: "elicitation_response_idempotency_conflict" },
+    });
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec(
+        `SELECT status, answer_json FROM elicitation_requests WHERE elicitation_id = ?`,
+        elicitationId,
+      ).one()).toEqual({ status: "answered", answer_json: JSON.stringify("yes") });
+    });
+    socket.close(1000, "done");
+  });
+
+  it("acknowledges a durable retry when its eager wake-up fails", async () => {
+    const stub = agentStub();
+    const opened = await initializeWorkstream(stub, "first message");
+    await settledRun(stub, opened.body.harnessRunId as string);
+    await waitForLoopRelease(stub);
+    const { socket } = await openSubscribedSocket(
+      stub,
+      "00000000-0000-7000-8000-0000000005db",
+    );
+    await runInDurableObject(stub, (instance) => {
+      const target = instance as unknown as {
+        product: { authorize: () => Promise<never> };
+        requestPersistentLoopActivation: () => Promise<never>;
+      };
+      target.product.authorize = async () => {
+        throw new Error("socket_retry_reauthorized_workspace_membership");
+      };
+      target.requestPersistentLoopActivation = async () => {
+        throw new Error("injected_retry_activation_failure");
+      };
+    });
+    const operationId = "00000000-0000-7000-8000-0000000005dc";
+    const receipt = nextSocketCommandOutcome(socket);
+    socket.send(JSON.stringify({ type: "retry_harness", operationId }));
+
+    expect(await receipt).toMatchObject({
+      type: "client_command_succeeded",
+      command: "retry_harness",
+      operationId,
+      harnessRunId: operationId,
+    });
+    expect(await runInDurableObject(stub, (_instance, state) =>
+      state.storage.sql.exec<{ status: string; origin: string }>(
+        `SELECT status, origin FROM runs WHERE run_id = ?`,
+        operationId,
+      ).one())).toEqual({ status: "admitted", origin: "manual_retry" });
+    socket.close(1000, "done");
+  });
+
+  it("does not replay an old reorder command over newer queue state", async () => {
+    const stub = agentStub();
+    const opened = await initializeWorkstream(stub, "first message");
+    await settledRun(stub, opened.body.harnessRunId as string);
+    const { socket } = await openSubscribedSocket(
+      stub,
+      "00000000-0000-7000-8000-0000000005c0",
+    );
+    await runInDurableObject(stub, (instance) => {
+      const target = instance as unknown as { product: { authorize: () => Promise<never> } };
+      target.product.authorize = async () => {
+        throw new Error("socket_reorder_reauthorized_workspace_membership");
+      };
+    });
+    await runInDurableObject(stub, (_instance, state) => {
+      holdLoopExecuting(state, { loopId: substreamLoopId(WORKSTREAM_ID) });
+    });
+    const enqueue = async (operationId: string, clientMessageId: string) => {
+      const receipt = nextSocketCommandOutcome(socket);
+      socket.send(JSON.stringify({
+        type: "create_message",
+        operationId,
+        payload: {
+          text: clientMessageId,
+          clientMessageId,
+          mentions: [],
+          confirmedParticipantUserIds: [],
+          attachmentIds: [],
+          runMode: "queue",
+        },
+      }));
+      return await receipt;
+    };
+    const first = await enqueue(
+      "00000000-0000-7000-8000-0000000005c1",
+      "socket-reorder-first",
+    );
+    const second = await enqueue(
+      "00000000-0000-7000-8000-0000000005c2",
+      "socket-reorder-second",
+    );
+    expect(first.deliveryState).toBe("pending");
+    expect(second.deliveryState).toBe("pending");
+    const firstTurn = first.turn as { turnId: string };
+    const secondTurn = second.turn as { turnId: string };
+    const firstOperationId = "00000000-0000-7000-8000-0000000005c3";
+    const firstReceipt = nextSocketCommandOutcome(socket);
+    const firstCommand = {
+      type: "reorder_pending_inputs",
+      operationId: firstOperationId,
+      inputIds: [secondTurn.turnId, firstTurn.turnId],
+    };
+    socket.send(JSON.stringify(firstCommand));
+    expect(await firstReceipt).toMatchObject({
+      type: "client_command_succeeded",
+      command: "reorder_pending_inputs",
+      operationId: firstOperationId,
+      pendingInputs: [
+        { clientMessageId: "socket-reorder-second" },
+        { clientMessageId: "socket-reorder-first" },
+      ],
+    });
+
+    const secondOperationId = "00000000-0000-7000-8000-0000000005c7";
+    const secondReceipt = nextSocketCommandOutcome(socket);
+    socket.send(JSON.stringify({
+      type: "reorder_pending_inputs",
+      operationId: secondOperationId,
+      inputIds: [firstTurn.turnId, secondTurn.turnId],
+    }));
+    expect(await secondReceipt).toMatchObject({
+      type: "client_command_succeeded",
+      pendingInputs: [
+        { clientMessageId: "socket-reorder-first" },
+        { clientMessageId: "socket-reorder-second" },
+      ],
+    });
+
+    const replayReceipt = nextSocketCommandOutcome(socket);
+    socket.send(JSON.stringify(firstCommand));
+    expect(await replayReceipt).toMatchObject({
+      type: "client_command_succeeded",
+      operationId: firstOperationId,
+      pendingInputs: [
+        { clientMessageId: "socket-reorder-first" },
+        { clientMessageId: "socket-reorder-second" },
+      ],
+    });
+    expect(await runInDurableObject(stub, (_instance, state) =>
+      state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM durable_inbox_receipts
+          WHERE channel = 'substream_socket_command'`,
+      ).one().count)).toBe(2);
+    socket.close(1000, "done");
+  });
+
+  it("does not replay an old stop command against a newer execution", async () => {
+    const stub = agentStub();
+    const opened = await initializeWorkstream(stub, "first message");
+    await settledRun(stub, opened.body.harnessRunId as string);
+    await runInDurableObject(stub, (_instance, state) => {
+      holdLoopExecuting(state, { loopId: substreamLoopId(WORKSTREAM_ID) });
+    });
+    const { socket } = await openSubscribedSocket(
+      stub,
+      "00000000-0000-7000-8000-0000000005c8",
+    );
+    await runInDurableObject(stub, (instance) => {
+      const target = instance as unknown as { product: { authorize: () => Promise<never> } };
+      target.product.authorize = async () => {
+        throw new Error("socket_stop_reauthorized_workspace_membership");
+      };
+    });
+    const command = {
+      type: "stop_harness",
+      operationId: "00000000-0000-7000-8000-0000000005c9",
+    };
+    const firstReceipt = nextSocketCommandOutcome(socket);
+    socket.send(JSON.stringify(command));
+    expect(await firstReceipt).toMatchObject({
+      type: "client_command_succeeded",
+      operationId: command.operationId,
+    });
+    await runInDurableObject(stub, (_instance, state) => {
+      const now = Date.now();
+      state.storage.sql.exec(
+        `UPDATE substream_loops
+            SET status = 'executing', active_execution_id = 'newer-execution',
+                active_execution_epoch = 2, lease_owner = 'newer-owner',
+                lease_expires_at = ?, stop_requested_at = NULL,
+                stop_after_step_ordinal = NULL, stop_reason = NULL,
+                revision = revision + 1, updated_at = MAX(updated_at, ?)
+          WHERE id = 1`,
+        now + 60_000,
+        now,
+      );
+    });
+
+    await evictDurableObject(stub);
+    const replayReceipt = nextSocketCommandOutcome(socket);
+    socket.send(JSON.stringify(command));
+    expect(await replayReceipt).toMatchObject({
+      type: "client_command_succeeded",
+      operationId: command.operationId,
+    });
+    expect(await runInDurableObject(stub, (_instance, state) =>
+      state.storage.sql.exec<{ active_execution_id: string; stop_requested_at: number | null }>(
+        `SELECT active_execution_id, stop_requested_at FROM substream_loops WHERE id = 1`,
+      ).one())).toEqual({ active_execution_id: "newer-execution", stop_requested_at: null });
+    socket.close(1000, "done");
+  });
+
+  it("archives and fences the active loop in one durable transition", async () => {
+    const stub = agentStub();
+    const opened = await initializeWorkstream(stub, "first message");
+    await settledRun(stub, opened.body.harnessRunId as string);
+    await runInDurableObject(stub, (_instance, state) => {
+      holdLoopExecuting(state, { loopId: substreamLoopId(WORKSTREAM_ID) });
+    });
+
+    const archived = await product(stub, {
+      operation: "update",
+      auth: AUTH,
+      input: { archived: true },
+    });
+    expect(archived.status).toBe(200);
+    expect(await runInDurableObject(stub, async (instance, state) => {
+      const loop = state.storage.sql.exec<{
+        stop_requested_at: number | null;
+        stop_reason: string | null;
+      }>(
+        `SELECT stop_requested_at, stop_reason FROM substream_loops WHERE id = 1`,
+      ).one();
+      const claim = await (instance as unknown as {
+        claimPersistentLoopExecution: () => Promise<unknown>;
+      }).claimPersistentLoopExecution();
+      return { loop, claim };
+    })).toEqual({
+      loop: {
+        stop_requested_at: expect.any(Number),
+        stop_reason: "workstream_archived",
+      },
+      claim: null,
+    });
+  });
+
+  it("does not claim an admitted retry while its room is archived", async () => {
+    const stub = agentStub();
+    const opened = await initializeWorkstream(stub, "first message");
+    await settledRun(stub, opened.body.harnessRunId as string);
+    await waitForLoopRelease(stub);
+    const retryRunId = asHarnessRunId("00000000-0000-7000-8000-0000000005da");
+    await runInDurableObject(stub, async (instance) => {
+      const productService = (instance as unknown as {
+        product: WorkstreamObjectProductService;
+      }).product;
+      await productService.retry(AUTH, retryRunId);
+    });
+
+    expect((await product(stub, {
+      operation: "update",
+      auth: AUTH,
+      input: { archived: true },
+    })).status).toBe(200);
+    await runDurableObjectAlarm(stub);
+
+    expect(await runInDurableObject(stub, async (instance, state) => ({
+      claim: await (instance as unknown as {
+        claimPersistentLoopExecution: () => Promise<unknown>;
+      }).claimPersistentLoopExecution(),
+      runStatus: state.storage.sql.exec<{ status: string }>(
+        `SELECT status FROM runs WHERE run_id = ?`,
+        retryRunId,
+      ).one().status,
+      loopStatus: state.storage.sql.exec<{ status: string }>(
+        `SELECT status FROM substream_loops WHERE id = 1`,
+      ).one().status,
+    }))).toEqual({ claim: null, runStatus: "admitted", loopStatus: "idle" });
   });
 
   it("acknowledges durable admission when the eager loop wake-up fails", async () => {

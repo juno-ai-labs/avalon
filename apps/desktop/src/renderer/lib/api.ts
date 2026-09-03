@@ -12,7 +12,6 @@ import {
   ConnectorOAuthAttemptSchema as WireConnectorOAuthAttemptSchema,
   ConnectorOAuthStartSchema as WireConnectorOAuthStartSchema,
   CursorPageSchema,
-  ElicitationSchema as WireElicitationSchema,
   BlockDashboardPreferenceSchema as WireBlockDashboardPreferenceSchema,
   BlockDashboardSchema as WireBlockDashboardSchema,
   NoteDetailSchema as WireNoteDetailSchema,
@@ -55,9 +54,7 @@ import {
   type GitHubRepositoryAccessSettings as WireGitHubRepositoryAccessSettings,
   ProjectDirectorySchema as WireProjectDirectorySchema,
   ProjectSummarySchema as WireProjectSummarySchema,
-  ReorderPendingLoopInputsResultSchema,
   type CreateProjectRequest,
-  type PendingTranscriptInput,
   type ProjectDirectory,
   type ProjectSummary,
   type UpdateProjectPresentationRequest,
@@ -1773,37 +1770,6 @@ export class RallyApi {
     });
   }
 
-  async stopHarness(id: string): Promise<void> {
-    await this.requestVoid(`/workstreams/${encodeURIComponent(id)}/stop`, { method: 'POST' });
-  }
-
-  /**
-   * Send the visible pending-input queue's new order after a drag.
-   *
-   * The whole arrangement travels, not the row that moved: the object
-   * permutes existing `input_sequence` values. Ids that have already been
-   * delivered are ignored rather than refused, and visible pending inputs
-   * the caller does not name keep their relative order behind the ones it
-   * did.
-   */
-  async reorderPendingLoopInputs(
-    id: string,
-    inputIds: string[],
-  ): Promise<{ pendingInputs: PendingTranscriptInput[] }> {
-    return this.request(`/workstreams/${encodeURIComponent(id)}/pending-inputs`, {
-      method: 'PUT',
-      body: { inputIds },
-      schema: ReorderPendingLoopInputsResultSchema,
-    });
-  }
-
-  async retryHarness(id: string): Promise<{ harnessRunId: string }> {
-    return this.request(`/workstreams/${encodeURIComponent(id)}/retry`, {
-      method: 'POST',
-      schema: z.object({ harnessRunId: z.string().uuid() }),
-    });
-  }
-
   async addParticipant(id: string, userId: string): Promise<WorkstreamDetail> {
     await this.request(`/workstreams/${encodeURIComponent(id)}/participants`, {
       method: 'POST',
@@ -1818,21 +1784,6 @@ export class RallyApi {
       `/workstreams/${encodeURIComponent(id)}/participants/${encodeURIComponent(userId)}`,
       { method: 'DELETE' },
     );
-  }
-
-  async answerElicitation(
-    id: string,
-    elicitationId: string,
-    answer: string | string[] | null,
-    customResponse?: string,
-  ): Promise<void> {
-    await this.request(`/workstreams/${encodeURIComponent(id)}/elicitations/${encodeURIComponent(elicitationId)}/answer`, {
-      method: 'POST',
-      body: answer == null
-        ? { skipped: true }
-        : { answer, ...(customResponse ? { customResponse } : {}) },
-      schema: z.object({ elicitation: WireElicitationSchema.optional() }).strict(),
-    });
   }
 
   /**
