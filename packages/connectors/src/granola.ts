@@ -56,11 +56,22 @@ const folderIdJsonSchema = {
   pattern: "^fol_[A-Za-z0-9]{14}$",
   description: "An optional Granola folder ID returned by list_folders.",
 } as const;
+/**
+ * Granola's page cursor. `anyOf` rather than `type: ["string", "null"]` because
+ * Bind's `sanitizeToolSchema` collapses the flat form to `type: "string"`, so
+ * the null branch never reached the model and `minLength: 1` read as a floor a
+ * caller with no cursor still had to clear; `GOOGLE_PAGE_TOKEN_SCHEMA` in
+ * [`index.ts`](index.ts) has the run that measured what a caller does then.
+ *
+ * The description names no producing field and no last-page signal, unlike the
+ * other connectors', because Granola's list response is passed through
+ * unmodelled here and neither has been established. Saying where the value
+ * comes from in general terms is true; naming a field would be a guess.
+ */
 const cursorJsonSchema = {
-  type: ["string", "null"],
-  minLength: 1,
-  maxLength: 4_096,
-  description: "An optional opaque cursor returned by the preceding page.",
+  anyOf: [{ type: "string", minLength: 1, maxLength: 4_096 }, { type: "null" }],
+  description:
+    "Send `null` for the first page. To continue an earlier call, pass back the exact cursor the preceding page returned, with that call's other arguments unchanged. It is an opaque cursor: a long provider-generated string, not a page number, an offset, or an index. Never construct, guess, shorten, or increment this token; when you have no token from a previous call, the value is `null`.",
 } as const;
 const dateFilterJsonSchema = {
   type: ["string", "null"],

@@ -75,6 +75,38 @@ export const LinearCapabilityScopes = {
   [LinearCapabilities.agent]: LinearAgentOAuthScopes,
 } as const;
 
+/**
+ * The one page cursor every paginated Linear tool takes, as the model reads it.
+ *
+ * Both halves matter and only together. The description says where the value
+ * comes from, because a cursor is the argument whose value cannot be reasoned
+ * out from its name and its bounds. The `anyOf` spelling makes "no cursor"
+ * expressible as a value, because `minLength: 1` otherwise reads as a floor the
+ * caller has to clear and it invents something that clears it.
+ *
+ * `GOOGLE_PAGE_TOKEN_SCHEMA` in [`index.ts`](index.ts) carries the measurements
+ * behind both, including the run that kept inventing values with the
+ * description in front of it four times over. The flat
+ * `type: ["string", "null"]` this used to carry is inert: Bind's
+ * `sanitizeToolSchema` collapses it to `type: "string"` and moves the
+ * nullability into the description, so the caller reads a schema forbidding the
+ * value beside prose permitting it.
+ *
+ * "Other arguments unchanged" carries over from that same constant. A relay
+ * cursor is a position within the connection it was issued for, so pairing one
+ * with changed filters is not a defined continuation of anything; what Linear
+ * returns for that pairing has not been measured here, and the instruction
+ * exists so nobody has to find out from a run.
+ *
+ * The last page is `pageInfo.hasNextPage: false` rather than a missing
+ * `endCursor`, which Linear still returns on the final page.
+ */
+const LINEAR_CURSOR_SCHEMA = {
+  anyOf: [{ type: "string", minLength: 1, maxLength: 500 }, { type: "null" }],
+  description:
+    "Send `null` for the first page. To continue an earlier call, pass back the exact `pageInfo.endCursor` string a previous call to this tool returned, with that call's other arguments unchanged. It is an opaque cursor: a long provider-generated string, not a page number, an offset, or an index. Never construct, guess, shorten, or increment this token; when you have no token from a previous call, the value is `null`. A result whose `pageInfo.hasNextPage` is false is the last page: stop there rather than calling again.",
+} as const;
+
 const linearTools: ToolDefinition[] = [
   {
     name: "search_issues",
@@ -88,7 +120,7 @@ const linearTools: ToolDefinition[] = [
       properties: {
         query: { type: "string", minLength: 1, maxLength: 500 },
         first: { type: "integer", minimum: 1, maximum: 25 },
-        after: { type: ["string", "null"], minLength: 1, maxLength: 500 },
+        after: LINEAR_CURSOR_SCHEMA,
       },
       required: ["query"],
     },
@@ -141,7 +173,7 @@ const linearTools: ToolDefinition[] = [
       properties: {
         teamId: { type: ["string", "null"], minLength: 1, maxLength: 200, description: "Limit the result to one team, from list_teams." },
         first: { type: "integer", minimum: 1, maximum: 50, description: "Defaults to 50." },
-        after: { type: ["string", "null"], minLength: 1, maxLength: 500 },
+        after: LINEAR_CURSOR_SCHEMA,
       },
     },
   },
@@ -1666,7 +1698,7 @@ function idInputSchema(name: string): Record<string, unknown> {
 function pageInputSchema(maximum: number): Record<string, unknown> {
   return {
     type: "object", additionalProperties: false,
-    properties: { first: { type: "integer", minimum: 1, maximum }, after: { type: ["string", "null"], minLength: 1, maxLength: 500 } },
+    properties: { first: { type: "integer", minimum: 1, maximum }, after: LINEAR_CURSOR_SCHEMA },
   };
 }
 

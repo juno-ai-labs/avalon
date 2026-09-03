@@ -905,6 +905,62 @@ fixture table instead, where it is reviewable.
 
 ## Changelog
 
+### 2026-09-03 — Every other connector's cursor gets the repair Google's got
+
+**What changed:** The cursor on Linear, Notion, Slack, Granola, and X is
+declared `anyOf: [{string, minLength: 1}, {null}]` instead of the flat
+`type: ["string", "null"]`, which is the spelling that survives Bind's
+sanitizer. Linear's `after`, Notion's `startCursor`, and Slack's `cursor` also
+gain the description they never had; Granola's and X's are rewritten to say that
+`null` is the first-page value, because their old wording said "optional" beside
+a schema that had just stopped permitting absence.
+
+The guard added with Google's change is widened from its four cursors to every
+cursor on every registered connector, matched on declared type as well as name
+so Slack's numeric `search_messages.after` is not read as one. It is scoped to
+the cursor property: the other collapsed branches on those same tools are the
+backlog counted below and are not converted here.
+`tool-argument-empty-strings.test.ts` gains the matching sweep for a cursor with
+no description, reading it off the property rather than the string branch, since
+under `anyOf` the description and the constraints sit on different nodes.
+
+**Why:** The two entries below fixed Google's four and recorded what remained:
+46 authored null branches across five connectors, 19 of them cursors, still
+collapsed to `type: "string"` with the nullability moved into prose. That is the
+schema-forbids-what-the-prose-permits conflict those entries were written to
+end, and the run they measured shows what a caller does with it: eight
+`drive.search` attempts, a value invented every time, three of them one
+character long, and the leaked reasoning *"Schema says min but omit should maybe
+omit."*
+
+Nothing in that mechanism is Google's. The six other connectors were not in the
+incident because the run happened to reach for Drive, and shipping the
+description half alone to them would have shipped the half that was already
+measured not to work.
+
+**Considered and rejected:** Describing the cursors without converting the
+spelling, which is what the first draft of this change did. The entry below
+establishes that a description alone did not survive contact with a caller that
+had it in front of it four times, so that draft would have added prose to five
+connectors and fixed none of them. Also rejected: converting all 46 collapsed
+branches. Absence means something different for an id, a filter, and a cursor,
+and each needs its own reasoning about what `null` requests; a cursor is the one
+where absence has a single unambiguous meaning and a measured failure behind it.
+Also rejected: naming a producing field in Granola's description. Its list
+response is passed through unmodelled here, so no field name and no last-page
+signal has been established, and inventing one is the failure the description is
+meant to prevent.
+
+**Consequences:** The remaining 35 collapsed branches are ids and filters, not
+cursors, and stay declared as type arrays; the widened assertion passes over
+them because it filters to the cursor property, so converting them stays a
+deliberate change rather than something this guard forces. A connector adding a
+paginated tool now has two guards to satisfy rather than one, and both name the
+connector, tool, and parameter when they fail. Slack keeps two cursor constants
+because its two searches bound the string at 2,000 characters and its three
+conversation reads never did; that absence is preserved rather than closed,
+since the number would be the team's to set.
+
 ### 2026-09-03 — A connection can name a connector Rally did not ship
 
 **What changed:** A `custom_mcp` connector type whose connections each carry
