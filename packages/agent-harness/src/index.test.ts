@@ -5903,38 +5903,6 @@ describe("agent harness", () => {
     ]);
   });
 
-  it("normalizes what the compiler said the person asked for", () => {
-    const base = {
-      name: "Weekly update",
-      description: "Summarize the week",
-      instructions: "Write a short update.",
-      triggers: [{ type: "manual", summary: "On request" }],
-    };
-
-    const normalized = (draft: Record<string, unknown>): unknown =>
-      (__testing.normalizeAutomationDraft(draft) as { requestedDelivery: unknown }).requestedDelivery;
-
-    // Model output, so tolerated rather than trusted: a destination named twice
-    // is one destination, and one Avalon does not offer is dropped rather than
-    // failing a submission the person can still use.
-    expect(normalized({ ...base, requestedDelivery: ["email", "email", "sms"] })).toEqual(["email"]);
-
-    // `slack_agent_dm` and `channel` are now in that same category. Acceptance
-    // derives delivery from the draft, and neither is derivable: one needs a
-    // connection ID a draft does not carry, the other has no target shape at
-    // all. They used to survive here to pre-tick a box on the create wizard,
-    // which is gone — so what reached acceptance was a request it then silently
-    // dropped. Both are set after creation instead, where a connection can be
-    // chosen. The result is at most one entry, so there is nothing left to sort
-    // for the compiler's cached prefix.
-    expect(normalized({ ...base, requestedDelivery: ["slack_agent_dm", "email"] })).toEqual(["email"]);
-    expect(normalized({ ...base, requestedDelivery: ["channel"] })).toEqual([]);
-
-    // Not an array at all, and absent, both mean nothing was asked for.
-    expect(normalized({ ...base, requestedDelivery: "email" })).toEqual([]);
-    expect(normalized(base)).toEqual([]);
-  });
-
   it("normalizes provider-compatible flat automation triggers", () => {
     expect(
       __testing.normalizeAutomationDraft({

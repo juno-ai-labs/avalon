@@ -1,7 +1,6 @@
 import { Hono } from "hono";
 import { zValidator } from "../middleware/validation";
 import {
-  AutomationDeliveryTargetSetSchema,
   AutomationDetailSchema,
   AutomationDraftSchema,
   AutomationRunSchema,
@@ -22,7 +21,6 @@ import {
 
 const idParam = z.object({ id: IdSchema });
 const runHeaders = z.object({ "idempotency-key": z.string().min(8).max(120) });
-const updateBody = z.strictObject({ deliveryTargets: AutomationDeliveryTargetSetSchema });
 const SharedTemplateSchema = z.strictObject({ templateId: IdSchema });
 
 /** Envelopes this route composes; the entities inside come from the contracts. */
@@ -93,12 +91,6 @@ automationRoutes.get("/:id", zValidator("param", idParam), async (c) =>
   c.json(AutomationDetailSchema.parse(
     await new AutomationAgentService(c.env, getAuth(c)).detail(c.req.valid("param").id),
   )));
-automationRoutes.patch("/:id", zValidator("param", idParam), zValidator("json", updateBody), async (c) =>
-  c.json(AutomationDetailSchema.parse(
-    await new AutomationAgentService(c.env, getAuth(c)).updateDeliveryTargets(
-      c.req.valid("param").id,
-      c.req.valid("json").deliveryTargets,
-    ))));
 automationRoutes.post("/:id/run", zValidator("param", idParam), zValidator("header", runHeaders), async (c) => c.json(
   StartedRunSchema.parse(await new AutomationAgentService(c.env, getAuth(c)).runNow(
     c.req.valid("param").id,

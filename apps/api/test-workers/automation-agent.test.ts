@@ -24,8 +24,6 @@ const AUTHOR_ID = asUserId("00000000-0000-7000-8000-0000000000b2");
 const AUTOMATION_ID = asAutomationId("00000000-0000-7000-8000-0000000000b3");
 /** The room these fixtures are drafted in, since a draft now always has one. */
 const AUTHORING_WORKSTREAM_ID = "00000000-0000-7000-8000-0000000000b9";
-/** Email delivery resolves from the author's own user row, so it needs one. */
-const AUTHOR_EMAIL = "author@example.com";
 
 function automationStub() {
   return env.AUTOMATION_AGENTS.get(env.AUTOMATION_AGENTS.idFromName(
@@ -41,12 +39,6 @@ beforeEach(async () => {
   await env.DB.prepare(
     `INSERT INTO workspaces (id, region, abandoned_at) VALUES (?, 'global', NULL)`,
   ).bind(WORKSPACE_ID).run();
-  await env.DB.prepare(
-    `CREATE TABLE users (id TEXT PRIMARY KEY, email TEXT, timezone TEXT)`,
-  ).run();
-  await env.DB.prepare(
-    `INSERT INTO users (id, email, timezone) VALUES (?, ?, 'America/Los_Angeles')`,
-  ).bind(AUTHOR_ID, AUTHOR_EMAIL).run();
   await env.DB.prepare(`CREATE TABLE workstream_email_routes (
     local_part TEXT PRIMARY KEY COLLATE NOCASE, region TEXT NOT NULL,
     workspace_id TEXT NOT NULL, workstream_id TEXT, automation_subscription_id TEXT,
@@ -72,7 +64,6 @@ function readyDefinition(name: string) {
     expectedOutputs: [],
     // Typed rather than inferred: several tests spread this fixture and replace
     // one of these, and an inferred `never[]` refuses every replacement.
-    requestedDelivery: [] as Array<"email" | "slack_agent_dm" | "channel">,
     defaultBehavior: {},
     recommendedPlugins: [] as Array<{
       pluginId: string;
@@ -623,66 +614,6 @@ describe("AutomationAgent", () => {
     });
   });
 
-  it("gives an automation the email delivery its draft asked for", async () => {
-    // The silent third instance: the draft records `requestedDelivery`, the
-    // card sent `deliveryTargets: []`, and an automation whose conversation
-    // asked for emailed results was created delivering nothing, with no error
-    // anywhere. Email is the one channel a draft can settle on its own, because
-    // it resolves from the author's own user row and names no connection.
-    await pinWorkspaceIdentity();
-    await seedReadyDraft({ ...readyDefinition("Daily digest"), requestedDelivery: ["email"] });
-
-    const detail = await authorService().acceptAuthoredDraft(AUTOMATION_ID);
-    expect(detail.deliveryTargets).toEqual([
-      { type: "email", connectionId: null, displayName: AUTHOR_EMAIL, status: "active" },
-    ]);
-  });
-
-  it("refuses a delivery channel acceptance cannot bind, at both ends", async () => {
-    // `slack_agent_dm` and `channel` resolve to a target naming a specific
-    // connection, or to no target shape at all, so neither is derivable from a
-    // draft — which carries no IDs by design. They used to pre-tick a box on
-    // the create wizard where a member supplied the missing ID; with that gone
-    // they were recorded and silently dropped, and an automation whose
-    // conversation asked for a Slack DM delivered nothing.
-    //
-    // Both ends, because they are the same predicate and the point is that they
-    // cannot drift: submission keeps it inside the drafting loop where it can
-    // be repaired, and acceptance still refuses a definition stored before this
-    // change rather than trusting that submission caught it.
-    const asking = {
-      ...readyDefinition("Daily digest"),
-      requestedDelivery: ["slack_agent_dm" as const],
-    };
-
-    await runInDurableObject(automationStub(), async (instance: AutomationAgent, state) => {
-      await expect(instance.admitAuthoredDraft({
-        schemaVersion: 1,
-        automationId: AUTOMATION_ID,
-        workspaceId: WORKSPACE_ID,
-        authorUserId: AUTHOR_ID,
-        region: "global",
-        authoredInWorkstreamId: AUTHORING_WORKSTREAM_ID,
-        draft: asking,
-      })).rejects.toThrow("automation_delivery_channel_unsupported");
-      expect(state.storage.sql.exec<{ n: number }>(
-        `SELECT COUNT(*) AS n FROM automation_definition_revisions`,
-      ).one().n).toBe(0);
-
-      // The acceptance end, driven directly because submission can no longer
-      // produce the definition it is about.
-      await expect((instance as unknown as {
-        prepareAcceptance(input: unknown, definition: unknown): Promise<unknown>;
-      }).prepareAcceptance({
-        automationId: AUTOMATION_ID,
-        workspaceId: WORKSPACE_ID,
-        userId: AUTHOR_ID,
-        authorUserId: AUTHOR_ID,
-        scope: "personal",
-      }, asking)).rejects.toThrow("automation_delivery_channel_unsupported");
-    });
-  });
-
   it("refuses to admit a ready draft whose evaluator names a source no trigger declares", async () => {
     // Triggers and evaluator rules are written by two separate tool calls, and
     // nothing compared them directly: acceptance inferred their agreement from
@@ -1159,7 +1090,7 @@ describe("AutomationAgent", () => {
     function seedRun(
       state: DurableObjectState,
       runId: string,
-      options: { deliveryTargets?: unknown[]; disposition?: string } = {},
+      options: { disposition?: string } = {},
     ): void {
       const context = {
         schemaVersion: 1,
@@ -1182,9 +1113,6 @@ describe("AutomationAgent", () => {
         defaultPluginIds: [],
         activitySourcePluginIds: {},
         connectorBindings: {},
-        deliveryTargets: options.deliveryTargets ?? [
-          { type: "email", emailAddress: "recruiter@example.com" },
-        ],
         modelOverride: null,
         executionPrincipal: { type: "user", userId: AUTHOR_ID },
         trigger: { kind: "manual", requestedByUserId: AUTHOR_ID },
@@ -1282,7 +1210,7 @@ describe("AutomationAgent", () => {
       const runId = "00000000-0000-7000-8000-0000000000e3";
       await runInDurableObject(automationStub(), async (instance: AutomationAgent, state) => {
         seedIdentity(state);
-        seedRun(state, runId, { deliveryTargets: [] });
+        seedRun(state, runId);
 
         const decision = await instance.resolveRunDisposition({
           schemaVersion: 1,

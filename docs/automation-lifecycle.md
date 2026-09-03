@@ -128,7 +128,6 @@ Everything acceptance needs beyond that is **derived from the definition** by
 | --- | --- |
 | `activitySourcePluginIds` | each external-event trigger's `sourceBindingKey` and `suggestedSourcePluginId` |
 | `defaultPluginIds` | `recommendedPlugins[].pluginId` |
-| `deliveryTargets` | `requestedDelivery`, which only `email` can satisfy |
 
 That inversion is the point. These were request fields because a create wizard
 asked a member to choose them, and that wizard was deleted on 2026-09-01 along
@@ -138,6 +137,18 @@ the plugin the model loaded and inspected against a live connection activation,
 and its recommended plugins were held to the same rule. The draft was always the
 authoritative source; the request was a copy of it that the surviving caller
 could not make.
+
+**An automation has no destinations of its own.** The one place a result goes
+because of what the automation *is* rather than what a run *does* is the room
+that owns a `workstream`-scoped one, and that follows from ownership, not from
+anybody choosing it. Everything outside Rally — an inbox, a channel, a DM, a
+document — is the run's to send, inside the loop, with the connector tools it
+was bound, as part of doing the work. The run is told so: the system prompt's
+result-delivery section names the room when there is one, so the run does not
+post there twice, and says outright that nothing sends for it when there is
+not, so a run that only describes an email has not sent one. What a run
+chooses to send is therefore inside the loop and steered by whatever steers
+the loop; the classifier below still decides whether the room hears from it.
 
 What derivation deliberately does **not** settle is the present. A connection
 can be revoked, disabled, or become another member's between drafting and
@@ -149,8 +160,8 @@ Acceptance is two phases around one durable acceptance row, so an interrupted
 activation resumes rather than restarting:
 
 1. **Freeze.** Under one transaction: check the definition is `ready`, the
-   revision matches, and no elicitation is pending; resolve connector bindings,
-   delivery destinations, and the acceptance timezone; write
+   revision matches, and no elicitation is pending; resolve connector bindings
+   and the acceptance timezone; write
    `automation_acceptance` with a hash of the request; write the schedules
    paused; materialize the definition's memory tables; move the lifecycle to
    `activating`. A second acceptance with a different request hash is refused
@@ -395,8 +406,8 @@ telemetry storage — not a product-state fallback.
   `withAutomationErrors` is for calls that can *refuse*; a call whose failures
   are all faults keeps its 500 rather than being dressed as a conflict.
 - **Acceptance derives what the draft decided; it never takes it in a request.**
-  The bindings, plugins and delivery an automation is created with come from the
-  stored definition through `automationAcceptanceSelections`. A request field
+  The bindings and plugins an automation is created with come from the stored
+  definition through `automationAcceptanceSelections`. A request field
   restating any of them is a second source of truth for a fact the draft already
   settled, and the way this failed is instructive rather than hypothetical: the
   fields outlived the wizard that filled them, the one surviving caller sent
@@ -503,14 +514,6 @@ email is addressed and rendered
   gap between drafting and Create, they cannot be moved earlier, and each has a
   table row so it reaches a member as an instruction rather than as the generic
   conflict every untabled code used to produce.
-- **A draft asking for a delivery channel that cannot be bound** is refused with
-  `automation_delivery_channel_unsupported`, at submission and again at
-  acceptance. Only `email` is derivable, because it resolves from the author's
-  own user row and names no connection; `slack_agent_dm` needs a connection ID a
-  draft does not carry, and `channel` has no delivery-target shape at all. Both
-  are set after creation through `PATCH /automations/:id`, which is where a
-  member can choose the connection. The model's own tool schema no longer offers
-  either, so a draft carrying one predates this change.
 - **The compiler fails or is interrupted.** The run settles as `failed` and stays
   the visible outcome until another turn is admitted — hiding it made a failure
   look like a successful idle reconnect. **Retry** re-arms the dispatch alarm for
@@ -563,7 +566,7 @@ email is addressed and rendered
 | Suite | Command | Covers |
 | --- | --- | --- |
 | `apps/api/test-workers/automation-agent.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd: identity plus the first turn plus one compiler admission committed before dispatch; evaluator replacement and its receipt in one transaction; an event-driven authored submission refused when its rules are absent or empty, exempted while the draft is not ready, and admitted through to acceptance once they are set; acceptance in place deleting only the draft conversation; generation-fenced memory with replayed write receipts; a memory table keeping its identity across revisions; the id-only accept creating the automation the object holds for a manual draft and for an external-event one whose source binding comes only from the draft, binding the plugins a draft recommends, giving it the email delivery its draft asked for, refusing a recommended plugin with no connection and a delivery channel that cannot be bound, a directory membership refusal answering 403, an `ApiError` raised inside the object surviving the RPC hop with its own status, and workspace abandonment retiring compiler, schedule, run, and outbox lanes before external work. |
-| `apps/api/test-workers/automation-delivery-targets.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd, with `connector_connections` and `slack_user_links` in WorkspaceDO and deliberately absent from D1: saving and removing a Slack destination; each refusal separately — no connection, a disabled one, another person's personal one, no Slack link, a link belonging to someone else, an inactive link; binding a connector plugin at acceptance, including when a disabled row still holds the same plugin id; and the service answering a detail rather than an unmapped 500. Its first test asserts the two tables are absent from D1, because that absence is what makes the rest evidence. |
+| `apps/api/test-workers/automation-acceptance-bindings.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd, with `connector_connections` in WorkspaceDO and deliberately absent from D1: binding the plugins a draft recommends at acceptance, refusing one the workspace has no connection for, binding the live connection when a disabled row still holds the same plugin id, and the service answering a detail rather than an unmapped 500. Its first test asserts the table is absent from D1, because that absence is what makes the rest evidence. |
 | `apps/api/test-workers/automation-cutover.test.ts` | `pnpm --filter @rally/api test:workers` | A fresh WorkspaceDO reaching the final schema with no legacy lifecycle tables, and an import that discards audited drafts and replays cleanup safely. |
 | `apps/api/test-workers/external-event-routing.test.ts` | `pnpm --filter @rally/api test:workers` | One accepted event and one matcher serving an automation and two watched work streams. |
 | `apps/api/test/external-event-evaluator.test.ts` | `pnpm --filter @rally/api test` | The pure predicate: legal and illegal documents, missing-field semantics, and the connector vocabulary. |
@@ -674,6 +677,78 @@ workspace found holding legacy state is to run the script again, which is
 idempotent per workspace.
 
 ## Changelog
+
+### 2026-09-03 — An automation has no destinations of its own
+
+**What changed:** Delivery targets are gone from automations end to end.
+`deliveryTargets` is off the frozen run context and `AutomationDetailSchema`;
+`requestedDelivery` is off the draft, its enum, and the model's tool schema;
+`AutomationDeliveryTargetInput/SetSchema` are deleted; `resolveDeliveryTargets`,
+`updateDeliveryTargets`, `PATCH /automations/:id`, the desktop delivery editor,
+the child's external delivery loop, and five error-table rows are removed.
+AutomationAgent schema v13 strips `$.deliveryTargets` from stored run contexts
+and rebuilds `automation_acceptance` without `delivery_targets_json`. The
+classifier's `reach.canDeliver` is now `owningWorkstreamId !== null`. The
+system prompt's result-delivery section gained a second arm that tells a run
+with no destination that sending is its own work. Separately and first, the
+inbound-email tool filtering came out (previous entry). Digest delivery is a
+different system and is untouched.
+
+**Why:** Delivery was modelled as deterministic infrastructure decided at
+creation — a two-element enum of destinations, resolved to IDs, frozen into the
+run context, sent by a loop after the run ended. That shape could not express
+"email the finance team, and DM me only if it is urgent", it needed a member to
+pick a connection at a moment the product no longer had, and it is what
+produced the four-field defect the previous entry cleaned up. The judgement
+about *where* a result should go belongs with the judgement about *what* it
+should say, which is the loop's. So the automation knows nothing about
+delivery, and a run sends what its instructions ask for with the tools it was
+bound.
+
+**What survived, and why it is not delivery:** the room that owns a
+`workstream`-scoped automation is still woken with the result. That follows
+from ownership rather than from anybody choosing it, was already separate from
+`deliveryTargets` in the child (`substream-agent.ts`, the block that begins
+"The room that owns this automation"), and is the one case the disposition
+classifier was built for — a spurious result in a shared room. `delivery_state`,
+the receipt machinery, `resolveRunDisposition` and `expose_workstream` all keep
+their jobs against that one destination.
+
+**The security trade, stated once:** what a run chooses to send is now inside
+the loop, and the loop is steered by whatever steers the loop, including
+trigger content. Before this change that was already true of every
+`connector_activity` run, which held write tools while reading equally
+untrusted third-party pages; only inbound email was filtered, and the previous
+entry removed that filter on the grounds that a boundary drawn around one
+channel out of several is not a boundary. The control that remains is
+screening at ingress — a sender must resolve to an active workspace member —
+and it is now the same control for every trigger.
+
+**The migration:** `AutomationRunContextV1Schema` is `z.strictObject`, so a
+frozen context still carrying `deliveryTargets` would stop parsing the moment
+the field left the contract: every claimed-but-unexecuted run, and every
+historical row the detail path reads. v13 rewrites them with `json_remove`,
+guarded by `json_extract ... IS NOT NULL` so a resume after a failed later
+group is a no-op, and rebuilds `automation_acceptance` because SQLite refuses
+`DROP COLUMN` on a column named in a CHECK. It mirrors the v9 rebuild beside
+it, including the `owning_workstream_id` copy v9 had to null and this one
+preserves.
+
+**Considered and rejected:** *tolerating the key* as an optional ignored field.
+Lower risk for a run in flight at the moment of deploy, and it leaves a dead
+field in a frozen contract that every future reader has to know to ignore.
+*Keeping the deterministic path for untrusted triggers only.* That was the
+recommended shape before the inbound-email filter came out, and it stops
+making sense once no trigger is special: the split would have to be drawn on a
+distinction the codebase no longer makes anywhere else. *Removing the
+classifier.* Its most-cited case is the one that survives.
+
+**What a future change has to respect:** the room wake is not a delivery target
+and must not be modelled as one — the moment it becomes a chosen destination it
+becomes something a run could be steered to drop. And the prompt's empty arm is
+load-bearing: it is the only thing that tells a personal automation that nothing
+sends for it, and a run that reads silence as "Rally has it covered" is the
+silent-loss defect this whole sequence began with, in its final form.
 
 ### 2026-09-03 — Acceptance takes an ID, and derives the rest from the draft
 

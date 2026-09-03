@@ -2099,11 +2099,6 @@ const automationDraftSubmissionJsonSchema = {
       }
     },
     expectedOutputs: { type: "array", items: { type: "string" } },
-    requestedDelivery: {
-      type: "array",
-      description: "Use [\"email\"] only when the owner asked to receive the result at their own email address, and only when suggestedScope is \"personal\". Use [] otherwise, and always when suggestedScope is \"workstream\" — that automation's results land in this work stream, which is what its scope means. Email is the only destination an automation can be given at creation; if the owner asks for a Slack DM or a channel, say that it can be set up after the automation is created and use []. Rally does the sending; this only records what was asked for.",
-      items: { type: "string", enum: ["email"] }
-    },
     defaultBehavior: {
       type: "string",
       description: "A JSON-encoded object of default behavior settings; use {} when none are needed."
@@ -2169,7 +2164,6 @@ const automationDraftSubmissionJsonSchema = {
     "instructions",
     "triggers",
     "expectedOutputs",
-    "requestedDelivery",
     "defaultBehavior",
     "recommendedPlugins",
     "memoryTables",
@@ -2475,24 +2469,6 @@ function normalizeAutomationDraft(value: unknown): unknown {
     requiredCapabilities: [],
     defaultBehavior: parseJsonObject(draft.defaultBehavior),
     memoryTables: Array.isArray(draft.memoryTables) ? draft.memoryTables : [],
-    // A destination named twice is one destination, and one the schema does not
-    // know is dropped rather than failing the whole submission — the draft is
-    // still usable, the create screen just does not pre-tick that box. Sorted
-    // as well as de-duplicated: the normalized draft is rendered back into the
-    // compiler's own prefix on every later turn, so letting the model's word
-    // order decide those bytes costs a prompt-cache hit per turn for nothing.
-    // Narrowed to what acceptance can actually bind. `slack_agent_dm` resolves
-    // to a target naming a specific Slack connection and `channel` has no
-    // target shape at all, so neither is derivable from a draft, which carries
-    // no IDs by design. They used to be accepted here and pre-ticked a checkbox
-    // on the create wizard, where a member supplied the missing ID; with that
-    // wizard gone they were recorded and then silently dropped. Dropping them
-    // at the edge of the model's vocabulary means the drafting conversation
-    // offers what can be delivered, instead of a card that quietly delivers
-    // less than it said.
-    requestedDelivery: Array.isArray(draft.requestedDelivery)
-      ? [...new Set(draft.requestedDelivery.filter((entry) => entry === "email"))]
-      : [],
     ready,
     followUpQuestion: null,
     elicitation: null,

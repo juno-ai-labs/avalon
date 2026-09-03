@@ -82,7 +82,6 @@ const AUTOMATION_ERROR_RESPONSES = {
   automation_not_accepted: { status: 409, message: "This automation has not been created yet." },
   automation_not_pausable: { status: 409, message: "This automation cannot be paused right now." },
   automation_not_resumable: { status: 409, message: "This automation cannot be resumed right now." },
-  automation_not_configurable: { status: 409, message: "This automation's delivery cannot be changed right now." },
   automation_activation_fenced: {
     status: 409,
     message: "This automation changed while it was being created. Reload and try again.",
@@ -101,14 +100,6 @@ const AUTOMATION_ERROR_RESPONSES = {
     status: 422,
     message: "This automation's trigger is missing the connection it watches. Ask Rally to set it up again.",
   },
-  automation_delivery_channel_unsupported: {
-    status: 422,
-    message: "Automations can only send results to your email today. Ask Rally to change how this one delivers.",
-  },
-  automation_personal_delivery_required: {
-    status: 422,
-    message: "Only a personal automation can send results outside Rally.",
-  },
   automation_evaluator_source_binding_mismatch: {
     status: 422,
     message: "This automation's trigger and its rules disagree about which connection to watch. Ask Rally to set it up again.",
@@ -121,23 +112,10 @@ const AUTOMATION_ERROR_RESPONSES = {
     status: 409,
     message: "A connection this automation needs is unavailable. Reconnect it and try again.",
   },
-  automation_delivery_connection_unavailable: {
-    status: 409,
-    message: "A delivery destination is unavailable. Reconnect it and try again.",
-  },
-  automation_delivery_identity_unavailable: {
-    status: 409,
-    message: "A delivery destination could not be resolved for your account.",
-  },
-  // Both of these are thrown and both were falling to the `SAFE_CODE` net, so
-  // one half of the delivery surface answered with a sentence and the other
-  // half with "This automation could not complete that request." — which, under
-  // a checkbox, reads as the automation having broken rather than the setting
-  // having failed to save.
-  automation_email_delivery_unavailable: {
-    status: 409,
-    message: "Your account has no email address, so Rally cannot send results there.",
-  },
+  // Thrown when a derived plugin resolves to a connection the caller may not
+  // bind. It fell to the `SAFE_CODE` net and answered "This automation could not
+  // complete that request.", which under a Create button reads as the automation
+  // having broken rather than as a connection the person could go and share.
   automation_workspace_connection_required: {
     status: 409,
     message: "A workspace automation can only use connections shared with the whole workspace.",
