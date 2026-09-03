@@ -474,35 +474,65 @@ export const GoogleFileWriteAuthorizationGuidance =
   "Only files with writableByRally=true are eligible for Docs or Sheets write tools; files created through this connection are writable, but an arbitrary Drive search result might be read-only under Google's per-file authorization.";
 
 /**
- * What every paginated Google tool says about its cursor parameter.
+ * The cursor parameter every paginated Google tool declares, and what it says.
  *
- * Every other parameter on these tools carries a description, and a run got
- * every one of them right — a valid `fileType`, a valid `orderBy`, a valid
- * RFC 3339 `modifiedAfter` — while sending `"/"`, `"1"`, and `"next"` for the
- * one that carried none. A cursor is the single argument whose value cannot be
- * reasoned out from its name and its bounds: `maxResults` needs no description
- * because `minimum`/`maximum` on a field called "max results" already say what
- * it is, and nothing about `minLength`/`maxLength` says where a token comes
- * from. Google rejects an invented one with a 400 that fails the call before it
- * searches, so the guess costs the whole request rather than degrading it.
+ * Declared as a union with `null` rather than as a bare optional string,
+ * because "leave the key out" is not a move these callers reliably make and
+ * `null` is. A run that had this description in front of it — four copies of
+ * it — still sent `"x"`, `" "`, `"undefined"`, `"null"` as a *string*, `"/"`,
+ * and once its own leaked reasoning, eight attempts in a work stream with no
+ * prior examples to copy. That reasoning is the evidence for the shape:
+ * "here likely pageToken required? Schema says min but omit should maybe
+ * omit. We sent empty invalid. Need redo." It was hunting for a way to say
+ * "nothing" and could not find one, so it kept inventing values that satisfy
+ * `minLength: 1`. Three of the eight were exactly one character.
  *
- * "Other arguments unchanged" is deliberately not a list of them. The token
- * encodes the query it was issued for, and Google does not re-run a changed
- * search when given a cursor — it resumes the old one, a silent wrong answer
- * rather than an error. Naming each tool's filters said the same thing four
- * ways and left a fifth to be remembered: `orderBy` was missed on
- * `drive.search` when the lists were written out, which is the whole failure
- * that clause exists to prevent. A sentence that covers every argument cannot
- * be short by one.
+ * `null` gives that hunt an answer the schema actually admits, which is the
+ * convention the strict structured-output dialects settle on for the same
+ * reason: every property present, absence spelled as a value.
  *
- * The last page is stated as `null` rather than as an absent key because
- * `readString` returns `null`, and that is the shape all four tools emit.
- * Describing a key that is never absent as "absent" would leave a model to
- * resolve the contradiction against what it sees; X shipped a repair for a
- * model reading a falsy cursor as another page and paging forever.
+ * Spelled `anyOf` rather than the flat `type: ["string", "null"]` Slack's
+ * cursors use, and that is not a style preference. Bind's `sanitizeToolSchema`
+ * collapses the flat form to `type: "string"` and appends "Accepts string or
+ * null." to the description — so the caller is shown a schema that forbids the
+ * value while prose beside it says the value is fine, which is the exact
+ * conflict this change exists to end. The union survives the sanitizer whole.
+ * Anyone tempted to make these two connectors match should change Slack's
+ * shape, not this one.
+ *
+ * `minLength: 1` stays on the string branch. It is what makes the harness drop
+ * a blanked argument rather than forward `""`, which is the repair the Linear
+ * `after: ""` incident bought on 2026-09-02, and lowering it would buy that
+ * failure back.
+ *
+ * The description does not list the arguments to hold unchanged across a page.
+ * The token encodes the query it was issued for and Google resumes the old
+ * search rather than re-running a changed one — a silent wrong answer — but a
+ * per-tool list was tried and was wrong within a day: `orderBy` was missed on
+ * `drive.search`, which is that exact failure. A sentence covering every
+ * argument cannot be short by one.
+ *
+ * The last page is stated as `null` because `readString` returns `null` and
+ * that is the shape all four tools emit. Describing a key that is never absent
+ * as "absent" would leave a caller to resolve the contradiction against what
+ * it sees; X shipped a repair for a caller reading a falsy cursor as another
+ * page and paging forever.
  */
-const GOOGLE_PAGE_TOKEN_DESCRIPTION =
-  "Omit this for the first page. To continue an earlier search pass back the exact `nextPageToken` string a previous call to this tool returned, with that call's other arguments unchanged. It is an opaque cursor — a long provider-generated string, not a page number, an offset, or an index. Never construct, guess, shorten, or increment this token. A result whose `nextPageToken` is `null` is the last page: stop there rather than calling again.";
+const GOOGLE_PAGE_TOKEN_SCHEMA = {
+  anyOf: [{ type: "string", minLength: 1, maxLength: 2_000 }, { type: "null" }],
+  description:
+    "Send `null` for the first page. To continue an earlier search, pass back the exact `nextPageToken` string a previous call to this tool returned, with that call's other arguments unchanged. It is an opaque cursor — a long provider-generated string, not a page number, an offset, or an index. Never construct, guess, shorten, or increment this token; when you have no token from a previous call, the value is `null`. A result whose `nextPageToken` is `null` is the last page: stop there rather than calling again.",
+} as const;
+
+/**
+ * The executor's half of {@link GOOGLE_PAGE_TOKEN_SCHEMA}, shared for the same
+ * reason the schema is: the bounds have to agree with what the caller was told,
+ * and four hand-written copies are four chances for them to drift. `null` and
+ * an absent key both become `undefined`, which every call site already treats
+ * as "no cursor" through a plain truthiness guard.
+ */
+const GOOGLE_PAGE_TOKEN_ARGUMENT = z.string().min(1).max(2_000).nullish()
+  .transform((value) => value ?? undefined);
 
 export const googleTools: ToolDefinition[] = [
   {
@@ -532,12 +562,7 @@ export const googleTools: ToolDefinition[] = [
             "Gmail search query. Supports Gmail's operators, for example from:dana@example.com, to:, cc:, subject:, newer_than:30d, older_than:1y, has:attachment, in:anywhere, is:unread, and OR / parentheses / \"quoted phrases\". Prefer an operator query over bare keywords, which match message bodies and return far too much.",
         },
         maxResults: { type: "integer", minimum: 1, maximum: 25 },
-        pageToken: {
-          type: "string",
-          minLength: 1,
-          maxLength: 2_000,
-          description: GOOGLE_PAGE_TOKEN_DESCRIPTION,
-        }
+        pageToken: GOOGLE_PAGE_TOKEN_SCHEMA
       },
       required: ["query"]
     }
@@ -622,12 +647,7 @@ export const googleTools: ToolDefinition[] = [
       additionalProperties: false,
       properties: {
         maxResults: { type: "integer", minimum: 1, maximum: 250 },
-        pageToken: {
-          type: "string",
-          minLength: 1,
-          maxLength: 2_000,
-          description: GOOGLE_PAGE_TOKEN_DESCRIPTION,
-        }
+        pageToken: GOOGLE_PAGE_TOKEN_SCHEMA
       }
     }
   },
@@ -646,12 +666,7 @@ export const googleTools: ToolDefinition[] = [
         timeMax: { type: "string", minLength: 1, format: "date-time" },
         query: { type: "string", minLength: 1 },
         maxResults: { type: "integer", minimum: 1, maximum: 100 },
-        pageToken: {
-          type: "string",
-          minLength: 1,
-          maxLength: 2_000,
-          description: GOOGLE_PAGE_TOKEN_DESCRIPTION,
-        }
+        pageToken: GOOGLE_PAGE_TOKEN_SCHEMA
       },
       required: ["timeMin", "timeMax"]
     }
@@ -721,12 +736,7 @@ export const googleTools: ToolDefinition[] = [
           description: "Result order. Defaults to relevance.",
         },
         maxResults: { type: "integer", minimum: 1, maximum: 100 },
-        pageToken: {
-          type: "string",
-          minLength: 1,
-          maxLength: 2_000,
-          description: GOOGLE_PAGE_TOKEN_DESCRIPTION,
-        }
+        pageToken: GOOGLE_PAGE_TOKEN_SCHEMA
       }
     }
   },
@@ -2292,7 +2302,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         const args = z.strictObject({
           query: z.string().min(1).max(2_000),
           maxResults: z.number().int().min(1).max(25).default(10),
-          pageToken: z.string().min(1).max(2_000).optional()
+          pageToken: GOOGLE_PAGE_TOKEN_ARGUMENT
         }).parse(rawArgs);
         const url = new URL("https://gmail.googleapis.com/gmail/v1/users/me/messages");
         url.searchParams.set("q", args.query);
@@ -2463,7 +2473,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       if (name === "calendar.list_calendars") {
         const args = z.strictObject({
           maxResults: z.number().int().min(1).max(250).default(100),
-          pageToken: z.string().min(1).max(2_000).optional()
+          pageToken: GOOGLE_PAGE_TOKEN_ARGUMENT
         }).parse(rawArgs);
         const url = new URL("https://www.googleapis.com/calendar/v3/users/me/calendarList");
         url.searchParams.set("maxResults", String(args.maxResults));
@@ -2492,7 +2502,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
             timeMax: z.string().datetime({ offset: true }),
             query: z.string().min(1).max(2_000).optional(),
             maxResults: z.number().int().min(1).max(100).default(25),
-            pageToken: z.string().min(1).max(2_000).optional()
+            pageToken: GOOGLE_PAGE_TOKEN_ARGUMENT
           })
           .parse(rawArgs);
         const calendarId = await resolveGoogleCalendarId(context, args.calendarId);
@@ -2818,7 +2828,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
           modifiedAfter: z.string().datetime({ offset: true }).optional(),
           orderBy: z.enum(["relevance", "modified"]).default("relevance"),
           maxResults: z.number().int().min(1).max(100).default(25),
-          pageToken: z.string().min(1).max(2_000).optional()
+          pageToken: GOOGLE_PAGE_TOKEN_ARGUMENT
         }).parse(rawArgs);
         const url = new URL("https://www.googleapis.com/drive/v3/files");
         // Names *and* contents. Matching names alone made a search for what a
