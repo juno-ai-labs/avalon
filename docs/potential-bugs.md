@@ -99,13 +99,13 @@ so it never reaches an automation's rows. Nothing does either for automations:
 `scheduleTimezone` resolves an unnamed calendar zone from the account when the
 row is written and the resolved value is frozen there.
 
-Four readers answer "what zone is this automation in", and they do not agree
+Three readers answer "what zone is this automation in", and they do not agree
 once the account moves. The `schedules` row is frozen at derivation; the digest's
-is re-derived; `runLocalTimezones` (`integrations.ts:6539`) resolves the same
+is re-derived; and `runLocalTimezones` (`integrations.ts:6539`) resolves the same
 order *live* on every run, so `core_current_time` reports a local day the run's
-own schedule contradicts; and `automation-email-service.ts` dates the result
-email in the owner's current zone. Whoever settles the question below should
-settle all four, not the first one they find.
+own schedule contradicts. (A fourth, the result email's date, went with the
+deterministic delivery path on 2026-09-03.) Whoever settles the question below
+should settle all three, not the first one they find.
 
 **Why it is suspicious.** Both rows are derived from the same column for the
 same reason, and one follows it while the other does not. Somebody who moves

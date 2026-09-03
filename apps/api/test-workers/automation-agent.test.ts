@@ -752,7 +752,6 @@ describe("AutomationAgent", () => {
         triggers: [{ type: "resource_watch" as const, resourceId: "00000000-0000-7000-8000-0000000000d1" }],
         requiredCapabilities: [],
         expectedOutputs: [],
-        requestedDelivery: [],
         defaultBehavior: {},
         recommendedPlugins: [],
         memoryTables: [],
@@ -1180,7 +1179,7 @@ describe("AutomationAgent", () => {
       });
     });
 
-    it("delivers rather than withholding when the classifier cannot be reached", async () => {
+    it("exposes rather than withholding when the classifier cannot be reached", async () => {
       const runId = "00000000-0000-7000-8000-0000000000e2";
       await runInDurableObject(automationStub(), async (instance: AutomationAgent, state) => {
         seedIdentity(state);
@@ -1196,13 +1195,17 @@ describe("AutomationAgent", () => {
 
         // No provider credentials in workerd here, so the inference fails and
         // the failure direction is what this proves: a result nobody can judge
-        // is sent, not swallowed.
-        expect(decision.disposition).toBe("deliver");
+        // is surfaced, not swallowed. The arm it lands on changed with the
+        // destinations: this is a personal run with no owning room, so there is
+        // nothing left to `deliver` to and the fail-open answer is to expose
+        // the run's own work stream. A room-owned run would default to
+        // `deliver` for the same reason.
+        expect(decision.disposition).toBe("expose_workstream");
         expect(decision.source).toBe("default");
         expect(state.storage.sql.exec<{ disposition: string; disposition_source: string }>(
           `SELECT disposition, disposition_source FROM automation_runs WHERE run_id = ?`,
           runId,
-        ).one()).toEqual({ disposition: "deliver", disposition_source: "default" });
+        ).one()).toEqual({ disposition: "expose_workstream", disposition_source: "default" });
       });
     });
 
@@ -1263,9 +1266,9 @@ describe("an automation the work stream owns", () => {
         `INSERT INTO automation_acceptance
            (id, definition_revision, request_hash, scope, owning_workstream_id,
             default_plugin_ids_json, activity_source_plugin_ids_json, connector_bindings_json,
-            delivery_targets_json, model_override, evaluator_projection_json,
+            model_override, evaluator_projection_json,
             evaluator_source_hash, accepted_at, activated_at)
-         VALUES (1, 1, 'sha256:request', 'workstream', ?, '[]', '{}', '{}', '[]', NULL, '[]',
+         VALUES (1, 1, 'sha256:request', 'workstream', ?, '[]', '{}', '{}', NULL, '[]',
                  'sha256:evaluators', 100, 101)`,
         OWNING_WORKSTREAM_ID,
       );
@@ -1447,9 +1450,9 @@ describe("taking over who an automation runs as", () => {
         `INSERT INTO automation_acceptance
            (id, definition_revision, request_hash, scope, owning_workstream_id,
             default_plugin_ids_json, activity_source_plugin_ids_json, connector_bindings_json,
-            delivery_targets_json, model_override, evaluator_projection_json,
+            model_override, evaluator_projection_json,
             evaluator_source_hash, accepted_at, activated_at)
-         VALUES (1, 1, 'sha256:request', 'workstream', ?, '[]', '{}', ?, '[]', NULL, '[]',
+         VALUES (1, 1, 'sha256:request', 'workstream', ?, '[]', '{}', ?, NULL, '[]',
                  'sha256:evaluators', 100, 101)`,
         OWNING_WORKSTREAM_ID,
         JSON.stringify({ plugin_gmail: LEAVER_GMAIL, plugin_slack: SHARED_SLACK }),

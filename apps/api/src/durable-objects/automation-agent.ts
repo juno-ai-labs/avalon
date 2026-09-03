@@ -237,6 +237,14 @@ const AutomationLegacyImportRequestSchema = z.strictObject({
     defaultPluginIds: z.array(ModelPluginIdSchema),
     activitySourcePluginIds: ActivitySourcePluginIdsSchema,
     connectorBindings: z.record(z.string(), z.string()),
+    /**
+     * Accepted and ignored. This is the shape the cutover script emits from
+     * legacy tables, and the runbook keeps that script as the remedy for a
+     * workspace found still holding legacy state, so the import has to keep
+     * reading what the script writes. Nothing here is persisted from it: an
+     * automation has no destinations of its own any more.
+     */
+    deliveryTargets: z.array(z.unknown()).optional(),
     emailAddress: z.string().email().nullable(),
     modelOverride: AgentModelOverrideSchema.nullable(),
     createdAt: z.number().int().nonnegative(),
