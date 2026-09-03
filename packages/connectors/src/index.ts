@@ -448,7 +448,7 @@ function googlePageTokenDescription(repeatedArguments: readonly string[]): strin
     : quoted.length === 1
       ? `, repeating that call's ${quoted[0]} unchanged`
       : `, repeating that call's ${quoted.slice(0, -1).join(", ")} and ${quoted[quoted.length - 1]} unchanged`;
-  return `Continue an earlier call: pass back the exact \`nextPageToken\` string a previous call to this tool returned${unchanged}. It is an opaque cursor — a long provider-generated string, not a page number, an offset, or an index — so never construct, guess, shorten, or increment one. Omit it for the first page. A result whose \`nextPageToken\` is \`null\` is the last page: stop there rather than calling it again.`;
+  return `Omit this for the first page. To continue an earlier search pass back the exact \`nextPageToken\` string a previous call to this tool returned ${unchanged}. It is an opaque cursor — a long provider-generated string, not a page number, an offset, or an index. Never construct, guess, shorten, or increment this token. A result whose \`nextPageToken\` is \`null\` is the last page: stop there rather than calling again.`;
 }
 
 export const googleTools: ToolDefinition[] = [
