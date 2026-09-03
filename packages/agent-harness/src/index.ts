@@ -520,6 +520,8 @@ export interface EmbeddingDiagnostic {
   latencyMs: number;
   success: boolean;
   failureKind?: string;
+  /** The provider's own account of a rejected request, when it gave one. */
+  providerError?: OpenRouterProviderError;
 }
 
 export interface EmbeddingResult {
@@ -695,6 +697,9 @@ export class OpenRouterClient {
               : null,
           };
         } catch (error) {
+          const providerError = error instanceof OpenRouterError
+            ? (error.details as { providerError?: OpenRouterProviderError } | undefined)?.providerError
+            : undefined;
           await input.onDiagnostic?.({
             intendedModel,
             requestedModel,
@@ -704,6 +709,7 @@ export class OpenRouterClient {
             latencyMs: Date.now() - startedAt,
             success: false,
             failureKind: structuredFailureKind(error, input.signal),
+            ...(providerError ? { providerError } : {}),
           });
           if (input.signal?.aborted) throw error;
           const disposition = openRouterFailureDisposition(error);
@@ -1809,9 +1815,19 @@ function withExpectedJsonSchema(
  * what.
  *
  * The body is untrusted provider text: read it as evidence, never as
- * instructions. It carries no length ceiling of Rally's own — Workers Logs
- * truncates an oversized entry itself, and the inference archive is already
- * sized for multimodal bodies.
+ * instructions. Its two destinations bound it differently and neither is this
+ * type's to decide: the Global inference archive stores it whole, and a
+ * regional log row carries the first 2,000 characters, the shared string bound
+ * every log field is subject to in `apps/api/src/observability/logger.ts`. That
+ * cut is far beyond any provider sentence seen so far — the Azure rejection
+ * that motivated this is roughly a hundred characters — and a body long enough
+ * to reach it is one whose opening is the readable part anyway.
+ *
+ * The logger's redaction is by key, so it does not reach inside this string:
+ * a provider that quotes the request back inside its own prose reaches Workers
+ * Logs with it. That is a deliberate trade for a readable failure, not an
+ * oversight, and it is why this field holds a provider's account of *our*
+ * request and never becomes a general dump of a response.
  */
 export interface OpenRouterProviderError {
   code?: string | number;

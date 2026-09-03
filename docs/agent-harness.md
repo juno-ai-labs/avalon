@@ -1291,11 +1291,19 @@ schema to maintain as providers change theirs. Also rejected: extracting only
 structural parts such as OpenAI's `param` (`tools[13].parameters`). The Grok
 root-union rejection of 13 August carried no `param` at all and said everything
 in prose, so a structural extractor would have kept nothing on the incident that
-motivated the tool-schema guards. Also rejected: a length ceiling. Workers Logs
-truncates an oversized entry itself and the archive is sized for multimodal
-bodies, so a cap of Rally's own would be [a number nobody
-here can justify](adding-security-defensive-and-other-limits.md) guarding
-against a cost the platform already bounds.
+motivated the tool-schema guards. Also rejected: a length ceiling of this
+field's own. Its two destinations already bound it and neither bound is this
+change's to set — the archive stores the body whole, and a log row carries the
+first 2,000 characters under the shared string bound in `redact` that every log
+field is subject to. Adding a third number on top would be [a number nobody
+here can justify](adding-security-defensive-and-other-limits.md).
+
+**Every inference path, including embeddings.** `EmbeddingDiagnostic` had no
+provider-error field at all, so a rejected embedding call recorded a
+`failure_kind` and nothing about the refusal — the one inference path this change
+would otherwise have left as it found it. It now carries `providerError` like the
+streaming and structured paths, and `embedding_inference` logs the same three
+fields the other two events do.
 
 **Both regions, deliberately.** The reason travels on the regional structured
 log rather than only in the Global archive, so EU — whose inference is
@@ -1309,8 +1317,14 @@ into a Global-only surface takes EU's only copy with it.
 quotes our own request back often enough to be assumed to. It is evidence,
 never instruction — the same rule tool output and fetched pages already carry —
 and the prompts, attachments, and model context that Workers Logs excludes stay
-excluded. Widening `detail` into a general dump of the response is how that
-distinction would be lost.
+excluded. Two consequences follow and are easy to miss. `redact` masks by key,
+so it does not reach inside this string: a provider that quotes the request
+inside its own prose reaches Workers Logs with it, which is the trade being made
+rather than a gap to close later. And a log row holds only the first 2,000
+characters of it, so a long body is complete in the Global archive and clipped
+in the log — which is the one place EU sees it. Widening `detail` into a general
+dump of the response is how the distinction between "what the provider said
+about our request" and "our request" would be lost.
 
 ### 2026-09-03 — The assembled memory-recall query is bounded before run setup uses it
 

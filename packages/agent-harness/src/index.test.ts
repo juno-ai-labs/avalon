@@ -621,6 +621,36 @@ describe("agent harness", () => {
     ]);
   });
 
+  it("gives a rejected embedding call the same account of the refusal", async () => {
+    const diagnostics: EmbeddingDiagnostic[] = [];
+    const fetcher = vi.fn(async () => Response.json({
+      error: { code: "model_not_found", message: "No endpoints found for this model" },
+    }, { status: 404 })) as unknown as typeof fetch;
+    const client = new OpenRouterClient({
+      apiKey: "test-key",
+      primaryModel: "primary/embedding",
+      sameModelRetries: 0,
+      fetch: fetcher,
+    });
+
+    await expect(client.embed({
+      input: "durable preference",
+      inputType: "search_document",
+      dimensions: 1_024,
+      generationName: "memory_document_embedding",
+      onDiagnostic: (diagnostic) => {
+        diagnostics.push(diagnostic);
+      },
+    })).rejects.toMatchObject({ name: "OpenRouterError" });
+
+    // Embeddings are an inference path like any other: a refusal here used to
+    // record `failureKind` and nothing about what the provider said.
+    expect(diagnostics.at(-1)?.providerError).toEqual({
+      code: "model_not_found",
+      detail: '{"error":{"code":"model_not_found","message":"No endpoints found for this model"}}',
+    });
+  });
+
   it("rejects embeddings that do not match the requested Vectorize dimensions", async () => {
     const client = new OpenRouterClient({
       apiKey: "test-key",

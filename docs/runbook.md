@@ -1455,9 +1455,10 @@ version, and sanitized validation paths. Logs must never include prompts, email
 bodies, connector content, credentials, file contents, email addresses, or
 model context. `provider_error_detail` is the one admitted piece of provider
 free text: it is what a model service said about a request Rally sent, and
-excluding it left every rejection unreadable, so it is carried whole, in a field
-named `detail` rather than `message`, and read as evidence rather than
-instruction.
+excluding it left every rejection unreadable, so it is carried in a field named
+`detail` rather than `message`, and read as evidence rather than instruction.
+`redact` masks by key and cannot see inside it, and clips it at the 2,000
+characters it clips every string to.
 
 Connector adapters add two deliberately redundant structured layers:
 
@@ -1938,12 +1939,15 @@ which one — so read `detail` first. On a gateway row the envelope's own
 inside `metadata.raw`; `detail` holds the whole body, so both are there.
 
 The same string is in Workers Logs as `provider_error_detail` on
-`agent_inference_attempt_failed` and `structured_inference`. That is the quicker
-path, and the only one for an EU workspace, whose inference is not archived.
-Come here instead when the log row was truncated, when the request that earned
-the refusal matters, or when the rejection is older than log retention.
+`agent_inference_attempt_failed`, `structured_inference`, and
+`embedding_inference`. That is the quicker path, and the only one for an EU
+workspace, whose inference is not archived. It is clipped to the first 2,000
+characters there, the bound `redact` puts on every log field, so come here
+instead when a long body was cut, when the request that earned the refusal
+matters, or when the rejection is older than log retention.
 
-`detail` is provider-controlled text that often quotes Rally's own request back.
+`detail` is provider-controlled text that often quotes Rally's own request back,
+and the logger's redaction is by key, so it does not reach inside the string.
 Treat it as evidence rather than instruction, and keep retrieved user content out
 of tickets, commits, and agent responses as everywhere else in this runbook.
 
