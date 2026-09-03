@@ -76,9 +76,6 @@ const EXPECTED_TABLES = [
   "bind_loop_heads",
   "bind_loop_state_messages",
   "bind_provider_boundaries",
-  "block_dashboard_block_runs",
-  "block_dashboard_configuration_versions",
-  "block_dashboard_user_preferences",
   "content_audience_fences",
   "content_refs",
   "delivered_loop_inputs",
@@ -799,6 +796,41 @@ describe("the Workstream Durable Object relational schema", () => {
       const parsed = WorkstreamWorkflowInputSchema.safeParse(JSON.parse(row.execution_context_json));
       expect(parsed.success).toBe(true);
       expect(parsed.success && parsed.data.automationRunContext).toEqual(automationRunContext);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("removes the retired dashboard state in version 38", () => {
+    const database = new DatabaseSync(":memory:");
+    const storage = objectStorage(database);
+    try {
+      applyDurableObjectSqliteMigrations({
+        storage,
+        migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.filter((migration) => migration.version < 38),
+        component: "workstream",
+        workerVersionId: "worker-before",
+        now: 1_000,
+      });
+      database.prepare(
+        `INSERT INTO due_work
+           (job_key, kind, due_at, epoch, payload_json, attempts, updated_at)
+         VALUES ('block_dashboard_refresh', 'refresh', 1000, 1, '{}', 0, 1000)`,
+      ).run();
+      expect(database.prepare(
+        `SELECT name FROM sqlite_schema
+          WHERE type = 'table' AND name LIKE 'block_dashboard_%'
+          ORDER BY name`,
+      ).all()).toHaveLength(3);
+      applyWorkstreamObjectSchema(storage, "worker-after", 2_000);
+
+      expect(database.prepare(
+        `SELECT name FROM sqlite_schema
+          WHERE type = 'table' AND name LIKE 'block_dashboard_%'`,
+      ).all()).toEqual([]);
+      expect(database.prepare(
+        `SELECT COUNT(*) AS count FROM due_work WHERE job_key = 'block_dashboard_refresh'`,
+      ).get()).toEqual({ count: 0 });
     } finally {
       database.close();
     }

@@ -31,4 +31,21 @@ describe("the WorkstreamDO migration ledger", () => {
     ).all()).toEqual([{ message_id: "keep", effect_kind: "directory_common" }]);
     expect(() => insert.run("rejected", "suggestion:other", "suggestion_feedback")).toThrow();
   });
+
+  it("drops every retired dashboard table in version 5", () => {
+    const database = new DatabaseSync(":memory:");
+    apply(database, 4);
+    expect(database.prepare(
+      `SELECT name FROM sqlite_schema
+        WHERE type = 'table' AND name LIKE 'block_dashboard_%'
+        ORDER BY name`,
+    ).all()).toHaveLength(6);
+
+    apply(database, 5, 4);
+
+    expect(database.prepare(
+      `SELECT name FROM sqlite_schema
+        WHERE type = 'table' AND name LIKE 'block_dashboard_%'`,
+    ).all()).toEqual([]);
+  });
 });

@@ -22,7 +22,7 @@ the thing this module replaced, and it is not to come back.
 | `apps/api/src/services/workspace-service.ts` | `removeMember` and `leaveWorkspace` — end the D1 membership and publish in the same request. Final-member leave suspends the row during atomic workspace abandonment instead of deleting it, but publishes the same membership-wide revocation. |
 | `apps/api/src/services/auth-service.ts` | `logout` — publishes for each session row it revoked. |
 | `apps/api/src/index.ts` | Queue dispatch by name — ahead of the work-stream maintenance gate, so a retraction is never held by it — and `reapExpiredSessions` on the five-minute cron. |
-| `apps/api/src/durable-objects/{workspace-do,workstream-do,substream-agent,block-dashboard-agent,automation-agent}.ts` | `revokeSocketAccess` on each of the five socket-holding objects. |
+| `apps/api/src/durable-objects/{workspace-do,workstream-do,substream-agent,automation-agent}.ts` | `revokeSocketAccess` on each socket-holding object. |
 | `apps/api/wrangler.{global,eu,test}.jsonc` | The `ACCESS_REVOCATION_QUEUE` producer binding and the consumer settings. |
 | `packages/db/migrations/0091_seed_expired_session_revocations.sql` | Marks the expired-session backlog older than seven days revoked so the sweep starts clean, and indexes the query it runs every five minutes. The cutoff matters: marking a row suppresses its announcement forever, and migrations run before the Worker deploys, so anything recent is left for the sweep to announce properly. |
 
@@ -61,9 +61,8 @@ about; each child becomes its own message on the same queue.
 
 ```
 workspace  ──▶ WorkspaceDO        ──▶ [workstreamIds] + [automationIds] + [artifactIds]
-workstream ──▶ WorkstreamDO       ──▶ [substreamIds] + [blockIds]
+workstream ──▶ WorkstreamDO       ──▶ [substreamIds]
 substream  ──▶ SubstreamAgent     ──▶ (leaf)
-block      ──▶ BlockDashboardAgent ──▶ (leaf)
 automation ──▶ AutomationAgent    ──▶ (leaf)
 artifact   ──▶ ArtifactHostDO     ──▶ (leaf)
 ```
@@ -259,8 +258,8 @@ Callers: any Worker code that ends access calls `publishAccessRevocation`. The
   participation in, or visibility of, one work stream. Those are facts in the
   object's *own* SQL, not in D1, so no producer here can publish them — and the
   object that holds them enforces them itself, synchronously, on its own publish
-  paths (`WorkstreamDO.broadcastMetadata`, `broadcastBlockDashboardEvent`, and
-  `SubstreamAgent` on an event that narrows visibility). That is not a second
+  paths (`WorkstreamDO.broadcastMetadata` and `SubstreamAgent` on an event that
+  narrows visibility). That is not a second
   answer to this module's question. This module answers "does this person still
   have access to the workspace", which only D1 knows; those checks answer "does
   this work stream still admit this reader", which only that object knows. The
@@ -328,6 +327,19 @@ would be a way into somebody else's workspace.
   somebody kept access they should have lost.
 
 ## Changelog
+
+### 2026-09-03 — HyperSight leaves the revocation hierarchy
+
+**What changed:** The revocation walk no longer discovers or calls a
+BlockDashboardAgent child, because that Durable Object class and its sockets are
+removed.
+
+**Why:** Keeping a revocation branch for a deleted feature would preserve a
+phantom authority edge and make access audits report a child that can no longer
+exist.
+
+**Consequences:** Revocation still closes WorkspaceDO, WorkstreamDO, and
+SubstreamAgent access. Historical migration records remain immutable.
 
 ### 2026-09-01 — Closing the room socket ends its message authority
 

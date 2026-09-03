@@ -146,6 +146,8 @@ describe("the development seed", () => {
       expect(automation.id).toMatch(/^[0-9a-f-]{36}$/u);
       expect(automation.authorUserId).toMatch(/^[0-9a-f-]{36}$/u);
       expect(automation.source.definition).toBeTypeOf("object");
+      expect(automation.source.definition).not.toHaveProperty("requestedDelivery");
+      expect(automation.source).not.toHaveProperty("deliveryTargets");
       expect(["active", "paused"]).toContain(automation.source.status);
       expect(["personal", "workspace"]).toContain(automation.source.scope);
     }

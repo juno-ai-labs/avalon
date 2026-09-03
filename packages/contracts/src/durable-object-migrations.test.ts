@@ -9,7 +9,6 @@ import {
 
 const WORKSPACE = "0192f3a0-1c4d-7000-8000-0000000000a1";
 const WORKSTREAM = "0192f3a0-1c4d-7000-8000-0000000000a2";
-const BLOCK = "0192f3a0-1c4d-7000-8000-0000000000a3";
 
 describe("isOpaqueDurableObjectName", () => {
   it("accepts every name shape apps/api mints", () => {
@@ -17,8 +16,7 @@ describe("isOpaqueDurableObjectName", () => {
       `global:${WORKSPACE}`,
       `eu:${WORKSPACE}:${WORKSTREAM}`,
       `eu:${WORKSPACE}:${WORKSTREAM}:0`,
-      `eu:${WORKSPACE}:${WORKSTREAM}:${BLOCK}`,
-      `global:${WORKSPACE}:${WORKSTREAM}:block-dashboard:${BLOCK}`,
+      `eu:${WORKSPACE}:${WORKSTREAM}:0192f3a0-1c4d-7000-8000-0000000000a3`,
     ]) {
       expect(isOpaqueDurableObjectName(name)).toBe(true);
     }

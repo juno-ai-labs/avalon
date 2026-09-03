@@ -40,7 +40,7 @@ export function setCachedWorkstreams(
  *
  * The feed and control sockets can close independently. Keeping this boundary
  * shared prevents whichever one closes first from leaving transcript,
- * HyperSight, context, or recovery state visible until the other catches up.
+ * context, or recovery state visible until the other catches up.
  */
 export function evictCachedWorkstream(
   queryClient: QueryClient,
@@ -53,8 +53,6 @@ export function evictCachedWorkstream(
     ['workstream-feed-source', workstreamId],
     ['workstream-socket-snapshot-generation', workstreamId],
     ['workstream-context', workstreamId],
-    ['block-dashboard', workstreamId],
-    ['block-dashboard-preference', workstreamId],
     ['terminal-workstream', workstreamId],
     ['substream-workstream', workstreamId],
     ['substream-ordered-transcript', workstreamId],

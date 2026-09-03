@@ -102,7 +102,7 @@ interface InspectorRailProps {
   onRefreshResource?: (resource: WorkstreamResource) => void;
   refreshingResourceId?: string | null;
   onOpenRun?: (run: AutomationRunSummary) => void;
-  /** True while the inspector is fading out under HyperSight taking the slot. */
+  /** True while the inspector is fading out. */
   leaving?: boolean;
   dropTarget?: {
     dragging: boolean;
@@ -850,8 +850,7 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
     }
   };
 
-  // The rail is already closed while it fades out under HyperSight, so the
-  // hand-off keeps it on screen for exactly as long as that fade lasts.
+  // Keep a closed rail on screen for exactly as long as its fade lasts.
   if (!railOpen && !props.leaving) return null;
 
   const headerTitle = resource?.title ?? (inspector ? 'Details' : railTitle[railVariant]);

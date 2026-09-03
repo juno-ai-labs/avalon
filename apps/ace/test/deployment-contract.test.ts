@@ -109,7 +109,6 @@ describe('Ace deployment contract', () => {
 
     expect(deploy).toContain("const migrationDomain = 'migrations.internal.rallywith.ai'");
     expect(deploy).toContain("const aceDomain = 'ace.internal.rallywith.ai'");
-    expect(deploy).toContain("ensureFlag('hypersight-enabled'");
     expect(deploy).toContain("ensureFlag('meeting-recording-enabled'");
     expect(deploy).toContain("ensureFlag('suggested-work-enabled'");
     expect(deploy).toContain("ensureFlag('automation-workspace-templates-enabled'");

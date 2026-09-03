@@ -11,12 +11,6 @@ deployment surface or a package, and before assuming where a rule is enforced.
 It stays a map: a subsystem described here in a paragraph has its own document,
 and the map points at it rather than absorbing it.
 
-One naming boundary is deliberate: users see **HyperSight**, while the internal
-per-block execution subsystem is `BlockDashboard` and its Durable Object is
-`BlockDashboardAgent`. Internal URLs, bindings, tables, protocol events, and
-telemetry use BlockDashboard so the product label does not double as an
-infrastructure role.
-
 ## Where the code lives
 
 ```text
@@ -41,7 +35,7 @@ docs/                      Product, architecture, security, setup, runbooks
 | `apps/api/src/index.ts`, `apps/api/src/worker-events.ts` | The regional API's statically imported HTTP/event graph and platform exports. Heavy stateless providers run in the typed document, Terminal, and Global telemetry-delivery service Workers owned by [`api-worker-deployment.md`](api-worker-deployment.md). |
 | `apps/api/src/services` | Business rules. Route handlers hold none. |
 | `apps/api/src/services/terminal` | Deferred Terminal plugin, Daytona adapter, authority-fenced sandbox control plane, resources, and trusted GitHub publication. |
-| `apps/api/src/durable-objects` | `WorkspaceDO`, model-free `WorkstreamDO`, `SubstreamAgent`, per-block `BlockDashboardAgent`, the shared `MigratableDurableObject` schema base and the `ScheduledDurableObject` alarm base above it, and their SQL-only migration/storage layers. |
+| `apps/api/src/durable-objects` | `WorkspaceDO`, model-free `WorkstreamDO`, `SubstreamAgent`, `AutomationAgent`, the shared `MigratableDurableObject` schema base and the `ScheduledDurableObject` alarm base above it, and their SQL-only migration/storage layers. |
 | `apps/api/src/workflows`, `apps/api/src/queues` | Generic/non-workstream orchestration, legacy work-stream drain, and idempotent regional consumers. |
 | `apps/api/src/*-regional-bridge.ts`, `apps/api/src/*-routing-bridge.ts` | The `WorkerEntrypoint` RPC bridges that are the only path from Global to EU. |
 | `apps/api/src/env.ts` | `assertEnvContract` — the one place the Worker environment is parsed. |
@@ -101,10 +95,6 @@ flowchart LR
   E <-->|"workspace sync + command + presence WebSocket"| WD["WorkspaceDO"]
   E <-->|"aggregate metadata WebSocket"| WS["WorkstreamDO (no agent)"]
   E <-->|"direct feed WebSocket"| SA["SubstreamAgent"]
-  E <-->|"derived block WebSocket"| HB["BlockDashboardAgent"]
-  WS -->|"durable HyperSight fan-out"| HB["BlockDashboardAgent"]
-  HB -->|"fenced transcript/runtime SQL"| SA
-  HB -->|"versioned block result"| WS
   H --> D[("Regional D1")]
   H --> B[("Regional R2")]
   H --> WD
@@ -141,9 +131,8 @@ schedules, the content-free automation directory and its event-routing ledger,
 resources/notes/memory/R2 references, external delivery, activity, discovery,
 and cross-work-stream query state. Each automation's own product state lives in
 its own `AutomationAgent`. After cutover, `SubstreamAgent` SQLite owns substream product
-state and the full conversation agent loop; each `BlockDashboardAgent` owns
-one derived block's execution lifecycle; `WorkstreamDO` owns aggregate metadata,
-HyperSight configuration/published results, and its outboxes. Large activity
+state and the full conversation agent loop; `WorkstreamDO` owns aggregate metadata
+and its outboxes. Large activity
 payloads, uploads, and snapshots live in R2.
 
 Users and workspaces each own a validated IANA timezone. The desktop detects the
@@ -255,8 +244,7 @@ identity, crash, and restricted operator flow.
 Within each regional workspace, one `WorkspaceDO` synchronizes workspace
 surfaces and routes user commands, every
 work stream maps to one model-free `WorkstreamDO`, and every independent model
-context maps to one `SubstreamAgent`. Every stable configured HyperSight block
-maps to one `BlockDashboardAgent`. Main external substream `0` retains the
+context maps to one `SubstreamAgent`. Main external substream `0` retains the
 historical room name during class rename; additional children append
 their substream ID. Every staging/production lookup resolves through a restricted
 namespace: `jurisdiction("us")` for Global and `jurisdiction("eu")` for EU,
@@ -276,8 +264,7 @@ records; it has no rebuildable workspace/work-stream serving projections. The no
 [`workstream-durable-object.md`](workstream-durable-object.md).
 
 `WorkspaceDO` and `WorkstreamDO` form the low-volume control plane for workspace
-sync/command admission, metadata, authoritative directory queries, HyperSight
-fan-out, and regional effects.
+sync/command admission, metadata, authoritative directory queries, and regional effects.
 Each authenticated Electron renderer maintains one native Chromium WorkspaceDO
 socket for the active workspace. It also owns a main-process Node socket pair —
 one WorkstreamDO metadata connection and one substream `0` feed — for the active
@@ -287,17 +274,6 @@ subscriptions opt out of legacy socket-derived presence; WorkspaceDO's explicit
 foreground signal is authoritative. Transcript reads, streaming checkpoints,
 and loop execution route directly to the selected `SubstreamAgent` data plane.
 Parents therefore never become the throughput ceiling for their children.
-
-HyperSight follows the same control/data split without pretending a derived
-block is a conversation. Main `SubstreamAgent("0")` sends one debounced trigger
-and transcript fence to WorkstreamDO. The parent durably fans out the current
-configuration to stable block agents. Each block agent runs Bind and directly
-RPCs source runtime SQL in `SubstreamAgent("0")`. Live queued/running state and
-derived output travel on a hibernating socket from that block agent directly to
-Electron, while versioned terminal results settle into WorkstreamDO as product
-metadata. The source agent therefore talks to blocks as their canonical data
-authority, but does not duplicate the parent's block registry or dispatch
-outbox, and the model-free parent never relays token traffic.
 
 An authoritative child mutation that changes workspace/user surfaces writes a
 versioned effect to the child's local outbox in the same SQLite transaction.
@@ -339,15 +315,11 @@ The socket responsibilities are deliberately not interchangeable:
   message creation, serves cursor-paged authoritative work-stream lists, and
   publishes current work-stream rows plus waterlined workspace-topic invalidations.
 - `WorkstreamDO` publishes complete independently waterlined common/viewer
-  snapshots and HyperSight configuration, but carries neither transcript parts
+  snapshots, but carries neither transcript parts
   nor model tokens.
 - `SubstreamAgent` is a read-only direct conversation feed plus correlated
   transcript-page download. Its object-local SQL owns canonical parts, tool
   calls/results, active compaction, and the accumulated output checkpoint.
-- `BlockDashboardAgent` is a read-only direct derived-output channel. It
-  publishes queued/running/terminal state and a replaceable durable stream
-  checkpoint for exactly one configured block.
-
 Electron's header/detail/sidebar use one shared work-stream cache and one
 per-work-stream ledger keyed by authority generation plus separate common and
 viewer waterlines. The direct WorkstreamDO event gives an open work stream the
@@ -422,7 +394,7 @@ no list response becomes transcript authority.
 
 Cloudflare's WebSocket auto-response answers exact text `ping` frames with `pong`
 without waking a hibernated object. The SubstreamAgent feed jitters its heartbeat
-across 45–55 seconds; WorkspaceDO, WorkstreamDO, and BlockDashboardAgent use a
+across 45–55 seconds; WorkspaceDO and WorkstreamDO use a
 fixed 50-second interval. Every role closes after 15 seconds without `pong`,
 reconnects with equal-jitter exponential backoff capped at 30 seconds, pauses
 while offline, and resumes from its own topic waterline, metadata waterlines, feed
@@ -442,13 +414,6 @@ work-stream messages admit one complete Bind loop into their `SubstreamAgent`.
 The durable child dispatch row, attempt lease, receipts, and checkpoints recover
 2–30 minute loops and rare two-hour-plus coding sessions across eviction. Generic
 Cloudflare Workflows remain available for non-workstream loops and legacy drain.
-HyperSight uses the same Bind harness in a stable `BlockDashboardAgent` per
-block; WorkstreamDO coordinates it and no Workflow or Agents SDK loop is added.
-Each block agent streams revisioned full checkpoints directly to Electron while
-its panel is visible. The parent socket remains the authority for shared block
-configuration and viewer preference; terminal results settle into WorkstreamDO
-while the direct socket supplies queued/running progress and derived output.
-
 Supported regional work-stream runtimes may discover the deferred Terminal
 plugin. Loading it changes only Bind's prompt/tool surface; the first file,
 command, resource, or repository tool call lazily crosses the regional API into
@@ -492,8 +457,8 @@ execution. The loop overlaps safe reads, serializes writes, records execution pl
 and results, replays completed receipts, and stops rather than repeating an
 ambiguous external write.
 
-Run limits are caller-specific. Root ordinary work-stream and HyperSight runs
-enforce a 1,000-turn cap but no aggregate tool-call, model-cost, or task-scale
+Run limits are caller-specific. Root ordinary work-stream runs enforce a
+1,000-turn cap but no aggregate tool-call, model-cost, or task-scale
 wall-time ceiling. Their Durable Object execution owners combine a 30-second
 alarm keep-alive with durable dispatch and lease recovery rather than relying
 on a Workflow deadline.
@@ -765,7 +730,7 @@ it.
   events. Raw microphone audio and transcripts are not persisted by that bridge.
 - **A run stops rather than repeating an ambiguous external write.** Context,
   token, iteration, and streaming-watchdog limits terminate root runs;
-  HyperSight shares the root policy, while inline children and the other
+  inline children and the other
   bounded callers also enforce their explicit cost, tool-call, and wall-clock
   ceilings. The caller-specific numbers are in
   [`agent-harness.md`](agent-harness.md).
@@ -829,6 +794,19 @@ access and no-egress symbolication.
 [`security.md`](security.md) owns these boundaries.
 
 ## Changelog
+
+### 2026-09-03 — HyperSight is removed as a subsystem
+
+**What changed:** Rally no longer has a BlockDashboardAgent, HyperSight panel,
+configuration or refresh services, socket audience, model role, or stored
+runtime state.
+
+**Why:** The feature is being removed completely; a hidden or flag-disabled
+subsystem would still carry authority, migrations, and operational cost.
+
+**Consequences:** The durable hierarchy is WorkspaceDO to WorkstreamDO to
+SubstreamAgent. Forward migrations delete the retired object class and its
+object-local tables; historical migrations remain immutable evidence.
 
 ### 2026-09-01 — Existing-room sends stop crossing the workspace parent
 

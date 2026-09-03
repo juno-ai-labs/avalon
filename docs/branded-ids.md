@@ -25,7 +25,6 @@ confusions, found one at a time in production.
 | `HarnessRunId` | `asHarnessRunId` | A harness run's id |
 | `UserId` | `asUserId` | A user's id |
 | `SubstreamId` | `asSubstreamId` | `"0"` or a child substream id |
-| `BlockId` | `asBlockId` | A HyperSight block's id |
 
 A brand is zod's `.brand<...>()`: zero runtime representation, and the schema
 parse is the constructor. The `asX` casts **validate** — they parse, so a
@@ -61,6 +60,17 @@ between them. Fan-in plumbing helpers with broad mixed-provenance call sets
 through their callers.
 
 ## Changelog
+
+### 2026-09-03 — HyperSight identifiers leave the live contract
+
+**What changed:** Block, configuration, dashboard-run, and dashboard socket
+identifiers were removed with the feature contracts that consumed them.
+
+**Why:** Keeping brands for entities that cannot be created or addressed makes
+dead product concepts appear valid at API boundaries.
+
+**Consequences:** Previously persisted values remain historical data only; no
+live parser or route admits them as HyperSight entities.
 
 ### 2026-08-29 — Transcript turn identity is explicitly opaque
 

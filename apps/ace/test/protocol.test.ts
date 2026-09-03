@@ -100,7 +100,6 @@ describe('Ace managed flag protocol', () => {
 
   it('keeps every application boolean explicit about its enabled state', () => {
     expect(MANAGED_FLAGS.map((flag) => flag.key)).toEqual([
-      'hypersight-enabled',
       'meeting-recording-enabled',
       'suggested-work-enabled',
       'automation-workspace-templates-enabled',
@@ -130,7 +129,7 @@ describe('Ace managed flag protocol', () => {
 
   it('does not allow a raw email address attribute to reach Flagship', () => {
     expect(ManagedFlagUpdateSchema.safeParse({
-      key: 'hypersight-enabled', description: 'HyperSight', enabled: true, default_variation: 'off',
+      key: 'meeting-recording-enabled', description: 'Meeting recording', enabled: true, default_variation: 'off',
       rules: [{ priority: 1, conditions: [{ attribute: 'email', operator: 'equals', value: 'person@example.com' }], serve_variation: 'on' }],
     }).success).toBe(false);
   });
@@ -146,7 +145,7 @@ describe('Ace managed flag protocol', () => {
     expect(ManagedFlagUpdateSchema.safeParse(incomplete('')).success).toBe(false);
     expect(ManagedFlagUpdateSchema.safeParse(incomplete([])).success).toBe(false);
     expect(ManagedFlagUpdateSchema.safeParse({
-      key: 'hypersight-enabled', description: 'HyperSight Enabled', enabled: true,
+      key: 'meeting-recording-enabled', description: 'Meeting Recording Enabled', enabled: true,
       default_variation: 'off', rules: [{ priority: 1, conditions: [{
         logical_operator: 'AND', clauses: [],
       }], serve_variation: 'on' }],
@@ -159,7 +158,7 @@ describe('Ace managed flag protocol', () => {
       ? simple
       : { logical_operator: 'AND', clauses: [nested(levels - 1)] };
     const flag = (conditions: unknown) => ({
-      key: 'hypersight-enabled', description: 'HyperSight Enabled', enabled: true,
+      key: 'meeting-recording-enabled', description: 'Meeting Recording Enabled', enabled: true,
       default_variation: 'off', rules: [{ priority: 1, conditions: [conditions], serve_variation: 'on' }],
     });
 
@@ -181,9 +180,8 @@ describe('Ace managed model protocol', () => {
       { role: 'work_opportunity_admission', key: 'agent-model-work-opportunity-admission' },
       { role: 'work_opportunity_ranking', key: 'agent-model-work-opportunity-ranking' },
       { role: 'automation_result_disposition', key: 'agent-model-automation-result-disposition' },
-      { role: 'block_dashboard', key: 'agent-model-block-dashboard' },
     ]);
-    expect(MANAGED_MODELS.map((model) => model.rank)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+    expect(MANAGED_MODELS.map((model) => model.rank)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     expect(MANAGED_MODELS.every((model) => model.rankReason.length > 15)).toBe(true);
     expect(new Set(MANAGED_MODELS.map((model) => model.key)).size).toBe(MANAGED_MODELS.length);
     expect(MANAGED_MODELS.every((model) => model.description.length > 60)).toBe(true);
@@ -210,9 +208,8 @@ describe('Ace managed model protocol', () => {
   });
 
   it('offers Sol only to roles whose complete execution path is Azure-routed', () => {
-    expect(AZURE_ROUTED_MODEL_ROLES).toEqual(['inline_child', 'block_dashboard']);
+    expect(AZURE_ROUTED_MODEL_ROLES).toEqual(['inline_child']);
     expect(modelChoicesForRole('inline_child')).toContain(GPT_5_6_SOL_MODEL_ID);
-    expect(modelChoicesForRole('block_dashboard')).toContain(GPT_5_6_SOL_MODEL_ID);
     expect(modelChoicesForRole('workstream')).not.toContain(GPT_5_6_SOL_MODEL_ID);
     expect(modelChoicesForRole('addressing_classifier')).not.toContain(GPT_5_6_SOL_MODEL_ID);
 

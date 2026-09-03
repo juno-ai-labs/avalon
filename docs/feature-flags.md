@@ -82,7 +82,6 @@ Every model-using agent owns exactly one flag, keyed `agent-model-<agent>`:
 | Work-stream agent | `agent-model-workstream` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Inline subagent | `agent-model-inline-child` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Automation architect | `agent-model-automation-compiler` | `OPENROUTER_AUTOMATION_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
-| HyperSight block | `agent-model-block-dashboard` | `BLOCK_DASHBOARD_MODEL` (`apps/api/src/env.ts`) | none by default; a flag may add them |
 | Meeting notes | `agent-model-meeting-notes` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Addressing classifier | `agent-model-addressing-classifier` | `OPENROUTER_CLASSIFIER_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Work-stream naming | `agent-model-workstream-naming` | `OPENROUTER_CLASSIFIER_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
@@ -127,13 +126,6 @@ structured-inference gateway. The exhaustiveness checks on
 `AGENT_MODEL_FLAG_KEYS` and `defaultAgentModelRouting` catch a *role* that was
 declared and not wired, but nothing catches a new service that never declared
 one.
-
-HyperSight has no fallbacks by default. A block that routes onward can change
-voice between refreshes of one configuration, so routing is something an
-operator turns on for it deliberately rather than the state it starts in. That
-is now a **default rather than an invariant**: `agent-model-block-dashboard` may
-serve a `fallbackModels` and the resolver honours it exactly as it does for
-every other role.
 
 ### Flag value
 
@@ -197,8 +189,8 @@ above. The selector says so plainly: unpinned is its own menu entry, labelled
 model the renderer cannot know is being served.
 
 The pin carries **no fallbacks**. It is a request to observe one specific model,
-and routing onward would answer a question nobody asked — the same reasoning
-that keeps HyperSight pinned rather than routed.
+and routing onward would answer a question nobody asked. An explicit pin stays
+fixed rather than routed.
 
 That leaves a pinned run's route plan with nowhere to traverse when the provider
 faults, so recovery has to come from somewhere else: the harness re-executes the
@@ -208,8 +200,8 @@ whole run. [`agent-harness.md`](agent-harness.md#failure-modes-and-limits) owns
 the budget and the failure code. Do not answer a pinned run's provider outage by
 adding fallbacks here.
 
-It reaches only the work-stream agent. The inline subagent, the automation
-architect that drafts the automation, and HyperSight keep their own flags: each
+It reaches only the work-stream agent. The inline subagent and the automation
+architect that drafts the automation keep their own flags: each
 is a distinct agent, and the whole point of giving it a flag was that it can be
 moved on its own.
 
@@ -308,7 +300,7 @@ A caller supplies only these, and only what it knows:
 | `region` | `AVALON_REGION` — `global` or `eu` |
 | `appEnv` | `APP_ENV` |
 | `workspaceId` | Present wherever the caller knows it; the right key for percentage rollouts |
-| `workstreamId` | Present on work-stream, subagent, HyperSight, and classifier evaluations |
+| `workstreamId` | Present on work-stream, subagent, and classifier evaluations |
 | `userId` | Present on automation-compiler, meeting-notes, and work-stream naming evaluations |
 
 Identity wins over attributes: the loaded facts are spread underneath these, so
@@ -354,7 +346,7 @@ does not match, so such an account sits out the rollout rather than landing in
 the wrong half of it.
 
 `workspaceOwnerEmailDomain` exists because it is the only domain most
-evaluations can have. A work-stream run, a subagent, HyperSight, and the
+evaluations can have. A work-stream run, a subagent, and the
 classifiers carry no `userId` — nobody is asking, the workspace is — so without
 the owner's domain no rule could reach a customer's tenancy or the dogfooding
 workspaces on the paths that do the most inference.
@@ -473,7 +465,6 @@ behave. There are eight today:
 | Flag key | Type | Default | Decides |
 | --- | --- | --- | --- |
 | `developer-settings` | boolean | `false` | Whether Application → Developer exists on this device |
-| `hypersight-enabled` | boolean | `false` | Whether Electron shows HyperSight surfaces |
 | `meeting-recording-enabled` | boolean | `false` | Whether Electron shows meeting-recording actions |
 | `suggested-work-enabled` | boolean | `false` | Whether Electron shows Suggested Work surfaces |
 | `automation-workspace-templates-enabled` | boolean | `false` | Whether Electron shows workspace-template surfaces |
@@ -483,7 +474,7 @@ behave. There are eight today:
 | `control-tower-refresh-seconds` | number | `60` | How often a recording meeting commits a transcript segment and rewrites its Control Tower briefing |
 
 `GET /feature-flags` serves them all as one object — `{ "developerSettings":
-false, "hypersightEnabled": false, "meetingRecordingEnabled": false,
+false, "meetingRecordingEnabled": false,
 "suggestedWorkEnabled": false, "automationWorkspaceTemplatesEnabled": false,
 "digestsEnabled": true, "multipleWorkspacesEnabled": false,
 "controlTowerRefreshSeconds": 60 }` — resolved for the
@@ -525,7 +516,7 @@ controls for discovery and visibility, not authorization, entitlements, or
 server-side kill switches. A hidden Suggested Work surface may skip its own
 fetch and impressions because nothing was drawn, but the Suggested Work API
 remains available. The same rule applies to workspace-template,
-meeting-recording, HyperSight, and multiple-workspace operations. Turning the
+meeting-recording, and multiple-workspace operations. Turning the
 multiple-workspaces flag off hides the account-menu affordances; it does not
 collapse memberships or discard stored workspace credentials.
 
@@ -592,9 +583,7 @@ configuration changes can take
 The regional object evaluates after that delay; it does not trust a value from
 the administrative write response.
 
-HyperSight hides its header control and panel until the value is exactly true;
-because the panel is not mounted, its view-local query and sockets naturally do
-not run. Meeting recording hides its actions in the sidebar, macOS menu, and
+Meeting recording hides its actions in the sidebar, macOS menu, and
 meeting screen. Neither flag is checked by an API route or by the Electron IPC
 handler that performs an already-selected action.
 
@@ -693,9 +682,8 @@ choice *and* the flag, computed once in `desktopApplicationSettings()`:
   `client-feature-flags.ts` describes the person, evaluates the flag, and serves
   the answer; changing who is in is a flag change with a changelog entry, not a
   deploy.
-- **Product Boolean flag names explain true.** `hypersight-enabled` and
-  `meeting-recording-enabled` map to `hypersightEnabled` and
-  `meetingRecordingEnabled`; a bare or negatively named Boolean invites one
+- **Product Boolean flag names explain true.** `meeting-recording-enabled` maps
+  to `meetingRecordingEnabled`; a bare or negatively named Boolean invites one
   layer to invert another.
 - **A product-flag notification carries a key, never a value.** Two people in
   one workspace may match different rules, so WorkspaceDO evaluates each user
@@ -769,9 +757,6 @@ correctly provisioned flag.
   failed read there is a real defect rather than the expected local state.
 - **A pin naming a retired model logs `workstream_model_override_unknown` and
   returns to the flag**, rather than failing the run.
-- **A `fallbackModels` served to `agent-model-block-dashboard` is honoured**, like every
-  other role's. HyperSight's empty fallback list is the checked-in default, not a
-  resolver invariant.
 - **A clamped cadence logs `control_tower_refresh_flag_clamped`** rather than
   passing quietly.
 - **`harness_runs.model` is an expectation, not a guarantee.** It records the model
@@ -802,7 +787,7 @@ correctly provisioned flag.
 
 | Suite | Covers |
 | --- | --- |
-| `apps/api/test/agent-model-flags.test.ts` | Each resolver's failure direction, the four unresolved cases, the zod rejection, and that HyperSight honours its flag's fallbacks like every other role. |
+| `apps/api/test/agent-model-flags.test.ts` | Each resolver's failure direction, unresolved cases, and zod rejection. |
 | `apps/api/test/agent-model-override.test.ts` | Pin precedence, the closed id set validated on write and read, and the three run-creation paths that must copy the column. |
 | `apps/api/test/client-feature-flags.test.ts` | That everything but an explicit `true` resolves to off, and that the cadence is clamped to `CONTROL_TOWER_REFRESH_SECONDS`. |
 | `apps/api/test/digest-flags.test.ts` | That everything but an explicit `false` resolves to enabled — the one resolver in this table that fails toward `true`. |
@@ -856,8 +841,8 @@ count, an age, a schema-declared enum, an id, and an email domain — never a
 name, an address, or anything a person wrote. Widening that set is a data
 decision about both regions at once, not a local change to a loader.
 
-Ace automatically ensures all eleven `agent-model-*` JSON flags plus
-`hypersight-enabled`, `meeting-recording-enabled`, `suggested-work-enabled`,
+Ace automatically ensures all ten `agent-model-*` JSON flags plus
+`meeting-recording-enabled`, `suggested-work-enabled`,
 `automation-workspace-templates-enabled`, `multiple-workspaces-enabled`,
 `live-artifacts-enabled`, and `digests-enabled` exist on every
 merge-to-main deployment. It seeds model flags from the checked-in Worker
@@ -1137,6 +1122,17 @@ add it to the attribute table here. If it needs a read of its own, it needs a
 cache entry of its own — three reads is the standing budget for an evaluation.
 
 ## Changelog
+
+### 2026-09-03 — HyperSight flags and model selection are deleted
+
+**What changed:** The client feature flag, Block Dashboard model role, defaults,
+Ace editor entry, and runtime resolution were removed.
+
+**Why:** A flag is not a deletion boundary. Keeping one would preserve a
+configurable feature contract even when every visible consumer is gone.
+
+**Consequences:** Old flag values are ignored as unknown data and cannot
+reactivate the feature.
 
 ### 2026-09-02 — Gemini 3.8 Flash joins with the same access as 3.7 Flash
 

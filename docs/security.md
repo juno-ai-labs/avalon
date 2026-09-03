@@ -269,17 +269,15 @@ may reuse those values only when they exactly match request-scoped in-memory
 preparation revalidated against D1 during ticket transit and its local
 generation. Every upgrade still reads current regional maintenance authority;
 session/membership or local-visibility revocation fences or deletes preparation,
-and its absence restores the full regional admission check. HyperSight block tickets add
-the stable block ID and a distinct audience, so they cannot authorize a source
-feed or parent control socket. The ticket travels in
+and its absence restores the full regional admission check. The ticket travels in
 `Sec-WebSocket-Protocol` — the one handshake header a browser will set, through
 the `WebSocket` constructor's `protocols` argument — as the sentinel
 `rally.ticket.v1` followed by the ticket. Current clients never place it in the
 query string: Cloudflare records whole request URLs into the invocation log, the
 Logpush export, and trace spans, and no redaction in this repository can reach
 them. Legacy workspace/work-stream/substream/dictation issuers retain a query
-field only for old desktop compatibility; the new HyperSight issuer returns a
-clean URL, and the current renderer strips any legacy field before opening. The
+field only for old desktop compatibility, and the current renderer strips any
+legacy field before opening. The
 server echoes only the sentinel, never the ticket, because a selected subprotocol
 is a response header. [`realtime-sockets.md`](realtime-sockets.md) owns the
 admission path.
@@ -608,7 +606,7 @@ bound it on the thing a placeholder cannot fake, and add the bound to
   the invocation log, the Logpush export, and trace spans, and no redaction in
   this repository can reach them. Legacy issuer response fields exist only for
   old desktop compatibility and must be removed at the declared compatibility
-  cutoff rather than copied to HyperSight or any later role.
+  cutoff rather than copied to any later role.
 - **A prepared feed admission is usable only by its exact signed ticket and
   object authority generation.** It is in memory, never a second durable
   credential; it is revalidated against D1 during ticket transit, natural
@@ -772,6 +770,17 @@ EU rotate independently. [`runbook.md`](runbook.md) owns the procedure and the
 incident response that may prompt it.
 
 ## Changelog
+
+### 2026-09-03 — HyperSight no longer defines an authority surface
+
+**What changed:** Dashboard ticket claims, object access paths, feature-specific
+model execution, and preference/configuration mutations were removed.
+
+**Why:** Leaving authorization code for a deleted feature creates a shadow
+surface that is harder to audit than either a live feature or no feature.
+
+**Consequences:** The existing workspace, work-stream, and substream authority
+boundaries remain; revocation no longer traverses a dashboard child.
 
 ### 2026-09-03 — An inbound-email run is no longer read-only
 
