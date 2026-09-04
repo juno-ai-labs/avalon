@@ -1531,7 +1531,8 @@ describe("a member's message travels the whole pipeline", () => {
         JSON.stringify({
           region: "global",
           workspaceId: WORKSPACE_ID,
-          workstreamId: WORKSTREAM_ID,
+          parentKind: "workstream",
+          parentId: WORKSTREAM_ID,
           substreamId: "0",
           loopId: initial.loop_id,
           harnessRunId: executionId,
@@ -2032,12 +2033,15 @@ describe("a member's message travels the whole pipeline", () => {
     };
     expect((await child.bootstrapRuntime({
       workspaceId: WORKSPACE_ID,
-      workstreamId: WORKSTREAM_ID,
+      parentKind: "workstream",
+      parentId: WORKSTREAM_ID,
+      substreamId,
       generation: 1,
     })).status).toBe(200);
     expect((await child.executeIdentityOperation({
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
+      substreamId,
       operation: "provision",
       args: [{
         title: "Child conversation",

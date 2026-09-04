@@ -1235,7 +1235,6 @@ export function testSubstreamAgentsBinding(
       args: unknown[];
     }) => testIdentityOperationStub(storeFor(input.workstreamId, input.workspaceId))(input)),
     refreshTimerAlarm: vi.fn(() => ({ status: 200, bodyJson: "{}" })),
-    flushEffectsToWorkstreamDO: vi.fn(() => ({ status: 200, bodyJson: "{}" })),
     handleProductRequest: vi.fn((request: { operation: string } & Record<string, unknown>) => {
       const handler = options.product?.[request.operation];
       if (!handler) throw new Error(`unstubbed product operation: ${request.operation}`);

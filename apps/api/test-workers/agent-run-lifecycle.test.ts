@@ -122,7 +122,7 @@ describe("admitting a subordinate execution receipt", () => {
     });
 
     await expect(activate(stub, runInput(RUN_A, {
-      workstreamId: "00000000-0000-7000-8000-0000000004ff",
+      parentId: "00000000-0000-7000-8000-0000000004ff",
     }))).resolves.toMatchObject({
       status: 409,
       payload: { error: "substream_run_identity_mismatch" },
