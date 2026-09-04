@@ -102,6 +102,7 @@ import {
 import { z } from "zod";
 import { automationDOName, conversationObjectName, workspaceDOName, workstreamDOName } from "../durable-objects/names";
 import { createAutomation } from "./automation-service";
+import { ResourceService } from "./resource-service";
 import type { TranscriptCompactionContinuation } from "../durable-objects/workstream-transcript-storage";
 import { rpcResultBody } from "../durable-objects/rpc-result";
 import { WorkspaceConnectorEventSchema } from "../durable-objects/workspace-connector-event-protocol";
@@ -1750,6 +1751,60 @@ function createAvalonAutomationsPlugin(
     // Telemetry only: the diagnostics these tools emit name the model that
     // produced the arguments, and a work-stream run does not fix one here.
     model: "",
+    draftResearchPort: {
+      // The people a rule may name, from the workspace's active members. The
+      // ids are remembered by the plugin so a submitted rule can only name
+      // someone the model actually looked up.
+      searchPeople: async (query: string) => {
+        const term = `%${query.trim().toLowerCase()}%`;
+        const rows = await env.DB.prepare(
+          `SELECT u.id, u.name, u.email
+             FROM workspace_members m
+             JOIN users u ON u.id = m.user_id
+            WHERE m.workspace_id = ? AND m.status = 'active'
+              AND (LOWER(u.name) LIKE ? OR LOWER(u.email) LIKE ?)
+            ORDER BY u.name COLLATE NOCASE
+            LIMIT 10`,
+        ).bind(input.workspaceId, term, term).all<{ id: string; name: string; email: string }>();
+        return { people: (rows.results ?? []).map((row) => ({ id: row.id, name: row.name, email: row.email })) };
+      },
+      // The resources a watch trigger may name, seen as the person the run acts
+      // for, with the plugin each one is reached through.
+      searchResources: async (query: string) => {
+        if (!authorUserId) throw new Error("automation_draft_author_unavailable");
+        const membership = await env.DB.prepare(
+          `SELECT role FROM workspace_members WHERE workspace_id = ? AND user_id = ? AND status = 'active'`,
+        ).bind(input.workspaceId, authorUserId).first<{ role: "owner" | "admin" | "member" }>();
+        if (!membership) throw new Error("automation_draft_author_unavailable");
+        const page = await new ResourceService(env, {
+          sessionId: `run:${input.harnessRunId}`,
+          userId: asUserId(authorUserId),
+          workspaceId: asWorkspaceId(input.workspaceId),
+          region: input.region,
+          role: membership.role,
+          analyticsWorkspaceId: null,
+        }).list({ query, limit: 10 });
+        const connectionIds = [...new Set(page.items.map((item) => item.connectionId).filter((id): id is string => id !== null))];
+        const plugins = new Map<string, string>();
+        if (connectionIds.length > 0) {
+          const rows = await env.DB.prepare(
+            `SELECT id, model_plugin_id FROM connector_connections
+              WHERE workspace_id = ? AND id IN (${connectionIds.map(() => "?").join(", ")})`,
+          ).bind(input.workspaceId, ...connectionIds).all<{ id: string; model_plugin_id: string | null }>();
+          for (const row of rows.results ?? []) if (row.model_plugin_id) plugins.set(row.id, row.model_plugin_id);
+        }
+        return {
+          resources: page.items.map((item) => ({
+            id: item.id,
+            title: item.title,
+            resourceType: item.resourceType,
+            provider: item.provider,
+            pluginId: item.connectionId === null ? null : plugins.get(item.connectionId) ?? null,
+            sourceBindingKeys: [],
+          })),
+        };
+      },
+    },
     automationDirectoryPort: {
       // What this conversation may edit, with the definition an edit starts
       // from: a room's own automations, or the automation whose conversation
@@ -1938,7 +1993,12 @@ async function loadAutomationCreatorPluginCatalog(
           granted.has(definition.capability)
           && connectorCapabilitySupportsScope(adapter, definition.capability, scope)
         ));
-    if (!dynamicCapability && !staticDefinitions.length) continue;
+    // A connection earns its catalog entry by what an automation can do with
+    // it: call its tools, or be started by its events. A generic webhook has
+    // no tools by design and exists only to be a trigger, so a filter on
+    // tools alone made every webhook automation impossible to draft.
+    const eventCapable = adapter.manifest.activityTriggers.length > 0 || Boolean(adapter.webhookActivity);
+    if (!dynamicCapability && !staticDefinitions.length && !eventCapable) continue;
     const frozen: FrozenConnectorPlugin = {
       pluginId: `connection:${connectionId}`,
       modelPluginId,

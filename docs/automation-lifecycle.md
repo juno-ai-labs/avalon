@@ -539,6 +539,32 @@ production inspection paths.
 
 ## Changelog
 
+### 2026-09-04: A webhook can start an automation, and the drafting agent can look things up
+
+**What changed:** `loadAutomationCreatorPluginCatalog` keeps a connection whose
+connector is event-capable (`manifest.activityTriggers` or a `webhookActivity`
+source) even when it exposes no tools; a generic webhook has no tools by
+design and was dropped from the catalog, so no webhook-triggered automation
+could be drafted anywhere. The drafting plugin's `people_search` and
+`resources_search` now have a host: workspace members from D1, and the
+resource list the person the run acts for can see, each resource with the
+plugin its connection is reached through. A `workstream`-scoped automation's
+author manages it alongside the room's participants, since the directory row
+that names those participants lands through the effect queue and a card that
+says "accept" was refused while it was in flight. `matchExternalEventDestinations`
+logs `external_event_matched` with the delivery count, so a non-match is no
+longer silent.
+
+**Why:** Found by driving the routing path on a running stack: the ingest and
+dedupe half worked, the drafting half could not name the webhook, and the two
+research tools had thrown `automation_draft_research_host_unavailable` since
+the compiler host they were written for was deleted.
+
+**Consequences:** A catalog entry can carry no tools and still be inspected
+and bound as a trigger source. The manager rule for a room's automation is
+participant or author; a person who leaves the room keeps managing what they
+asked for until the room's participants change it.
+
 ### 2026-09-04: A room can edit an automation it owns
 
 **What changed:** `submit_draft` accepts an `automationId` beside the draft,
