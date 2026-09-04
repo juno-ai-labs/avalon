@@ -53,6 +53,7 @@ import {
 import { HttpUrlSchema } from "@rally/contracts/url-schemas";
 import {
   AutomationActivationV1Schema,
+  AutomationDetailSchema,
   ModelPluginIdSchema,
   ToolDefinitionSchema,
   WorkstreamReadResourceOutputSchema,
@@ -1749,12 +1750,78 @@ function createAvalonAutomationsPlugin(
     // Telemetry only: the diagnostics these tools emit name the model that
     // produced the arguments, and a work-stream run does not fix one here.
     model: "",
-    draftMutationPort: {
-      submitDraft: async (draft: AutomationDraft) => {
+    automationDirectoryPort: {
+      // What this conversation may edit, with the definition an edit starts
+      // from: a room's own automations, or the automation whose conversation
+      // this is. Read as the person the run acts for, so a room's list is the
+      // one that person could open.
+      listAutomations: async () => {
         if (!authorUserId) throw new Error("automation_draft_author_unavailable");
-        // A room's draft creates the automation on its first submission, owned
-        // by the room; the automation's own conversation already has one.
-        if (input.parentKind !== "automation") {
+        const workspaceId = asWorkspaceId(input.workspaceId);
+        const actor = { userId: asUserId(authorUserId), participantOfOwningWorkstream: true };
+        const ids: string[] = [];
+        if (input.parentKind === "automation") {
+          ids.push(authoredAutomationId);
+        } else {
+          const workspace = await durableObjectStubForWorkspace(
+            env,
+            env.WORKSPACE_DOS,
+            workspaceId,
+            workspaceDOName(env.AVALON_REGION, workspaceId),
+          );
+          const owned = await workspace.listWorkstreamAutomations({
+            workspaceId,
+            workstreamId: input.parentId,
+            userId: asUserId(authorUserId),
+          });
+          ids.push(...owned.items.map((item) => item.id));
+        }
+        const automations = await Promise.all(ids.map(async (automationId) => {
+          const detail = AutomationDetailSchema.parse(await (await durableObjectStubForWorkspace(
+            env,
+            env.AUTOMATION_DOS,
+            workspaceId,
+            automationDOName(env.AVALON_REGION, workspaceId, asAutomationId(automationId)),
+          )).readDetail({ workspaceId, automationId: asAutomationId(automationId), actor }));
+          return {
+            automationId: detail.id,
+            name: detail.name,
+            description: detail.description,
+            lifecycle: detail.lifecycle,
+            scope: detail.scope,
+            currentDefinitionRevision: detail.currentDefinitionRevision,
+            acceptedDefinitionRevision: detail.acceptedDefinitionRevision,
+            currentDefinition: detail.currentDefinition,
+          };
+        }));
+        return { automations };
+      },
+    },
+    draftMutationPort: {
+      submitDraft: async (draft: AutomationDraft, _context, target) => {
+        if (!authorUserId) throw new Error("automation_draft_author_unavailable");
+        // Where the draft goes. An automation's own conversation edits only
+        // itself. A room edits one it owns when the model names it, and
+        // otherwise creates one on the first submission, owned by the room.
+        let targetId = authoredAutomationId;
+        if (target.automationId !== null) {
+          if (input.parentKind === "automation") {
+            if (target.automationId !== authoredAutomationId) {
+              throw new Error("This conversation can only change its own automation; omit automationId");
+            }
+          } else {
+            const owned = await (await durableObjectStubForWorkspace(
+              env,
+              env.WORKSPACE_DOS,
+              asWorkspaceId(input.workspaceId),
+              workspaceDOName(env.AVALON_REGION, asWorkspaceId(input.workspaceId)),
+            )).automationOwner({ workspaceId: asWorkspaceId(input.workspaceId), automationId: target.automationId });
+            if (owned.owningWorkstreamId !== input.parentId) {
+              throw new Error("That automation is not one this work stream owns; call automations_list for the ones it can change");
+            }
+            targetId = asAutomationId(target.automationId);
+          }
+        } else if (input.parentKind !== "automation") {
           await createAutomation(env, {
             workspaceId: input.workspaceId,
             authorUserId,
@@ -1767,11 +1834,11 @@ function createAvalonAutomationsPlugin(
           env,
           env.AUTOMATION_DOS,
           asWorkspaceId(input.workspaceId),
-          automationDOName(env.AVALON_REGION, asWorkspaceId(input.workspaceId), authoredAutomationId),
+          automationDOName(env.AVALON_REGION, asWorkspaceId(input.workspaceId), targetId),
         );
         const submitted = await automation.submitDefinition({
           workspaceId: asWorkspaceId(input.workspaceId),
-          automationId: authoredAutomationId,
+          automationId: targetId,
           draft,
           evaluatorRules: draftState.evaluatorRules,
           submittedByRunId: input.harnessRunId,
@@ -1795,7 +1862,7 @@ function createAvalonAutomationsPlugin(
           card: {
             type: "automation_draft_proposed",
             schemaVersion: 1,
-            automationId: authoredAutomationId,
+            automationId: targetId,
             automationName: draft.name,
             description: draft.description,
             triggerSummaries: draft.triggers.map(automationTriggerLine),
