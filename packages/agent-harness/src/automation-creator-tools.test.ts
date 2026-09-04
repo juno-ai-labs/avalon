@@ -275,3 +275,102 @@ describe("submitting a draft that needs evaluator rules", () => {
     }, toolContext)).resolves.toMatchObject({ output: { accepted: true } });
   });
 });
+
+describe("set_evaluator_rules and a resource the rule is not about", () => {
+  const pageCreated = {
+    eventType: "notion.page.created",
+    label: "Page created",
+    description: "A page was created.",
+    eventFamilies: [],
+    filterFields: [],
+    resourceRelationships: [{ relationship: "page" as const, resourceType: "notion_page" }],
+    digestible: true,
+  };
+
+  function ruleHost(resolvedResources: AutomationCreatorToolHost["resolvedResources"] = new Map()) {
+    const staged: unknown[] = [];
+    const state = host({
+      catalog: [{
+        pluginId: "plugin_notion",
+        displayName: "Notion",
+        icon: "brand-notion",
+        description: "Notion pages.",
+        scope: "workspace",
+        searchAliases: [],
+        systemMessage: "",
+        activityTriggers: [pageCreated],
+        tools: [],
+      }],
+      inspectedPluginIds: new Set(["plugin_notion"]),
+      loadedPluginIds: new Set(["plugin_notion"]),
+      resolvedResources,
+      draftMutationPort: {
+        submitDraft: async () => ({ accepted: true as const }),
+        setEvaluatorRules: async (rules) => {
+          staged.push(rules);
+          return { accepted: true as const };
+        },
+      },
+    });
+    return { state, staged };
+  }
+
+  function rule(resourceId?: string) {
+    return {
+      schemaVersion: 1,
+      evaluators: [{
+        evaluatorKey: "page_created",
+        source: {
+          sourceBindingKey: "notion_source",
+          suggestedSourcePluginId: "plugin_notion",
+          ...(resourceId === undefined ? {} : { resourceId }),
+          event: { kind: "event_type", eventType: "notion.page.created" },
+        },
+        when: { kind: "always" },
+      }],
+    };
+  }
+
+  it("treats the nil and max UUIDs as no resource rather than an unknown one", async () => {
+    const { state, staged } = ruleHost();
+    const tools = createAutomationsPlugin(state).tools;
+
+    // Some models fill every declared property; `resourceId` is optional and
+    // the sentinel is what they reach for. It passed the id pattern, so the
+    // rule was refused for a resource the rule never needed.
+    for (const sentinel of ["00000000-0000-0000-0000-000000000000", "FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF", ""]) {
+      await expect(toolNamed(tools, "set_evaluator_rules").execute(rule(sentinel), toolContext))
+        .resolves.toMatchObject({ output: { accepted: true } });
+    }
+    expect(staged).toHaveLength(3);
+    for (const rules of staged) {
+      expect((rules as { evaluators: Array<{ source: Record<string, unknown> }> }).evaluators[0]!.source)
+        .not.toHaveProperty("resourceId");
+    }
+  });
+
+  it("still refuses an id that names a resource nobody searched for", async () => {
+    const { state, staged } = ruleHost();
+    const tools = createAutomationsPlugin(state).tools;
+
+    await expect(toolNamed(tools, "set_evaluator_rules")
+      .execute(rule("11111111-1111-4111-8111-111111111111"), toolContext))
+      .rejects.toThrow(/not one this plugin can watch/u);
+    expect(staged).toHaveLength(0);
+  });
+
+  it("accepts a searched resource whose plugin matches even when the search named no binding keys", async () => {
+    const { state, staged } = ruleHost(new Map([[
+      "22222222-2222-4222-8222-222222222222",
+      { pluginId: "plugin_notion", resourceType: "notion_page", sourceBindingKeys: [] },
+    ]]));
+    const tools = createAutomationsPlugin(state).tools;
+
+    // A search result that names binding keys narrows the check; one that
+    // names none is not a refusal of every binding key.
+    await expect(toolNamed(tools, "set_evaluator_rules")
+      .execute(rule("22222222-2222-4222-8222-222222222222"), toolContext))
+      .resolves.toMatchObject({ output: { accepted: true } });
+    expect(staged).toHaveLength(1);
+  });
+});

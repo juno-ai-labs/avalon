@@ -11,7 +11,7 @@ import { zValidator } from "@hono/zod-validator";
 import type { Env } from "../env";
 import { automationDOName, workspaceDOName } from "../durable-objects/names";
 import { ApiError } from "../lib/api-error";
-import { uuidV7 } from "../lib/uuid-v7";
+import { sha256Hex } from "../lib/crypto";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import {
   bootstrapWorkstreamRuntimeEnvironment,
@@ -422,6 +422,12 @@ const SyntheticConnectorEventBodySchema = z.strictObject({
   }),
 });
 
+/** A UUID-shaped id from a hash, so the same event always gets the same id. */
+function syntheticActivityId(hex: string): string {
+  const digits = hex.replace(/[^0-9a-f]/giu, "").padEnd(32, "0").slice(0, 32);
+  return `${digits.slice(0, 8)}-${digits.slice(8, 12)}-4${digits.slice(13, 16)}-8${digits.slice(17, 20)}-${digits.slice(20, 32)}`;
+}
+
 const SyntheticConnectorEventResultSchema = z.strictObject({
   activityId: z.string().uuid(),
   enqueued: z.literal(true),
@@ -433,7 +439,12 @@ devRoutes.post("/connector-events", zValidator("json", SyntheticConnectorEventBo
   }
   const body = c.req.valid("json");
   const now = new Date().toISOString();
-  const activityId = uuidV7();
+  // The same provider event id is the same event: a replay must carry the
+  // identity the first delivery had, or the ledger refuses it as a reuse.
+  // Callers replaying an event pass the same occurredAt too.
+  const activityId = syntheticActivityId(await sha256Hex(
+    `${body.workspaceId}:${body.connectorType}:${body.activity.connectionId}:${body.activity.providerEventId}`,
+  ));
   await enqueueWorkspaceConnectorEvent(c.env, {
     connectorType: body.connectorType,
     activity: {
