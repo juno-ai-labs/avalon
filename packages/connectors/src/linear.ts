@@ -78,28 +78,14 @@ export const LinearCapabilityScopes = {
 /**
  * The one page cursor every paginated Linear tool takes, as the model reads it.
  *
- * Both halves matter and only together. The description says where the value
- * comes from, because a cursor is the argument whose value cannot be reasoned
- * out from its name and its bounds. The `anyOf` spelling makes "no cursor"
- * expressible as a value, because `minLength: 1` otherwise reads as a floor the
- * caller has to clear and it invents something that clears it.
- *
- * `GOOGLE_PAGE_TOKEN_SCHEMA` in [`index.ts`](index.ts) carries the measurements
- * behind both, including the run that kept inventing values with the
- * description in front of it four times over. The flat
- * `type: ["string", "null"]` this used to carry is inert: Bind's
- * `sanitizeToolSchema` collapses it to `type: "string"` and moves the
- * nullability into the description, so the caller reads a schema forbidding the
- * value beside prose permitting it.
- *
- * "Other arguments unchanged" carries over from that same constant. A relay
- * cursor is a position within the connection it was issued for, so pairing one
- * with changed filters is not a defined continuation of anything; what Linear
- * returns for that pairing has not been measured here, and the instruction
- * exists so nobody has to find out from a run.
- *
- * The last page is `pageInfo.hasNextPage: false` rather than a missing
- * `endCursor`, which Linear still returns on the final page.
+ * `GOOGLE_PAGE_TOKEN_SCHEMA` in [`index.ts`](index.ts) has why the description
+ * and the `anyOf` spelling are one rule rather than two, and the run that
+ * measured it. Two facts are Linear's own: the last page is
+ * `pageInfo.hasNextPage: false` rather than a missing `endCursor`, which Linear
+ * still returns on the final page; and "other arguments unchanged" is asked for
+ * because a relay cursor is a position within the connection it was issued for,
+ * so pairing one with changed filters is not a defined continuation of
+ * anything. What Linear returns for that pairing has not been measured here.
  */
 const LINEAR_CURSOR_SCHEMA = {
   anyOf: [{ type: "string", minLength: 1, maxLength: 500 }, { type: "null" }],

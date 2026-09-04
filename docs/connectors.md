@@ -708,6 +708,8 @@ configuration that was actually established.
 
 Every rule below was learned from a defect in production or in review, and each names the failure that produced it. A new adapter is expected to satisfy all of them; several are enforced by the compiler or by `apps/api/test/connector-credential-freshness.test.ts`, which enumerates the registry so a connector is enrolled by existing rather than by someone remembering it.
 
+**A pagination cursor says what to send when there is none, and spells that value `anyOf`.** Every cursor names the result field it is copied from, states that it is opaque and never constructed, and declares `anyOf: [{string, minLength: 1}, {null}]`, which is the only spelling Bind's sanitizer delivers intact. Both halves are enforced by `apps/api/test/tool-argument-empty-strings.test.ts` and `apps/api/test/tool-schema-sanitization.test.ts`, which enumerate the registry through `apps/api/test/helpers/connector-cursors.ts` so a connector is enrolled by existing; a cursor named outside `CURSOR_PARAMETERS` is the one case still enrolled by someone remembering. *A run told to read a shared Drive folder invented `"/"`, `"1"`, and `"next"` for `pageToken` across eight calls, each rejected whole by Google, and then answered from public web search instead; the description added first did not stop it, because `minLength: 1` reads as a floor to clear when nothing says absence is expressible.*
+
 **Never refuse an incoming request because a stored status says the connection is unhealthy.** Gate on `disabled` — a person's decision — and on nothing else; see [Stored status is a belief, not a gate](#stored-status-is-a-belief-not-a-gate). *A Slack installation refused sixteen hours of events, unfurls, identity links and automation deliveries without once asking Slack whether the grant still worked, and overwrote the accurate diagnosis of its own failure while doing so.*
 
 **Never reach a provider with a credential nobody refreshed.** Enforced structurally: provider-calling entry points take `AuthorizedConnectorConnection`, which only the credential door can mint. *A Granola personal connection became unloadable minutes after it was connected, reporting `plugin_not_authorized` while the connections screen showed it healthy, because `load_plugin` revalidation health-checked it without refreshing first.*
@@ -922,9 +924,23 @@ the cursor property: the other collapsed branches on those same tools are the
 backlog counted below and are not converted here.
 `tool-argument-empty-strings.test.ts` gains the matching sweep for a cursor with
 no description, reading it off the property rather than the string branch, since
-under `anyOf` the description and the constraints sit on different nodes.
+under `anyOf` the description and the constraints sit on different nodes. Both
+sweeps read cursors through one shared helper, because two copies kept in step
+by hand diverged on the first edit that touched only one of them.
 
-**Why:** The two entries below fixed Google's four and recorded what remained:
+Slack's `search` and `search_messages` now report a last page as
+`next_cursor: null` rather than passing the provider's `""` through, which is
+the repair `boundXPage` already makes for X. Without it those two tools would
+carry a description whose stop condition the caller never sees: a blank cursor
+reads as another page, cannot be sent back because the string branch rejects
+it, and the caller either invents a token or sends `null` and re-fetches page
+one forever. An earlier revision of this change instead described the last page
+as "no `next_cursor`", on the reading that these tools leave the key absent.
+They do not, and a description is not the place to record a provider's quirk
+that a normalizer can remove.
+
+**Why:** The two Google cursor entries below fixed that connector's four and
+recorded what remained:
 46 authored null branches across five connectors, still collapsed to
 `type: "string"` with the nullability moved into prose. 18 of those are the
 cursors converted here. That is the
@@ -960,7 +976,7 @@ they stay declared as type arrays, and the widened assertion passes over them
 because it filters to the cursor property, so converting them stays a deliberate
 change rather than something this guard forces. That count comes from running
 `droppedNullableBranches` over the registry, not from subtracting 18 from the
-46 the entry below recorded. A connector adding a
+46 those entries recorded. A connector adding a
 paginated tool now has two guards to satisfy rather than one, and both name the
 connector, tool, and parameter when they fail. Slack keeps two cursor constants
 because its two searches bound the string at 2,000 characters and its three
