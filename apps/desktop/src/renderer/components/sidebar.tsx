@@ -56,6 +56,7 @@ import {
 import type { AutomationSummary, NoteSummary, Workspace, WorkspaceMember, WorkstreamSummary } from '../lib/types';
 import { MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, useUiStore } from '../lib/ui-store';
 import { useDebugEnabled } from '../lib/use-debug-enabled';
+import { DeleteAutomationDialog } from './delete-automation-dialog';
 import { Avatar, AvatarStack, Badge, Button, IconButton, InlineError, Modal, StatusDot, TitleSkeleton } from './primitives';
 import { ProjectIcon, ProjectSidebarSection } from './project-sidebar-section';
 import { SidebarSkeletonGroup, SidebarSkeletonRows } from './sidebar-skeleton';
@@ -1080,8 +1081,6 @@ export function Sidebar({
   const [batchPreviewFailed, setBatchPreviewFailed] = useState(false);
   const batchPreviewGeneration = useRef(0);
   const [deleteTarget, setDeleteTarget] = useState<AutomationSummary | null>(null);
-  const [deleting, setDeleting] = useState(false);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
   // Drafts are listed with the rest: a draft is a conversation in progress on
   // the automation's own screen, which is where its row leads.
   const orderedAutomations = automations;
@@ -1232,26 +1231,6 @@ export function Sidebar({
     setRenameTarget(workstream);
     setRenameTitle(workstream.title);
     setRenameError(null);
-  };
-
-  const closeDelete = (): void => {
-    if (deleting) return;
-    setDeleteTarget(null);
-    setDeleteError(null);
-  };
-
-  const submitDelete = async (): Promise<void> => {
-    if (!deleteTarget) return;
-    setDeleting(true);
-    setDeleteError(null);
-    try {
-      await onDeleteAutomation(deleteTarget);
-      setDeleteTarget(null);
-    } catch (error) {
-      setDeleteError(error instanceof Error ? error.message : 'The automation could not be deleted.');
-    } finally {
-      setDeleting(false);
-    }
   };
 
   const closeArchiveNote = (): void => {
@@ -2137,41 +2116,11 @@ export function Sidebar({
         <p className="modal-copy">{menuError?.copy}</p>
         {menuError && <InlineError>{menuError.message}</InlineError>}
       </Modal>
-      <Modal
-        footer={(
-          <>
-            <Button disabled={deleting} onClick={closeDelete}>Cancel</Button>
-            <Button className="button-danger" disabled={deleting} onClick={() => void submitDelete()}>
-              Delete
-            </Button>
-          </>
-        )}
-        onOpenChange={(open) => {
-          if (!open) closeDelete();
-        }}
-        open={Boolean(deleteTarget)}
-        title={deleteTarget?.status === 'draft' ? 'Delete draft' : 'Delete automation'}
-      >
-        <p className="modal-copy">
-          {deleteTarget?.status === 'draft' ? (
-            <>
-              <strong>{deleteTarget.name}</strong> and the conversation that was writing it are
-              deleted for good. Rally has no way to bring a draft back.
-            </>
-          ) : (
-            <>
-              {/* What the API does, rather than the reassurance this
-                  said before it: deleting enqueues an archive for
-                  every work stream the automation's runs created, so
-                  the runs leave with it. */}
-              <strong>{deleteTarget?.name}</strong> stops running and leaves the sidebar for good.
-              Every past run — and the work stream each one created — is archived with it, and
-              Rally has no way to bring them back.
-            </>
-          )}
-        </p>
-        {deleteError && <InlineError>{deleteError}</InlineError>}
-      </Modal>
+      <DeleteAutomationDialog
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={() => deleteTarget ? onDeleteAutomation(deleteTarget) : Promise.resolve()}
+        target={deleteTarget}
+      />
     </>
   );
 }
