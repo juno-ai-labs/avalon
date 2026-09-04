@@ -829,3 +829,75 @@ describe('composer queue preview', () => {
     }
   });
 });
+
+/**
+ * The window's own buttons are drawn over the page on macOS, and the sidebar's
+ * 48px title bar is what normally holds anything readable clear of them. Below
+ * 921px the sidebar leaves the flow for a drawer, and the work-stream and
+ * automation headers slide under the traffic lights — where the title is both
+ * illegible and unclickable, since the buttons are chrome above the web
+ * contents and take the press. `docs/assumptions.md` item 25 is the rule.
+ *
+ * Nothing in a component test can see it: the DOM is identical either way, and
+ * the defect is entirely in resolved layout against chrome jsdom does not draw.
+ */
+describe('window-control gutter while the sidebar is a drawer', () => {
+  it('defaults the inset to nothing, so only macOS pays for the band', () => {
+    const root = rule(':root');
+    const overlay = rule('.workspace-shell.has-overlay-window-controls');
+
+    expect(root).not.toBeNull();
+    expect(overlay).not.toBeNull();
+    expect(root).toContain('--window-controls-inset: 0px;');
+    expect(overlay).toContain('--window-controls-inset: 82px;');
+  });
+
+  // 82px is the traffic lights' own geometry: three 12px buttons on a 20px
+  // pitch from `trafficLightPosition` x: 18, ending at 70, plus 12px of air.
+  // `max()` rather than the token alone so the 8px the narrow layout already
+  // used survives on the platforms where the inset is zero.
+  it('starts the collapsed headers after the band rather than under it', () => {
+    const collapsed = stylesheet.match(/@media \(max-width: 920px\) \{([\s\S]*?)\n\}/u)?.[1];
+    expect(collapsed).toBeDefined();
+
+    const headers = ruleWithin(collapsed!, '.workstream-header,\n  .automation-overview-header');
+    expect(headers).not.toBeNull();
+    expect(headers).toContain('padding-left: max(8px, var(--window-controls-inset));');
+  });
+
+  /**
+   * The drawer button keeps its whole hit target however little room is left.
+   *
+   * It is the only way back to the navigation at this width, and it sits in a
+   * flex row that also holds a title with `min-width: 0`. Left to shrink it
+   * loses width to the title before the title truncates, and with the right
+   * rail open at the window's 860px minimum there is little to give.
+   */
+  it('never lets the drawer button shrink out of its hit target', () => {
+    const button = rule('.header-menu-button');
+    expect(button).not.toBeNull();
+    expect(button).toContain('flex: 0 0 auto;');
+  });
+
+  /**
+   * The one coupling nothing else would notice.
+   *
+   * A stylesheet rule keyed on a class no component writes is inert, and the
+   * symptom is this change's defect returning on macOS alone — the platform
+   * none of this suite runs on. The class is asserted where it is *produced*,
+   * so an inverted mapping fails `windowControlsShellClass`'s own test rather
+   * than passing a grep for the literal. What is left for here is that the
+   * stylesheet and that helper name the same class. Read from disk rather than
+   * imported for the reason at the top of this file.
+   */
+  it('is keyed on the class the shell actually produces', () => {
+    const shell = readFileSync(resolve(process.cwd(), 'src/renderer/components/app-shell.tsx'), 'utf8');
+    const produced = /return platform === 'darwin' \? '([a-z-]+)' : '';/u.exec(shell)?.[1];
+
+    expect(produced).toBe('has-overlay-window-controls');
+    expect(rule(`.workspace-shell.${produced!}`)).not.toBeNull();
+    // And that the shell hands it the platform rather than calling it with
+    // something that is never 'darwin'.
+    expect(shell).toContain('windowControlsShellClass(runtime?.platform)');
+  });
+});
