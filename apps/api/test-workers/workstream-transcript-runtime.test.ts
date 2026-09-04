@@ -68,7 +68,8 @@ describe("work-stream transcript on workerd SQLite", () => {
     const workflowInput = WorkstreamWorkflowInputSchema.parse({
       region: "global",
       workspaceId: WORKSPACE_ID,
-      workstreamId: WORKSTREAM_ID,
+      parentKind: "workstream",
+      parentId: WORKSTREAM_ID,
       substreamId: "0",
       loopId: LOOP_ID,
       harnessRunId: receiptRunId,
@@ -285,7 +286,8 @@ describe("work-stream transcript on workerd SQLite", () => {
     const workflowInput = WorkstreamWorkflowInputSchema.parse({
       region: "global",
       workspaceId: WORKSPACE_ID,
-      workstreamId: WORKSTREAM_ID,
+      parentKind: "workstream",
+      parentId: WORKSTREAM_ID,
       substreamId: "0",
       loopId: LOOP_ID,
       harnessRunId: receiptRunId,

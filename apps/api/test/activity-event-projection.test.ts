@@ -155,7 +155,7 @@ function connectorEvent(): WorkspaceConnectorEvent {
   };
 }
 
-function processingEnv(claimed: boolean, eventType?: string): {
+function processingEnv(matched: boolean, eventType?: string): {
   env: Env;
   opportunitySources: Array<Record<string, unknown>>;
   recorded: ActivityEventInput[];
@@ -175,7 +175,7 @@ function processingEnv(claimed: boolean, eventType?: string): {
     SLACK_SIGNING_SECRET: "signing",
     WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
       extra: {
-        matchExternalEventDestinations: () => ({ claimed, deliveries: [] }),
+        matchExternalEventDestinations: () => ({ matched, deliveries: [] }),
         connectorEvent: () => event,
         enqueueOpportunitySource: (input: Record<string, unknown>) => {
           opportunitySources.push(input);

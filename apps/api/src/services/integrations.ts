@@ -3425,6 +3425,7 @@ export async function runWorkstreamHarness(
                 workstreamId: input.parentId,
                 harnessRunId: input.harnessRunId,
                 invocationId: invocation.id,
+                ...automationRunProvenance(input),
               }).catch(() => undefined);
               // The run ends here, so this is the only place the halt is
               // recorded. Without it an ambiguity that leaves the receipt row
@@ -3581,6 +3582,7 @@ export async function runWorkstreamHarness(
               workstreamId: input.parentId,
               harnessRunId: input.harnessRunId,
               invocationId: invocation.id,
+              ...automationRunProvenance(input),
             }).catch(() => undefined);
           }
           attachmentGrounding.onCompleted(event);
@@ -3709,6 +3711,7 @@ export async function runWorkstreamHarness(
               workstreamId: input.parentId,
               harnessRunId: input.harnessRunId,
               invocationId: invocation.id,
+              ...automationRunProvenance(input),
             }).catch(() => undefined);
           }
           attachmentGrounding.onFailed(event);
@@ -8103,6 +8106,23 @@ function wireToolStatus(status: ToolReceiptRecord["status"]): ToolInvocation["st
 /** The other half of that translation: the object counts unix ms, the wire reads ISO. */
 function wireTimestamp(at: number | null): string | null {
   return at == null ? null : new Date(at).toISOString();
+}
+
+/**
+ * The automation a tool receipt belongs to, for telemetry.
+ *
+ * The terminal receipt is emitted from the run loop, which is the only place
+ * that knows a run's automation: the stored receipt carries no automation
+ * columns. Without this the started event said `runKind: "automation"` and the
+ * terminal event that closes it said `workstream`, so no automation's tool
+ * outcomes could be counted from the pair.
+ */
+function automationRunProvenance(
+  input: WorkstreamWorkflowInput,
+): { automationId: string; automationRunId: string } | Record<string, never> {
+  return input.automationRun
+    ? { automationId: input.automationRun.automationId, automationRunId: input.automationRun.runId }
+    : {};
 }
 
 async function loadToolInvocation(
