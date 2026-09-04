@@ -41,6 +41,7 @@ import {
 } from "@rally/contracts/conversation-parent";
 
 import type { Env } from "../env";
+import { connectorActivityTriggerDescriptors } from "../lib/connector-activity-triggers";
 import { ApiError } from "../lib/api-error";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { sha256 } from "../lib/crypto";
@@ -1378,7 +1379,7 @@ export class AutomationDO extends ConversationParentDurableObject {
     const connections = selectedPluginIds.length === 0
       ? { results: [] }
       : await this.workspaceDatabase().prepare(
-        `SELECT id, connector_type, scope, owner_user_id, model_plugin_id, status
+        `SELECT id, connector_type, scope, owner_user_id, model_plugin_id, status, config_json
            FROM connector_connections WHERE workspace_id = ? AND status <> 'disabled'`,
       ).bind(row.workspace_id).all<{
         id: string;
@@ -1387,6 +1388,7 @@ export class AutomationDO extends ConversationParentDurableObject {
         owner_user_id: string | null;
         model_plugin_id: string;
         status: string;
+        config_json: string | null;
       }>();
     const connectionsByPlugin = new Map(
       (connections.results ?? []).map((connection) => [connection.model_plugin_id, connection]),
@@ -1424,7 +1426,7 @@ export class AutomationDO extends ConversationParentDurableObject {
     for (const evaluator of rules.evaluators) {
       const connection = connectionsByPlugin.get(evaluator.source.suggestedSourcePluginId);
       if (!connection) throw new ApiError(422, "automation_plugin_unavailable", "An evaluator names a plugin with no connection");
-      const descriptors = registry.get(connection.connector_type).manifest.activityTriggers;
+      const descriptors = connectorActivityTriggerDescriptors(registry.get(connection.connector_type), connection.config_json);
       const eventFamilies: Record<string, string[]> = {};
       for (const descriptor of descriptors) {
         for (const family of descriptor.eventFamilies) {

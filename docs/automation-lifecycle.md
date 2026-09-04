@@ -539,6 +539,34 @@ production inspection paths.
 
 ## Changelog
 
+### 2026-09-04: A webhook's triggers are its configured event types, and its payload keys are the filter fields
+
+**What changed:** `connectorActivityTriggerDescriptors` (`lib/connector-activity-triggers.ts`)
+derives a generic webhook connection's triggers from the connection's own
+`eventTypes` allowlist, one trigger per configured type, each marked
+`openFilterFields` so a rule may name any metadata key with any operator; the
+drafting catalog and the accept path both read triggers through it, and
+`plugin_inspect` shows the flag. The harness run's plugin filter keeps an
+event-capable connection with no tools, so `load_plugin` on a webhook plugin
+succeeds and a ready draft naming it is admitted. An automation's own
+conversation replays its drafting receipts (inspections, lookups, rules)
+across every turn on the conversation, so a plugin inspected before an
+elicitation pause is still inspected after it. The refusal for a resource a
+plugin cannot watch says the field may be omitted.
+
+**Why:** The manifest declared one trigger, `webhook.received`, while a
+delivery carries the caller's `event_type` and the matcher selects
+registrations by exact type, so a webhook rule could be written only for an
+event that never arrives; and with no declared filter fields the only legal
+rule was `always`. Found by drafting a webhook automation on a running stack
+with live inference: the catalog fix made the plugin visible and the run's
+own filter then refused to load it.
+
+**Consequences:** A connection is what defines a webhook's vocabulary; adding
+an event type to the connection adds a trigger the next draft can name. An
+open descriptor is validated for shape only, and a leaf on a key the payload
+lacks is a miss at match time, not a refusal at accept.
+
 ### 2026-09-04: A webhook can start an automation, and the drafting agent can look things up
 
 **What changed:** `loadAutomationCreatorPluginCatalog` keeps a connection whose

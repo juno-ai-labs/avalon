@@ -108,6 +108,7 @@ import { rpcResultBody } from "../durable-objects/rpc-result";
 import { WorkspaceConnectorEventSchema } from "../durable-objects/workspace-connector-event-protocol";
 import type { Env } from "../env";
 import { countEnv, numericEnv } from "../env";
+import { connectorActivityTriggerDescriptors } from "../lib/connector-activity-triggers";
 import { sha256 } from "../lib/crypto";
 import { markLoopActivationRecorded } from "../lib/loop-activation-signal";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
@@ -1684,19 +1685,19 @@ function createAvalonAutomationsPlugin(
           asUserId(authorUserId),
         ));
       }
-      const receipts = await createToolReceiptObjectPort(
-        env,
-        input.workspaceId,
-        input.parentId,
-      ).receiptsForRun({
-        runId: input.harnessRunId,
-        capabilities: [
-          "rally.automation.plugins.inspect",
-          "rally.automation.people.search",
-          "rally.automation.resources.search",
-          "rally.automation.evaluators.set",
-        ],
-      });
+      const replayCapabilities = [
+        "rally.automation.plugins.inspect",
+        "rally.automation.people.search",
+        "rally.automation.resources.search",
+        "rally.automation.evaluators.set",
+      ];
+      const receiptPort = createToolReceiptObjectPort(env, input.workspaceId, input.parentId);
+      // An automation's own conversation drafts across turns, so what it
+      // inspected or looked up in an earlier turn still counts; a room's
+      // drafting is one turn's work and replays that run alone.
+      const receipts = input.parentKind === "automation"
+        ? await receiptPort.receiptsForCapabilities({ capabilities: replayCapabilities, limit: 200 })
+        : await receiptPort.receiptsForRun({ runId: input.harnessRunId, capabilities: replayCapabilities });
       const replayDeadline = Date.now() + TOOL_TRANSCRIPT_REPLAY_BUDGET_MS;
       for (const receipt of receipts) {
         if (receipt.status !== "completed") continue;
@@ -2062,7 +2063,7 @@ async function loadAutomationCreatorPluginCatalog(
       scope,
       searchAliases: presentation.searchAliases,
       systemMessage: presentation.systemMessage,
-      activityTriggers: adapter.manifest.activityTriggers,
+      activityTriggers: connectorActivityTriggerDescriptors(adapter, row.config_json == null ? null : String(row.config_json)),
       tools: definitions.map((definition) => ({
           name: stableWireToolName(wirePrefix, definition.name),
           canonicalName: definition.name,
@@ -5780,7 +5781,15 @@ async function loadHarnessTools(
       : adapter.agentPlugin.tools.filter((definition) => (
           connectorCapabilitySupportsScope(adapter, definition.capability, scope)
         ));
-    if (!dynamicCapability && !staticDefinitions.some((definition) => grantedScopes.includes(definition.capability))) {
+    // A connection with no callable tool still belongs to a run that drafts
+    // an automation: loading it is how the drafting tools learn it was
+    // chosen as a trigger source. It contributes no tools to the run.
+    const eventCapable = adapter.manifest.activityTriggers.length > 0 || Boolean(adapter.webhookActivity);
+    if (
+      !dynamicCapability
+      && !staticDefinitions.some((definition) => grantedScopes.includes(definition.capability))
+      && !eventCapable
+    ) {
       continue;
     }
     const frozen: FrozenConnectorPlugin = {

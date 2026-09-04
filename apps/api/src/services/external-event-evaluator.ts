@@ -189,12 +189,16 @@ function validatePredicate(
   const descriptor = ConnectorActivityTriggerDescriptorV2Schema.parse(rawDescriptor);
   if (predicate.kind === "always") return;
   for (const [leafIndex, leaf] of predicate.allOf.entries()) {
-    const field = descriptor.filterFields.find((candidate) => candidate.key === leaf.attribute);
     const path = ["when", "allOf", leafIndex] as const;
-    if (!field || !field.operators.includes(leaf.operator)) {
+    // An open descriptor names no fields: the caller's payload keys are the
+    // vocabulary, and a leaf on a key the event lacks is simply a miss.
+    const field = descriptor.openFilterFields === true
+      ? null
+      : descriptor.filterFields.find((candidate) => candidate.key === leaf.attribute) ?? undefined;
+    if (field === undefined || (field !== null && !field.operators.includes(leaf.operator))) {
       throw evaluatorIssue(evaluatorIndex, [...path, "attribute"], "automation_evaluator_invalid");
     }
-    if (leaf.kind !== "presence" && leaf.kind !== field.valueType) {
+    if (field !== null && leaf.kind !== "presence" && leaf.kind !== field.valueType) {
       throw evaluatorIssue(evaluatorIndex, [...path, "kind"], "automation_evaluator_invalid");
     }
     if (leaf.kind === "person_id" || leaf.kind === "person_id_array") {
