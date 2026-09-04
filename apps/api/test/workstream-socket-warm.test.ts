@@ -213,16 +213,21 @@ describe("conversation socket ticket preparation", () => {
     expect(prepareSocketAdmission).not.toHaveBeenCalled();
   });
 
-  it("marks a ticket for an archived parent so the room seats a reader only", async () => {
+  it("refuses a ticket for an archived work stream the way its boot does, before any object is touched", async () => {
+    // The work-stream object refuses every read of an archived room, so a
+    // ticket would open a socket that never gets a frame. The archived
+    // admission flag is for an automation's conversation, which stays
+    // readable; that path is proved on workerd in
+    // `test-workers/conversation-parent-contract.test.ts`.
     const prepareSocketAdmission = vi.fn(async () => ({ outcome: "snapshot_prepared" as const }));
     const parent = parentDecisions(true, true);
     const env = environment(prepareSocketAdmission, undefined, undefined, parent);
     const service = new ConversationService(env, auth, () => undefined);
 
-    const ticket = await service.socketTicket(workstreamId);
-
-    await expect(verifySocketTicket(env, ticket.ticket)).resolves.toMatchObject({
-      admission: { parentArchived: true },
+    await expect(service.socketTicket(workstreamId)).rejects.toMatchObject({
+      status: 404,
+      code: "conversation_not_found",
     });
+    expect(prepareSocketAdmission).not.toHaveBeenCalled();
   });
 });

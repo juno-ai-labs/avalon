@@ -242,14 +242,17 @@ async function admitPendingInput(input: {
   text?: string;
   bindContent?: unknown;
   withAttachment?: boolean;
-  messageType?: "text" | "elicitation";
+  messageType?: "text" | "elicitation" | "automation_activation";
   elicitationId?: string;
+  /** `system` is what an automation's posted result is admitted as: no author, a `system` canonical role. */
+  actor?: "human" | "system";
 }): Promise<{ inputId: string; attachmentId: string; loop: SubstreamLoopStorage }> {
   const inputId = input.inputId ?? "00000000-0000-7000-8000-000000000101";
   const attachmentId = "00000000-0000-7000-8000-000000000102";
+  const actor = input.actor ?? "human";
   const text = input.text ?? "Hello @Ada";
   const mentionStart = text.indexOf("@Ada");
-  if (mentionStart < 0) throw new Error("pending_input_test_mention_missing");
+  if (mentionStart < 0 && actor === "human") throw new Error("pending_input_test_mention_missing");
   const loop = new SubstreamLoopStorage(input.storage);
   loop.ensureLoop({ loopId: "persistent-loop", bindStateRevision: 0, now: NOW });
   const clientMessageId = input.clientMessageId ?? "client-pending-1";
@@ -257,7 +260,7 @@ async function admitPendingInput(input: {
     inputId,
     loopId: "persistent-loop",
     clientMessageId,
-    preparationKind: "human_message",
+    preparationKind: actor === "system" ? "automation_activation" : "human_message",
     envelopeJson: JSON.stringify({ input: { text } }),
     now: NOW,
   });
@@ -265,7 +268,7 @@ async function admitPendingInput(input: {
     factId: `${inputId}:message`,
     factKind: "participant_message",
     audience: "shared",
-    payload: { role: "user", content: text, structuredContent: { source: "test" } },
+    payload: { role: actor === "system" ? "system" : "user", content: text, structuredContent: { source: "test" } },
     origin: { originKind: "canonical", sourceKind: null, sourceId: null, sourceRevision: null },
     runId: null,
     turnId: inputId,
@@ -284,10 +287,10 @@ async function admitPendingInput(input: {
   loop.completeInputPreparation({
     inputId,
     preparedTurnId: inputId,
-    mode: "steer",
-    actor: "human",
-    authorUserId: "user-1",
-    authorNameSnapshot: "Ada at admission",
+    mode: actor === "system" ? "queue" : "steer",
+    actor,
+    authorUserId: actor === "system" ? null : "user-1",
+    authorNameSnapshot: actor === "system" ? null : "Ada at admission",
     authorAvatarUrlSnapshot: null,
     clientMessageId,
     externalActorJson: null,
@@ -327,7 +330,7 @@ async function admitPendingInput(input: {
       attachedAt: NOW + 1,
       updatedAt: NOW + 1,
     }]),
-    mentionsJson: JSON.stringify([{
+    mentionsJson: JSON.stringify(mentionStart < 0 ? [] : [{
       mentionIndex: 0,
       mentionKind: "person",
       targetUserId: "user-2",
@@ -886,6 +889,54 @@ describe("canonical ordered work-stream transcript", () => {
       envelopeJson: JSON.stringify({ input: { text: "duplicate" } }),
       now: NOW + 6,
     })).toThrow("pending_input_already_delivered");
+  });
+
+  it("activates a system-actor input, the shape an automation's posted result arrives in", async () => {
+    // The canonical payload of an activation carries the `system` role its
+    // actor implies; what the model reads is the `user` bind payload. The
+    // drain used to test the canonical role and throw, and a pending input
+    // that throws stays first in line, so the room processed nothing after
+    // the first result an automation posted into it.
+    const { transcript, sql, storage } = open();
+    seedPendingInputRoot(sql);
+    // A room that has run before: the Bind head exists, so the activation is
+    // appended to it through the same preparation every later steer takes.
+    const { inputId, loop } = await admitPendingInput({
+      storage,
+      withAttachment: false,
+      actor: "system",
+      messageType: "automation_activation",
+      text: "The weekly summary is ready.",
+      bindContent: "An automation posted: The weekly summary is ready.",
+    });
+    await transcript.commitBindTransition(initializePersistentLoop(), NOW + 2);
+    sql.exec(`UPDATE substream_loops SET bind_state_revision = 1 WHERE id = 1`);
+    const activated = await transcript.activatePendingInput({
+      loopId: "persistent-loop",
+      expectedInputId: inputId,
+      expectedLoopRevision: loop.loop()!.revision,
+      expectedBindGeneration: 1,
+      expectedBindStateRevision: 1,
+      receipt: {
+        substreamId: "0",
+        runId: "00000000-0000-7000-8000-000000000104",
+        executionEpoch: 1,
+        leaseOwner: "system-input-owner",
+        leaseExpiresAt: NOW + 100_000,
+        executionContextJson: JSON.stringify({ kind: "system_input_test" }),
+        executionPrincipalJson: JSON.stringify({ type: "user", userId: "user-1" }),
+        origin: "automation_activation",
+        model: null,
+      },
+      enqueueRegionalEffectsInTransaction: () => undefined,
+      now: NOW + 3,
+    });
+    expect(activated).toMatchObject({
+      outcome: "activated",
+      turns: [{ turnId: inputId, actor: "system", transcriptSequence: 1 }],
+    });
+    expect(sql.exec(`SELECT COUNT(*) AS count FROM pending_loop_inputs`).one()).toEqual({ count: 0 });
+    expect(transcript.participantTurn(inputId)).toMatchObject({ transcriptSequence: 1 });
   });
 
   it("does not reactivate a participant removed while an admitted input waits", async () => {
