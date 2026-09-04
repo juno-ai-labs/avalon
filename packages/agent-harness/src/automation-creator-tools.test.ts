@@ -47,6 +47,20 @@ const eventDrivenDraft = {
   ready: true,
 };
 
+/** Rules that name the draft's one trigger, so a ready submission is admitted. */
+const eventDrivenRules = {
+  schemaVersion: 1,
+  evaluators: [{
+    evaluatorKey: "page_created",
+    source: {
+      sourceBindingKey: "notion_source",
+      suggestedSourcePluginId: "plugin_notion",
+      event: { kind: "event_type", eventType: "notion.page.created" },
+    },
+    when: { kind: "always" },
+  }],
+};
+
 const toolContext = { toolCallId: "call-1" } as never;
 
 function toolNamed(tools: ReturnType<typeof createAutomationsPlugin>["tools"], name: string) {
@@ -92,21 +106,63 @@ describe("the automations plugin", () => {
     expect(plugin.canonicalId).toBe(AUTOMATIONS_PLUGIN_ID);
   });
 
-  it("carries the drafting tools it already had, and adds none", () => {
+  it("carries the drafting tools from one definition, plus the list an edit starts from", () => {
     const names = createAutomationsPlugin(host()).tools.map((tool) => tool.definition.name);
 
-    // The same seven the dedicated compiler harness has always used, from one
-    // definition rather than a second copy: these tools decide what a draft may
-    // say, and two answers to that is two products.
+    // From one definition rather than a second copy: these tools decide what a
+    // draft may say, and two answers to that is two products. The list is the
+    // one addition: an edit starts from a definition the conversation owns.
     expect(names).toEqual([
       "plugins_list",
       "plugins_search",
       "plugin_inspect",
       "people_search",
       "resources_search",
+      "automations_list",
       "submit_draft",
       "set_evaluator_rules",
     ]);
+  });
+
+  it("lists what the conversation may edit through the host, and tells the agent to start there", async () => {
+    const listed = { automations: [{ automationId: "a-1", name: "Standup reminder" }] };
+    const state = host({ automationDirectoryPort: { listAutomations: async () => listed } });
+    const plugin = createAutomationsPlugin(state);
+
+    await expect(toolNamed(plugin.tools, "automations_list").execute({}, toolContext))
+      .resolves.toMatchObject({ output: listed });
+    expect(plugin.systemMessage).toContain("call automations_list");
+    expect(plugin.systemMessage).toContain("with its automationId");
+  });
+
+  it("hands the named automation to the host beside the draft, and never inside it", async () => {
+    const targets: Array<{ automationId: string | null }> = [];
+    const drafts: unknown[] = [];
+    const state = host({
+      loadedPluginIds: new Set(["plugin_notion"]),
+      inspectedPluginIds: new Set(["plugin_notion"]),
+      draftMutationPort: {
+        submitDraft: async (draft, _context, target) => {
+          drafts.push(draft);
+          targets.push(target);
+          return { accepted: true as const };
+        },
+        setEvaluatorRules: async () => ({ accepted: true as const }),
+      },
+    });
+    // Staged on the host as `set_evaluator_rules` leaves them; that tool's own
+    // vocabulary check is its own test.
+    state.draftState.evaluatorRules = AutomationSetEvaluatorRulesInputV1Schema.parse(eventDrivenRules);
+    const tools = createAutomationsPlugin(state).tools;
+
+    await toolNamed(tools, "submit_draft").execute({ ...eventDrivenDraft, automationId: "a-1" }, toolContext);
+    await toolNamed(tools, "submit_draft").execute({ ...eventDrivenDraft, automationId: null }, toolContext);
+    await toolNamed(tools, "submit_draft").execute(eventDrivenDraft, toolContext);
+
+    expect(targets).toEqual([{ automationId: "a-1" }, { automationId: null }, { automationId: null }]);
+    // The draft is the definition an automation stores; the address it is
+    // stored at is not part of it.
+    expect(drafts.every((draft) => !("automationId" in (draft as object)))).toBe(true);
   });
 
   it("tells the agent to ask for a scope it cannot change afterwards", () => {

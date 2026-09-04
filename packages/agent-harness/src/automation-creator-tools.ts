@@ -13,6 +13,7 @@ import {
   executeAutomationCreatorDiscoveryTool,
   parseAutomationSubmission,
   AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS,
+  automationSubmissionTarget,
   type AutomationCreatorPluginCatalogEntry,
   type HarnessTool,
   type HarnessToolContext,
@@ -62,8 +63,17 @@ export interface AutomationCreatorToolHost {
     searchPeople(query: string): Promise<unknown>;
     searchResources(query: string): Promise<unknown>;
   };
+  /** The automations this conversation may edit, each with its current definition. */
+  automationDirectoryPort?: {
+    listAutomations(): Promise<unknown>;
+  };
   draftMutationPort?: {
-    submitDraft(draft: AutomationDraft, context: HarnessToolContext): Promise<unknown>;
+    /** `target` names an automation from `listAutomations`; null creates one. */
+    submitDraft(
+      draft: AutomationDraft,
+      context: HarnessToolContext,
+      target: { automationId: string | null },
+    ): Promise<unknown>;
     setEvaluatorRules(
       rules: unknown,
       context: HarnessToolContext,
@@ -179,6 +189,16 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
       },
     },
     {
+      definition: creatorDefinition("automations_list"),
+      execute: async () => {
+        if (!input.automationDirectoryPort) throw new Error("automation_directory_host_unavailable");
+        return {
+          output: await input.automationDirectoryPort.listAutomations(),
+          summary: "Listed the automations this conversation can edit",
+        };
+      },
+    },
+    {
       definition: creatorDefinition("submit_draft"),
       serial: true,
       /**
@@ -265,7 +285,9 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
             );
           }
         }
-        await input.draftMutationPort?.submitDraft(parsed.data, context);
+        await input.draftMutationPort?.submitDraft(parsed.data, context, {
+          automationId: automationSubmissionTarget(raw),
+        });
         draftState.submitted = parsed.data;
         await input.onDiagnostic?.({
           stage: "complete",
@@ -420,6 +442,8 @@ export const AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE = [
   "write that send and its recipient into the instructions as a step, because the run performs it with its own tools",
   "and a result the instructions do not send goes nowhere.",
   "An automation can never deliver into a different work stream, so do not offer to send results to one.",
+  "To change an automation that already exists, call automations_list, start from its current definition,",
+  "and submit the whole revised draft with its automationId; a person applies the change the same way they accepted it.",
 ].join(" ");
 
 /**
