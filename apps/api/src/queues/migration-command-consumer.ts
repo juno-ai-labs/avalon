@@ -30,15 +30,14 @@ import {
   DurableObjectMigrationCommandSchema,
   type DurableObjectMigrationCommand,
 } from "@rally/contracts/durable-object-migrations";
-import { asWorkspaceId } from "@rally/contracts";
 
 import { latestMigrationVersion, type ForcedMigrationOutcome } from "../durable-objects/migration-reporting";
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../durable-objects/workspace-do";
 import { WORKSTREAM_DO_SCHEMA_MIGRATIONS } from "../durable-objects/workstream-do";
+import { AUTOMATION_DO_SCHEMA_MIGRATIONS } from "../durable-objects/automation-do";
 import { WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS } from "../durable-objects/workstream-object-schema";
 import type { Env } from "../env";
-import { durableObjectStubById, durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
-import { workspaceDOName } from "../durable-objects/names";
+import { durableObjectStubById } from "../lib/durable-object-namespace";
 import { logStructuredEvent, logWarn } from "../observability/logger";
 
 /**
@@ -72,6 +71,8 @@ export function migrationCommandDispatchers(env: Env): Record<
       durableObjectStubById(env, env.WORKSTREAM_DOS, objectId).forceMigration(command),
     WorkspaceDO: (objectId, command) =>
       durableObjectStubById(env, env.WORKSPACE_DOS, objectId).forceMigration(command),
+    AutomationDO: (objectId, command) =>
+      durableObjectStubById(env, env.AUTOMATION_DOS, objectId).forceMigration(command),
   };
 }
 
@@ -87,6 +88,7 @@ export const MIGRATION_COMMAND_HEADS: Readonly<Record<string, number>> = {
   SubstreamAgent: latestMigrationVersion(WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS),
   WorkstreamDO: latestMigrationVersion(WORKSTREAM_DO_SCHEMA_MIGRATIONS),
   WorkspaceDO: latestMigrationVersion(WORKSPACE_DO_SCHEMA_MIGRATIONS),
+  AutomationDO: latestMigrationVersion(AUTOMATION_DO_SCHEMA_MIGRATIONS),
 };
 
 /**
@@ -189,40 +191,6 @@ export async function consumeMigrationCommandQueue(
     }
 
     try {
-      if (command.automationCutover) {
-        const workspaceId = asWorkspaceId(command.automationCutover.workspaceId);
-        const workspace = await durableObjectStubForWorkspace(
-          env,
-          env.WORKSPACE_DOS,
-          workspaceId,
-          workspaceDOName(command.region, workspaceId),
-        );
-        const witness = await workspace.automationCutoverWitness({
-          workspaceId: command.automationCutover.workspaceId,
-        });
-        if (
-          command.automationCutover.expectedDraftIds
-          && JSON.stringify([...command.automationCutover.expectedDraftIds].sort())
-            !== JSON.stringify([...witness.draftIds].sort())
-        ) throw new Error("automation_cutover_command_witness_mismatch");
-        const result = await workspace
-          .finalizeAutomationCutover({
-            workspaceId: command.automationCutover.workspaceId,
-            expectedDraftIds: witness.draftIds,
-          });
-        logStructuredEvent(env, "info", "automation_cutover_completed", {
-          message: `automation_cutover_completed imported=${result.imported} discarded_drafts=${result.discardedDrafts}`,
-          run_id: command.runId,
-          command_id: command.commandId,
-          object_id: command.objectId,
-          workspace_id: command.automationCutover.workspaceId,
-          source_hash: result.sourceHash,
-          imported_count: result.imported,
-          discarded_draft_count: result.discardedDrafts,
-        });
-        message.ack();
-        return;
-      }
       const outcome = await applyMigrationCommand(env, command);
       // Against this deployment's head, not the object's own — see
       // `migrationShortfall`. An object that answered from an isolate still

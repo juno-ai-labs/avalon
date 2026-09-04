@@ -11,8 +11,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   artifactHostDOName,
-  automationAgentName,
-  substreamAgentName,
+  automationDOName,
+  conversationObjectName,
   workspaceDOName,
   workstreamDOName,
 } from "../src/durable-objects/names";
@@ -33,9 +33,9 @@ const ARTIFACT = asArtifactId("3f2504e0-4f89-41d3-9a0c-0305e82c3306");
 const EVERY_MINTED_NAME = (["global", "eu"] as const).flatMap((region) => [
   workspaceDOName(region, WORKSPACE),
   workstreamDOName(region, WORKSPACE, WORKSTREAM),
-  substreamAgentName(region, WORKSPACE, WORKSTREAM),
-  substreamAgentName(region, WORKSPACE, WORKSTREAM, SUBSTREAM),
-  automationAgentName(region, WORKSPACE, AUTOMATION),
+  conversationObjectName(region, WORKSPACE, WORKSTREAM),
+  conversationObjectName(region, WORKSPACE, WORKSTREAM, SUBSTREAM),
+  automationDOName(region, WORKSPACE, AUTOMATION),
   artifactHostDOName(region, ARTIFACT),
 ]);
 

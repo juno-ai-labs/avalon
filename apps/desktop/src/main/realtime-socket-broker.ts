@@ -414,17 +414,17 @@ function validSocketPath(input: DesktopRealtimeSocketOpenInput, url: URL): boole
     return false;
   }
   if (segments[0] !== 'socket') return false;
-  if (input.kind === 'automation_agent') {
+  if (input.kind === 'workstream_control') {
     return segments.length === 3
-      && segments[1] === 'automations'
+      && segments[1] === 'workstreams'
       && IdSchema.safeParse(segments[2]).success;
   }
-  if (segments[1] !== 'workstreams') return false;
-  if (!IdSchema.safeParse(segments[2]).success) return false;
-  if (input.kind === 'workstream_control') return segments.length === 3;
-  return segments.length === 5
-    && segments[3] === 'substreams'
-    && (segments[4] === '0' || IdSchema.safeParse(segments[4]).success);
+  // A feed is addressed by its conversation, whichever kind of parent it has:
+  // a work stream's and an automation's feeds share one upgrade route.
+  return segments.length === 4
+    && segments[1] === 'conversations'
+    && IdSchema.safeParse(segments[2]).success
+    && (segments[3] === '0' || IdSchema.safeParse(segments[3]).success);
 }
 
 /**

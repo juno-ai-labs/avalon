@@ -301,8 +301,8 @@ itself by the code name, in its own voice, to every user in every work stream.
 
 Five prompts said it outright and now say Rally: the work-stream system prompt,
 Control Tower and the end-of-meeting summarizer in `meeting-notes-service.ts`,
-the automation architect in `prompts/automation-compiler.ts`, and the read-only
-sub-agent in `integrations.ts`. The prompt bodies moved with them — the
+the automation architect in `prompts/automation-compiler.ts` (since deleted with
+the first automation object), and the read-only sub-agent in `integrations.ts`. The prompt bodies moved with them — the
 addressing classifier, work-opportunity admission and ranking, the Bind
 summarization instructions, and the injected context headers (`SCHEDULED DIGEST
 BRIEF FROM RALLY`, `USER-SELECTED RALLY SUGGESTED-WORK BRIEF`).

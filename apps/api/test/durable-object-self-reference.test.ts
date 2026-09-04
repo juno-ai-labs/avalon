@@ -10,7 +10,7 @@
 import { asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import { describe, expect, it, vi } from "vitest";
 
-import { substreamAgentName } from "../src/durable-objects/names";
+import { conversationObjectName } from "../src/durable-objects/names";
 import {
   substreamSelfObjectName,
   type SubstreamAgent,
@@ -37,12 +37,12 @@ const WORKSTREAM = "22222222-2222-4222-8222-222222222222";
 const OTHER_WORKSTREAM = "33333333-3333-4333-8333-333333333333";
 const OTHER_WORKSPACE = "44444444-4444-4444-8444-444444444444";
 /** Built the way the agent builds it, so the test cannot drift from the code. */
-const OWN_NAME = substreamAgentName(
+const OWN_NAME = conversationObjectName(
   "global",
   asWorkspaceId(WORKSPACE),
   asWorkstreamId(WORKSTREAM),
 );
-const SIBLING_NAME = substreamAgentName(
+const SIBLING_NAME = conversationObjectName(
   "global",
   asWorkspaceId(WORKSPACE),
   asWorkstreamId(OTHER_WORKSTREAM),
@@ -277,7 +277,8 @@ describe("a local workspace SQL executor carried on the environment", () => {
 describe("the name a SubstreamAgent answers to", () => {
   const identity = {
     workspaceId: asWorkspaceId(WORKSPACE),
-    workstreamId: asWorkstreamId(WORKSTREAM),
+    parentKind: "workstream" as const,
+    parentId: asWorkstreamId(WORKSTREAM),
   };
 
   it("is the object's own name once both durable facts are recorded", () => {

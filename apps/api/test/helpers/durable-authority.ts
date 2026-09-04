@@ -1209,11 +1209,13 @@ export function testSubstreamAgentsBinding(
       options.roomEvents?.push(input.event);
       return { status: 204, bodyJson: "null" };
     }),
-    bootstrapRuntime: vi.fn((input: { workspaceId: string; workstreamId: string }) => {
+    bootstrapRuntime: vi.fn((input: { workspaceId: string; parentId: string }) => {
       // Production's bootstrap opens the object and writes its identity root;
       // seeding here is that same admission, so a creation flow's first routed
-      // statement finds the root the way it would in the real object.
-      const store = storeFor(input.workstreamId, input.workspaceId);
+      // statement finds the root the way it would in the real object. The
+      // request names the conversation's parent rather than a work stream, so
+      // the store this double keys on is the parent's.
+      const store = storeFor(input.parentId, input.workspaceId);
       // And it stamps the reason code, as `bootstrapRuntimeAuthority` does.
       // `provisionWorkstream` keys its replay guard on that value, so a double
       // that left the shared fixture's `seeded` in place would make every
@@ -1233,7 +1235,6 @@ export function testSubstreamAgentsBinding(
       args: unknown[];
     }) => testIdentityOperationStub(storeFor(input.workstreamId, input.workspaceId))(input)),
     refreshTimerAlarm: vi.fn(() => ({ status: 200, bodyJson: "{}" })),
-    flushEffectsToWorkstreamDO: vi.fn(() => ({ status: 200, bodyJson: "{}" })),
     handleProductRequest: vi.fn((request: { operation: string } & Record<string, unknown>) => {
       const handler = options.product?.[request.operation];
       if (!handler) throw new Error(`unstubbed product operation: ${request.operation}`);

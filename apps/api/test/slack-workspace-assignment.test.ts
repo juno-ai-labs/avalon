@@ -40,6 +40,21 @@ import {
 const databases: DatabaseSync[] = [];
 
 /**
+ * The parent's half of a create.
+ *
+ * A work stream created from Slack reserves its main conversation on the parent
+ * object before the child is initialized, and the real `reserveChild` answers
+ * with the generation the parent is at. Nothing in this file asserts on the
+ * reservation, but a create that cannot make it never reaches the object.
+ */
+function parentReserveChild() {
+  return vi.fn(async (input: { authorityGeneration: number }) => ({
+    reserved: true as const,
+    authorityGeneration: input.authorityGeneration,
+  }));
+}
+
+/**
  * Open a fixture work stream's own object database and mirror its D1 product
  * row into it. Creator and participant writes route to this store since the
  * cutover — the D1 `workstreams` row is only the regional directory copy.
@@ -914,12 +929,11 @@ describe("Slack connector principal delivery", () => {
       SESSION_SIGNING_KEY: "test-session-signing-key-with-32-characters",
       SUBSTREAM_AGENTS: substreamAgents,
       WORKSTREAM_DOS: testSubstreamAgentsBinding(database, {
-        extra: { flushWorkspaceDirectoryEffects: vi.fn(async () => ({ status: 200, bodyJson: "{}" })) },
+        extra: { reserveChild: parentReserveChild() },
       }),
       WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
         extra: {
           ...workspaceObjectRpcs(instance, SLACK_WORKSPACE_OBJECT_METHODS),
-          hasWorkstreamDirectory: vi.fn(async () => true),
           hasActiveExternalEventRegistration: vi.fn(async () => false),
         },
       }),
@@ -1264,7 +1278,6 @@ describe("Slack public channel membership", () => {
     const database = migratedDatabase();
     const credentialsKey = "test-connector-credentials-key";
     const { instance, objectDatabase } = await slackInstallationFixture(database, credentialsKey);
-    seedSlackActivitySubscription(objectDatabase, "slack.channel.created");
     objectDatabase.prepare(
       `INSERT INTO slack_ingress_jobs
        (id, workspace_id, connection_id, team_id, body_hash, kind, payload_json,
@@ -1574,12 +1587,11 @@ describe("Slack public channel membership", () => {
         },
       }),
       WORKSTREAM_DOS: testSubstreamAgentsBinding(database, {
-        extra: { flushWorkspaceDirectoryEffects: vi.fn(async () => ({ status: 200, bodyJson: "{}" })) },
+        extra: { reserveChild: parentReserveChild() },
       }),
       WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
         extra: {
           ...workspaceObjectRpcs(instance, SLACK_WORKSPACE_OBJECT_METHODS),
-          hasWorkstreamDirectory: vi.fn(async () => true),
           hasActiveExternalEventRegistration: vi.fn(async () => false),
         },
       }),
@@ -2240,7 +2252,6 @@ describe("Slack ingress maintenance reaps link challenges", () => {
       workspaceId: WORKSPACE_ID,
       directory: {
         workstreamScheduleTargets: async () => ({ items: [] }),
-        plannedAutomationWorkstream: async () => null,
       },
       notificationIntents: {
         notificationIntentMaintenanceTarget: async () => ({ dueAt: null }),
@@ -2474,44 +2485,6 @@ function insertSlackEventJob(objectDatabase: DatabaseSync, id: string, payload: 
              '11111111-1111-4111-8111-111111111111', 'T123', 'hash', 'event', ?,
              'queued', 0, '2026-01-01', '2026-01-01')`,
   ).run(id, JSON.stringify(payload));
-}
-
-function seedSlackActivitySubscription(objectDatabase: DatabaseSync, eventType: string): void {
-  objectDatabase.prepare(
-    `INSERT INTO automation_templates
-       (id, workspace_id, owner_user_id, name, description, sharing_state,
-        latest_version_number, created_at, updated_at)
-     VALUES ('template-slack-activity', '22222222-2222-4222-8222-222222222222',
-             'user-owner', 'Slack activity', 'Test Slack activity', 'workspace',
-             1, '2026-01-01', '2026-01-01')`,
-  ).run();
-  objectDatabase.prepare(
-    `INSERT INTO automation_template_versions
-       (id, template_id, version_number, instructions, trigger_definitions_json,
-        required_capabilities_json, expected_outputs_json, default_behavior_json,
-        created_by_user_id, created_at)
-     VALUES ('version-slack-activity', 'template-slack-activity', 1, 'Handle Slack activity', ?,
-             '[]', '[]', '{}', 'user-owner', '2026-01-01')`,
-  ).run(JSON.stringify([{
-    type: "connector_activity",
-    connectorType: "slack",
-    sourceBindingKey: "slack_source",
-    suggestedSourcePluginId: "plugin_slack_workspace",
-    eventTypes: [eventType],
-    deterministicFilters: {},
-  }]));
-  objectDatabase.prepare(
-    `INSERT INTO automation_subscriptions
-       (id, workspace_id, template_id, template_version_id, scope, owner_user_id,
-        execution_principal_json, connector_bindings_json, activity_trigger_bindings_json,
-        overrides_json, status, created_at, updated_at)
-     VALUES ('subscription-slack-activity', '22222222-2222-4222-8222-222222222222',
-             'template-slack-activity', 'version-slack-activity', 'workspace', NULL,
-             '{}', ?, ?, '{}', 'active', '2026-01-01', '2026-01-01')`,
-  ).run(
-    JSON.stringify({ plugin_slack_workspace: "11111111-1111-4111-8111-111111111111" }),
-    JSON.stringify({ slack_source: "plugin_slack_workspace" }),
-  );
 }
 
 function appMention(

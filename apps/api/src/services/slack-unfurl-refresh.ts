@@ -172,8 +172,6 @@ async function loadDurableObjectStaleUnfurls(
           title: item.title,
           harness_status: durableDirectoryHarnessStatus(item.state),
           last_activity_at: item.lastActivityAt,
-          origin_type: item.originType,
-          automation_name: item.originLabel,
           archived_at: item.archivedAt,
           updated_at: item.updatedAt,
         });

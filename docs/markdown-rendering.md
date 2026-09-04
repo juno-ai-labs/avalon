@@ -34,7 +34,7 @@ Ten call sites, all passing a markdown string as `children`:
 | Surface | Call site |
 | --- | --- |
 | A work-stream turn, and the structured block above it | `workstream-blocks.tsx` |
-| An automation's overview while it is being set up | `new-automation.tsx` |
+| An automation's definition on its page | `screens/automation.tsx` |
 | The Control Tower meeting briefing | `screens/meeting-notes.tsx` |
 | A note's body | `screens/note-detail.tsx` |
 | A Markdown or converted document attachment in the full-window lightbox | `attachment-lightbox.tsx` |
@@ -700,8 +700,8 @@ becomes the characters it stood for;
 and why it refuses to touch a price.
 
 It does not own the markdown itself. Where a briefing's text comes from is
-[`meeting-notes.md`](meeting-notes.md); an automation overview's is
-[`automation-drafts.md`](automation-drafts.md). It does not own the surrounding
+[`meeting-notes.md`](meeting-notes.md); an automation definition's is
+[`automation-lifecycle.md`](automation-lifecycle.md). It does not own the surrounding
 screen either — a note's page geometry belongs to the note screen, and this
 document has an opinion only about the part of it that is markdown.
 

@@ -56,7 +56,6 @@ function summary(overrides: Partial<WorkstreamSummary> = {}): WorkstreamSummary 
     id: '00000000-0000-7000-8000-000000000002',
     title: 'Before the change',
     titleStatus: 'settled',
-    origin: 'ad_hoc',
     harnessStatus: 'running',
     latestAttentionSequenceNumber: 0,
     readThroughSequenceNumber: 0,
@@ -686,12 +685,7 @@ describe('WorkspaceSocketProvider', () => {
         titleStatus: 'settled',
         objective: 'Served by WorkspaceDO SQL',
         emailAddress: null,
-        originType: 'ad_hoc',
-        originLabel: null,
         createdByUserId: '00000000-0000-7000-8000-000000000003',
-        automationSubscriptionId: null,
-        automationRunId: null,
-        plannedFor: null,
         harnessStatus: 'running',
         latestAttentionSequenceNumber: 4,
         readThroughSequenceNumber: 2,
@@ -771,12 +765,7 @@ describe('WorkspaceSocketProvider', () => {
           titleStatus: 'settled',
           objective: 'Served by WorkspaceDO SQL',
           emailAddress: null,
-          originType: 'ad_hoc',
-          originLabel: null,
           createdByUserId: '00000000-0000-7000-8000-000000000003',
-          automationSubscriptionId: null,
-          automationRunId: null,
-          plannedFor: null,
           harnessStatus: 'running',
           latestAttentionSequenceNumber: 4,
           readThroughSequenceNumber: 2,
@@ -807,7 +796,6 @@ describe('WorkspaceSocketProvider', () => {
         nextRunAt: null,
         lastRunAt: null,
         updatedAt: '2026-08-17T19:00:00.000Z',
-        updateAvailable: false,
       }] },
       notes: { waterline: 1, items: [{
         id: '00000000-0000-7000-8000-000000000006',
@@ -1036,7 +1024,6 @@ describe('WorkspaceSocketProvider', () => {
         nextRunAt: null,
         lastRunAt: null,
         updatedAt: '2026-08-17T19:00:00.000Z',
-        updateAvailable: false,
       }] },
       notes: { waterline: 0, items: [] },
     });
@@ -1068,6 +1055,58 @@ describe('WorkspaceSocketProvider', () => {
     }));
     expect(queryClient.getQueryData(['automations']))
       .toEqual([expect.objectContaining({ name: 'Caught up while away' })]);
+  });
+
+  it('refetches an open automation page when its list row is pushed', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const automationId = '00000000-0000-7000-8000-000000000005';
+    queryClient.setQueryData(['automation', automationId], { id: automationId, currentDefinition: null });
+    queryClient.setQueryData(['automation-runs', automationId], []);
+    const getWorkspaceSocketTicket = vi.fn(async () => ({
+      url: 'wss://api.rally.test/socket/workspaces/workspace-1',
+      ticket: 'workspace-ticket',
+      protocols: socketTicketProtocols('workspace-ticket'),
+    }));
+    render(
+      <QueryClientProvider client={queryClient}>
+        <WorkspaceSocketProvider
+          api={{ getWorkspaceSocketTicket }}
+          workspaceId="00000000-0000-7000-8000-000000000001"
+        >
+          <div />
+        </WorkspaceSocketProvider>
+      </QueryClientProvider>,
+    );
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    expect(queryClient.getQueryState(['automation', automationId])?.isInvalidated).toBe(false);
+
+    // The automation's own chat submitted a revision: the object pushed the
+    // sidebar list and nothing else, since no HTTP request of the desktop's
+    // was in play. The page's detail query has to hear it, or Create stays
+    // disabled on a stale definition until something else refetches.
+    act(() => socket.message({
+      type: 'workspace_sidebar_list',
+      occurredAt: '2026-08-17T20:00:00.000Z',
+      list: 'automations',
+      waterline: 3,
+      items: [{
+        id: automationId,
+        name: 'Weekly changelog',
+        description: 'Every Monday',
+        emailAddress: null,
+        scope: 'workspace',
+        status: 'draft',
+        nextRunAt: null,
+        lastRunAt: null,
+        updatedAt: '2026-08-17T19:00:00.000Z',
+      }],
+    }));
+
+    expect(queryClient.getQueryState(['automation', automationId])?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(['automation-runs', automationId])?.isInvalidated).toBe(true);
   });
 
   it('drops a sidebar list whose version is not newer than the one applied', async () => {
@@ -1107,7 +1146,6 @@ describe('WorkspaceSocketProvider', () => {
         nextRunAt: null,
         lastRunAt: null,
         updatedAt: '2026-08-17T19:00:00.000Z',
-        updateAvailable: false,
       }],
     });
 
@@ -1261,11 +1299,7 @@ describe('the workspace and work-stream sockets over one store', () => {
       description: 'Objective',
       preview: 'Preview',
       emailAddress: null,
-      originType: 'ad_hoc',
       createdByUserId: null,
-      automationSubscriptionId: null,
-      automationRunId: null,
-      plannedFor: null,
       titleStatus: 'settled',
       exactState: 'completed',
       harnessStatus: 'completed',
@@ -1312,12 +1346,7 @@ describe('the workspace and work-stream sockets over one store', () => {
         titleStatus: 'settled',
         objective: 'Objective',
         emailAddress: null,
-        originType: 'ad_hoc',
-        originLabel: null,
         createdByUserId: null,
-        automationSubscriptionId: null,
-        automationRunId: null,
-        plannedFor: null,
         harnessStatus,
         latestAttentionSequenceNumber: 4,
         readThroughSequenceNumber: 2,

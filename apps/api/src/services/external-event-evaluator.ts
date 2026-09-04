@@ -28,7 +28,7 @@ export function evaluateExternalEventPredicate(
 ): boolean {
   const predicate = ExternalEventPredicateV1Schema.parse(rawPredicate);
   if (predicate.kind === "always") return true;
-  return predicate.anyOf.some((group) => group.allOf.every((leaf) => evaluateLeaf(leaf, context)));
+  return predicate.allOf.every((leaf) => evaluateLeaf(leaf, context));
 }
 
 function evaluateLeaf(
@@ -188,21 +188,28 @@ function validatePredicate(
 ): void {
   const descriptor = ConnectorActivityTriggerDescriptorV2Schema.parse(rawDescriptor);
   if (predicate.kind === "always") return;
-  for (const [groupIndex, group] of predicate.anyOf.entries()) {
-    for (const [leafIndex, leaf] of group.allOf.entries()) {
-      const field = descriptor.filterFields.find((candidate) => candidate.key === leaf.attribute);
-      const path = ["when", "anyOf", groupIndex, "allOf", leafIndex] as const;
-      if (!field || !field.operators.includes(leaf.operator)) {
-        throw evaluatorIssue(evaluatorIndex, [...path, "attribute"], "automation_evaluator_invalid");
-      }
-      if (leaf.kind !== "presence" && leaf.kind !== field.valueType) {
-        throw evaluatorIssue(evaluatorIndex, [...path, "kind"], "automation_evaluator_invalid");
-      }
-      if (leaf.kind === "person_id" || leaf.kind === "person_id_array") {
-        const values = Array.isArray(leaf.value) ? leaf.value : [leaf.value];
-        if (values.some((personId) => !personIds.has(personId))) {
-          throw evaluatorIssue(evaluatorIndex, [...path, "value"], "automation_person_not_found");
-        }
+  for (const [leafIndex, leaf] of predicate.allOf.entries()) {
+    const path = ["when", "allOf", leafIndex] as const;
+    // An open descriptor names no fields: the caller's payload keys are the
+    // vocabulary, and a leaf on a key the event lacks is simply a miss.
+    // A dotted key on an open descriptor would compile and never match: the
+    // event context indexes metadata by its bare keys.
+    if (descriptor.openFilterFields === true && leaf.attribute.includes(".")) {
+      throw evaluatorIssue(evaluatorIndex, [...path, "attribute"], "automation_evaluator_invalid");
+    }
+    const field = descriptor.openFilterFields === true
+      ? null
+      : descriptor.filterFields.find((candidate) => candidate.key === leaf.attribute) ?? undefined;
+    if (field === undefined || (field !== null && !field.operators.includes(leaf.operator))) {
+      throw evaluatorIssue(evaluatorIndex, [...path, "attribute"], "automation_evaluator_invalid");
+    }
+    if (field !== null && leaf.kind !== "presence" && leaf.kind !== field.valueType) {
+      throw evaluatorIssue(evaluatorIndex, [...path, "kind"], "automation_evaluator_invalid");
+    }
+    if (leaf.kind === "person_id" || leaf.kind === "person_id_array") {
+      const values = Array.isArray(leaf.value) ? leaf.value : [leaf.value];
+      if (values.some((personId) => !personIds.has(personId))) {
+        throw evaluatorIssue(evaluatorIndex, [...path, "value"], "automation_person_not_found");
       }
     }
   }

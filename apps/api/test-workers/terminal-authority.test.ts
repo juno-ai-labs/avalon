@@ -25,7 +25,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { asSubstreamId } from "@rally/contracts";
 
-import { substreamAgentName } from "../src/durable-objects/names";
+import { conversationObjectName } from "../src/durable-objects/names";
 import type { SubstreamAgent } from "../src/durable-objects/substream-agent";
 import type { TerminalOperation } from "../src/durable-objects/workstream-terminal-protocol";
 import { rpcResultBody } from "../src/durable-objects/rpc-result";
@@ -57,7 +57,7 @@ let unique = 0;
 function agent(): DurableObjectStub {
   unique += 1;
   return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
-    substreamAgentName(
+    conversationObjectName(
       "global",
       WORKSPACE_ID,
       WORKSTREAM_ID,
@@ -69,7 +69,7 @@ function agent(): DurableObjectStub {
 /** The one main-child object whose Terminal tables are work-stream authority. */
 function mainAgent(): DurableObjectStub {
   return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
-    substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID, asSubstreamId("0")),
+    conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID, asSubstreamId("0")),
   ));
 }
 
@@ -769,10 +769,14 @@ describe("Terminal authority on real workerd", () => {
       } catch (error) {
         observed.push(error instanceof Error ? error.message : "unknown_terminal_error");
       }
+      // Every conversation attaches its own resources, so the refusal a
+      // non-main child must give is for an attachment addressed to another
+      // conversation of the work stream: here the main child's.
       try {
         await resourceAttacher({
           workspaceId: WORKSPACE_ID,
           workstreamId: WORKSTREAM_ID,
+          substreamId: "0",
           resourceId: "00000000-0000-7000-8000-00000000aa04",
           attachedByUserId: null,
           relationshipType: "generated",

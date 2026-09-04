@@ -3352,7 +3352,13 @@ export class WorkstreamTranscriptStorage {
     let projection = previous;
     for (const pending of pendingInputs) {
       const material = parsePendingInputMaterial(pending);
-      if (material.payload.role !== "user") {
+      // The transition below appends `bindPayload`, which is always the user
+      // message the model reads; the canonical payload's role follows the
+      // actor and is `system` for an automation's posted result. Testing the
+      // canonical role here threw on every such activation, and a pending
+      // input that throws never leaves the queue, so the room stopped
+      // processing anything after it.
+      if (material.bindPayload.role !== "user") {
         throw new Error("pending_input_bind_role_invalid");
       }
       const steps: PreparedPendingBindStep[] = [];

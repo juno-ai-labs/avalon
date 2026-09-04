@@ -85,7 +85,6 @@ function scheduleContext(database: DatabaseSync): WorkspaceScheduleContext {
     workspaceId: WORKSPACE_ID,
     directory: {
       workstreamScheduleTargets: async () => ({ items: [] }),
-      plannedAutomationWorkstream: async () => null,
     },
     notificationIntents: {
       notificationIntentMaintenanceTarget: async (input) =>

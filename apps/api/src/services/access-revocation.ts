@@ -37,6 +37,14 @@ const RevocationTargetSchema = z.discriminatedUnion("scope", [
   }),
   z.strictObject({ scope: z.literal("automation"), automationId: IdSchema }),
   /**
+   * Every automation a work stream owns, for a person who just lost that
+   * room. A room-owned automation admits the room's participants to its
+   * conversation and its runs, and removing a participant is a room-local
+   * write that no membership revocation follows, so the room's writer
+   * publishes this and WorkspaceDO names the automations.
+   */
+  z.strictObject({ scope: z.literal("workstream_automations"), workstreamId: IdSchema }),
+  /**
    * A live web artifact's supervisor, a sibling of the work streams.
    *
    * It hangs off the workspace hop rather than a work stream's because
@@ -58,6 +66,7 @@ export const AccessRevocationMessageSchema = z.strictObject({
   /** Why access ended. Carried for operators; the fan-out treats all alike. */
   reason: z.enum([
     "workspace_membership_removed",
+    "workstream_participant_removed",
     "session_revoked",
     "session_expired",
   ]),
@@ -147,7 +156,8 @@ export function descendantRevocation(
  */
 export async function publishAccessRevocation(
   env: Env,
-  message: Omit<AccessRevocationMessage, "kind" | "occurredAt" | "target"> & { occurredAt?: string },
+  message: Omit<AccessRevocationMessage, "kind" | "occurredAt" | "target">
+    & { occurredAt?: string; target?: AccessRevocationMessage["target"] },
 ): Promise<boolean> {
   // The parse is inside the try, not before it. It is practically unreachable —
   // every field is a UUID this Worker just read out of D1 — but the invariant

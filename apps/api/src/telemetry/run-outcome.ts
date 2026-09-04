@@ -1,4 +1,4 @@
-import { asUserId, type UserId, type WorkspaceId } from '@rally/contracts';
+import { asUserId, type AutomationRunReferenceV1, type UserId, type WorkspaceId } from '@rally/contracts';
 import type { Env, IdentityAuthContext } from '../env';
 import { apiTelemetryEnvelope, emitAuthenticatedApiTelemetry } from './api-emitter';
 import {
@@ -8,14 +8,15 @@ import {
   telemetryJourneyDuration,
   type TelemetryJourneyDuration,
 } from './product-usage';
-import { createIdentityObjectPort } from "../runtime/identity-port";
 import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
-import { automationRunTelemetryEnvelope } from "./automation-run-envelope";
 
 interface CorrelatedRunInput {
   workspaceId: WorkspaceId;
-  workstreamId: string;
+  /** The conversation parent's id, of either kind. */
+  parentId: string;
   harnessRunId: string;
+  /** Set on an automation run's child loop; the run's provenance rides on the input. */
+  automationRun?: AutomationRunReferenceV1 | undefined;
   telemetryOperationId?: string | undefined;
   telemetrySubjectUserId?: string | undefined;
 }
@@ -80,9 +81,15 @@ function triggerType(row: RunRow): 'composer' | 'retry' | 'manual' | 'scheduled'
   if (row.origin === 'human_message') return 'composer';
   if (row.origin === 'manual_retry') return 'retry';
   if (row.origin === 'scheduled_digest') return 'digest';
-  if (row.automation_trigger_type === 'activity') return 'activity';
+  // The run reference's own trigger vocabulary, translated into the one the
+  // dashboards already read. They are not the same words: a reference says
+  // `external_event` and `schedule` where this event has always said
+  // `activity` and `scheduled`, and reading the reference's words as if they
+  // were these reported every scheduled and every event-triggered run as
+  // `manual`, through the fallthrough below.
+  if (row.automation_trigger_type === 'external_event') return 'activity';
   if (row.automation_trigger_type === 'inbound_email') return 'inbound_email';
-  if (row.automation_trigger_type === 'scheduled') return 'scheduled';
+  if (row.automation_trigger_type === 'schedule') return 'scheduled';
   if (row.automation_id) return 'manual';
   return 'system';
 }
@@ -117,32 +124,18 @@ export async function emitCorrelatedRunOutcome(
   env: Env,
   input: CorrelatedRunInput,
 ): Promise<void> {
-  const stored = await createHarnessRunObjectPort(env, input.workspaceId, input.workstreamId)
+  const stored = await createHarnessRunObjectPort(env, input.workspaceId, input.parentId)
     .runOutcomeTelemetry({ runId: input.harnessRunId });
   if (!stored || stored.completed_at === null
     || !['completed', 'needs_input', 'failed', 'stopped'].includes(stored.status)) return;
-  const run: RunRow = { ...stored, automation_id: null, automation_run_id: null, automation_trigger_type: null };
-  // The work stream's automation run was a second table in the join, and the
-  // only column this needed from it. It is the identity authority's row, asked
-  // for after the terminal gate rather than fetched for every run.
-  const workstreamIdentity = await createIdentityObjectPort(env, input.workspaceId, input.workstreamId)
-    .identity();
-  run.automation_run_id = workstreamIdentity?.automation_run_id ?? null;
-  run.automation_id = workstreamIdentity?.automation_subscription_id ?? null;
-  // The automation lookup is workspace authority (the WorkspaceDO — the D1
-  // copy was scrubbed at cutover); the run rows above are work-stream
-  // authority, and no database holds both sides of the old JOIN. Both callers
-  // swallow telemetry errors, so the joined form did not fail — it silently
-  // killed run_terminal telemetry in production.
-  const automation = run.automation_run_id && run.automation_id
-    && ["automation", "automation_run"].includes(run.origin)
-    ? await automationRunTelemetryEnvelope(env, {
-        workspaceId: input.workspaceId,
-        automationId: run.automation_id,
-        runId: run.automation_run_id,
-      })
-    : null;
-  run.automation_trigger_type = automation?.triggerType ?? null;
+  // An automation run's provenance is on the loop input that started it, so no
+  // object is asked a second question after the terminal gate.
+  const run: RunRow = {
+    ...stored,
+    automation_id: input.automationRun?.automationId ?? null,
+    automation_run_id: input.automationRun?.runId ?? null,
+    automation_trigger_type: input.automationRun?.trigger.kind ?? null,
+  };
   const started = run.started_at;
   const completed = stored.completed_at;
   const operationId = input.telemetryOperationId ?? input.harnessRunId;
@@ -153,7 +146,7 @@ export async function emitCorrelatedRunOutcome(
     ...(subjectUserId ? { userId: subjectUserId } : {}),
     name: 'run_terminal',
     properties: {
-      workstreamId: input.workstreamId,
+      workstreamId: input.parentId,
       harnessRunId: input.harnessRunId,
       ...(run.automation_id ? { automationId: run.automation_id } : {}),
       runKind: runKind(run),

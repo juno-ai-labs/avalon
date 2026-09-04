@@ -64,13 +64,13 @@ export function WorkstreamSocketResumeProvider({
  * behavior for isolated consumers and unit tests.
  */
 export function useWorkstreamSocketResumeState(
-  workstreamId: string,
+  parentId: string,
   substreamId = '0',
 ): WorkstreamSocketResumeState {
   const sharedRegistry = useContext(WorkstreamSocketResumeContext);
   const localRegistry = useRef<WorkstreamSocketResumeRegistry>(new Map());
   const registry = sharedRegistry ?? localRegistry.current;
-  const key = `${workstreamId}:${substreamId}`;
+  const key = `${parentId}:${substreamId}`;
   let resumeState = registry.get(key);
   if (!resumeState) {
     resumeState = { lastSequence: 0, streamCursors: new Map() };

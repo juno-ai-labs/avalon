@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import {
+  AutomationDraftSchema,
   asAutomationId,
   asUserId,
   asWorkspaceId,
@@ -8,10 +9,9 @@ import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 
 import type { Env } from "../env";
-import { automationAgentName, workspaceDOName } from "../durable-objects/names";
-import { canonicalTranscriptJson } from "../durable-objects/ordered-transcript-sqlite/canonical-payload-store";
+import { automationDOName, workspaceDOName } from "../durable-objects/names";
 import { ApiError } from "../lib/api-error";
-import { sha256 } from "../lib/crypto";
+import { sha256Hex } from "../lib/crypto";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import {
   bootstrapWorkstreamRuntimeEnvironment,
@@ -19,13 +19,14 @@ import {
 import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
 import { readWorkstreamAuthorityControl } from "../services/workstream-authority";
 import { WorkstreamObjectClient } from "../services/workstream-object-client";
+import { createAutomation } from "../services/automation-service";
+import { enqueueWorkspaceConnectorEvent } from "../services/workspace-connector-event-ingress";
 import { createIdentityObjectPort } from "../runtime/identity-port";
 import { createTranscriptObjectPort } from "../runtime/transcript-port";
 import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
 import { createToolReceiptObjectPort } from "../runtime/tool-receipt-port";
 import type { ToolReceiptObjectPort } from "../durable-objects/workstream-tool-receipt-protocol";
 import type { PersistedRunStatus } from "../durable-objects/workstream-harness-run-storage";
-import { AutomationLegacyImportSourceSchema } from "../durable-objects/automation-legacy-import";
 
 const row = z.record(z.string(), z.union([z.string(), z.number(), z.null()]));
 
@@ -86,14 +87,15 @@ async function insertToolReceipts(
  * touch is enumerated here rather than taken from the request.
  */
 const WORKSPACE_SEED_TABLES = new Set([
-  "connector_connections", "automation_templates", "automation_template_versions",
+  "connector_connections",
   "resources",
 ]);
 
 const seedAutomation = z.strictObject({
   id: z.string().uuid(),
   authorUserId: z.string().uuid(),
-  source: AutomationLegacyImportSourceSchema,
+  scope: z.enum(["personal", "workspace"]),
+  draft: AutomationDraftSchema,
 });
 
 export const SeedProductBodySchema = z.strictObject({
@@ -120,7 +122,7 @@ const SeedProductResultSchema = z.strictObject({
   workspaceTables: z.record(z.string(), z.number()),
   automations: z.array(z.strictObject({
     automationId: z.string().uuid(),
-    lifecycle: z.enum(["active", "paused"]),
+    lifecycle: z.enum(["active"]),
   })),
   workstreams: z.array(z.object({
     workstreamId: z.string().uuid(),
@@ -218,49 +220,39 @@ async function seedProduct(env: Env, body: z.infer<typeof SeedProductBodySchema>
 
   const automations = [];
   for (const automation of body.automations) {
-    const automationId = asAutomationId(automation.id);
-    const sourceHash = await sha256(canonicalTranscriptJson(automation.source));
-    const agent = await durableObjectStubForWorkspace(
+    // The same three steps a person takes: the object with its conversation,
+    // the definition the conversation would have submitted, and Create.
+    const { automationId } = await createAutomation(env, {
+      workspaceId,
+      authorUserId: automation.authorUserId,
+      scope: automation.scope,
+      owningWorkstreamId: null,
+      automationId: automation.id,
+    });
+    const object = await durableObjectStubForWorkspace(
       env,
-      env.AUTOMATION_AGENTS,
+      env.AUTOMATION_DOS,
       asWorkspaceId(workspaceId),
-      automationAgentName(env.AVALON_REGION, asWorkspaceId(workspaceId), automationId),
+      automationDOName(env.AVALON_REGION, asWorkspaceId(workspaceId), asAutomationId(automationId)),
     );
-    const receipt = await agent.importAcceptedAutomation({
-      schemaVersion: 1,
+    await object.submitDefinition({
+      workspaceId: asWorkspaceId(workspaceId),
       automationId,
-      workspaceId,
-      authorUserId: automation.authorUserId,
-      region: env.AVALON_REGION,
-      sourceHash,
-      source: automation.source,
+      draft: { ...automation.draft, suggestedScope: automation.scope },
+      evaluatorRules: null,
+      submittedByRunId: null,
     });
-    await workspaceObject.applyAutomationProjection({
-      schemaVersion: 1,
+    await object.apply({
+      workspaceId: asWorkspaceId(workspaceId),
       automationId,
-      workspaceId,
-      authorUserId: automation.authorUserId,
-      authorityGeneration: receipt.authorityGeneration,
-      projectionVersion: 1,
-      payloadHash: sourceHash,
-      lifecycle: receipt.lifecycle,
-      scope: automation.source.scope,
-      title: automation.source.definition.name,
-      description: automation.source.definition.description,
-      nextRunAt: automation.source.schedules.reduce<number | null>((value, schedule) => (
-        schedule.nextDueAt !== null && (value === null || schedule.nextDueAt < value)
-          ? schedule.nextDueAt
-          : value
-      ), null),
-      attentionCode: automation.source.unsupportedTrigger ? "unsupported_trigger"
-        : automation.source.status === "error" ? "legacy_runtime_error" : null,
+      actor: { userId: asUserId(automation.authorUserId), actorRole: "owner", participantOfOwningWorkstream: false },
     });
-    automations.push({ automationId, lifecycle: receipt.lifecycle });
+    automations.push({ automationId, lifecycle: "active" as const });
   }
 
   const results = [];
   for (const workstream of body.workstreams) {
-    const routed = await bootstrapWorkstreamRuntimeEnvironment(env, workspaceId, workstream.id);
+    const routed = await bootstrapWorkstreamRuntimeEnvironment(env, workspaceId, workstream.id, "workstream");
     const copied: Record<string, number> = {};
 
     const identityPort = createIdentityObjectPort(env, workspaceId, workstream.id);
@@ -394,3 +386,95 @@ async function seedProduct(env: Env, body: z.infer<typeof SeedProductBodySchema>
   }
   return { seeded: true, workspaceTables: workspaceCounts, automations, workstreams: results };
 }
+
+/**
+ * A synthetic connector event, for driving the routing path without a
+ * provider.
+ *
+ * Local development only, gated the same way the seed is. The body is the
+ * normalized activity a connector adapter would have produced; it is enqueued
+ * exactly where a verified webhook or a poll enqueues one, so everything after
+ * ingress (the workspace's event ledger, the matcher, the automation's
+ * admission, the run) is the production path. The connection it names must
+ * exist in the workspace, which the seed can provide.
+ */
+const SyntheticConnectorEventBodySchema = z.strictObject({
+  workspaceId: z.string().uuid(),
+  connectorType: z.string().min(1).max(80),
+  activity: z.object({
+    connectionId: z.string().uuid(),
+    connectionScope: z.enum(["personal", "workspace"]).default("workspace"),
+    connectionOwnerUserId: z.string().uuid().nullable().default(null),
+    provider: z.string().min(1).max(80),
+    providerEventId: z.string().min(1).max(200),
+    eventType: z.string().min(1).max(200),
+    resourceType: z.string().max(80).nullable().default(null),
+    providerResourceId: z.string().max(500).nullable().default(null),
+    title: z.string().min(1).max(300),
+    summary: z.string().max(4_000).default(""),
+    textSnippet: z.string().max(4_000).default(""),
+    occurredAt: z.string().datetime({ offset: true }).optional(),
+    targetUserIds: z.array(z.string().uuid()).default([]),
+    visibility: z.record(z.string(), z.unknown()).default({ kind: "workspace" }),
+    metadata: z.record(z.string(), z.unknown()).default({}),
+    actor: z.record(z.string(), z.unknown()).default({}),
+    subject: z.record(z.string(), z.unknown()).default({}),
+  }),
+});
+
+/** A UUID-shaped id from a hash, so the same event always gets the same id. */
+function syntheticActivityId(hex: string): string {
+  const digits = hex.replace(/[^0-9a-f]/giu, "").padEnd(32, "0").slice(0, 32);
+  return `${digits.slice(0, 8)}-${digits.slice(8, 12)}-4${digits.slice(13, 16)}-8${digits.slice(17, 20)}-${digits.slice(20, 32)}`;
+}
+
+const SyntheticConnectorEventResultSchema = z.strictObject({
+  activityId: z.string().uuid(),
+  enqueued: z.literal(true),
+});
+
+devRoutes.post("/connector-events", zValidator("json", SyntheticConnectorEventBodySchema), async (c) => {
+  if (c.env.APP_ENV !== "development" || c.env.RALLY_DEV_AUTH !== "true") {
+    throw new ApiError(404, "not_found", "Development tooling is unavailable");
+  }
+  const body = c.req.valid("json");
+  const now = new Date().toISOString();
+  // The same provider event id is the same event: a replay must carry the
+  // identity the first delivery had, or the ledger refuses it as a reuse.
+  // Callers replaying an event pass the same occurredAt too.
+  const activityId = syntheticActivityId(await sha256Hex(
+    `${body.workspaceId}:${body.connectorType}:${body.activity.connectionId}:${body.activity.providerEventId}`,
+  ));
+  await enqueueWorkspaceConnectorEvent(c.env, {
+    connectorType: body.connectorType,
+    activity: {
+      id: activityId,
+      workspaceId: body.workspaceId,
+      region: c.env.AVALON_REGION,
+      connectionId: body.activity.connectionId,
+      connectionScope: body.activity.connectionScope,
+      connectionOwnerUserId: body.activity.connectionOwnerUserId,
+      provider: body.activity.provider,
+      providerEventId: body.activity.providerEventId,
+      eventType: body.activity.eventType,
+      resourceType: body.activity.resourceType,
+      providerResourceId: body.activity.providerResourceId,
+      actor: body.activity.actor,
+      subject: body.activity.subject,
+      occurredAt: body.activity.occurredAt ?? now,
+      receivedAt: now,
+      title: body.activity.title,
+      summary: body.activity.summary,
+      textSnippet: body.activity.textSnippet,
+      payloadRef: null,
+      visibility: body.activity.visibility,
+      targetUserIds: body.activity.targetUserIds,
+      entityKeys: [],
+      dedupeKey: `${body.connectorType}:${body.activity.providerEventId}`,
+      rawContentHash: null,
+      metadata: body.activity.metadata,
+      externalPeople: [],
+    },
+  });
+  return c.json(SyntheticConnectorEventResultSchema.parse({ activityId, enqueued: true }), 202);
+});

@@ -96,6 +96,7 @@ const defaultActions = {
 const automation: AutomationSummary = {
   id: 'automation-1',
   name: 'Daily product brief',
+  description: 'A brief every morning.',
   scope: 'you',
   status: 'active',
   nextRunAt: '2026-08-01T16:00:00.000Z',
@@ -106,7 +107,6 @@ function workstream(
   id: string,
   title: string,
   harnessStatus: WorkstreamSummary['harnessStatus'],
-  origin: WorkstreamSummary['origin'] = 'ad_hoc',
   lastActivityAt = '2026-07-31T20:00:00.000Z',
   viewerState: Partial<Pick<WorkstreamSummary, 'hasUnread' | 'unseen' | 'youAreMentioned'>> = {},
 ): WorkstreamSummary {
@@ -114,7 +114,6 @@ function workstream(
     id,
     title,
     titleStatus: 'settled',
-    origin,
     harnessStatus,
     scope: 'workspace' as const,
     latestAttentionSequenceNumber: 0,
@@ -493,7 +492,7 @@ describe('Sidebar work-stream markers', () => {
               workstream('running', 'Pricing restructure', 'running'),
               workstream('completed', 'Missing sidebar row', 'completed'),
               workstream('scheduled', 'Monday review', 'scheduled'),
-              workstream('automation', 'PostHog follow-up', 'completed', 'automation'),
+              workstream('automation', 'PostHog follow-up', 'completed'),
             ]}
           />
         </Tooltip.Provider>
@@ -521,7 +520,7 @@ describe('Sidebar work-stream markers', () => {
             onSignOut={vi.fn()}
             workspace={workspace}
             workstreams={[
-              workstream('unseen', 'Warehouse migration', 'running', 'ad_hoc', '2026-07-31T20:00:00.000Z', {
+              workstream('unseen', 'Warehouse migration', 'running', '2026-07-31T20:00:00.000Z', {
                 unseen: true,
                 // Everything else is true as well, and none of it wins.
                 youAreMentioned: true,
@@ -559,14 +558,14 @@ describe('Sidebar work-stream markers', () => {
             onSignOut={vi.fn()}
             workspace={workspace}
             workstreams={[
-              workstream('mentioned', 'Launch blockers', 'running', 'ad_hoc', '2026-07-31T20:00:00.000Z', {
+              workstream('mentioned', 'Launch blockers', 'running', '2026-07-31T20:00:00.000Z', {
                 youAreMentioned: true,
                 hasUnread: true,
               }),
-              workstream('unread', 'Vendor contract', 'running', 'ad_hoc', '2026-07-31T20:00:00.000Z', {
+              workstream('unread', 'Vendor contract', 'running', '2026-07-31T20:00:00.000Z', {
                 hasUnread: true,
               }),
-              workstream('read', 'Release notes', 'completed', 'ad_hoc', '2026-07-31T20:00:00.000Z', {
+              workstream('read', 'Release notes', 'completed', '2026-07-31T20:00:00.000Z', {
                 hasUnread: true,
               }),
             ]}
@@ -735,12 +734,12 @@ describe('Sidebar work-stream markers', () => {
               onSignOut={vi.fn()}
               workspace={workspace}
               workstreams={[
-                workstream('old-input', 'Old input request', 'needs_input', 'ad_hoc', '2026-06-12T12:00:00.000Z'),
-                workstream('month-scheduled', 'Scheduled this month', 'scheduled', 'ad_hoc', '2026-07-10T12:00:00.000Z'),
-                workstream('week-scheduled', 'Scheduled this week', 'scheduled', 'ad_hoc', '2026-07-27T12:00:00.000Z'),
-                workstream('yesterday-failed', 'Failed yesterday', 'failed', 'ad_hoc', '2026-07-30T12:00:00.000Z'),
-                workstream('day-running', 'Recently running', 'running', 'ad_hoc', '2026-07-31T08:00:00.000Z'),
-                workstream('hour-complete', 'Just completed', 'completed', 'ad_hoc', '2026-07-31T19:50:00.000Z'),
+                workstream('old-input', 'Old input request', 'needs_input', '2026-06-12T12:00:00.000Z'),
+                workstream('month-scheduled', 'Scheduled this month', 'scheduled', '2026-07-10T12:00:00.000Z'),
+                workstream('week-scheduled', 'Scheduled this week', 'scheduled', '2026-07-27T12:00:00.000Z'),
+                workstream('yesterday-failed', 'Failed yesterday', 'failed', '2026-07-30T12:00:00.000Z'),
+                workstream('day-running', 'Recently running', 'running', '2026-07-31T08:00:00.000Z'),
+                workstream('hour-complete', 'Just completed', 'completed', '2026-07-31T19:50:00.000Z'),
               ]}
             />
           </Tooltip.Provider>
@@ -789,7 +788,7 @@ describe('Sidebar work-stream markers', () => {
             onPreviewWorkstreamBatch={onPreviewWorkstreamBatch}
             onSignOut={vi.fn()}
             workspace={workspace}
-            workstreams={[workstream('recent', 'Recent planning', 'completed', 'ad_hoc', new Date().toISOString())]}
+            workstreams={[workstream('recent', 'Recent planning', 'completed', new Date().toISOString())]}
           />
         </Tooltip.Provider>
       </MemoryRouter>,
@@ -860,7 +859,7 @@ describe('Sidebar work-stream markers', () => {
             onPreviewWorkstreamBatch={onPreviewWorkstreamBatch}
             onSignOut={vi.fn()}
             workspace={workspace}
-            workstreams={[workstream('recent', 'Recent planning', 'completed', 'ad_hoc', at)]}
+            workstreams={[workstream('recent', 'Recent planning', 'completed', at)]}
           />
         </Tooltip.Provider>
       </MemoryRouter>,
@@ -904,7 +903,7 @@ describe('Sidebar work-stream markers', () => {
             onPreviewWorkstreamBatch={onPreviewWorkstreamBatch}
             onSignOut={vi.fn()}
             workspace={workspace}
-            workstreams={[workstream('recent', 'Recent planning', 'completed', 'ad_hoc', at)]}
+            workstreams={[workstream('recent', 'Recent planning', 'completed', at)]}
           />
         </Tooltip.Provider>
       </MemoryRouter>,
@@ -937,7 +936,7 @@ describe('Sidebar work-stream markers', () => {
             onPreviewWorkstreamBatch={vi.fn(async () => ({ matchedCount: 20, matchedNoteCount: 0 }))}
             onSignOut={vi.fn()}
             workspace={workspace}
-            workstreams={[workstream('recent', 'Recent planning', 'completed', 'ad_hoc', new Date().toISOString())]}
+            workstreams={[workstream('recent', 'Recent planning', 'completed', new Date().toISOString())]}
           />
         </Tooltip.Provider>
       </MemoryRouter>,
@@ -979,7 +978,6 @@ describe('Sidebar work-stream markers', () => {
                 'boundary',
                 'Boundary planning',
                 'completed',
-                'ad_hoc',
                 '2026-07-31T19:00:30.000Z',
               )]}
             />
@@ -1026,16 +1024,30 @@ describe('Sidebar work-stream markers', () => {
     expect(row.querySelector('.scope-badge')).toHaveTextContent('You');
   });
 
-  it('marks an automation that cannot run instead of promising it a next run', async () => {
+  it('offers New automation beside New work stream, leading to the create route', () => {
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    const actions = screen.getByRole('link', { name: 'New work stream' }).parentElement!;
+    const newAutomation = within(actions).getByRole('link', { name: 'New automation' });
+    // Its own route rather than a new work stream: the automation is created
+    // there and its draft is written in its own conversation.
+    expect(newAutomation).toHaveAttribute('href', '/automations/new');
+    expect(screen.getByRole('link', { name: 'New work stream' })).toHaveAttribute('href', '/workstreams/new');
+  });
+
+  it('names the room that owns a work-stream-scoped automation on its badge', () => {
     render(
       <MemoryRouter>
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[
-              { ...automation, status: 'paused', attention: 'unsupported_trigger' },
-              { ...automation, id: 'automation-9', name: 'Weekly digest' },
-            ]}
+            automations={[{ ...automation, scope: 'workstream', owningWorkstreamId: 'workstream-9' }]}
             onSignOut={vi.fn()}
             workspace={workspace}
             workstreams={[]}
@@ -1044,17 +1056,8 @@ describe('Sidebar work-stream markers', () => {
       </MemoryRouter>,
     );
 
-    const stopped = screen.getByRole('link', { name: /Daily product brief/u });
-    // A schedule it will never keep is worse than no hint at all, which is
-    // what the row said before: "Next in a few hours".
-    expect(within(stopped).getByText('Will not run')).toBeVisible();
-    expect(within(stopped).queryByText(/^Next /u)).not.toBeInTheDocument();
-    expect(stopped.querySelector('.sidebar-row-icon.is-attention')).not.toBeNull();
-
-    // Inert for the automations nothing is wrong with.
-    const healthy = screen.getByRole('link', { name: /Weekly digest/u });
-    expect(within(healthy).getByText(/^Next /u)).toBeVisible();
-    expect(healthy.querySelector('.sidebar-row-icon.is-attention')).toBeNull();
+    const row = screen.getByRole('link', { name: /Daily product brief/u });
+    expect(row.querySelector('.scope-badge')).toHaveTextContent('Work stream');
   });
 
   it('shows the requested automation actions on right click and runs the automation', async () => {
@@ -1092,10 +1095,11 @@ describe('Sidebar work-stream markers', () => {
     );
   });
 
-  it('does not list a draft, which no longer has a screen to open', () => {
+  it('lists a draft with its hint and links it to the automation it is drafting', () => {
     const draft: AutomationSummary = {
       id: 'automation-2',
       name: 'Ad hoc competitor scan',
+      description: 'Watch the competitors.',
       scope: 'you',
       status: 'draft',
       updatedAt: '2026-07-28T11:00:00.000Z',
@@ -1114,17 +1118,16 @@ describe('Sidebar work-stream markers', () => {
       </MemoryRouter>,
     );
 
-    // A draft is a conversation in progress and lives where that conversation
-    // is — a work stream's rail, or nowhere at all if it was written on the
-    // builder that no longer exists. A row here would lead to "this automation
-    // has not been created yet", which is what it did until this filter.
+    // A draft is a conversation in progress on the automation's own screen,
+    // which is where its row leads; the hint says it is not running yet.
     const section = screen.getByRole('region', { name: 'Automations' });
     expect([...section.querySelectorAll('.sidebar-row-title')].map((row) => row.textContent))
-      .toEqual(['Daily product brief']);
-    expect(screen.queryByText('Ad hoc competitor scan')).toBeNull();
-    // The server stopped sending drafts too; this is the second guard, for a
-    // client holding a socket-pushed list from before that change.
-    expect(section.querySelector('.automation-row.is-draft')).toBeNull();
+      .toEqual(['Ad hoc competitor scan', 'Daily product brief']);
+    const row = screen.getByRole('link', { name: /Ad hoc competitor scan/u });
+    expect(row).toHaveClass('is-draft');
+    expect(row).toHaveAttribute('href', '/automations/automation-2');
+    expect(within(row).getByText('Draft')).toBeVisible();
+    expect(screen.queryByText('No automations')).toBeNull();
   });
 
   it('deletes an automation only after the confirmation dialog', async () => {
@@ -1225,7 +1228,7 @@ describe('Sidebar work-stream markers', () => {
             onOpenMeetingNotes={onOpenMeetingNotes}
             onSignOut={vi.fn()}
             workspace={workspace}
-            workstreams={[workstream('older', 'Older work stream', 'completed', 'ad_hoc', '2026-07-31T19:40:00.000Z')]}
+            workstreams={[workstream('older', 'Older work stream', 'completed', '2026-07-31T19:40:00.000Z')]}
           />
         </Tooltip.Provider>
       </MemoryRouter>,
@@ -1932,20 +1935,8 @@ describe('private work streams', () => {
     );
   });
 
-  // Both of these take their audience from something other than this column, so
-  // the menu does not offer a change that would not happen.
-  it('does not offer the toggle on a work stream an automation generated', async () => {
-    renderWith([{
-      ...workstream('00000000-4000-4000-8000-000000000025', 'Daily brief', 'completed', 'automation'),
-      automationSubscriptionId: '00000000-4000-4000-8000-000000000026',
-    }]);
-
-    fireEvent.contextMenu(screen.getByRole('link', { name: /Daily brief/u }), { clientX: 120, clientY: 90 });
-
-    expect(await screen.findByRole('menuitem', { name: 'Rename' })).toBeInTheDocument();
-    expect(screen.queryByRole('menuitem', { name: 'Make private' })).not.toBeInTheDocument();
-  });
-
+  // A system work stream takes its audience from the subsystem, so the menu
+  // does not offer a change that would not happen.
   it('does not offer the toggle on a work stream that belongs to Rally itself', async () => {
     renderWith([{
       ...workstream('00000000-4000-4000-8000-000000000027', 'Digest · Adam', 'completed'),
@@ -2075,8 +2066,8 @@ describe('pinned work streams', () => {
 
   it('renders pinned rows in their stored order rather than by activity', () => {
     renderWith([
-      pinned(workstream('ws-a', 'Alpha', 'completed', 'ad_hoc', '2026-07-31T20:00:00.000Z'), 1),
-      pinned(workstream('ws-b', 'Bravo', 'completed', 'ad_hoc', '2026-07-20T20:00:00.000Z'), 0),
+      pinned(workstream('ws-a', 'Alpha', 'completed', '2026-07-31T20:00:00.000Z'), 1),
+      pinned(workstream('ws-b', 'Bravo', 'completed', '2026-07-20T20:00:00.000Z'), 0),
     ]);
 
     expect(pinnedRowTitles()).toEqual([expect.stringContaining('Bravo'), expect.stringContaining('Alpha')]);
@@ -2101,7 +2092,6 @@ describe('pinned work streams', () => {
                   `ws-recent-${index + 1}`,
                   `Recent ${index + 1}`,
                   'completed',
-                  'ad_hoc',
                   `2026-07-31T19:${String(58 - index).padStart(2, '0')}:00.000Z`,
                 )),
             ]}

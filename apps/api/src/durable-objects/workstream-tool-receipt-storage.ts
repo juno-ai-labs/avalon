@@ -638,6 +638,26 @@ export class WorkstreamToolReceiptStorage {
   }
 
   /** Ordered relevant tool history used to rebuild run-local safety state after eviction. */
+  /**
+   * The latest receipts of some capabilities across every run on this object.
+   *
+   * An automation's conversation drafts across turns: a plugin inspected in
+   * one turn is still inspected when an elicitation pause ends and the next
+   * turn resumes the draft. Replaying by run alone forgot that and refused
+   * the rule until the model inspected again.
+   */
+  receiptsForCapabilities(input: { capabilities: readonly string[]; limit: number }): ToolReceiptRecord[] {
+    if (input.capabilities.length === 0) return [];
+    const placeholders = input.capabilities.map(() => "?").join(", ");
+    return this.sql.exec<ReceiptRow>(
+      `SELECT ${RECEIPT_COLUMNS} FROM tool_effects
+        WHERE json_extract(execution_plan_json, '$.capability') IN (${placeholders})
+        ORDER BY COALESCE(settled_at, started_at, 0) DESC, tool_position DESC LIMIT ?`,
+      ...input.capabilities,
+      Math.max(1, Math.min(input.limit, 500)),
+    ).toArray().map(receiptRecord).reverse();
+  }
+
   receiptsForRun(input: { runId: string; capabilities: readonly string[] }): ToolReceiptRecord[] {
     if (input.capabilities.length === 0) return [];
     const placeholders = input.capabilities.map(() => "?").join(", ");

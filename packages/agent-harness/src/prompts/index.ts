@@ -1,5 +1,4 @@
 export * from "./addressing";
-export * from "./automation-result-disposition";
 export * from "./citations";
 export * from "./compaction";
 export * from "./document-generation";

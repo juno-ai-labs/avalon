@@ -30,7 +30,6 @@
     "OPENROUTER_FALLBACK_MODELS": "google/gemini-3.6-flash",
     "OPENROUTER_CLASSIFIER_MODEL": "google/gemini-2.5-flash-lite",
     "OPENROUTER_STRUCTURED_MODEL": "google/gemini-2.5-flash-lite",
-    "OPENROUTER_AUTOMATION_MODEL": "x-ai/grok-4.5",
     "RESEND_FROM_EMAIL": "Rally <invites@rallywith.ai>",
     "RESEND_NOTIFICATION_FROM_EMAIL": "Rally <notifications@rallywith.ai>",
     "WORKSTREAM_EMAIL_DOMAIN": "automation.rallywith.ai",
@@ -55,7 +54,6 @@
     "PROVIDER_WEBHOOK_MAX_BYTES": "2000000",
     "INBOUND_EMAIL_MAX_BYTES": "5000000",
     "INBOUND_EMAIL_PROCESSING_LEASE_SECONDS": "300",
-    "AUTOMATION_EMAIL_MAX_RUNS_PER_HOUR": "30",
     "LOG_LEVEL": "info"
   },
   "d1_databases": [
@@ -167,7 +165,7 @@
   "durable_objects": {
     "bindings": [
       { "name": "SUBSTREAM_AGENTS", "class_name": "SubstreamAgent" },
-      { "name": "AUTOMATION_AGENTS", "class_name": "AutomationAgent" },
+      { "name": "AUTOMATION_DOS", "class_name": "AutomationDO" },
       { "name": "WORKSTREAM_DOS", "class_name": "WorkstreamDO" },
       { "name": "WORKSPACE_DOS", "class_name": "WorkspaceDO" },
       { "name": "CRASH_SYMBOLICATOR", "class_name": "CrashSymbolicatorContainer" },
@@ -193,6 +191,12 @@
   // dynamic and deliberately absent from this list — only Rally's own classes
   // are ever migrated here. v8 irreversibly deletes the retired HyperSight
   // class and all objects in its namespace; rollback cannot restore that state.
+  // v9 irreversibly deletes the first automation object, whose thirteen released
+  // migrations built a drafting substrate that no longer exists, and adds
+  // AutomationDO with a fresh ledger: an automation is now a parent of
+  // conversation objects, like WorkstreamDO, and its schema starts at what that
+  // needs. Every automation that existed before v9 is gone with the class;
+  // there were no users, only dogfood, and they are recreated by chatting.
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["WorkstreamRoom", "WorkspaceScheduler"] },
     { "tag": "v2", "new_sqlite_classes": ["CrashSymbolicatorContainer"] },
@@ -205,7 +209,8 @@
     { "tag": "v5", "new_sqlite_classes": ["SlackReactionTicker"] },
     { "tag": "v6", "new_sqlite_classes": ["AutomationAgent"] },
     { "tag": "v7", "new_sqlite_classes": ["ArtifactHostDO"] },
-    { "tag": "v8", "deleted_classes": ["BlockDashboardAgent"] }
+    { "tag": "v8", "deleted_classes": ["BlockDashboardAgent"] },
+    { "tag": "v9", "deleted_classes": ["AutomationAgent"], "new_sqlite_classes": ["AutomationDO"] }
   ],
   "queues": {
     "producers": [

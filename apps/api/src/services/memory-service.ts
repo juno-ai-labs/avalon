@@ -24,7 +24,6 @@ import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
 import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
 import { createIdentityObjectPort } from "../runtime/identity-port";
-import { executeAutomationMemoryToolForRun } from "./automation-memory-client";
 import { MEMORY_EMBEDDING_MODEL, runEmbeddingInference } from "./structured-inference";
 
 export const MEMORY_EMBEDDING_DIMENSIONS = 1_024;
@@ -255,7 +254,7 @@ function ftsQuery(value: string): string | null {
     .join(" OR ");
 }
 
-async function ensureScope(
+export async function ensureScope(
   env: Env,
   workspaceId: string,
   kind: MemoryScopeKind,
@@ -285,9 +284,9 @@ export async function resolveMemoryAccess(
   input: WorkstreamWorkflowInput,
 ): Promise<MemoryScope[]> {
   const [run, workstream] = await Promise.all([
-    createHarnessRunObjectPort(env, input.workspaceId, input.workstreamId)
+    createHarnessRunObjectPort(env, input.workspaceId, input.parentId)
       .run({ runId: input.harnessRunId }),
-    createIdentityObjectPort(env, input.workspaceId, input.workstreamId).identity(),
+    createIdentityObjectPort(env, input.workspaceId, input.parentId).identity(),
   ]);
   if (!run || !workstream) throw new Error("memory_run_context_not_found");
   if (stableJson(JSON.parse(run.execution_principal_json)) !== stableJson(input.executionPrincipal)) {
@@ -317,37 +316,23 @@ export async function resolveMemoryAccess(
     await ensureScope(env, input.workspaceId, "workspace", input.workspaceId, workspaceWritable),
   ];
 
-  if (input.automationSubscriptionId) {
-    if (workstream.automation_subscription_id !== input.automationSubscriptionId) {
-      throw new Error("memory_automation_workstream_mismatch");
-    }
-    // The 2026-08-28 automation cutover moved automation-scoped memory into
-    // the named AutomationAgent and dropped both `automation_subscriptions`
-    // and every `memory_scopes` row of kind `automation` from WorkspaceDO
-    // (`docs/data-model.md`), so the subscription row this branch used to
-    // read — to authorize a personal automation's owner and grant the
-    // automation scope — no longer exists anywhere this service can reach.
-    // Every live automation run resolves memory through
-    // `executeAutomationMemoryToolForRun` instead: the tools and the recall
-    // freeze both route there when `automationRunContext` is present, and a
-    // run that names a subscription without that context is already stopped
-    // by name in `loadRunPromptContext`. This refusal is the fence for a
-    // future caller that reaches here anyway — it fails by name rather than
-    // surfacing the routed `no such table: automation_subscriptions` the old
-    // read produced once the table was dropped.
-    throw new Error("memory_automation_scope_retired");
+  // An automation's conversations, its draft chat and its runs alike, share
+  // the automation's own scope: what a run learns is what the next run should
+  // know, and what the person said while drafting is part of that. The
+  // person's own scope stays out of it, because a run acts for the automation
+  // rather than as the person, and a workspace automation's runs would
+  // otherwise write into whichever member happened to be its principal.
+  if (input.parentKind === "automation") {
+    scopes.push(await ensureScope(env, input.workspaceId, "automation", input.parentId, true));
+    return scopes;
   }
 
-  // Everything below is the union for a run that is *not* an automation run,
-  // and the run's own `automationSubscriptionId` is what decides that — not how
-  // the work stream was created. This used to also demand
-  // `origin_type === "ad_hoc"`, which read as a consistency check and was in
-  // fact a refusal of every run a member's reply admits.
-  // `assertRunAuthorityStillValid` treats a run with no subscription as a
-  // non-automation run in any work stream, and that field is the run's
-  // authority claim rather than a description of its container; this is the
-  // memory union agreeing with it. See `docs/agent-harness.md` §Scoped durable
-  // memory for the class this covers and the two questions left open.
+  // Everything below is the union for a run whose parent is a work stream. The
+  // parent kind on the run's input is the fact that decides it: an automation
+  // run carries `parentKind: "automation"` and took the branch above, and the
+  // container's own row says nothing more. This used to be decided by a
+  // subscription id on the run plus the identity root's `origin_type`, the
+  // second of which was a weaker copy of the first and has no writer now.
   if (input.executionPrincipal.type === "user") {
     scopes.push(await ensureScope(
       env,
@@ -357,43 +342,13 @@ export async function resolveMemoryAccess(
       true,
     ));
   }
-  // A work-stream scope, though, belongs only to a work stream that owns one.
-  // Migration 0036's `memory_scopes_validate_workstream_owner` refused to create
-  // one for a work stream an automation made, because every run of a
-  // subscription gets a fresh work stream and memory left in one of them can
-  // never be recalled — which is what the subscription's own scope exists for.
-  // 0090 dropped that trigger with the rest of D1's product enforcement when
-  // memory moved into WorkspaceDO, and nothing retired the rule it stated.
-  //
-  // Held here rather than back in the schema, and not for lack of visibility:
-  // `workspace_workstream_directory` does carry both fields. But that row is a
-  // generation-fenced projection behind a waterline, so a constraint reading it
-  // would gate scope creation on projection timing and fail closed on a work
-  // stream not yet projected — and memory rows there deliberately hold
-  // work-stream ids as opaque provenance rather than foreign keys
-  // (`docs/workstream-durable-object.md`). This function reads the identity
-  // object directly and owes no such timing. It reads it safely only because
-  // every automation producer provisions the work stream before dispatching a
-  // run into it; a producer that dispatched first would reach this with the
-  // identity root's `origin_type` default still standing.
-  //
-  // Only the subscription id is tested, where 0036 tested the origin label too.
-  // The label is a second name for the same bit — the three automation
-  // producers set both together and nothing updates either afterwards — and it
-  // is the weaker of the two: the identity root declares
-  // `origin_type TEXT NOT NULL DEFAULT 'ad_hoc'` with no CHECK, so keying on it
-  // would silently drop this scope for any value that is neither. The
-  // subscription id is the fact the rule is about, and the same field the
-  // automation branch above keys on.
-  if (!workstream.automation_subscription_id) {
-    scopes.push(await ensureScope(
-      env,
-      input.workspaceId,
-      "workstream",
-      input.workstreamId,
-      input.executionPrincipal.type === "user",
-    ));
-  }
+  scopes.push(await ensureScope(
+    env,
+    input.workspaceId,
+    "workstream",
+    input.parentId,
+    input.executionPrincipal.type === "user",
+  ));
   return scopes;
 }
 
@@ -484,7 +439,7 @@ async function searchVector(
   if (!env.MEMORY_INDEX) throw new Error("memory_vector_binding_unavailable");
   const embedding = await embedMemory(env, query, "search_query", {
     workspaceId: input.workspaceId,
-    workstreamId: input.workstreamId,
+    workstreamId: input.parentId,
     ...(input.substreamId ? { substreamId: input.substreamId } : {}),
     harnessRunId: input.harnessRunId,
     executionPrincipal: input.executionPrincipal,
@@ -701,7 +656,7 @@ export async function freezeRunMemoryContext(
   // text so a replay freezes the same query.
   const query = (rawQuery.trim() || "Current work-stream objective and trigger")
     .slice(0, MEMORY_RECALL_QUERY_LIMIT);
-  const runs = createHarnessRunObjectPort(env, input.workspaceId, input.workstreamId);
+  const runs = createHarnessRunObjectPort(env, input.workspaceId, input.parentId);
   const fence = {
     runId: input.harnessRunId,
     attemptId: lease.attemptId,
@@ -711,25 +666,11 @@ export async function freezeRunMemoryContext(
   const existing = await runs.memoryContext(fence);
   if (existing) return parseFrozenContext(existing);
 
-  const recalled = input.automationRunContext
-    ? await executeAutomationMemoryToolForRun(env, input, "search", { query })
-    : null;
   env = withWorkspaceRuntimeDatabase(env, input.workspaceId);
-  const workspaceRecall = recalled ? null : await hybridMemorySearch(env, input, query);
-  const memoryScopeIds = recalled
-    ? [input.automationRunContext!.automationId]
-    : workspaceRecall!.scopes.map((scope) => scope.memoryScopeId).sort();
-  const results = recalled
-    ? z.looseObject({ results: z.array(z.strictObject({
-        memoryItemId: z.string(),
-        memoryScopeId: z.string(),
-        scopeKind: z.literal("automation"),
-        text: z.string(),
-        revision: z.number().int().positive(),
-        expiresAt: z.string().nullable(),
-      })) }).parse(recalled.output).results
-    : workspaceRecall!.results;
-  const retrievalMode = recalled ? "fts_only" as const : workspaceRecall!.retrievalMode;
+  const workspaceRecall = await hybridMemorySearch(env, input, query);
+  const memoryScopeIds = workspaceRecall.scopes.map((scope) => scope.memoryScopeId).sort();
+  const results = workspaceRecall.results;
+  const retrievalMode = workspaceRecall.retrievalMode;
   const memoryContextHash = await sha256(stableJson({ memoryScopeIds, query, retrievalMode, results }));
   // The recall above costs a vector search, so the read and the write cannot be
   // one operation. A loser gets the winner's row rather than an outcome to
@@ -834,7 +775,7 @@ async function addMemory(
   const provenance = {
     source: "agent",
     harnessRunId: input.harnessRunId,
-    workstreamId: input.workstreamId,
+    workstreamId: input.parentId,
     executionPrincipal: input.executionPrincipal,
     rationale: args.rationale,
   };
@@ -851,7 +792,7 @@ async function addMemory(
       receiptId,
       actorPrincipalJson: JSON.stringify(input.executionPrincipal),
       harnessRunId: input.harnessRunId,
-      workstreamId: input.workstreamId,
+      workstreamId: input.parentId,
       rationale: args.rationale,
       inputHash,
       mutationJson: JSON.stringify({ text: args.text, expiresAt: args.expiresAt ?? null }),
@@ -928,7 +869,7 @@ async function updateMemory(
       receiptId,
       actorPrincipalJson: JSON.stringify(input.executionPrincipal),
       harnessRunId: input.harnessRunId,
-      workstreamId: input.workstreamId,
+      workstreamId: input.parentId,
       rationale: args.rationale,
       inputHash,
       mutationJson: JSON.stringify({ text: args.text, expiresAt }),
@@ -983,7 +924,7 @@ async function invalidateMemory(
       receiptId,
       actorPrincipalJson: principalJson,
       harnessRunId: input.harnessRunId,
-      workstreamId: input.workstreamId,
+      workstreamId: input.parentId,
       rationale: args.reason,
       inputHash,
       mutationJson: JSON.stringify({ reason: args.reason }),
@@ -1113,17 +1054,7 @@ export function createMemoryTools(env: Env, input: WorkstreamWorkflowInput): Har
       execute: (raw, context) => invalidateMemory(env, input, raw, context),
     },
   ];
-  if (!input.automationRunContext) return tools;
-  return tools.map((tool) => ({
-    ...tool,
-    execute: async (raw, context) => executeAutomationMemoryToolForRun(
-      env,
-      input,
-      tool.definition.name as "search" | "add" | "update" | "invalidate",
-      raw,
-      context.providerIdempotencyKey,
-    ),
-  }));
+  return tools;
 }
 
 async function projectOutboxRow(

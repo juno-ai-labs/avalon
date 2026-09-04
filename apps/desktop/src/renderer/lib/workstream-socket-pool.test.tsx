@@ -78,7 +78,7 @@ function socketApi(): WorkstreamSocketApi & {
       ticket: `control-ticket-${workstreamId}`,
       protocols: socketTicketProtocols(`control-ticket-${workstreamId}`),
     })),
-    getWorkstream: vi.fn(unexpected),
+    getConversation: vi.fn(unexpected),
     messageMentionPayload: vi.fn(async () => []),
   };
 }
@@ -144,6 +144,32 @@ describe('retainedWorkstreamSocketIds', () => {
 
   it('returns no IDs when every source is empty', () => {
     expect(retainedWorkstreamSocketIds(null, [], [], null)).toEqual([]);
+  });
+});
+
+describe('useRetainedWorkstreamSocket for an automation parent', () => {
+  it('opens only the feed: an automation has no WorkstreamDO control socket to warm', async () => {
+    const api = socketApi();
+    const automationId = '00000000-0000-7000-8000-00000000a001';
+    const workstreamId = '00000000-0000-7000-8000-00000000b001';
+    const Wrapper = createWrapper();
+    function AutomationConnection(): React.JSX.Element {
+      const connection = useRetainedWorkstreamSocket(api, automationId, true, 'automation', '0');
+      return <div>{connection.state}</div>;
+    }
+    render(
+      <Wrapper>
+        <WorkstreamSocketPool activeWorkstreamId={workstreamId} api={api} backgroundWorkstreamIds={[]}>
+          <AutomationConnection />
+        </WorkstreamSocketPool>
+      </Wrapper>,
+    );
+    await flushPromises();
+
+    // The pool's active work stream opened its pair; the automation opened a
+    // feed of its own and asked for no control ticket at all.
+    expect(api.getSocketTicket).toHaveBeenCalledWith(automationId, '0', expect.anything(), 0, false, expect.anything());
+    expect(api.getWorkstreamControlSocketTicket.mock.calls.map(([id]) => id)).toEqual([workstreamId]);
   });
 });
 

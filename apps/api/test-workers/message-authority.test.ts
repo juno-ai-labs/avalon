@@ -23,7 +23,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { asSubstreamId } from "@rally/contracts";
 
-import { substreamAgentName } from "../src/durable-objects/names";
+import { conversationObjectName } from "../src/durable-objects/names";
 import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
 import {
   WORKSPACE_ID,
@@ -48,7 +48,7 @@ let unique = 0;
 function agent(): DurableObjectStub {
   unique += 1;
   return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
-    substreamAgentName(
+    conversationObjectName(
       "global",
       WORKSPACE_ID,
       WORKSTREAM_ID,

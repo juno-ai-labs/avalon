@@ -1604,9 +1604,6 @@ export class WorkstreamHarnessRunStorage {
         || run.lease_expires_at <= input.now) {
         return { outcome: "ownership_lost" as const };
       }
-      if (input.hostOutcomeStatus === "completed" && !input.finalTurn) {
-        return { outcome: "content_mismatch" as const, reasons: ["content" as const] };
-      }
       if (
         input.finalTurn !== null
         && input.participantNotice !== null

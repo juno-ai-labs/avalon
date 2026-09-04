@@ -18,7 +18,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 38;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 39;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -2807,6 +2807,20 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
       `DROP TABLE IF EXISTS block_dashboard_configuration_versions`,
       `DROP TABLE IF EXISTS block_dashboard_user_preferences`,
       `DROP INDEX IF EXISTS parts_pending_tool_fence_idx`,
+    ],
+  },
+  {
+    version: 39,
+    description: "a conversation records the kind of parent it belongs to",
+    statements: [
+      // `workstream_key` is the parent id. It kept its column name because the
+      // runtime-compat view and triggers in `workstream-runtime-compat-schema.ts`
+      // name it inside released migration text; what changed is that the
+      // parent may now be an automation as well as a work stream, and the
+      // object says which. Every object that exists at this version belongs to
+      // a work stream, which is what the default records.
+      `ALTER TABLE workstream ADD COLUMN parent_kind TEXT NOT NULL DEFAULT 'workstream'
+         CHECK (parent_kind IN ('workstream', 'automation'))`,
     ],
   },
 ];

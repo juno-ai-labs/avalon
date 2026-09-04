@@ -35,6 +35,8 @@ export function createToolReceiptObjectPort(
   workspaceId: string,
   workstreamId: string,
   localStorage?: WorkstreamToolReceiptStorage,
+  /** Which of the parent's conversations; the main one by default. */
+  substreamId?: string,
 ): ToolReceiptObjectPort {
   return createObjectPort(
     env,
@@ -42,5 +44,6 @@ export function createToolReceiptObjectPort(
     workstreamId,
     CONTRACT,
     localStorage,
+    substreamId,
   );
 }

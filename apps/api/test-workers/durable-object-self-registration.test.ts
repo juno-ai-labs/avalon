@@ -23,7 +23,7 @@ import { reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import {
-  substreamAgentName,
+  conversationObjectName,
   workspaceDOName,
   workstreamDOName,
 } from "../src/durable-objects/names";
@@ -75,7 +75,7 @@ beforeEach(async () => {
 
 describe("a Durable Object's registration of its own identity", () => {
   it("lets a SubstreamAgent recognize itself before its identity is written", async () => {
-    const name = substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID);
+    const name = conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID);
     const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(name));
 
     await runInDurableObject(stub, (instance, state) => {
@@ -93,7 +93,7 @@ describe("a Durable Object's registration of its own identity", () => {
       expect(selfFor(
         held.env,
         env.SUBSTREAM_AGENTS,
-        substreamAgentName("global", WORKSPACE_ID, OTHER_WORKSTREAM_ID),
+        conversationObjectName("global", WORKSPACE_ID, OTHER_WORKSTREAM_ID),
       )).toBeNull();
       expect(selfFor(held.env, env.WORKSTREAM_DOS, name)).toBeNull();
     });
@@ -105,7 +105,7 @@ describe("a Durable Object's registration of its own identity", () => {
     // The service keeps its environment for the object's whole life and resolves
     // this work stream's own model routing through it, so an unregistered one
     // left that resolution going out through the namespace and back in.
-    const name = substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID);
+    const name = conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID);
     const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(name));
 
     await runInDurableObject(stub, (instance, state) => {

@@ -1813,16 +1813,25 @@ describe("publishing a run's final turn", () => {
       .toMatchObject({ event_type: "host_outcome_persisted", status: "failed" });
   });
 
-  it("refuses to checkpoint completion without a durable assistant turn", async () => {
+  it("checkpoints a completion a tool ended, which has no assistant turn to point at", async () => {
     const { storage } = claimed();
 
+    // A ready draft submitted from an automation's chat ends the run from the
+    // tool, and the model is not asked for a closing message. Refusing the
+    // checkpoint here left the run un-terminalized with an error, after the
+    // tool's effect had already landed.
     await expect(storage.publishHostOutcome({
       ...fence,
       runId: RUN,
       ...publish,
       finalTurn: null,
-    })).resolves.toEqual({ outcome: "content_mismatch", reasons: ["content"] });
-    expect(storage.lifecycleEvent({ runId: RUN, eventKey: "host_outcome" })).toBeUndefined();
+    })).resolves.toEqual({
+      outcome: "published",
+      finalTurnSequenceNumber: null,
+      participantNoticeSequenceNumber: null,
+    });
+    expect(storage.lifecycleEvent({ runId: RUN, eventKey: "host_outcome" }))
+      .toMatchObject({ event_type: "host_outcome_persisted", status: "completed" });
   });
 
   it("refuses a conflicting participant notice before writing a final turn or lifecycle event", async () => {

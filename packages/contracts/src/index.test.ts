@@ -7,13 +7,11 @@ import {
   AnswerElicitationRequestSchema,
   AppendNoteTranscriptSegmentRequestSchema,
   AutomationDraftSchema,
-  AutomationDraftStreamEventSchema,
   AGENT_MODEL_FLAG_KEYS,
   AGENT_MODEL_OVERRIDES,
   AGENT_MODEL_ROLES,
   AgentModelRoutingSchema,
   ClientSocketEventSchema,
-  CompileAutomationRequestSchema,
   ConnectorOAuthProviderSchema,
   ConnectorOAuthProviders,
   automationAcceptanceSelections,
@@ -348,26 +346,22 @@ describe("boundary contracts", () => {
     expect(AGENT_MODEL_ROLES).toEqual([
       "workstream",
       "inline_child",
-      "automation_compiler",
       "meeting_notes",
       "addressing_classifier",
       "workstream_naming",
       "work_opportunity_admission",
       "work_opportunity_ranking",
       "workstream_description",
-      "automation_result_disposition",
     ]);
     expect(AGENT_MODEL_ROLES.map((role) => AGENT_MODEL_FLAG_KEYS[role])).toEqual([
       "agent-model-workstream",
       "agent-model-inline-child",
-      "agent-model-automation-compiler",
       "agent-model-meeting-notes",
       "agent-model-addressing-classifier",
       "agent-model-workstream-naming",
       "agent-model-work-opportunity-admission",
       "agent-model-work-opportunity-ranking",
       "agent-model-workstream-description",
-      "agent-model-automation-result-disposition",
     ]);
     expect(AgentModelRoutingSchema.parse({ model: " x-ai/grok-4.3 " })).toEqual({
       model: "x-ai/grok-4.3",
@@ -401,21 +395,6 @@ describe("boundary contracts", () => {
     });
     expect(AnswerElicitationRequestSchema.parse({ skipped: true })).toEqual({ skipped: true });
     expect(AnswerElicitationRequestSchema.safeParse({ skipped: true, answer: "hidden" }).success).toBe(false);
-  });
-
-  it("carries a stable draft ID while accepting legacy automation compile requests", () => {
-    expect(CompileAutomationRequestSchema.parse({
-      draftId: id,
-      messages: [{ role: "user", content: "Check the blog every day." }],
-    })).toMatchObject({
-      draftId: id,
-      currentDraft: null,
-      attachmentIds: [],
-    });
-    expect(CompileAutomationRequestSchema.parse({
-      messages: [{ role: "user", content: "Check the blog every day." }],
-      attachmentIds: [id],
-    })).toMatchObject({ currentDraft: null, attachmentIds: [id] });
   });
 
   it("exposes stable member-safe harness failure codes", () => {
@@ -702,32 +681,6 @@ describe("boundary contracts", () => {
     // carry them had no caller left able to fill it, so it arrived empty and
     // the accepted automation ran with none of its own recommended connectors.
     expect(automationAcceptanceSelections(draft).defaultPluginIds).toHaveLength(25);
-    // A row is attributed to the one plugin that owns its tool, never to a set.
-    const activity = AutomationDraftStreamEventSchema.parse({
-      type: "tool",
-      toolCallId: "tool-1",
-      name: "Reviewed Service 0",
-      summary: "Read the authorized service",
-      status: "completed",
-      plugin: { pluginId: recommendations[0]!.pluginId, displayName: "Service 0", icon: "plug" },
-    });
-    expect(activity.type).toBe("tool");
-    if (activity.type !== "tool") throw new Error("Expected tool activity");
-    expect(activity.plugin).toEqual({
-      pluginId: recommendations[0]!.pluginId,
-      displayName: "Service 0",
-      icon: "plug",
-    });
-
-    const unattributed = AutomationDraftStreamEventSchema.parse({
-      type: "tool",
-      toolCallId: "tool-2",
-      name: "Searched the public web",
-      summary: "Web search completed",
-      status: "completed",
-    });
-    if (unattributed.type !== "tool") throw new Error("Expected tool activity");
-    expect(unattributed.plugin).toBeNull();
   });
 
   it("validates automation-scoped durable table declarations and natural keys", () => {
@@ -1032,11 +985,11 @@ describe("boundary contracts", () => {
     const result = WorkstreamWorkflowInputSchema.safeParse({
       region: "global",
       workspaceId: id,
-      workstreamId: id,
+      parentKind: "workstream",
+      parentId: id,
       loopId: `workstream:${id}:substream:0:loop`,
       harnessRunId: id,
       triggerMessageId: null,
-      automationSubscriptionId: null,
       activityId: null,
       reason: "message"
     });
@@ -1047,11 +1000,11 @@ describe("boundary contracts", () => {
     const parsed = WorkstreamWorkflowInputSchema.parse({
       region: "global",
       workspaceId: id,
-      workstreamId: id,
+      parentKind: "workstream",
+      parentId: id,
       loopId: `workstream:${id}:substream:0:loop`,
       harnessRunId: id,
       triggerMessageId: id,
-      automationSubscriptionId: null,
       activityId: null,
       executionPrincipal: { type: "user", userId: id },
       telemetryOperationId: id,
@@ -1069,11 +1022,11 @@ describe("boundary contracts", () => {
     const parsed = WorkstreamWorkflowInputSchema.parse({
       region: "global",
       workspaceId: id,
-      workstreamId: id,
+      parentKind: "workstream",
+      parentId: id,
       loopId: `workstream:${id}:substream:0:loop`,
       harnessRunId: id,
       triggerMessageId: id,
-      automationSubscriptionId: null,
       activityId: null,
       executionPrincipal: { type: "workspace", workspaceId: id },
       slackOrigin: {
@@ -1127,10 +1080,10 @@ describe("boundary contracts", () => {
     const base = {
       region: "global",
       workspaceId: id,
-      workstreamId: id,
+      parentKind: "workstream",
+      parentId: id,
       loopId,
       triggerMessageId: id,
-      automationSubscriptionId: null,
       activityId: null,
       executionPrincipal: { type: "user", userId: id },
       reason: "human_message",
@@ -1152,11 +1105,11 @@ describe("boundary contracts", () => {
     const base = {
       region: "global",
       workspaceId: id,
-      workstreamId: id,
+      parentKind: "workstream",
+      parentId: id,
       loopId,
       harnessRunId: id,
       triggerMessageId: id,
-      automationSubscriptionId: null,
       activityId: null,
       executionPrincipal: { type: "user", userId: id },
       reason: "manual_retry",
@@ -1546,12 +1499,7 @@ describe("resource version provenance", () => {
       titleStatus: "settled",
       objective: "",
       emailAddress: null,
-      originType: "ad_hoc",
-      originLabel: null,
       createdByUserId: null,
-      automationSubscriptionId: null,
-      automationRunId: null,
-      plannedFor: null,
       harnessStatus: "completed",
       latestAttentionSequenceNumber: 0,
       readThroughSequenceNumber: 0,

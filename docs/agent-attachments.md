@@ -52,9 +52,9 @@ a list request; it never supplies or guesses a MIME filter.
 
 The same registry renders the complete model-facing explanation and the Zod
 enum. Strict schemas cover list, read, search, view, and summarize arguments and
-their exact success results. Work streams expose all five operations; the
-automation architect receives the four content operations because its complete
-set of at most ten resources is already present in the current-turn manifest.
+their exact success results. Every conversation, a work stream's and an
+automation's alike, exposes all five operations; the compiler-only variant
+that received four is gone with the compiler.
 JSON Schema guides the provider, while the executor must parse the same strict
 Zod schema because the harness does not enforce provider-facing JSON Schema.
 
@@ -86,7 +86,7 @@ Triggering messages call `buildAttachmentModelParts`, but that name now means a
 manifest plus successfully normalized image parts only. Text, Office, PDF, and
 other source objects are not fetched during projection; all extraction happens
 after current authorization through read, search, or summarize. The platform
-prompt requires the active agent—work-stream agent or automation architect—to
+prompt requires the active agent to
 inspect a referenced attachment before answering and to use `charactersBefore`
 and `charactersAfter` rather than treating one page as the whole resource.
 The host also enforces that promise: if a read, search, view, or summary call
@@ -192,21 +192,12 @@ the aggregate supplements that working set rather than replacing it.
 
 ### Automation-draft hydration
 
-When a compiler request includes attachments, Rally freezes the unique resource
-IDs after verifying that every row is a draft upload owned by the requesting
-user in the current workspace. The preloaded automation architect receives the
-complete manifest plus read, search, view, and summarize definitions under
-`automation_*` wire names. It has no paginated list tool because the frozen set
-is already visible and cannot exceed ten resources.
-
-The frozen set is only an upper bound, never cached authority. Every operation
-queries those IDs again and requires the same workspace, owner, upload provider,
-and `attachment_status = 'draft'`. One bounded query reloads the entire frozen
-set. Deletion, ownership change, or promotion to
-an attached resource therefore returns the same `resource_not_found` result as a
-guessed ID. Automation cursors use a separate purpose namespace, so a work-stream
-continuation cannot be replayed into the compiler. Conversion, paging, image
-normalization, isolated summaries, and result bounds remain shared.
+There is no separate hydration path for an automation any more. An automation
+is drafted in a conversation of its own, a `SubstreamAgent` under its
+`AutomationDO`, and attachments there are ordinary conversation attachments
+admitted, frozen, and read exactly as in a work stream. The compiler request
+that once carried up to ten draft uploads under `automation_*` wire names is
+gone with the compiler ([`automation-lifecycle.md`](automation-lifecycle.md)).
 
 ### Terminal resource exchange
 
@@ -622,6 +613,21 @@ terms rather than duplicating attachment text. Future changes must preserve thos
 cheap discovery and continuation paths.
 
 ## Changelog
+
+### 2026-09-03: The compiler's attachment path is gone
+
+**What changed:** The `automation_*` attachment tools, the frozen ten-resource
+manifest, and the four-operation variant the preloaded automation architect
+received are removed. An automation's conversation is a `SubstreamAgent` and
+takes the work-stream attachment path unchanged.
+
+**Why:** The automation was rebuilt as a conversation parent and the standalone
+compiler deleted ([`automation-lifecycle.md`](automation-lifecycle.md)); the
+compiler was this path's only caller.
+
+**Consequences:** One attachment path, with the five operations, for every
+conversation. A future headless caller that needs a frozen set would add its
+own freeze at admission rather than reviving the compiler's.
 
 ### 2026-09-02 — A corrupted continuation can recover through its one unambiguous read
 

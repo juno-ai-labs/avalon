@@ -19,7 +19,6 @@ export interface WorkstreamUnfurlSummary {
   title: string;
   harnessStatus: string;
   lastActivityAt: string | null;
-  automationName: string | null;
 }
 
 /** Slack sends at most a handful of links per message; bound the batch anyway. */
@@ -68,9 +67,6 @@ export function workstreamUnfurlSummary(row: Record<string, unknown>): Workstrea
     title: typeof row.title === "string" ? row.title : "",
     harnessStatus: typeof row.harness_status === "string" ? row.harness_status : "",
     lastActivityAt: typeof row.last_activity_at === "string" ? row.last_activity_at : null,
-    automationName: row.origin_type === "automation" && typeof row.automation_name === "string"
-      ? row.automation_name
-      : null,
   };
 }
 
@@ -181,7 +177,6 @@ export function workstreamUnfurlBlocks(
   const detail = [
     badge?.label ?? null,
     slackUnfurlUpdatedAt(summary.lastActivityAt),
-    summary.automationName ? `via ${escapeMrkdwn(summary.automationName.trim().slice(0, 100))}` : null,
   ].filter((part): part is string => part !== null).join(" · ");
   return [
     {

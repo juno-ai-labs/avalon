@@ -2932,8 +2932,6 @@ export class SlackAgentService {
         title: item.title,
         harness_status: directoryHarnessStatus(item.state),
         last_activity_at: item.lastActivityAt,
-        origin_type: item.originType,
-        automation_name: item.originLabel,
       })) }));
     return new Map((rows.results ?? []).map((row) => [String(row.id), workstreamUnfurlSummary(row)]));
   }

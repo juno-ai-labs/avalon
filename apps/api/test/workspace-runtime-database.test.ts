@@ -160,8 +160,6 @@ describe("workspace runtime database routing", () => {
  */
 const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   "_internal_durable_alarms",
-  "automation_creation_claims",
-  "automation_cutover_campaign",
   "opportunity_batch_events",
   "opportunity_batch_windows",
   "opportunity_provenance_edges",
@@ -185,7 +183,6 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   "workspace_batch_dispatch_targets",
   "workspace_batch_dispatches",
   "workspace_directory_state",
-  "workspace_external_event_deliveries",
   "workspace_external_event_registrations",
   "workspace_identity",
   "workspace_project_order",

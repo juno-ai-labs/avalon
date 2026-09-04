@@ -1,4 +1,4 @@
-import { asHarnessRunId, asSubstreamId, asUserId, asWorkstreamId } from "@rally/contracts";
+import { asAutomationId, asHarnessRunId, asSubstreamId, asUserId, asWorkstreamId } from "@rally/contracts";
 import { asWorkspaceId } from "@rally/contracts";
 import type { DatabaseSync, SQLInputValue, StatementSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -33,14 +33,15 @@ const OWNER_ID = asUserId("00000000-0000-4000-8000-000000000002");
 const MEMBER_ID = asUserId("00000000-0000-4000-8000-000000000003");
 const WORKSTREAM_ONE = asWorkstreamId("00000000-0000-4000-8000-000000000011");
 const WORKSTREAM_TWO = asWorkstreamId("00000000-0000-4000-8000-000000000012");
-const AUTOMATION_WORKSTREAM_ONE = asWorkstreamId("00000000-0000-4000-8000-000000000013");
-const AUTOMATION_WORKSTREAM_TWO = asWorkstreamId("00000000-0000-4000-8000-000000000014");
+const AUTOMATION_ONE = asAutomationId("00000000-0000-4000-8000-000000000013");
+const AUTOMATION_TWO = asAutomationId("00000000-0000-4000-8000-000000000014");
 const RUN_ONE = asHarnessRunId("00000000-0000-4000-8000-000000000021");
 const RUN_TWO = asHarnessRunId("00000000-0000-4000-8000-000000000022");
 const AUTOMATION_RUN_ONE = asHarnessRunId("00000000-0000-4000-8000-000000000023");
 const AUTOMATION_RUN_TWO = asHarnessRunId("00000000-0000-4000-8000-000000000024");
-const AUTOMATION_FOLLOW_UP_RUN = asHarnessRunId("00000000-0000-4000-8000-000000000025");
-const AUTOMATION_SUBSCRIPTION_ID = "00000000-0000-4000-8000-000000000031";
+/** An automation run's id, which is also its child substream under the automation. */
+const AUTOMATION_CHILD_ONE = "00000000-0000-4000-8000-000000000041";
+const AUTOMATION_CHILD_TWO = "00000000-0000-4000-8000-000000000042";
 
 class SqliteD1Statement {
   private values: unknown[] = [];
@@ -171,8 +172,8 @@ afterEach(() => {
  * through typed object ports while workspace memory tables stay regional.
  */
 function routedEnv(env: Env, runInput: WorkstreamWorkflowInput): Env {
-  const store = objectStores.get(runInput.workstreamId);
-  if (!store) throw new Error(`no object store for ${runInput.workstreamId}`);
+  const store = objectStores.get(runInput.parentId);
+  if (!store) throw new Error(`no object store for ${runInput.parentId}`);
   return env;
 }
 
@@ -230,68 +231,39 @@ function fixture(): {
     INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at) VALUES
       ('${WORKSPACE_ID}', '${OWNER_ID}', 'owner', 'active', '2026-01-01'),
       ('${WORKSPACE_ID}', '${MEMBER_ID}', 'member', 'active', '2026-01-01');
-    INSERT INTO automation_templates
-      (id, workspace_id, owner_user_id, name, description, sharing_state,
-       latest_version_number, created_at, updated_at)
-    VALUES ('template-memory', '${WORKSPACE_ID}', '${OWNER_ID}', 'Memory automation',
-            'Tests shared automation memory', 'workspace', 1, '2026-01-01', '2026-01-01');
-    INSERT INTO automation_template_versions
-      (id, template_id, version_number, instructions, trigger_definitions_json,
-       required_capabilities_json, expected_outputs_json, default_behavior_json,
-       created_by_user_id, created_at)
-    VALUES ('version-memory', 'template-memory', 1, 'Remember', '[]', '[]', '[]', '{}',
-            '${OWNER_ID}', '2026-01-01');
-    INSERT INTO automation_subscriptions
-      (id, workspace_id, template_id, template_version_id, scope, owner_user_id,
-       execution_principal_json, connector_bindings_json, overrides_json,
-       status, created_at, updated_at)
-    VALUES ('${AUTOMATION_SUBSCRIPTION_ID}', '${WORKSPACE_ID}', 'template-memory',
-            'version-memory', 'workspace', NULL,
-            '{"type":"workspace","workspaceId":"${WORKSPACE_ID}"}', '{}', '{}',
-            'active', '2026-01-01', '2026-01-01');
     INSERT INTO workstreams
       (id, workspace_id, title, objective, origin_type, created_by_user_id,
-       automation_subscription_id, harness_status, last_activity_at, created_at, updated_at)
+       harness_status, last_activity_at, created_at, updated_at)
     VALUES
       ('${WORKSTREAM_ONE}', '${WORKSPACE_ID}', 'Owner task', 'Remember preferences', 'ad_hoc',
-       '${OWNER_ID}', NULL, 'running', '2026-01-01', '2026-01-01', '2026-01-01'),
+       '${OWNER_ID}', 'running', '2026-01-01', '2026-01-01', '2026-01-01'),
       ('${WORKSTREAM_TWO}', '${WORKSPACE_ID}', 'Member task', 'Keep users isolated', 'ad_hoc',
-       '${MEMBER_ID}', NULL, 'running', '2026-01-01', '2026-01-01', '2026-01-01'),
-      ('${AUTOMATION_WORKSTREAM_ONE}', '${WORKSPACE_ID}', 'Automation one', 'First run', 'automation',
-       NULL, '${AUTOMATION_SUBSCRIPTION_ID}', 'running', '2026-01-01', '2026-01-01', '2026-01-01'),
-      ('${AUTOMATION_WORKSTREAM_TWO}', '${WORKSPACE_ID}', 'Automation two', 'Second run', 'automation',
-       NULL, '${AUTOMATION_SUBSCRIPTION_ID}', 'running', '2026-01-01', '2026-01-01', '2026-01-01');
+       '${MEMBER_ID}', 'running', '2026-01-01', '2026-01-01', '2026-01-01');
   `);
-  // Since migration 0090 each run row lives only in its work stream's own
-  // object; the fixture opens the four objects and writes the runs through
-  // the same compat port the harness uses.
+  // Since migration 0090 each run row lives only in its parent's own object;
+  // the fixture opens the two work streams and writes the runs through the
+  // same compat port the harness uses.
   const runsByWorkstream: Array<[string, string, string, string, string]> = [
     [WORKSTREAM_ONE, RUN_ONE, JSON.stringify({ type: "user", userId: OWNER_ID }), "attempt-owner", "lease-owner"],
     [WORKSTREAM_TWO, RUN_TWO, JSON.stringify({ type: "user", userId: MEMBER_ID }), "attempt-member", "lease-member"],
-    [AUTOMATION_WORKSTREAM_ONE, AUTOMATION_RUN_ONE,
-      JSON.stringify({ type: "workspace", workspaceId: WORKSPACE_ID }), "attempt-auto-one", "lease-auto-one"],
-    [AUTOMATION_WORKSTREAM_TWO, AUTOMATION_RUN_TWO,
-      JSON.stringify({ type: "workspace", workspaceId: WORKSPACE_ID }), "attempt-auto-two", "lease-auto-two"],
   ];
   for (const [workstreamId, runId, principalJson, attemptId, leaseOwner] of runsByWorkstream) {
     const store = testWorkstreamObjectStore();
     openDatabases.push(store);
     seedWorkstreamObjectRoot(store, { workstreamId, workspaceId: WORKSPACE_ID });
     const directory = database.prepare(
-      "SELECT title, objective, origin_type, created_by_user_id, automation_subscription_id FROM workstreams WHERE id = ?",
+      "SELECT title, objective, origin_type, created_by_user_id FROM workstreams WHERE id = ?",
     ).get(workstreamId) as {
       title: string;
       objective: string;
       origin_type: string;
       created_by_user_id: string | null;
-      automation_subscription_id: string | null;
     };
     applyWorkstreamObjectRootFields(store, {
       title: directory.title,
       description: directory.objective,
       originType: directory.origin_type,
       createdByUserId: directory.created_by_user_id,
-      automationSubscriptionId: directory.automation_subscription_id,
       exactState: "running",
     });
     seedWorkstreamRun(store, { id: runId, executionPrincipalJson: principalJson,
@@ -299,6 +271,33 @@ function fixture(): {
       leaseExpiresAt: Date.parse("2099-01-01T00:00:00.000Z"),
       heartbeatAt: Date.parse("2026-01-01") });
     objectStores.set(workstreamId, store);
+  }
+  // An automation is a conversation parent of its own, and a run is a child
+  // substream under it: the run row lives in the automation's object, keyed by
+  // the run id the loop input names as its substream. The first automation
+  // runs as its author, the second as the workspace, because the union has to
+  // come out the same either way.
+  const runsByAutomation: Array<[string, string, string, string, string, string]> = [
+    [AUTOMATION_ONE, AUTOMATION_CHILD_ONE, AUTOMATION_RUN_ONE,
+      JSON.stringify({ type: "user", userId: OWNER_ID }), "attempt-auto-one", "lease-auto-one"],
+    [AUTOMATION_TWO, AUTOMATION_CHILD_TWO, AUTOMATION_RUN_TWO,
+      JSON.stringify({ type: "workspace", workspaceId: WORKSPACE_ID }), "attempt-auto-two", "lease-auto-two"],
+  ];
+  for (const [automationId, childId, runId, principalJson, attemptId, leaseOwner] of runsByAutomation) {
+    const store = testWorkstreamObjectStore();
+    openDatabases.push(store);
+    seedWorkstreamObjectRoot(store, {
+      workstreamId: automationId,
+      workspaceId: WORKSPACE_ID,
+      title: automationId === AUTOMATION_ONE ? "Automation one" : "Automation two",
+      description: "Remember across runs",
+      exactState: "running",
+    });
+    seedWorkstreamRun(store, { id: runId, substreamId: childId, executionPrincipalJson: principalJson,
+      attemptId, attemptEpoch: 1, leaseOwner,
+      leaseExpiresAt: Date.parse("2099-01-01T00:00:00.000Z"),
+      heartbeatAt: Date.parse("2026-01-01") });
+    objectStores.set(automationId, store);
   }
   const embeddings = new FakeOpenRouterEmbeddings();
   vi.stubGlobal("fetch", embeddings.fetch);
@@ -354,28 +353,40 @@ function input(
   automationRun: 1 | 2 | null = null,
 ): WorkstreamWorkflowInput {
   if (automationRun) {
+    const automationId = automationRun === 1 ? AUTOMATION_ONE : AUTOMATION_TWO;
+    const childId = automationRun === 1 ? AUTOMATION_CHILD_ONE : AUTOMATION_CHILD_TWO;
     return {
       region: "global",
       workspaceId: WORKSPACE_ID,
-      workstreamId: automationRun === 1 ? AUTOMATION_WORKSTREAM_ONE : AUTOMATION_WORKSTREAM_TWO,
-      loopId: `workstream:${automationRun === 1 ? AUTOMATION_WORKSTREAM_ONE : AUTOMATION_WORKSTREAM_TWO}:substream:0:loop`,
+      parentKind: "automation",
+      parentId: automationId,
+      substreamId: asSubstreamId(childId),
+      loopId: `workstream:${automationId}:substream:${childId}:loop`,
       harnessRunId: automationRun === 1 ? AUTOMATION_RUN_ONE : AUTOMATION_RUN_TWO,
       triggerMessageId: null,
-      automationSubscriptionId: AUTOMATION_SUBSCRIPTION_ID,
       activityId: null,
-      executionPrincipal: { type: "workspace", workspaceId: WORKSPACE_ID },
-      reason: "memory automation test",
+      executionPrincipal: automationRun === 1
+        ? { type: "user", userId: OWNER_ID }
+        : { type: "workspace", workspaceId: WORKSPACE_ID },
+      reason: "automation",
+      automationRun: {
+        schemaVersion: 1,
+        automationId,
+        runId: childId,
+        definitionRevision: 1,
+        trigger: { kind: "manual", requestedByUserId: OWNER_ID },
+      },
     };
   }
   const owner = user === "owner";
   return {
     region: "global",
     workspaceId: WORKSPACE_ID,
-    workstreamId: owner ? WORKSTREAM_ONE : WORKSTREAM_TWO,
+    parentKind: "workstream",
+    parentId: owner ? WORKSTREAM_ONE : WORKSTREAM_TWO,
     loopId: `workstream:${owner ? WORKSTREAM_ONE : WORKSTREAM_TWO}:substream:0:loop`,
     harnessRunId: owner ? RUN_ONE : RUN_TWO,
     triggerMessageId: null,
-    automationSubscriptionId: null,
     activityId: null,
     executionPrincipal: user === "workspace"
       ? { type: "workspace", workspaceId: WORKSPACE_ID }
@@ -387,7 +398,7 @@ function input(
 function toolContext(runInput: WorkstreamWorkflowInput, receipt: string) {
   return {
     workspaceId: runInput.workspaceId,
-    workstreamId: runInput.workstreamId,
+    workstreamId: runInput.parentId,
     harnessRunId: runInput.harnessRunId,
     toolCallId: receipt,
     providerIdempotencyKey: receipt,
@@ -492,102 +503,55 @@ describe("scoped agent memory", () => {
     });
   });
 
-  it("refuses a workspace-side automation memory union by name since the cutover retired it", async () => {
+  it("gives an automation run the workspace scope and its automation's own, and nothing personal", async () => {
     const { env } = fixture();
-    // The 2026-08-28 automation cutover dropped `automation_subscriptions`
-    // (and every automation memory scope) from WorkspaceDO, so the branch
-    // that used to authorize this union has no row left to read anywhere.
-    // Reaching it must fail by its own name — before the conversion it
-    // surfaced as a routed `no such table: automation_subscriptions`.
-    const automationRun = input("workspace", 1);
-    await expect(resolveMemoryAccess(routedEnv(env, automationRun), automationRun))
-      .rejects.toThrow("memory_automation_scope_retired");
-    // And through the tool surface a subscription-declaring run without the
-    // frozen automation context gets the same named refusal, not a SQL error.
-    await expect(memoryTool(env, automationRun, "add").execute(
-      { scopeKind: "automation", text: "Use the crimson summary template", rationale: "Future runs need this" },
-      toolContext(automationRun, "add-automation"),
-    )).rejects.toThrow("memory_automation_scope_retired");
-  });
-
-  it("gives a run with no subscription the ordinary union in an automation work stream", async () => {
-    const { env } = fixture();
-    // The reply's own run, not the automation's rewritten: `admitRun` inserts a
-    // new row for the trigger message once the run before it has terminalized —
-    // `runs_mutating_substream_uq` permits one live run per substream — and the
-    // work stream's origin stays `automation` underneath both.
-    objectStores.get(AUTOMATION_WORKSTREAM_TWO)!.prepare(
-      "UPDATE runs SET status = 'completed' WHERE run_id = ?",
-    ).run(AUTOMATION_RUN_TWO);
-    seedWorkstreamRun(objectStores.get(AUTOMATION_WORKSTREAM_TWO)!, {
-      id: AUTOMATION_FOLLOW_UP_RUN, origin: "human_message",
-      executionPrincipalJson: JSON.stringify({ type: "user", userId: MEMBER_ID }),
-      attemptId: "attempt-follow-up", attemptEpoch: 1, leaseOwner: "lease-follow-up",
-      leaseExpiresAt: Date.parse("2099-01-01T00:00:00.000Z"),
-      heartbeatAt: Date.parse("2026-01-01"),
-    });
-    const reply: WorkstreamWorkflowInput = {
-      region: "global",
-      workspaceId: WORKSPACE_ID,
-      workstreamId: AUTOMATION_WORKSTREAM_TWO,
-      loopId: `workstream:${AUTOMATION_WORKSTREAM_TWO}:substream:0:loop`,
-      harnessRunId: AUTOMATION_FOLLOW_UP_RUN,
-      triggerMessageId: null,
-      automationSubscriptionId: null,
-      activityId: null,
-      executionPrincipal: { type: "user", userId: MEMBER_ID },
-      reason: "human_message",
-    };
-    const scopes = await resolveMemoryAccess(routedEnv(env, reply), reply);
-    // Workspace and the member's own memory, and neither of the two scopes this
-    // work stream is not entitled to: not the subscription's automation memory,
-    // which still takes a run that declares the subscription, and not a
-    // work-stream scope, which only an ad-hoc work stream owns.
-    expect(scopes.map((scope) => scope.kind)).toEqual(["workspace", "user"]);
-    expect(scopes.find((scope) => scope.kind === "user")).toMatchObject({
-      ownerId: MEMBER_ID,
-      writable: true,
-    });
-    // Asserted rather than implied: this member is not an owner or admin, and
-    // admitting the run must not have made workspace memory writable to them.
-    expect(scopes.find((scope) => scope.kind === "workspace")?.writable).toBe(false);
-    // The same branch admits a workspace principal, which is what a workspace
-    // automation's own continuation reaches it as — a scheduled wake-up
-    // declares no subscription either. It gets workspace memory alone: no
-    // person to own a user scope, and no scope of its own because the work
-    // stream belongs to a subscription. (A digest is not this case: it is
-    // ad-hoc with a user principal, so it does take a work-stream scope.)
-    const wakeup = { ...input("workspace", 1), automationSubscriptionId: null };
-    expect((await resolveMemoryAccess(routedEnv(env, wakeup), wakeup)).map((scope) => scope.kind))
-      .toEqual(["workspace"]);
-
-    // And the tool surface still offers a scope kind this run cannot reach —
-    // `scopeKind` is the full static enum — so the model's recovery from
-    // picking it is the executor's refusal, not a resolved scope. `reason` is
-    // asserted, not just the message: it is the field the model acts on, and
-    // it must name only what this run can *write*, narrowest first. Listing the
-    // union order instead would send it back to `workspace`, which a plain
-    // member cannot write, spending the next turn on a second refusal.
-    await expect(memoryTool(env, reply, "add").execute(
-      { scopeKind: "workstream", text: "Reply thread note", rationale: "Should not resolve" },
-      toolContext(reply, "add-workstream-under-automation"),
+    // Automation one runs as its author. The author's own memory stays out of
+    // the union all the same: a run acts for the automation rather than as the
+    // person, so what it learns belongs to every later run of that automation
+    // and not to the person's other conversations.
+    const runInput = input("owner", 1);
+    const scopes = await resolveMemoryAccess(routedEnv(env, runInput), runInput);
+    expect(scopes.map((scope) => [scope.kind, scope.ownerId, scope.writable])).toEqual([
+      ["workspace", WORKSPACE_ID, true],
+      ["automation", AUTOMATION_ONE, true],
+    ]);
+    // A work-stream run keeps the shape it had: the person's scope and the
+    // work stream's, on top of the workspace's.
+    const workstreamRun = input("owner");
+    expect((await resolveMemoryAccess(routedEnv(env, workstreamRun), workstreamRun)).map((scope) => scope.kind))
+      .toEqual(["workspace", "user", "workstream"]);
+    // The tool surface still offers every kind, so asking for the one this run
+    // cannot reach is the executor's refusal, naming what it can write.
+    await expect(memoryTool(env, runInput, "add").execute(
+      { scopeKind: "user", text: "Owner prefers crimson reports", rationale: "Should not resolve" },
+      toolContext(runInput, "add-user-under-automation"),
     )).rejects.toMatchObject({
       code: "memory_scope_not_available",
-      message: expect.stringContaining("Its scopes are: user, workspace"),
-      details: { reason: expect.stringContaining("Retry with one of: user — narrowest first") },
+      message: expect.stringContaining("Its scopes are: automation, workspace"),
     });
   });
 
-  it("holds a run that declares a subscription to the work stream it names", async () => {
+  it("keeps two automations' memory apart while both share the workspace's", async () => {
     const { env } = fixture();
-    // `input("owner")` is WORKSTREAM_ONE, which is ad-hoc and belongs to no
-    // subscription — so claiming this one is the mismatch, not a stale id.
-    const borrowed: WorkstreamWorkflowInput = {
-      ...input("owner"),
-      automationSubscriptionId: AUTOMATION_SUBSCRIPTION_ID,
-    };
-    await expect(resolveMemoryAccess(routedEnv(env, borrowed), borrowed))
-      .rejects.toThrow("memory_automation_workstream_mismatch");
+    const first = input("owner", 1);
+    const second = input("workspace", 2);
+    await memoryTool(env, first, "add").execute(
+      { scopeKind: "automation", text: "Use the crimson summary template", rationale: "Future runs need this" },
+      toolContext(first, "add-automation-one"),
+    );
+    await memoryTool(env, first, "add").execute(
+      { scopeKind: "workspace", text: "The workspace release day is Thursday", rationale: "Shared convention" },
+      toolContext(first, "add-workspace-from-automation"),
+    );
+    // The second automation's scope is its own, keyed by the automation and
+    // not by the workspace both belong to.
+    expect((await resolveMemoryAccess(routedEnv(env, second), second)).map((scope) => [scope.kind, scope.ownerId]))
+      .toEqual([["workspace", WORKSPACE_ID], ["automation", AUTOMATION_TWO]]);
+    expect((await memorySearch(routedEnv(env, first), first, "crimson summary")).results)
+      .toEqual([expect.objectContaining({ scopeKind: "automation" })]);
+    expect((await memorySearch(routedEnv(env, second), second, "crimson summary")).results).toEqual([]);
+    expect((await memorySearch(routedEnv(env, second), second, "release Thursday")).results)
+      .toEqual([expect.objectContaining({ scopeKind: "workspace" })]);
   });
 
   it("replays receipts and uses revision CAS for updates and invalidation", async () => {
@@ -785,11 +749,9 @@ describe("scoped agent memory", () => {
     // bound is the whole point: the automation receiver rejects anything past
     // it, and rejecting is what escaped run setup.
     //
-    // This exercises the workspace branch. `freezeRunMemoryContext` picks the
-    // automation branch on `automationRunContext`, which this fixture does not
-    // populate and which needs an `AUTOMATION_AGENTS` binding to reach — so
-    // what is proved here is that the query handed to *either* recall surface
-    // now satisfies the bound, not that the automation call itself succeeds.
+    // This exercises a work-stream run; an automation run's recall goes
+    // through the same freeze with its automation scope in the union, so the
+    // bound proved here is the one both shapes are held to.
     expect(frozen.query.length).toBe(MEMORY_RECALL_QUERY_LIMIT);
     expect(() => z.string().max(MEMORY_RECALL_QUERY_LIMIT).parse(frozen.query)).not.toThrow();
   });
@@ -823,7 +785,7 @@ describe("scoped agent memory", () => {
     // else, so a routed UPDATE was refused outright; the authority now enforces
     // it by answering `reused` and never writing, which is the same guarantee
     // stated as an outcome rather than as a missing trigger.
-    const reFrozen = await testHarnessRunPort(objectStores.get(runInput.workstreamId)!)
+    const reFrozen = await testHarnessRunPort(objectStores.get(runInput.parentId)!)
       .persistMemoryContext({
         runId: RUN_ONE,
         attemptId: "attempt-owner",

@@ -127,6 +127,7 @@ function projectMessage(
 function messageTypeOf(stored: string): Message["messageType"] {
   switch (stored) {
     case "text": case "system": case "tool": case "elicitation": case "suggestion":
+    case "automation_activation":
       return stored;
     default:
       return "system";

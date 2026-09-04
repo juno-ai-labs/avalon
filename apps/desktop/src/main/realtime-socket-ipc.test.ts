@@ -40,7 +40,7 @@ function openInput() {
   return {
     socketId,
     kind: 'substream_feed' as const,
-    url: `wss://api.rallywith.ai/socket/workstreams/${workstreamId}/substreams/0`,
+    url: `wss://api.rallywith.ai/socket/conversations/${workstreamId}/0`,
     protocols: ['rally.ticket.v1', 't'.repeat(40)] as [string, string],
   };
 }

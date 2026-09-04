@@ -26,7 +26,6 @@ function workstream(overrides: Record<string, unknown> = {}) {
     originType: "automation",
     originLabel: "Weekly digest",
     createdByUserId: "00000000-0000-7000-8000-000000000003",
-    automationSubscriptionId: null,
     automationRunId: null,
     plannedFor: null,
     harnessStatus: "completed",

@@ -54,7 +54,6 @@ const baseEnv = createTestEnv({
   OPENROUTER_FALLBACK_MODELS: "google/gemini-3.6-flash, anthropic/claude-sonnet-4.5",
   OPENROUTER_CLASSIFIER_MODEL: "google/gemini-2.5-flash-lite",
   OPENROUTER_STRUCTURED_MODEL: "google/gemini-2.5-flash-lite",
-  OPENROUTER_AUTOMATION_MODEL: "x-ai/grok-4.5",
 });
 
 type DetailsStub = (
@@ -171,7 +170,6 @@ describe("agent model flags", () => {
     });
     expect(defaultAgentModelRouting(baseEnv, "inline_child").model).toBe("x-ai/grok-4.3");
     expect(defaultAgentModelRouting(baseEnv, "meeting_notes").model).toBe("x-ai/grok-4.3");
-    expect(defaultAgentModelRouting(baseEnv, "automation_compiler").model).toBe("x-ai/grok-4.5");
     expect(defaultAgentModelRouting(baseEnv, "addressing_classifier").model).toBe("google/gemini-2.5-flash-lite");
     expect(defaultAgentModelRouting(baseEnv, "workstream_naming").model).toBe("google/gemini-2.5-flash-lite");
   });
@@ -190,17 +188,17 @@ describe("agent model flags", () => {
     }));
     const env = envWithFlags(getObjectDetails);
 
-    await resolveAgentModelRouting(env, "automation_compiler", {
+    await resolveAgentModelRouting(env, "workstream_naming", {
       workspaceId: SEEDED_WORKSPACE_ID,
       workstreamId: SEEDED_WORKSTREAM_ID,
       userId: "usr-1",
     });
 
     expect(getObjectDetails).toHaveBeenCalledWith(
-      "agent-model-automation-compiler",
-      { model: "x-ai/grok-4.5", fallbackModels: ["google/gemini-3.6-flash", "anthropic/claude-sonnet-4.5"] },
+      "agent-model-workstream-naming",
+      { model: "google/gemini-2.5-flash-lite", fallbackModels: ["google/gemini-3.6-flash", "anthropic/claude-sonnet-4.5"] },
       {
-        agent: "automation_compiler",
+        agent: "workstream_naming",
         region: "global",
         appEnv: "production",
         workspaceId: SEEDED_WORKSPACE_ID,

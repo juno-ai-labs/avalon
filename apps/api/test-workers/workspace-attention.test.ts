@@ -11,13 +11,15 @@ import { env } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import {
+  asUserId,
+  asWorkspaceId,
+  asWorkstreamId,
+  conversationEffectHash,
+  type ParentEffect,
+} from "@rally/contracts";
 
 import { workspaceDOName } from "../src/durable-objects/names";
-import {
-  type WorkstreamRegionalEffect,
-  workstreamRegionalEffectHash,
-} from "../src/durable-objects/workstream-regional-effect";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000009f7");
 const MEMBER = asUserId("00000000-0000-7000-8000-0000000009a1");
@@ -29,20 +31,21 @@ function workspace() {
   ));
 }
 
-function envelope(effect: WorkstreamRegionalEffect, workstreamId: string) {
+function envelope(effect: ParentEffect, workstreamId: string) {
   sequence += 1;
   return {
-    kind: "workstream_regional_effect" as const,
+    kind: "parent_effect" as const,
     contractVersion: 1 as const,
     region: "global" as const,
     workspaceId: WORKSPACE_ID,
-    workstreamId: asWorkstreamId(workstreamId),
+    parentKind: "workstream" as const,
+    parentId: asWorkstreamId(workstreamId),
     generation: 1,
     messageId: `00000000-0000-7000-8000-${String(sequence).padStart(12, "0")}`,
     partitionKey: effect.kind === "directory_user" ? `user:${effect.userId}` : "common",
     sourceVersion: 1,
     requiredProjectionVersion: null,
-    payloadHash: workstreamRegionalEffectHash(effect),
+    payloadHash: conversationEffectHash(effect),
     effect,
   };
 }
@@ -57,11 +60,10 @@ async function seed(input: {
   seen?: number;
   mentionedAt?: number;
   archivedAt?: string | null;
-  originType?: "ad_hoc" | "automation";
 }): Promise<void> {
   const workstreamId = asWorkstreamId(input.id);
   const latest = input.latest ?? 0;
-  const common: WorkstreamRegionalEffect = {
+  const common: ParentEffect = {
     kind: "directory_common",
     title: input.id,
     description: "",
@@ -72,17 +74,14 @@ async function seed(input: {
     lastActivityAt: "2026-08-31T12:00:00.000Z",
     completedAt: null,
     archivedAt: input.archivedAt ?? null,
-    originType: input.originType ?? "ad_hoc",
     createdByUserId: MEMBER,
-    automationSubscriptionId: null,
-    plannedFor: null,
     latestAttentionOrdinal: latest,
     unreadTrackingStartOrdinal: 0,
     createdAt: "2026-08-31T12:00:00.000Z",
     updatedAt: "2026-08-31T12:00:00.000Z",
     resourceLinks: [],
   };
-  const viewer: WorkstreamRegionalEffect = {
+  const viewer: ParentEffect = {
     kind: "directory_user",
     userId: MEMBER,
     isParticipant: input.participant ?? true,

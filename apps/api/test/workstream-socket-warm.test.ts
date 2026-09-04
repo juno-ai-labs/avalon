@@ -7,8 +7,8 @@ import {
 import { describe, expect, it, vi } from "vitest";
 
 import type { AuthContext, Env } from "../src/env";
-import { substreamAgentName } from "../src/durable-objects/names";
-import { WorkstreamService } from "../src/services/workstream-service";
+import { conversationObjectName } from "../src/durable-objects/names";
+import { ConversationService } from "../src/services/conversation-service";
 import { verifySocketTicket } from "../src/services/socket-service";
 import {
   createCloudflareTestBinding,
@@ -30,11 +30,25 @@ const auth: AuthContext = {
   role: "member",
 };
 
+/**
+ * The parent's two answers the ticket path depends on: that this id names a
+ * work stream, and whether this person may read its conversations. Both are
+ * the real `WorkstreamDO`'s in `test-workers/conversation-parent-contract`;
+ * here they are the seam, so the Worker-side sequence is what is under test.
+ */
+function parentDecisions(authorized = true, archived = false) {
+  return {
+    authority: vi.fn(async () => ({ exists: true, authorityGeneration: 7, archived })),
+    authorizeViewer: vi.fn(async () => ({ authorized, archived })),
+  };
+}
+
 function environment(
   prepareSocketAdmission: (input: unknown) => Promise<{ outcome: "snapshot_prepared" }>,
   substreamObjectName: (name: string) => DurableObjectId = () =>
     createTestDurableObjectId("substream"),
   getSubstream: (id: DurableObjectId) => object = () => ({ prepareSocketAdmission }),
+  parent: ReturnType<typeof parentDecisions> = parentDecisions(),
 ): Env {
   return createTestEnv({
     APP_ENV: "test",
@@ -51,9 +65,9 @@ function environment(
         }),
       }),
     }),
-    WORKSPACE_DOS: createCloudflareTestBinding<Env["WORKSPACE_DOS"]>({
-      idFromName: () => createTestDurableObjectId("workspace"),
-      get: () => ({ canReadWorkstream: async () => true }),
+    WORKSTREAM_DOS: createCloudflareTestBinding<Env["WORKSTREAM_DOS"]>({
+      idFromName: () => createTestDurableObjectId("workstream"),
+      get: () => parent,
     }),
     SUBSTREAM_AGENTS: createCloudflareTestBinding<Env["SUBSTREAM_AGENTS"]>({
       idFromName: substreamObjectName,
@@ -62,21 +76,22 @@ function environment(
   });
 }
 
-describe("work-stream socket ticket preparation", () => {
+describe("conversation socket ticket preparation", () => {
   it("defers measurable admission and snapshot preparation for the main feed object", async () => {
     const prepareSocketAdmission = vi.fn(async () => ({ outcome: "snapshot_prepared" as const }));
     const substreamObjectName = vi.fn(() => createTestDurableObjectId("substream"));
     const deferred: Promise<unknown>[] = [];
     const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
-    const service = new WorkstreamService(
-      environment(prepareSocketAdmission, substreamObjectName),
+    const parent = parentDecisions();
+    const service = new ConversationService(
+      environment(prepareSocketAdmission, substreamObjectName, undefined, parent),
       auth,
       (promise) => deferred.push(promise),
     );
 
     const ticket = await service.socketTicket(workstreamId);
 
-    expect(ticket.url).toContain(`/socket/workstreams/${workstreamId}/substreams/0`);
+    expect(ticket.url).toContain(`/socket/conversations/${workstreamId}/0`);
     await expect(verifySocketTicket(
       environment(prepareSocketAdmission, substreamObjectName),
       ticket.ticket,
@@ -87,15 +102,20 @@ describe("work-stream socket ticket preparation", () => {
         authorityGeneration: 7,
         role: "member",
         analyticsWorkspaceId: null,
+        parentArchived: false,
       },
     });
+    // The parent decided before anything was issued, and it was asked about
+    // this person, not merely whether the work stream exists.
+    expect(parent.authorizeViewer).toHaveBeenCalledWith({ workspaceId, parentId: workstreamId, userId });
     expect(deferred).toHaveLength(1);
     await expect(deferred[0]).resolves.toBeUndefined();
     expect(substreamObjectName).toHaveBeenCalledWith(
-      substreamAgentName("global", workspaceId, workstreamId),
+      conversationObjectName("global", workspaceId, workstreamId),
     );
     expect(prepareSocketAdmission).toHaveBeenCalledWith(expect.objectContaining({
       workspaceId,
+      parentKind: "workstream",
       workstreamId,
       substreamId: "0",
       userId,
@@ -115,6 +135,7 @@ describe("work-stream socket ticket preparation", () => {
       event: "workstream_socket_ticket_warm_finished",
       workspace_id: workspaceId,
       workstream_id: workstreamId,
+      parent_kind: "workstream",
       substream_id: "0",
       ticket_id: ticket.ticketId,
       duration_ms: expect.any(Number),
@@ -128,13 +149,13 @@ describe("work-stream socket ticket preparation", () => {
     const substreamObjectName = vi.fn(() => createTestDurableObjectId("substream"));
     const deferred: Promise<unknown>[] = [];
     const env = environment(prepareSocketAdmission, substreamObjectName);
-    const service = new WorkstreamService(env, auth, (promise) => deferred.push(promise));
+    const service = new ConversationService(env, auth, (promise) => deferred.push(promise));
     const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
     const ticket = await service.socketTicket(workstreamId);
     await expect(deferred[0]).resolves.toBeUndefined();
     expect(substreamObjectName).toHaveBeenCalledWith(
-      substreamAgentName("global", workspaceId, workstreamId),
+      conversationObjectName("global", workspaceId, workstreamId),
     );
     expect(warning).toHaveBeenCalledWith(expect.objectContaining({
       event: "workstream_socket_ticket_warm_finished",
@@ -153,7 +174,7 @@ describe("work-stream socket ticket preparation", () => {
     const substreamObjectName = vi.fn(() => createTestDurableObjectId("substream"));
     const getSubstream = vi.fn(() => ({ prepareSocketAdmission }));
     const deferred: Promise<unknown>[] = [];
-    const service = new WorkstreamService(
+    const service = new ConversationService(
       environment(prepareSocketAdmission, substreamObjectName, getSubstream),
       auth,
       (promise) => deferred.push(promise),
@@ -161,10 +182,52 @@ describe("work-stream socket ticket preparation", () => {
 
     const ticket = await service.socketTicket(workstreamId, substreamId);
 
-    expect(ticket.url).toContain(`/socket/workstreams/${workstreamId}/substreams/${substreamId}`);
+    expect(ticket.url).toContain(`/socket/conversations/${workstreamId}/${substreamId}`);
     expect(deferred).toEqual([]);
     expect(substreamObjectName).not.toHaveBeenCalled();
     expect(getSubstream).not.toHaveBeenCalled();
+    expect(prepareSocketAdmission).not.toHaveBeenCalled();
+  });
+
+  it("refuses a ticket to somebody the parent does not admit, before any object is touched", async () => {
+    const prepareSocketAdmission = vi.fn(async () => ({ outcome: "snapshot_prepared" as const }));
+    const substreamObjectName = vi.fn(() => createTestDurableObjectId("substream"));
+    const getSubstream = vi.fn(() => ({ prepareSocketAdmission }));
+    const deferred: Promise<unknown>[] = [];
+    const parent = parentDecisions(false);
+    const service = new ConversationService(
+      environment(prepareSocketAdmission, substreamObjectName, getSubstream, parent),
+      auth,
+      (promise) => deferred.push(promise),
+    );
+
+    // A 404 rather than a 403: whether a work stream exists is itself something
+    // a non-participant is not told.
+    await expect(service.socketTicket(workstreamId)).rejects.toMatchObject({
+      status: 404,
+      code: "conversation_not_found",
+    });
+    expect(parent.authorizeViewer).toHaveBeenCalledWith({ workspaceId, parentId: workstreamId, userId });
+    expect(deferred).toEqual([]);
+    expect(getSubstream).not.toHaveBeenCalled();
+    expect(prepareSocketAdmission).not.toHaveBeenCalled();
+  });
+
+  it("refuses a ticket for an archived work stream the way its boot does, before any object is touched", async () => {
+    // The work-stream object refuses every read of an archived room, so a
+    // ticket would open a socket that never gets a frame. The archived
+    // admission flag is for an automation's conversation, which stays
+    // readable; that path is proved on workerd in
+    // `test-workers/conversation-parent-contract.test.ts`.
+    const prepareSocketAdmission = vi.fn(async () => ({ outcome: "snapshot_prepared" as const }));
+    const parent = parentDecisions(true, true);
+    const env = environment(prepareSocketAdmission, undefined, undefined, parent);
+    const service = new ConversationService(env, auth, () => undefined);
+
+    await expect(service.socketTicket(workstreamId)).rejects.toMatchObject({
+      status: 404,
+      code: "conversation_not_found",
+    });
     expect(prepareSocketAdmission).not.toHaveBeenCalled();
   });
 });
