@@ -1,6 +1,7 @@
 import { classifyAttachmentKind } from '@rally/contracts';
 import type { CitationTarget } from '@rally/contracts/citations';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
+import type { AttachmentPreview } from '../components/attachments';
 import type { CitationContext, CitationPreview, CitationResource } from '../components/markdown-citations';
 import { ApiError } from './api';
 import { MAX_RESOURCE_PREVIEW_WAIT_MS, readResourcePreviewText } from './resource-preview';
@@ -53,7 +54,7 @@ function documentVerdict(error: unknown): boolean {
   return error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 429;
 }
 
-export function useCitations({ loadResourceContent, resources }: {
+export function useCitations({ loadResourceContent, onOpenPreview, resources }: {
   /**
    * The preview route, or absent on a surface that has none. It is the same
    * read the rail's detail makes, deliberately: the embed card's excerpt and
@@ -61,10 +62,30 @@ export function useCitations({ loadResourceContent, resources }: {
    * a second answer about one document.
    */
   loadResourceContent?: (resourceId: string, signal?: AbortSignal) => Promise<Blob>;
+  onOpenPreview?: (preview: AttachmentPreview) => void;
   resources: WorkstreamResource[];
 }): CitationContext {
   const inspect = useUiStore((state) => state.inspect);
   const openRail = useUiStore((state) => state.openRail);
+
+  // Socket snapshots may replace the resource array even when none of the
+  // citation-facing data changed. Letting that allocation rebuild `local`
+  // changes every callback in this context; each mounted image card then
+  // revokes its settled object URL and asks for the same preview again. Apart
+  // from wasting a conversion read, the thumbnail/skeleton swap remeasures the
+  // virtual row and visibly moves the feed. The fields below are the complete
+  // input used to resolve, preview, and open a citation, so they are the
+  // semantic identity the context actually needs.
+  const resourcesIdentity = JSON.stringify(resources.map((resource) => ({
+    contentAvailable: resource.contentAvailable,
+    currentVersion: resource.currentVersion,
+    id: resource.id,
+    mimeType: resource.mimeType,
+    resourceType: resource.resourceType,
+    slug: resource.slug,
+    title: resource.title,
+  })));
+  const stableResources = useMemo(() => resources, [resourcesIdentity]);
 
   /**
    * Both spellings of a resource's identity, mapped to the one resource.
@@ -76,8 +97,8 @@ export function useCitations({ loadResourceContent, resources }: {
    * degradation it can lean on.
    */
   const local = useMemo(() => {
-    const byToken = new Map<string, { citation: CitationResource; version: number }>();
-    for (const resource of resources) {
+    const byToken = new Map<string, { citation: CitationResource; contentAvailable: boolean; version: number }>();
+    for (const resource of stableResources) {
       // The version rides beside the citation rather than inside it: a chip is
       // dressed from the record's name and kind, and which revision it names is
       // the host's business, not the renderer's.
@@ -88,13 +109,14 @@ export function useCitations({ loadResourceContent, resources }: {
           title: resource.title,
           ...(resource.mimeType ? { mimeType: resource.mimeType } : {}),
         },
+        contentAvailable: resource.contentAvailable === true,
         version: resource.currentVersion,
       };
       byToken.set(resource.id, entry);
       if (resource.slug) byToken.set(resource.slug, entry);
     }
     return byToken;
-  }, [resources]);
+  }, [stableResources]);
 
   const resolve = useCallback(
     (token: string): CitationResource | undefined => local.get(token)?.citation,
@@ -163,21 +185,21 @@ export function useCitations({ loadResourceContent, resources }: {
     const key = `${entry.citation.id}@${entry.version}`;
     const cached = state.inFlight.get(key);
     if (cached) return cached;
-    // The two kinds the preview route answers with the resource's *own* bytes
-    // rather than with a readable derivative: an image the card draws, and an
-    // audio file it plays. Everything else is text by the time it arrives here,
-    // so the derivative reader is the right way to read it — and the wrong way
-    // to read either of these. An audio file sent through it was decoded as
-    // UTF-8, and the card announcing a recording showed a paragraph of
-    // replacement characters where its glance belongs.
-    const kind = classifyAttachmentKind({
+    const attachmentKind = classifyAttachmentKind({
       fileName: entry.citation.title,
       mimeType: entry.citation.mimeType,
     });
-    const media = kind === 'audio' || kind === 'image' ? kind : null;
-    const read: Promise<CitationPreview> = media
+    // Audio, sites, and unknown binary files have their own inspector
+    // presentations and no readable excerpt to put inside a citation card.
+    // Sending those bytes through the text-preview path both asks the server
+    // for a conversion it cannot provide and, when the source is returned
+    // directly, paints binary data as prose. The card still opens normally;
+    // it simply keeps the same empty preview room as an attachment with no
+    // thumbnail.
+    if (attachmentKind === 'audio' || attachmentKind === 'site' || attachmentKind === 'other') return undefined;
+    const read: Promise<CitationPreview> = attachmentKind === 'image'
       ? loadResourceContent(entry.citation.id, state.controller.signal)
-        .then((blob) => ({ kind: media, blob }))
+        .then((blob) => ({ kind: 'image', blob }))
       : readResourcePreviewText(
           loadResourceContent,
           entry.citation.id,
@@ -215,5 +237,25 @@ export function useCitations({ loadResourceContent, resources }: {
     inspect({ type: 'resource', id: entry.citation.id });
   }, [inspect, local, openRail]);
 
-  return useMemo(() => ({ open, preview, resolve }), [open, preview, resolve]);
+  const openPreview = useCallback((resourceId: string, returnFocus: HTMLElement): void => {
+    const entry = local.get(resourceId);
+    if (
+      !entry
+      || !entry.contentAvailable
+      || !loadResourceContent
+      || !onOpenPreview
+      || entry.citation.resourceType === 'generated_site'
+    ) {
+      open({ scheme: 'resource', resourceId });
+      return;
+    }
+    onOpenPreview({
+      name: entry.citation.title,
+      ...(entry.citation.mimeType ? { mimeType: entry.citation.mimeType } : {}),
+      loadContent: (signal) => loadResourceContent(entry.citation.id, signal),
+      returnFocus,
+    });
+  }, [loadResourceContent, local, onOpenPreview, open]);
+
+  return useMemo(() => ({ open, openPreview, preview, resolve }), [open, openPreview, preview, resolve]);
 }

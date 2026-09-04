@@ -1,5 +1,5 @@
 import { createRef } from 'react';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MentionIdentity } from '../lib/api';
@@ -90,7 +90,7 @@ function renderComposer(
 }
 
 describe('WorkstreamComposer mention confirmation', () => {
-  it('places dictation after attachments and exposes microphone selection', async () => {
+  it('uses the compact GrokBot input chrome', () => {
     vi.stubGlobal('navigator', {
       mediaDevices: {
         addEventListener: vi.fn(),
@@ -121,17 +121,11 @@ describe('WorkstreamComposer mention confirmation', () => {
       </Tooltip.Provider>,
     );
 
-    const attach = screen.getByRole('button', { name: 'Attach a file' });
-    const dictate = screen.getByRole('button', { name: 'Click or hold to dictate' });
-    expect(attach.compareDocumentPosition(dictate) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Choose microphone' })).toBeEnabled());
-    fireEvent.pointerDown(screen.getByRole('button', { name: 'Choose microphone' }), { button: 0, ctrlKey: false });
-    const studioMicrophone = await screen.findByRole('menuitemradio', { name: 'Studio microphone' });
-    expect(studioMicrophone).toBeVisible();
-    expect(studioMicrophone).toHaveAttribute('aria-checked', 'false');
-    expect(screen.getByRole('menuitemradio', { name: 'Default - MacBook Pro Microphone' }))
-      .toHaveAttribute('aria-checked', 'true');
+    expect(document.querySelector('.workstream-composer')).toHaveClass('is-message-capsule');
+    expect(screen.getByRole('button', { name: 'Composer actions' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Start voice input' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Choose microphone' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Mention a participant' })).not.toBeInTheDocument();
   });
 
   it('sends an attachment without requiring message text', async () => {
@@ -434,18 +428,15 @@ describe('WorkstreamComposer mention confirmation', () => {
     expect(screen.queryByText('short-bob@example.com')).not.toBeInTheDocument();
   });
 
-  it('starts a mention where the caret is rather than at the end of the draft', async () => {
+  it('opens mentions by typing at the caret without a dedicated mention button', async () => {
     renderComposer();
     const composer = screen.getByLabelText('Message the work stream');
 
     fireEvent.change(composer, {
-      target: { value: 'ask about the release', selectionStart: 3, selectionEnd: 3 },
+      target: { value: 'ask @ about the release', selectionStart: 5, selectionEnd: 5 },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Mention a participant' }));
 
-    // Someone who came back to finish a sentence keeps it: the `@` lands under
-    // the caret, not at the end of what they had already written.
-    await waitFor(() => expect(composer).toHaveValue('ask @ about the release'));
+    expect(screen.queryByRole('button', { name: 'Mention a participant' })).not.toBeInTheDocument();
     expect(screen.getByRole('listbox', { name: 'Mentions' })).toBeVisible();
   });
 
@@ -491,17 +482,13 @@ describe('WorkstreamComposer mention confirmation', () => {
     // membership that is not active — the participants rail already filters for
     // exactly this reason.
     const options = await screen.findAllByRole('option');
-    const firstOption = options[0];
-    if (!firstOption) throw new Error('Expected at least one mention option');
-    await within(firstOption).findByText('A');
-    expect(options.map(mentionOptionCopy)).toEqual([{
-      badge: 'Person',
-      description: 'adam@example.com',
-      label: 'Adam',
-    }]);
+    expect(options.map(mentionOptionCopy)).toEqual([
+      { badge: 'Bot', description: null, label: 'Rally' },
+      { badge: 'Person', description: 'adam@example.com', label: 'Adam' },
+    ]);
   });
 
-  it('offers people only, leaving the work stream\'s connections out of the list and out of the highlight', async () => {
+  it('offers Rally and people, leaving connections out of the list and highlight', async () => {
     const connected: WorkstreamDetail = {
       ...workstream,
       connections: [{
@@ -519,17 +506,16 @@ describe('WorkstreamComposer mention confirmation', () => {
     fireEvent.change(composer, { target: { value: '@' } });
 
     const options = await screen.findAllByRole('option');
-    const firstOption = options[0];
-    if (!firstOption) throw new Error('Expected at least one mention option');
-    await within(firstOption).findByText('A');
     expect(options.map(mentionOptionCopy)).toEqual([
+      { badge: 'Bot', description: null, label: 'Rally' },
       { badge: 'Person', description: 'adam@example.com', label: 'Adam' },
       { badge: 'Person', description: 'bob@example.com · not participating', label: 'Bob Builder' },
       { badge: 'Person', description: 'cara@example.com · not participating', label: 'Cara Chen' },
     ]);
-    expect(options[0]).toHaveAccessibleName('Adam — adam@example.com — Person');
-    expect(options[1]).toHaveAccessibleName('Bob Builder — bob@example.com · not participating — Person');
-    expect(options[2]).toHaveAccessibleName('Cara Chen — cara@example.com · not participating — Person');
+    expect(options[0]).toHaveAccessibleName('Rally — Ask Rally to join this part of the conversation — Bot');
+    expect(options[1]).toHaveAccessibleName('Adam — adam@example.com — Person');
+    expect(options[2]).toHaveAccessibleName('Bob Builder — bob@example.com · not participating — Person');
+    expect(options[3]).toHaveAccessibleName('Cara Chen — cara@example.com · not participating — Person');
     expect(screen.queryByText('Workspace connection')).not.toBeInTheDocument();
 
     // The draft's highlight names what the composer can mention, so a
@@ -547,19 +533,32 @@ describe('WorkstreamComposer mention confirmation', () => {
     fireEvent.change(composer, { target: { value: '@' } });
 
     const options = await screen.findAllByRole('option');
-    expect(options.map((option) => option.getAttribute('aria-selected'))).toEqual(['true', 'false', 'false']);
+    expect(options.map((option) => option.getAttribute('aria-selected'))).toEqual(['true', 'false', 'false', 'false']);
 
     fireEvent.keyDown(composer, { key: 'ArrowDown' });
 
     expect(screen.getAllByRole('option').map((option) => option.getAttribute('aria-selected')))
-      .toEqual(['false', 'true', 'false']);
+      .toEqual(['false', 'true', 'false', 'false']);
 
     fireEvent.keyDown(composer, { key: 'Enter' });
 
-    await waitFor(() => expect(composer).toHaveValue('@Bob Builder '));
+    await waitFor(() => expect(composer).toHaveValue('@Adam '));
     expect(screen.queryByRole('listbox', { name: 'Mentions' })).not.toBeInTheDocument();
     // Enter chose a name rather than sending the half-written mention.
     expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it('inserts Rally from the mention picker without forging a person identity', async () => {
+    const onSend = vi.fn(async () => undefined);
+    renderComposer(onSend);
+    const composer = screen.getByLabelText('Message the work stream');
+
+    fireEvent.change(composer, { target: { value: '@' } });
+    fireEvent.click(await screen.findByRole('option', { name: /Rally .* Bot/u }));
+
+    expect(composer).toHaveValue('@Rally ');
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith('@Rally', [], undefined, undefined));
   });
 
   it('wraps to the last candidate when the highlight is walked up off the top', async () => {
@@ -571,7 +570,7 @@ describe('WorkstreamComposer mention confirmation', () => {
     fireEvent.keyDown(composer, { key: 'ArrowUp' });
 
     expect(screen.getAllByRole('option').map((option) => option.getAttribute('aria-selected')))
-      .toEqual(['false', 'false', 'true']);
+      .toEqual(['false', 'false', 'false', 'true']);
 
     fireEvent.keyDown(composer, { key: 'Enter' });
 
@@ -585,14 +584,15 @@ describe('WorkstreamComposer mention confirmation', () => {
     fireEvent.change(composer, { target: { value: '@' } });
     await screen.findAllByRole('option');
     fireEvent.keyDown(composer, { key: 'ArrowDown' });
+    fireEvent.keyDown(composer, { key: 'ArrowDown' });
 
     // Bob was highlighted and the narrowed list has no Bob in it, so Enter must
     // fall back to the first row rather than to whoever inherited his place.
-    fireEvent.change(composer, { target: { value: '@a' } });
+    fireEvent.change(composer, { target: { value: '@ad' } });
 
-    await waitFor(() => expect(screen.getAllByRole('option')).toHaveLength(2));
+    await waitFor(() => expect(screen.getAllByRole('option')).toHaveLength(1));
     expect(screen.getAllByRole('option').map((option) => option.getAttribute('aria-selected')))
-      .toEqual(['true', 'false']);
+      .toEqual(['true']);
 
     fireEvent.keyDown(composer, { key: 'Enter' });
 
@@ -615,7 +615,7 @@ describe('WorkstreamComposer mention confirmation', () => {
     // A highlight left over from the last time it was open would send Enter to
     // whoever was under it, which is not the row this list is showing first.
     await waitFor(() => expect(screen.getAllByRole('option').map((option) => option.getAttribute('aria-selected')))
-      .toEqual(['true', 'false', 'false']));
+      .toEqual(['true', 'false', 'false', 'false']));
   });
 
   it('sends participant mentions without asking for confirmation', async () => {
@@ -712,133 +712,15 @@ describe('WorkstreamComposer draft caching', () => {
   });
 });
 
-describe('WorkstreamComposer model readout', () => {
-  const ranOn = (model: string | undefined): WorkstreamDetail => ({
-    ...workstream,
-    latestHarnessRunId: 'run-1',
-    latestHarnessRun: {
-      id: 'run-1',
-      origin: 'opening_message',
-      status: 'completed',
-      ...(model ? { model } : {}),
-      createdAt: '2026-07-31T20:00:00.000Z',
-    },
-  });
-
-  it('shows no model unless developer mode is on', async () => {
-    renderComposer(undefined, false, undefined, ranOn('x-ai/grok-4.5'));
+describe('WorkstreamComposer GrokBot chrome', () => {
+  it('keeps developer model details out of the conversation input', async () => {
+    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
+    renderComposer(undefined, false, undefined, {
+      ...workstream,
+      modelOverride: 'deepseek/deepseek-v4-pro',
+    });
 
     await screen.findByLabelText('Message the work stream');
     expect(screen.queryByRole('button', { name: /^Model:/u })).not.toBeInTheDocument();
-  });
-
-  it('names the model this work stream is running on', async () => {
-    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
-    renderComposer(undefined, false, undefined, ranOn('x-ai/grok-4.5'));
-
-    // The pill is the same one the launch composer offers, so a pinned work
-    // stream reads here exactly as it read when it was pinned. Unpinned, the
-    // name says the id is the latest run's rather than a standing property:
-    // this work stream re-resolves the flag on every launch.
-    const readout = await screen.findByRole('button', {
-      name: "Model: x-ai/grok-4.5 (the latest run's) — unpinned, so the agent-model-workstream flag decides each run and a later run may differ. It cannot be set here.",
-    });
-    expect(readout).toHaveTextContent('Grok 4.5');
-  });
-
-  it('promises a fixed model only where one is actually pinned', async () => {
-    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
-    // The pin is the only thing that makes the model a property of the work
-    // stream rather than of its last run: `resolveWorkstreamModelRouting` stops
-    // at the row and never reads the flag. Saying so on an unpinned work stream
-    // would be a stability guarantee the server does not keep.
-    renderComposer(undefined, false, undefined, {
-      ...ranOn('deepseek/deepseek-v4-pro'),
-      modelOverride: 'deepseek/deepseek-v4-pro',
-    });
-
-    await screen.findByRole('button', {
-      name: 'Model: deepseek/deepseek-v4-pro — pinned when this work stream was created, so every run uses it. It cannot be changed.',
-    });
-  });
-
-  it('is the launch composer’s dropdown with its trigger disabled', async () => {
-    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
-    renderComposer(undefined, false, undefined, ranOn('x-ai/grok-4.5'));
-
-    const readout = await screen.findByRole('button', { name: /^Model: x-ai\/grok-4\.5/u });
-    expect(readout).toBeDisabled();
-
-    // The same gesture that opens it on the launch screen. A work stream's model
-    // is decided at creation, so a menu here would offer a change no later run
-    // would honour.
-    fireEvent.pointerDown(readout, { button: 0, ctrlKey: false });
-    fireEvent.click(readout);
-
-    await waitFor(() => expect(screen.getByLabelText('Message the work stream')).toBeInTheDocument());
-    expect(screen.queryByRole('menuitemradio')).not.toBeInTheDocument();
-  });
-
-  it('names a served model the pin list does not admit', async () => {
-    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
-    // A flag variation may serve any OpenRouter id, and an unpinned work stream
-    // runs on whatever it served. The pill shortens it; the tooltip does not.
-    renderComposer(undefined, false, undefined, ranOn('moonshotai/kimi-k2.5'));
-
-    const readout = await screen.findByRole('button', { name: /^Model: moonshotai\/kimi-k2\.5/u });
-    expect(readout).toHaveTextContent('kimi-k2.5');
-  });
-
-  it('falls back to the pin when the run never got far enough to record a model', async () => {
-    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
-    // A run that failed before its first token leaves `harness_runs.model` null.
-    // Calling a pinned work stream **Default** there would describe it as
-    // following a flag it never consults.
-    renderComposer(undefined, false, undefined, {
-      ...ranOn(undefined),
-      modelOverride: 'deepseek/deepseek-v4-pro',
-    });
-
-    const readout = await screen.findByRole('button', { name: /^Model: deepseek\/deepseek-v4-pro/u });
-    expect(readout).toHaveTextContent('DeepSeek V4 Pro');
-  });
-
-  it('prefers what ran over what was pinned', async () => {
-    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
-    // The two agree on every ordinary pinned work stream. Where they disagree
-    // the run is the truth — it is what answered.
-    renderComposer(undefined, false, undefined, {
-      ...ranOn('x-ai/grok-4.5'),
-      modelOverride: 'deepseek/deepseek-v4-pro',
-    });
-
-    await screen.findByRole('button', { name: /^Model: x-ai\/grok-4\.5/u });
-  });
-
-  it('treats a blank recorded model as no model at all', async () => {
-    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
-    // `harness_runs.model` is not constrained to be non-empty, and a Worker with
-    // an unset OPENROUTER_* variable resolves to `""` and stores it. Believing
-    // that would render a pill with nothing in it; it falls through to the pin
-    // instead, exactly as a null would.
-    renderComposer(undefined, false, undefined, {
-      ...ranOn('   '),
-      modelOverride: 'deepseek/deepseek-v4-pro',
-    });
-
-    const readout = await screen.findByRole('button', { name: /^Model: deepseek\/deepseek-v4-pro/u });
-    expect(readout).toHaveTextContent('DeepSeek V4 Pro');
-  });
-
-  it('claims no model before the work stream has a run to read one off', async () => {
-    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
-    renderComposer(undefined, false, undefined, ranOn(undefined));
-
-    // Same answer an untouched launch composer gives, for the same reason: the
-    // flag decides and the renderer cannot see the served variation.
-    const readout = await screen.findByRole('button', {
-      name: 'Model: Default (no run yet) — unpinned, so the agent-model-workstream flag decides each run and a later run may differ. It cannot be set here.',
-    });
-    expect(readout).toHaveTextContent('Default');
   });
 });

@@ -25,10 +25,9 @@ import { escapeHtml } from "./resend";
  * paragraph, because a briefing's table read as one run-on line of pipes is
  * worse than a plain one.
  *
- * Styling is inline and dark. Not because the app has one appearance — it ships
- * four themes and two of them are light — but because a mail client cannot tell
- * this renderer which one the reader chose, so the email is rendered in the
- * shipped default, stated on the elements themselves: a client will strip a
+ * Styling is inline and dark. Rally ships light and dark appearances, but a
+ * mail client cannot tell this renderer which one the reader chose, so email is
+ * rendered in one fixed palette, stated on the elements themselves: a client will strip a
  * `<style>` block, and several rewrite a page that declares a light scheme. A
  * light variant behind `prefers-color-scheme` is the open question, not a
  * decision this file has already settled.

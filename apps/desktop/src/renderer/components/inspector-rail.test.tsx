@@ -236,7 +236,7 @@ describe('InspectorRail details', () => {
     expect(useUiStore.getState().inspector).toBeNull();
   });
 
-  it('separates incoming sources from generated artifacts', () => {
+  it('keeps incoming sources and generated artifacts in one resources section', () => {
     renderResources([
       watched,
       {
@@ -249,8 +249,9 @@ describe('InspectorRail details', () => {
       },
     ]);
 
-    expect(within(screen.getByRole('heading', { name: 'Sources' }).closest('section')!).getByText(watched.title)).toBeVisible();
-    expect(within(screen.getByRole('heading', { name: 'Artifacts' }).closest('section')!).getByText('Generated release brief')).toBeVisible();
+    const resources = screen.getByRole('heading', { name: 'Resources' }).closest('section')!;
+    expect(within(resources).getByText(watched.title)).toBeVisible();
+    expect(within(resources).getByText('Generated release brief')).toBeVisible();
     expect(screen.getAllByRole('checkbox')).toHaveLength(1);
   });
 

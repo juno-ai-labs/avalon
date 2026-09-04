@@ -177,6 +177,37 @@ describe('Sidebar work-stream markers', () => {
     });
   });
 
+  it('reduces the GrokBot shell navigation to work streams', () => {
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[automation]}
+            conversationOnly
+            notes={[note('note-hidden', 'Meeting notes', '2026-07-31T19:00:00.000Z')]}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[workstream('stream-visible', 'Customer launch', 'completed')]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText('Customer launch')).toBeInTheDocument();
+    expect(screen.queryByText('Daily product brief')).not.toBeInTheDocument();
+    expect(screen.queryByText('Meeting notes')).not.toBeInTheDocument();
+    expect(screen.queryByText('New automation')).not.toBeInTheDocument();
+    expect(screen.getByRole('searchbox', { name: 'Search work streams' })).toBeInTheDocument();
+    const titlebar = document.querySelector('.sidebar-titlebar');
+    const commandbar = document.querySelector('.sidebar-commandbar');
+    expect(titlebar).not.toBeNull();
+    expect(commandbar).not.toBeNull();
+    expect(titlebar).toContainElement(screen.getByRole('link', { name: 'New chat' }));
+    expect(commandbar).toContainElement(screen.getByRole('searchbox', { name: 'Search work streams' }));
+    expect(commandbar?.querySelector('.sidebar-new-button')).toBeNull();
+  });
+
   afterEach(() => vi.unstubAllGlobals());
 
   it('resizes from the keyboard and exposes its constrained width', () => {
@@ -197,6 +228,15 @@ describe('Sidebar work-stream markers', () => {
 
     fireEvent.keyDown(resizer, { key: 'ArrowLeft' });
     expect(resizer).toHaveAttribute('aria-valuenow', '300');
+  });
+
+  it('names compact links and connects their hover descriptions to the link', async () => {
+    const item = workstream('compact-preview', 'Named compact destination', 'completed');
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} compact conversationOnly automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[item]} /></Tooltip.Provider></MemoryRouter>);
+    const link = screen.getByRole('link', { name: item.title });
+    fireEvent.pointerEnter(link.closest('[data-workstream-id]')!);
+    await waitFor(() => expect(link).toHaveAttribute('aria-describedby', `workstream-preview-${item.id}`));
+    expect(document.getElementById(link.getAttribute('aria-describedby')!)).toHaveTextContent(item.title);
   });
 
   it('forwards a work-stream row hover to the pooled socket warm-up', () => {
@@ -755,7 +795,7 @@ describe('Sidebar work-stream markers', () => {
         'Before this month',
       ]);
       expect(screen.queryByRole('heading', { name: 'Work streams' })).not.toBeInTheDocument();
-      expect([...document.querySelectorAll('.workstream-row .sidebar-row-title')].map((row) => row.textContent)).toEqual([
+      expect([...document.querySelectorAll('.workstream-row .sidebar-row-title-copy')].map((row) => row.textContent)).toEqual([
         'Just completed',
         'Recently running',
         'Failed yesterday',
@@ -1234,7 +1274,7 @@ describe('Sidebar work-stream markers', () => {
       </MemoryRouter>,
     );
 
-    expect([...document.querySelectorAll('.sidebar-row-title')].map((row) => row.textContent)).toEqual([
+    expect([...document.querySelectorAll('.sidebar-row-title')].map((row) => row.querySelector('.sidebar-row-title-copy')?.textContent ?? row.textContent)).toEqual([
       'Customer interview',
       'Shared research',
       'Older work stream',
@@ -1767,10 +1807,10 @@ describe('private work streams', () => {
 
     const row = screen.getByRole('link', { name: /Digest/u });
     expect(screen.queryByLabelText('Private work stream')).not.toBeInTheDocument();
-    expect(row.querySelector('.sidebar-workstream-facepile')).toBeNull();
+    expect(row.querySelector('.sidebar-workstream-facepile')).not.toBeNull();
   });
 
-  it('hides the current user so a solo personal row has no facepile', () => {
+  it('shows the full participant roster when a personal row contains only the current user', () => {
     renderWith([{
       ...workstream('00000000-4000-4000-8000-00000000002c', 'Just me', 'completed'),
       scope: 'personal',
@@ -1778,11 +1818,11 @@ describe('private work streams', () => {
     }]);
 
     const row = screen.getByRole('link', { name: /Just me/u });
-    expect(row.querySelector('.sidebar-workstream-facepile')).toBeNull();
+    expect(row.querySelector('.avatar-stack')).toHaveAccessibleName('Adam');
     expect(row.querySelector('.sidebar-workstream-public')).toBeNull();
   });
 
-  it('paints everyone else in a personal row except the current user', () => {
+  it('paints the full participant roster in a personal row', () => {
     renderWith([{
       ...workstream('00000000-4000-4000-8000-00000000002d', 'Pairing', 'completed'),
       scope: 'personal',
@@ -1790,8 +1830,8 @@ describe('private work streams', () => {
     }]);
 
     const row = screen.getByRole('link', { name: /Pairing/u });
-    expect(row.querySelector('.avatar-stack')).toHaveAccessibleName('Ari');
-    expect(row.querySelectorAll('.avatar-stack-item')).toHaveLength(1);
+    expect(row.querySelector('.avatar-stack')).toHaveAccessibleName('Adam; Ari');
+    expect(row.querySelectorAll('.avatar-stack-item')).toHaveLength(2);
     expect(row.querySelector('.avatar-overflow')).toBeNull();
   });
 
@@ -1804,7 +1844,7 @@ describe('private work streams', () => {
     }]);
 
     const row = screen.getByRole('link', { name: /Staffing/u });
-    expect(row.querySelector('.avatar-stack')).toHaveAccessibleName('Ellis; Drew; and 2 more');
+    expect(row.querySelector('.avatar-stack')).toHaveAccessibleName('Adam; Ellis; Drew; and 2 more');
     expect(within(row).getByText('+2')).toBeInTheDocument();
   });
 
@@ -1816,7 +1856,7 @@ describe('private work streams', () => {
     }]);
 
     const row = screen.getByRole('link', { name: /Pairing/u });
-    const face = row.querySelector('.avatar-stack-item');
+    const face = row.querySelectorAll('.avatar-stack-item')[1];
     if (!face) throw new Error('the pairing row rendered no facepile avatar');
     fireEvent.pointerMove(face, { pointerType: 'mouse' });
 
@@ -1836,7 +1876,8 @@ describe('private work streams', () => {
   it('marks a workspace-scoped work stream as public', () => {
     renderWith([{
       ...workstream('00000000-4000-4000-8000-000000000022', 'Launch', 'completed'),
-      // Leftover ids from when the row was personal must not paint a pile.
+      // Participant presence remains visible even when the work stream is
+      // available to the whole workspace.
       participantUserIds: ['user-1', 'user-2'],
       participantExtraCount: 3,
     }]);
@@ -1844,7 +1885,7 @@ describe('private work streams', () => {
     const row = screen.getByRole('link', { name: /Launch/u });
     expect(row.querySelector('.sidebar-workstream-public')).not.toBeNull();
     expect(screen.queryByLabelText('Private work stream')).not.toBeInTheDocument();
-    expect(row.querySelector('.sidebar-workstream-facepile')).toBeNull();
+    expect(row.querySelector('.sidebar-workstream-facepile')).not.toBeNull();
   });
 
   it('paints the three newest faces and an overflow for everyone past that', () => {
@@ -1856,12 +1897,16 @@ describe('private work streams', () => {
     }]);
 
     const row = screen.getByRole('link', { name: /Comp review/u });
-    // Five participants, three preview ids (Ellis, Drew, Casey). The two
-    // extras include the viewer (user-1), who is not in that preview, so the
-    // row paints the three others and +1 rather than +2.
-    expect(row.querySelector('.avatar-stack')).toHaveAccessibleName('Ellis; Drew; Casey; and 1 more');
+    // Five participants, three preview ids (Ellis, Drew, Casey), followed by
+    // the directory's exact overflow count.
+    const stack = row.querySelector('.avatar-stack');
+    expect(stack).toHaveAccessibleName('Ellis; Drew; Casey; and 2 more');
+    expect(stack).toHaveClass('is-grok-cluster');
+    expect(stack).toHaveAttribute('data-visible-count', '3');
     expect(row.querySelectorAll('.avatar-stack-item')).toHaveLength(3);
-    expect(within(row).getByText('+1')).toBeInTheDocument();
+    expect([...row.querySelectorAll('.avatar-stack-item')].map((item) => item.getAttribute('data-grok-shape')))
+      .toEqual(['circle', 'wedge', 'pill']);
+    expect(within(row).getByText('+2')).toBeInTheDocument();
     expect(within(row).queryByLabelText('Private work stream')).not.toBeInTheDocument();
     expect(row.querySelector('.sidebar-workstream-public')).toBeNull();
     expect(row).toHaveAccessibleName(/Comp review/u);
@@ -1877,8 +1922,8 @@ describe('private work streams', () => {
     }]);
 
     const row = screen.getByRole('link', { name: /Staffing overflow/u });
-    expect(row.querySelector('.avatar-stack')).toHaveAccessibleName('Ellis; Drew; and 2 more');
-    expect(within(row).getByText('+2')).toBeInTheDocument();
+    expect(row.querySelector('.avatar-stack')).toHaveAccessibleName('Ellis; Drew; and 3 more');
+    expect(within(row).getByText('+3')).toBeInTheDocument();
     expect(row).not.toHaveAccessibleName(/Ellis|Drew/u);
   });
 
@@ -2113,7 +2158,7 @@ describe('pinned work streams', () => {
     fireEvent.keyDown(window, { key: 'Meta', metaKey: true });
     fireEvent.keyDown(window, { key: 'Meta', metaKey: true, repeat: true });
     const pills = [...document.querySelectorAll('.command-shortcut-pill')];
-    expect(pills.map((pill) => pill.textContent)).toEqual(['1', '2', '3', '4', '5', '6', '7', '8', '9']);
+    expect(pills.map((pill) => pill.textContent)).toEqual(['⌘1', '⌘2', '⌘3', '⌘4', '⌘5', '⌘6', '⌘7', '⌘8', '⌘9']);
     // The overlay reuses the automation You / Workspace badge so the two chips
     // cannot pick up different size or colour. Dropping either class is the
     // failure this asserts; `toHaveClass` names the missing one.
@@ -2240,6 +2285,18 @@ describe('pinned work streams', () => {
 
     fireEvent.dragEnd(dragTarget(/Charlie/u), { dataTransfer: dataTransfer('move') });
     await waitFor(() => expect(onReorderPinnedWorkstreams).toHaveBeenCalledWith(['ws-c', 'ws-a', 'ws-b']));
+  });
+
+  it('reorders filtered pins without moving the hidden pin', async () => {
+    const onReorderPinnedWorkstreams = vi.fn(async (): Promise<void> => undefined);
+    renderWith([
+      pinned(workstream('ws-a', 'Match Alpha', 'completed'), 0),
+      pinned(workstream('ws-b', 'Hidden Bravo', 'completed'), 1),
+      pinned(workstream('ws-c', 'Match Charlie', 'completed'), 2),
+    ], { onReorderPinnedWorkstreams });
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search work streams' }), { target: { value: 'Match' } });
+    fireEvent.keyDown(dragTarget(/Match Charlie/u), { key: 'ArrowUp', altKey: true });
+    await waitFor(() => expect(onReorderPinnedWorkstreams).toHaveBeenCalledWith(['ws-c', 'ws-b', 'ws-a']));
   });
 
   it('sends nothing when a drag ends where it started', () => {
@@ -2782,6 +2839,30 @@ describe('Sidebar work-stream paging', () => {
     // are usually there by the time the reader arrives.
     scrollTo(nav, 900);
     expect(onLoadMoreWorkstreams).toHaveBeenCalledTimes(1);
+  });
+
+  it('finds a match on a later page even when filtering removes the scrollbar', async () => {
+    const first = workstream('first', 'Recent chat', 'completed');
+    const older = workstream('older', 'Older matching chat', 'completed');
+    function PagedSearch(): React.JSX.Element {
+      const [rows, setRows] = useState([first]);
+      return <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} workspace={workspace}
+        workstreams={rows} hasMoreWorkstreams={rows.length === 1}
+        onLoadMoreWorkstreams={() => setRows([first, older])} />;
+    }
+    render(<MemoryRouter><Tooltip.Provider><PagedSearch /></Tooltip.Provider></MemoryRouter>);
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search work streams' }), { target: { value: 'Older matching' } });
+    expect(await screen.findByRole('link', { name: 'Older matching chat' })).toBeVisible();
+    expect(screen.queryByText('No matching work streams')).toBeNull();
+  });
+
+  it('does not automatically loop a failed search page and offers an explicit retry', () => {
+    const onLoadMoreWorkstreams = vi.fn();
+    renderWithPaging({ hasMoreWorkstreams: true, onLoadMoreWorkstreams });
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search work streams' }), { target: { value: 'Missing' } });
+    expect(onLoadMoreWorkstreams).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole('button', { name: 'Search more work streams' }));
+    expect(onLoadMoreWorkstreams).toHaveBeenCalledTimes(2);
   });
 
   it('asks both lists for their next page, since one set of headings holds both', () => {

@@ -5,7 +5,6 @@ import test from 'node:test';
 import {
   assetManifest,
   defaultTheme,
-  backdropDocument,
   customProperty,
   fontCacheId,
   fontFaces,
@@ -340,109 +339,6 @@ test('the main process is told where to fetch a remote font from', () => {
 });
 
 /**
- * A backdrop document is served to an origin of its own, and an origin of its
- * own inherits nothing from the application's cascade. Everything it needs to
- * name has to be written into it.
- */
-test('a backdrop document carries the whole theme it belongs to', () => {
-  const air = themes.find((theme) => theme.id === 'air');
-  assert.ok(air?.backdrop, 'expected Air to bring a backdrop document');
-
-  const document = backdropDocument(air, registry, resolvedTokens(air, themes));
-
-  assert.match(document, /^<!doctype html>/u);
-  assert.ok(document.includes(air.backdrop.html.trimEnd()), 'the theme markup is not in it');
-  for (const path of Object.keys(registry.tokens)) {
-    assert.ok(
-      document.includes(`${customProperty(path)}:`),
-      `the backdrop cannot read ${path}, which it inherits from nothing`,
-    );
-  }
-  // It paints the theme's own floor rather than relying on frame transparency:
-  // a frame on another origin gets Chromium's default white canvas, and
-  // compositing the application against *that* is what the first cut did.
-  assert.match(document, /background-color: var\(--av-sys-backdrop-color\);/u);
-  assert.match(document, /pointer-events: none/u);
-});
-
-test('a backdrop that moves has to be able to stop', () => {
-  const air = themes.find((theme) => theme.id === 'air');
-  const html = air?.backdrop?.html ?? '';
-  if (!/requestAnimationFrame/u.test(html)) return;
-
-  assert.match(
-    html,
-    /prefers-reduced-motion/u,
-    'a backdrop that animates must honour prefers-reduced-motion: it cannot be dismissed',
-  );
-});
-
-/**
- * The two Air variants light the same room, and their fields are not
- * interchangeable.
- *
- * On paper an additive bloom is glare: it lightens a ground that is already
- * near-white, so the orb reads as a blown-out patch rather than as colour.
- * `mix-blend-mode: multiply` darkens toward the pigment instead, which is how
- * ink behaves on a page — and it is why the light alphas are roughly double the
- * dark ones and still land softer. Copying one field into the other, or
- * retuning one alpha to "match", is how that gets lost.
- */
-test('the light field multiplies and the dark field does not', () => {
-  const fieldOf = (id) => themes.find((theme) => theme.id === id)?.backdrop?.html ?? '';
-
-  assert.match(fieldOf('air'), /mix-blend-mode: multiply/u);
-  assert.ok(!fieldOf('air-dark').includes('mix-blend-mode'), 'the dark field adds light, it does not multiply');
-});
-
-/**
- * Each bloom's hue, pinned to the reference. Only the warm one follows the
- * brand — the reference writes it as the accent and the other three as fixed
- * hues, so a retint moves the light the theme is named for and leaves the rest
- * of the field where the design put it.
- */
-test('every bloom carries the hue its reference gives it', () => {
-  const expected = {
-    'air-dark': [
-      ['warm', /rgb\(from var\(--av-sys-color-brand-base\) r g b \/ \.32\)/u],
-      ['cool', /rgba\(150, 178, 166, \.26\)/u],
-      ['clay', /rgba\(196, 120, 86, \.2\)/u],
-      ['ember', /rgba\(224, 132, 64, \.40\)/u],
-    ],
-    air: [
-      ['warm', /rgb\(from var\(--av-sys-color-brand-base\) r g b \/ \.50\)/u],
-      ['cool', /rgba\(112, 158, 141, \.42\)/u],
-      ['clay', /rgba\(196, 120, 86, \.3\)/u],
-      ['ember', /rgba\(232, 138, 58, \.50\)/u],
-    ],
-  };
-
-  for (const [id, blooms] of Object.entries(expected)) {
-    const html = themes.find((theme) => theme.id === id)?.backdrop?.html ?? '';
-    assert.ok(html, `${id} brings no backdrop`);
-    for (const [bloom, hue] of blooms) {
-      assert.match(html, hue, `${id}: the ${bloom} bloom has drifted from its reference`);
-    }
-  }
-});
-
-/**
- * The two variants are one theme at two brightnesses: the same room, the same
- * furniture, different lamps. Anything that is not a colour has to agree, or
- * they are two designs that happen to share a name.
- */
-test('the Air variants differ only in colour', () => {
-  const [light, dark] = ['air', 'air-dark'].map((id) => themes.find((theme) => theme.id === id));
-  const colourish = new Set(['color', 'gradient', 'shadow']);
-
-  const structural = (theme) => Object.fromEntries(
-    Object.entries(theme.tokens).filter(([path]) => !colourish.has(registry.tokens[path].$type)),
-  );
-
-  assert.deepEqual(structural(light), structural(dark));
-});
-
-/**
  * A heading is larger than the prose it sits above.
  *
  * `.markdown-body` takes its own size from `sys.font.size.prose`, and the
@@ -490,15 +386,14 @@ test('every theme keeps its markdown headings above its prose', () => {
  *
  * `app.css` writes `border-top` from that token unconditionally — the renderer
  * suite anchors that declaration — so the token is not a rule theme's opt-in.
- * Terra read it as one, set it to `transparent`, and shipped a card with three
+ * A retired palette read it as one, set it to `transparent`, and shipped a card with three
  * sides: the work-stream composer was open along the top while the launch
  * screen, which writes its own card, was closed. Nothing else sees this. The
  * generated CSS is valid, every token resolves, and the missing edge is one
  * hairline on one screen.
  *
- * Read through `resolvedTokens` rather than the theme JSON, because a theme
- * inherits what it was content not to restate: Terra Light declares no
- * `border-color` of its own and takes Terra's.
+ * Read through `resolvedTokens` rather than the appearance JSON, because an
+ * appearance inherits whatever it was content not to restate.
  */
 test('a card composer states its top edge as its frame, and a rule keeps a visible one', () => {
   for (const theme of themes) {

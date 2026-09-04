@@ -4,7 +4,7 @@ export function mentionOptionCopy(option: HTMLElement): {
   label: string | null;
 } {
   return {
-    badge: option.querySelector('.badge')?.textContent ?? null,
+    badge: option.querySelector('.badge, .mention-popover-kind')?.textContent ?? null,
     description: option.querySelector('small')?.textContent ?? null,
     label: option.querySelector('strong')?.textContent ?? null,
   };

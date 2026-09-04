@@ -1,4 +1,5 @@
 import clsx from 'clsx';
+import * as Dialog from '@radix-ui/react-dialog';
 import {
   IconBrain,
   IconDeviceDesktop,
@@ -12,19 +13,22 @@ import {
 import type { AutomationPluginActivity } from '@rally/contracts';
 import {
   Check,
+  ChevronLeft,
   ChevronDown,
   ChevronRight,
   CircleAlert,
   Clipboard,
   Copy,
   FileDown,
+  FileText,
   ImageDown,
   LoaderCircle,
   Square,
   TerminalSquare,
   Volume2,
+  X,
 } from 'lucide-react';
-import { Children, Fragment, memo, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { Children, Fragment, memo, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Highlight, Prism, type Language, type PrismTheme } from 'prism-react-renderer';
 import {
   citationFootnotes,
@@ -47,7 +51,13 @@ import { logError } from '../../common/logger';
 import { messageExportDate, messageExportFileName, type MessageExportFormat } from '../../common/message-export';
 import { formatDuration, formatRelative } from '../lib/format';
 import { isComposingKeyEvent } from '../lib/ime';
-import { markdownDefinitionBlocks, splitCollapsibleMarkdown, withMarkdownDefinitions } from '../lib/markdown-collapse';
+import {
+  markdownDefinitionBlocks,
+  splitCollapsibleMarkdown,
+  splitMarkdownH2Document,
+  withMarkdownDefinitions,
+  type MarkdownH2Section,
+} from '../lib/markdown-collapse';
 import { saveMessageExport } from '../lib/message-export';
 import { desktopBridge, desktopServicesAvailable } from '../lib/platform';
 import { pluginGroupIconForContract, type PluginGroupIcon } from '../lib/plugin-groups';
@@ -666,8 +676,8 @@ function MentionChip({ fallbackLabel, mention, personId }: {
 }): React.JSX.Element {
   const fallbackText = typeof fallbackLabel === 'string' ? fallbackLabel : '@Person';
   const label = mention?.displayName
-    ? `@${mention.displayName.replace(/^@/u, '')}`
-    : fallbackLabel;
+    ? mention.displayName.replace(/^@/u, '')
+    : typeof fallbackLabel === 'string' ? fallbackLabel.replace(/^@/u, '') : fallbackLabel;
   const initials = mentionInitials(mention?.displayName ?? fallbackText);
 
   return (
@@ -988,10 +998,23 @@ export function MarkdownBody({
 }): React.JSX.Element {
   // One token per mounted body, so the links keep stable identity across renders.
   const token = useMemo(createConnectorMentionToken, []);
+  // Socket hydration may replace a message with an equivalent object and a
+  // newly allocated mentions array. Preserve the semantic value's identity so
+  // that metadata-only refresh does not rebuild the parsed Markdown tree.
+  const mentionsKey = JSON.stringify(mentions.map((mention) => [
+    mention.type,
+    mention.personId,
+    mention.connectorType,
+    mention.displayName,
+    mention.avatarUrl,
+    mention.startOffset,
+    mention.endOffset,
+  ]));
+  const stableMentions = useMemo(() => mentions, [mentionsKey]);
   // Mentions first, normalization second, and the order is load-bearing: the
   // connector offsets are measured against the stored text, so anything that
   // changes its length has to run after they have been resolved into links.
-  const linked = withConnectorMentionLinks(children, mentions, token);
+  const linked = withConnectorMentionLinks(children, stableMentions, token);
   const markdown = verbatim ? linked : normalizeModelMarkdown(linked);
   const messageId = telemetry?.messageId;
   const workstreamId = telemetry?.workstreamId;
@@ -1012,8 +1035,24 @@ export function MarkdownBody({
     for (const identifier of referenced) {
       if (definitions.has(identifier)) numbers.set(identifier, numbers.size + 1);
     }
-    return { ...(citations ? { citations } : {}), PreviewBody: CitationPreviewBody, footnotes: found, numbers, prefix, still };
+    return { ...(citations ? { citations } : {}), footnotes: found, numbers, prefix, still };
   }, [citations, footnoteSource, prefix, still]);
+  // Code rendering does not depend on citation resolution or the identity of
+  // the mentions array. Keep its component type stable when either of those
+  // inputs is refreshed: ReactMarkdown treats a new inline function as a new
+  // component type, which used to unmount a finished Mermaid diagram, show its
+  // much shorter source fallback, and then render the diagram again.
+  const renderCode = useCallback((properties: React.ComponentProps<'code'> & ExtraProps): React.JSX.Element => (
+    <MarkdownCode
+      {...properties}
+      glance={glance}
+      // An open fence changes on every streaming commit, and Mermaid's
+      // asynchronous parse cannot be cancelled. Render once the turn is
+      // complete; glances and saved stills deliberately keep source code.
+      renderDiagrams={!glance && !still && !streaming}
+      telemetry={messageId !== undefined && workstreamId !== undefined ? { messageId, workstreamId } : undefined}
+    />
+  ), [glance, messageId, still, streaming, workstreamId]);
   // Stable across commits that change nothing they depend on, for two reasons:
   // the settled segments' memo compares them by identity, and the memoised
   // element below reuses the whole rendered body while they hold still.
@@ -1027,7 +1066,7 @@ export function MarkdownBody({
               anchor={{ ...props, href }}
               footnoteRef={node?.properties?.dataFootnoteRef !== undefined}
               href={href}
-              identity={() => renderIdentity(href, linkChildren, mentions, token)}
+              identity={() => renderIdentity(href, linkChildren, stableMentions, token)}
             >{linkChildren}</CitationLink>
           )
       ),
@@ -1055,17 +1094,7 @@ export function MarkdownBody({
         if (node?.properties?.dataFootnotes === undefined) return <section {...props}>{sectionChildren}</section>;
         return <CitationFootnoteSection section={props}>{sectionChildren}</CitationFootnoteSection>;
       },
-      code: (properties) => (
-        <MarkdownCode
-          {...properties}
-          glance={glance}
-          // An open fence changes on every streaming commit, and Mermaid's
-          // asynchronous parse cannot be cancelled. Render once the turn is
-          // complete; glances and saved stills deliberately keep source code.
-          renderDiagrams={!glance && !still && !streaming}
-          telemetry={messageId !== undefined && workstreamId !== undefined ? { messageId, workstreamId } : undefined}
-        />
-      ),
+      code: renderCode,
       pre: ({ children: preChildren }) => <>{preChildren}</>,
       table: MarkdownTable,
     } satisfies MarkdownComponents,
@@ -1082,7 +1111,7 @@ export function MarkdownBody({
         ? url
         : defaultUrlTransform(url)
     )) satisfies MarkdownUrlTransform,
-  }), [glance, mentions, messageId, still, streaming, token, workstreamId]);
+  }), [glance, renderCode, stableMentions, token]);
   // Heading overrides are a second map so a nested h3 in a section body does
   // not grow a chevron: only the section's own heading markdown uses these.
   const headingComponents = useMemo<MarkdownComponents>(() => ({
@@ -1296,18 +1325,221 @@ export function MarkdownBody({
   );
 }
 
-/**
- * The embed card's preview, fed through this same renderer so a Word file's
- * `**Author:**` bolds here the way it bolds in the rail one click away.
- *
- * Glance: a fence or a link cannot nest a control inside the card's button,
- * and an external image cannot fetch from a URL the document chose. No
- * citations: a document that cites another resource would otherwise draw a
- * card inside this card. Verbatim: the text is the file's, and the model-text
- * repair is a repair of what a model wrote.
- */
-function CitationPreviewBody({ children }: { children: string }): React.JSX.Element {
-  return <MarkdownBody glance verbatim>{children}</MarkdownBody>;
+const DOCUMENT_CARD_WIDTH = 220;
+const DOCUMENT_CARD_HEIGHT = 53;
+const DOCUMENT_CARD_OFFSET = 20;
+
+function mentionsWithin(
+  mentions: readonly MessageMention[],
+  start: number,
+  end: number,
+): MessageMention[] {
+  return mentions.flatMap((mention) => {
+    if (mention.type !== 'connector') return [mention];
+    if (mention.startOffset < start || mention.endOffset > end) return [];
+    return [{
+      ...mention,
+      startOffset: mention.startOffset - start,
+      endOffset: mention.endOffset - start,
+    }];
+  });
+}
+
+interface PositionedDocumentSection {
+  readonly section: MarkdownH2Section;
+  readonly start: number;
+}
+
+function AgentDocumentDeck({
+  citations,
+  mentions,
+  streaming,
+  text,
+  telemetry,
+}: {
+  citations?: CitationContext;
+  mentions: readonly MessageMention[];
+  streaming: boolean;
+  text: string;
+  telemetry?: MessageCopyTelemetry;
+}): React.JSX.Element {
+  const document = useMemo(() => splitMarkdownH2Document(text), [text]);
+  const positioned = useMemo<PositionedDocumentSection[]>(() => {
+    let cursor = document.preamble.length;
+    return document.sections.map((section) => {
+      const positionedSection = { section, start: cursor };
+      cursor += section.heading.length + section.body.length;
+      return positionedSection;
+    });
+  }, [document]);
+  const definitions = useMemo(() => markdownDefinitionBlocks(text), [text]);
+  const [openIndex, setOpenIndex] = useState<number | null>(null);
+  const returnFocus = useRef<HTMLButtonElement | null>(null);
+  const pointerStart = useRef<{ x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    if (openIndex !== null && openIndex >= positioned.length) {
+      setOpenIndex(positioned.length > 0 ? positioned.length - 1 : null);
+    }
+  }, [openIndex, positioned.length]);
+
+  useEffect(() => {
+    if (openIndex === null) return;
+    const pageWithKeyboard = (event: KeyboardEvent): void => {
+      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+      event.preventDefault();
+      setOpenIndex((current) => {
+        if (current === null) return null;
+        return event.key === 'ArrowRight'
+          ? Math.min(positioned.length - 1, current + 1)
+          : Math.max(0, current - 1);
+      });
+    };
+    window.addEventListener('keydown', pageWithKeyboard);
+    return () => window.removeEventListener('keydown', pageWithKeyboard);
+  }, [openIndex, positioned.length]);
+
+  if (streaming || positioned.length === 0) {
+    return (
+      <MarkdownBody citations={citations} mentions={[...mentions]} streaming={streaming} telemetry={telemetry}>
+        {text}
+      </MarkdownBody>
+    );
+  }
+
+  const active = openIndex === null ? null : positioned[openIndex];
+  const deckWidth = DOCUMENT_CARD_WIDTH + (positioned.length - 1) * DOCUMENT_CARD_OFFSET;
+  const deckHeight = DOCUMENT_CARD_HEIGHT + (positioned.length - 1) * DOCUMENT_CARD_OFFSET;
+  const page = (direction: -1 | 1): void => {
+    setOpenIndex((current) => {
+      if (current === null) return null;
+      return Math.max(0, Math.min(positioned.length - 1, current + direction));
+    });
+  };
+  const finishSwipe = (x: number, y: number): void => {
+    const start = pointerStart.current;
+    pointerStart.current = null;
+    if (!start) return;
+    const horizontal = x - start.x;
+    const vertical = y - start.y;
+    if (Math.abs(horizontal) < 44 || Math.abs(horizontal) <= Math.abs(vertical)) return;
+    page(horizontal < 0 ? 1 : -1);
+  };
+  const activeBodyStart = active ? active.start + active.section.heading.length : 0;
+  const activeBody = active
+    ? withMarkdownDefinitions(active.section.body, definitions)
+    : '';
+
+  return (
+    <div className="agent-document-deck-region">
+      {document.preamble && (
+        <div className="agent-document-preamble">
+          <MarkdownBody
+            citations={citations}
+            mentions={mentionsWithin(mentions, 0, document.preamble.length)}
+            streaming={streaming}
+            telemetry={telemetry}
+          >{document.preamble}</MarkdownBody>
+        </div>
+      )}
+      <div aria-label={`${positioned.length} document sections`} className="agent-document-deck-scroll">
+        <div
+          className="agent-document-deck"
+          style={{ height: deckHeight, width: deckWidth }}
+        >
+          {positioned.map(({ section }, index) => (
+            <button
+              aria-label={`Open section ${index + 1} of ${positioned.length}: ${section.title}`}
+              className="agent-document-card"
+              key={section.id}
+              onClick={(event) => {
+                returnFocus.current = event.currentTarget;
+                setOpenIndex(index);
+              }}
+              style={{
+                left: index * DOCUMENT_CARD_OFFSET,
+                top: index * DOCUMENT_CARD_OFFSET,
+                zIndex: positioned.length - index,
+              }}
+              type="button"
+            >
+              <span aria-hidden="true" className="agent-document-card-icon">
+                <FileText size={24} strokeWidth={1.8} />
+              </span>
+              <span className="agent-document-card-copy">
+                <strong>{section.title}</strong>
+                <span>Section {index + 1} of {positioned.length}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+      <span className="sr-only">{positioned.length} {positioned.length === 1 ? 'section' : 'sections'}</span>
+
+      <Dialog.Root open={active !== null} onOpenChange={(open) => !open && setOpenIndex(null)}>
+        {active && (
+          <Dialog.Portal>
+            <Dialog.Overlay className="attachment-lightbox-overlay" />
+            <Dialog.Content
+              className="agent-document-lightbox"
+              onCloseAutoFocus={(event) => {
+                if (!returnFocus.current) return;
+                event.preventDefault();
+                returnFocus.current.focus();
+              }}
+              onPointerDown={(event) => {
+                pointerStart.current = { x: event.clientX, y: event.clientY };
+              }}
+              onPointerCancel={() => { pointerStart.current = null; }}
+              onPointerUp={(event) => finishSwipe(event.clientX, event.clientY)}
+            >
+              <header className="agent-document-lightbox-header">
+                <div>
+                  <small aria-live="polite">Section {openIndex! + 1} of {positioned.length}</small>
+                  <Dialog.Title>{active.section.title}</Dialog.Title>
+                </div>
+                <nav aria-label="Document sections" className="agent-document-lightbox-navigation">
+                  <button
+                    aria-label="Previous section"
+                    disabled={openIndex === 0}
+                    onClick={() => page(-1)}
+                    type="button"
+                  ><ChevronLeft aria-hidden="true" size={18} /></button>
+                  <button
+                    aria-label="Next section"
+                    disabled={openIndex === positioned.length - 1}
+                    onClick={() => page(1)}
+                    type="button"
+                  ><ChevronRight aria-hidden="true" size={18} /></button>
+                </nav>
+                <Dialog.Close asChild>
+                  <button aria-label="Close document" className="attachment-lightbox-close" type="button">
+                    <X aria-hidden="true" size={20} />
+                  </button>
+                </Dialog.Close>
+              </header>
+              <div className="agent-document-lightbox-scroll">
+                <article className="agent-document-lightbox-page">
+                  {activeBody.trim() ? (
+                    <MarkdownBody
+                      citations={citations}
+                      mentions={mentionsWithin(
+                        mentions,
+                        activeBodyStart,
+                        active.start + active.section.heading.length + active.section.body.length,
+                      )}
+                      telemetry={telemetry}
+                    >{activeBody}</MarkdownBody>
+                  ) : <p className="agent-document-empty-section">This section is empty.</p>}
+                </article>
+              </div>
+              <p className="sr-only">Use the left and right arrow keys, swipe, or use the previous and next buttons to change sections.</p>
+            </Dialog.Content>
+          </Dialog.Portal>
+        )}
+      </Dialog.Root>
+    </div>
+  );
 }
 
 /**
@@ -1435,6 +1667,7 @@ function AssistantMessageActions({ citations, mentions, telemetry, text }: {
 }
 
 export function AssistantMessageContent({
+  documentCards = false,
   citations,
   collapseHeadings = false,
   // The hoisted constant, not `= []`: a per-render array here would feed
@@ -1447,6 +1680,7 @@ export function AssistantMessageContent({
 }: {
   citations?: CitationContext;
   collapseHeadings?: boolean;
+  documentCards?: boolean;
   mentions?: MessageMention[];
   showCopy?: boolean;
   streaming?: boolean;
@@ -1455,7 +1689,19 @@ export function AssistantMessageContent({
 }): React.JSX.Element {
   return (
     <>
-      {text ? <MarkdownBody citations={citations} collapseHeadings={collapseHeadings} mentions={mentions} streaming={streaming} telemetry={telemetry}>{text}</MarkdownBody> : null}
+      {text ? (
+        documentCards
+          ? (
+              <AgentDocumentDeck
+                citations={citations}
+                mentions={mentions}
+                streaming={streaming}
+                telemetry={telemetry}
+                 text={text}
+               />
+             )
+          : <MarkdownBody citations={citations} collapseHeadings={collapseHeadings} mentions={mentions} streaming={streaming} telemetry={telemetry}>{text}</MarkdownBody>
+      ) : null}
       {showCopy && !streaming && text && (
         <AssistantMessageActions citations={citations} mentions={mentions} telemetry={telemetry} text={text} />
       )}
@@ -1519,6 +1765,47 @@ function ToolBlock({ message }: { message: Message }): React.JSX.Element | null 
 export interface RowDisclosure {
   expanded: ReadonlySet<string>;
   onToggle: (messageId: string) => void;
+}
+
+function HumanMessageBubble({
+  children,
+  disclosure,
+  messageId,
+  text,
+}: {
+  children: React.ReactNode;
+  disclosure?: RowDisclosure;
+  messageId: string;
+  text: string;
+}): React.JSX.Element {
+  const [locallyExpanded, setLocallyExpanded] = useState(false);
+  const [bodyNode, setBodyNode] = useState<HTMLElement | null>(null);
+  const expanded = disclosure ? disclosure.expanded.has(messageId) : locallyExpanded;
+  const clamped = useTextClamped(bodyNode, text, !expanded);
+
+  return (
+    <div
+      className="human-message-bubble"
+      data-clamped={clamped ? 'true' : undefined}
+      data-expanded={expanded ? 'true' : undefined}
+    >
+      <div className="human-message-bubble-body" ref={setBodyNode}>{children}</div>
+      {(expanded || clamped) && (
+        <button
+          aria-expanded={expanded}
+          className="human-message-toggle"
+          onClick={() => {
+            if (disclosure) disclosure.onToggle(messageId);
+            else setLocallyExpanded((current) => !current);
+          }}
+          type="button"
+        >
+          {expanded ? 'Show less' : 'Show more'}
+          <ChevronDown aria-hidden="true" size={14} />
+        </button>
+      )}
+    </div>
+  );
 }
 
 /**
@@ -1769,7 +2056,7 @@ function PluginGlyphMark({ icon }: { icon: PluginGroupIcon }): React.JSX.Element
  * No chip, no ring: a row of enclosed glyphs reads as a toolbar, and these are
  * not controls. The glyph takes a single high-contrast neutral rather than each
  * connector's brand colour, because a brand colour chosen to sit on its own
- * chip has no guaranteed contrast against a transcript in four themes.
+ * chip has no guaranteed contrast against a transcript in both appearances.
  *
  * `pulsing` is how a group says it is still working. It replaces the per-plugin
  * spinner: one mark that breathes carries the same fact in the space the mark
@@ -2062,7 +2349,7 @@ export function ElicitationPanel({
         }
         const target = event.target as HTMLElement;
         if (isText || target.matches('input, textarea') || event.metaKey || event.ctrlKey || event.altKey) return;
-        const index = Number(event.key) - 1;
+        const index = /^[a-z]$/iu.test(event.key) ? event.key.toUpperCase().charCodeAt(0) - 65 : Number(event.key) - 1;
         if (!Number.isInteger(index) || index < 0 || index >= options.length + (allowOther ? 1 : 0)) return;
         event.preventDefault();
         const option = options[index];
@@ -2076,7 +2363,7 @@ export function ElicitationPanel({
         </div>
         <div className="elicitation-header-actions">
           <button aria-label="Collapse question" onClick={() => setCollapsed(true)} type="button">
-            <ChevronDown aria-hidden="true" size={16} />
+            <X aria-hidden="true" size={16} />
           </button>
         </div>
       </header>
@@ -2102,11 +2389,10 @@ export function ElicitationPanel({
                 value={option.value}
               />
               <span className="elicitation-option-copy"><strong>{normalizeModelText(option.label)}</strong>{option.description && <small>{normalizeModelText(option.description)}</small>}</span>
+              <kbd aria-hidden="true">{index < 26 ? String.fromCharCode(65 + index) : index + 1}</kbd>
               {isMulti ? (
                 <span aria-hidden="true" className="elicitation-checkbox">{selected.includes(option.value) && <Check size={12} strokeWidth={3} />}</span>
-              ) : (
-                <kbd aria-hidden="true">{index + 1}</kbd>
-              )}
+              ) : null}
             </label>
           ))}
           {allowOther && (
@@ -2139,11 +2425,10 @@ export function ElicitationPanel({
                   value={text}
                 />
               </span>
+              <kbd aria-hidden="true">{options.length < 26 ? String.fromCharCode(65 + options.length) : options.length + 1}</kbd>
               {isMulti ? (
                 <span aria-hidden="true" className="elicitation-checkbox">{customSelected && <Check size={12} strokeWidth={3} />}</span>
-              ) : (
-                <kbd aria-hidden="true">{options.length + 1}</kbd>
-              )}
+              ) : null}
             </div>
           )}
         </fieldset>
@@ -2163,6 +2448,8 @@ export function ElicitationPanel({
 }
 
 interface MessageBlockProps {
+  /** The main work-stream feed presents an agent's h2 document as a card deck. */
+  agentDocumentCards?: boolean;
   /**
    * How this transcript resolves and opens a citation. Absent on a surface
    * without a work stream behind it, which is exactly when every citation in a
@@ -2194,6 +2481,7 @@ interface MessageBlockProps {
 }
 
 export function MessageBlock({
+  agentDocumentCards = false,
   citations,
   collapseHeadings = false,
   currentUserId,
@@ -2338,7 +2626,7 @@ export function MessageBlock({
         {message.contextLabel && <span className="message-context-label">{message.contextLabel}</span>}
         <time dateTime={message.createdAt}>{formatRelative(message.createdAt)}</time>
         {message.workSummary && <span className="message-work-summary">{workSummaryLabel(message.workSummary)}</span>}
-        {!human && collapseHeadings && <MarkdownCollapseAllButton />}
+        {!human && collapseHeadings && !agentDocumentCards && <MarkdownCollapseAllButton />}
       </header>
       {human ? (
         <div className="human-message-content">
@@ -2350,13 +2638,13 @@ export function MessageBlock({
             />
           ) : null}
           {message.text ? (
-            <div className="human-message-bubble">
+            <HumanMessageBubble disclosure={rowDisclosure} messageId={message.id} text={message.text}>
               <MarkdownBody
                 mentions={message.mentions}
                 telemetry={{ messageId: message.id, workstreamId: message.workstreamId }}
                 verbatim
               >{message.text}</MarkdownBody>
-            </div>
+            </HumanMessageBubble>
           ) : null}
           {pendingLabel && <span className="message-delivery-pill">{pendingLabel}</span>}
         </div>
@@ -2372,6 +2660,7 @@ export function MessageBlock({
           <AssistantMessageContent
             citations={citations}
             collapseHeadings={collapseHeadings}
+            documentCards={agentDocumentCards}
             mentions={message.mentions}
             streaming={message.streaming}
             text={message.text ?? ''}
@@ -2381,7 +2670,7 @@ export function MessageBlock({
       )}
     </article>
   );
-  if (human || !collapseHeadings) return article;
+  if (human || !collapseHeadings || agentDocumentCards) return article;
   // Same repair the body applies, so the header's collapse-all and the
   // body's section wrappers agree on `section-${index}` ids. Mentions are
   // inline links and cannot change the heading count.

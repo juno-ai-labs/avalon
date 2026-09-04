@@ -198,6 +198,7 @@ export function AvatarStack({
   presentUserIds = [],
   currentUserId = null,
   nameTooltip = true,
+  layout = 'row',
 }: {
   members: WorkspaceMember[];
   limit?: number;
@@ -224,6 +225,8 @@ export function AvatarStack({
    * avoid.
    */
   nameTooltip?: boolean;
+  /** Grok's sidebar compacts the first three faces into an overlapping cluster. */
+  layout?: 'row' | 'grok-cluster';
 }): React.JSX.Element {
   const visible = members.slice(0, limit);
   const overflow = extraCount ?? Math.max(0, members.length - visible.length);
@@ -237,15 +240,28 @@ export function AvatarStack({
   return (
     <span
       aria-label={named.join('; ')}
-      className="avatar-stack"
+      className={clsx('avatar-stack', layout === 'grok-cluster' && 'is-grok-cluster')}
+      data-visible-count={visible.length}
     >
-      {visible.map((member) => {
+      {visible.map((member, index) => {
+        const grokShape = index === 0
+          ? 'circle'
+          : index === visible.length - 1
+            ? 'pill'
+            : 'wedge';
         const showingPresence = present.has(member.id) && member.id !== currentUserId;
         const tooltip = showingPresence
           ? `${member.name} is viewing this workstream.`
           : member.name;
         const item = (
-          <span className={clsx('avatar-stack-item', showingPresence && 'is-present')}>
+          <span
+            className={clsx(
+              'avatar-stack-item',
+              layout === 'grok-cluster' && `is-grok-position-${index + 1}`,
+              showingPresence && 'is-present',
+            )}
+            data-grok-shape={layout === 'grok-cluster' ? grokShape : undefined}
+          >
             {showingPresence && <span aria-hidden="true" className="avatar-presence-ping" />}
             <Avatar member={member} size="small" title={null} />
           </span>

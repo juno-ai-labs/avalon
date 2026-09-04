@@ -1,707 +1,144 @@
-# Theming
+# Desktop appearance
 
-A theme is a JSON file. `config/design-tokens/` holds one file per appearance
-and a registry saying which tokens exist and what each one means; a build step
-turns them into the stylesheet the renderer loads. Nothing in the interface
-chooses a colour outside that vocabulary, so adding an appearance costs a JSON
-file rather than an audit of a 3,800-line stylesheet.
+Rally has one visual language with two appearances: light and dark. People can
+follow the Mac setting or pin either appearance. There are no named theme
+families, user-selectable designs, animated theme documents, or theme-specific
+component branches.
 
-Read this before adding a theme, adding a token, or writing a colour anywhere in
-the renderer. Two rules carry the rest: **`app.css` names tokens and never a
-colour**, and **`themes.css` is generated — edit the JSON**. A test fails if
-either stops being true.
+The design-token JSON is the source of truth. Generated CSS exposes semantic
+custom properties to the renderer, and application rules consume those
+properties without knowing which appearance is active.
 
 ## Where the code lives
 
 | Path | Responsibility |
 | --- | --- |
-| `config/design-tokens/registry.json` | Every token that exists, its type, and the prose explaining what it is for. The vocabulary. |
-| `config/design-tokens/themes/*.json` | One appearance each: values for the registry's paths. The only place a colour is written down. |
-| `config/design-tokens/*.schema.json` | JSON Schema for both, so an editor completes and validates them. |
-| `scripts/build-theme-assets.mjs` | Turns the JSON into `themes.css`. `pnpm tokens:build` writes it; `pnpm tokens:check` fails on drift. |
-| `apps/desktop/src/renderer/styles/themes.css` | **Generated.** The custom properties, one block per theme. |
-| `apps/desktop/src/renderer/styles/app.css` | The rules. Names tokens; states no colour of its own. |
-| `apps/desktop/src/common/themes.ts` | The vocabulary both processes share: the theme ids, `resolveTheme`, and each theme's window background. |
-| `apps/desktop/src/renderer/lib/theme.ts` | Reading, applying, persisting, and re-resolving the choice. Stamps `data-theme`. |
-| `apps/desktop/src/renderer/lib/device-preferences.ts` | Where the choice is stored, beside the region and the microphone. |
-| `apps/desktop/src/renderer/components/theme-picker.tsx` | The Appearance control in Settings. |
-| `apps/desktop/src/main/application-settings.ts` | `themeChoice`, the mirrored copy the main process paints a new window from. |
-| `apps/desktop/tailwind.config.ts` | The Tailwind palette, pointed at the same tokens so a utility class cannot diverge. |
-| `apps/desktop/src/main/theme-assets.ts` | The two asset schemes: the backdrop policy, and the remote-font cache. |
-| `apps/desktop/src/renderer/components/theme-backdrop.tsx` | The sandboxed frame a backdrop document renders in. |
-| `apps/desktop/src/renderer/fonts/` | Font files a theme may name as `bundled`, with their licences. |
-
-## A theme file
-
-Shaped after a VS Code colour theme — a little metadata and one flat map of
-dotted keys, because flat keys diff cleanly and a nested tree does not:
-
-```json
-{
-  "$schema": "../theme.schema.json",
-  "id": "air-dark",
-  "name": "Air Dark",
-  "appearance": "dark",
-  "description": "Near-black, amber, and a great deal of room.",
-  "tokens": {
-    "sys.color.surface.canvas": "#100e0c",
-    "sys.color.text.default": "{ref.color.neutral.14}"
-  }
-}
-```
-
-`appearance` becomes `color-scheme`, so form controls and scrollbars match.
-A value in braces aliases another token rather than repeating its value; the
-generator turns it into a `var()` reference and a test rejects an alias that
-leads back to itself.
-
-A value may also be an object or an array of them, which is how a background
-layer is written:
-
-```json
-"sys.backdrop.image": [
-  { "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8'>…</svg>" },
-  { "url": "https://example.test/paper.avif" },
-  { "gradient": "radial-gradient(80% 60% at 88% 8%, rgba(224, 140, 58, .09), transparent 62%)" }
-]
-```
-
-An array is a CSS layer stack, first on top. `svg` is artwork drawn in the theme
-file: the generator collapses its whitespace, swaps its double quotes for single
-ones and percent-encodes what a `url()` cannot carry, then wraps the result in
-`url("data:image/svg+xml,…")`. It must declare the SVG namespace or nothing
-renders, and it may not alias a token — a data URI is its own document and cannot
-read a custom property, so the generator rejects both rather than emitting a dud.
-`url` must be `https:`, which is all the renderer's Content-Security-Policy
-allows from the network.
-
-## Fonts
-
-A theme file has a `fonts` array beside its `tokens`, because a family name is a
-wish and the file is the fact:
-
-```json
-"fonts": [
-  { "family": "Geist", "weight": "100 900", "display": "block",
-    "src": { "bundled": "geist-latin-variable.woff2" } },
-  { "family": "Cadence", "weight": "400",
-    "src": { "url": "https://fonts.example/cadence.woff2", "integrity": "sha256-…" } }
-]
-```
-
-Every theme declares its own — a theme that inherited them would be one you
-cannot read on its own — and the generator emits the union once, so switching
-appearance never waits on a font.
-
-**`bundled` names a file in `apps/desktop/src/renderer/fonts/`**, which ships
-inside the application. That is what removes the substitution flash: the family
-is present on the first paint, and `font-display: block` has nothing to block
-on. Geist and Geist Mono are bundled for exactly this reason — the interface
-named `Inter` for months without shipping it, so every weight resolved against
-whatever the platform substituted and the type had two usable weights instead of
-nine. Adding a file means adding its licence and a row in that directory's
-`README.md`.
-
-**`url` is fetched by the main process, once.** The stylesheet never names the
-remote host; it names `avalon-font://cache/<id>.woff2`, where the id is a hash of
-the URL. On a miss the main process fetches it, checks `integrity` if the theme
-declared one, refuses anything empty or larger than 8 MB, and writes it under
-`userData` through a rename so an interrupted launch leaves no half-file.
-Nothing expires — a font at a URL is immutable in practice, and a theme that
-wants different bytes changes the URL, which changes the id, which misses. A
-renderer that asked the remote host itself would announce the reader to whoever
-runs it, on every cold start, for as long as the theme was in use.
-
-What that does not remove is the first fetch: a remote family is `swap`, so the
-first launch on a new machine paints the fallback and swaps. A theme that wants
-no flash at all bundles its font.
-
-## A backdrop that moves
-
-Some backdrops are not values. Both Air variants light the room with a field
-that orbits, and there is no `background-image` that orbits — it needs a clock
-and a frame loop. Rather
-than invent a declarative motion vocabulary that would cover that one case and
-none of the next, a theme may bring a whole document:
-
-```json
-"backdrop": {
-  "description": "Four blurred blooms orbiting a shared centroid.",
-  "html": "<div class=\"field\">…</div><style>…</style><script>…</script>"
-}
-```
-
-The generator wraps it in a page, writes the theme's tokens in as custom
-properties — a document on another origin inherits nothing from this one's
-cascade — and gives it the theme's own `sys.backdrop.*` stack as its floor.
-A theme that brings a document owns the whole backdrop.
-
-### What a backdrop may do
-
-Paint, and animate. That is the entire grant, and three mechanisms enforce it:
-
-| Mechanism | What it withholds |
-| --- | --- |
-| Served from `avalon-backdrop://`, not the renderer's scheme | The application's origin, and whatever that origin is ever granted. |
-| `default-src 'none'` with **no** `connect-src` | Every network call. A backdrop cannot report that it was rendered. |
-| `sandbox="allow-scripts"`, **without** `allow-same-origin` | The parent document, storage, cookies, and the preload bridge. Its script runs in an opaque origin. |
-
-All three are load-bearing. The policy without the sandbox attribute is still a
-document that can read the application's DOM; the sandbox without the policy is
-still a document that can phone home. `script-src 'unsafe-inline'` is the point
-of the arrangement rather than a concession to it — the document exists to run
-its own animation — and it is only safe inside the other two.
-
-The window's own policy has to *skip* a backdrop response rather than add to it:
-that policy ends in `frame-ancestors 'none'`, and a backdrop that cannot be
-framed never renders. `isBackdropUrl` is the predicate that does it, for the same
-reason the message exporter has one.
-
-**A backdrop that animates must honour `prefers-reduced-motion`.** It is the one
-piece of motion in the interface a reader cannot dismiss, scroll past, or wait
-out. A test rejects a backdrop that starts a frame loop without naming the query.
-
-Colours may be written down inside a backdrop document. It is part of the theme,
-and a theme file is the one place a colour is allowed to be a literal — `app.css`
-is not, and the difference is the whole engine.
-
-Adding a theme is that file plus an entry in `themeChoices`. Everything else —
-the picker, persistence, the window background — reads from those.
+| `config/design-tokens/registry.json` | Declares every supported token path, type, and meaning. |
+| `config/design-tokens/themes/light.json` | Rally's light token values and font declarations. |
+| `config/design-tokens/themes/dark.json` | Rally's dark token values and font declarations. |
+| `config/design-tokens/theme.schema.json` | Validates an appearance file. |
+| `scripts/build-theme-assets.mjs` | Generates the renderer stylesheet and remote-font manifest. |
+| `apps/desktop/src/renderer/styles/themes.css` | Generated light and dark custom-property blocks. |
+| `apps/desktop/src/renderer/styles/app.css` | Component and layout rules expressed through semantic tokens. |
+| `apps/desktop/src/common/themes.ts` | The shared `system | light | dark` preference and resolver. |
+| `apps/desktop/src/renderer/lib/theme.ts` | Applies the resolved appearance, persists the preference, follows macOS, and synchronizes windows. |
+| `apps/desktop/src/renderer/components/theme-picker.tsx` | The Appearance setting. |
+| `apps/desktop/src/main/theme-assets.ts` | The private cache for a remote font declared by an appearance. |
 
 ## How it works
 
-### One attribute
+`ThemeChoice` is the scalar device preference `system`, `light`, or `dark`.
+`system` resolves through `prefers-color-scheme`; the other two values resolve
+to themselves. The renderer writes the result to `data-theme` on `<html>` and
+the original preference to `data-theme-mode`. The generated stylesheet has one
+block for `[data-theme='light']` and one for `[data-theme='dark']`; light is also
+emitted on `:root` to make the first frame deterministic.
 
-`installTheme()` runs from the renderer entry point, before the first React
-render, and sets two attributes on `<html>`:
+The preference is device-local. `theme.ts` writes it beside the other device
+preferences and reports it to the main process. Main stores the scalar in
+`application-settings.json`, uses its resolved value for a new BrowserWindow's
+initial `backgroundColor`, and broadcasts changes so every open window repaints.
+A previous object-shaped preference is accepted only as a migration input: its
+`mode` becomes the scalar preference and its former family value is ignored.
 
-```html
-<html data-theme="air-dark" data-theme-family="air" data-theme-mode="system">
-```
-
-`data-theme` selects one block out of `themes.css`. The other two record what the
-person actually picked, one attribute per axis, because a pinned Dark and
-"system, currently dark" produce an identical `data-theme` and the Settings
-picker has to tell them apart.
-
-Nothing else in the renderer branches on the theme. No component chooses a
-colour, and no rule is written twice for two appearances.
-
-### The token taxonomy
-
-Names are dot-separated and **front-loaded by tier**, so a reader can tell what
-kind of decision a token is from its first word. The three tiers are Material's
-and the shape is GitLab's; the flat dotted keys are VS Code's.
-
-| Tier | Means | Example |
-| --- | --- | --- |
-| `ref` | A primitive. A step on a ramp, with no opinion about where it is used. | `ref.color.neutral.4` |
-| `sys` | A semantic decision. What the interface *means* by a value. | `sys.color.text.subtle` |
-| `cmp` | One component's own decision, where no semantic token fits. | `cmp.sidebar.border` |
-
-After the tier comes the category (`color`, `space`, `size`, `font`,
-`elevation`), then the concept, then the variant, and any state last —
-`sys.color.surface.raised-hover`, not `sys.color.hover.surface.raised`. Context
-before property; the value never appears in the name, so a token called
-`sys.color.danger.base` can stop being red without becoming a lie.
-
-A path becomes a custom property by prefixing the namespace and swapping dots
-for hyphens: `sys.color.text.default` is `--av-sys-color-text-default`. The
-`--av-` namespace keeps Rally's properties apart from the ones Radix and
-`tw-fade` set on their own elements.
-
-Two structural decisions sit underneath the taxonomy and are worth
-understanding before adding any token.
-
-**Surfaces are named, and each theme declares them outright** —
-`sys.color.surface.canvas`, `.default`, `.subtle`, `.sunken`, `.raised`,
-`.raised-hover`, `.elevated`, `.elevated-hover`. Their *relationship* inverts
-between light and dark: a dark theme makes a control recede by darkening it, a
-light theme by greying it. Nothing derives one from another, because no
-derivation is right in both.
-
-**Everything monotonic lives on a ramp**, ordered by *contrast against the
-surface* rather than by lightness, so a rule can name a step without knowing
-which way round the theme runs. There are two. `ref.color.neutral.1` … `.14` is
-the neutral ramp — fills at the faint end, text at the strong end.
-`ref.color.line.1` … `.6` is the line ramp, and every border and outline draws
-from it.
-
-They were one ramp until Air needed borders that all but disappear. A border
-and a faint fill sit at the same contrast level, so they shared a step: neutral
-step four was simultaneously the default border and the selected sidebar row's
-background, and making the border vanish took the selection with it. Separating
-them lets a theme say "draw with space, not lines" in six values without
-touching anything it fills.
-
-On top of those sit the accent families — `brand`, `accent`, `success`,
-`warning`, `danger` — named for what they mean rather than for the hue they
-happen to be. Each carries the same roles:
-
-| Role | What it is for |
-| --- | --- |
-| `base` | The hue itself: a fill, a dot, an icon. |
-| `strong` | The hovered fill, or a brighter tone. |
-| `soft` | The hue as text, readable on the surface. |
-| `wash` | The hue as a tinted background block. |
-| `edge` | The hue as a border on that block. |
-| `on` | Text drawn on top of a filled swatch of the hue. |
-
-`brand` carries `ink`, the brand drawn as a mark or a label on an ordinary
-surface — a different question from `base`, because Rally's chartreuse is a
-fine fill on white and an illegible label on it. `success` carries `fill` and
-`fill-edge` for a filled control, which is neither the vivid hue nor the wash.
-
-`registry.json` holds a prose explanation per group, and the generator writes
-them into `themes.css` as comments. That file is where a token's reasoning
-lives; the generated stylesheet is where a reader meets it.
-
-### The backdrop
-
-The window has **one** backdrop, painted by `.workspace-shell` and by nothing
-else. The sidebar and the content pane sit on top of it, so a theme's ground and
-whatever light it casts run the full width of the window, unbroken, under both.
-
-`sys.backdrop.*` is that layer, and every token in it is a CSS `background-*`
-longhand under its own name:
-
-| Token | CSS property | What a theme uses it for |
-| --- | --- | --- |
-| `sys.backdrop.color` | `background-color` | The ground the artwork sits on. |
-| `sys.backdrop.image` | `background-image` | Gradients, drawn SVG, a fetched image — one layer or a stack. |
-| `sys.backdrop.position` | `background-position` | Where it centres. |
-| `sys.backdrop.size` | `background-size` | Zoom: `cover`, `contain`, a percentage pair. |
-| `sys.backdrop.repeat` | `background-repeat` | Tiling. |
-| `sys.backdrop.attachment` | `background-attachment` | `fixed` anchors it to the viewport. |
-| `sys.backdrop.blend-mode` | `background-blend-mode` | How the layers combine. |
-
-Sizing, centring, tiling and zoom are not a vocabulary invented here. Every one
-of them already has an answer that a decade of use has sanded smooth, and a
-theme reaching for `background-size: cover` should be able to write exactly
-that. What the theme file adds is the single step it cannot write by hand —
-turning artwork into something a `url()` can carry.
-
-### One mark, two shapes
-
-A navigation row carries one mark at its leading edge. Its **shape** is the
-theme's — `cmp.marker.*` — and its **colour** stays the row's state. Holding
-those two apart is what lets Air flatten `cmp.row.background-selected` to
-`transparent` and mark selection with a line instead, without the navigation
-losing what the dot was saying: which stream needs an answer, and which one is
-running.
-
-The mark stretches between `cmp.marker.inset-block` and the row rather than
-carrying a height, because that one mechanism describes both shapes — a centred
-dot is `calc(50% - 3px)`, a line is however far in from the row's edges the theme
-wants it to start. A height token would have needed a second rule for the shape
-it could not express.
-
-### A card, or a rule
-
-The composer is built from one set of tokens either way. A card sets
-`cmp.composer.background`, `border-color` and `radius`; a rule sets those to
-nothing and gives `rule-color` a hairline, so the composer reads as a line the
-page rests on rather than a box floating over it. Air takes the second.
-
-`rule-color` is the composer's **top** edge in both shapes, not an extra
-hairline a rule theme switches on — the stylesheet draws that edge from it
-unconditionally. A card theme therefore states it as the same line as its
-`border-color`, and a card theme that leaves it `transparent` gets a box with
-three sides. Terra did, for as long as the tokens existed.
-
-`rule-color-focus` exists because of what the first shape hides: once the border
-is gone, the rule turning warm is the only thing left saying the field is live.
-A theme that flattens the frame has to say what focus looks like. A card, whose
-top edge is that same token, states it as its own `border-color-focus`.
-
-`send-background` follows the same frame. A flat composer carrying a raised
-button reads as two surfaces disagreeing about which one the page is.
-
-### Rendered markdown
-
-Markdown's colours were tokens from the start — heading colour, links, the
-blockquote rule, `li::marker`, the table header's fill, syntax highlighting.
-Its **measurements** were not, and that is a different kind of gap:
-`.markdown-body` takes its own size from `sys.font.size.prose`, so a theme that
-raised its prose got larger paragraphs and headings that stayed where they were.
-Air did exactly that, and rendered an `h2` at 16px under 16.5px body text.
-
-`cmp.markdown.*` is the scale and the rhythm: four heading sizes, their leading
-and margin, the weight `strong` and a table header share, list margin and
-indent, blockquote and rule margins, table leading, and cell padding. The note
-detail keeps a second, larger scale under `article-*`, because a note is read as
-a document rather than as a turn in a transcript.
-
-Two tests hold it. One asserts every heading is at least as large as its own
-theme's prose and that the levels descend — `>=` rather than `>`, because a
-level carried by weight alone is a decision, while one *below* the prose is a
-caption. The other rejects a bare `px` font-size, weight or line-height inside a
-`.markdown-body` rule, which is the guard that would have caught this: the
-engine had one for colour and none for size.
-
-Mermaid is the one renderer that cannot keep a `var()` reference in the markup:
-it parses, derives, and writes an SVG stylesheet before the browser sees it. The
-adapter in `markdown-mermaid-theme.ts` therefore reads the active theme's
-computed custom properties at that third-party boundary and hands Mermaid
-concrete values. The mapping still chooses no palette of its own: diagram
-surfaces, text, borders, state washes, chart series, font, radius, and stroke
-width all name design tokens. Relationship lines use
-`cmp.markdown.diagram-line`, aliased to the strongest line-ramp step in each
-theme; ordinary container borders stay deliberately quieter. Switching
-appearance causes the diagram to render again from the newly resolved values.
-Mermaid's numeric configuration takes pixel counts, and reading a custom
-property does not convert units: `font-size-prose`, `radius-md`, and
-`border-hairline` must therefore remain `px` lengths. The adapter rejects any
-other unit rather than silently passing a partial measurement.
-
-### The navigation is translucent
-
-`--av-cmp-sidebar-background` is a translucent tint rather than an opaque colour,
-so the backdrop and the light across it read through the navigation.
-
-A theme may take that to its conclusion. Air sets the tint to `transparent` and
-`--av-cmp-pane-background` to `transparent` as well, so it has **one ground**:
-the backdrop is the whole window, under the navigation and the message feed
-alike, broken only by `--av-cmp-sidebar-border`. The other themes keep an opaque
-content pane over the backdrop, which is why the pane's fill is a token at all
-rather than the backdrop showing everywhere.
-
-That fill is what the pane is *for*. It must never repaint the backdrop: the
-shell and the pane each carried a copy once, so that the opaque pane would still
-show the theme's light, and two copies of one gradient cannot be kept in
-register — `background-attachment: fixed` holds them together only while both
-elements are viewport-sized. A seam ran down the navigation's edge where Air's
-glow stopped and started again. A test names the only two elements allowed to
-paint `--av-sys-backdrop-image`: the shell, and the Settings miniature, which
-draws the *offered* theme's backdrop at swatch scale.
-
-Two states translucency cannot serve have tokens of their own:
-
-| Token | Why it is not the tint |
-| --- | --- |
-| `--av-cmp-sidebar-background-solid` | The narrow-width drawer sits *over* the content. A see-through drawer shows the work stream through the navigation. |
-| `--av-cmp-sidebar-border` | The single divider between navigation and content. A theme may keep it visible after flattening every other border, and Air does. |
-
-Nothing drawn inside the sidebar may paint `--av-cmp-sidebar-background` again: the tint is
-already on the surface beneath it, and applying it twice is visibly darker. The
-account row at the foot of the navigation paints `transparent` for this reason.
-
-### The families
-
-A theme choice has **two axes**. A *family* is a design; a *mode* is which way
-round to run it. They answer different questions — the family is a taste, the
-mode is a lighting condition that may change during the day — so the picker
-offers them as two rows rather than one list.
-
-| Family | Light | Dark |
-| --- | --- | --- |
-| **Terra** — Rally's original palette | `terra-light` | `terra` |
-| **Air** — amber light on a moving field | `air` | `air-dark` |
-
-`familyAppearances` in `common/themes.ts` is the whole coupling: adding a family
-is a row there and two theme files, and nothing else in either process learns a
-new name. A test asserts every family brings both halves and no appearance
-belongs to two families — a family missing one half is a family the mode row
-cannot switch.
-
-**The mode never changes the family.** `system` consults the Mac about the
-*lighting* only, so someone on Air who is following the room crosses between
-`air` and `air-dark` and is never handed Terra.
-
-### One design at two brightnesses
-
-Air's two appearances share more than a name: a test asserts that every token
-which is not a colour is identical between them. Prose at 1.85 leading, roughly
-double the vertical spacing, uppercase letterspaced micro-labels, a person's
-turn with no bubble, a 2px line where Terra puts a dot, and a composer that is a
-rule rather than a card.
-
-What differs is the palette and, in one place that matters, the *blending*:
-
-| | `air` | `air-dark` |
-| --- | --- | --- |
-| Ground | `#f7f3ec` warm paper | `#100e0c` near-black |
-| Accent | `#d2822c` | `#e8a15c` |
-| Field blending | `mix-blend-mode: multiply` | normal |
-| Bloom alphas | ~.5 at the core | ~.32 at the core |
-
-The blending is not a detail. On paper an additive bloom is glare: it lightens a
-ground that is already near-white, so the orb reads as a blown-out patch rather
-than as colour. Multiplying darkens toward the pigment instead, which is how ink
-behaves on a page — and it is why the light field's alphas are roughly double
-the dark field's and still land softer.
-
-Only the warm bloom follows the brand token. The reference writes that one as
-the accent and the other three as fixed hues, so a retint moves the light the
-theme is named for and leaves the rest of the field where the design put it.
-
-### Choosing one
-
-The choice lives in `localStorage`, in the same `rally:device-preferences`
-record as the selected region and the microphone. It is a device preference, not
-an account one: an appearance belongs to the screen it is being looked at, and a
-person who works on a bright laptop and a dark desktop should not have to keep
-changing it back.
-
-**Every open window follows.** A theme is a preference of the device, not of the
-window it was chosen in: choosing one in the Settings window and having the work
-stream behind it stay as it was is not a preview, it is a bug. The renderer
-reports the choice it is drawing over `theme:set-window`, and the main process
-relays `theme:changed` to every *other* window, which applies it. Relaying only
-on a change is what stops it echoing — a window told to follow reports back, and
-that report matches what main already holds and stops there.
-
-The payload carries the **choice**, both axes, and the listener applies it rather
-than re-reading the store. Applying it still re-resolves `system` against *that*
-window's own `matchMedia`, which is the property re-reading the store was there
-to get — but each window is a separate renderer process, and a `localStorage`
-write in the window that made the choice is not ordered against an IPC round
-trip through main. A window that re-read a store the write had not reached yet
-would re-apply the old choice and report *that* back; main would see a
-difference and broadcast again, and the guard that stops the echo would instead
-be driving one. It settles once storage propagates; in the meantime it is a
-flicker across windows.
-
-It is stored as `{ family, mode }`. A record written by an earlier build holds a
-flat name instead — `airy`, `dark` — and `parseThemeChoice` migrates it, because
-a stored preference outlives the shape it was written in and a rename is not a
-reason to hand somebody a different design.
-
-The `system` mode — the default — resolves through
-`matchMedia('(prefers-color-scheme: dark)')`, and `watchSystemAppearance()`
-re-resolves it when the Mac changes. Only that mode listens: someone who pinned
-Dark has said what they want.
-
-### The window background
-
-Electron needs a window's `backgroundColor` at construction, before any renderer
-exists to ask. So the renderer reports its *choice* over the `theme:set-window`
-channel, the main process stores it as `themeChoice` in
-`application-settings.json`, and reads it back at startup before the first window
-opens. The renderer stays authoritative; a disagreement resolves itself on the
-next report.
-
-**The choice travels, not the appearance**, and main re-resolves it against
-`nativeTheme.shouldUseDarkColors` at the moment it builds each window. Two things
-depend on that:
-
-- **`system` survives a quit.** An appearance resolved under yesterday's Mac is
-  not the appearance to open with today. Storing the resolved value meant a Mac
-  that changed overnight opened the first window of the next launch in the old
-  colour and corrected itself once the renderer ran — the flash this whole
-  mechanism exists to prevent. Because the resolve happens per window rather than
-  once at startup, it also follows a Mac that changes while Rally is running.
-- **The relay can tell that a preference changed.** Two choices can resolve to
-  the same appearance — Terra following a dark Mac, and Terra pinned to Dark —
-  so comparing appearances reports no change for a move between them. Every
-  other window would keep its old `data-theme-mode`, look identical in that
-  moment, and be wrong at sunrise. `sameThemeChoice` compares both axes.
+Every visual value originates in the token registry and one of the two
+appearance JSON files. `pnpm tokens:build` regenerates `themes.css` and
+`common/theme-assets.ts`; `pnpm tokens:check` rejects drift. Bundled fonts are
+addressed directly. If an appearance declares a remote WOFF2 URL, main fetches
+it once, optionally verifies its integrity, stores it under `userData`, and
+serves it through `rally-font://`.
 
 ## Invariants
 
-- **`themes.css` is generated.** Editing it works until the next
-  `pnpm tokens:build` silently reverts you. `pnpm tokens:check` runs in CI
-  through `pnpm test:scripts` and fails if the two disagree.
-- **A theme sets only paths the registry declares**, and every alias points at a
-  token that exists and never leads back to itself. A self-referential custom
-  property is not a CSS error: the property resolves to nothing and every rule
-  using it is dropped, so it surfaces as an unstyled interface rather than as a
-  failure. Two tokens were exactly this during the taxonomy rename.
-- **Every `var()` in `app.css` names a declared token.** With around 1,300
-  references and names as long as `--av-sys-color-surface-raised-hover`, a
-  transposition is a matter of time, and an unresolved property looks almost
-  right rather than broken.
-- **`app.css` contains no literal colour** — no hex, no `rgb()`/`hsl()`/`lab()`,
-  no colour keyword, including inside a `color-mix()`. A literal that slips back
-  in renders correctly under whichever theme it was sampled from and is invisible
-  in every other one until somebody switches, which is exactly how the stylesheet
-  accumulated 268 of them before this engine existed. `themes.css.node.test.ts`
-  is the only thing that catches the 269th.
-- **Every theme restates every token whose value is a colour.** The dark block is
-  also `:root`, so an omitted token silently inherits a dark colour: a light theme
-  missing `--av-cmp-tooltip-foreground` draws near-black on near-black, nothing else looks
-  wrong, and nobody finds it until a person hovers something. Lengths, font
-  stacks, and aliases onto a ramp are deliberately left to the generator to
-  fill in.
-- **Every theme's block declares every token.** The generator fills in what a
-  theme was content to inherit, because falling through to `:root` works only
-  while `data-theme` is on the document. An alias is substituted where it is
-  *declared*, so a nested element carrying a different `data-theme` inherits the
-  default theme's already-resolved colour and redeclaring the ramp beneath it
-  changes nothing. The Settings miniature is exactly that element, and it
-  previewed a dark surface under the Light swatch until the blocks were filled
-  out.
-- **A backdrop document may paint and nothing else.** Its own scheme, a policy
-  with no `connect-src`, and a frame sandboxed without `allow-same-origin`. All
-  three, every time; any two of them is a hole.
-- **A backdrop that animates honours `prefers-reduced-motion`.** It is the one
-  piece of motion a reader cannot dismiss, scroll past, or wait out.
-- **The renderer never names a remote font host.** It names
-  `avalon-font://cache/<id>.woff2`; the main process is the only thing that
-  fetches. A stylesheet pointing at `https://` is a per-launch beacon.
-- **A markdown heading is never smaller than its prose**, and rendered markdown
-  takes no size from a literal. The colour guard could not see a type scale, and
-  a whole one leaked past it.
-- **A row's mark keeps its state colour.** A theme may reshape it; a theme that
-  recoloured it would be a theme that removed information.
-- **Every family brings both appearances, and no appearance belongs to two.**
-  A family missing one half is a family the mode row cannot switch — the row
-  would be there with a position that does nothing.
-- **A theme change reaches every window.** One preference, one appearance
-  everywhere; a window that kept its own would make the Settings preview a lie.
-- **The family never follows the Mac.** Only the lighting does. Switching
-  somebody out of the design they chose, at sunset, is the bug the flat list
-  made easy.
-- **The backdrop is painted once.** Only `.workspace-shell` and the Settings
-  miniature may name `--av-sys-backdrop-image`; anything else that paints it
-  draws a second copy of one gradient and shows a seam where the two disagree.
-- **The backdrop document is mounted by the main window alone.** The standalone
-  Settings and meeting windows keep a flat `surface-default` ground: both are
-  dense forms, and a field of moving light behind one costs more legibility than
-  it buys. On Air that does mean the two windows differ side by side, since
-  Settings opens over the work stream — a decision, not an oversight, and the
-  one place the "one appearance everywhere" rule below is knowingly relaxed. The
-  *choice* still reaches those windows; only the document does not. A test pins
-  which surfaces mount `ThemeBackdrop`, because the painted-once guard above
-  looks for a second copy and would never notice a missing one.
-- **Both ramps are monotonic in contrast against the surface**, in every theme.
-- **Lines come off `--av-ref-color-line-*` and fills come off `--av-ref-color-neutral-*`.** A border that reaches
-  back onto the neutral ramp re-creates the coupling the split exists to remove,
-  and does it silently — it looks right in whichever theme it was written
-  against. A test rejects any `border` or `outline` declaration naming `--av-ref-color-neutral-*`.
-- **A focus border stays visible in every theme.** `--av-ref-color-line-6` is the one step
-  Air does not flatten; an invisible focus indicator is an accessibility defect,
-  not a design choice.
-- **No component invents or branches on a colour.** Two places that accept CSS
-  values — the `prism-react-renderer` theme and the per-participant accent — take
-  JavaScript values. Both pass `var(--av-sys-color-syntax-*)` and `var(--person-accent)` strings into
-  inline styles, which resolve against the element's cascade like any other
-  reference. Mermaid is the explicit exception to retaining the reference: its
-  generator must receive concrete colours before it writes an SVG stylesheet,
-  so `markdown-mermaid-theme.ts` resolves named semantic tokens at render time
-  without owning a value. The message exporter re-hosts Prism markup
-  in a standalone document that loads none of this, so it declares the syntax
-  tokens itself from the generated `exportSyntaxPalette`; a `var()` that resolves
-  nowhere is invalid at computed-value time and falls back to the inherited
-  colour, which for a code block is near-black on near-black. Anything else that
-  serializes rendered markup out of the renderer inherits that obligation.
-- **A canvas is handed the appearance, since it cannot be handed a token.**
-  `thinking-orbs` paints its dots onto a `<canvas>` in one of two monochrome
-  inks and picks between them from a `theme="dark" | "light"` prop, so no rule
-  reaches it and no `var()` can be passed to it. `useAppearance()` is the whole
-  coupling — one hook, no colour — and it is the only thing a component may
-  branch the theme on. The library's own `auto` mode is not a substitute: it
-  looks for `data-theme="dark"` or `data-theme="light"`, ours says `terra-light`,
-  and it would fall through to `prefers-color-scheme` and draw dark-window ink
-  for somebody who pinned Light against a dark Mac. What it answers is the
-  *window's* lighting, not the nearest themed ancestor's: it reads the applied
-  appearance off `<html>`, while a rule honours `data-theme` wherever it sits —
-  and the Settings swatches put one on a descendant. Nothing draws an orb inside
-  such a subtree today, and one dropped there would take the window's ink rather
-  than the swatch's.
-- **`themeWindowBackground` equals each theme's own `--av-sys-color-surface-canvas`.** It is the one
-  value written down twice, and a test compares the copies.
-- **The Tailwind palette resolves to tokens, never to literals.** It is currently
-  unused by any component; literal values there were a silent second copy of the
-  dark theme waiting for the first person to type `bg-surface`.
+- **There is one design and exactly two resolved appearances.** Adding a named
+  theme family or another picker axis would restore UI and state the product no
+  longer supports.
+- **`system` is a preference, not a palette.** It must always resolve to light
+  or dark before it reaches `data-theme`; otherwise the generated selectors do
+  not provide a complete token set.
+- **Renderer rules use semantic tokens.** A literal colour in `app.css` works in
+  one appearance and bypasses the contrast decisions in the token files.
+- **Both appearance files declare the full registry.** Inheritance between
+  appearances makes a missing dark value silently render with the light value.
+- **The shell owns the canvas background.** Repainting the same image or
+  gradient on nested panes creates seams when the sidebar and feed differ in
+  size.
+- **The main-process window background matches the canvas token.** A mismatch
+  flashes the wrong colour before the renderer's first frame.
+- **Appearance files are data.** They cannot carry HTML or JavaScript, and the
+  desktop registers no appearance-document protocol or iframe.
 
 ## Boundary
 
-This module owns how the renderer decides what a colour is, and the persistence
-and resolution of the choice behind it. It does not own layout, component
-structure, or any individual rule in `app.css` beyond the requirement that the
-rule name tokens.
+This module owns appearance preference, token definitions, token generation,
+the renderer's CSS contract, and initial window colouring. Individual
+components own their structure and choose semantic component tokens; they do
+not own palettes. Application icons, member and connector brand colours, rich
+attachment content, and exported message documents have their own presentation
+contracts and do not become selectable Rally themes.
 
-It deliberately does **not** theme two surfaces:
-
-- **The exported message card** (`apps/desktop/src/main/message-export.ts`) is a
-  fixed light artefact rendered in a hidden window outside the renderer's
-  document, and stays that way whatever the app theme is — a saved PNG is a
-  document, not a screenshot of the app. Being unthemed is not the same as being
-  token-free: its `:root` declares the default theme's `sys.color.syntax.*` from
-  the generated `exportSyntaxPalette`, because the highlighted code it embeds
-  names those tokens in inline styles and nothing else in that document defines
-  them. See [`message-export.md`](message-export.md).
-- **The application icon** has its own light/dark pair driven by `nativeTheme` in
-  the main process, and follows the Mac rather than the in-app theme. Choosing
-  Air does not change the Dock icon.
-
-The main process depends on this module only for `common/themes.ts`; it never
-reads a stylesheet.
+The private font scheme is an asset cache, not a theme execution surface. It
+serves only generated, hash-addressed WOFF2 entries. The renderer cannot supply
+an arbitrary URL to it.
 
 ## Failure modes and limits
 
-- **A theme the build no longer has**, found in a stored preference, is dropped by
-  the preference parser and the choice falls back to `system`. The rest of the
-  record — region, workspace name, microphone — survives, because losing those to
-  an appearance is a far worse outcome than an appearance reverting.
-- **No `matchMedia`** — jsdom has none, and an Electron window may not early
-  enough to be certain of — resolves `system` to light, which is what Chromium
-  answers when the platform expresses no preference, and subscribes to nothing.
-- **`setWindowTheme` failing** is swallowed. Nothing the renderer draws depends
-  on it; the cost is that the next window opens on the previous theme's canvas.
-- **A light theme's switch knob** is white on a grey track at about 1.9:1, below
-  the 3:1 a graphical control would ideally hold. The knob carries a
-  `--av-sys-elevation-shadow-sm` lift, and the state is also conveyed by its position and by the
-  track turning green. This is the same trade every light-mode switch makes and
-  it was accepted deliberately; a track dark enough for 3:1 reads as *on*.
-- **A theme whose backdrop is a document previews as its floor.** The Settings
-  miniature draws `sys.backdrop.*`, and Air's blooms live in its document rather
-  than in those tokens, so the Air swatch is a flat ground. Mounting a live
-  frame per swatch would put four animation loops behind a preference pane to
-  show a 92px thumbnail of one.
-- **Themes are not animated.** Switching repaints immediately, and the reported
-  window background applies to the *next* window rather than the current one.
-
-### Deliberately unfinished
-
-Three things the reference designs specify that Air does not do yet. They are
-here rather than only in the pull request that raised them, because a pull
-request description is not reachable from the repository.
-
-- **A person's own turn is left-aligned in Air.** Both reference files use
-  `align-self: flex-end`, which would put it on the right as Terra does. Left is
-  a deliberate instruction that overrides the files, and `cmp.turn.align` is the
-  one token that changes it if that is revisited.
-- **The send control is a bare arrow.** The reference is an uppercase
-  letterspaced label beside it with no button frame. That is markup rather than
-  a token, so it is not a theme's decision to make as things stand — a theme
-  that wanted the label would need the composer to offer one.
-- **There is one row hover.** The reference distinguishes three —
-  navigation actions, the automation row, and stream rows — where
-  `cmp.row.background-hover` covers all of them; only the stream value matches.
-  Pressed and focus states are absent from the reference files entirely and are
-  unchanged from Terra.
+- A missing or malformed preference falls back to `system`.
+- A stored preference from the former object shape retains only its valid
+  `mode`; an invalid mode falls back to `system`.
+- A remote font response that is empty, exceeds 8 MiB, fails a declared SHA-256
+  integrity check, or is not in the generated manifest returns 404 and leaves
+  the UI on its fallback font.
+- An appearance JSON file that omits a required token, names an undeclared
+  token, uses an invalid value type, or duplicates the default fails the token
+  build or its tests.
 
 ## Testing
 
-| Suite | What it covers |
-| --- | --- |
-| `scripts/build-theme-assets.test.mjs` | The JSON half: that the committed stylesheet is what the JSON produces, that themes set only declared paths, that aliases resolve and never cycle, that every theme restates every colour and declares every token, that both ramps are ordered by contrast, that a card composer states its top edge as its frame while a rule keeps a visible one, and that a backdrop layer — gradient, fetched URL, or drawn SVG — becomes the CSS it should. Runs in CI through `pnpm test:scripts`. |
-| `src/renderer/styles/themes.css.node.test.ts` | The structural invariants: no literal colour in `app.css`, every `var()` naming a declared token, lines coming off the line ramp, the navigation tint and the backdrop each painted once, the duplicated window background, and the composer's top edge being drawn from `rule-color` — the coupling the token invariant above rests on. Runs against the files on disk. |
-| `src/main/theme-assets.test.ts` | The backdrop policy and URL parsing, and the font cache: fetch-once, integrity, the size limit, concurrent asks collapsing to one request, and a 404 for every id no theme declared. |
-| `src/common/themes.test.ts` | Resolution and parsing, including that a deliberate choice is never overridden by the Mac. |
-| `src/renderer/lib/theme.test.ts` | Applying, persisting, the `system` watcher, the unknown-theme fallback, and that a reader takes the applied appearance rather than a store the broadcast has outrun. |
-| `src/renderer/components/theme-picker.test.tsx` | The picker, including that each swatch previews with its own `data-theme`. |
-| `src/renderer/components/agent-work-timing.test.tsx`, `primitives.test.tsx` | That the orb — the one surface handed an appearance rather than a token — is given the one the window is drawn in. |
-| `src/renderer/lib/device-preferences.test.ts` | That an unknown theme is dropped without discarding the record. |
+- `pnpm tokens:check` proves the committed generated files match the two JSON
+  sources.
+- `pnpm test:scripts` exercises the generator, schema, token completeness,
+  aliases, font declarations, and structural token rules.
+- `pnpm --filter @rally/desktop exec vitest run src/common/themes.test.ts src/main/theme-assets.test.ts src/renderer/lib/theme.test.ts src/renderer/components/theme-picker.test.tsx src/renderer/styles/themes.css.node.test.ts`
+  covers preference migration, resolution, cross-window behavior, the picker,
+  the font cache, and CSS invariants.
+- `pnpm lint`, `pnpm typecheck`, and the proportional desktop suite remain the
+  repository gates. A visible change must also be inspected in a real Electron
+  window in both appearances.
 
-Run them with `pnpm --filter @rally/desktop test`.
+## Security and trust model
 
-Two traps. The stylesheet tests read from disk rather than importing, because
-Vite hands `?raw` an empty string for a file it is already processing as CSS;
-they are named `.node.test.ts` so `node:fs` stays out of the renderer program.
-And jsdom implements no `matchMedia`, so a test that needs one installs it with
-`Object.defineProperty` rather than `vi.stubGlobal` — `unstubGlobals` reverts
-stubs before each test and would take the installation with it.
-
-None of this says whether a theme is *legible*. That needs a real window: run the
-client under Xvfb and read the screens, per
-[`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it). Two of
-the defects fixed on the way in — a near-black label on a near-black fill in
-Air, and Rally's chartreuse mark on white — passed every assertion above.
+Appearance JSON is build-time input and produces CSS plus a fixed font
+manifest. It cannot execute code. The retired animated appearance-document
+scheme and iframe are absent from the renderer CSP and Electron protocol
+registration. Remote font URLs are not exposed directly to the renderer; main
+serves only generated IDs and enforces the cache's size and integrity checks.
 
 ## Changelog
+
+### 2026-09-04 — Rally has one design with light and dark appearances
+
+**What changed:** The former named palettes, family axis, design swatches,
+animated backdrop document, iframe, custom protocol, schema field, generated
+module, tests, and supporting CSS were removed. The stored preference is now a
+scalar `system | light | dark`; previous object-shaped values migrate by keeping
+only their valid appearance mode.
+
+**Why:** The GrokBot rewrite established a single product look. Leaving the old
+theme engine behind kept dead visual states, executable decoration, and a
+second picker axis available to drift back into the application even though no
+current product surface used them.
+
+**Considered and rejected:** Hiding the named-theme controls while preserving
+their runtime and token files. That would reduce the Settings UI but retain the
+same protocol, generated assets, branches, tests, and maintenance burden.
+
+**Consequences:** Future visual work changes both Rally appearance files rather
+than adding a theme. The only compatibility code is the narrow stored-setting
+migration, and no appearance can bring executable markup.
+
+The entries below record the retired engine's history, not supported current
+features. They remain here so future changes can recover the original reasons.
 
 ### 2026-09-02 — Terra's work-stream composer closes its frame and matches the launch composer
 
@@ -820,6 +257,28 @@ differently should change how it is *painted*: `--av-sys-color-person-1`
 through `-6` are the accent it and the dot resolve through.
 [`conversation-surfaces.md`](conversation-surfaces.md) owns the row itself and
 carries the full entry.
+
+### 2026-09-01 — Rally has one GrokBot palette with light and dark appearances
+
+**What changed:** The Settings surface no longer offers visual families. It
+offers only System, Light, and Dark, all resolving to the same Rally design.
+The main window no longer mounts the Air backdrop. Its light palette now uses
+the reference's `#fcfcfc` canvas, `#f7f7f7` sidebar, and neutral fills; dark uses
+the measured `#070707` canvas, `#111111` sidebar, `#2f2f2f` raised controls, and
+`#313131` selected work-stream row.
+
+**Why:** The GrokBot rewrite is the application, not a selectable skin. Keeping
+Terra and Air as visible alternatives made every screenshot and component state
+depend on a product choice that no longer exists.
+
+**Considered and rejected:** Deleting the token generator with the picker. The
+generator is still the enforcement boundary that keeps literal colors out of
+component CSS and gives light and dark exact, independently measured values.
+
+**Consequences:** Older stored family choices keep only their mode when read by
+the renderer. The legacy appearance files remain build inputs until the desktop
+window-prepaint and asset plumbing can be collapsed without mixing that cleanup
+into this frontend rewrite.
 
 ### 2026-08-30 — Mermaid resolves the active design tokens
 

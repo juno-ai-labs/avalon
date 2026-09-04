@@ -288,7 +288,7 @@ function ContextContent({
     <div className="rail-sections">
       <Section
         action={<IconButton label="Add participant" onClick={onAddParticipant}><UserPlus size={14} /></IconButton>}
-        title="People"
+        title="Participants"
       >
         {workstream.participants.length === 0 ? (
           <p className="rail-empty-line">No human participants</p>
@@ -320,20 +320,12 @@ function ContextContent({
 
       <Section
         action={<IconButton label="Add resource" onClick={onAddResource}><Plus size={14} /></IconButton>}
-        title="Sources"
+        title="Resources"
       >
-        {sources.length === 0 ? (
-          <p className="rail-empty-line">No sources attached</p>
+        {sources.length === 0 && artifacts.length === 0 ? (
+          <p className="rail-empty-line">No resources attached</p>
         ) : (
-          <ResourceCards onToggleWatch={onToggleWatch} resources={sources} />
-        )}
-      </Section>
-
-      <Section title="Artifacts">
-        {artifacts.length === 0 ? (
-          <p className="rail-empty-line">No artifacts generated</p>
-        ) : (
-          <ResourceCards resources={artifacts} />
+          <ResourceCards onToggleWatch={onToggleWatch} resources={[...sources, ...artifacts]} />
         )}
       </Section>
 

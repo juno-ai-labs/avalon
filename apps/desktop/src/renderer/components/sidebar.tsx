@@ -5,20 +5,21 @@ import { IconDots, IconLock } from '@tabler/icons-react';
 import clsx from 'clsx';
 import {
   Archive,
-  ChevronDown,
   ChevronsLeft,
   Check,
+  CircleHelp,
   CirclePause,
   Clock,
   Cog,
-  Command,
   Copy,
   EyeOff,
   FileStack,
   Globe2,
+  GripVertical,
+  Info,
   LogOut,
+  Megaphone,
   Menu,
-  MessageSquarePlus,
   Mic2,
   NotebookText,
   Pencil,
@@ -26,7 +27,9 @@ import {
   PinOff,
   Play,
   Plus,
+  Search,
   Settings,
+  Smartphone,
   Trash2,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
@@ -37,6 +40,7 @@ import type { CreateProjectRequest, ProjectSummary, WorkstreamBatchFilter, Works
 import {
   formatDateTime,
   formatRelative,
+  formatTime,
   groupActivityItems,
   nextRecencyBoundary,
   recencyGroupBatchFilter,
@@ -54,15 +58,28 @@ import {
   telemetryVisibility,
 } from '../lib/telemetry';
 import type { AutomationSummary, NoteSummary, Workspace, WorkspaceMember, WorkstreamSummary } from '../lib/types';
-import { MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, useUiStore } from '../lib/ui-store';
+import {
+  COLLAPSED_SIDEBAR_WIDTH,
+  MAX_SIDEBAR_WIDTH,
+  MIN_SIDEBAR_WIDTH,
+  SIDEBAR_COLLAPSE_DRAG_THRESHOLD,
+  SIDEBAR_CONTENT_MIN_WIDTH,
+  SIDEBAR_EXPAND_DRAG_THRESHOLD,
+  useUiStore,
+} from '../lib/ui-store';
 import { useDebugEnabled } from '../lib/use-debug-enabled';
 import { DeleteAutomationDialog } from './delete-automation-dialog';
 import { Avatar, AvatarStack, Badge, Button, IconButton, InlineError, Modal, StatusDot, TitleSkeleton } from './primitives';
 import { ProjectIcon, ProjectSidebarSection } from './project-sidebar-section';
 import { SidebarSkeletonGroup, SidebarSkeletonRows } from './sidebar-skeleton';
 import { ContextNestedMenu } from './nested-menu';
+import { WorkstreamGlyph } from './workstream-glyph';
 
 interface SidebarProps {
+  /** GrokBot-style shell: navigation is work streams only. */
+  conversationOnly?: boolean;
+  /** The responsive or manually selected GrokBot icon rail. */
+  compact?: boolean;
   workspace: Workspace;
   members?: WorkspaceMember[];
   automations: AutomationSummary[];
@@ -186,6 +203,25 @@ function visibleBatchCounts(
       && item.note.ownerUserId === viewerId
       && item.note.recordingStatus !== 'recording').length,
   };
+}
+
+const sidebarWeekday = new Intl.DateTimeFormat(undefined, { weekday: 'long' });
+const sidebarMonthDay = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
+
+function formatSidebarActivityTime(value: string, now = new Date()): string {
+  const date = new Date(value);
+  const timestamp = date.getTime();
+  if (!Number.isFinite(timestamp)) return 'Unknown time';
+
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startOfTomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime();
+  const startOfYesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1).getTime();
+  const startOfWeekWindow = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6).getTime();
+
+  if (timestamp >= startOfToday && timestamp < startOfTomorrow) return formatTime(value);
+  if (timestamp >= startOfYesterday && timestamp < startOfToday) return 'Yesterday';
+  if (timestamp >= startOfWeekWindow && timestamp < startOfYesterday) return sidebarWeekday.format(date);
+  return sidebarMonthDay.format(date);
 }
 
 /** How close the pointer comes to the navigation's edge before its pill shows. */
@@ -468,20 +504,48 @@ function CommandShortcutHint({
   if (!visible || shortcut === undefined) return null;
   return (
     <span aria-hidden="true" className="command-shortcut-scrim">
-      {/* Same Badge + scope-badge chrome as an automation's You / Workspace
-          pill, so holding Command does not introduce a second, chunkier chip. */}
+      {/* GrokBot renders the platform glyph and slot as one compact run rather
+          than placing a command icon beside the number. */}
       <Badge className="scope-badge command-shortcut-pill">
-        <Command size={9} />
-        <span>{shortcut}</span>
+        {`⌘${shortcut}`}
       </Badge>
     </span>
+  );
+}
+
+/**
+ * The row itself gets deliberately terse when the sidebar becomes an icon
+ * rail. GrokBot keeps the missing context one hover away with the same card in
+ * both sidebar forms, so resizing never changes what hovering a person means.
+ */
+function WorkstreamHoverPreview({
+  description,
+  workstream,
+}: {
+  description: string | undefined;
+  workstream: WorkstreamSummary;
+}): React.JSX.Element {
+  return (
+    <div className="sidebar-workstream-preview">
+      <div className="sidebar-workstream-preview-header">
+        <span className="sidebar-workstream-preview-identity">
+          <WorkstreamGlyph id={workstream.id} size={16} />
+          <span className="sidebar-workstream-preview-name">{workstream.title}</span>
+        </span>
+        <time dateTime={workstream.lastActivityAt}>
+          {formatSidebarActivityTime(workstream.lastActivityAt)}
+        </time>
+      </div>
+      <span className={clsx('sidebar-workstream-preview-copy', !description && 'is-empty')}>
+        {description || 'No messages yet'}
+      </span>
+    </div>
   );
 }
 
 function WorkstreamRow({
   commandShortcut,
   commandShortcutsVisible,
-  currentUserId,
   debugEnabled,
   drag,
   members,
@@ -499,7 +563,6 @@ function WorkstreamRow({
 }: {
   commandShortcut?: number;
   commandShortcutsVisible?: boolean;
-  currentUserId: string;
   debugEnabled: boolean;
   drag?: PinnedRowDrag;
   members: WorkspaceMember[];
@@ -518,6 +581,43 @@ function WorkstreamRow({
   const location = useLocation();
   const socketWarmup = useWorkstreamSocketHoverWarmup(workstream.id);
   const socketOpenContext = useWorkstreamSocketOpenContext(workstream.id);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const previewOpenTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const previewCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancelPreviewTimer = useCallback(() => {
+    if (previewOpenTimer.current !== null) {
+      clearTimeout(previewOpenTimer.current);
+      previewOpenTimer.current = null;
+    }
+    if (previewCloseTimer.current !== null) {
+      clearTimeout(previewCloseTimer.current);
+      previewCloseTimer.current = null;
+    }
+  }, []);
+  const schedulePreviewOpen = useCallback(() => {
+    cancelPreviewTimer();
+    previewOpenTimer.current = setTimeout(() => {
+      previewOpenTimer.current = null;
+      setPreviewOpen(true);
+    }, 300);
+  }, [cancelPreviewTimer]);
+  const schedulePreviewClose = useCallback(() => {
+    cancelPreviewTimer();
+    // GrokBot leaves 100ms to cross a small pointer gap without flashing the
+    // card. The preview remains non-interactive, so this is grace rather than
+    // a second hover target.
+    previewCloseTimer.current = setTimeout(() => {
+      previewCloseTimer.current = null;
+      setPreviewOpen(false);
+    }, 100);
+  }, [cancelPreviewTimer]);
+  const closePreview = useCallback(() => {
+    cancelPreviewTimer();
+    setPreviewOpen(false);
+  }, [cancelPreviewTimer]);
+  useEffect(() => () => {
+    cancelPreviewTimer();
+  }, [cancelPreviewTimer]);
   // The row is a cache entry, not a read: nothing here refetches, so the grace
   // is what ends a skeleton whose rename never arrived. Read
   // `lib/naming-skeleton.ts` before changing when it comes down.
@@ -564,6 +664,7 @@ function WorkstreamRow({
             }
             : undefined}
           onDragStart={(event) => {
+              closePreview();
               // Chromium refuses to start a drag with an empty payload, and the
               // id is the payload every other surface would want anyway. The
               // order itself is tracked in the sidebar's own state: reading it
@@ -575,6 +676,11 @@ function WorkstreamRow({
               drag?.onDragStart(workstream);
             }}
           onDrop={drag ? (event) => event.preventDefault() : undefined}
+          onContextMenu={closePreview}
+          onBlur={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) schedulePreviewClose();
+          }}
+          onFocus={schedulePreviewOpen}
           onKeyDown={drag
             ? (event) => {
               // Alt rather than a bare arrow: the arrows move focus through the
@@ -585,11 +691,30 @@ function WorkstreamRow({
               drag.onMove(workstream, event.key === 'ArrowUp' ? -1 : 1);
             }
             : undefined}
-          onPointerEnter={socketWarmup.onPointerEnter}
-          onPointerLeave={socketWarmup.onPointerLeave}
-          onPointerCancel={socketWarmup.onPointerCancel}
+          onPointerEnter={() => {
+            socketWarmup.onPointerEnter();
+            schedulePreviewOpen();
+          }}
+          onPointerLeave={() => {
+            socketWarmup.onPointerLeave();
+            schedulePreviewClose();
+          }}
+          onPointerCancel={() => {
+            socketWarmup.onPointerCancel();
+            schedulePreviewClose();
+          }}
         >
-          <NavLink
+          <Tooltip.Root open={previewOpen}>
+            <Tooltip.Trigger asChild>
+              {/* Radix Slot string-merges a child's className. NavLink's
+                  className is a callback, so making the link the slotted child
+                  turns that callback into text and removes every row class.
+                  Keep the positioning trigger on a plain element and leave the
+                  navigation element's class resolver untouched. */}
+              <div className="sidebar-workstream-preview-anchor">
+                <NavLink
+            aria-describedby={previewOpen ? `workstream-preview-${workstream.id}` : undefined}
+            aria-label={[naming ? 'Rally is naming this work stream' : workstream.title, drag?.position].filter(Boolean).join(', ')}
             aria-keyshortcuts={commandShortcut === undefined ? undefined : `Meta+${commandShortcut}`}
             className={({ isActive }) => clsx(
               'sidebar-row workstream-row',
@@ -607,6 +732,7 @@ function WorkstreamRow({
             onClick={(event) => {
               if (event.defaultPrevented || event.button !== 0
                 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+              closePreview();
               const destination = `/workstreams/${workstream.id}`;
               if (location.pathname === destination) return;
               const socketContext = socketOpenContext();
@@ -626,12 +752,18 @@ function WorkstreamRow({
             to={`/workstreams/${workstream.id}`}
           >
             <span className="sidebar-row-icon">
-              <StatusDot compact status={workstreamMarkerStatus(workstream)} tooltip />
+              <WorkstreamGlyph id={workstream.id} size={36} />
+              <span className="workstream-row-status">
+                <StatusDot compact status={workstreamMarkerStatus(workstream)} tooltip />
+              </span>
             </span>
             <span className="sidebar-row-main">
               <span className="sidebar-row-title">
-                {workstream.systemKind && <Cog aria-label="System work stream" size={11} />}
-                {naming ? <TitleSkeleton /> : workstream.title}
+                <span className="sidebar-row-title-copy">
+                  {workstream.systemKind && <Cog aria-label="System work stream" size={11} />}
+                  {naming ? <TitleSkeleton /> : workstream.title}
+                </span>
+                <time aria-hidden="true" dateTime={workstream.lastActivityAt}>{formatSidebarActivityTime(workstream.lastActivityAt)}</time>
               </span>
               {description && (
                 <span className="sidebar-row-hint">
@@ -672,18 +804,31 @@ function WorkstreamRow({
                 </Tooltip.Portal>
               </Tooltip.Root>
             )}
-            {workstream.scope === 'workspace'
-              ? <PublicMarker />
-              : (
-                <SidebarWorkstreamFacepile
-                  currentUserId={currentUserId}
-                  extraCount={workstream.participantExtraCount}
-                  memberIds={workstream.participantUserIds}
-                  roster={members}
-                />
-              )}
+            <span className="workstream-row-people">
+              <SidebarWorkstreamFacepile
+                extraCount={workstream.participantExtraCount}
+                memberIds={workstream.participantUserIds}
+                roster={members}
+              />
+              {workstream.scope === 'workspace' && <PublicMarker />}
+            </span>
             <CommandShortcutHint shortcut={commandShortcut} visible={commandShortcutsVisible} />
-          </NavLink>
+                </NavLink>
+              </div>
+            </Tooltip.Trigger>
+            <Tooltip.Portal>
+              <Tooltip.Content
+                align="center"
+                className="sidebar-workstream-preview-surface"
+                collisionPadding={8}
+                id={`workstream-preview-${workstream.id}`}
+                side="right"
+                sideOffset={8}
+              >
+                <WorkstreamHoverPreview description={description} workstream={workstream} />
+              </Tooltip.Content>
+            </Tooltip.Portal>
+          </Tooltip.Root>
         </div>
       </ContextMenu.Trigger>
       <ContextMenu.Portal>
@@ -798,45 +943,22 @@ function resolveSidebarFacepileMembers(
   });
 }
 
-/**
- * The sidebar pile is "who else is in this", not a roster of everyone including
- * the reader. The directory preview still carries the viewer's id (it is the
- * same payload for every participant), so drop them here and, when they sat
- * past the three painted ids, take them out of the overflow too.
- */
-function sidebarFacepileForViewer(
-  memberIds: readonly string[],
-  extraCount: number,
-  currentUserId: string,
-): { extraCount: number; memberIds: string[] } {
-  const viewerWasInPreview = memberIds.includes(currentUserId);
-  return {
-    // The wire extraCount still includes the viewer when they sat past the
-    // painted ids. Decrement once to drop them; do not decrement when they
-    // were already in the preview, or overflow of other people would vanish.
-    extraCount: viewerWasInPreview ? extraCount : Math.max(0, extraCount - 1),
-    memberIds: memberIds.filter((id) => id !== currentUserId),
-  };
-}
-
 function SidebarWorkstreamFacepile({
-  currentUserId,
   extraCount,
   memberIds,
   roster,
 }: {
-  currentUserId: string;
   extraCount: number;
   memberIds: readonly string[];
   roster: readonly WorkspaceMember[];
 }): React.JSX.Element | null {
-  const forViewer = sidebarFacepileForViewer(memberIds, extraCount, currentUserId);
-  const members = resolveSidebarFacepileMembers(forViewer.memberIds, roster);
+  const members = resolveSidebarFacepileMembers(memberIds, roster);
   if (members.length === 0) return null;
   return (
     <span aria-hidden="true" className="sidebar-workstream-facepile">
       <AvatarStack
-        extraCount={forViewer.extraCount + (forViewer.memberIds.length - members.length)}
+        extraCount={extraCount + (memberIds.length - members.length)}
+        layout="grok-cluster"
         limit={WORKSTREAM_SIDEBAR_FACEPILE_LIMIT}
         members={members}
       />
@@ -960,6 +1082,8 @@ function moveWithin(ids: string[], id: string, index: number): string[] {
 }
 
 export function Sidebar({
+  conversationOnly = false,
+  compact = false,
   workspace,
   members = [],
   automations,
@@ -998,12 +1122,21 @@ export function Sidebar({
   onLoadMoreNotes,
 }: SidebarProps): React.JSX.Element {
   const debugEnabled = useDebugEnabled();
+  const [searchQuery, setSearchQuery] = useState('');
   const location = useLocation();
   const navigate = useNavigate();
   const sidebarOpen = useUiStore((state) => state.sidebarOpen);
+  const sidebarCollapsed = useUiStore((state) => state.sidebarCollapsed);
   const sidebarWidth = useUiStore((state) => state.sidebarWidth);
   const setSidebarOpen = useUiStore((state) => state.setSidebarOpen);
+  const setSidebarCollapsed = useUiStore((state) => state.setSidebarCollapsed);
   const setSidebarWidth = useUiStore((state) => state.setSidebarWidth);
+  const effectiveSidebarWidth = compact ? COLLAPSED_SIDEBAR_WIDTH : sidebarWidth;
+  const openPublicPage = useCallback(async (path: string): Promise<void> => {
+    const bridge = desktopBridge();
+    const { webBaseUrl } = await bridge.getRuntimeConfig();
+    await bridge.openExternal(new URL(path, `${webBaseUrl.replace(/\/$/u, '')}/`).toString());
+  }, []);
   const roster = useMemo(() => {
     const byId = new Map(members.map((member) => [member.id, member]));
     byId.set(workspace.currentUser.id, workspace.currentUser);
@@ -1081,9 +1214,37 @@ export function Sidebar({
   const [batchPreviewFailed, setBatchPreviewFailed] = useState(false);
   const batchPreviewGeneration = useRef(0);
   const [deleteTarget, setDeleteTarget] = useState<AutomationSummary | null>(null);
+  const normalizedSearch = searchQuery.trim().toLowerCase();
+  const searchedPage = useRef<{ query: string; rows: typeof workstreams } | null>(null);
+  useEffect(() => {
+    if (!normalizedSearch) {
+      searchedPage.current = null;
+      return;
+    }
+    if (!hasMoreWorkstreams || loadingMoreWorkstreams || !onLoadMoreWorkstreams) return;
+    // A failed page leaves the same rows in place. Do not automatically retry
+    // that failure forever; the explicit load action below can retry it.
+    if (searchedPage.current?.query === normalizedSearch && searchedPage.current.rows === workstreams) return;
+    searchedPage.current = { query: normalizedSearch, rows: workstreams };
+    onLoadMoreWorkstreams();
+  }, [normalizedSearch, hasMoreWorkstreams, loadingMoreWorkstreams, onLoadMoreWorkstreams, workstreams]);
+  const visibleWorkstreams = useMemo(() => normalizedSearch
+    ? workstreams.filter((workstream) => [workstream.title, workstream.preview, workstream.objective]
+      .some((value) => value?.toLowerCase().includes(normalizedSearch)))
+    : workstreams, [normalizedSearch, workstreams]);
+  const visibleNotes = useMemo(() => conversationOnly
+    ? []
+    : normalizedSearch
+      ? notes.filter((note) => note.title.toLowerCase().includes(normalizedSearch))
+      : notes, [conversationOnly, normalizedSearch, notes]);
+  const visibleAutomations = useMemo(() => conversationOnly
+    ? []
+    : normalizedSearch
+      ? automations.filter((automation) => automation.name.toLowerCase().includes(normalizedSearch))
+      : automations, [automations, conversationOnly, normalizedSearch]);
   // Drafts are listed with the rest: a draft is a conversation in progress on
   // the automation's own screen, which is where its row leads.
-  const orderedAutomations = automations;
+  const orderedAutomations = visibleAutomations;
   // A pinned work stream leaves the recent list entirely rather than appearing
   // twice: the section it moves to is the one whose order the reader controls,
   // and a row in both places would take its order from whichever they saw last.
@@ -1092,30 +1253,30 @@ export function Sidebar({
   // of it. Comparing a finished drag against the second would compare it with
   // itself and conclude nothing moved.
   const storedPinnedWorkstreams = useMemo(
-    () => orderPinnedWorkstreams(workstreams, null),
-    [workstreams],
+    () => orderPinnedWorkstreams(visibleWorkstreams, null),
+    [visibleWorkstreams],
   );
   const pinnedWorkstreams = useMemo(
-    () => orderPinnedWorkstreams(workstreams, dragOrder),
-    [dragOrder, workstreams],
+    () => orderPinnedWorkstreams(visibleWorkstreams, dragOrder),
+    [dragOrder, visibleWorkstreams],
   );
   const unpinnedWorkstreams = useMemo(
-    () => workstreams.filter((workstream) => workstream.pinPosition === null),
-    [workstreams],
+    () => visibleWorkstreams.filter((workstream) => workstream.pinPosition === null),
+    [visibleWorkstreams],
   );
   const [groupedAtMs, setGroupedAtMs] = useState(() => Date.now());
   useEffect(() => {
     const now = new Date();
     const next = nextRecencyBoundary([
       ...unpinnedWorkstreams,
-      ...notes,
+      ...visibleNotes,
     ], now);
     const timer = window.setTimeout(
       () => setGroupedAtMs(Date.now()),
       Math.max(1, next - now.getTime() + 1),
     );
     return () => window.clearTimeout(timer);
-  }, [groupedAtMs, notes, unpinnedWorkstreams]);
+  }, [groupedAtMs, unpinnedWorkstreams, visibleNotes]);
   const groups = useMemo(() => {
     const groupedAt = new Date(groupedAtMs);
     return groupActivityItems<RecentSidebarItem>([
@@ -1125,14 +1286,14 @@ export function Sidebar({
         lastActivityAt: workstream.lastActivityAt,
         workstream,
       })),
-      ...notes.map((note) => ({
+      ...visibleNotes.map((note) => ({
         type: 'note' as const,
         id: `note:${note.id}`,
         lastActivityAt: note.lastActivityAt,
         note,
       })),
     ], groupedAt);
-  }, [groupedAtMs, notes, unpinnedWorkstreams]);
+  }, [groupedAtMs, unpinnedWorkstreams, visibleNotes]);
 
   // The visible destination order is one run: the reader's manually arranged
   // pins first, then recent work streams and notes in exactly the order the
@@ -1468,7 +1629,13 @@ export function Sidebar({
   const commitPinnedOrder = async (order: string[]): Promise<void> => {
     setDragOrder(order);
     try {
-      await onReorderPinnedWorkstreams(order);
+      // Search only reorders the visible slots; hidden pins keep their place.
+      const visibleIds = new Set(order);
+      let nextVisible = 0;
+      const completeOrder = orderPinnedWorkstreams(workstreams, null).map((pinned) => (
+        visibleIds.has(pinned.id) ? order[nextVisible++]! : pinned.id
+      ));
+      await onReorderPinnedWorkstreams(completeOrder);
     } catch (error) {
       setMenuError({
         title: 'Pinned work streams could not be reordered',
@@ -1528,7 +1695,6 @@ export function Sidebar({
 
   const renderWorkstream = (workstream: WorkstreamSummary): React.JSX.Element => (
     <WorkstreamRow
-      currentUserId={workspace.currentUser.id}
       debugEnabled={debugEnabled}
       members={roster}
       workspace={workspace}
@@ -1581,17 +1747,33 @@ export function Sidebar({
   // the pointer instead keeps the reveal generous and the hit area honest.
   useEffect(() => {
     const track = (event: PointerEvent): void => {
-      const near = Math.abs(event.clientX - sidebarWidth) <= EDGE_REVEAL_DISTANCE;
+      const near = Math.abs(event.clientX - effectiveSidebarWidth) <= EDGE_REVEAL_DISTANCE;
       setPointerNearEdge((current) => current === near ? current : near);
     };
     window.addEventListener('pointermove', track);
     return () => window.removeEventListener('pointermove', track);
-  }, [sidebarWidth]);
+  }, [effectiveSidebarWidth]);
+
+  const resizeSidebar = useCallback((requestedWidth: number): void => {
+    const availableWidth = window.innerWidth - SIDEBAR_CONTENT_MIN_WIDTH;
+    if (compact) {
+      if (requestedWidth < SIDEBAR_EXPAND_DRAG_THRESHOLD || availableWidth < MIN_SIDEBAR_WIDTH) return;
+      setSidebarCollapsed(false);
+      setSidebarWidth(Math.min(requestedWidth, availableWidth));
+      return;
+    }
+    if (requestedWidth < SIDEBAR_COLLAPSE_DRAG_THRESHOLD) {
+      setSidebarCollapsed(true);
+      return;
+    }
+    if (availableWidth < MIN_SIDEBAR_WIDTH) return;
+    setSidebarWidth(Math.min(requestedWidth, availableWidth));
+  }, [compact, setSidebarCollapsed, setSidebarWidth]);
 
   useEffect(() => {
     if (!resizing) return undefined;
 
-    const move = (event: PointerEvent): void => setSidebarWidth(event.clientX - grabOffset.current);
+    const move = (event: PointerEvent): void => resizeSidebar(event.clientX - grabOffset.current);
     const stop = (): void => setResizing(false);
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', stop, { once: true });
@@ -1599,7 +1781,17 @@ export function Sidebar({
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', stop);
     };
-  }, [resizing, setSidebarWidth]);
+  }, [resizeSidebar, resizing]);
+
+  useEffect(() => {
+    const toggleCompact = (event: KeyboardEvent): void => {
+      if (!event.metaKey || event.altKey || event.ctrlKey || event.shiftKey || event.key.toLowerCase() !== 'b') return;
+      event.preventDefault();
+      setSidebarCollapsed(!sidebarCollapsed);
+    };
+    window.addEventListener('keydown', toggleCompact, true);
+    return () => window.removeEventListener('keydown', toggleCompact, true);
+  }, [setSidebarCollapsed, sidebarCollapsed]);
 
   // Waits for the list itself to carry the change before chasing the row.
   //
@@ -1669,11 +1861,24 @@ export function Sidebar({
         <Menu size={17} />
       </IconButton>
       {sidebarOpen && <button aria-label="Close navigation" className="sidebar-scrim" onClick={() => setSidebarOpen(false)} type="button" />}
-      <aside aria-label="Rally navigation" className={clsx('sidebar', sidebarOpen && 'is-mobile-open', resizing && 'is-resizing')}>
+      <aside
+        aria-label="Rally navigation"
+        className={clsx('sidebar', compact && 'is-compact', sidebarOpen && 'is-mobile-open', resizing && 'is-resizing')}
+        data-sidebar-collapsed={compact ? '' : undefined}
+      >
         <div className="sidebar-titlebar window-drag">
           <IconButton className="window-no-drag mobile-only" label="Close navigation" onClick={() => setSidebarOpen(false)}>
             <ChevronsLeft size={16} />
           </IconButton>
+          <NavLink
+            aria-label="New chat"
+            className={({ isActive }) => clsx('sidebar-new-button window-no-drag', isActive && 'is-active')}
+            onClick={() => markSurfaceEntrypoint('sidebar_new')}
+            state={location.pathname === '/workstreams/new' ? undefined : { returnTo: location.pathname }}
+            to="/workstreams/new"
+          >
+            <Plus aria-hidden="true" size={16} />
+          </NavLink>
         </div>
 
         <nav
@@ -1682,13 +1887,35 @@ export function Sidebar({
           onScroll={loadMoreWhenNearBottom}
           ref={scrollRef}
         >
-          <div className="sidebar-primary-actions">
+          <div className="sidebar-commandbar window-no-drag">
+            <label className="sidebar-search">
+              <Search aria-hidden="true" size={14} />
+              <span className="sr-only">Search work streams</span>
+              <input
+                aria-label="Search work streams"
+                onChange={(event) => setSearchQuery(event.currentTarget.value)}
+                placeholder="Search"
+                type="search"
+                value={searchQuery}
+              />
+            </label>
+          </div>
+          {conversationOnly && location.pathname === '/workstreams/new' && (
+            <div aria-current="page" aria-label="New chat draft" className="sidebar-new-chat-draft">
+              <span aria-hidden="true" className="sidebar-new-chat-draft-icon">
+                <Plus size={16} strokeWidth={1.7} />
+              </span>
+              <span>New chat</span>
+            </div>
+          )}
+
+          {!conversationOnly && <div className="sidebar-primary-actions sidebar-secondary-actions">
             <NavLink
               className={({ isActive }) => clsx('sidebar-action', isActive && 'is-active')}
               onClick={() => markSurfaceEntrypoint('sidebar_new')}
               to="/workstreams/new"
             >
-              <MessageSquarePlus aria-hidden="true" size={15} />
+              <Plus aria-hidden="true" size={15} />
               <span>New work stream</span>
             </NavLink>
             {/* Creates the automation and opens its conversation, which is
@@ -1707,27 +1934,29 @@ export function Sidebar({
                 <span>New meeting/notes</span>
               </button>
             )}
-          </div>
+          </div>}
 
-          <ProjectSidebarSection
-            inactiveProjects={inactiveProjects}
-            loading={loading === true}
-            onAddWorkstream={onAddWorkstreamToProject}
-            onCreate={onCreateProject}
-            onReorder={onReorderProjects}
-            onRestore={onRestoreProject}
-            projects={projects}
-            renderWorkstream={renderWorkstream}
-            workstreams={workstreams}
-          />
+          {!conversationOnly && (
+            <ProjectSidebarSection
+              inactiveProjects={inactiveProjects}
+              loading={loading === true}
+              onAddWorkstream={onAddWorkstreamToProject}
+              onCreate={onCreateProject}
+              onReorder={onReorderProjects}
+              onRestore={onRestoreProject}
+              projects={projects}
+              renderWorkstream={renderWorkstream}
+              workstreams={visibleWorkstreams}
+            />
+          )}
 
-          <section className="sidebar-section" aria-labelledby="automations-heading">
+          {!conversationOnly && <section className="sidebar-section" aria-labelledby="automations-heading">
             <div className="sidebar-section-heading">
               <h2 id="automations-heading">Automations</h2>
             </div>
-            {loading && automations.length === 0 ? (
+            {loading && visibleAutomations.length === 0 ? (
               <SidebarSkeletonRows count={3} />
-            ) : automations.length === 0 ? (
+            ) : visibleAutomations.length === 0 ? (
               <p className="sidebar-empty">No automations</p>
             ) : (
               <div className="sidebar-list">
@@ -1745,7 +1974,7 @@ export function Sidebar({
                 ))}
               </div>
             )}
-          </section>
+          </section>}
 
           {/* Only when something is pinned. An empty heading would be a
               standing invitation to a feature the reader has not used, sitting
@@ -1782,7 +2011,6 @@ export function Sidebar({
                   <WorkstreamRow
                     commandShortcut={commandShortcutById.get(`workstream:${pinned.id}`)}
                     commandShortcutsVisible={commandShortcutsVisible}
-                    currentUserId={workspace.currentUser.id}
                     debugEnabled={debugEnabled}
                     drag={pinnedRowDrag(pinned, index)}
                     key={pinned.id}
@@ -1818,7 +2046,7 @@ export function Sidebar({
                 <span className="sr-only">Loading your projects, work streams, automations and notes</span>
               </div>
             )}
-            {loading && workstreams.length === 0 && notes.length === 0 ? (
+            {loading && visibleWorkstreams.length === 0 && visibleNotes.length === 0 ? (
               <>
                 <SidebarSkeletonGroup count={4} />
                 <SidebarSkeletonGroup count={3} />
@@ -1827,7 +2055,11 @@ export function Sidebar({
               // Pinned work streams are work streams, so the empty line only
               // holds when nothing is pinned either; with everything pinned the
               // section has nothing left to say and says nothing.
-              pinnedWorkstreams.length === 0 && <p className="sidebar-empty">No work streams or notes yet</p>
+              pinnedWorkstreams.length === 0 && (
+                <p className="sidebar-empty">{normalizedSearch
+                  ? hasMoreWorkstreams ? 'No matches in loaded work streams' : 'No matching work streams'
+                  : 'No work streams or notes yet'}</p>
+              )
             ) : (
               groups.map((group) => (
                 <div className="sidebar-group" key={group.label}>
@@ -1891,7 +2123,6 @@ export function Sidebar({
                       <WorkstreamRow
                         commandShortcut={commandShortcutById.get(item.id)}
                         commandShortcutsVisible={commandShortcutsVisible}
-                        currentUserId={workspace.currentUser.id}
                         debugEnabled={debugEnabled}
                         key={item.id}
                         onArchive={setArchiveWorkstreamTarget}
@@ -1918,6 +2149,9 @@ export function Sidebar({
             {(loadingMoreWorkstreams || loadingMoreNotes) && (
               <p aria-live="polite" className="sidebar-empty">Loading more…</p>
             )}
+            {normalizedSearch && hasMoreWorkstreams && !loadingMoreWorkstreams && onLoadMoreWorkstreams && (
+              <button className="sidebar-empty" onClick={onLoadMoreWorkstreams} type="button">Search more work streams</button>
+            )}
           </section>
         </nav>
 
@@ -1941,15 +2175,25 @@ export function Sidebar({
         */}
         {/* <OnboardingChecklist /> */}
 
+        {compact && (
+          <NavLink
+            aria-label="New chat"
+            className={({ isActive }) => clsx('sidebar-new-button sidebar-rail-new-button window-no-drag', isActive && 'is-active')}
+            onClick={() => markSurfaceEntrypoint('sidebar_new')}
+            state={location.pathname === '/workstreams/new' ? undefined : { returnTo: location.pathname }}
+            to="/workstreams/new"
+          >
+            <Plus aria-hidden="true" size={19} strokeWidth={1.6} />
+          </NavLink>
+        )}
+
         {accountMenu ?? <DropdownMenu.Root>
           <DropdownMenu.Trigger asChild>
-            <button className="account-trigger window-no-drag" type="button">
+            <button aria-label="Open account menu" className="account-trigger window-no-drag" type="button">
               <Avatar member={workspace.currentUser} size="small" />
               <span className="account-copy">
                 <strong>{workspace.currentUser.name}</strong>
-                <span>{workspace.name}</span>
               </span>
-              <ChevronDown aria-hidden="true" size={14} />
             </button>
           </DropdownMenu.Trigger>
           <DropdownMenu.Portal>
@@ -1964,8 +2208,45 @@ export function Sidebar({
                   <Settings size={14} /> Settings…
                 </button>
               </DropdownMenu.Item>
-              <DropdownMenu.Item className="menu-item" onSelect={onSignOut}>
-                <LogOut size={14} /> Sign out
+              <DropdownMenu.Item
+                className="menu-item account-menu-item"
+                onSelect={() => void openPublicPage('/').catch(() => undefined)}
+              >
+                <Smartphone aria-hidden="true" />
+                <span>Get Rally for iOS</span>
+              </DropdownMenu.Item>
+              <DropdownMenu.Item
+                className="menu-item account-menu-item"
+                onSelect={() => void desktopBridge().openSettings()}
+              >
+                <Settings aria-hidden="true" />
+                <span>Settings</span>
+              </DropdownMenu.Item>
+              <DropdownMenu.Item
+                className="menu-item account-menu-item"
+                onSelect={() => void openPublicPage('/').catch(() => undefined)}
+              >
+                <Info aria-hidden="true" />
+                <span>About</span>
+              </DropdownMenu.Item>
+              <DropdownMenu.Item
+                className="menu-item account-menu-item"
+                onSelect={() => void openPublicPage('/support/').catch(() => undefined)}
+              >
+                <CircleHelp aria-hidden="true" />
+                <span>Help Center</span>
+              </DropdownMenu.Item>
+              <DropdownMenu.Item
+                className="menu-item account-menu-item"
+                onSelect={() => void openPublicPage('/support/').catch(() => undefined)}
+              >
+                <Megaphone aria-hidden="true" />
+                <span>Send Feedback</span>
+              </DropdownMenu.Item>
+              <DropdownMenu.Separator className="menu-separator account-menu-separator" />
+              <DropdownMenu.Item className="menu-item account-menu-item" onSelect={onSignOut}>
+                <LogOut aria-hidden="true" />
+                <span>Log out</span>
               </DropdownMenu.Item>
             </DropdownMenu.Content>
           </DropdownMenu.Portal>
@@ -1974,22 +2255,28 @@ export function Sidebar({
           aria-label="Resize navigation"
           aria-orientation="vertical"
           aria-valuemax={MAX_SIDEBAR_WIDTH}
-          aria-valuemin={MIN_SIDEBAR_WIDTH}
-          aria-valuenow={sidebarWidth}
+          aria-valuemin={COLLAPSED_SIDEBAR_WIDTH}
+          aria-valuenow={effectiveSidebarWidth}
           className={clsx('sidebar-resizer', pointerNearEdge && 'is-near')}
           onKeyDown={(event) => {
-            if (event.key === 'ArrowLeft') setSidebarWidth(sidebarWidth - 16);
-            if (event.key === 'ArrowRight') setSidebarWidth(sidebarWidth + 16);
+            if (event.key === 'ArrowLeft' && !compact) {
+              resizeSidebar(sidebarWidth > MIN_SIDEBAR_WIDTH
+                ? sidebarWidth - 16
+                : SIDEBAR_COLLAPSE_DRAG_THRESHOLD - 1);
+            }
+            if (event.key === 'ArrowRight') resizeSidebar(compact ? MIN_SIDEBAR_WIDTH : sidebarWidth + 16);
           }}
           onPointerDown={(event) => {
             event.currentTarget.setPointerCapture(event.pointerId);
-            grabOffset.current = event.clientX - sidebarWidth;
+            grabOffset.current = event.clientX - effectiveSidebarWidth;
             setResizing(true);
           }}
           role="separator"
           tabIndex={0}
         >
-          <span />
+          <span aria-hidden="true" className="sidebar-resizer-handle">
+            <GripVertical size={11} strokeWidth={2} />
+          </span>
         </div>
       </aside>
       <Modal
