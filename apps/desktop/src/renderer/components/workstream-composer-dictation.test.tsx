@@ -52,7 +52,6 @@ const workstream: WorkstreamDetail = {
   id: 'workstream-1',
   title: 'Live transcript',
   titleStatus: 'settled' as const,
-  origin: 'ad_hoc',
   harnessStatus: 'completed',
   scope: 'workspace' as const,
   lastActivityAt: '2026-08-06T12:00:00.000Z',
@@ -72,7 +71,6 @@ const workstream: WorkstreamDetail = {
   resources: [],
   connections: [],
   backgroundTasks: [],
-  automationRuns: [],
 };
 
 beforeEach(() => {

@@ -50,7 +50,7 @@ import {
 } from "./helpers/scripted-provider";
 import { createCloudflareTestBinding } from "../test/helpers/cloudflare-test";
 import {
-  substreamAgentName,
+  conversationObjectName,
   substreamLoopId,
   workspaceDOName,
 } from "../src/durable-objects/names";
@@ -211,7 +211,7 @@ beforeEach(async () => {
 
 function agentStub(): DurableObjectStub {
   return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
-    substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
   ));
 }
 
@@ -1531,12 +1531,12 @@ describe("a member's message travels the whole pipeline", () => {
         JSON.stringify({
           region: "global",
           workspaceId: WORKSPACE_ID,
-          workstreamId: WORKSTREAM_ID,
+          parentKind: "workstream",
+          parentId: WORKSTREAM_ID,
           substreamId: "0",
           loopId: initial.loop_id,
           harnessRunId: executionId,
           triggerMessageId: null,
-          automationSubscriptionId: null,
           activityId: null,
           executionPrincipal: { type: "user", userId: USER_ID },
           reason: "user_message",
@@ -2025,7 +2025,7 @@ describe("a member's message travels the whole pipeline", () => {
   it("admits a message through a non-main child using its external loop identity", async () => {
     const substreamId = asSubstreamId("00000000-0000-7000-8000-0000000005d0");
     const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
-      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID, substreamId),
+      conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID, substreamId),
     ));
     const child = stub as unknown as {
       bootstrapRuntime(input: Record<string, unknown>): Promise<{ status: number }>;
@@ -2033,12 +2033,15 @@ describe("a member's message travels the whole pipeline", () => {
     };
     expect((await child.bootstrapRuntime({
       workspaceId: WORKSPACE_ID,
-      workstreamId: WORKSTREAM_ID,
+      parentKind: "workstream",
+      parentId: WORKSTREAM_ID,
+      substreamId,
       generation: 1,
     })).status).toBe(200);
     expect((await child.executeIdentityOperation({
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
+      substreamId,
       operation: "provision",
       args: [{
         title: "Child conversation",
@@ -2051,7 +2054,6 @@ describe("a member's message travels the whole pipeline", () => {
         emailAddress: null,
         emailRouteStatus: null,
         systemKind: null,
-        automationSubscriptionId: null,
         automationRunId: null,
         plannedFor: null,
         modelOverride: null,
@@ -2688,18 +2690,18 @@ describe("a member's message travels the whole pipeline", () => {
     await settledRun(stub, opened.body.harnessRunId as string);
     await waitForLoopRelease(stub);
     const retryRunId = asHarnessRunId("00000000-0000-7000-8000-0000000005da");
+    // Retried and archived under one input gate. The retry arms the loop's
+    // activation alarm for now, and between two separate requests workerd may
+    // fire it: the retry then runs before the archive, and what the assertion
+    // sees is that run's outcome rather than an admitted run the archive
+    // fenced. Storage awaits keep the gate closed, so nothing interleaves here.
     await runInDurableObject(stub, async (instance) => {
       const productService = (instance as unknown as {
         product: WorkstreamObjectProductService;
       }).product;
       await productService.retry(AUTH, retryRunId);
+      await productService.update(AUTH, { archived: true });
     });
-
-    expect((await product(stub, {
-      operation: "update",
-      auth: AUTH,
-      input: { archived: true },
-    })).status).toBe(200);
     await runDurableObjectAlarm(stub);
 
     expect(await runInDurableObject(stub, async (instance, state) => ({

@@ -1,0 +1,282 @@
+import { newId } from "@rally/db";
+import { asSubstreamId, asWorkspaceId, asWorkstreamId, asAutomationId } from "@rally/contracts";
+import type { ConversationParentKind } from "@rally/contracts/conversation-parent";
+
+import { automationDOName, conversationObjectName, workstreamDOName } from "../durable-objects/names";
+import type { AuthContext, Env } from "../env";
+import { ApiError } from "../lib/api-error";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
+import { logStructuredEvent, logWarn } from "../observability/logger";
+import { ObjectPortError } from "../runtime/object-port";
+import { createIdentityObjectPort } from "../runtime/identity-port";
+import { issueSocketTicket, WORKSTREAM_SOCKET_TICKET_TTL_SECONDS } from "./socket-service";
+import { requireOpenWorkstreamAuthority, requireWorkstreamIngress } from "./workstream-authority";
+import { WorkstreamObjectClient } from "./workstream-object-client";
+
+export interface ResolvedConversationParent {
+  kind: ConversationParentKind;
+  id: string;
+  authorityGeneration: number;
+  /** Whether the parent is archived: readers are admitted, writers refused. */
+  archived: boolean;
+}
+
+/**
+ * The conversation surface: one parent's substreams, whichever kind of parent.
+ *
+ * A work stream and an automation are addressed the same way here. The Worker
+ * resolves which kind a parent id names, asks that parent whether this person
+ * may read its conversations, seats them on the conversation object, and only
+ * then hands out a ticket or a client. What differs between the two kinds is
+ * inside the parent's own `authorizeViewer`; nothing here branches on it.
+ */
+export class ConversationService {
+  constructor(
+    private readonly env: Env,
+    private readonly auth: AuthContext,
+    private readonly defer?: (promise: Promise<unknown>) => void,
+  ) {}
+
+  /**
+   * Which kind of parent this id names.
+   *
+   * Work streams first, because they are most of the traffic; an id neither
+   * knows is a 404 rather than a guess. Both reads are the parent's own
+   * `authority`, which also carries the generation and archive state the
+   * ticket needs.
+   */
+  async resolveParent(parentId: string): Promise<ResolvedConversationParent> {
+    const workstream = await durableObjectStubForWorkspace(
+      this.env,
+      this.env.WORKSTREAM_DOS,
+      this.auth.workspaceId,
+      workstreamDOName(this.env.AVALON_REGION, this.auth.workspaceId, asWorkstreamId(parentId)),
+    );
+    const asWorkstream = await workstream.authority({ workspaceId: this.auth.workspaceId, parentId });
+    if (asWorkstream.exists) {
+      return { kind: "workstream", id: parentId, ...asWorkstream };
+    }
+    const automation = await durableObjectStubForWorkspace(
+      this.env,
+      this.env.AUTOMATION_DOS,
+      this.auth.workspaceId,
+      automationDOName(this.env.AVALON_REGION, this.auth.workspaceId, asAutomationId(parentId)),
+    );
+    const asAutomation = await automation.authority({ workspaceId: this.auth.workspaceId, parentId });
+    if (asAutomation.exists) {
+      return { kind: "automation", id: parentId, ...asAutomation };
+    }
+    throw new ApiError(404, "conversation_not_found", "Conversation not found");
+  }
+
+  /**
+   * The parent's answer to "may this person read your conversations", and the
+   * seat that follows from it.
+   *
+   * The conversation object decides reads from its own participant list, so a
+   * reader the parent admits is seated there before anything is issued. For a
+   * work stream the seat already exists (the room's participants are the
+   * conversation's); for an automation the parent's rule is wider than the
+   * conversation's list, and this is what carries the parent's decision down.
+   */
+  async authorizeViewer(parentId: string, substreamId = "0"): Promise<ResolvedConversationParent> {
+    const parent = await this.resolveParent(parentId);
+    const decision = await this.parentStub(parent).then((stub) => stub.authorizeViewer({
+      workspaceId: this.auth.workspaceId,
+      parentId,
+      userId: this.auth.userId,
+    }));
+    if (!decision.authorized) throw new ApiError(404, "conversation_not_found", "Conversation not found");
+    if (parent.kind === "automation") {
+      try {
+        await createIdentityObjectPort(this.env, this.auth.workspaceId, parentId, undefined, substreamId)
+          .admitParticipant({
+            userId: this.auth.userId,
+            addedByUserId: this.auth.userId,
+            reason: "explicit",
+            now: Date.now(),
+          });
+      } catch (error) {
+        // A run's conversation exists once the run alarm provisions it. A
+        // reader who arrives in the moment between the run being recorded and
+        // the object being bootstrapped gets a typed retry, not a 500.
+        if (error instanceof ObjectPortError && substreamId !== "0") {
+          throw new ApiError(409, "conversation_not_ready", "This conversation is still being set up; try again shortly");
+        }
+        throw error;
+      }
+    }
+    return { ...parent, archived: decision.archived || parent.archived };
+  }
+
+  /** The object client for the parent's main conversation, or a 503 on a stack that never opened the authority. */
+  async client(parentId: string, traced = false): Promise<WorkstreamObjectClient> {
+    await requireOpenWorkstreamAuthority(this.env);
+    await this.authorizeViewer(parentId);
+    return new WorkstreamObjectClient(this.env, this.auth, parentId, "0", traced);
+  }
+
+  /** A client for a write, refused outright when the parent is archived. */
+  async writableClient(parentId: string): Promise<WorkstreamObjectClient> {
+    await requireOpenWorkstreamAuthority(this.env);
+    const parent = await this.authorizeViewer(parentId);
+    if (parent.archived) {
+      throw new ApiError(409, "conversation_parent_archived", "This conversation belongs to something that is archived");
+    }
+    return new WorkstreamObjectClient(this.env, this.auth, parentId, "0");
+  }
+
+  async socketTicket(
+    parentId: string,
+    substreamId = "0",
+    afterSequence?: number,
+    speculative = false,
+  ) {
+    const [parent, authority] = await Promise.all([
+      this.authorizeViewer(parentId, substreamId),
+      requireWorkstreamIngress(this.env),
+    ]);
+    // A work stream's own object refuses every read of an archived room, boot
+    // included, so a ticket for one would open a socket that never gets a
+    // frame. Refuse it the way the boot does. An automation's conversation
+    // stays readable after its archive; only its writes are refused.
+    if (parent.kind === "workstream" && parent.archived) {
+      throw new ApiError(404, "conversation_not_found", "Conversation not found");
+    }
+    // Minted here rather than inside the issuer so the route can log the id the
+    // room will report consuming; see `docs/performance-tracing.md`.
+    const ticketId = newId();
+    const issuedAt = Math.floor(Date.now() / 1_000);
+    const ticket = await issueSocketTicket(
+      this.env,
+      this.auth,
+      { kind: parent.kind, id: parentId },
+      substreamId,
+      ticketId,
+      afterSequence,
+      speculative,
+      {
+        issuedAt,
+        admission: {
+          authorityGeneration: authority.generation,
+          role: this.auth.role,
+          analyticsWorkspaceId: this.auth.analyticsWorkspaceId ?? null,
+          parentArchived: parent.archived,
+        },
+      },
+    );
+    // The main conversation is recorded by its parent's creation. A child is
+    // reserved by its parent too, so an arbitrary substream id must not
+    // materialize an object merely because its parent is visible; the warm-up
+    // is for the main conversation, which every open pays for.
+    if (substreamId === "0") {
+      this.warmMainSocketSubstream({
+        parent,
+        ticketId,
+        ticketIssuedAt: issuedAt,
+        ticketExpiresAt: issuedAt + WORKSTREAM_SOCKET_TICKET_TTL_SECONDS,
+        ...(afterSequence === undefined ? {} : { afterSequence }),
+        speculative,
+        authorityGeneration: authority.generation,
+      });
+    }
+    const url = new URL(this.env.PUBLIC_API_BASE_URL);
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    url.pathname = `/socket/conversations/${parentId}/${substreamId}`;
+    url.search = new URLSearchParams({ ticket }).toString();
+    return {
+      url: url.toString(),
+      ticket,
+      ticketId,
+      subscriptionBootstrap: afterSequence !== undefined,
+    };
+  }
+
+  /**
+   * Use ticket transit to prepare the exact room admission and first snapshot.
+   *
+   * The signed ticket and durable one-use receipt remain the authorization
+   * boundary. This in-memory work is deliberately best effort: an unavailable
+   * preparation leaves the later upgrade on its existing regional fallback,
+   * never turns a usable ticket into an API failure. `defer` is request-owned
+   * `waitUntil`, so the Worker keeps the binding call alive after sending the
+   * ticket without adding the preparation to ticket latency.
+   */
+  private warmMainSocketSubstream(input: {
+    parent: ResolvedConversationParent;
+    ticketId: string;
+    ticketIssuedAt: number;
+    ticketExpiresAt: number;
+    afterSequence?: number;
+    speculative: boolean;
+    authorityGeneration: number;
+  }): void {
+    if (!this.defer) return;
+    const startedAt = Date.now();
+    this.defer((async () => {
+      try {
+        const stub = await durableObjectStubForWorkspace(
+          this.env,
+          this.env.SUBSTREAM_AGENTS,
+          this.auth.workspaceId,
+          conversationObjectName(this.env.AVALON_REGION, this.auth.workspaceId, input.parent.id),
+        );
+        const prepared = await stub.prepareSocketAdmission({
+          workspaceId: this.auth.workspaceId,
+          parentKind: input.parent.kind,
+          workstreamId: input.parent.id,
+          substreamId: asSubstreamId("0"),
+          userId: this.auth.userId,
+          sessionId: this.auth.sessionId,
+          ticketId: input.ticketId,
+          ticketIssuedAt: input.ticketIssuedAt,
+          ticketExpiresAt: input.ticketExpiresAt,
+          authorityGeneration: input.authorityGeneration,
+          role: this.auth.role,
+          analyticsWorkspaceId: this.auth.analyticsWorkspaceId ?? null,
+          ...(input.afterSequence === undefined ? {} : { afterSequence: input.afterSequence }),
+          speculative: input.speculative,
+        });
+        logStructuredEvent(this.env, "info", "workstream_socket_ticket_warm_finished", {
+          workspace_id: this.auth.workspaceId,
+          workstream_id: input.parent.id,
+          parent_kind: input.parent.kind,
+          substream_id: "0",
+          ticket_id: input.ticketId,
+          duration_ms: Math.max(0, Date.now() - startedAt),
+          outcome: "success",
+          preparation_outcome: prepared.outcome,
+        });
+      } catch (error) {
+        logWarn(this.env, "workstream_socket_ticket_warm_finished", {
+          workspace_id: this.auth.workspaceId,
+          workstream_id: input.parent.id,
+          parent_kind: input.parent.kind,
+          substream_id: "0",
+          ticket_id: input.ticketId,
+          duration_ms: Math.max(0, Date.now() - startedAt),
+          outcome: "failure",
+          error_name: error instanceof Error ? error.name : "UnknownError",
+        });
+      }
+    })());
+  }
+
+  private async parentStub(parent: ResolvedConversationParent) {
+    const workspaceId = asWorkspaceId(this.auth.workspaceId);
+    if (parent.kind === "automation") {
+      return durableObjectStubForWorkspace(
+        this.env,
+        this.env.AUTOMATION_DOS,
+        workspaceId,
+        automationDOName(this.env.AVALON_REGION, workspaceId, asAutomationId(parent.id)),
+      );
+    }
+    return durableObjectStubForWorkspace(
+      this.env,
+      this.env.WORKSTREAM_DOS,
+      workspaceId,
+      workstreamDOName(this.env.AVALON_REGION, workspaceId, asWorkstreamId(parent.id)),
+    );
+  }
+}

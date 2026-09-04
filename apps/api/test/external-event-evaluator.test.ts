@@ -4,13 +4,15 @@ import { evaluateExternalEventPredicate, validateDraftEvaluatorRules } from "../
 const personId = "11111111-1111-4111-8111-111111111111";
 
 describe("external event evaluator", () => {
-  it("evaluates typed DNF without coercion and treats missing negative leaves as false", () => {
+  it("evaluates a typed AND group without coercion and treats missing negative leaves as false", () => {
+    // One rule is one AND group: "A or B" is authored as two rules, so there is
+    // no OR to evaluate here.
     const predicate = {
-      kind: "dnf" as const,
-      anyOf: [{ allOf: [
+      kind: "all" as const,
+      allOf: [
         { kind: "string" as const, attribute: "messageText", operator: "contains" as const, value: "foobar" },
         { kind: "person_id_array" as const, attribute: "participantPersonIds", operator: "has" as const, value: personId },
-      ] }],
+      ],
     };
 
     expect(evaluateExternalEventPredicate(predicate, {
@@ -22,13 +24,15 @@ describe("external event evaluator", () => {
       participantPersonIds: [personId],
     })).toBe(false);
     expect(evaluateExternalEventPredicate({
-      kind: "dnf",
-      anyOf: [{ allOf: [{ kind: "string", attribute: "missing", operator: "not_equals", value: "x" }] }],
+      kind: "all",
+      allOf: [{ kind: "string", attribute: "missing", operator: "not_equals", value: "x" }],
     }, {})).toBe(false);
     expect(evaluateExternalEventPredicate({
-      kind: "dnf",
-      anyOf: [{ allOf: [{ kind: "presence", attribute: "missing", operator: "not_exists" }] }],
+      kind: "all",
+      allOf: [{ kind: "presence", attribute: "missing", operator: "not_exists" }],
     }, {})).toBe(true);
+    // The unconditional rule: every event of the watched type matches.
+    expect(evaluateExternalEventPredicate({ kind: "always" }, {})).toBe(true);
   });
 
   it("validates authoring rules against the inspected event manifest", () => {
@@ -43,13 +47,13 @@ describe("external event evaluator", () => {
           resourceId: "22222222-2222-4222-8222-222222222222",
         },
         when: {
-          kind: "dnf" as const,
-          anyOf: [{ allOf: [{
+          kind: "all" as const,
+          allOf: [{
             kind: "string" as const,
             attribute: "messageText",
             operator: "contains" as const,
             value: "foobar",
-          }] }],
+          }],
         },
       }],
     };
@@ -89,12 +93,12 @@ describe("external event evaluator", () => {
       ...rules,
       evaluators: [{
         ...rules.evaluators[0],
-        when: { kind: "dnf", anyOf: [{ allOf: [{
+        when: { kind: "all", allOf: [{
           kind: "number",
           attribute: "messageText",
           operator: "equals",
           value: 1,
-        }] }] },
+        }] },
       }],
     }, { inspectedPlugins, resources, personIds: new Set() })).toThrow("automation_evaluator_invalid");
   });

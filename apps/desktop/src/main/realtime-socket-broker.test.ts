@@ -30,7 +30,7 @@ function openInput(
     kind,
     url: kind === 'workstream_control'
       ? `wss://api.rallywith.ai/socket/workstreams/${workstreamId}`
-      : `wss://api.rallywith.ai/socket/workstreams/${workstreamId}/substreams/0`,
+      : `wss://api.rallywith.ai/socket/conversations/${workstreamId}/0`,
     protocols: ['rally.ticket.v1', ticket],
   };
 }
@@ -90,6 +90,34 @@ describe('realtimeSocketTargetAllowed', () => {
     expect(realtimeSocketTargetAllowed({
       ...openInput(),
       protocols: ['not-rally', ticket],
+    }, apiBaseUrls)).toBe(false);
+  });
+
+  it('admits a feed by its conversation, whichever parent it has, and nothing older', () => {
+    const automationId = '00000000-0000-7000-8000-000000000009';
+    const runId = '00000000-0000-7000-8000-000000000010';
+    // An automation's conversation and one of its runs ride the same route a
+    // work stream's feed does.
+    expect(realtimeSocketTargetAllowed({
+      ...openInput('substream_feed'),
+      url: `wss://api.rallywith.ai/socket/conversations/${automationId}/0`,
+    }, apiBaseUrls)).toBe(true);
+    expect(realtimeSocketTargetAllowed({
+      ...openInput('substream_feed'),
+      url: `wss://api.rallywith.ai/socket/conversations/${automationId}/${runId}`,
+    }, apiBaseUrls)).toBe(true);
+    // The retired shapes are refused rather than tolerated.
+    expect(realtimeSocketTargetAllowed({
+      ...openInput('substream_feed'),
+      url: `wss://api.rallywith.ai/socket/workstreams/${workstreamId}/substreams/0`,
+    }, apiBaseUrls)).toBe(false);
+    expect(realtimeSocketTargetAllowed({
+      ...openInput('substream_feed'),
+      url: `wss://api.rallywith.ai/socket/automations/${automationId}`,
+    }, apiBaseUrls)).toBe(false);
+    expect(realtimeSocketTargetAllowed({
+      ...openInput('substream_feed'),
+      url: `wss://api.rallywith.ai/socket/conversations/${automationId}/0/extra`,
     }, apiBaseUrls)).toBe(false);
   });
 });

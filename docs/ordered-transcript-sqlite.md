@@ -2,26 +2,26 @@
 
 `apps/api/src/durable-objects/ordered-transcript-sqlite/` is the one place the
 canonical ordered-transcript tables are declared and the one implementation of
-the canonical JSON those tables are addressed by. Three Durable Object classes
-install the same statement array — `SubstreamAgent`, `WorkstreamDO`, and
-`AutomationAgent` — so a work-stream feed and an automation's draft conversation
-are the same rows with the same ordering rules underneath two very different
-products.
+the canonical JSON those tables are addressed by. One Durable Object class
+installs the statement array today, `SubstreamAgent`, and every conversation
+Rally has, a work stream's feed and an automation's chat and runs alike, is a
+`SubstreamAgent`, so they are the same rows with the same ordering rules
+underneath different parents.
 
 The promise it makes is narrow and load-bearing: **these bytes never change.**
 Each host applies the array as one version of its own append-only migration
 ledger, and the runner records a hash of every applied version. Editing a
 statement here does not migrate anything; it strands every deployed object of
 every host on a hash mismatch. Read this before touching a file in that folder,
-and before giving a fourth object an ordered transcript.
+and before giving a second object an ordered transcript.
 
 What the rows *mean* is owned elsewhere:
 [`workstream-durable-object.md`](workstream-durable-object.md) owns the
 work-stream transcript and its protocol,
 [`agent-harness.md`](agent-harness.md) owns the Bind loop the
 `bind_loop_*` tables project, and
-[`automation-lifecycle.md`](automation-lifecycle.md) owns the automation draft
-conversation. This document owns the shared module itself.
+[`automation-lifecycle.md`](automation-lifecycle.md) owns what an automation's
+conversations are for. This document owns the shared module itself.
 
 ## Where the code lives
 
@@ -32,19 +32,18 @@ conversation. This document owns the shared module itself.
 | `ordered-transcript-sqlite/participant-transcript-store.ts` | `ParticipantTranscriptStore`: product-neutral append of one plain-text conversation turn, sequence allocation from `transcript_counters`, and an ordered read of those turns. |
 | `apps/api/src/durable-objects/sqlite-migrations.ts` | The runner that applies a host's ledger and compares each version's recorded hash against the current statements. The enforcement point for the freeze. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | Installs the array as `SubstreamAgent` migration 27. |
-| `apps/api/src/durable-objects/automation-agent.ts` | Installs the same array inside `AutomationAgent` migration 1, beside the automation-specific tables. |
 | `apps/api/src/durable-objects/workstream-transcript-storage.ts` | The work-stream host adapter: every richer read and write over these tables — blocks, attachments, mentions, activities, Bind states — lives here, not in the shared module. |
 
 ## How it works
 
-### One schema, three ledgers
+### One schema, one ledger today
 
 `ORDERED_TRANSCRIPT_SCHEMA_V1` is a `readonly string[]` of `CREATE TABLE`,
 `CREATE INDEX`, and one seeding `INSERT`. A host spreads it into a version of
-its own migration list. `SubstreamAgent` added it as version 27 and
-`AutomationAgent` ships it inside version 1; the statements are byte-identical,
-so both objects end up with the same physical schema even though their ledgers
-number it differently.
+its own migration list. `SubstreamAgent` added it as version 27. A second host
+would ship the same bytes inside its own version and end up with the same
+physical schema even though its ledger numbered it differently; the first
+automation object did exactly that until it was deleted on 2026-09-03.
 
 The runner hashes each version's statements when it applies them and compares
 the stored hash on every later wake. That is what makes the array immutable in
@@ -81,20 +80,17 @@ non-plain value, `transcript_non_finite_number` for `NaN` and the infinities.
 Throwing is the point — a payload that silently became `null` would hash
 consistently and hide the loss forever.
 
-The same function has a second, deliberate consumer outside transcripts: the
-automation cutover hashes its legacy source witness with it
-(`automation-cutover.ts`), and `routes/dev.ts` reproduces that hash for the
-development seeding path. Both need a hash two separate call sites can agree on
-across an object boundary, which is exactly what this function is.
+The function is written to be the hash two separate call sites can agree on
+across an object boundary; the automation cutover of 2026-08-28 was its one
+consumer outside transcripts and is gone.
 
 ### The participant store
 
 `ParticipantTranscriptStore` is the only product-neutral *writer* extracted so
 far, and it covers one shape: a single-text-block conversation turn. Preparation
 is asynchronous (the hash is `crypto.subtle`) and the append is synchronous, so
-a host can hash outside its transaction and commit inside it —
-`AutomationAgent.admitDraftTurn` does exactly that, preparing the message before
-opening `transactionSync`. `appendPreparedMessage` returns the existing sequence
+a host can hash outside its transaction and commit inside it, preparing the
+message before opening `transactionSync`. `appendPreparedMessage` returns the existing sequence
 when the `turn_id` is already present, so a retried admission answers with the
 coordinate it originally allocated.
 
@@ -118,8 +114,8 @@ coordinate it originally allocated.
   consistent; a host that inserts a fact directly can reference a payload that
   was never written.
 - **The shared module never reads a product-owned table.** It has no access to
-  participants, audiences, or authorization, and adding one would make a
-  work-stream rule apply to an automation draft that has no participants at all.
+  participants, audiences, or authorization, and adding one would make one
+  host's rule apply to every host.
   Authorization is the host's, before it calls in.
 
 ## Boundary
@@ -132,10 +128,9 @@ needs it.
 
 It does not own reads or writes richer than a plain turn. Blocks, attachments,
 mentions, tool lifecycle, activity intervals, snapshots, ranges, and every Bind
-state transition are implemented per host —
-`workstream-transcript-storage.ts` for work streams, `automation-agent.ts` for
-automations — even where they touch the same tables. That is the current state,
-not a design goal; see the changelog.
+state transition are implemented in the host adapter,
+`workstream-transcript-storage.ts`, rather than here. That is the current
+state, not a design goal; see the changelog.
 
 It is also **not** the canonicalizer Bind uses. `@rally/agent-harness` keeps
 `canonicalizeBindLoop` for the provider-boundary hash and its own `canonicalJson`
@@ -170,7 +165,6 @@ by the other.
 | Suite | Command | Covers |
 | --- | --- | --- |
 | `apps/api/test/workstream-object-schema.test.ts` | `pnpm --filter @rally/api test` | The SubstreamAgent ledger, version by version, against `node:sqlite` — including the version that installs this array. |
-| `apps/api/test-workers/automation-agent.test.ts` | `pnpm --filter @rally/api test:workers` | `AutomationAgent` applying its migration 1 on real workerd and appending the first human turn through `ParticipantTranscriptStore`. |
 | `apps/api/test-workers/durable-object-runtime.test.ts` | `pnpm --filter @rally/api test:workers` | The work-stream host's use of the same tables: canonical ranges, oversized-turn envelopes, and compaction recovery. |
 | `apps/api/test/workstream-transcript-storage.test.ts`, `apps/api/test/tool-transcript-durability.test.ts` | `pnpm --filter @rally/api test` | The work-stream adapter's reads and writes over these tables. |
 
@@ -179,6 +173,23 @@ this file, which is the intent — if such an assertion fails after an edit here
 the edit is wrong, not the test.
 
 ## Changelog
+
+### 2026-09-03: The second host is gone
+
+**What changed:** `AutomationAgent`, which installed this array inside its
+migration 1, was deleted with Wrangler tag `v9`. `SubstreamAgent` is the one
+host; an automation's chat and its runs are `SubstreamAgent`s under an
+`AutomationDO`, which installs no transcript.
+
+**Why:** [`automation-lifecycle.md`](automation-lifecycle.md) records the
+rebuild. For this module: the reason to extract the schema was a second host,
+and the second host stopped needing one the moment its conversation became an
+ordinary conversation object.
+
+**Consequences:** The freeze is unchanged; the bytes are still inside a
+released `SubstreamAgent` migration. The module stays extracted because
+extraction cost nothing to keep and the next host, if one appears, ships the
+same bytes the same way.
 
 ### 2026-08-28 — The ordered transcript schema becomes a shared module with three hosts
 

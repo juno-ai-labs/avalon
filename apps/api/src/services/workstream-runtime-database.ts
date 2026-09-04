@@ -1,6 +1,7 @@
-import { asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import type { ConversationParentKind } from "@rally/contracts/conversation-parent";
+import { asSubstreamId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 
-import { substreamAgentName } from "../durable-objects/names";
+import { conversationObjectName } from "../durable-objects/names";
 import { rpcResultBody } from "../durable-objects/rpc-result";
 import type { WorkstreamProvisionInput } from "../durable-objects/workstream-identity-storage";
 import type { Env } from "../env";
@@ -103,8 +104,14 @@ export async function writeRegionalWorkstreamAnchorBatch(
 export async function bootstrapWorkstreamRuntimeEnvironment(
   env: Env,
   workspaceId: string,
-  workstreamId: string,
+  parentId: string,
+  parentKind: ConversationParentKind,
 ): Promise<Env> {
+  // `workstream_authority_routes` and the `workstreams` anchor are keyed by
+  // parent id whatever the kind: every reader of the route (loop activation,
+  // socket admission, the notification generation fence) keys on the same id,
+  // and the D1 column keeps its name because D1 migrations are immutable.
+  const workstreamId = parentId;
   const authority = await readWorkstreamAuthorityControl(env);
   const at = new Date().toISOString();
   await writeRegionalWorkstreamAnchorBatch(env, { workspaceId, workstreamId, at }, () => [
@@ -130,11 +137,12 @@ export async function bootstrapWorkstreamRuntimeEnvironment(
     env,
     env.SUBSTREAM_AGENTS,
     workspaceId,
-    substreamAgentName(env.AVALON_REGION, asWorkspaceId(workspaceId), asWorkstreamId(workstreamId)),
+    conversationObjectName(env.AVALON_REGION, asWorkspaceId(workspaceId), asWorkstreamId(workstreamId)),
   );
   const response = await stub.bootstrapRuntime({
     workspaceId: asWorkspaceId(workspaceId),
-    workstreamId: asWorkstreamId(workstreamId),
+    parentKind,
+    parentId,
     generation: authority.generation,
   });
   if (response.status < 200 || response.status >= 300) {
@@ -148,6 +156,41 @@ export async function bootstrapWorkstreamRuntimeEnvironment(
 }
 
 /**
+ * Open one empty authoritative child conversation under a parent that already
+ * has its route.
+ *
+ * The regional route and the D1 anchor are per parent and were written when
+ * the parent's main conversation was bootstrapped; a child needs only its own
+ * object opened, knowing which substream it is.
+ */
+export async function bootstrapConversationChildRuntime(
+  env: Env,
+  workspaceId: string,
+  parentKind: ConversationParentKind,
+  parentId: string,
+  substreamId: string,
+): Promise<void> {
+  const authority = await readWorkstreamAuthorityControl(env);
+  const stub = await durableObjectStubForWorkspace(
+    env,
+    env.SUBSTREAM_AGENTS,
+    workspaceId,
+    conversationObjectName(env.AVALON_REGION, asWorkspaceId(workspaceId), parentId, asSubstreamId(substreamId)),
+  );
+  const response = await stub.bootstrapRuntime({
+    workspaceId: asWorkspaceId(workspaceId),
+    parentKind,
+    parentId,
+    substreamId,
+    generation: authority.generation,
+  });
+  if (response.status < 200 || response.status >= 300) {
+    const body = rpcResultBody(response) as { error?: unknown } | null;
+    throw new Error(typeof body?.error === "string" ? body.error : "conversation_child_bootstrap_failed");
+  }
+}
+
+/**
  * Write what a system-provisioned work stream is, on the object that owns it.
  *
  * The other half of {@link bootstrapWorkstreamRuntimeEnvironment}: that opens an
@@ -157,7 +200,9 @@ export async function bootstrapWorkstreamRuntimeEnvironment(
  */
 export async function provisionWorkstreamObject(
   env: Env,
-  input: WorkstreamProvisionInput & { workspaceId: string; workstreamId: string },
+  input: WorkstreamProvisionInput & { workspaceId: string; workstreamId: string; substreamId?: string },
 ): Promise<void> {
-  await createIdentityObjectPort(env, input.workspaceId, input.workstreamId).provision(input);
+  const { substreamId, ...provision } = input;
+  await createIdentityObjectPort(env, input.workspaceId, input.workstreamId, undefined, substreamId)
+    .provision(provision);
 }

@@ -1575,64 +1575,27 @@ function DraftProposedCard({
             acceptance and is therefore the part worth reading before pressing. */}
         <p className="system-message-text"><small>{scope} can manage it.</small></p>
         {error && <p className="system-message-text">{error}</p>}
-        {detail.ready ? (
-          <button
-            className="system-message-toggle"
-            disabled={accepting || !onAccept}
-            onClick={() => onAccept?.(detail.automationId)}
-            type="button"
-          >
-            {accepting ? 'Creating…' : 'Create this automation'}
-          </button>
-        ) : (
-          <p className="system-message-text"><small>Still being drafted.</small></p>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/**
- * The card a room gets when the person an automation runs as loses access.
- *
- * A card rather than a sentence because there is exactly one thing to do about
- * it, and only the person doing it can. Nobody can nominate somebody else:
- * lending your own Gmail to a standing automation is an agreement you make, not
- * one a colleague arranges for you, so the action says "me" and takes no
- * argument.
- */
-function PrincipalUnavailableCard({
-  detail,
-  messageId,
-  onClaim,
-  claiming,
-  error,
-}: {
-  detail: NonNullable<Message['principalUnavailable']>;
-  messageId: string;
-  onClaim?: (automationId: string) => void;
-  claiming?: boolean;
-  error?: string | undefined;
-}): React.JSX.Element {
-  const who = detail.outgoingUserName ?? 'The person it ran as';
-  return (
-    <div className="system-message principal-unavailable-card" id={`message-${messageId}`} role="group">
-      <span aria-hidden="true" className="system-message-dot" />
-      <div className="system-message-body">
-        <p className="system-message-text">
-          <strong>{detail.automationName}</strong> cannot reach{' '}
-          {detail.unreachableProviders.join(', ')}. {who} no longer has access.
-          Everything it runs on the workspace’s own connections is unaffected.
-        </p>
-        {error && <p className="system-message-text">{error}</p>}
-        <button
-          className="system-message-toggle"
-          disabled={claiming || !onClaim}
-          onClick={() => onClaim?.(detail.automationId)}
-          type="button"
-        >
-          {claiming ? 'Taking over…' : 'Run these as me'}
-        </button>
+        <div className="automation-draft-actions">
+          {detail.ready ? (
+            <button
+              className="system-message-toggle"
+              disabled={accepting || !onAccept}
+              onClick={() => onAccept?.(detail.automationId)}
+              type="button"
+            >
+              {accepting ? 'Creating…' : 'Create this automation'}
+            </button>
+          ) : (
+            <p className="system-message-text"><small>Still being drafted.</small></p>
+          )}
+          {/* The draft is reviewed and edited on the automation's own screen,
+              which is also where it is applied later. A hash link rather than a
+              router link: the app routes by hash, and the card renders on
+              surfaces with no router of their own. */}
+          <a className="system-message-toggle automation-draft-link" href={`#/automations/${detail.automationId}`}>
+            Open automation
+          </a>
+        </div>
       </div>
     </div>
   );
@@ -2224,14 +2187,6 @@ interface MessageBlockProps {
   onOpenAttachment?: (preview: AttachmentPreview) => void;
   onAnswerElicitation: (elicitationId: string, answer: string | string[] | null, customResponse?: string) => Promise<void>;
   rowDisclosure?: RowDisclosure;
-  /**
-   * Takes over an automation whose principal lost access. Absent on a surface
-   * with no API session, where the card still explains what is wrong — the room
-   * is better off knowing even where it cannot act from here.
-   */
-  onClaimExecutionPrincipal?: (automationId: string) => void;
-  claimingExecutionPrincipalFor?: string | null;
-  claimExecutionPrincipalError?: string | undefined;
   /** Creates the automation a proposal card names. */
   onAcceptDraft?: (automationId: string) => void;
   acceptingDraftFor?: string | null;
@@ -2248,9 +2203,6 @@ export function MessageBlock({
   onAnswerElicitation,
   onOpenAttachment,
   rowDisclosure,
-  onClaimExecutionPrincipal,
-  claimingExecutionPrincipalFor,
-  claimExecutionPrincipalError,
   onAcceptDraft,
   acceptingDraftFor,
   acceptDraftError,
@@ -2327,20 +2279,6 @@ export function MessageBlock({
         error={acceptDraftError}
         messageId={message.id}
         {...(onAcceptDraft ? { onAccept: onAcceptDraft } : {})}
-      />
-    );
-  }
-  // Ahead of the system branch it would otherwise fall into: this row is a
-  // system note, but it is one with something to do about it, and a clamped
-  // paragraph would bury the only action.
-  if (message.principalUnavailable) {
-    return (
-      <PrincipalUnavailableCard
-        claiming={claimingExecutionPrincipalFor === message.principalUnavailable.automationId}
-        detail={message.principalUnavailable}
-        error={claimExecutionPrincipalError}
-        messageId={message.id}
-        {...(onClaimExecutionPrincipal ? { onClaim: onClaimExecutionPrincipal } : {})}
       />
     );
   }

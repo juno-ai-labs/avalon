@@ -51,11 +51,11 @@ const context: HarnessToolContext = {
 const workflowInput: WorkstreamWorkflowInput = {
   region: "global",
   workspaceId: WORKSPACE_ID,
-  workstreamId: WORKSTREAM_ID,
+  parentKind: "workstream",
+  parentId: WORKSTREAM_ID,
   loopId: `workstream:${WORKSTREAM_ID}:substream:0:loop`,
   harnessRunId: RUN_ID,
   triggerMessageId: null,
-  automationSubscriptionId: null,
   activityId: null,
   executionPrincipal: context.executionPrincipal,
   reason: "Image generation test",

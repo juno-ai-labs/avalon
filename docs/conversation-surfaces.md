@@ -1,16 +1,17 @@
 # Shared conversation surfaces
 
-Rally has one conversation surface: the work-stream feed. Its presentation and
-interaction primitives live in a renderer family that a second adapter — the
-standalone automation draft wizard — used to share.
-
-**That second adapter is gone.** The
-[automations-in-a-work-stream PRD](PRDs/2026-08-29_automation-workstream-delivery/prd.md)
-moved authoring into a work stream's main feed and retired the standalone draft
-screen, so there is one adapter and nothing to keep in step with it. The
-extracted pieces below are still worth their seams — they are what a feed is
-made of — but a change to them now has one caller, and a second surface is a
-thing to argue for rather than a thing to preserve.
+Rally has one conversation surface: the feed of a `SubstreamAgent`, under
+whichever kind of parent it has. A work stream's main feed and an automation's
+own chat are the same surface over the same wire, reached through
+`/conversations/:parentId` and `/socket/conversations/:parentId/:substreamId`
+with a work-stream id or an automation id as the parent. The standalone
+automation draft wizard that used to be a second adapter over this family is
+gone, and so is the compiler it talked to; drafting an automation is a
+conversation in the automation's own substream `0`, with the drafting tools
+loaded as a plugin, so there is one adapter and nothing to keep in step with
+it. The extracted pieces below are still worth their seams (they are what a
+feed is made of), but a change to them has one caller, and a second surface is
+a thing to argue for rather than a thing to preserve.
 
 ## Where the code lives
 
@@ -25,18 +26,25 @@ thing to argue for rather than a thing to preserve.
 - `apps/desktop/src/renderer/components/expanded-composer.tsx`,
   `use-draft-text.ts`, and `use-file-attachments.ts` provide the common composer
   shell, local text persistence, and staged-file lifecycle.
-- `apps/desktop/src/renderer/screens/workstream.tsx` adapts a SubstreamAgent feed,
-  and is now the only adapter. Its tool rows are not rendered one per call: they
-  collapse into one row per plugin, which
+- `apps/desktop/src/renderer/screens/conversation-surface.tsx` is the one feed
+  composition: `ConversationSurface({parentKind, parentId, substreamId,
+  renderHeader})` owns the transcript, composer, attachments, and the socket
+  hooks for one conversation, keyed by the parent id and substream. Its
+  composer draft is `workstreamDraftKey` over the parent id, whichever kind of
+  parent that is. `screens/workstream.tsx` renders it for a work stream;
+  `screens/automation.tsx` renders `components/automation-header.tsx` through
+  `renderHeader` over it with `parentKind: "automation"` and `substreamId:
+  "0"`. Tool rows are not rendered one per call: they collapse into one row per plugin, which
   [`plugin-activity-rows.md`](plugin-activity-rows.md) owns entirely. The
   retired automation-draft adapter kept a row per call, which is the divergence
   that made the collapse a decision worth recording rather than an obvious one.
 
 ## Contract
 
-Both adapters provide canonical ordered turns, loaded coverage, streaming
+The adapter provides canonical ordered turns, loaded coverage, streaming
 blocks, activity timing, attachment actions, retry/stop state, and a stable
-conversation identity. The common viewport follows only while the reader owns
+conversation identity, for a work stream's conversation and an automation's
+alike. The common viewport follows only while the reader owns
 the latest edge; scrolling transfers ownership to the reader until **Jump to
 latest** is selected. Programmatic repositioning is announced before changing
 `scrollTop`, and reduced-motion preference controls whether the jump animates.
@@ -44,14 +52,16 @@ latest** is selected. Programmatic repositioning is announced before changing
 Sharing stops at product semantics. Work streams retain participants, unread,
 resource, run, and steering controls. The in-flight pending queue is one of
 those: it attaches to the work-stream composer, not to the shared
-`ComposerInput`, and automation drafts have no equivalent. Automation drafts retain templates,
-definition review, acceptance, compiler retry/stop, and structured elicitation.
-Neither adapter may smuggle those controls through an optional common prop.
+`ComposerInput`. An automation's page keeps its lifecycle controls (apply,
+pause, resume, delete, run now, the run list) beside the feed rather than
+inside it. Neither host may smuggle those controls through an optional common
+prop.
 
-The route host, not the feed, owns identity transitions. A new work stream and a
-new automation begin with local composer keys; after durable admission their
-adapter rekeys text/files and adopts the server identity without remounting the
-conversation family. Socket snapshots remain authoritative after reconnect;
+The route host, not the feed, owns identity transitions. A new work stream
+begins with local composer keys; after durable admission its adapter rekeys
+text/files and adopts the server identity without remounting the conversation
+family. A new automation is created by `POST /automations` before its
+conversation is opened, so its page starts on a durable id. Socket snapshots remain authoritative after reconnect;
 local optimistic rows are reconciled by stable client turn IDs.
 
 Finished assistant turns also share the action row. Copy and export remain
@@ -68,6 +78,54 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-04: The automation header asks before deleting, offers only what the object accepts, and hears its own chat
+
+**What changed:** `components/delete-automation-dialog.tsx` is the one
+confirmation an automation's deletion goes through; the sidebar's modal moved
+into it and `components/automation-header.tsx` opens the same dialog from its
+Delete item instead of firing the tombstone from the menu. The header offers
+Run now only on an active automation and disables Apply while paused, with
+the tooltip saying to resume first, matching what `AutomationDO` accepts.
+`lib/workspace-socket.tsx` invalidates the `automation` and
+`automation-runs` queries whenever the `automations` sidebar list is pushed.
+
+**Why:** Pull request review. Delete from the header was an irreversible
+operation with no question where the sidebar had always asked one. Run now
+while paused and Apply on a paused automation both answered `409` from the
+object, so the header offered commands guaranteed to fail. And when the
+automation's own chat submitted a revision, the object pushed only the
+sidebar list, since no HTTP request of the desktop's was in play to publish a
+sync topic; the page's detail query never heard, so Create stayed disabled on
+a stale definition until a remount or a window-focus refetch.
+
+**Consequences:** Every automations list push now costs a detail refetch on
+whichever automation pages are mounted, which is one at a time. The sidebar
+and the header cannot disagree about what deleting means: one dialog, one
+copy.
+
+### 2026-09-03: An automation's chat is the same feed, under an automation parent
+
+**What changed:** The conversation surface is addressed by its parent through
+`/conversations/:parentId` and the conversation feed socket, and an automation's
+own chat is that surface over substream `0` of the automation. On the desktop,
+`screens/conversation-surface.tsx` is the one composition, taking `parentKind`,
+`parentId`, `substreamId`, and a `renderHeader` slot; the work-stream screen
+and the automation screen are hosts over it, and the automation screen's header
+carries the lifecycle controls. There is no compiler, no narration stream, and
+no draft-specific feed state; the drafting tools are a plugin the ordinary loop
+loads.
+
+**Why:** [`automation-lifecycle.md`](automation-lifecycle.md) records why the
+automation was rebuilt as a conversation parent. For this document the point
+is narrower: the entry of 2026-09-01 below retired the second adapter, and the
+second *surface* is now retired with it, because an automation's conversation
+is a `SubstreamAgent` like any other.
+
+**Consequences:** A change to the feed family has one caller and two hosts,
+the work-stream screen and the automation page, which differ only in the
+controls they keep beside the feed. Any control that belongs to the automation
+(apply, pause, the run list) stays on its page, not in the family.
 
 ### 2026-09-03 — Child feed state cannot leak into or outlive its parent cache
 

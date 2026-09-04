@@ -35,7 +35,7 @@ docs/                      Product, architecture, security, setup, runbooks
 | `apps/api/src/index.ts`, `apps/api/src/worker-events.ts` | The regional API's statically imported HTTP/event graph and platform exports. Heavy stateless providers run in the typed document, Terminal, and Global telemetry-delivery service Workers owned by [`api-worker-deployment.md`](api-worker-deployment.md). |
 | `apps/api/src/services` | Business rules. Route handlers hold none. |
 | `apps/api/src/services/terminal` | Deferred Terminal plugin, Daytona adapter, authority-fenced sandbox control plane, resources, and trusted GitHub publication. |
-| `apps/api/src/durable-objects` | `WorkspaceDO`, model-free `WorkstreamDO`, `SubstreamAgent`, `AutomationAgent`, the shared `MigratableDurableObject` schema base and the `ScheduledDurableObject` alarm base above it, and their SQL-only migration/storage layers. |
+| `apps/api/src/durable-objects` | `WorkspaceDO`, the model-free conversation parents `WorkstreamDO` and `AutomationDO` over their shared `ConversationParentDurableObject` base, `SubstreamAgent`, the shared `MigratableDurableObject` schema base and the `ScheduledDurableObject` alarm base above it, and their SQL-only migration/storage layers. |
 | `apps/api/src/workflows`, `apps/api/src/queues` | Generic/non-workstream orchestration, legacy work-stream drain, and idempotent regional consumers. |
 | `apps/api/src/*-regional-bridge.ts`, `apps/api/src/*-routing-bridge.ts` | The `WorkerEntrypoint` RPC bridges that are the only path from Global to EU. |
 | `apps/api/src/env.ts` | `assertEnvContract` — the one place the Worker environment is parsed. |
@@ -127,24 +127,25 @@ Authority follows the data boundary. Regional D1 is the thin identity/routing
 plane: workspace/member/user identity, opaque connector/object routes,
 migration controls, and bounded operational audit/telemetry. WorkspaceDO owns
 workspace connector/product state, Terminal policy, digests and shared
-schedules, the content-free automation directory and its event-routing ledger,
-resources/notes/memory/R2 references, external delivery, activity, discovery,
-and cross-work-stream query state. Each automation's own product state lives in
-its own `AutomationAgent`. After cutover, `SubstreamAgent` SQLite owns substream product
-state and the full conversation agent loop; `WorkstreamDO` owns aggregate metadata
-and its outboxes. Large activity
+schedules, the content-free automation directory and the external-event
+registrations, resources/notes/memory/R2 references, external delivery,
+activity, discovery, and cross-work-stream query state. Each automation's own
+product state lives in its own `AutomationDO`, which is also the parent of the
+automation's conversation and its runs. `SubstreamAgent` SQLite owns substream
+product state and the full conversation agent loop; `WorkstreamDO` and
+`AutomationDO` own aggregate metadata and their outboxes. Large activity
 payloads, uploads, and snapshots live in R2.
 
 Users and workspaces each own a validated IANA timezone. The desktop detects the
 local system timezone during native authentication and sends it to seed an account
 that has never chosen one; a client that detects nothing sends nothing, and the
 server has no default of its own. Workspace defaults are `America/Los_Angeles` in
-Global and `Europe/London` in EU. Automation compilation preserves an explicit
-trigger timezone and leaves an unnamed one null: the zone is resolved at
-acceptance, inside the automation's own object, against the scope it is being
-accepted with and the account it will run for, and a response fills it back in so
-no client has to. A zone the runtime cannot format refuses acceptance with
-`automation_timezone_invalid` rather than being silently replaced.
+Global and `Europe/London` in EU. Automation drafting preserves an explicit
+trigger timezone and leaves an unnamed one null: the zone is resolved when a
+revision is applied, inside the automation's own object, against the scope it
+is being applied with and the account it will run for. A zone the runtime
+cannot format refuses the apply with `automation_timezone_invalid` rather than
+being silently replaced.
 
 ### Region boundary
 
@@ -436,9 +437,9 @@ Each durable agent attempt holds a renewable SQL lease; run-scope, plugin-activa
 tool receipt-plan/completion, checkpoint, and terminal commits are fenced by
 attempt and lease ownership. The run freezes its principal, eligible
 connections/capabilities, trigger policy, routing/prompt versions, tool-surface
-hash, and limits. The host revalidates principal and work-stream state, the
-frozen automation run context against its parent's **live** lifecycle and
-authority generation, trigger evidence, connection
+hash, and limits. The host revalidates principal and work-stream state, an
+automation run's live state in its parent (`AutomationDO.readRunState`),
+trigger evidence, connection
 ownership/grants, and whether a person has disabled the connection, at admission,
 before credential decryption and tools, and between model turns. A run whose
 automation has since been paused or deleted therefore stops issuing provider
@@ -449,7 +450,7 @@ is durable.
 
 Each run creates a fresh Bind registry. Stable always-active plugins separate
 discovery, time, scoped prose memory, scoped structured tables, work-stream
-operations, and automation architecture; the run registers only the bundles
+operations, and automation drafting; the run registers only the bundles
 applicable to that agent. Each eligible installed connection becomes a
 credential-scoped Bind plugin built from static adapter metadata and narrowed to
 frozen grants. Bound or attached connections can preload; other eligible plugins
@@ -489,10 +490,9 @@ and percentiles answer image/cold-start questions without pretending a provider
 phase is a model-run summary. The Terminal adapter emits both the structured log
 and non-blocking aggregate point; neither is canonical sandbox state.
 
-Durable memory is scoped to an ad-hoc work stream, a user inside a workspace, or
-the workspace itself. An automation's memory is not among them: it lives in that
-automation's own object, and its generated runs reach it through a
-generation-fenced RPC rather than through a WorkspaceDO scope. The host — not
+Durable memory is scoped to an ad-hoc work stream, a user inside a workspace,
+the workspace itself, or an automation, whose chat and runs share one scope of
+kind `automation` in the same WorkspaceDO store. The host — not
 the model — derives the searchable scope union from the frozen execution principal
 and run origin. WorkspaceDO FTS5 and the regional Vectorize index are searched
 concurrently, merged with reciprocal-rank fusion, and rechecked against canonical
@@ -508,15 +508,16 @@ its window fills.
 
 ### Automations and scheduling
 
-Natural-language automation creation compiles into a validated draft inside one
-named `AutomationAgent` Durable Object, which then becomes that automation's
-runtime authority in place: definition, lifecycle, timers, occurrence admission,
-generated-run history, memory, and delivery receipts. A versioned shared template
-still holds reusable behavior, but adopting one copies its definition into an
-independent agent rather than pinning a live subscription.
-[`automation-lifecycle.md`](automation-lifecycle.md) owns all of it; `WorkspaceDO`
-keeps only a content-free directory row, the typed external-event registrations
-that fan a connector event out, and the delivery ledger behind them.
+An automation is one `AutomationDO` Durable Object and one conversation. The
+object is a conversation parent beside `WorkstreamDO`: its substream `0` is the
+chat where the automation is drafted, created, and edited, and every run is a
+child substream under it. The object holds the definition revisions, the
+lifecycle, the schedules, the runs, and the inbound-email receipts; a run reads
+its definition from the parent by revision and reports its state through the
+same effect pipeline every conversation uses.
+[`automation-lifecycle.md`](automation-lifecycle.md) owns all of it;
+`WorkspaceDO` keeps only a content-free sidebar row the object publishes and
+the typed external-event registrations that fan a connector event out.
 
 WorkspaceDO holds one alarm for the earliest due item in its own workspace, and
 its uniqueness constraints are authoritative under repeated alarms. It starts
@@ -524,15 +525,15 @@ generic workflow instances rather than deploying per-automation code.
 
 The alarm's target kinds are due `schedules`, due `resource_watches`, per-task
 maintenance sweeps, and Terminal sandbox deadlines. A `schedules` row names
-exactly one of a connector connection or a digest schedule — automations left
-that table in the durable-lifecycle cutover and now arm their own object's alarm.
-A Durable Object holds one alarm at a time, so each target is a row in
-the object's `_internal_durable_alarms` list, the alarm is armed for the earliest
-of them, and every target due at that instant drains in one wake — each behind
-its own exponential-backoff gate, so a broken connector poll cannot stop a digest.
-Workspaces never contend: each has its own object and its own alarm.
-[`durable-object-alarms.md`](durable-object-alarms.md) covers the mechanism,
-which WorkstreamDO, SubstreamAgent, and AutomationAgent share.
+exactly one of a connector connection or a digest schedule; an automation arms
+its own object's alarm. A Durable Object holds one alarm at a time, so each
+target is a row in the object's `_internal_durable_alarms` list, the alarm is
+armed for the earliest of them, and every target due at that instant drains in
+one wake, each behind its own exponential-backoff gate, so a broken connector
+poll cannot stop a digest. Workspaces never contend: each has its own object
+and its own alarm. [`durable-object-alarms.md`](durable-object-alarms.md)
+covers the mechanism, which WorkstreamDO, SubstreamAgent, and AutomationDO
+share.
 
 A person's scheduled digest is one `schedules` row per delivery time, because a
 single RRULE multiplies `BYHOUR` by `BYMINUTE` and so cannot carry an arbitrary
@@ -596,13 +597,14 @@ precede any LLM classification.
 - **Authority follows the declared storage boundary.** Regional D1 owns
   membership/identity, opaque ingress/object routing, migration, and operational
   audit/telemetry. `WorkspaceDO` owns workspace-scoped connector, Terminal
-  policy, digest/schedule, the content-free automation directory and its
-  external-event routing ledger, resource/note/memory/R2-reference,
+  policy, digest/schedule, the content-free automation directory and the
+  external-event registrations, resource/note/memory/R2-reference,
   activity/discovery, directory, and external-delivery state. Each
-  `AutomationAgent` owns one automation's product state. After a work-stream generation opens, each
-  `SubstreamAgent` owns its substream product state, the model-free
-  `WorkstreamDO` owns aggregate metadata/outbox, and legacy D1 product and pin
-  tables do not exist. R2 holds large payloads; the authority that names each
+  `AutomationDO` owns one automation's product state and is the parent of its
+  conversation and its runs. After a work-stream generation opens, each
+  `SubstreamAgent` owns its substream product state, the model-free parents
+  `WorkstreamDO` and `AutomationDO` own aggregate metadata/outbox, and legacy D1
+  product and pin tables do not exist. R2 holds large payloads; the authority that names each
   workspace reference stays in the owning WorkspaceDO database.
 - **Every boundary a value crosses is parsed at runtime, not asserted by a type
   that build erases.** That covers HTTP requests, JSON responses, queue messages,
@@ -796,6 +798,32 @@ access and no-egress symbolication.
 [`security.md`](security.md) owns these boundaries.
 
 ## Changelog
+
+### 2026-09-03: An automation is a conversation parent, not a sibling authority
+
+**What changed:** `AutomationAgent` is replaced by `AutomationDO`, which sits
+beside `WorkstreamDO` as the second kind of conversation parent over one shared
+base, and whose substream `0` is the automation's own chat. The map above no
+longer shows an automation provisioning work streams for its runs; a run is a
+child substream under the automation. The Worker's conversation surface is
+`/conversations/:parentId` for both kinds of parent, and every asynchronous hop
+between the objects rides `ACTIVITY_QUEUE` with its envelope inline.
+
+**Why:** The previous entry of 2026-08-28 drew the line as "the workspace owns
+the fan-in, the automation owns its state, the run is a work stream". The
+third clause was the compromise that cost the most: a run's work stream needed
+an origin type, an exposed flag, and a directory row the sidebar filtered out,
+because nothing but a work stream could parent a conversation. Making the
+parent role explicit and giving it to the automation removed that. The rest of
+the reasoning is in [`workstream-durable-object.md`](workstream-durable-object.md)
+and [`automation-lifecycle.md`](automation-lifecycle.md).
+
+**Consequences:** The runtime component map has four migrated Durable Object
+classes again (`WorkspaceDO`, `WorkstreamDO`, `AutomationDO`,
+`SubstreamAgent`), and the line a future change should check itself against
+moved: a conversation belongs to a parent, a parent answers the contract in
+`packages/contracts/src/conversation-parent.ts`, and anything that needs to own
+conversations becomes a parent rather than minting hidden work streams.
 
 ### 2026-09-03 — HyperSight is removed as a subsystem
 

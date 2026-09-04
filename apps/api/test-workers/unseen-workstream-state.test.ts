@@ -19,14 +19,14 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   asWorkspaceId,
   asWorkstreamId,
+  ConversationEffectSchema,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
+  type ConversationEffect,
 } from "@rally/contracts";
 
-import { substreamAgentName, workspaceDOName, workstreamDOName } from "../src/durable-objects/names";
-import {
-  WorkstreamRegionalEffectSchema,
-  type WorkstreamRegionalEffect,
-} from "../src/durable-objects/workstream-regional-effect";
+import { conversationObjectName, workspaceDOName, workstreamDOName } from "../src/durable-objects/names";
+import type { Env } from "../src/env";
+import { deliverChildEffects } from "./helpers/conversation-effects";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000007b1");
 const WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-0000000007b2");
@@ -114,8 +114,32 @@ beforeEach(async () => {
 
 function agentStub(): DurableObjectStub {
   return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
-    substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
   ));
+}
+
+/**
+ * Keep an object's outbox readable for the helpers.
+ *
+ * The drain alarm fires the moment an effect commits and hands the rows to
+ * `ACTIVITY_QUEUE`, which nothing in this Worker consumes, so a read placed
+ * after the mutation races the drain (docs/testing.md). A producer that
+ * refuses makes the drain defer the rows instead of deleting them, and the
+ * helpers then hand exactly those rows to the real consumer.
+ */
+async function parkEffectQueue(stub: DurableObjectStub): Promise<void> {
+  await runInDurableObject(stub, (instance) => {
+    const target = instance as unknown as { env: Env };
+    const parked = {
+      send: () => Promise.reject(new Error("effect_queue_parked_by_test")),
+      sendBatch: () => Promise.reject(new Error("effect_queue_parked_by_test")),
+    };
+    target.env = new Proxy(target.env, {
+      get: (current, property, receiver) => property === "ACTIVITY_QUEUE"
+        ? parked
+        : Reflect.get(current, property, receiver),
+    });
+  });
 }
 
 async function product(stub: DurableObjectStub, body: unknown): Promise<{
@@ -131,6 +155,7 @@ async function product(stub: DurableObjectStub, body: unknown): Promise<{
 }
 
 async function startWorkstream(stub: DurableObjectStub, participantUserIds: string[]): Promise<void> {
+  await parkEffectQueue(stub);
   const opened = await product(stub, {
     operation: "initialize",
     auth: AUTH,
@@ -204,16 +229,15 @@ function nextEvent(socket: WebSocket, type: string): Promise<Record<string, unkn
  * What the sidebar is currently being told about one person.
  *
  * Read from the parent object's projection of the child's effects rather than
- * from the child's outbox: the outbox is drained by the alarm the moment an
- * effect lands in it, so counting rows there races the delivery it is meant to
- * be describing. Flushing first is the same RPC the create path uses, which
- * makes the read deterministic instead of alarm-timed.
+ * from the child's outbox: the outbox holds every effect ever enqueued until
+ * it is delivered, while the parent's row is the current answer. Delivery is
+ * driven by hand through the real Queue consumer, which makes the read
+ * deterministic instead of alarm-timed.
  */
 async function viewerState(stub: DurableObjectStub, userId: string): Promise<
-  Extract<WorkstreamRegionalEffect, { kind: "directory_user" }> | null
+  Extract<ConversationEffect, { kind: "directory_user" }> | null
 > {
-  await (stub as unknown as { flushEffectsToWorkstreamDO(): Promise<unknown> })
-    .flushEffectsToWorkstreamDO();
+  await deliverChildEffects(env, stub);
   const parent = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
     workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
   ));
@@ -223,8 +247,8 @@ async function viewerState(stub: DurableObjectStub, userId: string): Promise<
       userId,
     ).toArray());
   const effects = rows
-    .map((row) => WorkstreamRegionalEffectSchema.parse(JSON.parse(row.effect_json)))
-    .filter((effect): effect is Extract<WorkstreamRegionalEffect, { kind: "directory_user" }> => (
+    .map((row) => ConversationEffectSchema.parse(JSON.parse(row.effect_json)))
+    .filter((effect): effect is Extract<ConversationEffect, { kind: "directory_user" }> => (
       effect.kind === "directory_user"
     ));
   return effects.at(-1) ?? null;

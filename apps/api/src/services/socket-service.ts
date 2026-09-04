@@ -1,17 +1,16 @@
 import { RALLY_HEADERS, rallyHeaderAliases } from "@rally/contracts/http-headers";
 import { jwtVerify, SignJWT } from "jose";
 import {
-  asAutomationId,
   asSubstreamId,
   asUserId,
   asWorkspaceId,
   asWorkstreamId,
-  type AutomationId,
   type SubstreamId,
   type UserId,
   type WorkspaceId,
   type WorkstreamId,
 } from "@rally/contracts";
+import type { ConversationParentKind } from "@rally/contracts/conversation-parent";
 import {
   negotiatedSocketTicketSubprotocol,
   offersSocketTicketSubprotocol,
@@ -21,8 +20,7 @@ import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { inFlowSpan } from "../observability/tracing";
 import {
-  automationAgentName,
-  substreamAgentName,
+  conversationObjectName,
   workspaceDOName,
   workstreamDOName,
 } from "../durable-objects/names";
@@ -39,7 +37,9 @@ interface SocketClaims {
   sessionId: string;
   userId: UserId;
   workspaceId: WorkspaceId;
-  workstreamId: WorkstreamId;
+  /** The conversation's parent, of either kind, and its id. */
+  parentKind: ConversationParentKind;
+  parentId: string;
   substreamId: SubstreamId;
   region: "global" | "eu";
   ticketId: string;
@@ -54,6 +54,11 @@ export interface WorkstreamSocketAdmission {
   authorityGeneration: number;
   role: AuthContext["role"];
   analyticsWorkspaceId: string | null;
+  /**
+   * The parent said it is archived. The conversation admits the reader and
+   * refuses their writes: a child never outlives its parent's archive.
+   */
+  parentArchived: boolean;
 }
 
 export interface IssueWorkstreamSocketTicketOptions {
@@ -68,10 +73,6 @@ interface WorkspaceSocketClaims {
   region: "global" | "eu";
   ticketId: string;
   expiresAt: number;
-}
-
-interface AutomationSocketClaims extends WorkspaceSocketClaims {
-  automationId: AutomationId;
 }
 
 interface WorkstreamControlSocketClaims extends WorkspaceSocketClaims {
@@ -123,7 +124,7 @@ function assertSessionPrincipal(auth: AuthContext): void {
 export async function issueSocketTicket(
   env: Env,
   auth: AuthContext,
-  workstreamId: string,
+  parent: { kind: ConversationParentKind; id: string },
   substreamId = "0",
   ticketId: string = uuidV7(),
   afterSequence?: number,
@@ -136,7 +137,8 @@ export async function issueSocketTicket(
     purpose: "workstream_socket",
     sid: auth.sessionId,
     wid: auth.workspaceId,
-    wsid: workstreamId,
+    pk: parent.kind,
+    wsid: parent.id,
     ssid: substreamId,
     region: auth.region,
     ...(afterSequence === undefined ? {} : { after: afterSequence }),
@@ -146,6 +148,7 @@ export async function issueSocketTicket(
       authority_generation: options.admission.authorityGeneration,
       role: options.admission.role,
       analytics_workspace_id: options.admission.analyticsWorkspaceId,
+      ...(options.admission.parentArchived ? { parent_archived: true } : {}),
     } : {}),
   })
     .setProtectedHeader({ alg: "HS256", typ: "JWT" })
@@ -180,58 +183,6 @@ export async function issueWorkspaceSocketTicket(
     .sign(signingKey(env));
 }
 
-export async function issueAutomationSocketTicket(
-  env: Env,
-  auth: AuthContext,
-  automationId: string,
-): Promise<string> {
-  assertSessionPrincipal(auth);
-  const now = Math.floor(Date.now() / 1_000);
-  return new SignJWT({
-    purpose: "automation_socket",
-    sid: auth.sessionId,
-    wid: auth.workspaceId,
-    aid: automationId,
-    region: auth.region,
-  })
-    .setProtectedHeader({ alg: "HS256", typ: "JWT" })
-    .setSubject(auth.userId)
-    .setJti(uuidV7())
-    .setIssuer("avalon-api")
-    .setAudience("avalon-automation-socket")
-    .setIssuedAt(now)
-    .setExpirationTime(now + 60)
-    .sign(signingKey(env));
-}
-
-export async function verifyAutomationSocketTicket(
-  env: Env,
-  ticket: string,
-): Promise<AutomationSocketClaims> {
-  try {
-    const { payload } = await jwtVerify(ticket, signingKey(env), {
-      algorithms: ["HS256"], issuer: "avalon-api", audience: "avalon-automation-socket",
-    });
-    if (
-      payload.purpose !== "automation_socket" || typeof payload.sub !== "string"
-      || typeof payload.sid !== "string" || typeof payload.wid !== "string"
-      || typeof payload.aid !== "string" || typeof payload.jti !== "string"
-      || typeof payload.exp !== "number" || (payload.region !== "global" && payload.region !== "eu")
-    ) throw new Error("Incomplete automation socket claims");
-    return {
-      sessionId: payload.sid,
-      userId: asUserId(payload.sub),
-      workspaceId: asWorkspaceId(payload.wid),
-      automationId: asAutomationId(payload.aid),
-      region: payload.region,
-      ticketId: payload.jti,
-      expiresAt: payload.exp,
-    };
-  } catch {
-    throw new ApiError(401, "invalid_socket_ticket", "The realtime ticket is invalid or expired");
-  }
-}
-
 export async function verifySocketTicket(env: Env, ticket: string): Promise<SocketClaims> {
   try {
     const { payload } = await jwtVerify(ticket, signingKey(env), {
@@ -241,6 +192,7 @@ export async function verifySocketTicket(env: Env, ticket: string): Promise<Sock
       payload.purpose !== "workstream_socket" || typeof payload.sub !== "string" ||
       typeof payload.sid !== "string" ||
       typeof payload.wid !== "string" || typeof payload.wsid !== "string" || typeof payload.ssid !== "string" ||
+      (payload.pk !== "workstream" && payload.pk !== "automation") ||
       typeof payload.jti !== "string" || typeof payload.exp !== "number" ||
       (payload.region !== "global" && payload.region !== "eu")
     ) throw new Error("Incomplete socket claims");
@@ -266,13 +218,15 @@ export async function verifySocketTicket(env: Env, ticket: string): Promise<Sock
         authorityGeneration: payload.authority_generation,
         role: payload.role,
         analyticsWorkspaceId: payload.analytics_workspace_id,
+        parentArchived: payload.parent_archived === true,
       };
     }
     return {
       sessionId: payload.sid,
       userId: asUserId(payload.sub),
       workspaceId: asWorkspaceId(payload.wid),
-      workstreamId: asWorkstreamId(payload.wsid),
+      parentKind: payload.pk,
+      parentId: payload.wsid,
       substreamId: asSubstreamId(payload.ssid),
       region: payload.region,
       ticketId: payload.jti,
@@ -461,7 +415,7 @@ export class SocketService {
   constructor(private readonly env: Env) {}
 
   async upgrade(
-    workstreamId: string,
+    parentId: string,
     substreamId: string,
     queryTicket: string | undefined,
     request: Request,
@@ -475,7 +429,7 @@ export class SocketService {
     const claims = await verifySocketTicket(this.env, socketTicketFromRequest(request, queryTicket));
     if (
       claims.region !== this.env.AVALON_REGION
-      || claims.workstreamId !== workstreamId
+      || claims.parentId !== parentId
       || claims.substreamId !== substreamId
     ) {
       throw new ApiError(403, "socket_ticket_scope_mismatch", "The realtime ticket does not authorize this substream");
@@ -490,7 +444,7 @@ export class SocketService {
       component: "api_socket",
       identity: {
         workspaceId: claims.workspaceId,
-        workstreamId: claims.workstreamId,
+        workstreamId: claims.parentId,
         userId: claims.userId,
         sessionId: claims.sessionId,
         substreamId: claims.substreamId,
@@ -507,10 +461,10 @@ export class SocketService {
         this.env,
         this.env.SUBSTREAM_AGENTS,
         claims.workspaceId,
-        substreamAgentName(
+        conversationObjectName(
           claims.region,
           claims.workspaceId,
-          claims.workstreamId,
+          claims.parentId,
           claims.substreamId,
         ),
       ));
@@ -519,7 +473,9 @@ export class SocketService {
       // receive a live credential on a subrequest it does not authenticate with.
       headers.delete("sec-websocket-protocol");
       headers.set(RALLY_HEADERS.WORKSPACE_ID, claims.workspaceId);
-      headers.set(RALLY_HEADERS.WORKSTREAM_ID, claims.workstreamId);
+      headers.set(RALLY_HEADERS.WORKSTREAM_ID, claims.parentId);
+      headers.set(RALLY_HEADERS.PARENT_ID, claims.parentId);
+      headers.set(RALLY_HEADERS.PARENT_KIND, claims.parentKind);
       headers.set(RALLY_HEADERS.SUBSTREAM_ID, claims.substreamId);
       headers.set(RALLY_HEADERS.SESSION_ID, claims.sessionId);
       headers.set(RALLY_HEADERS.USER_ID, claims.userId);
@@ -536,6 +492,7 @@ export class SocketService {
         ...rallyHeaderAliases(RALLY_HEADERS.SOCKET_ANALYTICS_WORKSPACE_ID),
         ...rallyHeaderAliases(RALLY_HEADERS.SOCKET_AFTER_SEQUENCE),
         ...rallyHeaderAliases(RALLY_HEADERS.SOCKET_SPECULATIVE),
+        ...rallyHeaderAliases(RALLY_HEADERS.PARENT_ARCHIVED),
       ]) headers.delete(name);
       if (claims.afterSequence !== undefined) {
         headers.set(RALLY_HEADERS.SOCKET_AFTER_SEQUENCE, String(claims.afterSequence));
@@ -548,6 +505,7 @@ export class SocketService {
           String(claims.admission.authorityGeneration),
         );
         headers.set(RALLY_HEADERS.SOCKET_ADMISSION_ROLE, claims.admission.role);
+        if (claims.admission.parentArchived) headers.set(RALLY_HEADERS.PARENT_ARCHIVED, "true");
         if (claims.admission.analyticsWorkspaceId !== null) {
           headers.set(
             RALLY_HEADERS.SOCKET_ANALYTICS_WORKSPACE_ID,
@@ -612,50 +570,6 @@ export class WorkspaceSocketService {
     const response = await stub.fetch(
       new Request("https://workspace.internal/socket", { method: "GET", headers }),
     );
-    return withNegotiatedSubprotocol(request, response);
-  }
-}
-
-/** Edge authentication and regional routing for one AutomationAgent feed. */
-export class AutomationSocketService {
-  constructor(private readonly env: Env) {}
-
-  async upgrade(
-    automationId: string,
-    queryTicket: string | undefined,
-    request: Request,
-  ): Promise<Response> {
-    if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
-      throw new ApiError(426, "websocket_upgrade_required", "A WebSocket upgrade is required");
-    }
-    if (!isAllowedSocketOrigin(this.env, request.headers.get("origin"))) {
-      throw new ApiError(403, "socket_origin_forbidden", "The realtime origin is not allowed");
-    }
-    const claims = await verifyAutomationSocketTicket(
-      this.env,
-      socketTicketFromRequest(request, queryTicket),
-    );
-    if (claims.region !== this.env.AVALON_REGION || claims.automationId !== automationId) {
-      throw new ApiError(403, "socket_ticket_scope_mismatch", "The ticket does not authorize this automation");
-    }
-    const stub = await durableObjectStubForWorkspace(
-      this.env,
-      this.env.AUTOMATION_AGENTS,
-      claims.workspaceId,
-      automationAgentName(claims.region, claims.workspaceId, claims.automationId),
-    );
-    const headers = new Headers(request.headers);
-    headers.delete("sec-websocket-protocol");
-    headers.set("x-rally-workspace-id", claims.workspaceId);
-    headers.set("x-rally-user-id", claims.userId);
-    headers.set("x-rally-automation-id", claims.automationId);
-    headers.set(RALLY_HEADERS.SESSION_ID, claims.sessionId);
-    headers.set(RALLY_HEADERS.SOCKET_TICKET_ID, claims.ticketId);
-    headers.set(RALLY_HEADERS.SOCKET_TICKET_EXPIRES_AT, String(claims.expiresAt));
-    const response = await stub.fetch(new Request(
-      "https://automation-agent.internal/socket",
-      { method: "GET", headers },
-    ));
     return withNegotiatedSubprotocol(request, response);
   }
 }

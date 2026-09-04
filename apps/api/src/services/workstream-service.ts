@@ -1,6 +1,6 @@
 import { newId, nowIso } from "@rally/db";
 import { memberSafeHarnessFailureMessage } from "@rally/agent-harness";
-import { HarnessFailureCodeSchema, asHarnessRunId, asSubstreamId, asWorkspaceId, asWorkstreamId, type WorkspaceId, type WorkstreamId } from "@rally/contracts";
+import { HarnessFailureCodeSchema, asHarnessRunId, asWorkspaceId, asWorkstreamId, type WorkspaceId, type WorkstreamId } from "@rally/contracts";
 import type {
   AnswerElicitationRequestSchema,
   CreateMessageRequestSchema,
@@ -15,21 +15,18 @@ import type {
 } from "@rally/contracts";
 import type { z } from "zod";
 import type { AuthContext, Env } from "../env";
-import { substreamAgentName } from "../durable-objects/substream-agent";
+import { conversationObjectName } from "../durable-objects/substream-agent";
 import { substreamLoopId, workspaceDOName } from "../durable-objects/names";
 import { WorkspaceOpportunityOriginEventsResultSchema } from "../durable-objects/workspace-opportunity-protocol";
 import { ApiError } from "../lib/api-error";
+import { publishAccessRevocation } from "./access-revocation";
 import { loopActivationWasRecorded } from "../lib/loop-activation-signal";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { truncateUtf16Safe } from "../lib/text";
 import { activateWorkstreamLoop, publishWorkstreamEvent } from "./integrations";
 import { logStructuredEvent, logWarn } from "../observability/logger";
 import { scheduledWorkstreamModelForExisting } from "./agent-model-flags";
-import {
-  issueSocketTicket,
-  issueWorkstreamControlSocketTicket,
-  WORKSTREAM_SOCKET_TICKET_TTL_SECONDS,
-} from "./socket-service";
+import { issueWorkstreamControlSocketTicket } from "./socket-service";
 import { WorkstreamDirectoryService } from "./workstream-directory-service";
 import {
   activityOriginLocator,
@@ -48,7 +45,7 @@ import {
   wakeupExecutionPrincipal,
   type WorkstreamWakeupRow,
 } from "./workstream-wakeup-service";
-import { requireOpenWorkstreamAuthority, requireWorkstreamIngress } from "./workstream-authority";
+import { requireOpenWorkstreamAuthority } from "./workstream-authority";
 import { WorkstreamObjectClient } from "./workstream-object-client";
 import { WorkstreamObjectCreationService } from "./workstream-object-creation-service";
 import { rpcResultBody } from "../durable-objects/rpc-result";
@@ -165,7 +162,7 @@ async function externalMessageAgent(
     env,
     env.SUBSTREAM_AGENTS,
     workspaceId,
-    substreamAgentName(env.AVALON_REGION, workspaceId, workstreamId),
+    conversationObjectName(env.AVALON_REGION, workspaceId, workstreamId),
   );
 }
 
@@ -280,11 +277,11 @@ export async function launchWorkstreamHarness(
   const workflowInput: WorkstreamWorkflowInput = {
     region: env.AVALON_REGION,
     workspaceId: input.workspaceId,
-    workstreamId: input.workstreamId,
+    parentKind: "workstream",
+    parentId: input.workstreamId,
     loopId: substreamLoopId(input.workstreamId),
     harnessRunId: id,
     triggerMessageId: input.triggerMessageId,
-    automationSubscriptionId: null,
     activityId: null,
     executionPrincipal: input.executionPrincipal,
     ...(input.transcriptFenceMessageId
@@ -334,7 +331,7 @@ export async function launchWorkstreamHarness(
       });
     await emitCorrelatedRunOutcome(executionEnv, {
       workspaceId: input.workspaceId,
-      workstreamId: input.workstreamId,
+      parentId: input.workstreamId,
       harnessRunId: id,
       telemetryOperationId: input.telemetryOperationId,
       telemetrySubjectUserId: input.telemetrySubjectUserId,
@@ -551,77 +548,6 @@ export class WorkstreamService {
     private readonly defer?: (promise: Promise<unknown>) => void,
   ) {}
 
-  /**
-   * Use ticket transit to prepare the exact room admission and first snapshot.
-   *
-   * The signed ticket and durable one-use receipt remain the authorization
-   * boundary. This in-memory work is deliberately best effort: an unavailable
-   * preparation leaves the later upgrade on its existing regional fallback,
-   * never turns a usable ticket into an API failure. `defer` is request-owned
-   * `waitUntil`, so the Worker keeps the binding call alive after sending the
-   * ticket without adding the preparation to ticket latency.
-   */
-  private warmMainSocketSubstream(input: {
-    workstreamId: WorkstreamId;
-    ticketId: string;
-    ticketIssuedAt: number;
-    ticketExpiresAt: number;
-    afterSequence?: number;
-    speculative: boolean;
-    authorityGeneration: number;
-  }): void {
-    if (!this.defer) return;
-    const startedAt = Date.now();
-    this.defer((async () => {
-      try {
-        const stub = await durableObjectStubForWorkspace(
-          this.env,
-          this.env.SUBSTREAM_AGENTS,
-          this.auth.workspaceId,
-          substreamAgentName(
-            this.env.AVALON_REGION,
-            this.auth.workspaceId,
-            input.workstreamId,
-          ),
-        );
-        const prepared = await stub.prepareSocketAdmission({
-          workspaceId: this.auth.workspaceId,
-          workstreamId: input.workstreamId,
-          substreamId: asSubstreamId("0"),
-          userId: this.auth.userId,
-          sessionId: this.auth.sessionId,
-          ticketId: input.ticketId,
-          ticketIssuedAt: input.ticketIssuedAt,
-          ticketExpiresAt: input.ticketExpiresAt,
-          authorityGeneration: input.authorityGeneration,
-          role: this.auth.role,
-          analyticsWorkspaceId: this.auth.analyticsWorkspaceId ?? null,
-          ...(input.afterSequence === undefined ? {} : { afterSequence: input.afterSequence }),
-          speculative: input.speculative,
-        });
-        logStructuredEvent(this.env, "info", "workstream_socket_ticket_warm_finished", {
-          workspace_id: this.auth.workspaceId,
-          workstream_id: input.workstreamId,
-          substream_id: "0",
-          ticket_id: input.ticketId,
-          duration_ms: Math.max(0, Date.now() - startedAt),
-          outcome: "success",
-          preparation_outcome: prepared.outcome,
-        });
-      } catch (error) {
-        logWarn(this.env, "workstream_socket_ticket_warm_finished", {
-          workspace_id: this.auth.workspaceId,
-          workstream_id: input.workstreamId,
-          substream_id: "0",
-          ticket_id: input.ticketId,
-          duration_ms: Math.max(0, Date.now() - startedAt),
-          outcome: "failure",
-          error_name: error instanceof Error ? error.name : "UnknownError",
-        });
-      }
-    })());
-  }
-
   /** The object client, or a 503 refusal on a stack that never opened the authority. */
   private async authoritativeClient(id: string): Promise<WorkstreamObjectClient> {
     await requireOpenWorkstreamAuthority(this.env);
@@ -764,7 +690,18 @@ export class WorkstreamService {
     if (options.projectEffect !== true && (await this.projectConstraints(id)).activeProject) {
       throw new ApiError(409, "project_audience_managed_by_project", "Change project participants before removing this person");
     }
-    return client.removeParticipant(userId);
+    await client.removeParticipant(userId);
+    // The room closes its own sockets for the person it just removed. The
+    // automations it owns admitted them through the room, and nothing in the
+    // room reaches those objects, so this is where the retraction is
+    // published: whoever writes the fact publishes it, in the same request.
+    await publishAccessRevocation(this.env, {
+      reason: "workstream_participant_removed",
+      workspaceId: asWorkspaceId(this.auth.workspaceId),
+      userId,
+      sessionId: null,
+      target: { scope: "workstream_automations", workstreamId: id },
+    });
   }
 
   private async projectConstraints(workstreamId: string) {
@@ -795,64 +732,6 @@ export class WorkstreamService {
     input: AnswerElicitationInput,
   ) {
     return (await this.authoritativeClient(id)).answerElicitation(elicitationId, input);
-  }
-
-  async socketTicket(
-    id: string,
-    substreamId = "0",
-    afterSequence?: number,
-    speculative = false,
-  ) {
-    const workstreamId = asWorkstreamId(id);
-    const [, authority] = await Promise.all([
-      this.requireVisibleWorkstream(id),
-      requireWorkstreamIngress(this.env),
-    ]);
-    // Minted here rather than inside the issuer so the route can log the id the
-    // room will report consuming; see `docs/performance-tracing.md`.
-    const ticketId = newId();
-    const issuedAt = Math.floor(Date.now() / 1_000);
-    const ticket = await issueSocketTicket(
-      this.env,
-      this.auth,
-      id,
-      substreamId,
-      ticketId,
-      afterSequence,
-      speculative,
-      {
-        issuedAt,
-        admission: {
-          authorityGeneration: authority.generation,
-          role: this.auth.role,
-          analyticsWorkspaceId: this.auth.analyticsWorkspaceId ?? null,
-        },
-      },
-    );
-    // The main feed is recorded by work-stream creation. Non-main creation is
-    // not a product surface yet, so an arbitrary child UUID must not
-    // materialize an object merely because its parent work stream is visible.
-    if (substreamId === "0") {
-      this.warmMainSocketSubstream({
-        workstreamId,
-        ticketId,
-        ticketIssuedAt: issuedAt,
-        ticketExpiresAt: issuedAt + WORKSTREAM_SOCKET_TICKET_TTL_SECONDS,
-        ...(afterSequence === undefined ? {} : { afterSequence }),
-        speculative,
-        authorityGeneration: authority.generation,
-      });
-    }
-    const url = new URL(this.env.PUBLIC_API_BASE_URL);
-    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-    url.pathname = `/socket/workstreams/${id}/substreams/${substreamId}`;
-    url.search = new URLSearchParams({ ticket }).toString();
-    return {
-      url: url.toString(),
-      ticket,
-      ticketId,
-      subscriptionBootstrap: afterSequence !== undefined,
-    };
   }
 
   async workstreamControlSocketTicket(id: string) {

@@ -201,10 +201,10 @@ whose position `scrollTo` restores is described from the wire side in
 [`realtime-sockets.md`](realtime-sockets.md); how a message body is rendered
 belongs to [`markdown-rendering.md`](markdown-rendering.md).
 
-This document covers the **work-stream transcript only**. The automation-drafts
-screen (`new-automation.tsx`) carries a second, older streaming follow with its
-own thresholds; it is not built on this hook and
-[`automation-drafts.md`](automation-drafts.md) owns it.
+This document covers the conversation transcript, which a work stream's feed
+and an automation's chat both render through the same surface; the
+automation-drafts screen that carried a second, older streaming follow is
+gone.
 
 ## Failure modes and limits
 

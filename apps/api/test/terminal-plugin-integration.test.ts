@@ -94,9 +94,9 @@ function fixture(capability: "supported" | "unsupported", emergencyDisabled = fa
     TERMINAL_EMERGENCY_DISABLED: emergencyDisabled ? "true" : "false",
   });
   const input: WorkstreamWorkflowInput = {
-    region: "global", workspaceId: W, workstreamId: S,
+    region: "global", workspaceId: W, parentKind: "workstream", parentId: S,
     loopId: `workstream:${S}:substream:0:loop`, harnessRunId: R,
-    triggerMessageId: null, automationSubscriptionId: null, activityId: null,
+    triggerMessageId: null, activityId: null,
     executionPrincipal: { type: "user", userId: U }, reason: "user_message",
   };
   return { database, objectStore, env, input };
@@ -415,6 +415,7 @@ describe("Terminal Bind integration", () => {
         env,
         W,
         S,
+        "0",
         { terminal: resident },
       ),
       input,

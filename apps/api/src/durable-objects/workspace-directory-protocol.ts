@@ -10,7 +10,7 @@ import {
 import { z } from "zod";
 import { deferredZodSchema } from "@rally/contracts/deferred-zod-schema";
 
-import { WorkstreamRegionalEffectEnvelopeSchema } from "./workstream-regional-effect";
+import { ParentEffectEnvelopeSchema } from "@rally/contracts/conversation-effects";
 
 const TimestampSchema = z.string().datetime({ offset: true });
 const UuidV7Schema = IdSchema.refine((value) => value[14] === "7", "must be UUIDv7");
@@ -166,51 +166,6 @@ export const WorkspaceDirectoryVisibleIdsPageSchema = deferredZodSchema(() => z.
   nextCursor: IdSchema.nullable(),
 }));
 
-export const WorkspaceDirectoryExistsRequestSchema = deferredZodSchema(() => z.strictObject({
-  workspaceId: IdSchema,
-  workstreamId: IdSchema,
-}));
-
-export const WorkspaceDirectoryPlannedRequestSchema = deferredZodSchema(() => z.strictObject({
-  workspaceId: IdSchema,
-  userId: IdSchema,
-  automationSubscriptionId: IdSchema,
-  plannedFor: TimestampSchema,
-}));
-
-/** Internal scheduler lookup; unlike the member-facing lookup it is not visibility-filtered. */
-export const WorkspaceDirectoryPlannedAutomationRequestSchema = deferredZodSchema(() => z.strictObject({
-  workspaceId: IdSchema,
-  automationSubscriptionId: IdSchema,
-  plannedFor: TimestampSchema,
-}));
-
-/**
- * An automation's current title, for the origin label on a work stream it made.
- *
- * The work stream lives in its own object and the automation's directory row
- * lives in the workspace's, so this crosses. It used to cross as SQL through
- * the workspace runtime facade, which routes a statement by the table names in
- * it and sends anything it does not recognise to the regional database:
- * `automation_directory` was missing from that allowlist, so the read was
- * answered by D1 with `no such table` and every attempt to open an
- * automation's run work stream returned 500. A method names its tables in the
- * object that has them, and cannot be routed anywhere else.
- */
-export const WorkspaceAutomationOriginLabelRequestSchema = deferredZodSchema(() => z.strictObject({
-  workspaceId: IdSchema,
-  automationId: IdSchema,
-}));
-
-export const WorkspaceAutomationOriginLabelSchema = deferredZodSchema(() => z.strictObject({
-  /**
-   * The automation's title, or null when the workspace has no live directory
-   * row for it. The caller truncates for display; this carries what the
-   * directory holds.
-   */
-  title: z.string().nullable(),
-}));
-
 export const WorkspaceDirectoryPinRequestSchema = WorkspaceDirectoryVisibilityRequestSchema;
 
 export const WorkspaceDirectoryReorderPinsRequestSchema = deferredZodSchema(() => z.strictObject({
@@ -233,60 +188,6 @@ export const WorkspaceDirectoryNotificationStateSchema = deferredZodSchema(() =>
   emailAddress: z.string().email().max(254).nullable(),
 }));
 
-/**
- * What a delivery into a work stream needs to know before it writes.
- *
- * Only the fence and the archive flag: a caller holding this answers "may I
- * still write here", not "what does this room look like". Keeping the shape
- * that small is what stops it becoming a second, staler directory read.
- */
-export const WorkspaceDirectoryDeliveryAuthorityRequestSchema = z.strictObject({
-  workspaceId: IdSchema,
-  workstreamId: IdSchema,
-});
-
-export const WorkspaceDirectoryDeliveryAuthoritySchema = z.strictObject({
-  authorityGeneration: z.number().int().positive(),
-  archived: z.boolean(),
-});
-
-/**
- * Stop hiding the work stream an automation occurrence already ran in.
- *
- * `scope` is the automation's, not the work stream's: a shared automation's
- * output is shared, so a run worth reading is promoted to the workspace. There
- * is no `workstream` here because a room's automation has nothing to expose —
- * its results already arrive in a room people can see. Null leaves the work
- * stream's scope alone, for a run frozen before the automation's scope was
- * recorded beside it: revealing it narrowly is recoverable, and guessing
- * `workspace` would hand somebody's run to everyone.
- */
-export const WorkspaceDirectoryExposeRunRequestSchema = z.strictObject({
-  workspaceId: IdSchema,
-  workstreamId: IdSchema,
-  scope: z.enum(["personal", "workspace"]).nullable(),
-});
-
-/**
- * Which automations a work stream owns, for an effect that follows the room.
- *
- * Answered from the directory rather than by asking each automation object,
- * because the caller does not yet know which objects to ask — that is the
- * question. Lifecycle rides along so a caller can skip an automation an
- * archive has nothing to do to.
- */
-export const WorkspaceDirectoryOwnedAutomationsRequestSchema = z.strictObject({
-  workspaceId: IdSchema,
-  workstreamId: IdSchema,
-});
-
-export const WorkspaceDirectoryOwnedAutomationsSchema = z.strictObject({
-  automations: z.array(z.strictObject({
-    automationId: IdSchema,
-    lifecycle: z.string().min(1).max(40),
-  }).strict()),
-});
-
 export const WorkspaceDirectoryResourceRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   resourceId: IdSchema,
@@ -307,12 +208,7 @@ export const WorkspaceDirectoryInternalItemSchema = deferredZodSchema(() => z.st
   lastActivityAt: TimestampSchema,
   archivedAt: TimestampSchema.nullable(),
   updatedAt: TimestampSchema,
-  originType: z.enum(["ad_hoc", "automation"]),
-  originLabel: z.string().max(120).nullable(),
   createdByUserId: IdSchema.nullable(),
-  automationSubscriptionId: IdSchema.nullable(),
-  automationRunId: IdSchema.nullable(),
-  plannedFor: TimestampSchema.nullable(),
 }));
 
 export const WorkspaceDirectoryLookupRequestSchema = deferredZodSchema(() => z.strictObject({
@@ -367,14 +263,13 @@ export const WorkspaceDirectoryResourceAccessResultSchema = deferredZodSchema(()
     workstreamId: IdSchema,
     scope: z.enum(["personal", "workspace"]),
     createdByUserId: IdSchema.nullable(),
-    automationSubscriptionId: IdSchema.nullable(),
     isParticipant: z.boolean(),
   })).max(10_000),
 }));
 
 export const WorkspaceDirectoryApplyRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
-  envelopes: z.array(WorkstreamRegionalEffectEnvelopeSchema).min(1).max(25),
+  envelopes: z.array(ParentEffectEnvelopeSchema).min(1).max(25),
 }).superRefine((request, context) => {
   for (const [index, envelope] of request.envelopes.entries()) {
     if (envelope.workspaceId !== request.workspaceId) {
@@ -384,16 +279,15 @@ export const WorkspaceDirectoryApplyRequestSchema = deferredZodSchema(() => z.st
         message: "Workspace directory effects must target their owning workspace",
       });
     }
-    if (!["directory_common", "directory_user", "suggestion_feedback"].includes(envelope.effect.kind)) {
+    if (envelope.parentKind !== "workstream"
+      || !["directory_common", "directory_user"].includes(envelope.effect.kind)) {
       context.addIssue({
         code: "custom",
         path: ["envelopes", index, "effect", "kind"],
-        message: "Only workspace-owned directory effects may use the WorkspaceDO handoff",
+        message: "Only a work stream's directory effects may use the WorkspaceDO handoff",
       });
     }
-    if ((envelope.effect.kind === "directory_common"
-      || envelope.effect.kind === "directory_user"
-      || envelope.effect.kind === "suggestion_feedback")
+    if ((envelope.effect.kind === "directory_common" || envelope.effect.kind === "directory_user")
       && !UuidV7Schema.safeParse(envelope.messageId).success) {
       context.addIssue({
         code: "custom",
@@ -401,6 +295,32 @@ export const WorkspaceDirectoryApplyRequestSchema = deferredZodSchema(() => z.st
         message: "Directory state source identities must be UUIDv7",
       });
     }
+  }
+}));
+
+/**
+ * An automation's own sidebar row, published by its object through the same
+ * Queue leg a work stream's aggregate takes.
+ */
+export const WorkspaceAutomationDirectoryApplyRequestSchema = deferredZodSchema(() => z.strictObject({
+  workspaceId: IdSchema,
+  envelope: ParentEffectEnvelopeSchema,
+}).superRefine((request, context) => {
+  if (request.envelope.workspaceId !== request.workspaceId) {
+    context.addIssue({
+      code: "custom",
+      path: ["envelope", "workspaceId"],
+      message: "Automation directory effects must target their owning workspace",
+    });
+  }
+  if (request.envelope.parentKind !== "automation"
+    || request.envelope.effect.kind !== "directory_automation"
+    || request.envelope.effect.automationId !== request.envelope.parentId) {
+    context.addIssue({
+      code: "custom",
+      path: ["envelope", "effect", "kind"],
+      message: "Only an automation's own directory effect may use this handoff",
+    });
   }
 }));
 
@@ -421,7 +341,7 @@ export const WorkspaceDirectoryApplyResultSchema = deferredZodSchema(() => z.str
  */
 export const WorkspaceRegionalEffectApplyRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
-  envelope: WorkstreamRegionalEffectEnvelopeSchema,
+  envelope: ParentEffectEnvelopeSchema,
   actorUserId: IdSchema.nullable(),
   targetUserIds: z.array(IdSchema).max(100),
   recipientIsActiveMember: z.boolean(),
@@ -462,15 +382,6 @@ export type WorkspaceBatchNoteArchiveResult = z.infer<typeof WorkspaceBatchNoteA
 export type WorkspaceDirectoryReadableIdsResult = z.infer<typeof WorkspaceDirectoryReadableIdsResultSchema>;
 export type WorkspaceDirectoryVisibleIdsRequest = z.infer<typeof WorkspaceDirectoryVisibleIdsRequestSchema>;
 export type WorkspaceDirectoryVisibleIdsPage = z.infer<typeof WorkspaceDirectoryVisibleIdsPageSchema>;
-export type WorkspaceDirectoryExistsRequest = z.infer<typeof WorkspaceDirectoryExistsRequestSchema>;
-export type WorkspaceDirectoryPlannedRequest = z.infer<typeof WorkspaceDirectoryPlannedRequestSchema>;
-export type WorkspaceDirectoryPlannedAutomationRequest = z.infer<
-  typeof WorkspaceDirectoryPlannedAutomationRequestSchema
->;
-export type WorkspaceAutomationOriginLabelRequest = z.infer<
-  typeof WorkspaceAutomationOriginLabelRequestSchema
->;
-export type WorkspaceAutomationOriginLabel = z.infer<typeof WorkspaceAutomationOriginLabelSchema>;
 export type WorkspaceDirectoryPinRequest = z.infer<typeof WorkspaceDirectoryPinRequestSchema>;
 export type WorkspaceDirectoryReorderPinsRequest = z.infer<typeof WorkspaceDirectoryReorderPinsRequestSchema>;
 export type WorkspaceDirectoryNotificationRequest = z.infer<typeof WorkspaceDirectoryNotificationRequestSchema>;
@@ -486,6 +397,7 @@ export type WorkspaceDirectoryScheduleTargetsResult = z.infer<typeof WorkspaceDi
 export type WorkspaceDirectoryResourceAccessRequest = z.infer<typeof WorkspaceDirectoryResourceAccessRequestSchema>;
 export type WorkspaceDirectoryResourceAccessResult = z.infer<typeof WorkspaceDirectoryResourceAccessResultSchema>;
 export type WorkspaceDirectoryApplyRequest = z.infer<typeof WorkspaceDirectoryApplyRequestSchema>;
+export type WorkspaceAutomationDirectoryApplyRequest = z.infer<typeof WorkspaceAutomationDirectoryApplyRequestSchema>;
 export type WorkspaceDirectoryApplyResult = z.infer<typeof WorkspaceDirectoryApplyResultSchema>;
 export type WorkspaceRegionalEffectApplyRequest = z.infer<typeof WorkspaceRegionalEffectApplyRequestSchema>;
 export type WorkspaceRegionalEffectApplyResult = z.infer<typeof WorkspaceRegionalEffectApplyResultSchema>;

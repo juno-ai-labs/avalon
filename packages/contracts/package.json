@@ -9,6 +9,8 @@
     "./desktop-deep-link-intent": "./src/desktop-deep-link-intent.ts",
     "./deferred-zod-schema": "./src/deferred-zod-schema.ts",
     "./connector-oauth-providers": "./src/connector-oauth-providers.ts",
+    "./conversation-parent": "./src/conversation-parent.ts",
+    "./conversation-effects": "./src/conversation-effects.ts",
     "./durable-object-migrations": "./src/durable-object-migrations.ts",
     "./engineering-inspection": "./src/engineering-inspection.ts",
     "./http-headers": "./src/http-headers.ts",

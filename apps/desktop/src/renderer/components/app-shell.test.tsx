@@ -39,7 +39,6 @@ function summary(harnessStatus: WorkstreamSummary['harnessStatus'], id = workstr
     id,
     title: 'Draft the reply',
     titleStatus: 'settled',
-    origin: 'ad_hoc',
     scope: 'workspace',
     harnessStatus,
     latestAttentionSequenceNumber: 0,
@@ -93,23 +92,6 @@ describe('upsertProjectDirectory', () => {
 });
 
 describe('workstreamMatchesBatchFilter', () => {
-  it('leaves an automation run alone, the way the object that selects them does', () => {
-    // The sidebar keeps an automation's run work stream out of every heading,
-    // so a grouping action never selects one — and this screen, reached from
-    // the automation rather than from a heading, must not leave as if it had.
-    expect(workstreamMatchesBatchFilter(
-      { ...summary('completed'), origin: 'automation' },
-      {
-        lastActivityAt: {
-          atOrAfter: '2026-08-11T00:00:00.000Z',
-          before: '2026-08-12T00:00:00.000Z',
-        },
-        pinned: false,
-        includeSystem: false,
-      },
-    )).toBe(false);
-  });
-
   it('matches the selected unpinned non-system row against the same half-open range', () => {
     expect(workstreamMatchesBatchFilter(summary('completed'), {
       lastActivityAt: {

@@ -259,7 +259,7 @@ describe("durable UI-to-model transcript projection", () => {
           },
         }),
       }], {}),
-      { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID, triggerMessageId: null },
+      { workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, triggerMessageId: null },
       [
         message("00000000-0000-4000-8000-000000000052", 1, { author: "human", textContent: "Update it" }),
         message(invocationId, 2, { author: "agent", messageType: "tool", structuredContent: { invocation: {} } }),
@@ -299,7 +299,7 @@ describe("durable UI-to-model transcript projection", () => {
         model_content_status: "ready",
         model_content_error_code: null,
       }], { "images/diagram.png": new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]) }),
-      { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID, triggerMessageId: triggerId },
+      { workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, triggerMessageId: triggerId },
       [message(triggerId, 1, {
         author: "human",
         attachments: [{
@@ -337,7 +337,7 @@ describe("durable UI-to-model transcript projection", () => {
         model_content_status: "ready",
         model_content_error_code: null,
       }], { "notes.md": new TextEncoder().encode("historical secret bytes") }),
-      { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID, triggerMessageId: null },
+      { workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, triggerMessageId: null },
       [message("00000000-0000-4000-8000-000000000044", 1, {
         author: "human",
         textContent: "Earlier context",
@@ -405,7 +405,7 @@ describe("durable UI-to-model transcript projection", () => {
 
     const projection = await __integrationTesting.projectModelProtocolTranscript(env, {
       workspaceId: WORKSPACE_ID,
-      workstreamId: WORKSTREAM_ID,
+      parentId: WORKSTREAM_ID,
       triggerMessageId: null,
       executionPrincipal: { type: "user", userId: USER_ID },
     }, [message(invocationId, 1, {
@@ -425,7 +425,7 @@ describe("durable UI-to-model transcript projection", () => {
     const messageId = "00000000-0000-4000-8000-000000000030";
     const projection = await __integrationTesting.projectModelProtocolTranscript(
       projectionEnv([], {}),
-      { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID, triggerMessageId: messageId },
+      { workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, triggerMessageId: messageId },
       // Stored as the selecting member's own turn. The label, not the author, is
       // what routes it here — an ordinary human turn would be replayed as plain
       // instruction, dropping the caveat around the evidence quoted inside it.
@@ -455,7 +455,7 @@ describe("durable UI-to-model transcript projection", () => {
   it("projects an external Slack actor as an attributed user request", async () => {
     const projection = await __integrationTesting.projectModelProtocolTranscript(
       projectionEnv([], {}),
-      { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID, triggerMessageId: null },
+      { workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, triggerMessageId: null },
       [message("00000000-0000-4000-8000-000000000029", 1, {
         author: "external",
         textContent: "Investigate the failed deployment",
@@ -606,7 +606,7 @@ describe("durable UI-to-model transcript projection", () => {
     });
     const projection = await __integrationTesting.projectModelProtocolTranscript(
       projectionEnv([], {}),
-      { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID, triggerMessageId: null },
+      { workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, triggerMessageId: null },
       [
         message("00000000-0000-4000-8000-000000000030", 1, { author: "human", textContent: "Deploy the app" }),
         response,
@@ -644,7 +644,7 @@ describe("durable UI-to-model transcript projection", () => {
       transcriptPort({ [trigger.id]: trigger.sequenceNumber }, asked),
       {
         workspaceId: WORKSPACE_ID,
-        workstreamId: WORKSTREAM_ID,
+        parentId: WORKSTREAM_ID,
         triggerMessageId: trigger.id,
       },
       listMessages,
@@ -685,7 +685,7 @@ describe("durable UI-to-model transcript projection", () => {
       transcriptPort(sequences, bound),
       {
         workspaceId: WORKSPACE_ID,
-        workstreamId: WORKSTREAM_ID,
+        parentId: WORKSTREAM_ID,
         triggerMessageId: trigger.id,
         transcriptFenceMessageId: correction.id,
       },
@@ -724,7 +724,7 @@ describe("durable UI-to-model transcript projection", () => {
       transcriptPort(sequences),
       {
         workspaceId: WORKSPACE_ID,
-        workstreamId: WORKSTREAM_ID,
+        parentId: WORKSTREAM_ID,
         triggerMessageId: trigger.id,
         transcriptFenceMessageId: earlier.id,
       },
@@ -741,7 +741,7 @@ describe("durable UI-to-model transcript projection", () => {
       transcriptPort({}),
       {
         workspaceId: WORKSPACE_ID,
-        workstreamId: WORKSTREAM_ID,
+        parentId: WORKSTREAM_ID,
         triggerMessageId: "00000000-0000-4000-8000-000000000099",
       },
       listMessages,
@@ -766,7 +766,7 @@ describe("durable UI-to-model transcript projection", () => {
 
     const stored = await __integrationTesting.loadTriggerFencedTranscriptMessages(
       transcriptPort({}),
-      { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID, triggerMessageId: null },
+      { workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, triggerMessageId: null },
       listMessages,
     );
 
@@ -784,7 +784,7 @@ describe("durable UI-to-model transcript projection", () => {
 
     await expect(__integrationTesting.loadTriggerFencedTranscriptMessages(
       transcriptPort({}),
-      { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID, triggerMessageId: null },
+      { workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, triggerMessageId: null },
       async () => [oversized],
     )).rejects.toMatchObject({ code: "context_limit_exceeded" });
   });
@@ -812,7 +812,7 @@ describe("durable UI-to-model transcript projection", () => {
         }, stalledReplayStage);
         const projectionPromise = __integrationTesting.projectModelProtocolTranscript(env, {
           workspaceId: WORKSPACE_ID,
-          workstreamId: WORKSTREAM_ID,
+          parentId: WORKSTREAM_ID,
           triggerMessageId: null,
         }, [
           message("00000000-0000-4000-8000-000000000040", 1, {
@@ -916,7 +916,7 @@ describe("durable UI-to-model transcript projection", () => {
 
     const projection = await __integrationTesting.projectModelProtocolTranscript(env, {
       workspaceId: WORKSPACE_ID,
-      workstreamId: WORKSTREAM_ID,
+      parentId: WORKSTREAM_ID,
       triggerMessageId: null,
     }, storedMessages);
 

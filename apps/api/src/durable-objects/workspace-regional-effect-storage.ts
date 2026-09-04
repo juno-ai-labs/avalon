@@ -2,7 +2,7 @@ import type {
   WorkspaceRegionalEffectApplyRequest,
   WorkspaceRegionalEffectApplyResult,
 } from "./workspace-directory-protocol";
-import { isPersonNotificationEffect } from "./workstream-regional-effect";
+import { isPersonNotificationEffect } from "@rally/contracts/conversation-effects";
 
 // WorkstreamDO effect receipts are a replay fence, not history. After this
 // window a redelivery falls back to the idempotent product guards
@@ -89,7 +89,7 @@ export function applyWorkstreamRegionalEnvelope(
         ) VALUES (?, ?, 'workstream', ?, ?, ?, ?, ?, ?, ?, ?, 'workstream', NULL, ?, ?, ?, ?, ?, ?, ?, ?)`,
         effect.eventId,
         effect.eventType,
-        envelope.workstreamId,
+        envelope.parentId,
         effect.subjectSequenceNumber ?? null,
         effect.actorType,
         request.actorUserId,
@@ -97,7 +97,7 @@ export function applyWorkstreamRegionalEnvelope(
         effect.title,
         effect.body,
         effect.canonicalUrl,
-        envelope.workstreamId,
+        envelope.parentId,
         effect.digestible ? 1 : 0,
         epochMs(effect.occurredAt),
         now,
@@ -164,7 +164,7 @@ export function applyWorkstreamRegionalEnvelope(
            ON CONFLICT(intent_id) DO NOTHING`,
           effect.intentId,
           envelope.workspaceId,
-          envelope.workstreamId,
+          envelope.parentId,
           effect.recipientUserId,
           sourceId,
           envelope.generation,
@@ -184,7 +184,7 @@ export function applyWorkstreamRegionalEnvelope(
     insertWorkstreamEffectReceipt(
       storage,
       envelope.messageId,
-      envelope.workstreamId,
+      envelope.parentId,
       envelope.payloadHash,
       now,
     );

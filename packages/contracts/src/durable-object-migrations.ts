@@ -207,27 +207,9 @@ export const DurableObjectMigrationCommandSchema = z.object({
    * the queue precisely because they cannot get an answer from.
    */
   requestedAt: z.number().int().positive(),
-  /**
-   * One merge-triggered, WorkspaceDO-only product-authority cutover. Ordinary
-   * migration-tracker messages omit it and retain their existing behavior.
-   */
-  automationCutover: z.strictObject({
-    workspaceId: z.string().uuid(),
-    expectedDraftIds: z.array(z.string().uuid()).optional(),
-  }).optional(),
 }).superRefine((command, context) => {
-  if (!command.automationCutover) {
-    if (command.objectId === null) {
-      context.addIssue({ code: "custom", path: ["objectId"], message: "migration force requires an object ID" });
-    }
-    return;
-  }
-  if (command.className !== "WorkspaceDO") {
-    context.addIssue({ code: "custom", path: ["className"], message: "automation cutover requires WorkspaceDO" });
-  }
-  const expectedName = `${command.region}:${command.automationCutover.workspaceId}`;
-  if (command.objectName !== expectedName) {
-    context.addIssue({ code: "custom", path: ["objectName"], message: "automation cutover workspace name mismatch" });
+  if (command.objectId === null) {
+    context.addIssue({ code: "custom", path: ["objectId"], message: "migration force requires an object ID" });
   }
 });
 export type DurableObjectMigrationCommand = z.infer<typeof DurableObjectMigrationCommandSchema>;

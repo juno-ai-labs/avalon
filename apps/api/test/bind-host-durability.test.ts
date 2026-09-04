@@ -960,6 +960,27 @@ describe("Bind host durability boundaries", () => {
     })).toEqual({ status: "needs_input", finalTurnId: messageId });
   });
 
+  it("reads a run a tool ended as completed even when the model wrote nothing after it", () => {
+    // A ready draft submitted from the automation's chat ends the run from
+    // the tool; the work is the submission, and the model's silence after it
+    // is not the empty answer the failure code describes. Seen live: every
+    // successful ready submission was logged as a failed run.
+    expect(__integrationTesting.workstreamHarnessTerminalResult({
+      outcome: { status: "completed", completedByTool: true },
+      streamedText: "",
+      finalTurnId: null,
+      ambiguousToolOutcome: false,
+      stoppedByUser: false,
+    })).toEqual({ status: "completed" });
+    expect(__integrationTesting.workstreamHarnessTerminalResult({
+      outcome: { status: "completed" },
+      streamedText: "",
+      finalTurnId: null,
+      ambiguousToolOutcome: false,
+      stoppedByUser: false,
+    })).toMatchObject({ status: "failed", error: { code: "empty_completion" } });
+  });
+
   it("says why an ambiguous halt stopped the run, which nothing else may record", () => {
     const messageId = "00000000-0000-4000-8000-000000000003";
     // An elicitation leaves a question in the transcript to answer. An

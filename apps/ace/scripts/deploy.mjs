@@ -130,11 +130,13 @@ const audience = await ensureAccessApplication();
 await Promise.all([
   retireFlag('hypersight-enabled'),
   retireFlag('agent-model-block-dashboard'),
+  retireFlag('automation-workspace-templates-enabled'),
+  retireFlag('agent-model-automation-compiler'),
+  retireFlag('agent-model-automation-result-disposition'),
 ]);
 await Promise.all([
   ensureFlag('meeting-recording-enabled', 'True shows meeting-recording actions in Electron; false hides them without changing API availability.'),
   ensureFlag('suggested-work-enabled', 'True shows Suggested Work surfaces in Electron; false hides them without changing API availability.'),
-  ensureFlag('automation-workspace-templates-enabled', 'True shows workspace-template surfaces in Electron; false hides them without changing API availability.'),
   ensureFlag('multiple-workspaces-enabled', 'True shows workspace switching, invitations, creation, and background attention in Electron; false hides them without changing API availability.'),
   // Defaults ON, not off like every other managed flag: a digest already
   // sends by default for every existing person, so provisioning this flag

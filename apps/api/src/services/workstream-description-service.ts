@@ -323,7 +323,7 @@ interface WorkstreamDescriptionRow {
   title: string;
   objective: string;
   description_source: string;
-  origin_type: string;
+  parent_kind: string;
   archived_at: number | null;
 }
 
@@ -396,16 +396,17 @@ async function evaluate(
       title: identity.title,
       objective: identity.description,
       description_source: identity.description_source,
-      origin_type: identity.origin_type,
+      parent_kind: identity.parent_kind,
       archived_at: identity.archived_at,
     }
     : null;
   if (!workstream) return { status: "skipped", reason: "workstream_missing" };
   if (workstream.archived_at != null) return { status: "skipped", reason: "archived" };
-  // An automation's work stream describes one run of a saved configuration. Its
-  // description belongs to that configuration, and rewriting it here would put
-  // this loop in an argument with the automation that owns it.
-  if (workstream.origin_type === "automation") return { status: "skipped", reason: "automation_origin" };
+  // An automation's conversation is described by the automation's own
+  // definition, and rewriting it here would put this loop in an argument with
+  // the automation that owns it. The loop already skips this refresh for an
+  // automation parent; this is the same rule at the service's own door.
+  if (workstream.parent_kind === "automation") return { status: "skipped", reason: "automation_parent" };
 
   // Gate 1: the clock. A work stream that has not rested is not looked at,
   // whatever happened in it.

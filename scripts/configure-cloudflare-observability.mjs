@@ -73,15 +73,6 @@ export const SAVED_QUERY_DEFINITIONS = Object.freeze([
     ],
   ),
   savedQuery(
-    "Avalon · Slow inference",
-    "Automation compiler model responses slower than ten seconds.",
-    [
-      filter("event", "eq", "string", "automation_compiler"),
-      filter("stage", "eq", "string", "model_response"),
-      filter("latency_ms", "gt", "number", 10_000),
-    ],
-  ),
-  savedQuery(
     "Avalon · Degraded connector workflows",
     "Connector poll timeouts and terminal provider failures.",
     [group("or", [

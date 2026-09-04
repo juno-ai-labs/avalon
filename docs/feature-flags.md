@@ -81,17 +81,17 @@ Every model-using agent owns exactly one flag, keyed `agent-model-<agent>`:
 | --- | --- | --- | --- |
 | Work-stream agent | `agent-model-workstream` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Inline subagent | `agent-model-inline-child` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
-| Automation architect | `agent-model-automation-compiler` | `OPENROUTER_AUTOMATION_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Meeting notes | `agent-model-meeting-notes` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Addressing classifier | `agent-model-addressing-classifier` | `OPENROUTER_CLASSIFIER_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Work-stream naming | `agent-model-workstream-naming` | `OPENROUTER_CLASSIFIER_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Suggested-work admission | `agent-model-work-opportunity-admission` | `OPENROUTER_STRUCTURED_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Suggested-work ranking | `agent-model-work-opportunity-ranking` | `OPENROUTER_STRUCTURED_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Work-stream description | `agent-model-workstream-description` | `OPENROUTER_STRUCTURED_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
-| Automation result disposition | `agent-model-automation-result-disposition` | `OPENROUTER_STRUCTURED_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 
-The first four names match the `AgentInferenceSource` values written to the
-inference ledger, so a ledger row and a flag key name the same agent. The rest
+The first three names match the `AgentInferenceSource` values written to the
+inference ledger, so a ledger row and a flag key name the same agent; an
+automation run and the conversation that drafts one are `workstream` runs on
+the work-stream agent's flag. The rest
 are the standalone structured-output agents: message addressing uses the
 agent-harness classifier helper; work-stream naming, the two halves of suggested work, and the
 work-stream description loop use the bounded structured-inference gateway.
@@ -163,24 +163,20 @@ pinned work stream with it.
 
 A pin comes from one place — the model selector in the composers that start work,
 which appears only while Application → Developer → **Debug enabled** is on. A new
-work stream carries the choice directly; a new automation carries it into
-acceptance, where it is frozen on the automation's acceptance row and copied into
-every occurrence's `AutomationRunContextV1`. There is now exactly one path that
-creates a run — `AutomationAgent.provisionNextRun`, which serves manual,
-scheduled, connector-event, and inbound-email triggers alike — and it copies
-`modelOverride` from that frozen context onto the run's work stream, so a run
-resolves its model from its own row like every other work stream.
+work stream carries the choice directly. An automation's pin is the
+`model_override` column on its `AutomationDO` row; there is exactly one path
+that creates a run, the object's `provisionRun`, which serves manual,
+scheduled, connector-event, and inbound-email triggers alike, and it copies
+`model_override` onto the run's child conversation, so a run resolves its model
+from its own row like every other conversation.
 
-That used to be three paths — `createRun` in `automation-service.ts`, the
-scheduler's `startAutomation`, and the activity consumer's
-`startActivityAutomation` — two of which built the work-stream row inline, so a
-pin that reached only `createRun` looked correct under **Run now** and was
-silently ignored by every scheduled run. That is how this shipped in review, and
-it is the concrete reason
-[`automation-lifecycle.md`](automation-lifecycle.md) now has one producer. A new
-field a run needs is added to `AutomationRunContextV1`; a field added to the
-work-stream row without going through the context is a field an automation run
-does not get.
+That used to be three paths, two of which built the work-stream row inline, so
+a pin that reached only one looked correct under **Run now** and was silently
+ignored by every scheduled run. That is how this shipped in review, and it is
+the concrete reason [`automation-lifecycle.md`](automation-lifecycle.md) has
+one producer. A field a run needs comes from `readRunDefinition`; a field added
+to the conversation row without going through the definition is a field an
+automation run does not get.
 
 Nothing else writes the column, and choosing nothing writes nothing, so an
 ordinary work stream is unpinned and reads exactly as this document describes
@@ -200,9 +196,9 @@ whole run. [`agent-harness.md`](agent-harness.md#failure-modes-and-limits) owns
 the budget and the failure code. Do not answer a pinned run's provider outage by
 adding fallbacks here.
 
-It reaches only the work-stream agent. The inline subagent and the automation
-architect that drafts the automation keep their own flags: each
-is a distinct agent, and the whole point of giving it a flag was that it can be
+It reaches only the work-stream agent, which is also what drafts an
+automation and runs one. The inline subagent keeps its own flag: it is a
+distinct agent, and the whole point of giving it a flag was that it can be
 moved on its own.
 
 The set of ids a pin may name is closed — `AGENT_MODEL_OVERRIDES` in
@@ -216,16 +212,15 @@ retired from the list without a migration: the work streams still naming it log
 is the resolver that applies all of this; `resolveAgentModelRouting` stays purely
 about flags.
 
-An automation's pin follows the same rule from a different place.
-`CreateAutomationRequestSchema` validates it on write, at acceptance, and it is
-then frozen into the run context every occurrence carries — `AutomationRunContextV1`
-types `modelOverride` as a plain nullable string, because the context is a record
-of what was authorized rather than a second validator.
-`AutomationAgent.provisionNextRun` re-validates it through
-`automationModelOverride` on the way onto each run, so a model retired from
-`AGENT_MODEL_OVERRIDES` since acceptance drops back to the flag's choice and logs
-`workstream_model_override_unknown` rather than being handed to the provider as
-though it still existed. Retiring a model therefore still needs no migration.
+An automation's pin follows the same rule from a different place. The
+automation row's `model_override` is a plain nullable string, a record of what
+was authorized rather than a second validator, and `readRunDefinition` hands it
+to the run as `modelOverride`. `AutomationDO.provisionRun` re-validates it
+through `automationModelOverride` on the way onto each run, so a model retired
+from `AGENT_MODEL_OVERRIDES` since it was set drops back to the flag's choice
+and logs `workstream_model_override_unknown` rather than being handed to the
+provider as though it still existed. Retiring a model therefore still needs no
+migration.
 
 #### Reading it back inside the work stream
 
@@ -301,7 +296,7 @@ A caller supplies only these, and only what it knows:
 | `appEnv` | `APP_ENV` |
 | `workspaceId` | Present wherever the caller knows it; the right key for percentage rollouts |
 | `workstreamId` | Present on work-stream, subagent, and classifier evaluations |
-| `userId` | Present on automation-compiler, meeting-notes, and work-stream naming evaluations |
+| `userId` | Present on meeting-notes and work-stream naming evaluations |
 
 Identity wins over attributes: the loaded facts are spread underneath these, so
 nothing read from D1 can redefine the id a percentage rollout buckets on.
@@ -322,9 +317,9 @@ did. Each id the caller passes brings its facts with it:
 | `userEmailDomain` | string | Email domain of the user the evaluation is for | `userId` |
 | `userRole` | string | `owner`, `admin`, or `member` **in the workspace being evaluated** | `userId` + `workspaceId` |
 | `userPlatformId` | string | The person, stable across regions. **Bucket a per-person rollout by this, not by `userId`** | `userId` |
-| `workstreamOrigin` | string | `ad_hoc` or `automation` | `workstreamId` |
+| `workstreamOrigin` | string | `ad_hoc`; the `automation` value has had no writer since runs became conversations under their automation | `workstreamId` |
 | `workstreamScope` | string | `personal` or `workspace` — who may read it | `workstreamId` |
-| `workstreamCreatedByUserId` | string | Who created it; absent when an automation did | `workstreamId` |
+| `workstreamCreatedByUserId` | string | Who created it | `workstreamId` |
 | `workstreamCreatorEmailDomain` | string | That person's email domain | `workstreamId` |
 | `workstreamFromOpportunity` | boolean | Whether it was started from a suggested work item | `workstreamId` |
 | `workstreamIsSystem` | boolean | Whether it is machinery (`system_kind`), such as a digest's work stream | `workstreamId` |
@@ -398,11 +393,11 @@ carve-out.
   it crosses the authority fence, logs an operational error, and suppresses the
   now-readable row for ten seconds. Later runs load the complete work-stream
   attributes normally.
-- Scheduled creation uses the same resolver. `AutomationAgent.provisionNextRun`
-  calls `scheduledWorkstreamModel` after the child object is provisioned but
-  before its harness run is admitted, when the authoritative shell still carries
-  placeholder facts — which is not a valid targeting subject, so that resolver
-  deliberately loads workspace attributes only. A pinned automation skips the
+- Scheduled creation uses the same resolver. `AutomationDO.provisionRun`
+  calls `scheduledWorkstreamModel` after the run's child conversation is
+  provisioned but before its harness run is admitted, when the authoritative
+  shell still carries placeholder facts, which is not a valid targeting
+  subject, so that resolver deliberately loads workspace attributes only. A pinned automation skips the
   call, but only after `automationModelOverride` has accepted the pin; a pin it
   drops falls through to the flag like an unpinned run.
 - A **failed read is held down for ten seconds**, keyed by entity and subject.
@@ -460,14 +455,13 @@ guarantee. The inference ledger records what each attempt actually used.
 ### Client-visible flags
 
 A client flag decides what the desktop is allowed to *offer*, or how it should
-behave. There are eight today:
+behave. There are seven today:
 
 | Flag key | Type | Default | Decides |
 | --- | --- | --- | --- |
 | `developer-settings` | boolean | `false` | Whether Application → Developer exists on this device |
 | `meeting-recording-enabled` | boolean | `false` | Whether Electron shows meeting-recording actions |
 | `suggested-work-enabled` | boolean | `false` | Whether Electron shows Suggested Work surfaces |
-| `automation-workspace-templates-enabled` | boolean | `false` | Whether Electron shows workspace-template surfaces |
 | `live-artifacts-enabled` | boolean | `false` | Whether Electron shows live-artifact surfaces — the rail's site detail and preview pane, the Data view, and the artifact window. Presentation only: an artifact's authorization is structural, so a URL somebody already holds keeps working through its session checks whether or not this is on. See [`live-web-artifacts.md`](live-web-artifacts.md) |
 | `digests-enabled` | boolean | `true` | Whether Electron shows the Digest settings section — resolved through `digest-flags.ts`, the same function that gates delivery; see [`digests.md`](digests.md#the-run) |
 | `multiple-workspaces-enabled` | boolean | `false` | Whether Electron shows workspace switching, invitations, creation, and background attention |
@@ -475,7 +469,7 @@ behave. There are eight today:
 
 `GET /feature-flags` serves them all as one object — `{ "developerSettings":
 false, "meetingRecordingEnabled": false,
-"suggestedWorkEnabled": false, "automationWorkspaceTemplatesEnabled": false,
+"suggestedWorkEnabled": false,
 "digestsEnabled": true, "multipleWorkspacesEnabled": false,
 "controlTowerRefreshSeconds": 60 }` — resolved for the
 signed-in person. It answers under *identity* auth rather than workspace auth:
@@ -639,13 +633,12 @@ choice *and* the flag, computed once in `desktopApplicationSettings()`:
 - **A malformed variation is rejected whole, never merged field by field.**
 - **A work stream's pin wins and the flag is not consulted at all.** A rollout
   reaching the workspace must not quietly take a pinned work stream with it.
-- **The one path that creates a run copies `model_override` onto that run's work
-  stream.** `AutomationAgent.provisionNextRun` reads it from the run's frozen
-  `AutomationRunContextV1`, which acceptance filled from the automation's
-  acceptance row. The invariant used to read "every path", because there were
-  three and two of them built the row inline; a pin that reached only `createRun`
-  looked correct under **Run now** and was silently ignored by every scheduled
-  run. A second producer brings that failure straight back.
+- **The one path that creates a run copies `model_override` onto that run's
+  conversation.** `AutomationDO.provisionRun` reads it from the automation row.
+  The invariant used to read "every path", because there were three and two of
+  them built the row inline; a pin that reached only one looked correct under
+  **Run now** and was silently ignored by every scheduled run. A second producer
+  brings that failure straight back.
 - **A pin carries no fallbacks.** It is a request to observe one specific model,
   and routing onward would answer a question nobody asked. A provider fault on a
   pinned run is recovered by retrying that same model, never by widening the
@@ -654,7 +647,7 @@ choice *and* the flag, computed once in `desktopApplicationSettings()`:
   write *and* on read, which is what lets a model be retired without a migration.
   A work stream's pin is re-validated by `resolveWorkstreamModelRouting`; an
   automation's frozen pin by `automationModelOverride` as each run is
-  provisioned. A run path that reads `AutomationRunContextV1.modelOverride`
+  provisioned. A run path that reads the automation's `model_override`
   without that call reintroduces the gap — the context's type is deliberately
   wide.
 - **Identity is spread over the loaded attributes, never under them**, so nothing
@@ -843,7 +836,7 @@ decision about both regions at once, not a local change to a loader.
 
 Ace automatically ensures all ten `agent-model-*` JSON flags plus
 `meeting-recording-enabled`, `suggested-work-enabled`,
-`automation-workspace-templates-enabled`, `multiple-workspaces-enabled`,
+`multiple-workspaces-enabled`,
 `live-artifacts-enabled`, and `digests-enabled` exist on every
 merge-to-main deployment. It seeds model flags from the checked-in Worker
 defaults and does not overwrite an existing definition. Every product flag
@@ -1122,6 +1115,27 @@ add it to the attribute table here. If it needs a read of its own, it needs a
 cache entry of its own — three reads is the standing budget for an evaluation.
 
 ## Changelog
+
+### 2026-09-03: The automation compiler and disposition roles are gone
+
+**What changed:** `agent-model-automation-compiler` and
+`agent-model-automation-result-disposition` are no longer roles, and
+`OPENROUTER_AUTOMATION_MODEL` is no longer a Worker variable. Drafting an
+automation is a turn of the work-stream agent in the automation's own
+conversation, and a run posts its own result, so both roles lost their caller.
+`automation-workspace-templates-enabled` is gone with templates. An
+automation's pin lives on its `AutomationDO` row and reaches each run through
+`readRunDefinition`; the run-context copy it used to be frozen into no longer
+exists.
+
+**Why:** [`automation-lifecycle.md`](automation-lifecycle.md) records the
+rebuild; this entry records that two flags whose agents no longer exist were
+removed rather than left as dead keys a rollout could target.
+
+**Consequences:** A pinned automation still bypasses the flag on every run, and
+the one producer rule still holds; the object's `provisionRun` is that
+producer. `workstreamOrigin` remains a targeting attribute but only ever reads
+`ad_hoc` now.
 
 ### 2026-09-03 — HyperSight flags and model selection are deleted
 

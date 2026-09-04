@@ -13,6 +13,8 @@ import {
   executeAutomationCreatorDiscoveryTool,
   parseAutomationSubmission,
   AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS,
+  automationSubmissionTarget,
+  withoutUnusableDraftResourceIds,
   type AutomationCreatorPluginCatalogEntry,
   type HarnessTool,
   type HarnessToolContext,
@@ -62,8 +64,17 @@ export interface AutomationCreatorToolHost {
     searchPeople(query: string): Promise<unknown>;
     searchResources(query: string): Promise<unknown>;
   };
+  /** The automations this conversation may edit, each with its current definition. */
+  automationDirectoryPort?: {
+    listAutomations(): Promise<unknown>;
+  };
   draftMutationPort?: {
-    submitDraft(draft: AutomationDraft, context: HarnessToolContext): Promise<unknown>;
+    /** `target` names an automation from `listAutomations`; null creates one. */
+    submitDraft(
+      draft: AutomationDraft,
+      context: HarnessToolContext,
+      target: { automationId: string | null },
+    ): Promise<unknown>;
     setEvaluatorRules(
       rules: unknown,
       context: HarnessToolContext,
@@ -179,6 +190,16 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
       },
     },
     {
+      definition: creatorDefinition("automations_list"),
+      execute: async () => {
+        if (!input.automationDirectoryPort) throw new Error("automation_directory_host_unavailable");
+        return {
+          output: await input.automationDirectoryPort.listAutomations(),
+          summary: "Listed the automations this conversation can edit",
+        };
+      },
+    },
+    {
       definition: creatorDefinition("submit_draft"),
       serial: true,
       /**
@@ -265,7 +286,9 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
             );
           }
         }
-        await input.draftMutationPort?.submitDraft(parsed.data, context);
+        await input.draftMutationPort?.submitDraft(parsed.data, context, {
+          automationId: automationSubmissionTarget(raw),
+        });
         draftState.submitted = parsed.data;
         await input.onDiagnostic?.({
           stage: "complete",
@@ -285,9 +308,10 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
     {
       definition: creatorDefinition("set_evaluator_rules"),
       serial: true,
-      validateInput: (raw) => evaluatorRuleIssues(raw),
-      execute: async (raw, context) => {
+      validateInput: (raw) => evaluatorRuleIssues(withoutUnusableDraftResourceIds(raw, catalog)),
+      execute: async (rawArguments, context) => {
         if (!input.draftMutationPort) throw new Error("automation_draft_mutation_host_unavailable");
+        const raw = withoutUnusableDraftResourceIds(rawArguments, catalog);
         // The harness consults `validateInput` only after the executor has
         // already thrown a ZodError, so a semantic check that lives there
         // alone never runs — the rule reaches durable storage unchecked. The
@@ -340,18 +364,24 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
           const resolvedResource = evaluator.source.resourceId
             ? resolvedAutomationResources.get(evaluator.source.resourceId)
             : undefined;
+          // A resource belongs to a rule when the plugin that reaches it is the
+          // rule's source plugin. A search result that also names binding keys
+          // narrows it further; one that names none is not a refusal.
           if (
             evaluator.source.resourceId
             && (
               !resolvedResource
               || resolvedResource.pluginId !== plugin.pluginId
-              || !resolvedResource.sourceBindingKeys.includes(evaluator.source.sourceBindingKey)
+              || (
+                resolvedResource.sourceBindingKeys.length > 0
+                && !resolvedResource.sourceBindingKeys.includes(evaluator.source.sourceBindingKey)
+              )
             )
           ) {
             issues.push({
               code: "custom",
               path: ["evaluators", index, "source", "resourceId"],
-              message: "This resource is not one this plugin can watch. Find it with resources_search and use an ID it returns for this source binding.",
+              message: "This resource is not one this plugin can watch. Find it with resources_search and use an ID it returns for this source binding, or omit resourceId when the rule is not about one resource.",
               input: evaluator.source.resourceId,
             });
           }
@@ -370,18 +400,35 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
                 input: evaluator.source.resourceId,
               });
             }
-            if (!descriptor || evaluator.when.kind !== "dnf") continue;
-            for (const [groupIndex, group] of evaluator.when.anyOf.entries()) {
-              for (const [leafIndex, leaf] of group.allOf.entries()) {
+            if (!descriptor || evaluator.when.kind !== "all") continue;
+            {
+              for (const [leafIndex, leaf] of evaluator.when.allOf.entries()) {
                 const field = (descriptor.filterFields ?? []).find((candidate) => candidate.key === leaf.attribute);
+                // An open descriptor's fields are the payload's own keys, which
+                // nobody declared: the leaf is checked for shape only, the same
+                // rule the accept-side evaluator applies. The two must agree,
+                // or a rule the conversation could write is refused at accept,
+                // or one it could not write is admitted there.
+                if (descriptor.openFilterFields === true && leaf.attribute.includes(".")) {
+                  issues.push({
+                    code: "custom",
+                    path: ["evaluators", index, "when", "allOf", leafIndex, "attribute"],
+                    message: "Name the payload key bare, without a metadata. prefix: the event's metadata keys are the filter fields themselves.",
+                    input: leaf.attribute,
+                  });
+                  continue;
+                }
                 if (
-                  !field
-                  || !(field.operators ?? []).includes(leaf.operator)
-                  || (leaf.kind !== "presence" && leaf.kind !== field.valueType)
+                  descriptor.openFilterFields !== true
+                  && (
+                    !field
+                    || !(field.operators ?? []).includes(leaf.operator)
+                    || (leaf.kind !== "presence" && leaf.kind !== field.valueType)
+                  )
                 ) {
                   issues.push({
                     code: "custom",
-                    path: ["evaluators", index, "when", "anyOf", groupIndex, "allOf", leafIndex],
+                    path: ["evaluators", index, "when", "allOf", leafIndex],
                     message: "This filter field, operator, or value type is not one the plugin declares. Use a field from automation_plugin_inspect with one of the operators it lists and a value of the type it names.",
                     input: leaf,
                   });
@@ -389,11 +436,11 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
                 if (
                   (leaf.kind === "person_id" || leaf.kind === "person_id_array")
                   && (Array.isArray(leaf.value) ? leaf.value : [leaf.value])
-                    .some((personId) => !resolvedAutomationPersonIds.has(personId))
+                    .some((personId: string) => !resolvedAutomationPersonIds.has(personId))
                 ) {
                   issues.push({
                     code: "custom",
-                    path: ["evaluators", index, "when", "anyOf", groupIndex, "allOf", leafIndex, "value"],
+                    path: ["evaluators", index, "when", "allOf", leafIndex, "value"],
                     message: "This person ID was never resolved. Find the person with people_search and use an ID it returned.",
                     input: leaf.value,
                   });
@@ -420,6 +467,8 @@ export const AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE = [
   "write that send and its recipient into the instructions as a step, because the run performs it with its own tools",
   "and a result the instructions do not send goes nowhere.",
   "An automation can never deliver into a different work stream, so do not offer to send results to one.",
+  "To change an automation that already exists, call automations_list, start from its current definition,",
+  "and submit the whole revised draft with its automationId; a person applies the change the same way they accepted it.",
 ].join(" ");
 
 /**

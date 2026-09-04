@@ -7,8 +7,8 @@ import {
   renderSemanticTriggerMessages,
   renderScheduledDigestBriefMessage,
   renderTriggerActivityMessage,
-  renderAutomationResultDispositionMessages,
   renderUntrustedAutomationResultMessage,
+  renderUntrustedExternalEventMessage,
   renderUntrustedInboundEmailMessage,
   renderUntrustedSlackOriginMessage,
   renderWorkstreamDescriptionMessages,
@@ -93,7 +93,7 @@ describe("prompt renderers", () => {
           objective: "Produce the scheduled weekly engineering brief.",
           automation: workstreamAutomation,
         }),
-        hash: "b80be0deda1ee6ba4f2a4884d77f840342106f68cd9d5c47e272a3d4b9ec22ab",
+        hash: "0cf23c044417f17bf9d0e9a8ad1c12f1f903d33db90413eb99fc1258e40dcbc5",
       },
       semanticTrigger: {
         actual: renderSemanticTriggerMessages({
@@ -226,7 +226,7 @@ describe("prompt renderers", () => {
     expect(prompt).not.toMatch(/\n{3,}/u);
   });
 
-  it("tells an automation run that Rally delivers its result, and where", () => {
+  it("tells a room's automation run that the post-result tool is how the room hears it", () => {
     const prompt = renderWorkstreamSystemPrompt({
       title: "Weekly engineering brief: 2026-08-07",
       objective: "Produce the scheduled weekly engineering brief.",
@@ -235,11 +235,12 @@ describe("prompt renderers", () => {
 
     expect(prompt).toContain('"destination": "00000000-0000-7000-8000-0000000000aa"');
     expect(prompt).toContain("# Result delivery");
-    expect(prompt).toContain("Rally sends this run's final message to every destination in the task context's automation.resultDelivery");
-    // The room is the only destination Rally delivers to now, and the one this
-    // section most needs to name: a room-owned automation whose instructions
-    // say "post it here" would otherwise post the result a second time.
-    expect(prompt).toContain("A `workstream` destination is this room");
+    // Nothing delivers a final message for a run any more. The room that owns
+    // the automation hears a result only through the one tool that posts
+    // there, so the section names the tool rather than promising a delivery.
+    expect(prompt).toContain("is the room that owns this automation");
+    expect(prompt).toContain("the one way a result reaches that room is the automation_post_result tool");
+    expect(prompt).not.toContain("Rally sends this run's final message");
   });
 
   it("tells an automation with no destination that sending is its own work", () => {
@@ -257,7 +258,7 @@ describe("prompt renderers", () => {
     expect(undelivered).toContain("# Result delivery");
     expect(undelivered).toContain("Rally sends this run's result nowhere");
     expect(undelivered).toContain("sending it is part of doing the work, with your own tools, inside this run");
-    expect(undelivered).not.toContain("Rally sends this run's final message to every destination");
+    expect(undelivered).not.toContain("automation_post_result");
   });
 
   it("charges the delivery rule to no interactive run", () => {
@@ -388,23 +389,13 @@ describe("prompt renderers", () => {
       metadata: { body: injection },
     });
     const emailMessage = renderUntrustedInboundEmailMessage(injection);
+    const eventMessage = renderUntrustedExternalEventMessage(injection);
     // An automation's result is its model's prose wrapped around whatever its
     // connector tools read, so both the name and the body are outside content.
     const activationMessage = renderUntrustedAutomationResultMessage({
       automationName: injection,
       deliveredAt: "2026-08-03T00:00:00.000Z",
       text: injection,
-    });
-    // The classifier reads that same result. Its system prompt must not carry
-    // it, and the user message must.
-    const dispositionMessages = renderAutomationResultDispositionMessages({
-      automationName: injection,
-      automationObjective: injection,
-      triggerKind: "external_event",
-      triggerSummary: injection,
-      result: injection,
-      recentDispositions: ["done"],
-      reach: { canDeliver: true, canExpose: false },
     });
     // A digest brief is Avalon's instruction wrapped around connector-derived
     // event titles and bodies, so it carries outside content and belongs here.
@@ -444,12 +435,10 @@ describe("prompt renderers", () => {
     // however many user-role messages the renderer grows.
     expect(activityMessage).toMatchObject({ role: "user" });
     expect(emailMessage).toMatchObject({ role: "user" });
+    expect(eventMessage).toMatchObject({ role: "user" });
+    expect(eventMessage.content).toContain(injection);
     expect(activationMessage).toMatchObject({ role: "user" });
     expect(activationMessage.content).toContain(injection);
-    expect(dispositionMessages[0]).toMatchObject({ role: "system" });
-    expect(dispositionMessages[0]!.content).not.toContain(injection);
-    expect(dispositionMessages[1]).toMatchObject({ role: "user" });
-    expect(dispositionMessages[1]!.content).toContain(injection);
     expect(digestMessage).toMatchObject({ role: "user" });
     expect(digestMessage.content).toContain(injection);
     expect(semanticMessages[0]!.content).not.toContain(injection);

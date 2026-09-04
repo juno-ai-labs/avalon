@@ -101,7 +101,7 @@ function env(): Env {
 
 describe("a tool-receipt port built inside the object that owns the receipts", () => {
   it("answers out of the carried storage instead of dispatching", async () => {
-    const carried = withLocalWorkstreamAuthorities(env(), WORKSPACE, WORKSTREAM, { toolReceipt: residentReceipts() });
+    const carried = withLocalWorkstreamAuthorities(env(), WORKSPACE, WORKSTREAM, "0", { toolReceipt: residentReceipts() });
 
     const port = createToolReceiptObjectPort(carried, WORKSPACE, WORKSTREAM);
 
@@ -109,7 +109,7 @@ describe("a tool-receipt port built inside the object that owns the receipts", (
   });
 
   it("still dispatches for a different work stream on the same environment", async () => {
-    const carried = withLocalWorkstreamAuthorities(env(), WORKSPACE, WORKSTREAM, { toolReceipt: residentReceipts() });
+    const carried = withLocalWorkstreamAuthorities(env(), WORKSPACE, WORKSTREAM, "0", { toolReceipt: residentReceipts() });
 
     const port = createToolReceiptObjectPort(carried, WORKSPACE, OTHER_WORKSTREAM);
 
@@ -124,12 +124,14 @@ describe("a tool-receipt port built inside the object that owns the receipts", (
       env(),
       WORKSPACE,
       WORKSTREAM,
+      "0",
       { toolReceipt: residentReceipts() },
     );
     const second = withLocalWorkstreamAuthorities(
       first,
       WORKSPACE,
       OTHER_WORKSTREAM,
+      "0",
       { toolReceipt: residentReceipts() },
     );
 
@@ -163,7 +165,8 @@ describe("a tool-receipt port built inside the object that owns the receipts", (
 describe("the rule that decides whether this object owns a work stream's authorities", () => {
   const identity = {
     workspaceId: asWorkspaceId(WORKSPACE),
-    workstreamId: asWorkstreamId(WORKSTREAM),
+    parentKind: "workstream" as const,
+    parentId: asWorkstreamId(WORKSTREAM),
   };
   const target = { workspaceId: WORKSPACE, workstreamId: WORKSTREAM, substreamId: "0" };
 

@@ -494,8 +494,9 @@ Automation email may start a run, and the sender match against active
 membership is the only control on it: since 2026-09-03 such a run holds the same
 connector and web tools as every other automation run, for the reasons the
 changelog entry of that date records, so a From address that passes the screen
-steers a run that can write and send. An atomic per-address hourly budget bounds
-model spend if an address leaks or a sender is spoofed.
+steers a run that can write and send. There is no per-address rate limit; a
+limit is a decision for when mail volume exists, and its number would be the
+team's ([`adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md)).
 
 Audit events cover sign-in and session changes, membership, connector
 authorization and revocation, external writes, automation changes, suggestion

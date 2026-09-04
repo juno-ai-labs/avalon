@@ -20,6 +20,8 @@ export function createTranscriptObjectPort(
   workspaceId: string,
   workstreamId: string,
   localStorage?: WorkstreamTranscriptStorage,
+  /** Which of the parent's conversations; the main one by default. */
+  substreamId?: string,
 ): TranscriptObjectPort {
-  return createObjectPort(env, workspaceId, workstreamId, CONTRACT, localStorage);
+  return createObjectPort(env, workspaceId, workstreamId, CONTRACT, localStorage, substreamId);
 }

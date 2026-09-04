@@ -103,20 +103,6 @@ export class WorkstreamDirectoryService {
     );
   }
 
-  async plannedForAutomation(
-    automationSubscriptionId: string,
-    plannedFor: string,
-  ): Promise<Workstream | null> {
-    const workspace = await this.workspace();
-    const result = await workspace.plannedWorkstream({
-      workspaceId: this.auth.workspaceId,
-      userId: this.auth.userId,
-      automationSubscriptionId,
-      plannedFor,
-    });
-    return result ? WorkstreamSchema.parse(result) : null;
-  }
-
   async pin(workstreamId: string): Promise<{ items: Workstream[] }> {
     const workspace = await this.workspace();
     try {

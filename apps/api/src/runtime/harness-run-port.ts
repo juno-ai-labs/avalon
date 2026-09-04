@@ -35,6 +35,8 @@ export function createHarnessRunObjectPort(
   workspaceId: string,
   workstreamId: string,
   localStorage?: WorkstreamHarnessRunStorage,
+  /** Which of the parent's conversations; the main one by default. */
+  substreamId?: string,
 ): HarnessRunObjectPort {
-  return createObjectPort(env, workspaceId, workstreamId, CONTRACT, localStorage);
+  return createObjectPort(env, workspaceId, workstreamId, CONTRACT, localStorage, substreamId);
 }

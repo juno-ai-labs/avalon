@@ -36,6 +36,8 @@ interface MentionCandidate {
 }
 
 interface WorkstreamComposerProps {
+  /** What the empty box invites; an automation's conversation asks for its instructions. */
+  placeholder?: string;
   api?: Pick<RallyApi, 'getTranscriptionSocketTicket'>;
   workstream: WorkstreamDetail;
   workspaceId?: string;
@@ -81,6 +83,7 @@ const BASE_COMMANDS: ComposerCommand[] = [
 ];
 
 export function WorkstreamComposer({
+  placeholder = 'Message the work stream…',
   api,
   workstream,
   workspaceId = 'test-workspace',
@@ -386,7 +389,7 @@ export function WorkstreamComposer({
       )}
       <ComposerInput
         api={api}
-        ariaLabel="Message the work stream"
+        ariaLabel={placeholder.replace(/…$/u, '')}
         attachments={attachments}
         error={error}
         fileInputRef={fileInputRef}
@@ -443,7 +446,7 @@ export function WorkstreamComposer({
         onSelect={() => refreshOpenMentionQuery(text)}
         onSubmit={send}
         onValueChange={updateText}
-        placeholder="Message the work stream…"
+        placeholder={placeholder}
         ref={textareaRef}
         shouldSubmitOnEnter={() => mentionQuery === null}
         submitAccessory={workstream.harnessStatus === 'running'

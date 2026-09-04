@@ -4,7 +4,6 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 import { IconDots, IconLock } from '@tabler/icons-react';
 import clsx from 'clsx';
 import {
-  AlertTriangle,
   Archive,
   ChevronDown,
   ChevronsLeft,
@@ -44,7 +43,6 @@ import {
   workstreamMarkerStatus,
   type RecencyGroup,
 } from '../lib/format';
-import { automationAttentionNotice } from '../lib/automation-attention';
 import { useNamingSkeleton } from '../lib/naming-skeleton';
 import { desktopBridge } from '../lib/platform';
 import { useWorkstreamSocketHoverWarmup, useWorkstreamSocketOpenContext } from '../lib/workstream-socket-pool';
@@ -58,6 +56,7 @@ import {
 import type { AutomationSummary, NoteSummary, Workspace, WorkspaceMember, WorkstreamSummary } from '../lib/types';
 import { MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, useUiStore } from '../lib/ui-store';
 import { useDebugEnabled } from '../lib/use-debug-enabled';
+import { DeleteAutomationDialog } from './delete-automation-dialog';
 import { Avatar, AvatarStack, Badge, Button, IconButton, InlineError, Modal, StatusDot, TitleSkeleton } from './primitives';
 import { ProjectIcon, ProjectSidebarSection } from './project-sidebar-section';
 import { SidebarSkeletonGroup, SidebarSkeletonRows } from './sidebar-skeleton';
@@ -354,6 +353,10 @@ function CopyWorkstreamLinkItem({ workstreamId, workspace }: {
   );
 }
 
+function automationScopeLabel(scope: AutomationSummary['scope']): string {
+  return scope === 'you' ? 'You' : scope === 'workspace' ? 'Workspace' : 'Work stream';
+}
+
 /** The durable automation route currently open, excluding the new route. */
 function useOpenDraftId(): string | null {
   const location = useLocation();
@@ -374,39 +377,30 @@ function AutomationRow({
 }): React.JSX.Element {
   const isDraft = automation.status === 'draft';
   const draftActive = useOpenDraftId() === automation.id;
-  // A row is one line, so it carries the fact and not the reason: the words for
-  // why are on the automation's own screen, which is one click away.
-  const attention = automation.attention ? automationAttentionNotice(automation.attention) : null;
   return (
     <ContextMenu.Root>
       <ContextMenu.Trigger asChild>
         <div className="sidebar-context-target">
-          {/* AutomationScreen dispatches the same durable route to either the
-              draft conversation or accepted home from lifecycle state. */}
+          {/* One durable route for a draft and an accepted automation: the
+              screen behind it is the automation's own conversation, with its
+              lifecycle in the header. */}
           <NavLink
             className={({ isActive }) => clsx('sidebar-row automation-row', (isDraft ? draftActive : isActive) && 'is-active', isDraft && 'is-draft')}
             onClick={() => markSurfaceEntrypoint('sidebar_automation')}
             to={`/automations/${automation.id}`}
           >
-            <span className={clsx('sidebar-row-icon', attention && 'is-attention')} aria-hidden="true">
-              {attention
-                ? <AlertTriangle size={13} />
-                : automation.status === 'paused'
-                  ? <CirclePause size={13} />
-                  : <span className={clsx('mini-state', automation.status)} />}
+            <span className="sidebar-row-icon" aria-hidden="true">
+              {automation.status === 'paused'
+                ? <CirclePause size={13} />
+                : <span className={clsx('mini-state', automation.status)} />}
             </span>
             <span className="sidebar-row-main">
               <span className="sidebar-row-title">{automation.name}</span>
-              {/* The attention hint outranks the schedule: an automation that
-                  will not run has no next run worth naming, and one that was
-                  paused after a failure is not "next Tuesday" either. */}
-              {attention
-                ? <span className="sidebar-row-hint is-attention">{attention.shortLabel}</span>
-                : isDraft
-                  ? <span className="sidebar-row-hint">Draft</span>
-                  : automation.nextRunAt && <span className="sidebar-row-hint">Next {formatRelative(automation.nextRunAt)}</span>}
+              {isDraft
+                ? <span className="sidebar-row-hint">Draft</span>
+                : automation.nextRunAt && <span className="sidebar-row-hint">Next {formatRelative(automation.nextRunAt)}</span>}
             </span>
-            <Badge className="scope-badge">{automation.scope === 'you' ? 'You' : 'Workspace'}</Badge>
+            <Badge className="scope-badge">{automationScopeLabel(automation.scope)}</Badge>
           </NavLink>
         </div>
       </ContextMenu.Trigger>
@@ -536,13 +530,11 @@ function WorkstreamRow({
   // Both socket paths carry the standing description as `objective`. Keep the
   // direct value first for compatibility with resident cache rows, but never
   // let an empty legacy preview hide an otherwise valid description.
-  const description = workstream.preview || workstream.objective || workstream.automationName;
-  // Two kinds of row take their audience from something other than this
-  // column, so offering the toggle on them would describe a change that does
-  // not happen: a subsystem's own work stream is machinery, and one an
-  // automation generated is visible to whoever that automation is visible to.
-  // The API refuses both; the menu simply does not raise the question.
-  const scopeIsThisRowsToDecide = !workstream.systemKind && !workstream.automationSubscriptionId;
+  const description = workstream.preview || workstream.objective;
+  // A subsystem's own work stream takes its audience from the subsystem, so
+  // offering the toggle on it would describe a change that does not happen.
+  // The API refuses it; the menu simply does not raise the question.
+  const scopeIsThisRowsToDecide = !workstream.systemKind;
   return (
     <ContextMenu.Root>
       <ContextMenu.Trigger asChild>
@@ -1089,14 +1081,9 @@ export function Sidebar({
   const [batchPreviewFailed, setBatchPreviewFailed] = useState(false);
   const batchPreviewGeneration = useRef(0);
   const [deleteTarget, setDeleteTarget] = useState<AutomationSummary | null>(null);
-  const [deleting, setDeleting] = useState(false);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
-  // The server stopped listing drafts when the builder was retired — a draft is
-  // a conversation in progress and lives where that conversation is — but a
-  // client holding a socket-pushed list from before that change would still
-  // have one, and clicking it lands on "this automation has not been created
-  // yet". Filtered here as well, so an old row cannot outlive its screen.
-  const orderedAutomations = automations.filter((automation) => automation.status !== 'draft');
+  // Drafts are listed with the rest: a draft is a conversation in progress on
+  // the automation's own screen, which is where its row leads.
+  const orderedAutomations = automations;
   // A pinned work stream leaves the recent list entirely rather than appearing
   // twice: the section it moves to is the one whose order the reader controls,
   // and a row in both places would take its order from whichever they saw last.
@@ -1246,26 +1233,6 @@ export function Sidebar({
     setRenameError(null);
   };
 
-  const closeDelete = (): void => {
-    if (deleting) return;
-    setDeleteTarget(null);
-    setDeleteError(null);
-  };
-
-  const submitDelete = async (): Promise<void> => {
-    if (!deleteTarget) return;
-    setDeleting(true);
-    setDeleteError(null);
-    try {
-      await onDeleteAutomation(deleteTarget);
-      setDeleteTarget(null);
-    } catch (error) {
-      setDeleteError(error instanceof Error ? error.message : 'The automation could not be deleted.');
-    } finally {
-      setDeleting(false);
-    }
-  };
-
   const closeArchiveNote = (): void => {
     if (archivingNote) return;
     setArchiveNoteTarget(null);
@@ -1320,7 +1287,7 @@ export function Sidebar({
         workstreamId: archiveWorkstreamTarget.id,
         action: 'archive',
         visibility: telemetryVisibility(archiveWorkstreamTarget.scope),
-        origin: archiveWorkstreamTarget.systemKind ? 'system' : archiveWorkstreamTarget.origin,
+        origin: archiveWorkstreamTarget.systemKind ? 'system' : 'ad_hoc',
         pinned: archiveWorkstreamTarget.pinPosition !== null,
       });
       setArchiveWorkstreamTarget(null);
@@ -1431,7 +1398,7 @@ export function Sidebar({
         workstreamId: workstream.id,
         action: scope === 'workspace' ? 'make_public' : 'make_private',
         visibility: telemetryVisibility(scope),
-        origin: workstream.systemKind ? 'system' : workstream.origin,
+        origin: workstream.systemKind ? 'system' : 'ad_hoc',
         pinned: workstream.pinPosition !== null,
       });
     } catch (error) {
@@ -1466,7 +1433,7 @@ export function Sidebar({
           workstreamId: workstream.id,
           action: pinned ? 'pin' : 'unpin',
           visibility: telemetryVisibility(workstream.scope),
-          origin: workstream.systemKind ? 'system' : workstream.origin,
+          origin: workstream.systemKind ? 'system' : 'ad_hoc',
           pinned,
         });
       }
@@ -1490,7 +1457,7 @@ export function Sidebar({
       workstreamId: workstream.id,
       action: 'mark_unread',
       visibility: telemetryVisibility(workstream.scope),
-      origin: workstream.systemKind ? 'system' : workstream.origin,
+      origin: workstream.systemKind ? 'system' : 'ad_hoc',
       pinned: workstream.pinPosition !== null,
     });
   };
@@ -1596,7 +1563,7 @@ export function Sidebar({
         workstreamId: renameTarget.id,
         action: 'rename',
         visibility: telemetryVisibility(renameTarget.scope),
-        origin: renameTarget.systemKind ? 'system' : renameTarget.origin,
+        origin: renameTarget.systemKind ? 'system' : 'ad_hoc',
         pinned: renameTarget.pinPosition !== null,
       });
       setRenameTarget(null);
@@ -1724,17 +1691,12 @@ export function Sidebar({
               <MessageSquarePlus aria-hidden="true" size={15} />
               <span>New work stream</span>
             </NavLink>
-            {/* Drafting happens by asking for it in a work stream, so this
-                starts one. The affordance stays because people look for it
-                here; what it opens is the conversation the agent drafts in.
-
-                Never active: it shares a destination with "New work stream"
-                now, and deriving active state from the route would light both
-                rows at once for one screen. */}
+            {/* Creates the automation and opens its conversation, which is
+                where the draft is written. */}
             <NavLink
-              className="sidebar-action"
-              onClick={() => markSurfaceEntrypoint('sidebar_new')}
-              to="/workstreams/new"
+              className={({ isActive }) => clsx('sidebar-action', isActive && 'is-active')}
+              onClick={() => markSurfaceEntrypoint('sidebar_automation')}
+              to="/automations/new"
             >
               <Plus aria-hidden="true" size={15} />
               <span>New automation</span>
@@ -1766,7 +1728,7 @@ export function Sidebar({
             {loading && automations.length === 0 ? (
               <SidebarSkeletonRows count={3} />
             ) : automations.length === 0 ? (
-              <p className="sidebar-empty">No active automations</p>
+              <p className="sidebar-empty">No automations</p>
             ) : (
               <div className="sidebar-list">
                 {orderedAutomations.map((automation) => (
@@ -2154,41 +2116,11 @@ export function Sidebar({
         <p className="modal-copy">{menuError?.copy}</p>
         {menuError && <InlineError>{menuError.message}</InlineError>}
       </Modal>
-      <Modal
-        footer={(
-          <>
-            <Button disabled={deleting} onClick={closeDelete}>Cancel</Button>
-            <Button className="button-danger" disabled={deleting} onClick={() => void submitDelete()}>
-              Delete
-            </Button>
-          </>
-        )}
-        onOpenChange={(open) => {
-          if (!open) closeDelete();
-        }}
-        open={Boolean(deleteTarget)}
-        title={deleteTarget?.status === 'draft' ? 'Delete draft' : 'Delete automation'}
-      >
-        <p className="modal-copy">
-          {deleteTarget?.status === 'draft' ? (
-            <>
-              <strong>{deleteTarget.name}</strong> and the conversation that was writing it are
-              deleted for good. Rally has no way to bring a draft back.
-            </>
-          ) : (
-            <>
-              {/* What the API does, rather than the reassurance this
-                  said before it: deleting enqueues an archive for
-                  every work stream the automation's runs created, so
-                  the runs leave with it. */}
-              <strong>{deleteTarget?.name}</strong> stops running and leaves the sidebar for good.
-              Every past run — and the work stream each one created — is archived with it, and
-              Rally has no way to bring them back.
-            </>
-          )}
-        </p>
-        {deleteError && <InlineError>{deleteError}</InlineError>}
-      </Modal>
+      <DeleteAutomationDialog
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={() => deleteTarget ? onDeleteAutomation(deleteTarget) : Promise.resolve()}
+        target={deleteTarget}
+      />
     </>
   );
 }
