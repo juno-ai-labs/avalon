@@ -16,8 +16,8 @@ import { WORKSPACE_LOCAL_TABLES } from "../src/services/workspace-runtime-databa
  *
  * That failure has now been paid for three times: `slackUserIsLinked` joining
  * `workspace_members`, the origin-label read of `automation_directory`, and
- * `AutomationAgent` resolving a delivery destination. Each was found by a person
- * hitting it in production. The invariant is mechanical, so it is checked here
+ * the automation object resolving a delivery destination. Each was found by a
+ * person hitting it in production. The invariant is mechanical, so it is checked here
  * rather than restated in another document.
  *
  * This imports the real `WORKSPACE_LOCAL_TABLES` rather than restating it. An
@@ -62,12 +62,12 @@ describe("Durable Object workspace-table routing", () => {
     // Guards the guard: a rename of the directory, or a regex that stops
     // matching, would otherwise leave this file passing over nothing at all.
     const sources = durableObjectSources();
-    expect(sources).toContain("automation-agent.ts");
+    expect(sources).toContain("automation-do.ts");
     expect(sources).toContain("workspace-do.ts");
     expect(WORKSPACE_LOCAL_TABLES).toContain("connector_connections");
     expect(WORKSPACE_LOCAL_TABLES).toContain("slack_user_links");
     expect(
-      [...readFileSync(`${DURABLE_OBJECT_DIRECTORY}/automation-agent.ts`, "utf8")
+      [...readFileSync(`${DURABLE_OBJECT_DIRECTORY}/automation-do.ts`, "utf8")
         .matchAll(REGIONAL_STATEMENT)],
     ).not.toHaveLength(0);
   });

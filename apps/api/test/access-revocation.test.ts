@@ -585,14 +585,17 @@ describe("carrying one revocation to the objects", () => {
     workstreamIds?: string[];
     automationIds?: string[];
     substreamIds?: string[];
+    automationChildren?: string[];
     failAt?: boolean;
   } = {}) {
     const visits: Visit[] = [];
+    const listed: Array<{ name: string; request: unknown }> = [];
     const sent: Published[] = [];
     /**
-     * One double serves all four namespaces: the consumer only ever calls
-     * `revokeSocketAccess`, and what each object answers with is the whole
-     * difference between the hops.
+     * One double serves all four namespaces: the consumer calls
+     * `revokeSocketAccess` on the objects that hold sockets and `listChildren`
+     * on an automation, which holds none of its own, and what each object
+     * answers with is the whole difference between the hops.
      */
     const namespace = (answer: () => unknown): DurableObjectNamespace => {
       const binding: DurableObjectNamespace = createCloudflareTestBinding<DurableObjectNamespace>({
@@ -602,6 +605,17 @@ describe("carrying one revocation to the objects", () => {
             visits.push({ name: id.toString(), revocation });
             if (options.failAt) throw new Error("object unreachable");
             return answer();
+          },
+          listChildren: async (request: unknown) => {
+            listed.push({ name: id.toString(), request });
+            if (options.failAt) throw new Error("object unreachable");
+            return {
+              children: (options.automationChildren ?? []).map((substreamId, index) => ({
+                substreamId,
+                kind: substreamId === "0" ? "main" : "child",
+                createdAt: index,
+              })),
+            };
           },
         }),
         jurisdiction: (): DurableObjectNamespace => binding,
@@ -626,7 +640,7 @@ describe("carrying one revocation to the objects", () => {
         sendBatch: async (messages: Array<{ body: unknown }>) => { sent.push(...messages); },
       },
     });
-    return { env, visits, sent };
+    return { env, visits, listed, sent };
   }
 
   const WORKSTREAM = "00000000-0000-7000-8000-0000000000a1";
@@ -676,12 +690,30 @@ describe("carrying one revocation to the objects", () => {
     ]);
   });
 
-  it("stops at an automation", async () => {
+  it("publishes a message for every conversation an automation names", async () => {
     const AUTOMATION = "00000000-0000-7000-8000-0000000000d1";
-    const { env, visits, sent } = fanOut();
+    const RUN = "00000000-0000-7000-8000-0000000000e1";
+    const { env, visits, listed, sent } = fanOut({ automationChildren: ["0", RUN] });
     await applyAccessRevocation(env, message({ scope: "automation", automationId: AUTOMATION }));
 
-    expect(visits).toHaveLength(1);
+    // The automation holds no socket of its own: its draft conversation and
+    // each of its runs are children, and only the automation object can name
+    // them. Addressed as substreams under the automation's own id, the way a
+    // work stream's substreams are addressed under its.
+    expect(visits).toEqual([]);
+    expect(listed).toHaveLength(1);
+    expect(listed[0]?.request).toEqual({ workspaceId: WORKSPACE, parentId: AUTOMATION });
+    expect(targetsOf(sent)).toEqual([
+      { scope: "substream", workstreamId: AUTOMATION, substreamId: "0" },
+      { scope: "substream", workstreamId: AUTOMATION, substreamId: RUN },
+    ]);
+  });
+
+  it("stops at an automation with no conversations of its own", async () => {
+    const AUTOMATION = "00000000-0000-7000-8000-0000000000d1";
+    const { env, sent } = fanOut();
+    await applyAccessRevocation(env, message({ scope: "automation", automationId: AUTOMATION }));
+
     expect(sent).toEqual([]);
   });
 
