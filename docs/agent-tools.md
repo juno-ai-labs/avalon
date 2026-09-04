@@ -392,7 +392,12 @@ and the provider rejects the whole call. Four things belong in that description
 and none can be inferred from the parameter's name and bounds: which field of
 this tool's own result produces the value, that it is opaque and must never be
 constructed, guessed, shortened or incremented, that the rest of the call is
-held unchanged when it is passed, and what the last page looks like. That third
+held unchanged when it is passed, and what the last page looks like. All four
+are answerable for every cursor Rally serves. If a provider's pagination shape
+looks unestablished, that is a reason to go and establish it rather than an
+exception: the one parameter that seemed to qualify turned out to have its shape
+pinned by its own adapter's tests, and shipping without it would have left that
+caller the only one able to page forever. That third
 one is not pedantry: a cursor is a position within the query it was issued for,
 so pairing one with changed filters is not a defined continuation of either.
 Google is the measured case, and it resumes the old search rather than running
@@ -868,20 +873,23 @@ every cursor on every registered connector, and
 carrying no description.
 
 **Why:** The entry below converted Google's four and recorded that 46 authored
-null branches across five connectors were still collapsed, 19 of them cursors,
-"which is a change per connector rather than a line in this one". Those cursors
+null branches across five connectors were still collapsed, "which is a change
+per connector rather than a line in this one". The 18 of those that are cursors
 are now converted, so the assertion can be widened as that entry anticipated.
+Its count of 19 cursors reads Slack's `search_messages.after` as one; that
+parameter is a numeric timestamp filter sharing a cursor's name, which is why
+both sweeps now match on the declared type as well.
 Splitting the rule across two documents was the risk worth closing: an author
 reading Principle 9 for a cursor's prose would not have reached Principle 1 for
 its spelling, and prose alone was already measured not to work.
 
-**Consequences:** The remaining 35 collapsed branches are ids and filters rather
-than cursors and are unaffected; the widened assertion filters to the cursor
-property so it does not fail for them. An author who needs `null` on one of
-those still gets the rule from Principle 1; what is enforced automatically is
-the cursor case.
-
-## Changelog
+**Consequences:** 28 collapsed branches remain, on four connectors (Linear 13,
+Granola 7, Slack 6, Notion 2), and they are ids and filters rather than cursors;
+the widened assertion filters to the cursor property so it does not fail for
+them. An author who needs `null` on one of those still gets the rule from
+Principle 1; what is enforced automatically is the cursor case. Counted by
+running `droppedNullableBranches` over the registry rather than by subtracting
+from the entry below, so the figure describes the tree it ships with.
 
 ### 2026-09-03 — A parameter that may be "none" says so as a value, spelled `anyOf`
 

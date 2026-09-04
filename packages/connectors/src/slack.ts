@@ -162,8 +162,21 @@ function tool(
 }
 
 const id = { type: "string", minLength: 1 };
-// An empty id or cursor is not a value Slack has: declaring that lets the
-// harness treat a blanked optional one as omitted instead of failing the call.
+/**
+ * An optional Slack id. An empty one is not a value Slack has, and declaring
+ * that lets the harness treat a blanked optional id as omitted rather than
+ * failing the call.
+ *
+ * Cursors used to share this and no longer do. It keeps the flat
+ * `type: ["string", "null"]`, which Bind's sanitizer collapses, so a caller
+ * that will not omit `channel_id` cannot spell "no filter" as a value either
+ * and a `minLength: 1` floor is all it is left with. That is the same shape as
+ * the cursor failure and it is deliberately not fixed here: absence means
+ * "do not filter by this" rather than "start at the beginning", and what a
+ * caller should be told to send instead is a decision per parameter rather than
+ * a spelling change. It is counted with the rest of that backlog in
+ * [`connectors.md`](../../../docs/connectors.md).
+ */
 const optionalId = { type: ["string", "null"], minLength: 1 };
 const query = { type: "string", minLength: 1 };
 const boundedLimit = { type: "integer", minimum: 1, maximum: 100 };
