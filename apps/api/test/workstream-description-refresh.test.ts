@@ -60,7 +60,7 @@ function fixture(options: {
   proposal?: Proposal | (() => Proposal);
   objective?: string;
   descriptionSource?: "authored" | "derived";
-  originType?: "ad_hoc" | "automation";
+  parentKind?: "workstream" | "automation";
   archived?: boolean;
 } = {}): Fixture {
   const database = preRetirementProductSqliteDatabase();
@@ -74,7 +74,7 @@ function fixture(options: {
       (id, workspace_id, title, objective, origin_type, created_by_user_id,
        harness_status, next_sequence_number, last_activity_at, created_at, updated_at)
     VALUES ('${WORKSTREAM_ID}', '${WORKSPACE_ID}', 'Checkout', 'directory copy',
-            '${options.originType ?? "ad_hoc"}', '${USER_ID}',
+            'ad_hoc', '${USER_ID}',
             'idle', 1, '2026-08-11', '2026-01-01', '2026-01-01');
   `);
   // Since migration 0090 the transcript, the product `workstreams` row, and
@@ -88,11 +88,16 @@ function fixture(options: {
     title: "Checkout",
     description: options.objective ?? "Look into the payment error Morgan reported on Monday.",
     descriptionSource: options.descriptionSource ?? "derived",
-    originType: options.originType ?? "ad_hoc",
     createdByUserId: USER_ID,
     exactState: "idle",
     archivedAt: options.archived ? Date.parse("2026-08-01T00:00:00.000Z") : null,
   });
+  // Whose conversation this is, in the identity row the service reads. A run's
+  // conversation hangs off its automation rather than off a work stream, and
+  // that is the column saying so; the fixture helper seeds the default.
+  if (options.parentKind === "automation") {
+    objectStore.exec("UPDATE workstream SET parent_kind = 'automation' WHERE id = 1");
+  }
 
   const prompts: Array<{ system: string; user: string }> = [];
   const proposal = options.proposal ?? {
@@ -405,12 +410,12 @@ describe("work-stream description refresh", () => {
     });
   });
 
-  it("leaves an automation's work stream to its automation", async () => {
-    const { objectStore, env, prompts } = fixture({ originType: "automation" });
+  it("leaves an automation's conversation to its automation", async () => {
+    const { objectStore, env, prompts } = fixture({ parentKind: "automation" });
     addQualifyingConversation(objectStore);
 
     expect(await refreshWorkstreamDescription(env, { ...input, now: NOW }))
-      .toEqual({ status: "skipped", reason: "automation_origin" });
+      .toEqual({ status: "skipped", reason: "automation_parent" });
     expect(prompts).toHaveLength(0);
   });
 
