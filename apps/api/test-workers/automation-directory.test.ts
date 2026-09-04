@@ -192,4 +192,24 @@ describe("automation directory", () => {
     });
     expect(rail.items.map((item) => item.id)).toEqual([owned]);
   });
+
+  it("names every automation for a member's revocation, and a room's own for a lost room", async () => {
+    const personal = await createAndPublish("personal");
+    const shared = await createAndPublish("workspace");
+    const owned = await createAndPublish("workstream");
+
+    // The member authored none of these, and can read the shared one and, as
+    // a room participant, the owned one; the walk used to reach only what a
+    // person authored, so their sockets on the other two outlived them.
+    const revoked = await workspaceStub().revokeSocketAccess({
+      reason: "workspace_membership_removed",
+      workspaceId: WORKSPACE_ID,
+      userId: MEMBER_ID,
+      sessionId: null,
+    });
+    expect([...revoked.automationIds].sort()).toEqual([personal, shared, owned].sort());
+
+    expect(await workspaceStub().automationIdsOwnedByWorkstream({ workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID }))
+      .toEqual({ automationIds: [owned] });
+  });
 });

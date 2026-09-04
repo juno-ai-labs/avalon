@@ -3860,6 +3860,29 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * to know. The consumer decides what to do with the list, so nothing about
    * the revocation transport reaches inside the object.
    */
+  /**
+   * The automations a work stream owns, for the revocation walk.
+   *
+   * A room-owned automation admits the room's participants, and removing one
+   * of them is a write the room makes locally, which no membership revocation
+   * follows. The room's writer publishes a `workstream_automations` hop, and
+   * this is how the consumer turns it into one `automation` hop per owned
+   * automation; unlike `listWorkstreamAutomations` it asks nothing about the
+   * caller, since the consumer is not a participant of anything.
+   */
+  async automationIdsOwnedByWorkstream(input: unknown): Promise<{ automationIds: string[] }> {
+    await this.initialized;
+    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, workstreamId: IdSchema }).parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return {
+      automationIds: this.state.storage.sql.exec<{ automation_id: string }>(
+        `SELECT automation_id FROM automation_directory
+          WHERE owning_workstream_id = ? AND lifecycle <> 'deleted' ORDER BY automation_id`,
+        request.workstreamId,
+      ).toArray().map((row) => row.automation_id),
+    };
+  }
+
   async revokeSocketAccess(revocation: SocketAccessRevocation): Promise<{
     workstreamIds: string[];
     automationIds: string[];
@@ -3904,16 +3927,17 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }
     return {
       workstreamIds: this.revocableWorkstreamIds(request.userId),
-      // Only the author can hold an automation socket, so a revocation reaches
-      // exactly the automations they authored; a membership-wide revocation
-      // carries no user and reaches all of them.
+      // Every automation, unfiltered by person, for the same reason the
+      // artifact list is: an automation's conversation admits its author and
+      // its run-as principal, any member when it is workspace-scoped, and any
+      // participant of the room that owns it, so this object cannot tell which
+      // automations a given person holds a socket on. It once narrowed to the
+      // author, and a member's sockets on every other readable automation
+      // outlived their membership. A hop that finds nothing to drop costs one
+      // call.
       automationIds: this.state.storage.sql.exec<{ automation_id: string }>(
-        request.userId
-          ? `SELECT automation_id FROM automation_directory
-              WHERE lifecycle <> 'deleted' AND author_user_id = ? ORDER BY automation_id`
-          : `SELECT automation_id FROM automation_directory
-              WHERE lifecycle <> 'deleted' ORDER BY automation_id`,
-        ...(request.userId ? [request.userId] : []),
+        `SELECT automation_id FROM automation_directory
+          WHERE lifecycle <> 'deleted' ORDER BY automation_id`,
       ).toArray().map((row) => row.automation_id),
       // Artifacts hang off the workspace for the same reason automations do:
       // `artifact_registry` lives here, beside the resource authority, and

@@ -34,7 +34,7 @@ the thing this module replaced, and it is not to come back.
 it.** There is no watcher on D1 and no reconciliation pass; a retraction that is
 not published does not reach an open socket.
 
-Four producers exist today:
+Five producers exist today:
 
 - **A membership ends.** `WorkspaceService.removeMember` deletes the
   `workspace_members` row and publishes with `sessionId: null` — the membership
@@ -45,6 +45,11 @@ Four producers exist today:
   membership, or atomically suspends it while abandoning a workspace whose last
   active member is leaving, then publishes the same membership-wide message.
   The self-leave route cannot skip the producer by performing its own delete.
+- **A room participant is removed.** `WorkstreamService.removeParticipant`
+  tells the room, which closes its own sockets, then publishes with
+  `sessionId: null` and a `workstream_automations` target naming the room:
+  the automations the room owns admitted this person through the room, and
+  nothing inside the room reaches those objects.
 - **A session is revoked.** `AuthService.logout` returns the rows it revoked
   (`RETURNING id, user_id, workspace_id`) and publishes one message per row,
   carrying that session's id. Only the windows that presented that session are
@@ -60,11 +65,12 @@ calls `revokeSocketAccess`, and receives back the children that object knows
 about; each child becomes its own message on the same queue.
 
 ```
-workspace  ──▶ WorkspaceDO        ──▶ [workstreamIds] + [automationIds] + [artifactIds]
-workstream ──▶ WorkstreamDO       ──▶ [substreamIds]
-automation ──▶ AutomationDO       ──▶ [substreamIds]   (listChildren; it holds no socket)
-substream  ──▶ SubstreamAgent     ──▶ (leaf)
-artifact   ──▶ ArtifactHostDO     ──▶ (leaf)
+workspace              ──▶ WorkspaceDO    ──▶ [workstreamIds] + [automationIds] + [artifactIds]
+workstream_automations ──▶ WorkspaceDO    ──▶ [automationIds the room owns]  (automationIdsOwnedByWorkstream)
+workstream             ──▶ WorkstreamDO   ──▶ [substreamIds]
+automation             ──▶ AutomationDO   ──▶ [substreamIds]   (listChildren; it holds no socket)
+substream              ──▶ SubstreamAgent ──▶ (leaf)
+artifact               ──▶ ArtifactHostDO ──▶ (leaf)
 ```
 
 The fan-out is queue-driven rather than one long call chain for three reasons: a
@@ -98,13 +104,15 @@ chat is substream `0` under it and each run is a further substream, all of them
 so its hop is `AutomationDO.listChildren` and one `substream` message per child,
 keyed by the automation id as the parent. Its list comes from
 `automation_directory`, the one place the workspace knows an automation exists,
-filtered to the person's own authored automations when the message names a
-user and unfiltered when a membership ended and carries none. That filter is
-generous in one direction and not the other: a workspace-scoped automation's
-conversation admits any member, so a reader who is not the author can hold a
-socket the walk does not reach, which is the same generosity gap the
-work-stream list closes by naming every workspace-scoped work stream and this
-list does not yet close.
+and is unfiltered by person for the reason the artifact list is: an
+automation's conversation admits its author, its run-as principal, any member
+when it is workspace-scoped, and any participant of the room that owns it, so
+the workspace cannot tell which automations a person holds a socket on, and a
+hop that finds nothing to drop costs one call. A room-owned automation has one
+more way to lose a reader: the room removes a participant, a write the room
+makes locally that no membership revocation follows. The room's writer
+publishes a `workstream_automations` hop, and WorkspaceDO names the room's
+automations for it.
 
 **Only the object knows its own children.** A work stream's participants and a
 dashboard's blocks live in that object's SQL storage, not in D1, so no query the
@@ -330,6 +338,30 @@ would be a way into somebody else's workspace.
   somebody kept access they should have lost.
 
 ## Changelog
+
+### 2026-09-04: The walk reaches every automation a person could read, and a lost room
+
+**What changed:** `WorkspaceDO.revokeSocketAccess` names every non-deleted
+automation for a user revocation instead of only the ones the person
+authored. A new `workstream_automations` target, published by
+`WorkstreamService.removeParticipant` with the reason
+`workstream_participant_removed`, is answered by
+`WorkspaceDO.automationIdsOwnedByWorkstream` and fans out to one `automation`
+hop per automation the room owns.
+
+**Why:** Pull request review. `AutomationDO.authorizeViewer` admits any
+member on a workspace-scoped automation and any room participant on a
+room-owned one, but the walk narrowed to the author, so a removed member's
+sockets on every other readable automation and its runs outlived their
+membership. Removing a room participant published nothing at all: the room
+evicted its own readers locally, and the automations it owns, which had
+admitted the person through the room, never heard.
+
+**Consequences:** A membership revocation costs one hop per automation in the
+workspace, most of which find nothing to drop, the same trade the artifact
+list already made. A room participant's removal is now a producer like the
+other four, with the same rule: it publishes in the request that wrote the
+fact.
 
 ### 2026-09-03: The automation hop lists children instead of closing a room
 
