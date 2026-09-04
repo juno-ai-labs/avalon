@@ -129,16 +129,16 @@ describe('useFileAttachments', () => {
     expect(api.uploadResource).not.toHaveBeenCalled();
   });
 
-  it('keeps the first ten files and reports overflow', async () => {
+  it('keeps the first six files and reports overflow', async () => {
     const api = apiMock();
     const { result } = renderHook(() => useFileAttachments(api, draftKey));
     const files = Array.from({ length: 12 }, (_, index) => new File([String(index)], `file-${index}.txt`));
 
     act(() => result.current.addFiles(files));
 
-    await waitFor(() => expect(result.current.attachments).toHaveLength(10));
-    expect(result.current.error).toBe('You can attach up to 10 files to one message.');
-    await waitFor(() => expect(result.current.ready).toHaveLength(10));
+    await waitFor(() => expect(result.current.attachments).toHaveLength(6));
+    expect(result.current.error).toBe('You can attach up to 6 files to one message.');
+    await waitFor(() => expect(result.current.ready).toHaveLength(6));
 
     act(() => result.current.removeAttachment(result.current.attachments[0]!.localId));
     expect(result.current.error).toBeUndefined();
@@ -200,19 +200,21 @@ describe('useFileAttachments', () => {
     act(() => first.result.current.addFiles([
       new File(['one'], 'first.txt', { type: 'text/plain' }),
       new File(['two'], 'second.png', { type: 'image/png' }),
+      new File(['three'], 'third.mp4', { type: 'video/mp4' }),
     ]));
-    await waitFor(() => expect(first.result.current.ready).toHaveLength(2));
+    await waitFor(() => expect(first.result.current.ready).toHaveLength(3));
     first.unmount();
 
     const restored = renderHook(() => useFileAttachments(api, draftKey));
 
-    await waitFor(() => expect(restored.result.current.attachments).toHaveLength(2));
+    await waitFor(() => expect(restored.result.current.attachments).toHaveLength(3));
     expect(restored.result.current.attachments.map((attachment) => attachment.file.name))
-      .toEqual(['first.txt', 'second.png']);
-    expect(restored.result.current.ready).toHaveLength(2);
+      .toEqual(['first.txt', 'second.png', 'third.mp4']);
+    expect(restored.result.current.ready).toHaveLength(3);
     expect(restored.result.current.attachments[1]?.previewUrl).toBe('blob:preview');
+    expect(restored.result.current.attachments[2]?.previewUrl).toBe('blob:preview');
     expect(await restored.result.current.attachments[0]!.file.text()).toBe('one');
-    expect(api.uploadResource).toHaveBeenCalledTimes(2);
+    expect(api.uploadResource).toHaveBeenCalledTimes(3);
     expect(api.deleteDraftResource).not.toHaveBeenCalled();
   });
 
@@ -265,13 +267,13 @@ describe('useFileAttachments', () => {
     expect(result.current.attachments).toHaveLength(0);
   });
 
-  it('settles the ten-file limit when a drop races the cache read', async () => {
+  it('settles the six-file limit when a drop races the cache read', async () => {
     const api = apiMock({ uploadResource: vi.fn(async (file: File) => ({ ...resource, id: file.name })) });
     const seeded = renderHook(() => useFileAttachments(api, draftKey));
     act(() => seeded.result.current.addFiles(
-      Array.from({ length: 9 }, (_, index) => new File([`cached-${index}`], `cached-${index}.txt`)),
+      Array.from({ length: 5 }, (_, index) => new File([`cached-${index}`], `cached-${index}.txt`)),
     ));
-    await waitFor(() => expect(seeded.result.current.ready).toHaveLength(9));
+    await waitFor(() => expect(seeded.result.current.ready).toHaveLength(5));
     seeded.unmount();
 
     // The drop lands before the cached nine are known, so it is counted against
@@ -284,29 +286,29 @@ describe('useFileAttachments', () => {
     });
     const { result } = renderHook(() => useFileAttachments(api, draftKey));
     act(() => result.current.addFiles(
-      Array.from({ length: 10 }, (_, index) => new File([`dropped-${index}`], `dropped-${index}.txt`)),
+      Array.from({ length: 6 }, (_, index) => new File([`dropped-${index}`], `dropped-${index}.txt`)),
     ));
 
     // The drop having been counted against an empty composer is the precondition
     // everything below reconciles, so it is checked before the read is released.
     await waitFor(() => expect(result.current.attachments.map((attachment) => attachment.file.name))
-      .toEqual(Array.from({ length: 10 }, (_, index) => `dropped-${index}.txt`)));
+      .toEqual(Array.from({ length: 6 }, (_, index) => `dropped-${index}.txt`)));
     await act(async () => {
       releaseRead();
     });
 
-    // Wait for the cached nine to arrive, not merely for ten tiles: the ten
+    // Wait for the cached five to arrive, not merely for six tiles: the six
     // dropped files satisfy that count on their own, before reconciliation.
     await waitFor(() => expect(result.current.attachments[0]?.file.name).toBe('cached-0.txt'));
-    expect(result.current.attachments).toHaveLength(10);
-    expect(result.current.error).toBe('You can attach up to 10 files to one message.');
-    await waitFor(async () => expect(await readDraftAttachments(draftKey)).toHaveLength(10));
+    expect(result.current.attachments).toHaveLength(6);
+    expect(result.current.error).toBe('You can attach up to 6 files to one message.');
+    await waitFor(async () => expect(await readDraftAttachments(draftKey)).toHaveLength(6));
     expect(result.current.attachments.map((attachment) => attachment.file.name))
-      .toEqual([...Array.from({ length: 9 }, (_, index) => `cached-${index}.txt`), 'dropped-0.txt']);
+      .toEqual([...Array.from({ length: 5 }, (_, index) => `cached-${index}.txt`), 'dropped-0.txt']);
     // Every file that did not fit released its draft resource rather than
     // lingering upstream, invisible and unremovable.
     await waitFor(() => {
-      for (let index = 1; index < 10; index += 1) {
+      for (let index = 1; index < 6; index += 1) {
         expect(api.deleteDraftResource).toHaveBeenCalledWith(`dropped-${index}.txt`);
       }
     });
