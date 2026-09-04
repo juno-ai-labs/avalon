@@ -8,6 +8,7 @@ import {
   rememberAutomationResourceSearchResult,
   type AutomationCreatorToolHost,
 } from "./automation-creator-tools";
+import { AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS } from "./index";
 
 function host(overrides: Partial<AutomationCreatorToolHost> = {}): AutomationCreatorToolHost {
   return {
@@ -372,5 +373,93 @@ describe("set_evaluator_rules and a resource the rule is not about", () => {
       .execute(rule("22222222-2222-4222-8222-222222222222"), toolContext))
       .resolves.toMatchObject({ output: { accepted: true } });
     expect(staged).toHaveLength(1);
+  });
+});
+
+describe("set_evaluator_rules on a trigger whose filter fields are open", () => {
+  function hostWithTrigger(descriptor: Record<string, unknown>) {
+    const staged: unknown[] = [];
+    const state = host({
+      catalog: [{
+        pluginId: "plugin_webhook",
+        displayName: "Generic webhook",
+        icon: "webhook",
+        description: "Deliveries on a webhook.",
+        scope: "workspace",
+        searchAliases: [],
+        systemMessage: "",
+        activityTriggers: [{
+          eventType: "deploy.finished",
+          label: "deploy.finished",
+          description: "A delivery of deploy.finished on this webhook.",
+          eventFamilies: [],
+          filterFields: [],
+          resourceRelationships: [],
+          digestible: false,
+          ...descriptor,
+        }],
+        tools: [],
+      }],
+      inspectedPluginIds: new Set(["plugin_webhook"]),
+      loadedPluginIds: new Set(["plugin_webhook"]),
+      draftMutationPort: {
+        submitDraft: async () => ({ accepted: true as const }),
+        setEvaluatorRules: async (rules) => {
+          staged.push(rules);
+          return { accepted: true as const };
+        },
+      },
+    });
+    return { state, staged };
+  }
+  const serviceIsCheckout = {
+    schemaVersion: 1,
+    evaluators: [{
+      evaluatorKey: "checkout_deploys",
+      source: {
+        sourceBindingKey: "deploy_hook",
+        suggestedSourcePluginId: "plugin_webhook",
+        event: { kind: "event_type", eventType: "deploy.finished" },
+      },
+      when: {
+        kind: "all",
+        allOf: [{ kind: "string", attribute: "service", operator: "equals", value: "checkout" }],
+      },
+    }],
+  };
+
+  it("lets a rule name a payload key nobody declared", async () => {
+    const { state, staged } = hostWithTrigger({ openFilterFields: true });
+
+    // The accept-side evaluator checks an open descriptor's leaves for shape
+    // only. The drafting check has to agree, or the one rule a webhook is for
+    // (a condition on the caller's own keys) is refused before it is written.
+    await expect(toolNamed(createAutomationsPlugin(state).tools, "set_evaluator_rules")
+      .execute(serviceIsCheckout, toolContext))
+      .resolves.toMatchObject({ output: { accepted: true } });
+    expect(staged).toHaveLength(1);
+  });
+
+  it("still holds a closed descriptor to its declared fields", async () => {
+    const { state, staged } = hostWithTrigger({});
+
+    await expect(toolNamed(createAutomationsPlugin(state).tools, "set_evaluator_rules")
+      .execute(serviceIsCheckout, toolContext))
+      .rejects.toThrow(/not one the plugin declares/u);
+    expect(staged).toHaveLength(0);
+  });
+
+  it("does not advertise the nil or max UUID as a legal id in the tool's schema", () => {
+    const definition = AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS.find(
+      (candidate) => candidate.name === "set_evaluator_rules",
+    );
+    if (!definition) throw new Error("set_evaluator_rules definition missing");
+
+    // Zod's UUID pattern lists both as alternatives. A model reading that
+    // pattern took them as values to send rather than an id to leave out.
+    const schema = JSON.stringify(definition.inputSchema);
+    expect(schema).toContain("pattern");
+    expect(schema).not.toContain("00000000-0000-0000-0000-000000000000");
+    expect(schema).not.toContain("ffffffff-ffff-ffff-ffff-ffffffffffff");
   });
 });
