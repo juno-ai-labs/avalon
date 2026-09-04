@@ -28,6 +28,7 @@ import { type RailVariant, useUiStore } from '../lib/ui-store';
 import type { SocketState } from '../lib/use-workstream-socket';
 import type { WorkstreamDetail } from '../lib/types';
 import { AvatarStack, Badge, IconButton, InlineError, SocketStatusIndicator, StatusDot, TitleSkeleton } from '../components/primitives';
+import { WorkstreamGlyph } from '../components/workstream-glyph';
 import { ConversationSurface } from './conversation-surface';
 
 // The feed, composer and rail live in `conversation-surface.tsx`, shared with
@@ -407,6 +408,7 @@ export function WorkstreamScreen(): React.JSX.Element {
       renderHeader={(context) => (
         <WorkstreamHeader
           currentUserId={session?.user.id ?? null}
+          grokBotMode
           onAddParticipant={context.openParticipantDialog}
           onOpenRail={context.openRail}
           onRename={context.rename}

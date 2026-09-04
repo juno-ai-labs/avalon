@@ -21,7 +21,7 @@ import { draftWithMentionStarted, mentionOptionId, mentionQueryAtCaret, useMenti
 import { useFileAttachments } from '../lib/use-file-attachments';
 import { useWindowFilePaste } from '../lib/use-file-paste';
 import { useProjectDirectories } from '../lib/use-project-directories';
-import { useWorkstreamsQuery, WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
+import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
 import type { AgentModelOverride, CreatedWorkstream, Message, MessageAttachment, Workspace, WorkspaceMember, WorkstreamDetail } from '../lib/types';
 import { AgentWorkTiming } from '../components/agent-work-timing';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
@@ -190,89 +190,6 @@ function launchedWorkstreamDetail(
   };
 }
 
-/**
- * How long the home content stays mounted fading out under the transcript that
- * replaced it. The stylesheet animates over the same span, so the two have to
- * agree — the same contract `RAIL_EXIT_FADE_MS` keeps for the right sidebar.
- */
-const HOME_HAND_OFF_MS = 190;
-
-/**
- * Whether the home content is still on screen fading out over the work stream
- * being created. Only arriving at the launching state has anything to fade: a
- * create that fails puts the launcher back, and the person it failed for is
- * owed it immediately rather than after an animation.
- */
-function useHomeHandOff(launching: boolean): boolean {
-  const [shown, setShown] = useState(launching);
-  // A second launch can begin while the first hand-off is still pending — a
-  // create that failed, retried straight away. Storing a boolean would be an
-  // equal value, React would bail out, and the first departure's timer would
-  // end the second fade early. The count makes every departure distinct.
-  const [departure, setDeparture] = useState<number | null>(null);
-
-  if (shown !== launching) {
-    setShown(launching);
-    if (launching) setDeparture((current) => (current ?? 0) + 1);
-  }
-
-  useEffect(() => {
-    if (departure === null) return undefined;
-    const timer = window.setTimeout(() => setDeparture(null), HOME_HAND_OFF_MS);
-    return () => window.clearTimeout(timer);
-  }, [departure]);
-
-  return launching && departure !== null;
-}
-
-const WorkSuggestedPrompts = withSuggestedPrompts<{
-  items: WorkOpportunity[];
-  pendingId: string | null;
-  error?: string;
-  onSelect: (item: WorkOpportunity) => void;
-  onDismiss: (item: WorkOpportunity) => void;
-}>(({ items, pendingId, error, onSelect, onDismiss }) => ({
-  label: 'Suggested work',
-  items: items.map((item) => ({
-    id: item.id,
-    text: item.displayPrompt,
-    icon: item.icon,
-    sourceLabel: item.sourceLabel,
-  })),
-  pendingId,
-  ...(error ? { error } : {}),
-  onSelect: (selected) => {
-    const opportunity = items.find((item) => item.id === selected.id);
-    if (opportunity) onSelect(opportunity);
-  },
-  onDismiss: (selected) => {
-    const opportunity = items.find((item) => item.id === selected.id);
-    if (opportunity) onDismiss(opportunity);
-  },
-}));
-
-function AttentionWorkstreamRow({ projects, workstream }: { projects: ProjectSummary[]; workstream: WorkstreamSummary }): React.JSX.Element {
-  const summary = workstream.preview ?? workstream.objective;
-  return (
-    <NavLink className="waiting-workstream-row" to={`/workstreams/${workstream.id}`}>
-      {/* Read from the work stream rather than hard-coded, now that three states
-          land a row here and they do not mean the same thing — and through the
-          same ranking the sidebar dot uses, so one work stream does not show
-          two different markers on two screens. */}
-      <StatusDot status={workstreamMarkerStatus(workstream)} />
-      <span className="waiting-workstream-projects">
-        <ProjectIconPile projects={projects.filter((project) => project.workstreamIds.includes(workstream.id))} />
-      </span>
-      <span className="waiting-workstream-copy">
-        <strong>{workstream.title}</strong>
-        {summary && <span>{summary}</span>}
-      </span>
-      <time dateTime={workstream.lastActivityAt}>{formatRelative(workstream.lastActivityAt)}</time>
-      <ChevronRight aria-hidden="true" size={15} />
-    </NavLink>
-  );
-}
-
 function ParticipantPicker({
   currentUser,
   members,
@@ -371,7 +288,6 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
     enabled: Boolean(api),
     staleTime: 60_000,
   });
-  const workstreams = useWorkstreamsQuery();
   const { active: projects } = useProjectDirectories();
   const selectedIds = useMemo(() => new Set(selectedMembers.map((member) => member.id)), [selectedMembers]);
   const recipientCandidates = useMemo(() => {
@@ -415,9 +331,7 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
       void navigate(returnTo, { replace: true });
       return;
     }
-    const fallback = workstreams.data?.[0];
-    if (fallback) void navigate(`/workstreams/${fallback.id}`, { replace: true });
-  }, [location.pathname, location.state, navigate, workstreams.data]);
+  }, [location.pathname, location.state, navigate]);
   const owningProject = projects.data?.items.find((project) => project.id === owningProjectId);
   const personalProjectParticipantIds = useMemo(() => new Set(
     owningProject?.scope === 'personal'

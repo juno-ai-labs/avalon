@@ -261,6 +261,15 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
 
   // The main pane keeps room for an inspector that is still fading out.
   const showShellRail = (railOpen || railLeaving) && !location.pathname.startsWith('/notes/');
+  const expandForShellRail = railOpen && !location.pathname.startsWith('/notes/');
+  useEffect(() => {
+    void desktopBridge().setConversationDetailsOpen({
+      // A leaving rail remains laid out for its short cross-fade, but no longer
+      // owns window geometry. This preserves the true pre-panel bounds.
+      open: expandForShellRail,
+      width: railWidth,
+    }).catch(() => undefined);
+  }, [expandForShellRail, railWidth]);
   // Nothing here loads the sidebar. Subscribing to the workspace socket is
   // answered with the whole of it — the first page of work streams, the
   // automations and the notes — and WorkspaceDO pushes each list again whenever
@@ -412,6 +421,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   }, [workspaceKey]);
   const shellClassName = [
     'workspace-shell',
+    'grokbot-shell',
     windowControlsShellClass(runtime?.platform),
     showShellRail ? 'rail-open' : '',
     switchingWorkspaceKey !== null ? 'is-switching-workspace' : '',
@@ -438,7 +448,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   // rather than resizing to a width nothing is about to show.
   const shellStyle = {
     '--rail-width': `${railWidth}px`,
-    '--av-cmp-sidebar-width': `${sidebarWidth}px`,
+    '--av-cmp-sidebar-width': `${effectiveSidebarWidth}px`,
   } as CSSProperties;
 
   return (
@@ -524,6 +534,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
               }
             }}
             signingInWorkspaceKey={signingInWorkspaceKey}
+            presentation="grok"
             staleAt={workspaceAttention.isError && workspaceAttention.dataUpdatedAt > 0
               ? new Date(workspaceAttention.dataUpdatedAt).toISOString()
               : null}

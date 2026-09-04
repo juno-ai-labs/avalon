@@ -5,7 +5,6 @@ import { IconDots, IconLock } from '@tabler/icons-react';
 import clsx from 'clsx';
 import {
   Archive,
-  ChevronRight,
   ChevronsLeft,
   Check,
   CircleHelp,
@@ -15,7 +14,6 @@ import {
   Copy,
   EyeOff,
   FileStack,
-  Gauge,
   Globe2,
   GripVertical,
   Info,
@@ -1217,9 +1215,24 @@ export function Sidebar({
   const [batchPreviewFailed, setBatchPreviewFailed] = useState(false);
   const batchPreviewGeneration = useRef(0);
   const [deleteTarget, setDeleteTarget] = useState<AutomationSummary | null>(null);
+  const normalizedSearch = searchQuery.trim().toLowerCase();
+  const visibleWorkstreams = useMemo(() => normalizedSearch
+    ? workstreams.filter((workstream) => [workstream.title, workstream.preview, workstream.objective]
+      .some((value) => value?.toLowerCase().includes(normalizedSearch)))
+    : workstreams, [normalizedSearch, workstreams]);
+  const visibleNotes = useMemo(() => conversationOnly
+    ? []
+    : normalizedSearch
+      ? notes.filter((note) => note.title.toLowerCase().includes(normalizedSearch))
+      : notes, [conversationOnly, normalizedSearch, notes]);
+  const visibleAutomations = useMemo(() => conversationOnly
+    ? []
+    : normalizedSearch
+      ? automations.filter((automation) => automation.name.toLowerCase().includes(normalizedSearch))
+      : automations, [automations, conversationOnly, normalizedSearch]);
   // Drafts are listed with the rest: a draft is a conversation in progress on
   // the automation's own screen, which is where its row leads.
-  const orderedAutomations = automations;
+  const orderedAutomations = visibleAutomations;
   // A pinned work stream leaves the recent list entirely rather than appearing
   // twice: the section it moves to is the one whose order the reader controls,
   // and a row in both places would take its order from whichever they saw last.
@@ -1857,13 +1870,35 @@ export function Sidebar({
           ref={scrollRef}
         >
           <div className="sidebar-commandbar window-no-drag">
+            <label className="sidebar-search">
+              <Search aria-hidden="true" size={14} />
+              <span className="sr-only">Search work streams</span>
+              <input
+                aria-label="Search work streams"
+                onChange={(event) => setSearchQuery(event.currentTarget.value)}
+                placeholder="Search"
+                type="search"
+                value={searchQuery}
+              />
+            </label>
+          </div>
+          {conversationOnly && location.pathname === '/workstreams/new' && (
+            <div aria-current="page" aria-label="New chat draft" className="sidebar-new-chat-draft">
+              <span aria-hidden="true" className="sidebar-new-chat-draft-icon">
+                <Plus size={16} strokeWidth={1.7} />
+              </span>
+              <span>New chat</span>
+            </div>
+          )}
+
+          {!conversationOnly && <div className="sidebar-primary-actions sidebar-secondary-actions">
             <NavLink
-              aria-label="New work stream"
-              className={({ isActive }) => clsx('sidebar-new-button', isActive && 'is-active')}
+              className={({ isActive }) => clsx('sidebar-action', isActive && 'is-active')}
               onClick={() => markSurfaceEntrypoint('sidebar_new')}
               to="/workstreams/new"
             >
-              <Plus aria-hidden="true" size={17} />
+              <Plus aria-hidden="true" size={15} />
+              <span>New work stream</span>
             </NavLink>
             {/* Creates the automation and opens its conversation, which is
                 where the draft is written. */}
@@ -1903,7 +1938,7 @@ export function Sidebar({
             </div>
             {loading && visibleAutomations.length === 0 ? (
               <SidebarSkeletonRows count={3} />
-            ) : automations.length === 0 ? (
+            ) : visibleAutomations.length === 0 ? (
               <p className="sidebar-empty">No automations</p>
             ) : (
               <div className="sidebar-list">

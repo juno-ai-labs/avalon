@@ -1,7 +1,20 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import type { WorkspaceAttention } from '@rally/contracts';
-import { Check, ChevronDown, LoaderCircle, LogOut, Plus, Settings } from 'lucide-react';
+import {
+  Check,
+  ChevronDown,
+  ChevronRight,
+  CircleHelp,
+  Gauge,
+  Info,
+  LoaderCircle,
+  LogOut,
+  Megaphone,
+  Plus,
+  Settings,
+  Smartphone,
+} from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 import type {

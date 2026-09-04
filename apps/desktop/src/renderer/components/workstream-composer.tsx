@@ -1,6 +1,5 @@
 import { LoaderCircle, Sparkles, Square, UserPlus } from 'lucide-react';
 import { type RefObject, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import type { RallyApi, MentionIdentity } from '../lib/api';
 import { workstreamDraftKey } from '../lib/draft-keys';
 import {
@@ -61,6 +60,7 @@ interface WorkstreamComposerProps {
   onRemoveAttachment: (localId: string) => void;
   onRetryAttachment: (localId: string) => void;
   onStop: () => Promise<void>;
+  onTeachTask?: () => void;
   queueItems?: ComposerQueueItem[];
   onReorderQueue?: (inputIds: string[]) => Promise<void>;
 }
@@ -102,10 +102,10 @@ export function WorkstreamComposer({
   onRemoveAttachment,
   onRetryAttachment,
   onStop,
+  onTeachTask,
   queueItems = [],
   onReorderQueue,
 }: WorkstreamComposerProps): React.JSX.Element {
-  const navigate = useNavigate();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const draftRevisionRef = useRef(0);
   const {
@@ -441,7 +441,7 @@ export function WorkstreamComposer({
         onRetryAttachment={onRetryAttachment}
         onSelect={() => refreshOpenMentionQuery(text)}
         onSubmit={send}
-        onTeachTask={() => void navigate('/automations/new')}
+        onTeachTask={onTeachTask}
         onValueChange={updateText}
         placeholder={placeholder}
         ref={textareaRef}
