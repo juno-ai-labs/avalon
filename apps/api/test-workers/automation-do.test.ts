@@ -276,12 +276,12 @@ async function ingestSlackEvent(eventId: string, providerEventId: string): Promi
   });
 }
 
-async function createDraft(): Promise<void> {
+async function createDraft(owningWorkstreamId: string | null = null): Promise<void> {
   const created = await createAutomation(TEST_ENV, {
     workspaceId: WORKSPACE_ID,
     authorUserId: AUTHOR_ID,
-    scope: "personal",
-    owningWorkstreamId: null,
+    scope: owningWorkstreamId ? "workstream" : "personal",
+    owningWorkstreamId,
     automationId: AUTOMATION_ID,
   });
   expect(created).toEqual({ automationId: AUTOMATION_ID, created: true });
@@ -321,7 +321,7 @@ async function automationRow(): Promise<AutomationRow> {
   return runInDurableObject(automationStub(), (_instance, state) =>
     state.storage.sql.exec<AutomationRow>(
       `SELECT lifecycle, paused_by, accepted_definition_revision, effective_after_event_sequence,
-              connector_bindings_json, email_address
+              applied_effects_revision, connector_bindings_json, email_address
          FROM automation WHERE id = 1`,
     ).one());
 }
@@ -615,6 +615,140 @@ describe("AutomationDO", () => {
     await expect(runInDurableObject(automationStub(), (instance: AutomationDO) =>
       instance.pause({ ...addressed(), actor: actor(OUTSIDER_ID) }))).rejects.toThrow("You cannot manage this automation");
     expect((await automationRow()).lifecycle).toBe("active");
+  });
+
+  it("re-runs the tail of an apply whose effects never landed, instead of answering that it did", async () => {
+    await seedSlackConnection();
+    await createDraft();
+    await submit({
+      ...DEFINITION,
+      triggers: [{ type: "manual" }, { type: "interval", intervalSeconds: 3_600, summary: "Every hour" }],
+      recommendedPlugins: [{ pluginId: "plugin_slack", recommendedTools: [], reason: "Needed" }],
+    });
+    await apply();
+    expect(await automationRow()).toMatchObject({ lifecycle: "active", accepted_definition_revision: 1, applied_effects_revision: 1 });
+    expect((await alarms()).filter((alarm) => alarm.kind === AUTOMATION_SCHEDULE_ALARM_KIND)).toHaveLength(1);
+
+    // The state a crash between the transaction and the marker leaves: the
+    // row says applied, the alarm and the registrations never happened.
+    // Before the marker, the replay guard read the accepted revision and
+    // returned, so the automation stayed "active" with nothing armed and
+    // nothing registered, and Apply was disabled because the revisions
+    // matched: no way to repair it from anywhere.
+    await runInDurableObject(automationStub(), (_instance, state) => {
+      state.storage.sql.exec(`DELETE FROM _internal_durable_alarms WHERE kind = ?`, AUTOMATION_SCHEDULE_ALARM_KIND);
+      state.storage.sql.exec(`UPDATE automation SET applied_effects_revision = NULL, effective_after_event_sequence = NULL WHERE id = 1`);
+    });
+    expect((await alarms()).filter((alarm) => alarm.kind === AUTOMATION_SCHEDULE_ALARM_KIND)).toHaveLength(0);
+
+    await apply();
+
+    expect(await automationRow()).toMatchObject({ applied_effects_revision: 1, effective_after_event_sequence: 0 });
+    expect((await alarms()).filter((alarm) => alarm.kind === AUTOMATION_SCHEDULE_ALARM_KIND)).toHaveLength(1);
+  });
+
+  it("refuses to apply while paused, and while the owning room is archived", async () => {
+    await activeAutomation();
+    await automationStub().pause({ ...addressed(), actor: actor() });
+    const revised = await submit({ ...DEFINITION, instructions: "Say hello twice." });
+    expect(revised.definitionRevision).toBe(2);
+
+    // Applying used to write `lifecycle = 'active', paused_by = NULL` with no
+    // look at why the automation was paused, which resumed a room-archived
+    // automation past the refusal `resume` gives, with its schedules armed
+    // and its connector writes back, into a room it could not post to.
+    await expect(apply()).rejects.toMatchObject({ code: "automation_not_active" });
+    expect(await automationRow()).toMatchObject({ lifecycle: "paused", paused_by: "person", accepted_definition_revision: 1 });
+    expect((await alarms()).filter((alarm) => alarm.kind === AUTOMATION_SCHEDULE_ALARM_KIND)).toHaveLength(0);
+
+    await automationStub().resume({ ...addressed(), actor: actor() });
+    await apply();
+    expect(await automationRow()).toMatchObject({ lifecycle: "active", accepted_definition_revision: 2 });
+  });
+
+  it("refuses to apply to an automation whose owning room is archived", async () => {
+    const roomId = "00000000-0000-7000-8000-00000000ad80";
+    await createDraft(roomId);
+    await submit();
+    await apply();
+    await automationStub().setOwningRoomArchived({ ...addressed(), workstreamId: roomId, archived: true });
+    expect(await automationRow()).toMatchObject({ lifecycle: "paused", paused_by: "room_archive" });
+    await submit({ ...DEFINITION, instructions: "Say hello three times." });
+
+    // The archive holds until the room comes back; `resume` refuses with this
+    // code, and apply now answers the same instead of walking around it.
+    await expect(apply()).rejects.toMatchObject({ code: "automation_room_archived" });
+    expect(await automationRow()).toMatchObject({ lifecycle: "paused", paused_by: "room_archive", accepted_definition_revision: 1 });
+  });
+
+  it("creates the tables a definition declares in the automation's memory scope, once", async () => {
+    const declared = [{
+      name: "Deploys",
+      description: "One row per deploy the automation has seen.",
+      usageInstructions: "Insert a row for every deploy; update it when the deploy is rolled back.",
+      columns: [
+        { name: "service", description: "The service deployed.", type: "string", required: true, searchable: true },
+        { name: "deployedAt", description: "When it finished.", type: "datetime", required: true, searchable: false },
+      ],
+      keyColumns: ["service"],
+    }, {
+      name: "Rollbacks",
+      description: "Deploys that were rolled back.",
+      usageInstructions: "One row per rollback.",
+      columns: [{ name: "rollbackId", description: "The rollback.", type: "string", required: true, searchable: true }],
+      keyColumns: ["rollbackId"],
+    }];
+    await createDraft();
+    await submit({ ...DEFINITION, memoryTables: declared as AutomationDraft["memoryTables"] });
+    await apply();
+
+    // The draft asked the model for these, the definition carried them, and
+    // nothing made them: a run went looking for a table its own definition
+    // named and found nothing.
+    const tables = async () => runInDurableObject(workspaceStub(), (_instance, state) =>
+      state.storage.sql.exec<{ name: string; kind: string; owner_id: string; columns: number }>(
+        `SELECT t.name, s.kind, s.owner_id,
+                (SELECT COUNT(*) FROM memory_table_columns c WHERE c.memory_table_id = t.memory_table_id) AS columns
+           FROM memory_tables t JOIN memory_scopes s ON s.memory_scope_id = t.memory_scope_id
+          WHERE t.invalidated_at IS NULL ORDER BY t.name`,
+      ).toArray());
+    expect(await tables()).toEqual([
+      { name: "Deploys", kind: "automation", owner_id: AUTOMATION_ID, columns: 2 },
+      { name: "Rollbacks", kind: "automation", owner_id: AUTOMATION_ID, columns: 1 },
+    ]);
+
+    // A second revision declaring the same tables reopens them; nothing is
+    // duplicated and nothing is dropped.
+    await submit({ ...DEFINITION, instructions: "Report deploys.", memoryTables: declared as AutomationDraft["memoryTables"] });
+    await apply();
+    expect(await tables()).toHaveLength(2);
+
+    // The run is told what exists in its scope.
+    const started = await automationStub().runNow({ ...addressed(), actor: actor(), idempotencyKey: "tables-run-01" });
+    await settledChildRun(started.runId);
+    const systemPrompt = promptText(provider.calls[0]!.messages[0]?.content);
+    expect(systemPrompt).toContain("\"Deploys\"");
+    expect(systemPrompt).toContain("\"Rollbacks\"");
+    expect(systemPrompt).toContain("rollbackId");
+  });
+
+  it("arms the run alarm again for a pending run whose admission is retried", async () => {
+    await activeAutomation();
+    const first = await automationStub().runNow({ ...addressed(), actor: actor(), idempotencyKey: "rearm-key-0001" });
+    // The row commits before the alarm is armed. A retry after a failure
+    // between the two found the row and returned `reused` with nothing armed,
+    // so the run stayed pending forever: nothing else ever provisions it.
+    await runInDurableObject(automationStub(), (_instance, state) => {
+      state.storage.sql.exec(`DELETE FROM _internal_durable_alarms WHERE kind = ?`, AUTOMATION_RUN_ALARM_KIND);
+    });
+    expect((await alarms()).filter((alarm) => alarm.kind === AUTOMATION_RUN_ALARM_KIND)).toHaveLength(0);
+
+    const again = await automationStub().runNow({ ...addressed(), actor: actor(), idempotencyKey: "rearm-key-0001" });
+
+    expect(again).toEqual({ runId: first.runId, reused: true });
+    expect((await alarms()).filter((alarm) => alarm.kind === AUTOMATION_RUN_ALARM_KIND)).toHaveLength(1);
+    const run = await settledChildRun(first.runId);
+    expect(run).toMatchObject({ status: "completed" });
   });
 
   it("admits a manual run once per idempotency key", async () => {

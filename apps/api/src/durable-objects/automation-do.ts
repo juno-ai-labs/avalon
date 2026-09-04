@@ -57,6 +57,7 @@ import { automationModelOverride, scheduledWorkstreamModel } from "../services/a
 import { validateDraftEvaluatorRules } from "../services/external-event-evaluator";
 import { activateWorkstreamLoop } from "../services/integrations";
 import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
+import { materializeAutomationMemoryTables } from "../services/memory-table-service";
 import { WorkstreamEmailRoutingService } from "../services/workstream-email-routing-service";
 import { attachWorkstreamRuntimeResource } from "../services/workstream-object-client";
 import {
@@ -174,6 +175,14 @@ interface AutomationRow extends Record<string, SqlStorageValue> {
   model_override: string | null;
   email_address: string | null;
   effective_after_event_sequence: number | null;
+  /**
+   * The revision whose post-transaction effects (schedule alarms, workspace
+   * registrations, declared memory tables) are known to have landed. Set
+   * last, so a failure between the accepted-revision write and here leaves
+   * it behind and the next apply re-runs the tail instead of answering that
+   * nothing needs doing.
+   */
+  applied_effects_revision: number | null;
   authority_generation: number;
   created_at: number;
   updated_at: number;
@@ -292,6 +301,12 @@ export const AUTOMATION_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
     ) STRICT`,
     ...CONVERSATION_PARENT_SCHEMA_STATEMENTS,
     ...SCHEDULED_ALARM_SCHEMA_STATEMENTS,
+  ],
+}, {
+  version: 2,
+  description: "which revision's apply effects landed, so a replayed apply reconciles instead of returning",
+  statements: [
+    `ALTER TABLE automation ADD COLUMN applied_effects_revision INTEGER`,
   ],
 }];
 
@@ -486,8 +501,18 @@ export class AutomationDO extends ConversationParentDurableObject {
    *
    * Everything read from outside (connections, the person's timezone, the
    * email route) happens first; then one transaction replaces the schedules
-   * and moves the lifecycle; then the workspace's registrations are replaced,
-   * which is idempotent, so a failure there is retried by applying again.
+   * and moves the lifecycle; then the tail: schedule alarms, the workspace's
+   * registrations, and the declared memory tables, each idempotent. The tail
+   * is recorded as done in `applied_effects_revision` only at its end, so a
+   * failure anywhere in it is repaired by applying again: the replay guard
+   * reads that marker, not the accepted revision, which the transaction wrote
+   * before the tail ran.
+   *
+   * A paused automation is not applied to. Room-archive paused it so the
+   * archive holds, and `resume` is what lifts a pause; applying here used to
+   * set `lifecycle = 'active'` regardless and so resumed an automation whose
+   * room was archived, with its schedules and connector writes, while the one
+   * place its result could go stayed refused.
    */
   async apply(input: AutomationActorRequest): Promise<AutomationDetail> {
     await this.initialized;
@@ -495,11 +520,21 @@ export class AutomationDO extends ConversationParentDurableObject {
     const row = this.assertAutomation(request.workspaceId, request.automationId);
     if (row.lifecycle === "deleted") throw new ApiError(404, "automation_not_found", "This automation was deleted");
     this.assertManager(row, request.actor);
+    if (row.owning_room_archived_at !== null) {
+      throw new ApiError(409, "automation_room_archived", "The work stream that owns this automation is archived");
+    }
+    if (row.lifecycle === "paused") {
+      throw new ApiError(409, "automation_not_active", "Resume the automation before applying a change");
+    }
     const revision = this.revision(row.current_definition_revision);
     if (!revision || revision.ready !== 1) {
       throw new ApiError(422, "automation_definition_not_ready", "The automation's definition is not ready to apply");
     }
-    if (row.lifecycle === "active" && row.accepted_definition_revision === revision.definition_revision) {
+    if (
+      row.lifecycle === "active"
+      && row.accepted_definition_revision === revision.definition_revision
+      && row.applied_effects_revision === revision.definition_revision
+    ) {
       return this.detail();
     }
     const definition = AutomationDraftSchema.parse(JSON.parse(revision.definition_json));
@@ -543,6 +578,24 @@ export class AutomationDO extends ConversationParentDurableObject {
       );
       this.enqueueDirectory(now);
     });
+    await this.applyEffects(row, revision.definition_revision, definition, previousSchedules, prepared);
+    return this.detail();
+  }
+
+  /**
+   * The tail of an apply, run again by the next apply until it has all landed.
+   *
+   * `previousSchedules` are whatever schedule ids existed before this call:
+   * on a replay the table already holds the new revision's, so cancelling
+   * them and arming them again is one idempotent pass.
+   */
+  private async applyEffects(
+    row: AutomationRow,
+    definitionRevision: number,
+    definition: AutomationDraft,
+    previousSchedules: readonly string[],
+    prepared: Pick<Awaited<ReturnType<typeof this.prepareApplication>>, "schedules" | "evaluators">,
+  ): Promise<void> {
     await Promise.all(previousSchedules.map((scheduleId) => (
       this.cancelScheduledAlarm(AUTOMATION_SCHEDULE_ALARM_KIND, scheduleId)
     )));
@@ -550,8 +603,19 @@ export class AutomationDO extends ConversationParentDurableObject {
       await this.scheduleAlarm({ kind: AUTOMATION_SCHEDULE_ALARM_KIND, key: schedule.id, dueAt: schedule.nextDueAt });
     }
     await this.replaceRegistrations(prepared.evaluators);
+    await materializeAutomationMemoryTables(this.env, {
+      workspaceId: row.workspace_id,
+      automationId: row.automation_id,
+      definitionRevision,
+      runAsUserId: row.run_as_user_id,
+      tables: definition.memoryTables,
+    });
+    this.state.storage.sql.exec(
+      `UPDATE automation SET applied_effects_revision = ?, updated_at = ? WHERE id = 1`,
+      definitionRevision,
+      Date.now(),
+    );
     await this.armNextAlarm();
-    return this.detail();
   }
 
   async pause(input: AutomationActorRequest): Promise<void> {
@@ -1134,11 +1198,19 @@ export class AutomationDO extends ConversationParentDurableObject {
       now,
     ).toArray()[0];
     if (!inserted) {
-      const existing = first(this.state.storage.sql.exec<{ run_id: string }>(
-        `SELECT run_id FROM runs WHERE occurrence_key = ?`,
+      const existing = first(this.state.storage.sql.exec<{ run_id: string; state: string }>(
+        `SELECT run_id, state FROM runs WHERE occurrence_key = ?`,
         occurrenceKey,
       ));
       if (!existing) throw new Error("automation_occurrence_missing");
+      // The row commits on its own and the alarm is armed after it, so a
+      // retry of an admission that died between the two finds the row and
+      // must arm the alarm it never got; the alarm is keyed by run id and
+      // `provisionRun` ignores a run that is no longer pending, so arming a
+      // second time for a run that was provisioned costs nothing.
+      if (existing.state === "pending") {
+        await this.scheduleAlarm({ kind: AUTOMATION_RUN_ALARM_KIND, key: existing.run_id, dueAt: now });
+      }
       return { runId: existing.run_id, reused: true };
     }
     await this.scheduleAlarm({ kind: AUTOMATION_RUN_ALARM_KIND, key: runId, dueAt: now });
