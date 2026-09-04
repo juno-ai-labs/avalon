@@ -539,6 +539,37 @@ production inspection paths.
 
 ## Changelog
 
+### 2026-09-04: A run reads the event that woke it, and an array field has operators it can use
+
+**What changed:** A matched delivery (`WorkspaceExternalEventSchema`) now
+carries the event's `textSnippet` and `metadata` beside its title and
+summary, and `admitExternalEvent` renders them as the run's opening message
+(`lib/external-event-opening.ts`): a system row marked untrusted, with the
+same fields in its structured content, appended to the run's transcript
+before the loop starts, the way an inbound email already was. A run's
+opening no longer needs a resource; only an email attaches one. A delivery
+that would exceed the Queue's message bound with the content is sent
+without it, under `external_event_delivery_content_trimmed`, rather than
+not at all. Separately, a connector filter field whose manifest names no
+operators now defaults by value type
+(`defaultConnectorActivityFilterOperators`): the set operators for
+`string_array` and `person_id_array`, `equals` for everything else.
+
+**Why:** Every event automation drafted on the live stack fired correctly
+and then had nothing to say: the run was handed only the event's type, so
+"write a line naming the deployed service" produced "service: unavailable".
+The rule had just selected on that service; the run deserved to read it.
+The array default was found the same way: Granola's `changedFields` and
+Notion's `authorPersonIds` defaulted to `equals`, which the array leaf
+schema refuses, so no rule could ever name them.
+
+**Consequences:** The delivery message grows by the event's snippet and
+metadata, which ingress already bounded; the trim guard is the only new
+limit and it reuses the ingress bound. Connector text now enters a run's
+transcript as prose; it is labelled as the connector's words and not an
+instruction, and the structured content says `untrusted`. A manifest that
+wants `equals` on an array field must say so.
+
 ### 2026-09-04: A rule's "no resource" sentinel, a poison-pill event, and a replayable dev ingress
 
 **What changed:** `withoutUnusableAutomationResourceIds` (contracts) drops

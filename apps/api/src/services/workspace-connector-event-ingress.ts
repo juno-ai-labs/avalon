@@ -12,7 +12,7 @@ import type { Env } from "../env";
 import { sha256Hex } from "../lib/crypto";
 import { diagnosticErrorCode, logInfo, logWarn } from "../observability/logger";
 
-const MAX_CONNECTOR_EVENT_QUEUE_BYTES = 120_000;
+export const MAX_CONNECTOR_EVENT_QUEUE_BYTES = 120_000;
 
 /**
  * Two-stage handoff on one Queue:

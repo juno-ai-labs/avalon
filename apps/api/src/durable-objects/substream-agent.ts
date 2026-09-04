@@ -1563,6 +1563,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         eventType: z.string().min(1),
         title: z.string().min(1),
         summary: z.string(),
+        textSnippet: z.string().default(""),
+        metadata: z.record(z.string(), z.unknown()).default({}),
         occurredAt: z.number().int().nonnegative(),
         audienceKind: z.enum(["workspace", "restricted"]),
         audienceUserIds: z.array(z.string().min(1)),

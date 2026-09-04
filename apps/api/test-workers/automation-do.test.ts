@@ -616,6 +616,8 @@ describe("AutomationDO", () => {
       eventType: "slack.message.posted",
       title: "New message",
       summary: "A channel message arrived",
+      textSnippet: "foobar",
+      metadata: { messageText: "foobar", channel: "C123" },
       occurredAt: Date.parse(NOW),
       audienceUserIds: [],
       audienceKind: "workspace" as const,
@@ -635,6 +637,28 @@ describe("AutomationDO", () => {
       event: { ...event, id: earlierEventId, eventSequence: 1 },
     })).toEqual({ admitted: false, outcomeCode: "automation_event_before_activation_boundary" });
     expect((await runRows()).map((run) => run.occurrence_key)).toEqual([`external:${event.id}`]);
+    // The run gets to read the event that woke it: without this it knew only
+    // the event's type, and a rule on `channel` produced a run that could not
+    // name the channel.
+    const [admittedRun] = await runRows();
+    const opening = await runInDurableObject(automationStub(), (_instance, state) =>
+      state.storage.sql.exec<{ opening_json: string | null }>(
+        `SELECT opening_json FROM runs WHERE run_id = ?`, admittedRun!.run_id,
+      ).one().opening_json);
+    const parsed = JSON.parse(opening ?? "null") as {
+      textContent: string;
+      structuredContent: Record<string, unknown>;
+      resourceId: string | null;
+    } | null;
+    expect(parsed?.textContent).toContain("New message");
+    expect(parsed?.textContent).toContain("\"channel\": \"C123\"");
+    expect(parsed?.structuredContent).toMatchObject({
+      kind: "external_event",
+      untrusted: true,
+      workspaceEventId: event.id,
+      metadata: { channel: "C123" },
+    });
+    expect(parsed?.resourceId).toBeNull();
   });
 
   it("admits an inbound email once, answers a resend retry from its receipt, and refuses a stranger", async () => {
