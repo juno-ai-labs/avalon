@@ -254,7 +254,7 @@ function ftsQuery(value: string): string | null {
     .join(" OR ");
 }
 
-async function ensureScope(
+export async function ensureScope(
   env: Env,
   workspaceId: string,
   kind: MemoryScopeKind,
