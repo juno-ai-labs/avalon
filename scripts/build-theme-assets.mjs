@@ -4,8 +4,7 @@
  *
  * The JSON under `config/design-tokens/` is the source of truth: `registry.json`
  * says which tokens exist and what each one means, and one file per theme under
- * `themes/` supplies the values, the font faces it needs, and — optionally — a
- * backdrop document. This script is the only thing that writes any of the files
+ * `themes/` supplies the values and font faces it needs. This script is the only thing that writes any of the files
  * below, and `pnpm tokens:check` fails if a committed one has drifted, so the
  * JSON and the build cannot disagree.
  *
@@ -15,8 +14,7 @@
  * | Artefact | What reads it |
  * | --- | --- |
  * | `renderer/styles/themes.css` | The renderer: `@font-face` rules and one custom-property block per theme. |
- * | `renderer/backdrops/<id>.html` | The main process, which serves it over `rally-backdrop://`. |
- * | `common/theme-assets.ts` | Both: which themes have a backdrop, and which fonts the main process caches. |
+ * | `common/theme-assets.ts` | The cached remote-font manifest and fixed export syntax palette. |
  *
  * A token path becomes a custom property by prefixing the namespace and
  * swapping dots for hyphens: `sys.color.text.default` is
@@ -38,10 +36,6 @@ const themesDirectory = join(tokensDirectory, 'themes');
 const desktopSource = join(root, 'apps', 'desktop', 'src');
 export const stylesheetPath = join(desktopSource, 'renderer', 'styles', 'themes.css');
 export const manifestPath = join(desktopSource, 'common', 'theme-assets.ts');
-// The documents themselves are main-process only. The renderer points a frame
-// at a URL and never holds the markup, which is the whole point of serving it
-// from an origin the renderer does not share.
-export const backdropModulePath = join(desktopSource, 'main', 'theme-backdrops.ts');
 /** Where a `bundled` font source resolves to, and what `themes.css` points at. */
 export const fontsDirectory = join(desktopSource, 'renderer', 'fonts');
 const fontsHrefPrefix = '../fonts/';
@@ -236,76 +230,12 @@ function fontFaceRule(font, theme) {
 
 /** The scheme the main process serves cached remote font files from. */
 export const FONT_SCHEME = 'rally-font';
-/** The scheme a backdrop document is served from, one origin per theme. */
-export const BACKDROP_SCHEME = 'rally-backdrop';
-
-function tokenBlockLines(theme, registry, values) {
-  return Object.keys(registry.tokens)
-    .filter((path) => path in values)
-    .map((path) => `  ${customProperty(path)}: ${resolveValue(values[path], registry, theme, path)};`);
-}
 
 /**
- * A theme's backdrop document.
- *
- * It is a whole page rather than a fragment because it is served to a browsing
- * context of its own: its own origin, its own Content Security Policy, and a
- * sandbox that withholds everything except running scripts. The theme's tokens
- * are written in as custom properties — a document on another origin inherits
- * nothing from the application's cascade, so a backdrop that wants the accent
- * colour has to be handed it.
- */
-export function backdropDocument(theme, registry, values) {
-  return [
-    '<!doctype html>',
-    `<html lang="en" data-theme="${theme.id}">`,
-    '<head>',
-    '<meta charset="utf-8">',
-    `<title>${theme.name} backdrop</title>`,
-    '<style>',
-    ':root {',
-    ...tokenBlockLines(theme, registry, values),
-    '}',
-    // The document paints the theme's own `sys.backdrop.*` stack, the same rule
-    // the shell carries, and everything the theme animates goes on top of it.
-    //
-    // Not transparency: a frame on another origin gets Chromium's default white
-    // canvas, and `background: transparent` on the root then composites the app
-    // against *that* rather than against the window. Painting the floor here is
-    // both more robust and more honest — a theme that brings a document owns the
-    // whole backdrop, and this is what makes the two descriptions agree.
-    'html {',
-    '  background-color: var(--av-sys-backdrop-color);',
-    '  background-image: var(--av-sys-backdrop-image);',
-    '  background-position: var(--av-sys-backdrop-position);',
-    '  background-size: var(--av-sys-backdrop-size);',
-    '  background-repeat: var(--av-sys-backdrop-repeat);',
-    '  background-blend-mode: var(--av-sys-backdrop-blend-mode);',
-    '}',
-    // Immovable: a backdrop that could scroll or take a pointer would be an
-    // interface element.
-    'html, body { height: 100%; margin: 0; overflow: hidden; }',
-    'body { pointer-events: none; user-select: none; }',
-    '</style>',
-    '</head>',
-    '<body>',
-    theme.backdrop.html.trimEnd(),
-    '</body>',
-    '</html>',
-    '',
-  ].join('\n');
-}
-
-/**
- * What the application needs to know about themes that is not a CSS value.
- *
- * Generated rather than read from the JSON at runtime because both processes
- * need it: the renderer decides whether to mount a backdrop frame, and the main
- * process resolves a font-cache id to the URL it was minted from. Neither should
- * be parsing the design-token directory to find out.
+ * What the application needs to know about appearance assets that are not CSS
+ * values. Generated rather than parsed from design-token files at runtime.
  */
 export function assetManifest(themes) {
-  const withBackdrop = themes.filter((theme) => theme.backdrop);
   const syntax = exportSyntaxPalette(themes);
   const remote = fontFaces(themes).filter((font) => font.src.url);
 
@@ -325,19 +255,8 @@ export function assetManifest(themes) {
     ' * theme; `pnpm tokens:check` fails if this file and that JSON disagree.',
     ' */',
     '',
-    '/** The scheme a theme\'s backdrop document is served from. */',
-    `export const backdropScheme = '${BACKDROP_SCHEME}';`,
-    '',
     '/** The scheme cached remote font files are served from. */',
     `export const fontScheme = '${FONT_SCHEME}';`,
-    '',
-    '/**',
-    ' * Themes that bring a backdrop document. A theme not listed here paints its',
-    ' * backdrop entirely with `sys.backdrop.*` and mounts no frame at all.',
-    ' */',
-    `export const themesWithBackdrop = [${withBackdrop.map((theme) => `'${theme.id}'`).join(', ')}] as const;`,
-    '',
-    'export type ThemeWithBackdrop = (typeof themesWithBackdrop)[number];',
     '',
     '/**',
     ' * Remote font files, by the cache id `themes.css` asks for. The main process',
@@ -359,7 +278,7 @@ export function assetManifest(themes) {
     ' * those references is invalid at computed-value time and `color` falls back',
     ' * to the inherited near-black, on a near-black code block.',
     ' *',
-    ' * These are the default theme\'s values because the exported card is',
+    ' * These are the dark appearance\'s values because the exported card is',
     ' * deliberately not themed: a fixed light sheet with a fixed dark code block,',
     ' * so that a saved file looks the same whoever saved it. Generated rather than',
     ' * copied so the two cannot drift.',
@@ -372,14 +291,18 @@ export function assetManifest(themes) {
 }
 
 /**
- * The default theme's syntax tokens, fully resolved.
+ * The dark appearance's syntax tokens, fully resolved.
  *
  * An alias would be meaningless in a document that declares none of the ramp it
  * points at, so anything still shaped like `{ref.…}` is followed here rather
  * than emitted.
  */
 export function exportSyntaxPalette(themes) {
-  const theme = defaultTheme(themes);
+  const darkAppearances = themes.filter((theme) => theme.appearance === 'dark');
+  if (darkAppearances.length !== 1) {
+    throw new Error(`expected exactly one dark appearance, found ${darkAppearances.length}`);
+  }
+  const theme = darkAppearances[0];
   const values = resolvedTokens(theme, themes);
   return Object.keys(values)
     .filter((path) => path.startsWith('sys.color.syntax.'))
@@ -461,7 +384,7 @@ export function generate({ registry, themes }) {
  * an alias declared on `:root` is substituted where it is declared, so a nested
  * element carrying a different `data-theme` inherits the default theme's already
  * resolved colour and redeclaring the ramp beneath it changes nothing. The
- * Settings miniature and every backdrop document are exactly that element.
+ * Settings miniatures are exactly that element.
  */
 export function resolvedTokens(theme, themes) {
   const inherited = defaultTheme(themes).tokens;
@@ -476,51 +399,10 @@ export function resolvedTokens(theme, themes) {
  * checks, which over a few months is an artefact that no longer matches its
  * source.
  */
-/**
- * The backdrop documents, as a module the main process imports.
- *
- * Held in memory and served rather than read off disk, for the same reason the
- * message exporter does it: a handler that resolves a path is a handler that can
- * be argued into resolving a different one, and there is no path here to argue
- * about. It also removes the one real difference between a development run and a
- * packaged one, where the renderer's files live somewhere else entirely.
- */
-export function backdropModule(sources) {
-  const { registry, themes } = sources;
-  const withBackdrop = themes.filter((theme) => theme.backdrop);
-
-  const entries = withBackdrop.map((theme) => {
-    const document = backdropDocument(theme, registry, resolvedTokens(theme, themes));
-    return `  ${JSON.stringify(theme.id)}: ${JSON.stringify(document)},`;
-  });
-
-  return [
-    '/*',
-    ' * GENERATED FILE — do not edit.',
-    ' *',
-    ' * Written by `scripts/build-theme-assets.mjs` from the design-token JSON',
-    ' * under `config/design-tokens/`. Run `pnpm tokens:build` after editing a',
-    " * theme's backdrop; `pnpm tokens:check` fails if the two disagree.",
-    ' */',
-    '',
-    '/**',
-    " * One whole HTML document per theme that brings a backdrop, keyed by theme id.",
-    ' *',
-    ' * Served over `rally-backdrop://` under a policy that permits painting and',
-    " * nothing else. See `docs/theming.md` for what a backdrop document may do.",
-    ' */',
-    'export const backdropDocuments: Record<string, string> = {',
-    ...entries,
-    '};',
-    '',
-  ].join('\n');
-}
-
 export function outputs(sources) {
   return [
     { path: stylesheetPath, contents: generate(sources) },
     { path: manifestPath, contents: assetManifest(sources.themes) },
-    { path: backdropModulePath, contents: backdropModule(sources) },
   ];
 }
 

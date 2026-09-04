@@ -190,10 +190,10 @@ Two things about how a mark is drawn are load-bearing:
   [`using-company-brand-icons.md`](using-company-brand-icons.md) holds the
   measurement and `scripts/eslint-rules/thesvg-subpath-imports.mjs` enforces it.
 - **The mark is monochrome.** That is what this feed wants: one contrasting
-  neutral across four themes, instead of eight brand palettes of which several
-  vanish against one ground or the other — X and Notion on a dark theme, Granola
-  on a light one. It also means no per-theme artwork and no component that knows
-  which theme is on.
+  neutral across both appearances, instead of brand palettes of which several
+  vanish against one ground or the other — X and Notion in dark, Granola in
+  light. It also means no appearance-specific artwork and no component that
+  knows which appearance is on.
 
 Monochrome is asked for rather than imposed. Six of the eight brands ship a
 `mono` variant already drawn in `currentColor`, and `PLUGIN_BRAND_MARKS` records
@@ -227,7 +227,7 @@ pulses its opacity while the group is active, which is the whole of the "still
 going" signal. A column of enclosed glyphs down a transcript reads as a toolbar
 of controls, and these are labels; the single neutral is also the only colour
 with guaranteed contrast, because a connector's brand foreground was chosen
-against its own chip and the transcript has four themes and no chip.
+against its own chip and the transcript has two appearances and no chip.
 
 A **settled response total** is not a plugin row and does not live in the feed
 as one. While it runs it is progress and stays a row; once it settles
@@ -1200,7 +1200,7 @@ Also rejected: drawing the marks in their brand colours. It was built and looked
 at side by side, and it fails on its own terms — X and Notion are near-black and
 disappear on a dark theme, Granola's is near-black and disappears on a light one,
 and only some brands ship the light/dark art that would fix it. The masked
-neutral is legible on all four themes with no per-theme artwork.
+neutral is legible in both appearances with no appearance-specific artwork.
 
 **Consequences:** `PluginGroupIcon` is now the renderer's own vocabulary rather
 than the contract's, so a surface that carries `AutomationPluginIcon` must go

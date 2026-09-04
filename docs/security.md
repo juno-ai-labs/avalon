@@ -20,7 +20,7 @@ outside this document can break without their own tests failing.
 | `apps/desktop/src/common/realtime-socket-validation.ts`, `apps/desktop/src/main/realtime-socket-ipc.ts` | Shared broker channel/event validation and the main-window-only socket IPC boundary. |
 | `apps/desktop/src/main/realtime-socket-broker.ts` | Route-confined Node socket transport, ordered system/PAC routing, OS trust roots, frame limits, and renderer-owner teardown. |
 | `apps/desktop/src/renderer/index.html` | The Content Security Policy. |
-| `apps/desktop/src/main/theme-assets.ts` | The two theme-asset schemes: a backdrop document's policy, and the remote-font cache that keeps the renderer off remote hosts. |
+| `apps/desktop/src/main/theme-assets.ts` | The private remote-font cache that keeps the renderer off remote font hosts. |
 | `apps/desktop/src/renderer/components/markdown-mermaid.tsx` | The one generated-SVG boundary in Markdown: strict Mermaid configuration, disabled HTML labels and interactions, and source fallback. |
 | `apps/desktop/src/main/session-encryption.ts`, `stored-auth.ts`, `stored-session.ts`, `session-file.ts` | The versioned credential envelope and the serialized session-mutation boundary. |
 | `apps/desktop/src/main/lockdown-mode.ts` | The `safeStorage` mode and its migration. |
@@ -772,6 +772,22 @@ incident response that may prompt it.
 
 ## Changelog
 
+### 2026-09-04 — Appearance files can no longer execute code
+
+**What changed:** The animated theme-document iframe, its custom protocol,
+Content Security Policy exception, generated document module, and schema field
+were removed. Appearance files now produce only CSS values and a fixed remote
+font manifest; `rally-font://` is the only appearance-adjacent scheme.
+
+**Why:** Rally now has one GrokBot-derived design with light and dark
+appearances. Keeping an unused executable decoration format preserved a larger
+trust boundary and protocol surface without a product capability that needed
+it.
+
+**Consequences:** The renderer CSP no longer admits an appearance frame and the
+main process registers no appearance-document handler. Remote fonts retain the
+existing generated allowlist, size cap, and optional integrity verification.
+
 ### 2026-09-03 — HyperSight no longer defines an authority surface
 
 **What changed:** Dashboard ticket claims, object access paths, feature-specific
@@ -1320,7 +1336,7 @@ backdrop. It is served from `avalon-backdrop://`, a scheme of its own, under
 fetches each once, verifies a declared `sha256-` integrity, caps it at 8 MB, and
 writes it under `userData`.
 
-**Why:** Airy's backdrop is a field of light that orbits, and no CSS value
+**Why:** The retired appearance's backdrop is a field of light that orbits, and no CSS value
 orbits. The choices were a declarative motion vocabulary covering that one case,
 or letting a theme bring a script. A script is the honest answer for a file
 format modelled on VS Code themes, where the whole point is that people will

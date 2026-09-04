@@ -8,20 +8,12 @@ import {
   persistThemeChoice,
   readThemeChoice,
   resolvedThemeFor,
-  watchSystemAppearance,
   useAppearance,
   useTheme,
+  watchSystemAppearance,
   watchThemeBroadcast,
-  withFamily,
-  withMode,
 } from './theme';
 
-/**
- * A `matchMedia` that jsdom does not provide, with a handle on the listeners so
- * a test can make the Mac change appearance. Assigned rather than stubbed
- * through `vi.stubGlobal`, because `unstubGlobals` reverts before each test and
- * would take the installation with it.
- */
 function installMatchMedia(prefersDark: boolean): { change: (dark: boolean) => void } {
   let matches = prefersDark;
   const listeners = new Set<() => void>();
@@ -49,265 +41,189 @@ function removeMatchMedia(): void {
   Reflect.deleteProperty(window, 'matchMedia');
 }
 
+function installBridge(): { fire: (choice?: unknown) => void; listeners: number; reported: unknown[] } {
+  const state = {
+    fire: (() => undefined) as (choice?: unknown) => void,
+    listeners: 0,
+    reported: [] as unknown[],
+  };
+  vi.stubGlobal('rally', {
+    setWindowTheme: (choice: unknown) => {
+      state.reported.push(choice);
+      return Promise.resolve();
+    },
+    onThemeChanged: (listener: (choice: unknown) => void) => {
+      state.listeners += 1;
+      state.fire = listener;
+      return () => { state.listeners -= 1; };
+    },
+  });
+  return state;
+}
+
 describe('theme', () => {
   beforeEach(() => {
     window.localStorage.clear();
     delete document.documentElement.dataset['theme'];
-    delete document.documentElement.dataset['themeFamily'];
     delete document.documentElement.dataset['themeMode'];
     removeMatchMedia();
   });
 
-  it('starts on the single Rally design following the Mac when nothing has been chosen', () => {
-    expect(readThemeChoice()).toEqual({ family: 'air', mode: 'system' });
+  it('starts with the one Rally design following the Mac', () => {
+    expect(readThemeChoice()).toBe('system');
   });
 
-  it('records the resolved appearance and the choice that produced it', () => {
+  it('records the resolved appearance and the preference that produced it', () => {
     installMatchMedia(true);
-    const choice = { family: 'terra', mode: 'system' } as const;
 
-    expect(applyTheme(choice)).toEqual({ choice, resolved: 'terra' });
-    expect(document.documentElement.dataset['theme']).toBe('terra');
-    // Both axes, because "Terra, dark" and "Terra, system, currently dark" look
-    // identical on the document and the Settings picker has to tell them apart.
-    expect(document.documentElement.dataset['themeFamily']).toBe('terra');
+    expect(applyTheme('system')).toEqual({ choice: 'system', resolved: 'dark' });
+    expect(document.documentElement.dataset['theme']).toBe('dark');
     expect(document.documentElement.dataset['themeMode']).toBe('system');
   });
 
   it.each([
-    ['terra', 'light', 'terra-light'], ['terra', 'dark', 'terra'],
-    ['air', 'light', 'air'], ['air', 'dark', 'air-dark'],
-  ] as const)('stamps %s in %s mode whatever the Mac prefers', (family, mode, expected) => {
-    installMatchMedia(true);
-
-    expect(applyTheme({ family, mode }).resolved).toBe(expected);
-    expect(document.documentElement.dataset['theme']).toBe(expected);
+    ['light', true],
+    ['dark', false],
+  ] as const)('pins %s whatever the Mac prefers', (choice, prefersDark) => {
+    installMatchMedia(prefersDark);
+    expect(applyTheme(choice).resolved).toBe(choice);
+    expect(document.documentElement.dataset['theme']).toBe(choice);
   });
 
-  it('keeps the choice on the device, beside the other device preferences', () => {
+  it('keeps the preference beside the other device preferences', () => {
     window.localStorage.setItem(
       DEVICE_PREFERENCES_STORAGE_KEY,
       JSON.stringify({ version: 1, selectedRegion: 'eu' }),
     );
-    const choice = { family: 'air', mode: 'dark' } as const;
 
-    persistThemeChoice(choice);
+    persistThemeChoice('dark');
 
-    expect(readDevicePreferences()).toEqual({ version: 1, selectedRegion: 'eu', theme: choice });
-    expect(readThemeChoice()).toEqual(choice);
+    expect(readDevicePreferences()).toEqual({ version: 1, selectedRegion: 'eu', theme: 'dark' });
+    expect(readThemeChoice()).toBe('dark');
   });
 
-  /** One axis at a time is what the picker does: two rows, each a radiogroup. */
-  it('changes one axis and leaves the other alone', () => {
-    installMatchMedia(false);
-    persistThemeChoice({ family: 'air', mode: 'dark' });
-
-    expect(persistThemeChoice(withMode(readThemeChoice(), 'light')))
-      .toEqual({ choice: { family: 'air', mode: 'light' }, resolved: 'air' });
-    expect(persistThemeChoice(withFamily(readThemeChoice(), 'terra')))
-      .toEqual({ choice: { family: 'terra', mode: 'light' }, resolved: 'terra-light' });
-  });
-
-  it('applies the stored choice at install rather than the default', () => {
-    const choice = { family: 'air', mode: 'light' } as const;
-    persistThemeChoice(choice);
+  it('applies the stored preference at install', () => {
+    persistThemeChoice('light');
     delete document.documentElement.dataset['theme'];
 
-    expect(installTheme()).toEqual({ choice, resolved: 'air' });
-    expect(document.documentElement.dataset['theme']).toBe('air');
+    expect(installTheme()).toEqual({ choice: 'light', resolved: 'light' });
+    expect(document.documentElement.dataset['theme']).toBe('light');
   });
 
-  /**
-   * A stored choice this build cannot read is dropped by the preference parser,
-   * which leaves it at the default rather than stamping an attribute that
-   * selects no block at all — every colour would fall back to the default
-   * theme's `:root` while the picker showed something else.
-   */
-  it('falls back to the default when the stored choice is not one this build has', () => {
+  it('falls back when the stored preference is unreadable', () => {
     window.localStorage.setItem(
       DEVICE_PREFERENCES_STORAGE_KEY,
-      JSON.stringify({ version: 1, theme: { family: 'sepia', mode: 'dark' } }),
+      JSON.stringify({ version: 1, theme: 'sepia' }),
     );
 
-    expect(readThemeChoice()).toEqual({ family: 'air', mode: 'system' });
-    expect(installTheme().resolved).toBe('air');
+    expect(readThemeChoice()).toBe('system');
+    expect(installTheme().resolved).toBe('light');
   });
 
-  /**
-   * A preference written before the axes were separated. Someone who had chosen
-   * the design when it was one flat name should still be on it.
-   */
-  it('reads a flat choice stored by an earlier build', () => {
+  it('migrates the previous family-shaped preference by keeping its mode', () => {
     window.localStorage.setItem(
       DEVICE_PREFERENCES_STORAGE_KEY,
-      JSON.stringify({ version: 1, theme: 'airy' }),
+      JSON.stringify({ version: 1, theme: { family: 'retired', mode: 'dark' } }),
     );
 
-    expect(readThemeChoice()).toEqual({ family: 'air', mode: 'light' });
-    expect(installTheme().resolved).toBe('air');
+    expect(readThemeChoice()).toBe('dark');
+    expect(installTheme().resolved).toBe('dark');
   });
 
-  describe('without matchMedia', () => {
-    // jsdom has none, and neither does an Electron window early enough to be
-    // certain of. Resolving `system` to light matches what Chromium answers
-    // when the platform expresses no preference.
-    it('resolves the system mode to light and subscribes to nothing', () => {
-      expect(resolvedThemeFor({ family: 'terra', mode: 'system' })).toBe('terra-light');
-      expect(() => watchSystemAppearance()()).not.toThrow();
-    });
+  it('resolves system to light without matchMedia and subscribes to nothing', () => {
+    expect(resolvedThemeFor('system')).toBe('light');
+    expect(() => watchSystemAppearance()()).not.toThrow();
   });
 
-  describe('watching the system appearance', () => {
-    it('re-resolves when the Mac changes and the mode is system', () => {
-      const media = installMatchMedia(false);
-      persistThemeChoice({ family: 'terra', mode: 'system' });
-      const stop = watchSystemAppearance();
+  it('re-resolves system when the Mac changes', () => {
+    const media = installMatchMedia(false);
+    persistThemeChoice('system');
+    const stop = watchSystemAppearance();
 
-      media.change(true);
-      expect(document.documentElement.dataset['theme']).toBe('air-dark');
-
-      media.change(false);
-      expect(document.documentElement.dataset['theme']).toBe('air');
-      stop();
-    });
-
-    /**
-     * The family never follows the Mac — it is a taste, not a lighting
-     * condition — so someone on Air who is following the room stays on Air and
-     * only crosses between its two appearances.
-     */
-    it('switches within the chosen family rather than out of it', () => {
-      const media = installMatchMedia(false);
-      persistThemeChoice({ family: 'air', mode: 'system' });
-      const stop = watchSystemAppearance();
-
-      expect(document.documentElement.dataset['theme']).toBe('air');
-      media.change(true);
-      expect(document.documentElement.dataset['theme']).toBe('air-dark');
-      expect(document.documentElement.dataset['themeFamily']).toBe('air');
-      stop();
-    });
-
-    // The subscription exists for the `system` mode alone. Following the Mac
-    // after someone has pinned Dark is the bug it would look like a fix for.
-    it('leaves a pinned mode alone', () => {
-      const media = installMatchMedia(false);
-      persistThemeChoice({ family: 'air', mode: 'light' });
-      const stop = watchSystemAppearance();
-
-      media.change(true);
-
-      expect(document.documentElement.dataset['theme']).toBe('air');
-      stop();
-    });
-
-    it('stops re-resolving once detached', () => {
-      const media = installMatchMedia(false);
-      persistThemeChoice({ family: 'terra', mode: 'system' });
-      watchSystemAppearance()();
-
-      media.change(true);
-
-      expect(document.documentElement.dataset['theme']).toBe('terra-light');
-    });
+    media.change(true);
+    expect(document.documentElement.dataset['theme']).toBe('dark');
+    media.change(false);
+    expect(document.documentElement.dataset['theme']).toBe('light');
+    stop();
   });
 
-  /**
-   * A theme is a preference of the device, not of the window it was chosen in.
-   * Choosing it in the Settings window and having the work stream behind it stay
-   * as it was is the behaviour this removes.
-   */
-  describe('following a choice made in another window', () => {
-    function installBridge(): { fire: (choice?: unknown) => void; listeners: number; reported: unknown[] } {
-      const state = {
-        fire: (() => undefined) as (choice?: unknown) => void,
-        listeners: 0,
-        reported: [] as unknown[],
-      };
-      vi.stubGlobal('rally', {
-        setWindowTheme: (choice: unknown) => {
-          state.reported.push(choice);
-          return Promise.resolve();
-        },
-        onThemeChanged: (listener: (choice: unknown) => void) => {
-          state.listeners += 1;
-          state.fire = listener;
-          return () => { state.listeners -= 1; };
-        },
-      });
-      return state;
-    }
+  it('leaves a pinned preference alone when the Mac changes', () => {
+    const media = installMatchMedia(false);
+    persistThemeChoice('light');
+    const stop = watchSystemAppearance();
 
-    it('applies the choice the message carries', () => {
+    media.change(true);
+    expect(document.documentElement.dataset['theme']).toBe('light');
+    stop();
+  });
+
+  it('stops following the Mac once detached', () => {
+    const media = installMatchMedia(false);
+    persistThemeChoice('system');
+    watchSystemAppearance()();
+
+    media.change(true);
+    expect(document.documentElement.dataset['theme']).toBe('light');
+  });
+
+  describe('following another window', () => {
+    it('applies and reports the preference carried by the broadcast', () => {
       installMatchMedia(false);
       const bridge = installBridge();
       const stop = watchThemeBroadcast();
 
-      bridge.fire({ family: 'air', mode: 'dark' });
+      bridge.fire('dark');
 
-      expect(document.documentElement.dataset['theme']).toBe('air-dark');
-      expect(document.documentElement.dataset['themeFamily']).toBe('air');
+      expect(document.documentElement.dataset['theme']).toBe('dark');
       expect(document.documentElement.dataset['themeMode']).toBe('dark');
+      expect(bridge.reported).toEqual(['dark']);
       stop();
     });
 
-    // The payload carries the choice, not the appearance, which is what keeps a
-    // window that is following the Mac still following it — against *its* Mac.
-    it('re-resolves the system mode against this window’s own Mac', () => {
+    it('resolves a broadcast system preference against this window', () => {
       installMatchMedia(true);
       const bridge = installBridge();
       const stop = watchThemeBroadcast();
 
-      bridge.fire({ family: 'air', mode: 'system' });
+      bridge.fire('system');
 
-      expect(document.documentElement.dataset['theme']).toBe('air-dark');
+      expect(document.documentElement.dataset['theme']).toBe('dark');
       expect(document.documentElement.dataset['themeMode']).toBe('system');
       stop();
     });
 
-    /**
-     * Each window is its own renderer process, and a `localStorage` write in the
-     * window that made the choice is not ordered against an IPC round trip
-     * through main. A window that re-read the store instead of applying the
-     * payload could read a value the write had not reached yet, re-apply the
-     * *old* choice, and report it back — main would see a difference and
-     * broadcast again, turning the echo guard into an oscillator. Here the store
-     * is deliberately left stale.
-     */
-    it('does not follow a store the other window’s write has not reached yet', () => {
+    it('uses the payload instead of a stale local store', () => {
       installMatchMedia(false);
       window.localStorage.setItem(
         DEVICE_PREFERENCES_STORAGE_KEY,
-        JSON.stringify({ version: 1, theme: { family: 'terra', mode: 'light' } }),
+        JSON.stringify({ version: 1, theme: 'light' }),
       );
       const bridge = installBridge();
       const stop = watchThemeBroadcast();
 
-      bridge.fire({ family: 'air', mode: 'dark' });
+      bridge.fire('dark');
 
-      expect(document.documentElement.dataset['theme']).toBe('air-dark');
-      // And it reports what it drew, so main's comparison matches and stops.
-      expect(bridge.reported).toEqual([{ family: 'air', mode: 'dark' }]);
+      expect(document.documentElement.dataset['theme']).toBe('dark');
+      expect(bridge.reported).toEqual(['dark']);
       stop();
     });
 
-    /** A payload this build cannot read leaves the store as the only meaning. */
-    it('falls back to the stored choice when the message makes no sense', () => {
+    it('falls back to the store for an unreadable payload', () => {
       installMatchMedia(false);
       window.localStorage.setItem(
         DEVICE_PREFERENCES_STORAGE_KEY,
-        JSON.stringify({ version: 1, theme: { family: 'air', mode: 'dark' } }),
+        JSON.stringify({ version: 1, theme: 'dark' }),
       );
       const bridge = installBridge();
       const stop = watchThemeBroadcast();
 
-      bridge.fire({ family: 'sepia', mode: 'dark' });
+      bridge.fire('sepia');
 
-      expect(document.documentElement.dataset['theme']).toBe('air-dark');
+      expect(document.documentElement.dataset['theme']).toBe('dark');
       stop();
     });
 
-    it('detaches, and does nothing at all without the desktop bridge', () => {
+    it('detaches and is inert without the desktop bridge', () => {
       installMatchMedia(false);
       const bridge = installBridge();
       watchThemeBroadcast()();
@@ -318,40 +234,17 @@ describe('theme', () => {
     });
   });
 
-  /**
-   * The *choice* travels to main, not the appearance it resolves to. Main
-   * re-resolves it when it builds a window, which is the only way `system`
-   * survives Rally being closed while the Mac changes appearance — and the
-   * only way main can tell that a preference changed at all, since two choices
-   * can resolve to the same appearance.
-   */
-  it('tells the main process which choice to construct the next window from', async () => {
-    installMatchMedia(false);
-    const setWindowTheme = vi.fn(() => Promise.resolve());
-    vi.stubGlobal('rally', { setWindowTheme });
-
-    persistThemeChoice({ family: 'air', mode: 'dark' });
-    await Promise.resolve();
-
-    expect(setWindowTheme).toHaveBeenCalledWith({ family: 'air', mode: 'dark' });
-  });
-
-  /**
-   * The case the appearance could not express: under a dark Mac, `system` and a
-   * pinned Dark both draw `terra`. Main has to hear about the second one, or
-   * every other window goes on believing it is following the room.
-   */
-  it('reports a mode change that does not change the appearance', async () => {
+  it('reports a preference change even when the resolved appearance is unchanged', async () => {
     installMatchMedia(true);
     const setWindowTheme = vi.fn(() => Promise.resolve());
     vi.stubGlobal('rally', { setWindowTheme });
 
-    expect(persistThemeChoice({ family: 'terra', mode: 'system' }).resolved).toBe('terra');
-    expect(persistThemeChoice({ family: 'terra', mode: 'dark' }).resolved).toBe('terra');
+    expect(persistThemeChoice('system').resolved).toBe('dark');
+    expect(persistThemeChoice('dark').resolved).toBe('dark');
     await Promise.resolve();
 
-    expect(setWindowTheme).toHaveBeenNthCalledWith(1, { family: 'terra', mode: 'system' });
-    expect(setWindowTheme).toHaveBeenNthCalledWith(2, { family: 'terra', mode: 'dark' });
+    expect(setWindowTheme).toHaveBeenNthCalledWith(1, 'system');
+    expect(setWindowTheme).toHaveBeenNthCalledWith(2, 'dark');
   });
 });
 
@@ -361,43 +254,24 @@ describe('what a surface reads', () => {
     removeMatchMedia();
   });
 
-  /**
-   * The gap `watchThemeBroadcast` deliberately opens. It applies the choice the
-   * IPC message carried without waiting for the `localStorage` write behind it,
-   * so for a moment the store still holds the previous choice — and a surface
-   * that mounted in that moment and read the store would draw the appearance
-   * the window has just stopped being in, having already missed the
-   * announcement that would have corrected it. For the thinking orb that is an
-   * inverted canvas until something else applies a theme.
-   *
-   * This proves the pair together. `renderHook` flushes effects, so the
-   * re-read inside the subscribing effect alone would satisfy it — what that
-   * cannot cover is the frame in between, since a passive effect runs after
-   * the paint that has already drawn the wrong ink. The snapshot has to be
-   * right too, and only a real window shows the difference.
-   */
-  it('reads what was applied rather than a store that has not caught up', () => {
-    installMatchMedia(false);
+  it('reads the applied appearance instead of a stale store', () => {
     window.localStorage.setItem(
       DEVICE_PREFERENCES_STORAGE_KEY,
-      JSON.stringify({ version: 1, theme: { family: 'terra', mode: 'light' } }),
+      JSON.stringify({ version: 1, theme: 'light' }),
     );
+    applyTheme('dark');
 
-    applyTheme({ family: 'terra', mode: 'dark' });
-
-    expect(renderHook(() => useTheme()).result.current.resolved).toBe('terra');
+    expect(renderHook(() => useTheme()).result.current.resolved).toBe('dark');
     expect(renderHook(() => useAppearance()).result.current).toBe('dark');
   });
 
-  it('follows a theme applied while it is mounted', () => {
-    installMatchMedia(false);
-    applyTheme({ family: 'terra', mode: 'light' });
+  it('follows an appearance applied while mounted', () => {
+    applyTheme('light');
     const { result, rerender } = renderHook(() => useAppearance());
 
     expect(result.current).toBe('light');
-    applyTheme({ family: 'air', mode: 'dark' });
+    applyTheme('dark');
     rerender();
-
     expect(result.current).toBe('dark');
   });
 });

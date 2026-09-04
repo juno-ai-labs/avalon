@@ -5,13 +5,10 @@ import {
   parseAppearanceMode,
   parseResolvedTheme,
   parseThemeChoice,
-  parseThemeFamily,
   resolveTheme,
   sameThemeChoice,
-  type AppearanceMode,
   type ResolvedTheme,
   type ThemeChoice,
-  type ThemeFamily,
 } from '../../common/themes';
 import { readDevicePreferences, setDeviceTheme } from './device-preferences';
 import { desktopBridge, desktopServicesAvailable } from './platform';
@@ -21,18 +18,15 @@ import { desktopBridge, desktopServicesAvailable } from './platform';
  *
  * The whole mechanism is one attribute: `data-theme` on `<html>`, which selects
  * one block of custom properties out of `styles/themes.css`. Nothing else in
- * the renderer branches on the theme, and no component reads a colour — which
- * is what keeps a new theme a block of CSS rather than a sweep of components.
+ * the renderer branches on the appearance, and no component reads a colour.
  *
  * The choice is stored on the device rather than on the account. An appearance
  * belongs to the screen it is being looked at, and a person who works on a
  * bright laptop and a dark desktop should not have to keep changing it back.
  *
- * A choice has two parts — the design and the lighting — and only the second
- * follows the Mac. `data-theme` carries the appearance those two resolve to;
- * `data-theme-family` and `data-theme-mode` carry the choice itself, so a
- * surface that wants to say "System" can tell a deliberate dark from a system
- * that happens to be resolving dark.
+ * `data-theme` carries the resolved light or dark appearance and
+ * `data-theme-mode` carries the choice that produced it, so a surface can tell
+ * deliberate dark from a system setting that happens to resolve dark.
  */
 
 const SYSTEM_DARK_QUERY = '(prefers-color-scheme: dark)';
@@ -47,7 +41,7 @@ const listeners = new Set<(state: ThemeState) => void>();
 /**
  * What is on screen right now, read back off the document `applyTheme` stamped.
  *
- * The three attributes carry the whole state — the appearance being drawn and
+ * The two attributes carry the whole state — the appearance being drawn and
  * the choice that produced it — so this is the applied truth rather than a
  * second copy of it kept alongside. The store is not that truth:
  * `watchThemeBroadcast` applies a choice that arrived over IPC precisely
@@ -61,9 +55,8 @@ const listeners = new Set<(state: ThemeState) => void>();
 function currentThemeState(): ThemeState {
   const root = document.documentElement;
   const resolved = parseResolvedTheme(root.dataset['theme']);
-  const family = parseThemeFamily(root.dataset['themeFamily']);
   const mode = parseAppearanceMode(root.dataset['themeMode']);
-  if (resolved && family && mode) return { choice: { family, mode }, resolved };
+  if (resolved && mode) return { choice: mode, resolved };
   const choice = readThemeChoice();
   return { choice, resolved: resolvedThemeFor(choice) };
 }
@@ -80,19 +73,7 @@ function systemPrefersDark(): boolean {
 }
 
 export function readThemeChoice(): ThemeChoice {
-  const stored = readDevicePreferences().theme ?? defaultThemeChoice;
-  // Theme families were retired with the GrokBot rewrite. Preserve only the
-  // person's lighting preference when migrating an older device setting.
-  return { family: 'air', mode: stored.mode };
-}
-
-/** Changing one axis and leaving the other alone, which is what the picker does. */
-export function withFamily(choice: ThemeChoice, family: ThemeFamily): ThemeChoice {
-  return { ...choice, family };
-}
-
-export function withMode(choice: ThemeChoice, mode: AppearanceMode): ThemeChoice {
-  return { ...choice, mode };
+  return readDevicePreferences().theme ?? defaultThemeChoice;
 }
 
 export function resolvedThemeFor(choice: ThemeChoice): ResolvedTheme {
@@ -118,8 +99,7 @@ export function applyTheme(choice: ThemeChoice): ThemeState {
   const resolved = resolvedThemeFor(choice);
   const root = document.documentElement;
   root.dataset['theme'] = resolved;
-  root.dataset['themeFamily'] = choice.family;
-  root.dataset['themeMode'] = choice.mode;
+  root.dataset['themeMode'] = choice;
   const state: ThemeState = { choice, resolved };
   reportToMain(choice);
   for (const listener of listeners) listener(state);
@@ -152,10 +132,9 @@ export function watchSystemAppearance(): () => void {
   const query = window.matchMedia(SYSTEM_DARK_QUERY);
   const handler = (): void => {
     const choice = readThemeChoice();
-    // Only `system` listens: a person who asked for Light has said what they
-    // want. The *family* never follows the Mac — it is a taste, not a lighting
-    // condition — so a person on Air who is following the room stays on Air.
-    if (choice.mode !== 'system') return;
+    // Only `system` listens: a person who asked for Light or Dark has said what
+    // they want.
+    if (choice !== 'system') return;
     applyTheme(choice);
   };
   query.addEventListener('change', handler);
@@ -229,8 +208,7 @@ export function useTheme(): ThemeState {
  * can reach its ink, and it takes `dark`/`light` as a prop. Its own `auto`
  * detection cannot answer the question here — it looks for `data-theme="dark"`
  * or `data-theme="light"`, and ours carries an appearance name like
- * `terra-light`, so `auto` falls through to `prefers-color-scheme` and ignores
- * a person who pinned the mode against their Mac.
+ * Rally can be pinned independently from `prefers-color-scheme`.
  */
 export function useAppearance(): 'light' | 'dark' {
   return appearanceOf(useTheme().resolved);
