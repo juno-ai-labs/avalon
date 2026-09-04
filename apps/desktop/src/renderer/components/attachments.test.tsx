@@ -40,6 +40,33 @@ describe('attachment presentation', () => {
     expect(onRemove).toHaveBeenCalledOnce();
   });
 
+  it('shows pending video as a media tile and opens the local preview', () => {
+    const onOpen = vi.fn();
+    render(<PendingAttachmentTile
+      attachment={{
+        localId: 'draft-video',
+        file: new File(['video'], 'walkthrough.mp4', { type: 'video/mp4' }),
+        previewUrl: 'blob:local-video',
+        progress: 100,
+        status: 'ready',
+      }}
+      onOpen={onOpen}
+      onRemove={vi.fn()}
+      onRetry={vi.fn()}
+    />);
+
+    const preview = screen.getByRole('button', { name: 'Preview walkthrough.mp4' });
+    expect(preview.querySelector('video')).toHaveAttribute('src', 'blob:local-video');
+    expect(document.querySelector('.attachment-tile')).toHaveClass('is-video');
+    expect(document.querySelector('.attachment-video-play')).toBeVisible();
+    fireEvent.click(preview);
+    expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({
+      mimeType: 'video/mp4',
+      name: 'walkthrough.mp4',
+      src: 'blob:local-video',
+    }));
+  });
+
   it('loads a sent image lazily and opens it in the lightbox', async () => {
     const attachment: MessageAttachment = {
       id: 'resource-1',

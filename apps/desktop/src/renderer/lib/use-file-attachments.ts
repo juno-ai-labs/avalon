@@ -28,6 +28,7 @@ export interface PendingAttachment {
 const MAX_ATTACHMENTS = 6;
 const MAX_ATTACHMENT_BYTES = 25_000_000;
 const IMAGE_FILE_PATTERN = /\.(?:avif|bmp|gif|heic|heif|jpe?g|png|svg|webp)$/iu;
+const VIDEO_FILE_PATTERN = /\.(?:m4v|mkv|mov|mp4|webm)$/iu;
 const DISCONNECTED_ERROR = 'Rally is not connected. Try again after reconnecting.';
 const UNSAVED_ERROR = 'This device is out of room to hold attachments, so they will be lost if you quit before sending.';
 
@@ -68,6 +69,10 @@ function isImageFile(file: File): boolean {
   return file.type.startsWith('image/') || IMAGE_FILE_PATTERN.test(file.name);
 }
 
+function isPreviewableMediaFile(file: File): boolean {
+  return isImageFile(file) || file.type.startsWith('video/') || VIDEO_FILE_PATTERN.test(file.name);
+}
+
 /**
  * The upload endpoint keys a draft resource by the client's local ID, so a
  * conflict means an interrupted upload already landed upstream. The resource it
@@ -97,7 +102,7 @@ function restoredAttachment(cached: CachedDraftAttachment, connected: boolean): 
     localId: cached.localId,
     file,
     ...(cached.sha256 ? { sha256: cached.sha256 } : {}),
-    ...(isImageFile(file) ? { previewUrl: URL.createObjectURL(file) } : {}),
+    ...(isPreviewableMediaFile(file) ? { previewUrl: URL.createObjectURL(file) } : {}),
     progress: cached.resource ? 100 : 0,
     ...(cached.resource
       ? { status: 'ready' as const, resource: cached.resource }
@@ -227,7 +232,7 @@ export function useFileAttachments(api: FileAttachmentsApi | null, draftKey: str
           localId: crypto.randomUUID(),
           file,
           ...(sha256 ? { sha256 } : {}),
-          ...(isImageFile(file) ? { previewUrl: URL.createObjectURL(file) } : {}),
+          ...(isPreviewableMediaFile(file) ? { previewUrl: URL.createObjectURL(file) } : {}),
           progress: 0,
           status: file.size === 0 || file.size > MAX_ATTACHMENT_BYTES ? 'failed' : 'uploading',
           ...(file.size === 0
