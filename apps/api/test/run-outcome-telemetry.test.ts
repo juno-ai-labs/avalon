@@ -18,6 +18,8 @@ const workspaceId = asWorkspaceId('018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d2');
 const workstreamId = asWorkstreamId('018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d3');
 const runId = asHarnessRunId('018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d4');
 const operationId = '018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d5';
+const automationId = '018f3f4e-7b5a-7cc1-9a6f-2aa0324b7903';
+const automationRunId = '018f3f4e-7b5a-7cc1-9a6f-2aa0324b7904';
 
 describe('authoritative run outcome telemetry', () => {
   it('writes one idempotent outcome keyed by the run while retaining the operation as correlation', async () => {
@@ -38,37 +40,6 @@ describe('authoritative run outcome telemetry', () => {
         (id, workspace_id, title, objective, origin_type, created_by_user_id, created_at, updated_at, last_activity_at)
       VALUES ('${workstreamId}', '${workspaceId}', 'Run', 'Run', 'ad_hoc', '${userId}',
               '2026-08-12T20:00:00.000Z', '2026-08-12T20:00:00.000Z', '2026-08-12T20:00:00.000Z');
-      INSERT INTO automation_templates
-        (id, workspace_id, owner_user_id, name, description, sharing_state,
-         latest_version_number, created_at, updated_at)
-      VALUES ('018f3f4e-7b5a-7cc1-9a6f-2aa0324b7901', '${workspaceId}', '${userId}',
-              'Automation', '', 'private', 1, '2026-08-12T20:00:00.000Z', '2026-08-12T20:00:00.000Z');
-      INSERT INTO automation_template_versions
-        (id, template_id, version_number, instructions, trigger_definitions_json,
-         created_by_user_id, created_at)
-      VALUES ('018f3f4e-7b5a-7cc1-9a6f-2aa0324b7902',
-              '018f3f4e-7b5a-7cc1-9a6f-2aa0324b7901', 1, 'Run', '[]', '${userId}',
-              '2026-08-12T20:00:00.000Z');
-      INSERT INTO automation_subscriptions
-        (id, workspace_id, template_id, template_version_id, scope, owner_user_id,
-         execution_principal_json, status, created_at, updated_at)
-      VALUES ('018f3f4e-7b5a-7cc1-9a6f-2aa0324b7903', '${workspaceId}',
-              '018f3f4e-7b5a-7cc1-9a6f-2aa0324b7901',
-              '018f3f4e-7b5a-7cc1-9a6f-2aa0324b7902', 'personal', '${userId}',
-              '{"type":"user","userId":"${userId}"}', 'active',
-              '2026-08-12T20:00:00.000Z', '2026-08-12T20:00:00.000Z');
-      UPDATE workstreams
-         SET origin_type = 'automation',
-             automation_subscription_id = '018f3f4e-7b5a-7cc1-9a6f-2aa0324b7903',
-             automation_run_id = '018f3f4e-7b5a-7cc1-9a6f-2aa0324b7904'
-       WHERE id = '${workstreamId}';
-      INSERT INTO automation_runs
-        (id, workspace_id, automation_subscription_id, workstream_id, trigger_type,
-         started_at, completed_at, status, created_at)
-      VALUES ('018f3f4e-7b5a-7cc1-9a6f-2aa0324b7904', '${workspaceId}',
-              '018f3f4e-7b5a-7cc1-9a6f-2aa0324b7903', '${workstreamId}', 'scheduled',
-              '2026-08-12T19:00:00.000Z', '2026-08-12T19:10:00.000Z', 'completed',
-              '2026-08-12T19:00:00.000Z');
     `);
     // The run and its inference receipts live in the work stream's object
     // since migration 0090; the emitter is handed a routed environment the way
@@ -79,10 +50,7 @@ describe('authoritative run outcome telemetry', () => {
       workspaceId,
       title: "Run",
       description: "Run",
-      originType: "automation",
       createdByUserId: userId,
-      automationSubscriptionId: "018f3f4e-7b5a-7cc1-9a6f-2aa0324b7903",
-      automationRunId: "018f3f4e-7b5a-7cc1-9a6f-2aa0324b7904",
     }, Date.parse("2026-08-12T20:00:00.000Z"));
 
     workstreamObjectRun(
@@ -96,7 +64,7 @@ describe('authoritative run outcome telemetry', () => {
           completed_at, terminalized_at, created_at, updated_at)
        VALUES (?, '0', 'completed', '{}', 0, 0, '', 0, 0, ?,
                0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-               'completed', 'human_message', ?, 0, 'openai/gpt-5',
+               'completed', 'automation_activation', ?, 0, 'openai/gpt-5',
                '{"run_stats":{"turns":2}}', ?, ?, ?, ?)`,
       runId,
       Date.parse('2026-08-12T20:00:00.000Z'),
@@ -136,9 +104,8 @@ describe('authoritative run outcome telemetry', () => {
     });
     const env = createTestEnv({
       DB: sqliteD1(database),
-      // The work stream's automation run was a `JOIN workstreams` inside the
-      // statement below; it is the identity authority's read now, answered by
-      // the real storage class over the same object store this fixture seeds.
+      // The run row lives in the work stream's object, read by the real
+      // storage class over the same object store this fixture seeds.
       SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore),
       AVALON_REGION: 'global',
       APP_ENV: 'production',
@@ -163,14 +130,29 @@ describe('authoritative run outcome telemetry', () => {
     ));
 
     const routedEnv = env;
+    // Which automation this run belongs to, and what started it, ride on the
+    // loop input: the stored run row carries no automation columns, so nothing
+    // is asked a second question after the terminal gate.
     const input = {
       workspaceId,
       parentKind: "workstream",
       parentId: workstreamId,
       harnessRunId: runId,
+      automationRun: {
+        schemaVersion: 1,
+        automationId,
+        runId: automationRunId,
+        definitionRevision: 1,
+        trigger: {
+          kind: "schedule",
+          scheduleId: '018f3f4e-7b5a-7cc1-9a6f-2aa0324b7905',
+          scheduleKind: "calendar",
+          plannedFor: Date.parse('2026-08-12T19:00:00.000Z'),
+        },
+      },
       telemetryOperationId: operationId,
       telemetrySubjectUserId: userId,
-    };
+    } as const;
     await emitCorrelatedRunOutcome(routedEnv, input);
     await emitCorrelatedRunOutcome(routedEnv, input);
 
@@ -196,7 +178,9 @@ describe('authoritative run outcome telemetry', () => {
         workstreamId,
         harnessRunId: runId,
         runKind: 'automation',
-        triggerType: 'composer',
+        // The reference says `schedule`; this event has always said
+        // `scheduled`, and the run's own origin is the activation.
+        triggerType: 'scheduled',
         terminalState: 'completed',
         duration: '5s_30s',
         timeToFirstOutput: '1s_5s',
@@ -210,10 +194,8 @@ describe('authoritative run outcome telemetry', () => {
         fallbackUsed: true,
       },
     });
-    expect(JSON.parse(terminal.envelope_json).properties).toHaveProperty(
-      'automationId',
-      '018f3f4e-7b5a-7cc1-9a6f-2aa0324b7903',
-    );
+    expect(JSON.parse(terminal.envelope_json).properties)
+      .toHaveProperty('automationId', automationId);
     expect(database.prepare(`
       SELECT event_id, json_extract(envelope_json, '$.name') AS name
       FROM telemetry_accepted_events

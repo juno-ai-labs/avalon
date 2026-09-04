@@ -81,9 +81,15 @@ function triggerType(row: RunRow): 'composer' | 'retry' | 'manual' | 'scheduled'
   if (row.origin === 'human_message') return 'composer';
   if (row.origin === 'manual_retry') return 'retry';
   if (row.origin === 'scheduled_digest') return 'digest';
-  if (row.automation_trigger_type === 'activity') return 'activity';
+  // The run reference's own trigger vocabulary, translated into the one the
+  // dashboards already read. They are not the same words: a reference says
+  // `external_event` and `schedule` where this event has always said
+  // `activity` and `scheduled`, and reading the reference's words as if they
+  // were these reported every scheduled and every event-triggered run as
+  // `manual`, through the fallthrough below.
+  if (row.automation_trigger_type === 'external_event') return 'activity';
   if (row.automation_trigger_type === 'inbound_email') return 'inbound_email';
-  if (row.automation_trigger_type === 'scheduled') return 'scheduled';
+  if (row.automation_trigger_type === 'schedule') return 'scheduled';
   if (row.automation_id) return 'manual';
   return 'system';
 }
