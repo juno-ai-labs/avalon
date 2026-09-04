@@ -1,19 +1,19 @@
 # Spike: can a demo workspace be seeded and reset on Rally's real object hierarchy?
 
 > Companion research for [the demo workspace PRD](prd.md). This is the spike
-> report as written on 2026-09-04, preserved as the evidence that PRD cites. It
-> records an investigation; it is not itself a proposal.
+> report from 2026-09-04, preserved as the evidence that PRD cites, with screenshot
+> assets and links removed. It records an investigation; it is not itself a proposal.
 >
 > The spike branches are throwaway and are not merged, so the code described
 > below exists only on `spike/demo-workspace-replay-main` at `87e73ef`. The
 > report is copied into this folder so the PRD's evidence outlives them.
 >
 > **Where the PRD departs from it.** The recorded connector plugin rows and
-> their observed durations — §1, and the second capture in §6 — were how the
+> their observed durations — §1 and the visual observations in §6 — were how the
 > spike proved that real tool dispatch survives seeding. The PRD rejects them
 > (non-goal 4): a demo's assistant prose names the connectors it consulted and
 > carries no tool receipts at all, because stale tool names become misleading
-> context on a continued turn. Read that capture as evidence of a capability,
+> context on a continued turn. Read those observations as evidence of a capability,
 > not as the intended demo.
 
 **Branches:** `spike/demo-workspace-replay` (original, Rally 1.269.0) and
@@ -201,8 +201,8 @@ Then the reset was attacked deliberately:
   If it holds, a scripted multi-person discussion is invisible to the agent that is asked
   about it, which is a demo problem *and* a product question.
 - ~~Nothing was checked in a real window.~~ **Corrected: it was.** See
-  [§6](#6-screenshots). The Electron client was run under Xvfb against the seeded pack
-  and every visible claim above holds on screen. Two things only the screenshots showed
+  [§6](#6-visual-verification). The Electron client was run under Xvfb against the seeded pack
+  and every visible claim above holds on screen. Two things only the visual inspection showed
   are recorded there.
 - **EU was not exercised.** Everything ran in the Global region.
 - **Retirement was never tested against a workspace with automations.** The pack creates
@@ -406,22 +406,22 @@ the alarm.
 
 ---
 
-## 6. Screenshots
+## 6. Visual verification
 
-Captured from the Electron client running under Xvfb against a live local stack with the
+Observed in the Electron client running under Xvfb against a live local stack with the
 pack seeded into it, driven over the DevTools protocol, per
 `docs/dev-environment.md`. The seeded rooms are the three at the top of the sidebar; the
 two under **Today** are the repository's own checked-in development fixtures.
 
-| | |
+| Surface | Observation |
 | --- | --- |
-| [`01-home-and-sidebar.png`](spike-screenshots/01-home-and-sidebar.png) | The home screen's **Needs attention** row reads *"You were mentioned — Northgate renewal is up…"*, and the sidebar shows all three seeded rooms in the pack's intended order with a participant facepile on the renewal room. This is the `attention` payload rendered. |
-| [`02-plugin-rows-and-durations.png`](spike-screenshots/02-plugin-rows-and-durations.png) | The decision-memo transcript. The three recorded connector calls render exactly as the pack intends: collapsed under **Worked for 2s**, expanding to **Used Google Drive for 1s**, **Used Granola for 781ms**, **Used Linear for 1s**, each with its provider icon. Not three ungrouped tool rows. |
-| [`03-attached-document.png`](spike-screenshots/03-attached-document.png) | The work-stream context rail: Priya as **Creator**, and the memo under **Sources**. Its *Unavailable* label is the **watch** status (`watchStatus: "unsupported"`), which is correct for an uploaded file with no provider to poll — not a broken attachment. |
-| [`04-seeded-conversation.png`](spike-screenshots/04-seeded-conversation.png) | The renewal room. Three personas arguing across historical timestamps — 38, 34, 30, 25, 19 and 14 minutes ago — with the header showing **Private**, **Needs input**, and a four-person facepile. |
-| [`05-open-elicitation.png`](spike-screenshots/05-open-elicitation.png) | The `@Adam` mention chip, then the open question card: the prompt, three numbered options, an **Other** free-text field, and Skip / Submit. |
+| Home and sidebar | The home screen's **Needs attention** row reads *"You were mentioned — Northgate renewal is up…"*, and the sidebar shows all three seeded rooms in the pack's intended order with a participant facepile on the renewal room. This is the `attention` payload rendered. |
+| Plugin rows and durations | The decision-memo transcript. The three recorded connector calls render exactly as the pack intends: collapsed under **Worked for 2s**, expanding to **Used Google Drive for 1s**, **Used Granola for 781ms**, **Used Linear for 1s**, each with its provider icon. Not three ungrouped tool rows. |
+| Attached document | The work-stream context rail: Priya as **Creator**, and the memo under **Sources**. Its *Unavailable* label is the **watch** status (`watchStatus: "unsupported"`), which is correct for an uploaded file with no provider to poll — not a broken attachment. |
+| Seeded conversation | The renewal room. Three personas arguing across historical timestamps — 38, 34, 30, 25, 19 and 14 minutes ago — with the header showing **Private**, **Needs input**, and a four-person facepile. |
+| Open elicitation | The `@Adam` mention chip, then the open question card: the prompt, three numbered options, an **Other** free-text field, and Skip / Submit. |
 
-**What the screenshots showed that the API reads did not:**
+**What the visual inspection showed that the API reads did not:**
 
 1. **The historical-timestamp gap is worse on screen than in the payload.** Every seeded
    room is grouped under **Last hour** in the sidebar, and the decision memo's assistant
@@ -435,14 +435,14 @@ two under **Today** are the repository's own checked-in development fixtures.
    Worth a look before a demo, but it is a rendering detail of a very fast recorded run
    rather than anything the reset question turns on.
 
-Not captured: the retired workspace. Retiring the local development workspace would have
+Not visually inspected: the retired workspace. Retiring the local development workspace would have
 made the sandbox's own dev account unusable, and the retirement evidence in §1 and §5 is
 API-level and complete.
 
 ## 7. Recommendation
 
 **Fund it, at roughly half the scope the PRD is likely to assume, and in this order.**
-The screenshots in §6 sharpen this rather than change it: item 1 below is now the item
+The visual observations in §6 sharpen this rather than change it: item 1 below is now the item
 anybody looking at the demo would notice first.
 
 The two things that looked risky are not. Seeding through production paths works and the
@@ -490,7 +490,7 @@ reachable from no HTTP route.
   `docs/durable-object-sqlite.md` forbids. It is done that way on purpose so the branch
   can be deleted without leaving a released migration behind. A real implementation puts
   it in each class's migration list.
-- **Reproducing the screenshots:** seed the pack into the development workspace
+- **Repeating the visual verification:** seed the pack into the development workspace
   (`POST /auth/dev/session`, then `POST /dev/spike/seed` with that workspace and the
   session's `sid`), then run the Electron client under Xvfb per
   `docs/dev-environment.md` and sign in with **Use local development account**. On a cold
