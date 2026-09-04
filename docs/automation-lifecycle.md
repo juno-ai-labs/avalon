@@ -565,6 +565,17 @@ and bound as a trigger source. The manager rule for a room's automation is
 participant or author; a person who leaves the room keeps managing what they
 asked for until the room's participants change it.
 
+The rule vocabulary is proved across connectors in
+`apps/api/test-workers/external-event-rules.test.ts`: synthetic GitHub, Linear,
+Notion, Slack and webhook events ingested through the workspace ledger and
+matched against rules from `always` and event type up to compound string,
+set, number, boolean, presence and person leaves, restricted audiences (a
+restricted event reaches only a personal automation whose author is in the
+audience, never a workspace one), and the ordering boundary. The same events
+can be fired on a running stack through `POST /dev/connector-events`, a
+development-only ingress that enqueues a normalized activity where a verified
+webhook would, so everything after ingress is the production path.
+
 ### 2026-09-04: A room can edit an automation it owns
 
 **What changed:** `submit_draft` accepts an `automationId` beside the draft,
