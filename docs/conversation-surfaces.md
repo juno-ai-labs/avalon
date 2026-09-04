@@ -79,6 +79,31 @@ prove layout, focus, scroll position, or overlap.
 
 ## Changelog
 
+### 2026-09-04: The automation header asks before deleting, offers only what the object accepts, and hears its own chat
+
+**What changed:** `components/delete-automation-dialog.tsx` is the one
+confirmation an automation's deletion goes through; the sidebar's modal moved
+into it and `components/automation-header.tsx` opens the same dialog from its
+Delete item instead of firing the tombstone from the menu. The header offers
+Run now only on an active automation and disables Apply while paused, with
+the tooltip saying to resume first, matching what `AutomationDO` accepts.
+`lib/workspace-socket.tsx` invalidates the `automation` and
+`automation-runs` queries whenever the `automations` sidebar list is pushed.
+
+**Why:** Pull request review. Delete from the header was an irreversible
+operation with no question where the sidebar had always asked one. Run now
+while paused and Apply on a paused automation both answered `409` from the
+object, so the header offered commands guaranteed to fail. And when the
+automation's own chat submitted a revision, the object pushed only the
+sidebar list, since no HTTP request of the desktop's was in play to publish a
+sync topic; the page's detail query never heard, so Create stayed disabled on
+a stale definition until a remount or a window-focus refetch.
+
+**Consequences:** Every automations list push now costs a detail refetch on
+whichever automation pages are mounted, which is one at a time. The sidebar
+and the header cannot disagree about what deleting means: one dialog, one
+copy.
+
 ### 2026-09-03: An automation's chat is the same feed, under an automation parent
 
 **What changed:** The conversation surface is addressed by its parent through

@@ -1,5 +1,5 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { AutomationDetail } from '../lib/types';
 import { AutomationHeader, automationApplyEnabled } from './automation-header';
@@ -39,12 +39,12 @@ const draft: AutomationDetail = {
   recentRuns: [],
 };
 
-function actions(): Record<'onApply' | 'onPause' | 'onResume' | 'onDelete' | 'onRunNow', ReturnType<typeof vi.fn<() => void>>> {
+function actions() {
   return {
     onApply: vi.fn<() => void>(),
     onPause: vi.fn<() => void>(),
     onResume: vi.fn<() => void>(),
-    onDelete: vi.fn<() => void>(),
+    onDelete: vi.fn<() => Promise<void>>(async () => undefined),
     onRunNow: vi.fn<() => void>(),
   };
 }
@@ -161,6 +161,61 @@ describe('AutomationHeader', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Pause' }));
     expect(active.onPause).toHaveBeenCalledOnce();
     expect(screen.queryByRole('button', { name: 'Resume' })).toBeNull();
+  });
+
+  it('keeps Run now and Apply off while paused, since the object refuses both', async () => {
+    const paused = renderHeader({
+      ...draft,
+      status: 'paused',
+      lifecycle: 'paused',
+      currentDefinition: definition,
+      currentDefinitionRevision: 2,
+      acceptedDefinitionRevision: 1,
+    });
+
+    // A newer ready revision on a paused automation: Apply used to light up
+    // and the object answered 409 automation_not_active; Run now was offered
+    // and answered the same. Resume is the one thing to do here.
+    const apply = screen.getByRole('button', { name: 'Apply changes' });
+    expect(apply).toBeDisabled();
+    expect(apply).toHaveAttribute('title', 'Resume the automation before applying a change.');
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'More automation actions' }), { button: 0, ctrlKey: false });
+    expect(await screen.findByRole('menuitem', { name: 'Run now' })).toHaveAttribute('aria-disabled', 'true');
+    expect(paused.onRunNow).not.toHaveBeenCalled();
+    expect(automationApplyEnabled({
+      lifecycle: 'active',
+      currentDefinition: definition,
+      currentDefinitionRevision: 2,
+      acceptedDefinitionRevision: 1,
+    })).toBe(true);
+  });
+
+  it('deletes only after the confirmation dialog, and keeps a failure in it', async () => {
+    const handlers = renderHeader({
+      ...draft,
+      status: 'active',
+      lifecycle: 'active',
+      currentDefinition: definition,
+      currentDefinitionRevision: 1,
+      acceptedDefinitionRevision: 1,
+    });
+    handlers.onDelete.mockRejectedValueOnce(new Error('The automation is still finishing a run.'));
+
+    // The sidebar always asked; the header fired the tombstone from a menu
+    // item with no question. Same dialog, same copy, on both.
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'More automation actions' }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete automation' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Delete automation' });
+    expect(within(dialog).getByText('Weekly changelog')).toBeVisible();
+    expect(handlers.onDelete).not.toHaveBeenCalled();
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
+    expect(await within(dialog).findByText('The automation is still finishing a run.')).toBeVisible();
+    expect(handlers.onDelete).toHaveBeenCalledOnce();
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Delete automation' })).not.toBeInTheDocument());
+    expect(handlers.onDelete).toHaveBeenCalledTimes(2);
   });
 
   it('lists the runs it is given, with their status, and says when there are none', () => {
