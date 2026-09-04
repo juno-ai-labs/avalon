@@ -16,6 +16,7 @@ import {
   createTestD1Database,
   createTestD1PreparedStatement,
   createTestD1Result,
+  createTestD1Results,
   createTestEnv,
 } from "./helpers/cloudflare-test";
 import {
@@ -101,6 +102,15 @@ class ToolSelectionDatabase {
   readonly proposedDraftCards: Array<Record<string, unknown>> = [];
   /** Every `create` request, so an edit can be shown not to make a second automation. */
   readonly createdAutomations: Array<Record<string, unknown>> = [];
+  /**
+   * The runtime bootstrap and conversation provisioning a creation runs, on a
+   * replay too: the D1 anchor batches, the `bootstrapRuntime` requests, and
+   * the identity `provision` operations, each recorded rather than executed.
+   * What they do is `test-workers/automation-do.test.ts`'s subject.
+   */
+  readonly anchorBatches: string[][] = [];
+  readonly bootstrappedConversations: Array<Record<string, unknown>> = [];
+  readonly provisionedConversations: Array<Record<string, unknown>> = [];
   /** Every `readDetail` request the directory port sent, in order. */
   readonly detailReads: Array<Record<string, unknown>> = [];
   /** Every `listWorkstreamAutomations` request, in order. */
@@ -131,6 +141,13 @@ class ToolSelectionDatabase {
     });
     this.binding = createTestD1Database({
       prepare: (sql: string) => createTestD1PreparedStatement(new ToolSelectionStatement(this, sql)),
+      // The regional anchor and route a creation's bootstrap writes.
+      batch: async (statements: D1PreparedStatement[]) => {
+        this.anchorBatches.push(statements.map((statement) =>
+          (statement as unknown as ToolSelectionStatement).describe()
+        ));
+        return createTestD1Results(statements.map(() => ({ success: true, results: [] })));
+      },
     });
     // Which resources this work stream has attached is the object's answer now,
     // and which connection owns each of them is the workspace's. The fixture
@@ -151,10 +168,32 @@ class ToolSelectionDatabase {
   }
 
   readonly objectStore = testWorkstreamObjectStore();
+  /** The helper's own stub, for the identity reads the room's tools make. */
+  private readonly roomAgent = (() => {
+    const binding = testSubstreamAgentsBinding(this.objectStore);
+    return binding.get(binding.idFromName("room")) as unknown as {
+      executeIdentityOperation(request: unknown): unknown;
+    };
+  })();
   readonly agents = testSubstreamAgentsBinding(this.objectStore, {
     extra: {
       appendDraftProposedCard: vi.fn(async (request: Record<string, unknown>) => {
         this.proposedDraftCards.push(request);
+      }),
+      // A created automation's own conversation is opened and provisioned on
+      // the shared object store's binding; recorded, not executed, because
+      // the store here is the room's and the helper would seed a second root
+      // into it.
+      bootstrapRuntime: vi.fn(async (request: Record<string, unknown>) => {
+        this.bootstrappedConversations.push(request);
+        return { status: 200, bodyJson: "{}" };
+      }),
+      executeIdentityOperation: vi.fn(async (request: { operation: string } & Record<string, unknown>) => {
+        if (request.operation !== "provision") {
+          return this.roomAgent.executeIdentityOperation(request);
+        }
+        this.provisionedConversations.push(request);
+        return { status: 200, bodyJson: JSON.stringify({ ok: true, value: null }) };
       }),
     },
   });
@@ -209,6 +248,11 @@ class ToolSelectionStatement {
     return this;
   }
 
+  /** The statement's SQL with its whitespace collapsed, for a batch's record. */
+  describe(): string {
+    return this.sql.replace(/\s+/gu, " ").trim();
+  }
+
   async all<T>(): Promise<D1Result<T>> {
     const sql = this.sql.replace(/\s+/gu, " ").trim();
     let results: unknown[];
@@ -248,6 +292,11 @@ class ToolSelectionStatement {
     }
     if (sql.includes("SELECT id FROM workspaces")) {
       return { id: WORKSPACE_ID } as T;
+    }
+    // The bootstrap's schema probe: no legacy `title` column, so the anchor
+    // takes its final shape.
+    if (sql.includes("FROM pragma_table_info('workstreams')")) {
+      return null;
     }
     throw new Error(`Unexpected tool-selection first query: ${sql}`);
   }
@@ -297,11 +346,12 @@ function env(database: ToolSelectionDatabase): Env {
     SUBSTREAM_AGENTS: database.agents,
     AUTOMATION_DOS: testSubstreamAgentsBinding(database.objectStore, {
       extra: {
-        // Answered as already existing, so the Worker does not go on to
-        // provision the automation's own conversation: creating an automation
-        // from a room is `test-workers/automation-do.test.ts`'s subject, and
-        // what this file proves about a submission is what reaches
-        // `submitDefinition`.
+        // Answered as already existing. The Worker still bootstraps and
+        // provisions the automation's own conversation on a replay, and the
+        // doubles above record that rather than run it: creating an
+        // automation from a room is `test-workers/automation-do.test.ts`'s
+        // subject, and what this file proves about a submission is what
+        // reaches `submitDefinition`.
         create: vi.fn(async (request: Record<string, unknown>) => {
           database.createdAutomations.push(request);
           return { created: false };

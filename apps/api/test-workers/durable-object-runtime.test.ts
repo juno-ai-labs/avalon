@@ -6080,7 +6080,7 @@ describe("Durable Objects in the Workers runtime", () => {
           workspaceId: WORKSPACE_ID,
           workstreamId: ROOM_ID,
           userId: STRANGER_ID,
-        })).rejects.toThrow("automation_directory_access_denied");
+        })).rejects.toMatchObject({ code: "automation_directory_access_denied", status: 403 });
       });
     });
 
@@ -6099,7 +6099,7 @@ describe("Durable Objects in the Workers runtime", () => {
           workspaceId: WORKSPACE_ID,
           workstreamId: ROOM_ID,
           userId: STRANGER_ID,
-        })).rejects.toThrow("automation_directory_access_denied");
+        })).rejects.toMatchObject({ code: "automation_directory_access_denied", status: 403 });
       });
     });
   });
