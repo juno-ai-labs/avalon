@@ -1890,7 +1890,10 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           : { transcriptSequence: completedReservation.transcriptSequence }),
         usage: usageRecord(state),
       });
-      return outcome("completed", content || streamedContent, model, state, routedAttempts, resultStats);
+      return {
+        ...outcome("completed", content || streamedContent, model, state, routedAttempts, resultStats),
+        completedByTool: true,
+      };
     }
     if (result.stopReason === "waiting_for_reply" || result.stopReason === "resuming_later") {
       if (state.suspended?.toolCallId) {
