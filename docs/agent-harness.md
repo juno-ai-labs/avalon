@@ -1176,6 +1176,27 @@ silently return every test to the shared key while each still passes alone.
 
 ## Changelog
 
+### 2026-09-04: A run a tool ended is completed, not an empty answer
+
+**What changed:** `HarnessOutcome` gains `completedByTool`, set when a tool's
+`halt: "completed"` ends the loop. The host's terminal result reads a
+completed outcome with no final text as `completed` when that flag is set,
+and as `failed` with `empty_completion` otherwise, as before.
+
+**Why:** A ready draft submitted from an automation's own conversation ends
+the run from `submit_draft`, and the model is not asked for a closing
+message. The host saw a completed outcome with no final turn and recorded
+the run as failed with "the model returned no durable final response", so
+every successful ready submission on the live stack was logged as a failed
+run and the conversation showed a failure pill under a draft that had just
+been accepted. The failure code is right for a model that stops talking
+mid-task; it is wrong for a tool that says the task is done.
+
+**Consequences:** A completed run may have no final turn. Anything that
+counts failed runs no longer counts tool-ended ones; anything that renders a
+completed run must tolerate the absence of a final message, which the
+needs-input path already required.
+
 ### 2026-09-03: Drafting is a conversation, and a run reads its automation by revision
 
 **What changed:** The separate compiler host is gone with the first automation

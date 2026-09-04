@@ -3462,6 +3462,13 @@ export interface RunHarnessInput {
 
 export interface HarnessOutcome {
   status: "completed" | "needs_input" | "failed" | "stopped";
+  /**
+   * The run ended because a tool said the work was done (`halt: "completed"`),
+   * not because the model wrote a final answer. The host reads a completed
+   * outcome with no final text as a failure otherwise, since a model that
+   * stops talking mid-task has failed; a tool that ends the run has not.
+   */
+  completedByTool?: true;
   content: string;
   model: string | null;
   iterations: number;

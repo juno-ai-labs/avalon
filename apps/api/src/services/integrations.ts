@@ -404,7 +404,7 @@ async function publishRuntimeEventBestEffort(
 }
 
 function workstreamHarnessTerminalResult(input: {
-  outcome: Pick<Awaited<ReturnType<typeof runHarness>>, "status" | "failure">;
+  outcome: Pick<Awaited<ReturnType<typeof runHarness>>, "status" | "failure" | "completedByTool">;
   streamedText: string;
   finalTurnId: string | null;
   ambiguousToolOutcome: boolean;
@@ -428,6 +428,9 @@ function workstreamHarnessTerminalResult(input: {
   }
   if (stoppedByUser) return { status: "stopped", ...durableTurn };
   if (outcome.status === "completed" && streamedText && finalTurnId) return { status: "completed", finalTurnId };
+  // A tool ended the run (a ready draft submitted, for one): the work is in
+  // the tool's effect, and a model that wrote nothing after it has not failed.
+  if (outcome.status === "completed" && outcome.completedByTool) return { status: "completed", ...durableTurn };
   if (outcome.status === "completed") {
     return {
       status: "failed",
