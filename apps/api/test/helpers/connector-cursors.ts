@@ -24,6 +24,13 @@ const MAX_BRANCH_DEPTH = 4;
  * The branch of a declaration that states `type`, however the declaration is
  * spelled.
  *
+ * `anyOf` and `oneOf` are the composition keywords it reads. `allOf` is not:
+ * an intersection has no branch that stands alone as the string, and stacking
+ * `{ type: "string" }` with `{ minLength: 1 }` is a spelling no connector here
+ * uses. A cursor written that way is `"unreadable"` and throws rather than
+ * being skipped, which is the right answer for a shape nothing has decided how
+ * to read, and the message names the tool and the property.
+ *
  * Three outcomes, and the middle one is the point. A declaration that states a
  * type and it is not the one asked for is not that kind of declaration at all —
  * Slack's `read_message_context.after` is a count, not a cursor — so it is
