@@ -276,6 +276,15 @@ allocated — `MAX(position) + 1` inside the insert — rather than by the schem
 
 ## Changelog
 
+### 2026-09-04 — Search reorders only visible pin slots
+
+**What changed and why:** A filtered drag or keyboard move now merges the visible
+order back into the complete stored arrangement before sending it. Sending only
+matches made the server append hidden pins, moving work the reader never touched.
+Hidden pins keep their positions, matching the reference app's slot-preserving
+reorder behavior; the server still receives the complete list.
+
+
 ### 2026-08-30 — Command-number pills share the automation You chip
 
 **What changed:** The held-Command `⌘1`–`⌘9` overlay now renders through the

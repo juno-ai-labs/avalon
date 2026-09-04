@@ -222,6 +222,11 @@ xvfb-run -a --server-args="-screen 0 1440x900x24" \
   pnpm --filter @rally/desktop exec electron-vite dev --noSandbox --remoteDebuggingPort=9222
 ```
 
+Set `RALLY_RENDERER_PORT` and choose a matching non-default debugging port when
+another visual exploration is already running. For example,
+`RALLY_RENDERER_PORT=54731 ... --remoteDebuggingPort=59422` keeps both listeners
+isolated without changing the checked-in defaults.
+
 `--noSandbox` and `--remoteDebuggingPort` are **electron-vite's** CLI options,
 not Chromium's, which is why they are camelCase here. electron-vite turns them
 into `NO_SANDBOX` and `REMOTE_DEBUGGING_PORT` in the environment and appends

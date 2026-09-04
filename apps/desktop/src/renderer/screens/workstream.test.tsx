@@ -1,6 +1,7 @@
 import { createRef } from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
+import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { WORKSTREAM_NAMING_GRACE_MS } from '@rally/contracts';
 import type { DesktopSession } from '../../common/desktop';
@@ -150,22 +151,24 @@ describe('running work-stream message delivery', () => {
   it('queues a message for the in-flight loop without a delivery dropdown', async () => {
     const onSend = vi.fn(async () => undefined);
     render(
-      <Tooltip.Provider>
-        <WorkstreamComposer
-          attachments={[]}
-          fileInputRef={createRef<HTMLInputElement>()}
-          members={[]}
-          onAttach={vi.fn()}
-          onOpenAttachment={vi.fn()}
-          onRemoveAttachment={vi.fn()}
-          onRetryAttachment={vi.fn()}
-          onSend={onSend}
-          onStop={vi.fn(async () => undefined)}
-          sending={false}
-          uploading={false}
-          workstream={{ ...headerWorkstream, harnessStatus: 'running' }}
-        />
-      </Tooltip.Provider>,
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <WorkstreamComposer
+            attachments={[]}
+            fileInputRef={createRef<HTMLInputElement>()}
+            members={[]}
+            onAttach={vi.fn()}
+            onOpenAttachment={vi.fn()}
+            onRemoveAttachment={vi.fn()}
+            onRetryAttachment={vi.fn()}
+            onSend={onSend}
+            onStop={vi.fn(async () => undefined)}
+            sending={false}
+            uploading={false}
+            workstream={{ ...headerWorkstream, harnessStatus: 'running' }}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
     );
 
     expect(screen.queryByRole('combobox', { name: 'Message delivery' })).not.toBeInTheDocument();
@@ -206,6 +209,7 @@ function headerElement(
   workstream = headerWorkstream,
   overrides: {
     currentUserId?: string | null;
+    grokBotMode?: boolean;
     onRename?: (title: string) => Promise<void>;
     presentUserIds?: readonly string[];
   } = {},
@@ -214,6 +218,7 @@ function headerElement(
     <Tooltip.Provider>
       <WorkstreamHeader
         currentUserId={overrides.currentUserId ?? null}
+        grokBotMode={overrides.grokBotMode ?? false}
         onAddParticipant={vi.fn()}
         // The screen opens the rail through the same store action.
         onOpenRail={(variant) => useUiStore.getState().openRail(variant)}
@@ -265,6 +270,22 @@ describe('WorkstreamHeader presence', () => {
     expect(screen.queryByTitle(collaborator.name)).not.toBeInTheDocument();
     expect(container.querySelectorAll('.avatar-presence-ping')).toHaveLength(1);
     expect(container.querySelector('.participant-header-button [tabindex]')).toBeNull();
+  });
+});
+
+describe('WorkstreamHeader GrokBot shell', () => {
+  it('uses the centered conversation title as the only details control', () => {
+    renderWorkstreamHeader(headerWorkstream, { grokBotMode: true });
+
+    const title = screen.getByRole('button', { name: 'Daily product brief' });
+    expect(screen.getByRole('heading', { name: 'Daily product brief' })).toBeInTheDocument();
+    expect(title).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.queryByRole('button', { name: 'Show HyperSight' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'More work-stream actions' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Add participant' })).not.toBeInTheDocument();
+
+    fireEvent.click(title);
+    expect(title).toHaveAttribute('aria-pressed', 'true');
   });
 });
 

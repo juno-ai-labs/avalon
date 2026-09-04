@@ -1,10 +1,16 @@
 # Suggested work
 
-The four suggestions on the home screen: where they come from, who is allowed to
+The four suggestions exposed through the native menu bar: where they come from, who is allowed to
 see one, and — the part that has bitten hardest — when the ranking that orders
 them is allowed to run. Unclaimed connector activity becomes a candidate, a model
 admits a fraction of it, and a bounded tournament orders each member's four ahead
 of any request that will show them.
+
+The Grok-style new-chat screen no longer shows suggestion cards. The native
+menu bar remains a consumer: `menu-bar-content.ts` reads suggestions, records
+impressions, and starts one through its version-checked `/start` endpoint before
+opening the returned work stream. The producer is therefore retained, not
+orphaned by the removal of the home-screen presentation.
 
 Read this before changing admission, ranking, the `work_opportunities` family of
 tables, or `GET /work-opportunities`. Two properties hold the whole thing
@@ -281,7 +287,7 @@ enter telemetry.
 ## Boundary
 
 This module owns candidate admission, the ranking tournament, its scheduling, and
-the stored set the home screen reads. It does not own:
+the stored set the menu bar reads. It does not own:
 
 | For | Read |
 | --- | --- |
@@ -409,6 +415,14 @@ of how the last ranking ended — and `request_seq` against the scheduler's clai
 value.
 
 ## Changelog
+
+### 2026-09-04 — Keep the menu-bar consumer when replacing the home screen
+
+**What changed and why:** The Grok-style conversation launcher removes the home
+suggestion cards, not Suggested Work as a product capability. The native menu
+bar still reads, records impressions, and starts suggestions directly; it does
+not navigate to a removed home-card action. Admission and ranking remain for
+that reachable consumer. Removing them would require a separate product decision.
 
 ### 2026-09-03 — Suggested Work stops paying a frontier model to ignore CI
 

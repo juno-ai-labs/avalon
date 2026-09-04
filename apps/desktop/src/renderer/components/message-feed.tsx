@@ -22,6 +22,8 @@ import { MessageBlock, type RowDisclosure } from './workstream-blocks';
  * adapter, which is why this component draws nothing when it has no messages.
  */
 interface MessageFeedProps {
+  /** The main work-stream feed presents an agent's h2 document as a card deck. */
+  agentDocumentCards?: boolean;
   /**
    * How this feed resolves and opens a citation. Absent on a surface with no
    * work stream behind it — an automation draft — where every citation
@@ -77,11 +79,28 @@ export function useMessageFeedVirtualizer(input: {
     estimateSize: () => 140,
     getItemKey: (index) => input.messages[index]?.id ?? index,
     getScrollElement: () => input.scrollRef.current,
+    // A message can reflow by thousands of pixels when the sidebar changes
+    // form. TanStack's default callback trusts the ResizeObserver entry that
+    // queued the callback; when two width states cross before those callbacks
+    // run, an older entry can overwrite the newer row height and the feed
+    // alternates between both layouts. Read the row that exists *now* so the
+    // virtual ledger and the browser cannot chase one another vertically.
+    measureElement: measureMessageFeedRow,
     overscan: 8,
+    // The observer fires before the frame containing nested async content is
+    // necessarily final. Defer the live read to that frame so Mermaid's SVG
+    // replacement and the row measurement settle in one layout pass.
+    useAnimationFrameWithResizeObserver: true,
   });
 }
 
+/** The live border-box height used by the work-stream feed's virtual ledger. */
+export function measureMessageFeedRow(element: Element): number {
+  return Math.round(element.getBoundingClientRect().height);
+}
+
 export function MessageFeed({
+  agentDocumentCards = false,
   citations,
   currentUserId,
   currentUserName,
@@ -120,6 +139,7 @@ export function MessageFeed({
         </div>
       ) : (
         <MessageBlock
+          agentDocumentCards={agentDocumentCards}
           {...(citations ? { citations } : {})}
           collapseHeadings
           currentUserId={currentUserId}

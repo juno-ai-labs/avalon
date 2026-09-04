@@ -11,6 +11,7 @@ import {
   writeDraftAttachment,
 } from './draft-cache';
 import type { WorkstreamResource } from './types';
+import { isImageAttachment, isVideoAttachment } from './attachment-media';
 
 export type PendingAttachmentStatus = 'uploading' | 'ready' | 'failed';
 
@@ -27,7 +28,6 @@ export interface PendingAttachment {
 
 const MAX_ATTACHMENTS = 10;
 const MAX_ATTACHMENT_BYTES = 25_000_000;
-const IMAGE_FILE_PATTERN = /\.(?:avif|bmp|gif|heic|heif|jpe?g|png|svg|webp)$/iu;
 const DISCONNECTED_ERROR = 'Rally is not connected. Try again after reconnecting.';
 const UNSAVED_ERROR = 'This device is out of room to hold attachments, so they will be lost if you quit before sending.';
 
@@ -65,7 +65,11 @@ async function deleteDraftWithRetry(api: FileAttachmentsApi, id: string): Promis
 }
 
 function isImageFile(file: File): boolean {
-  return file.type.startsWith('image/') || IMAGE_FILE_PATTERN.test(file.name);
+  return isImageAttachment(file.type, file.name);
+}
+
+function isPreviewableMediaFile(file: File): boolean {
+  return isImageFile(file) || isVideoAttachment(file.type, file.name);
 }
 
 /**
@@ -97,7 +101,7 @@ function restoredAttachment(cached: CachedDraftAttachment, connected: boolean): 
     localId: cached.localId,
     file,
     ...(cached.sha256 ? { sha256: cached.sha256 } : {}),
-    ...(isImageFile(file) ? { previewUrl: URL.createObjectURL(file) } : {}),
+    ...(isPreviewableMediaFile(file) ? { previewUrl: URL.createObjectURL(file) } : {}),
     progress: cached.resource ? 100 : 0,
     ...(cached.resource
       ? { status: 'ready' as const, resource: cached.resource }
@@ -227,7 +231,7 @@ export function useFileAttachments(api: FileAttachmentsApi | null, draftKey: str
           localId: crypto.randomUUID(),
           file,
           ...(sha256 ? { sha256 } : {}),
-          ...(isImageFile(file) ? { previewUrl: URL.createObjectURL(file) } : {}),
+          ...(isPreviewableMediaFile(file) ? { previewUrl: URL.createObjectURL(file) } : {}),
           progress: 0,
           status: file.size === 0 || file.size > MAX_ATTACHMENT_BYTES ? 'failed' : 'uploading',
           ...(file.size === 0

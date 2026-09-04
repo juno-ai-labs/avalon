@@ -17,7 +17,7 @@ attempt at the opposite that the changelog records.
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/desktop/src/renderer/screens/new-workstream.tsx` | Both states of the screen, the `launching` state that switches between them, both create mutations, `launchedWorkstreamDetail` — the one place a launched work stream's cached detail is built — and `useHomeHandOff`. |
+| `apps/desktop/src/renderer/screens/new-workstream.tsx` | Both states of the screen, the `launching` state that switches between them, the create mutation, and `launchedWorkstreamDetail` — the one place a launched work stream's cached detail is built. |
 | `apps/desktop/src/renderer/styles/app.css` | The `.workstream-launch-screen` block at the end of the file: every geometry difference between the two states, and the two keyframes. |
 | `apps/desktop/src/renderer/components/composer-input.tsx` | `ComposerInput`, the single composer element the hand-off is built around. |
 | `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `MessageBlock`, which renders the optimistic opening turn exactly as the work-stream screen will render the persisted one. |
@@ -41,9 +41,10 @@ the response.
 The component renders one tree in both states, a three-row grid of header, body,
 and composer dock:
 
-- **Not launching** — the header row is collapsed to zero height, the body holds
-  the welcome heading, the work streams waiting for input, and suggested work,
-  and the dock carries the participant row above the composer.
+- **Not launching** — the header and body rows are empty and the dock carries
+  the participant row above the composer. The retired Welcome back dashboard,
+  attention list, and suggested-work shelf no longer sit between opening Rally
+  and starting a work stream.
 - **Launching** — the root additionally carries `workstream-screen`, the header
   expands to 55px around a title skeleton, the body holds a transcript, and the
   participant row collapses.
@@ -57,16 +58,12 @@ to become and the navigation that follows changes only the data.
 
 ### What moves
 
-Three things animate, and they are the whole transition:
+Two things animate, and they are the whole transition:
 
 - **The composer settles.** It is the same DOM element throughout, so its dock
   padding, stack width, background, border, radius, shadow, and text height all
   transition rather than cut. It is the object the eye follows from the middle of
   the launcher down into the dock.
-- **The home content hands off.** `useHomeHandOff` keeps it mounted and `inert`
-  for `HOME_HAND_OFF_MS` (190ms) while it fades and settles downward over the
-  transcript that replaced it — the same contract `RAIL_CROSSFADE_MS` keeps for
-  the right sidebar, and the stylesheet animates over the same span.
 - **The transcript assembles.** The opening turn and the work timer each rise
   7px into place on a 70ms stagger, so the transcript reads as being built rather
   than revealed.
@@ -105,18 +102,6 @@ own-turn treatment. The header shows `TitleSkeleton` — the same skeleton the c
 the header does not change hands at the swap; it is already waiting for the same
 name.
 
-Suggested work opens onto the same surface **without** an opening turn, and with
-an empty composer, and seeds its destination the same way. That work stream's
-opening turn belongs to the person who selected the suggestion, but its text is
-the expanded brief, which only the server holds — the home screen has never seen
-anything but the one-line `displayPrompt`, and standing that line in for the
-brief would show a turn that a longer, different one replaces the moment the
-refetch lands. Anything sitting in the composer, meanwhile, is a draft for a work
-stream nobody has started, so showing it beside one that has just been started
-would attach it to the wrong thing. The draft is held back rather than
-discarded — `LaunchingWorkstream.origin` is what distinguishes the two
-launchers — and it returns the moment the launch ends, either way.
-
 ### The room snapshot has to describe the run
 
 A work stream's socket sends a `snapshot` on subscribe, and the client replaces
@@ -142,13 +127,10 @@ both launchers write both, and a work stream that was just created therefore
 never shows it. It paints immediately, with the same turn in the same place, at
 the same geometry.
 
-The two launchers differ only in the transcript. A typed create authored its
-opening turn and seeds it. Suggested work's turn is the selecting member's too,
-but its text was expanded server-side from the prompt, so it seeds an empty
-transcript and lets the refetch bring the real turn a moment later — and the
-work-stream screen withholds its `Ready to begin` empty state while a run is
-scheduled or running, because an admitted run is already work even before its
-Workflow starts. The create response names that opening row as `turnId`; the
+The typed create authored its opening turn and seeds it. The work-stream screen
+withholds its `Ready to begin` empty state while a run is scheduled or running,
+because an admitted run is already work even before its Workflow starts. The
+create response names that opening row as `turnId`; the
 optimistic snapshot uses exactly that canonical identity, so the socket upsert
 replaces it by identity rather than asking timestamps or equal text to prove
 that two rows are the same turn.
@@ -402,6 +384,26 @@ with the backfill first. See [`regionalization.md`](regionalization.md).
 
 ## Changelog
 
+### 2026-09-04 — New chat uses GrokBot's recipient-first launcher without losing create semantics
+
+**What changed:** A workspace-level new chat opens with a `To:` recipient bar,
+searchable people results, and the compact message capsule. Typing `@` opens the
+inline mention list; attachments and the developer-only model override live in
+the capsule action menu. Project-owned creation keeps its project participant
+contract and existing toolbar. Both shapes still use the same durable create,
+draft, attachment, mention, optimistic transcript, and failure-recovery paths.
+
+**Why:** The old participant modifier and permanent toolbar made the rebased
+launcher visibly different from the GrokBot conversation entry point. Removing
+the controls outright would have made the visual rewrite a behavioral
+regression, especially for model-pinned debugging and attachment-only creates.
+
+**Consequences:** Tests for workspace creation interact with the recipient bar
+and action menu; project tests interact with the project participant modifier.
+The workspace launcher does not fetch the work-stream directory or suggested
+work, so restoring either query would also restore the loading and layout churn
+the focused launcher removed.
+
 ### 2026-09-02 — Follow-up creation now enters through the owning substream
 
 **What changed:** The work-stream composer sends an idempotent `create_message`
@@ -414,6 +416,25 @@ correlated failure one authority.
 
 **Consequences:** Opening work-stream creation remains a parent bootstrap route.
 Once the child exists, its conversation mutations use its socket.
+
+### 2026-09-01 — The launcher opens on the composer, not a home dashboard
+
+**What changed:** The not-yet-launching state no longer renders Welcome back,
+Needs attention, or Suggested work. It opens as an empty composer surface and
+keeps the same optimistic create transition after Enter.
+
+**Why:** Work-stream navigation now owns ongoing work, so duplicating attention
+and suggestion lists inside New work stream created a second, visually unrelated
+home product between the person and the GrokBot-style conversation shell.
+
+**Considered and rejected:** Restyling the dashboard to resemble GrokBot would
+keep the redundant navigation model. Redirecting New work stream to an existing
+room would remove the explicit create affordance.
+
+**Consequences:** The launcher no longer queries the work-stream directory or
+suggested-work endpoints. Its draft, attachments, mentions, and optimistic
+creation path are unchanged; the workspace-level participant interaction was
+later replaced by the recipient-first launcher recorded above.
 
 ### 2026-08-30 — A personal project's participant row uses one Radix tooltip
 

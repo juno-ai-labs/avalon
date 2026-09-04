@@ -151,6 +151,25 @@ function renderProjectScreen(
   return queryClient;
 }
 
+async function openComposerActions(): Promise<void> {
+  const trigger = await screen.findByRole('button', { name: 'Composer actions' });
+  fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
+}
+
+async function openModelMenu(): Promise<void> {
+  await openComposerActions();
+}
+
+function closeOpenMenus(): void {
+  fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+  fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+}
+
+async function selectModel(name: string): Promise<void> {
+  const item = await screen.findByRole('menuitemradio', { name });
+  fireEvent.click(item);
+}
+
 describe('New work-stream home', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
@@ -193,60 +212,15 @@ describe('New work-stream home', () => {
     });
   });
 
-  it('does not query or render Suggested Work while Suggested Work Enabled is false', async () => {
-    featureFlags.current = { suggestedWorkEnabled: false };
-
+  it('opens directly on the composer without the retired Welcome back home', async () => {
     renderScreen();
 
-    expect(await screen.findByRole('heading', { name: 'Welcome back, Adam' })).toBeVisible();
+    expect(await screen.findByRole('textbox', { name: 'Opening work-stream message' })).toBeVisible();
+    expect(screen.queryByRole('heading', { name: /Welcome back/u })).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Needs attention' })).not.toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'Suggested work' })).not.toBeInTheDocument();
     expect(api.getWorkOpportunities).not.toHaveBeenCalled();
-  });
-
-  it('leaves out the work streams that ask this person for nothing', async () => {
-    // The fixture is four run states and no personal state, so `needs_input` is
-    // the only one of the three that can qualify — the name used to say the
-    // section was for waiting-for-input alone, which stopped being true when
-    // unseen and mentioned joined it.
-    renderScreen();
-
-    expect(await screen.findByRole('heading', { name: 'Welcome back, Adam' })).toBeVisible();
-    const attention = await screen.findByRole('region', { name: 'Needs attention' });
-    const row = within(attention).getByRole('link', { name: /Board decision/u });
-    expect(row).toHaveAttribute('href', '/workstreams/waiting');
-    expect(row.querySelector('.waiting-workstream-projects')).toBeEmptyDOMElement();
-    expect(within(attention).getByText('Needs input')).toBeVisible();
-    expect(screen.queryByText('Pricing restructure')).not.toBeInTheDocument();
-    expect(screen.queryByText('Release notes')).not.toBeInTheDocument();
-    expect(screen.queryByText('Broken connector')).not.toBeInTheDocument();
-  });
-
-  it('given a project work stream needing attention, when the row renders, then its project icon sits in a dedicated row slot', async () => {
-    const projects: ProjectDirectory = {
-      waterline: 1,
-      items: [{
-        id: asProjectId('00000000-0000-7000-8000-0000000000f2'),
-        name: 'Hiring',
-        iconKey: 'briefcase',
-        colorKey: 'blue',
-        scope: 'personal',
-        status: 'active',
-        presentationRevision: 1,
-        audienceGeneration: 1,
-        lifecycleGeneration: 1,
-        participants: [],
-        workstreamIds: ['waiting'],
-        defaultResourceIds: [],
-        createdAt: '2026-08-27T00:00:00.000Z',
-        updatedAt: '2026-08-27T00:00:00.000Z',
-      }],
-    };
-    renderScreen(projects);
-
-    const attention = await screen.findByRole('region', { name: 'Needs attention' });
-    const pile = await within(attention).findByRole('img', { name: 'Projects: Hiring' });
-    expect(pile).toBeVisible();
-    expect(pile.parentElement).toHaveClass('waiting-workstream-projects');
+    expect(workspaceSocket.listWorkstreams).not.toHaveBeenCalled();
   });
 
   it('given a project launcher, when the first message is submitted, then it omits home sections and sends the project gate', async () => {
@@ -272,7 +246,7 @@ describe('New work-stream home', () => {
     };
     renderProjectScreen(projectId, projects);
 
-    expect(await screen.findByRole('heading', { name: 'New project work stream' })).toBeVisible();
+    expect(await screen.findByRole('textbox', { name: 'Opening work-stream message' })).toBeVisible();
     expect(screen.queryByRole('region', { name: 'Needs attention' })).not.toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'Suggested work' })).not.toBeInTheDocument();
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Add people' })).not.toBeInTheDocument());
@@ -296,112 +270,23 @@ describe('New work-stream home', () => {
     })));
   });
 
-  it('lists a work stream this person has never opened, newest activity first', async () => {
-    workspaceSocket.listWorkstreams.mockResolvedValue({
-      items: [
-        workstream('waiting', 'Board decision', 'needs_input', { lastActivityAt: '2026-07-31T18:00:00.000Z' }),
-        // Running, so nothing about the work stream itself puts it here: it is
-        // listed because this person was added and has not opened it.
-        workstream('unseen', 'Warehouse migration', 'running', {
-          lastActivityAt: '2026-07-31T20:00:00.000Z',
-          unseen: true,
-        }),
-        workstream('running', 'Pricing restructure', 'running', { lastActivityAt: '2026-07-31T21:00:00.000Z' }),
-      ],
-      nextCursor: null,
-    });
-    renderScreen();
-
-    const attention = await screen.findByRole('region', { name: 'Needs attention' });
-    const rows = within(attention).getAllByRole('link');
-    expect(rows.map((row) => row.getAttribute('href')))
-      .toEqual(['/workstreams/unseen', '/workstreams/waiting']);
-    // The marker says the room is new rather than what its run is doing.
-    expect(within(rows[0]!).getByText('New to you')).toBeInTheDocument();
-    expect(within(rows[0]!).queryByText('Running')).not.toBeInTheDocument();
-    expect(screen.queryByText('Pricing restructure')).not.toBeInTheDocument();
-  });
-
-  it('lists the work streams that name this person, and not the merely unread', async () => {
-    workspaceSocket.listWorkstreams.mockResolvedValue({
-      items: [
-        workstream('mentioned', 'Launch blockers', 'running', {
-          lastActivityAt: '2026-07-31T21:00:00.000Z',
-          youAreMentioned: true,
-          hasUnread: true,
-        }),
-        // Unread and nothing else: the ordinary condition of a work stream
-        // somebody is working in, and what buried the rest of the section.
-        workstream('unread', 'Vendor contract', 'completed', {
-          lastActivityAt: '2026-07-31T19:00:00.000Z',
-          hasUnread: true,
-        }),
-        workstream('added', 'Warehouse migration', 'completed', {
-          lastActivityAt: '2026-07-31T18:00:00.000Z',
-          hasUnread: true,
-          unseen: true,
-        }),
-        workstream('read', 'Pricing restructure', 'running', { lastActivityAt: '2026-07-31T22:00:00.000Z' }),
-      ],
-      nextCursor: null,
-    });
-    renderScreen();
-
-    const attention = await screen.findByRole('region', { name: 'Needs attention' });
-    const rows = within(attention).getAllByRole('link');
-    // The unseen row is unread too, and is listed on the unseen account.
-    expect(rows.map((row) => row.getAttribute('href')))
-      .toEqual(['/workstreams/mentioned', '/workstreams/added']);
-    expect(within(rows[0]!).getByText('You were mentioned')).toBeInTheDocument();
-    expect(within(rows[1]!).getByText('New to you')).toBeInTheDocument();
-    expect(screen.queryByText('Vendor contract')).not.toBeInTheDocument();
-    // Nothing is asking anything of this person here, however recently it moved.
-    expect(screen.queryByText('Pricing restructure')).not.toBeInTheDocument();
-  });
-
-  it('shows only the short ranked prompt, records its impression, and starts the displayed version', async () => {
-    api.getWorkOpportunities.mockResolvedValue([{
-      id: '00000000-0000-7000-8000-000000000099',
-      version: 3,
-      displayPrompt: 'Prepare the follow-up for the unresolved launch blocker',
-      icon: 'brand-slack',
-      sourceLabel: 'From slack',
-    }]);
-    renderScreen();
-
-    const suggestions = await screen.findByRole('region', { name: 'Suggested work' });
-    expect(within(suggestions).getByText('Prepare the follow-up for the unresolved launch blocker')).toBeVisible();
-    expect(within(suggestions).getByText('From slack')).toBeVisible();
-    await waitFor(() => expect(api.recordWorkOpportunityImpressions).toHaveBeenCalledWith([
-      '00000000-0000-7000-8000-000000000099',
-    ]));
-
-    fireEvent.click(within(suggestions).getByRole('button', {
-      name: 'Prepare the follow-up for the unresolved launch blocker',
-    }));
-    await waitFor(() => expect(api.startWorkOpportunity).toHaveBeenCalledWith(
-      '00000000-0000-7000-8000-000000000099',
-      3,
-      expect.any(String),
-      'workspace_home',
-      1,
-    ));
-  });
-
   it('uses the shared mention, attachment, and dictation controls', async () => {
     renderScreen();
 
-    expect(await screen.findByRole('button', { name: 'Mention a participant' })).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Attach a file' })).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Click or hold to dictate' })).toBeVisible();
+    expect(await screen.findByRole('button', { name: 'Composer actions' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Start voice input' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Mention a participant' })).not.toBeInTheDocument();
+    await openComposerActions();
+    expect(await screen.findByRole('menuitem', { name: 'Attach files' })).toBeVisible();
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Mention a participant' }));
+    const composer = screen.getByRole('textbox', { name: 'Opening work-stream message' });
+    fireEvent.change(composer, { target: { value: '@' } });
 
-    // The same inline list the other two composers open, rather than the
-    // participant dialog this control used to raise. That dialog is still one
-    // click away on the row above.
+    // GrokBot opens the same inline list from an @ typed at the caret rather
+    // than reserving permanent toolbar space for a mention button.
     expect(await screen.findByRole('listbox', { name: 'Mentions' })).toBeVisible();
-    expect(screen.getByRole('textbox', { name: 'Opening work-stream message' })).toHaveValue('@');
+    expect(composer).toHaveValue('@');
     expect(screen.queryByRole('dialog', { name: 'Add people' })).not.toBeInTheDocument();
   });
 
@@ -409,9 +294,11 @@ describe('New work-stream home', () => {
     const queryClient = renderScreen();
     const composer = await screen.findByRole('textbox', { name: 'Opening work-stream message' });
 
+    fireEvent.focus(composer);
     fireEvent.change(composer, { target: { value: 'ask @' } });
 
-    const options = await screen.findAllByRole('option');
+    const listbox = await screen.findByRole('listbox', { name: 'Mentions' });
+    const options = within(listbox).getAllByRole('option');
     const firstOption = options[0];
     if (!firstOption) throw new Error('Expected at least one mention option');
     await within(firstOption).findByText('AJ');
@@ -424,7 +311,7 @@ describe('New work-stream home', () => {
     expect(options.map((option) => option.getAttribute('aria-selected'))).toEqual(['true', 'false']);
 
     fireEvent.keyDown(composer, { key: 'ArrowDown' });
-    expect(screen.getAllByRole('option').map((option) => option.getAttribute('aria-selected'))).toEqual(['false', 'true']);
+    expect(within(listbox).getAllByRole('option').map((option) => option.getAttribute('aria-selected'))).toEqual(['false', 'true']);
 
     fireEvent.keyDown(composer, { key: 'Enter' });
 
@@ -432,7 +319,7 @@ describe('New work-stream home', () => {
     expect(screen.queryByRole('listbox', { name: 'Mentions' })).not.toBeInTheDocument();
     // A mention is also an audience decision, so the person is seated before
     // the work stream exists and the identity travels with the visible text.
-    expect(screen.getByRole('button', { name: 'Manage participants: Adam Juhasz, Samantha Lee' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Remove Samantha Lee' })).toBeVisible();
     fireEvent.keyDown(composer, { key: 'Enter' });
     await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledWith(expect.objectContaining({
       openingMessage: 'ask @Samantha Lee',
@@ -466,11 +353,13 @@ describe('New work-stream home', () => {
     renderScreen();
     const composer = await screen.findByRole('textbox', { name: 'Opening work-stream message' });
 
+    fireEvent.focus(composer);
     fireEvent.change(composer, { target: { value: 'ask @' } });
 
     // Picking someone here puts them in the create request, and the work-stream
     // endpoints refuse a membership that is not active.
-    const options = await screen.findAllByRole('option');
+    const listbox = await screen.findByRole('listbox', { name: 'Mentions' });
+    const options = within(listbox).getAllByRole('option');
     const firstOption = options[0];
     if (!firstOption) throw new Error('Expected at least one mention option');
     await within(firstOption).findByText('AJ');
@@ -482,17 +371,17 @@ describe('New work-stream home', () => {
     expect(options[1]).toHaveAccessibleName('Rae Okafor — rae@example.com — Person');
 
     fireEvent.keyDown(composer, { key: 'Escape' });
-    fireEvent.click(screen.getByRole('button', { name: 'Manage participants: Adam Juhasz' }));
-
-    const dialog = await screen.findByRole('dialog', { name: 'Add people' });
-    expect(within(dialog).queryByRole('checkbox', { name: /Samantha Lee/u })).not.toBeInTheDocument();
-    expect(within(dialog).getByRole('checkbox', { name: /Rae Okafor/u })).toBeVisible();
+    const peopleSearch = screen.getByRole('combobox', { name: 'Search people' });
+    fireEvent.focus(peopleSearch);
+    expect(screen.queryByRole('option', { name: 'Samantha Lee — samantha@example.com' })).not.toBeInTheDocument();
+    expect(await screen.findByRole('option', { name: 'Rae Okafor — rae@example.com' })).toBeVisible();
   });
 
   it('takes no draft with it when the caret leaves the mention the list belongs to', async () => {
     renderScreen();
     const composer = await screen.findByRole('textbox', { name: 'Opening work-stream message' }) as HTMLTextAreaElement;
 
+    fireEvent.focus(composer);
     fireEvent.change(composer, { target: { value: 'hello @Sam', selectionStart: 10, selectionEnd: 10 } });
     expect(await screen.findByRole('listbox', { name: 'Mentions' })).toBeVisible();
 
@@ -504,7 +393,7 @@ describe('New work-stream home', () => {
     fireEvent.keyDown(composer, { key: 'Enter' });
 
     await waitFor(() => expect(composer).toHaveValue('hello @Sam'));
-    expect(screen.getByRole('button', { name: 'Manage participants: Adam Juhasz' })).toBeVisible();
+    expect(screen.getByRole('combobox', { name: 'Search people' })).toBeVisible();
   });
 
   it('names the highlighted row to assistive technology while the list is open', async () => {
@@ -512,16 +401,18 @@ describe('New work-stream home', () => {
     const composer = await screen.findByRole('textbox', { name: 'Opening work-stream message' });
 
     expect(composer).not.toHaveAttribute('aria-activedescendant');
+    fireEvent.focus(composer);
     fireEvent.change(composer, { target: { value: 'ask @' } });
 
-    const options = await screen.findAllByRole('option');
+    const listbox = await screen.findByRole('listbox', { name: 'Mentions' });
+    const options = within(listbox).getAllByRole('option');
     // Focus stays in the draft, so this is the only thing that tells a screen
     // reader which row Enter would take.
     expect(composer).toHaveAttribute('aria-activedescendant', options[0]!.id);
     expect(composer).toHaveAttribute('aria-controls', 'launch-mention-listbox');
 
     fireEvent.keyDown(composer, { key: 'ArrowDown' });
-    expect(composer).toHaveAttribute('aria-activedescendant', screen.getAllByRole('option')[1]!.id);
+    expect(composer).toHaveAttribute('aria-activedescendant', within(listbox).getAllByRole('option')[1]!.id);
 
     fireEvent.keyDown(composer, { key: 'Escape' });
     expect(composer).not.toHaveAttribute('aria-activedescendant');
@@ -531,6 +422,7 @@ describe('New work-stream home', () => {
     renderScreen();
     const composer = await screen.findByRole('textbox', { name: 'Opening work-stream message' });
 
+    fireEvent.focus(composer);
     fireEvent.change(composer, { target: { value: 'ask @Sam' } });
     expect(await screen.findByRole('listbox', { name: 'Mentions' })).toBeVisible();
 
@@ -538,22 +430,15 @@ describe('New work-stream home', () => {
 
     expect(screen.queryByRole('listbox', { name: 'Mentions' })).not.toBeInTheDocument();
     expect(composer).toHaveValue('ask @Sam');
-    expect(screen.getByRole('button', { name: 'Manage participants: Adam Juhasz' })).toBeVisible();
+    expect(screen.getByRole('combobox', { name: 'Search people' })).toBeVisible();
   });
 
-  it('keeps participant selection above the composer and sends selected people', async () => {
+  it('keeps recipient selection above the composer and sends selected people', async () => {
     renderScreen();
 
-    const modifier = await screen.findByRole('button', { name: 'Manage participants: Adam Juhasz' });
-    expect(modifier).toBeVisible();
-    fireEvent.click(modifier);
-
-    const dialog = await screen.findByRole('dialog', { name: 'Add people' });
-    fireEvent.click(within(dialog).getByRole('checkbox', { name: /Samantha Lee/u }));
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Done' }));
-
-    expect(screen.getByRole('button', { name: 'Manage participants: Adam Juhasz, Samantha Lee' })).toHaveTextContent('Adam Juhasz, Samantha Lee');
-    expect(screen.getByRole('button', { name: 'Add people' })).toBeVisible();
+    fireEvent.click(await screen.findByRole('option', { name: 'Samantha Lee — samantha@example.com' }));
+    expect(screen.getByRole('button', { name: 'Remove Samantha Lee' })).toBeVisible();
+    expect(screen.getByRole('combobox', { name: 'Search people' })).toHaveAttribute('placeholder', 'Add people');
     const composer = screen.getByRole('textbox', { name: 'Opening work-stream message' });
     fireEvent.change(composer, { target: { value: '  Prepare the launch brief  ' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
@@ -568,26 +453,20 @@ describe('New work-stream home', () => {
     }));
   });
 
-  it('focuses the first member when the participant picker opens', async () => {
+  it('focuses the recipient search when the new chat opens', async () => {
     renderScreen();
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Manage participants: Adam Juhasz' }));
-
-    const dialog = await screen.findByRole('dialog', { name: 'Add people' });
-    await waitFor(() => expect(within(dialog).getByRole('checkbox', { name: /Samantha Lee/u })).toHaveFocus());
-    expect(within(dialog).getByRole('button', { name: 'Close dialog' })).not.toHaveFocus();
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Search people' })).toHaveFocus());
+    expect(await screen.findByRole('option', { name: 'Samantha Lee — samantha@example.com' })).toBeVisible();
   });
 
-  it('focuses Done when the participant picker has no available members', async () => {
+  it('shows an empty recipient result when the workspace has no available members', async () => {
     api.getWorkspaceMembers.mockResolvedValue([currentUser]);
     renderScreen();
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Manage participants: Adam Juhasz' }));
-
-    const dialog = await screen.findByRole('dialog', { name: 'Add people' });
-    expect(within(dialog).queryByRole('checkbox')).not.toBeInTheDocument();
-    await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Done' })).toHaveFocus());
-    expect(within(dialog).getByRole('button', { name: 'Close dialog' })).not.toHaveFocus();
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Search people' })).toHaveFocus());
+    expect(await screen.findByText('Everyone available is selected')).toBeVisible();
+    expect(screen.queryByRole('option')).not.toBeInTheDocument();
   });
 
   it('hides the model selector unless developer mode is on', async () => {
@@ -603,7 +482,9 @@ describe('New work-stream home', () => {
 
     // Unpinned is its own state, named for what it is rather than for a model
     // the renderer cannot know the flag will serve.
-    await screen.findByRole('button', { name: 'Model: Default (follows the agent-model-workstream flag)' });
+    await openModelMenu();
+    expect(await screen.findByRole('menuitemradio', { name: 'Default' })).toHaveAttribute('aria-checked', 'true');
+    closeOpenMenus();
     const composer = screen.getByRole('textbox', { name: 'Opening work-stream message' });
     fireEvent.change(composer, { target: { value: 'Prepare the launch brief' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
@@ -619,11 +500,9 @@ describe('New work-stream home', () => {
     applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
     renderScreen();
 
-    const selector = await screen.findByRole('button', { name: 'Model: Default (follows the agent-model-workstream flag)' });
-    fireEvent.pointerDown(selector, { button: 0, ctrlKey: false });
-    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'GPT-5.6 Sol' }));
-
-    await screen.findByRole('button', { name: 'Model: GPT-5.6 Sol' });
+    await openModelMenu();
+    await selectModel('GPT-5.6 Sol');
+    closeOpenMenus();
     const composer = screen.getByRole('textbox', { name: 'Opening work-stream message' });
     fireEvent.change(composer, { target: { value: 'Prepare the launch brief' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
@@ -645,10 +524,9 @@ describe('New work-stream home', () => {
     // which it would not if unpinned borrowed the flag's answer as its label.
     // Grok 4.3 is that model; it is deliberately not the menu's first entry,
     // since the families are ordered newest first.
-    const selector = await screen.findByRole('button', { name: 'Model: Default (follows the agent-model-workstream flag)' });
-    fireEvent.pointerDown(selector, { button: 0, ctrlKey: false });
-    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Grok 4.3' }));
-    await screen.findByRole('button', { name: 'Model: Grok 4.3' });
+    await openModelMenu();
+    await selectModel('Grok 4.3');
+    closeOpenMenus();
 
     const composer = screen.getByRole('textbox', { name: 'Opening work-stream message' });
     fireEvent.change(composer, { target: { value: 'Prepare the launch brief' } });
@@ -665,14 +543,12 @@ describe('New work-stream home', () => {
     applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
     renderScreen();
 
-    const selector = await screen.findByRole('button', { name: 'Model: Default (follows the agent-model-workstream flag)' });
-    fireEvent.pointerDown(selector, { button: 0, ctrlKey: false });
-    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'DeepSeek V4 Pro' }));
-    await screen.findByRole('button', { name: 'Model: DeepSeek V4 Pro' });
-
-    fireEvent.pointerDown(screen.getByRole('button', { name: 'Model: DeepSeek V4 Pro' }), { button: 0, ctrlKey: false });
-    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Default' }));
-    await screen.findByRole('button', { name: 'Model: Default (follows the agent-model-workstream flag)' });
+    await openModelMenu();
+    await selectModel('DeepSeek V4 Pro');
+    closeOpenMenus();
+    await openModelMenu();
+    await selectModel('Default');
+    closeOpenMenus();
 
     const composer = screen.getByRole('textbox', { name: 'Opening work-stream message' });
     fireEvent.change(composer, { target: { value: 'Prepare the launch brief' } });
@@ -688,10 +564,9 @@ describe('New work-stream home', () => {
     applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
     renderScreen();
 
-    const selector = await screen.findByRole('button', { name: 'Model: Default (follows the agent-model-workstream flag)' });
-    fireEvent.pointerDown(selector, { button: 0, ctrlKey: false });
-    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'GPT-5.6 Luna' }));
-    await screen.findByRole('button', { name: 'Model: GPT-5.6 Luna' });
+    await openModelMenu();
+    await selectModel('GPT-5.6 Luna');
+    closeOpenMenus();
 
     // The control goes away with the preference. A pin surviving it would keep
     // pinning every work stream started here with nothing on screen saying so.
@@ -750,7 +625,7 @@ describe('New work-stream home', () => {
       attachmentIds: ['resource-notes'],
       requestId: expect.any(String),
     }));
-    expect(screen.getByRole('button', { name: 'Attach a file' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Composer actions' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Remove notes.txt' })).toBeDisabled();
   });
 
@@ -777,10 +652,9 @@ describe('New work-stream home', () => {
     applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
     const queryClient = renderScreen();
 
-    const selector = await screen.findByRole('button', { name: 'Model: Default (follows the agent-model-workstream flag)' });
-    fireEvent.pointerDown(selector, { button: 0, ctrlKey: false });
-    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'DeepSeek V4 Pro' }));
-    await screen.findByRole('button', { name: 'Model: DeepSeek V4 Pro' });
+    await openModelMenu();
+    await selectModel('DeepSeek V4 Pro');
+    closeOpenMenus();
 
     const composer = screen.getByRole('textbox', { name: 'Opening work-stream message' });
     fireEvent.change(composer, { target: { value: 'Prepare the launch brief' } });
@@ -840,7 +714,7 @@ describe('New work-stream home', () => {
     expect(await screen.findByText(MESSAGE_TOO_LONG_MESSAGE)).toBeVisible();
     expect(api.createWorkstream).not.toHaveBeenCalled();
     expect(screen.queryByRole('status', { name: 'Rally is working' })).not.toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Welcome back, Adam' })).toBeVisible();
+    expect(screen.queryByRole('heading', { name: /Welcome back/u })).not.toBeInTheDocument();
     // Still in the composer. The person has to shorten it, which they cannot do
     // to text the screen has taken away from them.
     expect(composer).toHaveValue('x'.repeat(MESSAGE_MAX_CHARACTERS + 1));
@@ -901,7 +775,7 @@ describe('New work-stream home', () => {
     expect(await screen.findByText('offline')).toBeVisible();
     expect(screen.queryByRole('article', { name: 'Message from Adam Juhasz' })).not.toBeInTheDocument();
     expect(screen.queryByRole('status', { name: 'Rally is working' })).not.toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Welcome back, Adam' })).toBeVisible();
+    expect(screen.queryByRole('heading', { name: /Welcome back/u })).not.toBeInTheDocument();
   });
 
   // Without the seeded run the work timer the launch surface has been running
@@ -922,117 +796,6 @@ describe('New work-stream home', () => {
     // what makes the timer continuous rather than restarting at the navigation.
     expect(Date.parse(detail!.latestHarnessRun!.startedAt!)).toBeLessThanOrEqual(Date.now());
     expect(detail!.latestHarnessRun!.startedAt).not.toBe(createdWorkstream.createdAt);
-  });
-
-  it('opens suggested work onto the same surface, with no turn and no unsent draft', async () => {
-    api.getWorkOpportunities.mockResolvedValue([{
-      id: '00000000-0000-7000-8000-000000000099',
-      version: 3,
-      displayPrompt: 'Prepare the follow-up for the unresolved launch blocker',
-      icon: 'brand-slack',
-      sourceLabel: 'From slack',
-    }]);
-    api.startWorkOpportunity.mockReturnValue(new Promise(() => undefined));
-    renderScreen();
-
-    const composer = await screen.findByRole('textbox', { name: 'Opening work-stream message' });
-    fireEvent.change(composer, { target: { value: 'A different thing I have not sent' } });
-    const suggestions = await screen.findByRole('region', { name: 'Suggested work' });
-    fireEvent.click(within(suggestions).getByRole('button', {
-      name: 'Prepare the follow-up for the unresolved launch blocker',
-    }));
-
-    expect(await screen.findByRole('status', { name: 'Rally is working' })).toBeVisible();
-    // The opening turn of suggested work is the selecting member's, but its text
-    // is the brief the server expanded, which this screen has never seen — so
-    // there is nothing here that could stand in for it.
-    expect(screen.queryByRole('article', { name: 'Message from Adam Juhasz' })).not.toBeInTheDocument();
-    // And the draft belongs to a work stream nobody has started.
-    expect(composer).toHaveValue('');
-  });
-
-  // Without seeding, the work-stream screen has neither query and shows its
-  // full-screen `Opening work stream…` state — cutting away from a surface that
-  // was already showing this work stream.
-  it('seeds the destination for suggested work so it does not land on the loading orb', async () => {
-    api.getWorkOpportunities.mockResolvedValue([{
-      id: '00000000-0000-7000-8000-000000000099',
-      version: 3,
-      displayPrompt: 'Prepare the follow-up for the unresolved launch blocker',
-      icon: 'brand-slack',
-      sourceLabel: 'From slack',
-    }]);
-    const queryClient = renderScreen();
-
-    const suggestions = await screen.findByRole('region', { name: 'Suggested work' });
-    fireEvent.click(within(suggestions).getByRole('button', {
-      name: 'Prepare the follow-up for the unresolved launch blocker',
-    }));
-
-    await waitFor(() => expect(queryClient.getQueryData(['workstream', 'new-workstream'])).toMatchObject({
-      id: 'new-workstream',
-      latestHarnessRun: { id: 'run-new-workstream', status: 'running' },
-    }));
-    expect(api.startWorkOpportunity).toHaveBeenCalledWith(
-      '00000000-0000-7000-8000-000000000099', 3, expect.any(String), 'workspace_home', 1,
-    );
-    // Empty rather than invented: the opening turn belongs to the agent and
-    // arrives with the refetch.
-    expect(queryClient.getQueryData(['ordered-transcript', 'new-workstream']))
-      .toMatchObject({ snapshotThrough: 0, ranges: [] });
-  });
-
-  it('gives the draft back when suggested work fails to start', async () => {
-    api.getWorkOpportunities.mockResolvedValue([{
-      id: '00000000-0000-7000-8000-000000000099',
-      version: 3,
-      displayPrompt: 'Prepare the follow-up for the unresolved launch blocker',
-      icon: 'brand-slack',
-      sourceLabel: 'From slack',
-    }]);
-    api.startWorkOpportunity.mockRejectedValueOnce(new Error('offline'));
-    renderScreen();
-
-    const composer = await screen.findByRole('textbox', { name: 'Opening work-stream message' });
-    fireEvent.change(composer, { target: { value: 'A different thing I have not sent' } });
-    const suggestions = await screen.findByRole('region', { name: 'Suggested work' });
-    fireEvent.click(within(suggestions).getByRole('button', {
-      name: 'Prepare the follow-up for the unresolved launch blocker',
-    }));
-
-    await waitFor(() => expect(screen.queryByRole('status', { name: 'Rally is working' })).not.toBeInTheDocument());
-    expect(screen.getByRole('heading', { name: 'Welcome back, Adam' })).toBeVisible();
-    expect(composer).toHaveValue('A different thing I have not sent');
-  });
-
-  // The composer is controlled, so an empty value shown over a held draft is one
-  // keystroke away from being written back over it.
-  it('does not let a keystroke during a suggested-work launch eat the held draft', async () => {
-    api.getWorkOpportunities.mockResolvedValue([{
-      id: '00000000-0000-7000-8000-000000000099',
-      version: 3,
-      displayPrompt: 'Prepare the follow-up for the unresolved launch blocker',
-      icon: 'brand-slack',
-      sourceLabel: 'From slack',
-    }]);
-    let settleStart = (): void => undefined;
-    api.startWorkOpportunity.mockReturnValue(new Promise((_resolve, reject) => {
-      settleStart = () => reject(new Error('offline'));
-    }));
-    renderScreen();
-
-    const composer = await screen.findByRole('textbox', { name: 'Opening work-stream message' });
-    fireEvent.change(composer, { target: { value: 'Keep this' } });
-    const suggestions = await screen.findByRole('region', { name: 'Suggested work' });
-    fireEvent.click(within(suggestions).getByRole('button', {
-      name: 'Prepare the follow-up for the unresolved launch blocker',
-    }));
-    await screen.findByRole('status', { name: 'Rally is working' });
-
-    fireEvent.change(composer, { target: { value: 'typed while launching' } });
-    settleStart();
-
-    await waitFor(() => expect(composer).toHaveValue('Keep this'));
   });
 
   it('restores an immediately cleared message when creation fails without replacing a newer draft', async () => {
@@ -1104,7 +867,7 @@ describe('New work-stream home', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Remove notes.txt' }));
     fireEvent.change(composer, { target: { value: '' } });
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Create work stream' })).toBeDisabled());
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Create work stream' })).not.toBeInTheDocument());
     cleanup();
 
     renderScreen();

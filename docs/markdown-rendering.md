@@ -24,12 +24,11 @@ one of them silently missed the others; the changelog records what that cost.
 | `packages/contracts/src/citations.ts` | The protocol itself: the scheme allowlist, the footnote definition grammar, the reference patterns every reader of raw `[^label]` text shares (`footnoteReferencePattern`, and `openFootnoteReferencePattern` for one still arriving), the image-syntax announcement scan, and the plain-text rewrite that outbound email and Slack delivery send instead. |
 | `packages/contracts/src/markdown-code.ts` | Which lines of a markdown string are code, which `splitStreamingMarkdown` and the citation rewrite both read rather than each deciding. See [`markdown-code.md`](markdown-code.md). |
 | `apps/desktop/src/renderer/lib/use-citations.ts` | What a cited resource resolves to and where clicking one goes. |
-| `apps/desktop/src/renderer/lib/use-auto-open-embedded-resource.ts` | Auto-opening the inspector onto the latest embed card in the last two text turns of a work stream. |
-| `apps/desktop/src/renderer/styles/app.css` | The `.markdown-body` group: every element style markdown gets. Also the host overrides: `.note-detail-article` and `.meeting-notes-body` (heading scale), `.citation-card-preview` (inherits tone and zeros block margins so the four-line clamp spends itself on text), and `.inspector-detail-document` (sizes the body and the host width to the rail, and restyles no markdown element). |
+| `apps/desktop/src/renderer/styles/app.css` | The `.markdown-body` group: every element style markdown gets. Also the host overrides: `.note-detail-article` and `.meeting-notes-body` (heading scale), the compact resource embed and intrinsic image treatment, and `.inspector-detail-document` (sizes the body and the host width to the rail, and restyles no markdown element). |
 | `apps/desktop/src/renderer/styles/app.css.node.test.ts` | The stylesheet guards: the list markers Tailwind's preflight removes, and the assertion that no host restyles a markdown element. |
 | `apps/desktop/src/renderer/components/markdown-renderer.node.test.ts` | The guards that `react-markdown` stays mounted in one place, and that it and `remark-gfm` stay pinned to exact versions. |
 
-Ten call sites, all passing a markdown string as `children`:
+Nine call sites, all passing a markdown string as `children`:
 
 | Surface | Call site |
 | --- | --- |
@@ -38,9 +37,7 @@ Ten call sites, all passing a markdown string as `children`:
 | The Control Tower meeting briefing | `screens/meeting-notes.tsx` |
 | A note's body | `screens/note-detail.tsx` |
 | A Markdown or converted document attachment in the full-window lightbox | `attachment-lightbox.tsx` |
-| A resource's readable content in the rail's detail | `inspector-rail.tsx`, reading through `lib/resource-preview.ts` — which the embed card's preview shares, so the two cannot disagree about a document. Hosted as `.inspector-detail-document` in the rail's own scroll, not in a boxed inner pane, and sized to the rail's column so long prose wraps to the panel instead of clipping. |
-| The embed card's preview of that same derivative | `markdown-citations.tsx`, via `CitationPreviewBody` in `workstream-blocks.tsx` so the card does not import the renderer it lives inside |
-| An announced recording's play/pause transport | `ResourceAudioCard` in `markdown-citations.tsx`, over the same bytes the rail hands to its `<audio controls>` |
+| A resource's readable content in the rail's detail | `inspector-rail.tsx`, reading through `lib/resource-preview.ts`. Hosted as `.inspector-detail-document` in the rail's own scroll, not in a boxed inner pane, and sized to the rail's column so long prose wraps to the panel instead of clipping. |
 | A turn being saved as a picture or a PDF | `workstream-blocks.tsx` builds it; `lib/message-export.ts` renders it off-screen for its markup |
 
 ## How it works
@@ -151,9 +148,7 @@ approximately the first three line-heights of whatever follows — a
 paragraph, the top of a table, the start of a fence — behind an opacity
 mask that starts at 60% on the first pixel and reaches transparent on the
 last, so the content fades into the next heading rather than cutting off
-as a hard clip. The chevron sits in a left gutter — margin, not padding, so
-the heading and every paragraph under it start on the same left edge as the
-author line above them and only the chevron is outside it — coloured
+as a hard clip. The chevron sits in a left gutter, coloured
 with `sys.color.text.muted` (the receding control tone, the same token the
 citation chip's icon uses), and carries a tooltip. Clicking the heading or
 the chevron toggles the section; a click that follows a text selection does
@@ -246,144 +241,20 @@ While a message streams, embeds in different settled segments stay separate
 cards, and the whole-body re-render at completion merges them — the same
 healing every other cross-segment construct gets.
 
-An embed card also shows a **preview** of the resource between its badge and its
-title, when the host offers one. Images render from their source bytes in a
-fixed thumbnail box, centered and scaled with `object-fit: cover`; portrait and
-landscape files therefore fill the same card without distortion or changing a
-row's height. Audio is the one kind whose card is not a preview at all — see
-[the audio card](#the-audio-card) below. Other resources read the same
-`/resources/:id/preview` derivative
-the rail's detail panel shows — a Word file's markdown, a PDF's OCR — so the card
-and the panel it opens onto cannot disagree about a document. A text preview is
-itself a `MarkdownBody`
-(glance, verbatim, no citations), so `**Author:**` bolds and a heading is a
-heading rather than printed markers, a fence or a link cannot nest a control
-inside the card's button, and an external image cannot fetch from a URL the
-document chose merely because the card painted. It is a glance, not a reader:
-the stylesheet clamps it to four lines, scales every heading to the kind
-label's size, zeros block margins so the clamp spends its lines on text rather
-than on paragraph seams, and it scrolls in neither axis, because the whole
-card is one button and a scrollable box inside it would swallow the click.
-The preview is `aria-hidden` and `inert` as a backstop; the glance renderer
-is what keeps the nested controls out of the DOM. The excerpt leaves blank
-lines intact — they are the block grammar — and only normalises `\r\n` and
-caps at 600 characters. While the derivative is still being converted the
-card shows a shimmering skeleton, and every terminal answer — unconvertible,
-gone, retries spent — leaves the card's empty room rather than an error
-inside a control. A still never asks at all. The preview draws in
-`sys.color.text.disabled`, the faintest typographic tone, so it recedes from
-the title beneath it.
+An image embed reads its source bytes and renders at its intrinsic aspect ratio
+inside the same 560-by-200-pixel envelope used by message attachments. It shows
+a shimmering media skeleton while those bytes load. Other resource kinds do
+not fetch a derivative for feed decoration: sites, audio, documents, and other
+files render as compact 340-by-54-pixel icon, filename, and kind rows. Clicking
+either presentation opens the host's attachment preview when bytes are
+available. A true `generated_site` keeps its live-artifact inspector because its
+runtime is not an attachment blob. This avoids both binary-as-text failures and
+a second document reader nested inside the feed.
 
-#### The audio card
-
-A resource that classifies as **audio** gets a transport instead of a glance.
-The preview route serves audio as the resource's own bytes, exactly as it does
-an image, so reading it through the derivative reader decoded a recording as
-UTF-8 and filled the card with replacement characters. The split is made at the
-read: `useCitations` classifies the resource once and sends both media kinds —
-image and audio — to the raw-bytes path, leaving the conversion-and-retry reader
-for things that really are text.
-
-**Three places classify, and they have to agree.** `ResourceService.preview`
-decides whether to return stored bytes, `useCitations` decides which reader to
-use, and the card decides which shape to draw — all three call
-`classifyAttachmentKind` on the MIME type and filename, unconditionally. That is
-deliberately *not* what `resourceIconType` does, which answers the raw
-`resourceType` for anything outside the two provenance types because a
-`github_pull_request` is not a file. A card that classified through the icon
-mapping was narrower than the read: an MP3 carrying a connector's own type
-(`slack_file`, `drive_file`) was fetched as audio and then drawn by the ordinary
-card, which has nothing to put in the room for a blob it did not classify as an
-image.
-
-The audio card is **the one card that is not a single button**, because a
-control cannot nest inside one. The tile keeps its shape: the badge stays the
-kind glyph every card carries — the speaker the rail's own list draws for a
-recording — the room becomes a played bar, an `m:ss` clock (`h:mm:ss` past the
-hour) and a small play/pause button beneath them, and the title block becomes
-the button that opens the rail. So the card reads top to bottom as what this is,
-where it is, and what to press. Two controls, each with its own accessible name
-— "Play <title>" / "Pause <title>", and "Open <title>". The play control also
-carries `aria-pressed`, which is how the header's own toggles are written here:
-a state-bearing name *and* the state, rather than one or the other. The whole-card hover
-belongs to the cards that *are* one button, so it is written
-`button.citation-card:hover`; lighting the container would advertise a click it
-does not take.
-
-The play button **is** the app's `.icon-button` — the control the work-stream
-header's own icons are — and it takes that class rather than restating it, so
-the two cannot drift: transparent at rest with a transparent 1px border holding
-the box, `text.subtle`, 30px, filling on hover and keyboard focus. The one thing
-it resolves for itself is that fill. `.icon-button` fills with `surface.raised`,
-the step above a *header*, and this button sits on a card that is already
-`surface.elevated` — the same colour on Terra, one point off it on Air Dark, so
-the hover would not show. It uses the card's own `surface.elevated.hover`
-instead, written against `.citation-card-audio` so it wins on specificity rather
-than on sitting below `.icon-button:hover:not(:disabled)` in the file.
-
-Its container is a `span`, and **every node in it is phrasing content**. A lone
-embed keeps the paragraph the markdown put it in — the row pass merges runs of
-two or more — so the card renders inside a `<p>`. React builds the live DOM node
-by node and nests a block element there happily; the **export** serializes that
-DOM to a string and Chromium *reparses* it, and the HTML parser closes an open
-paragraph before a `div`, leaving a stray empty one behind. A saved picture then
-carries a paragraph's margin the turn never had. `button`, `span`, `small` and
-`audio` are all phrasing content; adding a block element here reopens it, and
-the round trip is covered by a test that reparses the rendered markup.
-
-It is a transport, not a player. Scrubbing, volume and speed are the rail's own
-`<audio controls>`, one click away through the title: a scrub target 150px wide
-inside a tile is a control nobody can land on. Playing state and position come
-from the element's own `play`, `pause`, `ended`, `timeupdate` and
-`durationchange` events rather than from the click, so the button cannot claim
-to be playing something that failed to decode, and a container reporting an
-infinite duration shows the elapsed clock alone rather than "Infinity".
-The position is published as one custom property, `--citation-card-played`, and
-drawn on a pseudo-element — four state changes a second belong in one node's
-style, not in a child React reconciles.
-
-**A re-ask must not interrupt playback.** The card's read effect re-runs
-whenever the citation context's `preview` callback changes identity, which
-`useCitations` rebuilds every time the work stream's resource array is replaced
-— on every `resource_attached` and `resource_updated` the socket delivers. Two
-things follow, and the card handles both: the object URL is held per *blob*
-rather than minted per run, so a cached read that resolves the same bytes hands
-the element the same `src`; and the asking state is merged over what the card
-already holds rather than replacing it, because the settled read lands in a
-second commit and the empty one in between unmounted the `audio` element. The
-skeleton is therefore chosen at render from the card having nothing to show, not
-from the flag alone. A failed re-ask keeps the bytes too: it is the route's
-answer about the next read, not a reason to stop a recording someone is
-listening to. **Starting one card stops the one the
-reader asked for before it**, through a module-level reference: a run of
-announced recordings shares one row, and two of them at once is not a mix
-anybody chose. That reference tracks the *request*, not the first element to
-start, and the distinction is load-bearing. `play()` is asynchronous, so two
-quick clicks can begin in whichever order their buffers fill; deciding
-exclusivity when the `play` event arrived let the earlier click come back and
-pause the card the reader had just moved to. The previous element is stopped
-where the reader asks, and a start that arrives for anything but the current
-request pauses itself instead of taking over. A recording that runs out clears
-the request, and a card leaving the transcript pauses its element, because
-removing a media element from the document does not stop it.
-
-On a work stream, the latest embed card in the last two **text** turns also
-opens the inspector onto that document without a click. The window is those
-two turns on purpose: a follow-up that does not re-announce the file should
-still surface it, and a document three turns back should not steal the rail.
-A turn that flattened into several text blocks still counts as one turn, so
-its own first-block card cannot be pushed out by later blocks of the same
-answer. Only agent text is scanned: human and external turns render markdown
-verbatim, without the citation context, so image syntax there is label text
-rather than a card. The same path runs when the feed first belongs to the
-route (open, reconnect, a snapshot that first makes the turns available) and
-when a streamed turn grows an announcement that was not there. Closing the
-rail for that announcement does not reopen it — the visit key is the turn
-id, so replacing the live overlay with its canonical block is the same
-announcement. Leaving the work stream and coming back does, because that is
-a new visit. Chips, footnotes, unresolved ids, escaped bangs, and samples
-inside code never qualify — they are not cards. Automation drafts do not
-auto-open: resources and the inspector are work-stream product controls.
+On a work stream, rendering or receiving an embed never opens the right-side
+inspector automatically. The transcript stays where the person left it until
+they click an embed, chip, or other explicit preview control. This applies on
+initial load, reconnect, and while an agent response streams.
 
 A GFM
 footnote whose definition is one paragraph carrying exactly one link becomes an
@@ -574,11 +445,10 @@ in list ancestors of either kind so that an `ol` holding a `ul` is a second leve
 
 A surface hosting `MarkdownBody` may override typography — a heading scale, a
 measure — because that is a property of the surface. It may not restyle a
-markdown element. Three surfaces take the exemption: a note reads as a document
+markdown element. Two surfaces take the exemption: a note reads as a document
 page and steps its headings 22/17/14, the meeting briefing sits in a narrow
-rail beside a transcript and holds every level at 15px, and the embed card's
-preview holds every level at the kind label's size so a glance does not spend
-its four lines on a title.
+rail beside a transcript and holds every level at 15px. Compact resource rows
+no longer contain a markdown glance or its heading override.
 
 Each writes the heading exemption as `<host> .markdown-body :is(h1, …)`, naming
 the shared container even though the host alone would select the same elements.
@@ -837,6 +707,27 @@ The traps, both of which have bitten:
   exercises none of the `ol` selectors.
 
 ## Changelog
+
+### 2026-09-04 — Compact embeds replace glances, inline players, and automatic inspector opening
+
+**What changed and why:** The requested GrokBot presentation replaces the old
+markdown glance and inline audio transport with compact file rows; images use
+their intrinsic aspect ratio. Audio remains playable in the explicit preview.
+An arriving embed no longer opens the inspector, including on initial load or
+reconnect, because it must not take over the reader's window or scroll position.
+These decisions supersede the earlier glance, recording-player, and auto-open
+entries below; their historical rationale is retained rather than deleted.
+Do not restore those feed surfaces as a fallback for failed preview loading.
+
+### 2026-09-04 — Inline resources use the same explicit preview as block embeds
+
+**What changed and why:** Inline resource chips now pass their activating button
+to `openPreview`, like block embeds. The previous branch still opened the right
+inspector for the same resource, making placement change navigation behavior.
+Unsupported/unavailable content and live generated sites retain the established
+inspector fallback. Preview failure and still-render guards are tested with
+image resources that actually enter the thumbnail-loading path.
+
 
 ### 2026-09-03 — A streaming citation is a skeleton, not raw `[^label]`
 
@@ -1778,15 +1669,13 @@ height instead of a column.
 form exists to say "a thing was produced here", and the file-tile shape —
 the one attachment cards across chat products have converged on — says that at
 a glance. Styling stayed entirely in semantic tokens rather than per-theme
-rules, which is what lets one rule land as a white sheet with a hairline border
-on Terra Light, a raised dark panel on Terra, and a near-borderless warm card
-in Air's letterspaced label voice, with no component knowing which theme is
-running.
+rules, which is what lets one rule land correctly in both light and dark without
+the component knowing which appearance is running.
 
 **Considered and rejected:** a `cmp.citation-card.*` token group. Every value
 the card needs already has a semantic answer (`surface-elevated`, the line
-ramp, `sys.label.*`), and a component group would be twelve values restated in
-four themes to express decisions the vocabulary already makes.
+ramp, `sys.label.*`), and a component group would restate values in both
+appearances to express decisions the vocabulary already makes.
 
 **What a future change has to respect:** the exported message card mirrors this
 markup with its own fixed-light rules in `message-export.ts` — a reshape here

@@ -541,7 +541,7 @@ pre {
    button, which would otherwise shrink to fit its label and centre it. Both
    restate what an item rendered onto Radix's own div already computes. The
    menu is `surface-raised`, so its ordinary highlight uses that surface's own
-   hover partner; Terra Light's `elevated-hover` is the same as the menu base.
+   hover partner; a palette may make `elevated-hover` the same as the menu base.
    The danger rule has equal specificity and follows this one, so source order
    preserves its dedicated tint. */
 /* A Radix menu item is a div, and a div full of text shows the I-beam and lets
@@ -592,20 +592,6 @@ pre {
    are the same measurement, and this comment is the only thing saying so. */
 .workspace-shell.has-overlay-window-controls { --window-controls-inset: 82px; }
 
-/* The frame a theme's backdrop document renders in. It sits between the shell's
-   painted backdrop and every pane, takes no pointer, and takes no focus — the
-   document inside it is decoration with a clock, not an interface. */
-.theme-backdrop {
-  border: 0;
-  color-scheme: normal;
-  height: 100%;
-  inset: 0;
-  pointer-events: none;
-  position: absolute;
-  width: 100%;
-  z-index: 0;
-}
-
 .main-pane {
   /* Its own fill, over the shell's backdrop. A theme that wants the backdrop to
      reach the feed sets this to `transparent`; one that wants the pane to be a
@@ -617,8 +603,7 @@ pre {
   min-width: 0;
   overflow: hidden;
   position: relative;
-  /* Above the backdrop frame, which is positioned and would otherwise paint over
-     this pane's static content for being later in the same stacking context. */
+  /* Above the shell's decorative background layer. */
   z-index: 1;
 }
 
@@ -648,8 +633,8 @@ pre {
 .sidebar-resizer {
   bottom: 0;
   position: absolute;
-  right: -12px;
-  top: 48px;
+  right: -6px;
+  top: 44px;
   width: 12px;
   z-index: 3;
 }
@@ -659,11 +644,11 @@ pre {
 .sidebar.is-resizing .sidebar-resizer > span { opacity: 1; }
 
 .sidebar-titlebar {
-  align-items: flex-end;
+  align-items: center;
   display: flex;
-  height: 48px;
+  height: 44px;
   justify-content: flex-end;
-  padding: 0 10px 7px;
+  padding: 0 16px;
 }
 
 .sidebar-scroll {
@@ -672,9 +657,13 @@ pre {
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 6px 8px 18px;
-  scrollbar-gutter: stable;
+  padding: 0 12px 18px;
+  /* GrokBot keeps this rail visually quiet and lets wheel, trackpad, and
+     keyboard scrolling move it without exposing a width-taking scrollbar. */
+  scrollbar-gutter: auto;
 }
+
+.sidebar-scroll::-webkit-scrollbar { width: 0; }
 
 .sidebar-primary-actions { display: grid; gap: var(--av-sys-space-row-gap); margin-bottom: var(--av-sys-space-group-gap); }
 
@@ -706,8 +695,8 @@ pre {
 
 /* The row's leading mark.
  *
- * One element, two jobs held apart: its *shape* is the theme's — a dot, or the
- * line Airy draws — and its *colour* is the row's state. Keeping them apart is
+ * One element, two jobs held apart: its *shape* is the design's — a dot or a
+ * line — and its *colour* is the row's state. Keeping them apart is
  * what lets a theme flatten the selection fill to nothing and still leave the
  * navigation saying which stream needs an answer and which one is running.
  *
@@ -871,7 +860,88 @@ pre {
 }
 .sidebar-list { display: grid; gap: var(--av-sys-space-row-gap); }
 .sidebar-context-target { min-width: 0; }
+.sidebar-workstream-preview-anchor { min-width: 0; width: 100%; }
 .sidebar-context-target .sidebar-row { width: 100%; }
+
+/* Source-verified against GrokBot 0.36.0's `sand-agent-hover-card`: the card
+   stays 260px wide in both sidebar forms, sits 8px off the row, and uses a
+   10px inset, 12px radius, 4px stack gap, and two preview lines. It is a
+   preview rather than another navigation target, so it never captures the
+   pointer from the row underneath it. */
+.sidebar-workstream-preview-surface {
+  animation: sidebar-workstream-preview-in 100ms ease-out;
+  background: var(--av-sys-color-surface-raised);
+  border: .5px solid var(--av-sys-color-border-subtle);
+  border-radius: 12px;
+  box-shadow: var(--av-sys-elevation-shadow-md);
+  color: var(--av-sys-color-text-default);
+  padding: 10px;
+  pointer-events: none;
+  width: 260px;
+  z-index: 1000;
+}
+
+.sidebar-workstream-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.sidebar-workstream-preview-header {
+  align-items: flex-end;
+  display: flex;
+  gap: 4px;
+  justify-content: space-between;
+  min-width: 0;
+  width: 100%;
+}
+
+.sidebar-workstream-preview-identity {
+  align-items: center;
+  display: flex;
+  flex: 1 1 auto;
+  gap: 8px;
+  min-width: 0;
+}
+
+.sidebar-workstream-preview-name {
+  color: var(--av-sys-color-text-default);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-workstream-preview-header time {
+  color: var(--av-sys-color-text-muted);
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 420;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.sidebar-workstream-preview-copy {
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  color: var(--av-sys-color-text-subtle);
+  display: -webkit-box;
+  font-size: 13px;
+  font-weight: 420;
+  line-height: 18px;
+  overflow: hidden;
+}
+
+.sidebar-workstream-preview-copy.is-empty { color: var(--av-sys-color-text-muted); }
+
+@keyframes sidebar-workstream-preview-in {
+  from { opacity: 0; transform: translateX(-2px); }
+  to { opacity: 1; transform: translateX(0); }
+}
 
 /* The pinned list is arranged by hand, so the grab cursor is the only standing
    sign that it can be. The row keeps its place in the flow while it is dragged
@@ -1038,10 +1108,10 @@ pre {
 
 .skeleton-row { animation: skeleton-pulse 1.5s ease-in-out infinite; }
 /* `neutral-4`, not `surface-subtle`: the sidebar's own ground is within a
-   shade or two of subtle in both light themes, and bars filled with it were
+   shade or two of subtle in the light appearance, and bars filled with it were
    invisible in a real window even though the DOM was correct. This is the
    same quiet fill a selected row uses, and it separates from the ground in
-   all four themes. */
+   both appearances. */
 .skeleton-bar { background: var(--av-ref-color-neutral-4); border-radius: var(--av-sys-size-radius-pill); display: block; }
 .skeleton-row-marker { border-radius: 50%; flex: 0 0 10px; height: 10px; margin: 0 4px; }
 .skeleton-row-line { height: 0.72em; width: 74%; }
@@ -1081,19 +1151,21 @@ pre {
 .account-trigger {
   align-items: center;
   background: transparent;
-  border-top: 1px solid var(--av-ref-color-line-1);
-  color: var(--av-sys-color-text-subtle);
+  border: 0;
+  border-radius: 8px;
+  color: var(--av-sys-color-text-default);
   display: flex;
   gap: 8px;
-  min-height: 54px;
-  padding: 8px 12px;
+  margin: 2px 12px 12px;
+  min-height: 40px;
+  padding: 6px 8px;
   text-align: left;
-  width: 100%;
+  width: calc(100% - 24px);
 }
 
 .account-trigger:hover { background: var(--av-sys-color-surface-subtle); }
 .account-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; }
-.account-copy strong { font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-copy strong { font-size: 13px; font-weight: 500; line-height: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .account-copy span { color: var(--av-sys-color-text-muted); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .account-attention-dot,
 .workspace-activity-dot {
@@ -1169,6 +1241,49 @@ pre {
   .workspace-shell.is-entering-workspace .sidebar,
   .workspace-shell.is-entering-workspace .main-pane { animation: none; }
 }
+/* The account card deliberately owns its palette instead of borrowing the
+   generic raised menu. Grok Bot keeps this card nearly as dark as the sidebar,
+   with one quiet border and a broad charcoal hover row. */
+.account-menu-content {
+  background: var(--av-sys-color-surface-elevated);
+  border-color: var(--av-sys-color-border-default);
+  border-radius: 12px;
+  box-shadow: var(--av-sys-elevation-shadow-md);
+  box-sizing: border-box;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  min-width: 228px;
+  padding: 6px;
+  width: 228px;
+}
+
+.account-menu-item.menu-item {
+  border-radius: 6px;
+  color: var(--av-sys-color-text-default);
+  display: grid;
+  font-size: 13px;
+  font-weight: 420;
+  gap: 4px;
+  grid-template-columns: 18px minmax(0, 1fr);
+  line-height: 20px;
+  min-height: 30px;
+  padding: 6px 8px;
+}
+
+.account-menu-item-with-value.menu-item { grid-template-columns: 18px minmax(0, 1fr) auto 14px; }
+.account-menu-item.menu-item[data-highlighted] { background: var(--av-cmp-row-background-hover); }
+.account-menu-item > svg { height: 16px; stroke-width: 1.8; width: 16px; }
+.account-menu-item > span:not(.account-menu-value) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-menu-value { color: var(--av-sys-color-text-muted); justify-self: end; }
+.account-menu-chevron { color: var(--av-sys-color-text-muted); height: 14px !important; width: 14px !important; }
+.account-menu-separator.menu-separator { margin: 4px 6px; }
+
+[data-theme='dark'] .account-menu-content {
+  background: var(--av-sys-color-surface-elevated);
+  border-color: var(--av-sys-color-border-default);
+  box-shadow: var(--av-sys-elevation-shadow-lg);
+}
+
+[data-theme='dark'] .account-menu-item.menu-item[data-highlighted] { background: var(--av-cmp-row-background-hover); }
 .mobile-sidebar-trigger { display: none; left: 8px; position: fixed; top: 9px; z-index: 25; }
 .sidebar-scrim { display: none; }
 .mobile-only { display: none; }
@@ -1938,9 +2053,7 @@ pre {
 .settings-diagnostics dt { align-items: center; color: var(--av-sys-color-text-subtle); display: flex; font-size: 11px; gap: 6px; }
 .settings-diagnostics dd { color: var(--av-sys-color-text-muted); font-size: 10.5px; margin: 0; overflow-wrap: anywhere; text-align: right; }
 
-/* The Appearance picker. Each swatch carries its own `data-theme`, so the
-   miniature below is drawn from the theme it offers rather than from a second
-   copy of that theme's colours. */
+/* Rally has one design with a three-position appearance preference. */
 .settings-theme-card {
   background: var(--av-sys-color-surface-subtle);
   border: 1px solid var(--av-ref-color-line-2);
@@ -1959,12 +2072,7 @@ pre {
 .settings-theme-heading strong { display: block; font-size: 13px; }
 .settings-theme-heading small { color: var(--av-sys-color-text-muted); display: block; font-size: 11px; margin-top: 2px; }
 
-/* The lighting row, above the designs.
- *
- * A segmented control rather than a fourth swatch, because it is not one of
- * them: it says which way round to run whichever design is chosen. The shape
- * carries that — three joined cells read as one setting with three positions,
- * where four separated swatches read as four alternatives. */
+/* System follows the Mac; Light and Dark pin one of Rally's two appearances. */
 .settings-theme-modes {
   background: var(--av-sys-color-surface-subtle);
   border: var(--av-sys-size-border-hairline) solid var(--av-ref-color-line-2);
@@ -2001,124 +2109,6 @@ pre {
   outline: 2px solid var(--av-sys-color-focus-default);
   outline-offset: 1px;
 }
-
-.settings-theme-shelf {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
-.settings-theme-option {
-  align-items: center;
-  background: none;
-  border: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 0;
-}
-
-/* Deliberately without `background-attachment`: the shell anchors the backdrop
-   to the viewport, and a 92px miniature that did the same would show whichever
-   slice of a window-sized gradient happened to fall behind it. Left to scroll,
-   the artwork scales into the swatch and the swatch previews the theme. */
-.settings-theme-swatch {
-  position: relative;
-  background-color: var(--av-sys-backdrop-color);
-  background-image: var(--av-sys-backdrop-image);
-  background-position: var(--av-sys-backdrop-position);
-  background-size: var(--av-sys-backdrop-size);
-  background-repeat: var(--av-sys-backdrop-repeat);
-  background-blend-mode: var(--av-sys-backdrop-blend-mode);
-  border: 1px solid var(--av-ref-color-line-2);
-  border-radius: var(--av-sys-size-radius-lg);
-  display: flex;
-  height: 58px;
-  overflow: hidden;
-  transition: border-color 140ms ease, transform 140ms ease;
-  width: 92px;
-}
-
-.settings-theme-option:hover .settings-theme-swatch { transform: translateY(-2px); }
-.settings-theme-option[aria-checked='true'] .settings-theme-swatch { border-color: var(--av-sys-color-brand-ink); }
-.settings-theme-option:focus-visible .settings-theme-swatch { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: 2px; }
-.settings-theme-option:focus-visible { outline: 0; }
-
-/* The other half of a System swatch.
- *
- * Under `system` a family has two appearances and which one you get depends on
- * the Mac, so the swatch shows both rather than picking one and being quietly
- * wrong for half the day. The split is a mask rather than a clip path because a
- * gradient angle in `deg` is a true angle whatever the box's aspect ratio is,
- * where a polygon's percentages are only 30° at one particular size. `120deg`
- * puts the edge 30° off vertical: the gradient runs perpendicular to its own
- * bands, so the edge angle is the direction minus a right angle. */
-.settings-theme-swatch-alternate {
-  background-color: var(--av-sys-backdrop-color);
-  background-image: var(--av-sys-backdrop-image);
-  background-position: var(--av-sys-backdrop-position);
-  background-size: var(--av-sys-backdrop-size);
-  background-repeat: var(--av-sys-backdrop-repeat);
-  background-blend-mode: var(--av-sys-backdrop-blend-mode);
-  display: flex;
-  inset: 0;
-  mask-image: linear-gradient(120deg, transparent 0 50%, currentColor 50% 100%);
-  position: absolute;
-}
-
-/* The miniature reads its own tokens, which is the whole point: `--av-cmp-sidebar-background`
-   here is the offered theme's, not the running one's. */
-.settings-theme-swatch-sidebar {
-  background: var(--av-cmp-sidebar-background);
-  border-right: 1px solid var(--av-ref-color-line-2);
-  flex: 0 0 26px;
-  position: relative;
-}
-
-/* The same two tokens the real navigation uses, and at swatch scale they still
-   produce the two shapes: `calc(50% - 3px)` is a centred dot, a flat inset is a
-   line down the row's leading edge. */
-.settings-theme-swatch-marker {
-  background: var(--av-sys-color-brand-base);
-  border-radius: var(--av-cmp-marker-radius);
-  inset-block: var(--av-cmp-marker-inset-block);
-  left: 7px;
-  position: absolute;
-  width: var(--av-cmp-marker-inline-size);
-}
-
-.settings-theme-swatch-surface {
-  background: var(--av-cmp-pane-background);
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: 5px;
-  justify-content: center;
-  padding: 0 8px;
-}
-
-/* `display: block` because one of these is not a flex item: the turn's line
-   sits inside the bubble, and an inline span ignores both height and width. */
-.settings-theme-swatch-line { background: var(--av-ref-color-neutral-7); border-radius: var(--av-sys-size-radius-pill); display: block; height: 3px; }
-.settings-theme-swatch-line.is-short { width: 58%; }
-.settings-theme-swatch-line.is-turn { width: 26px; }
-
-/* A person's own turn, on the side the theme puts it. `--av-cmp-turn-align` is
-   the same token the feed uses, so the preview cannot say left while the feed
-   says right — and the bubble around it appears or does not for the same
-   reason. In Air both are flat: the turn is text at the leading edge like
-   everything else. */
-.settings-theme-swatch-turn {
-  align-self: var(--av-cmp-turn-align);
-  background: var(--av-cmp-bubble-background);
-  border: 1px solid var(--av-cmp-bubble-border);
-  border-radius: var(--av-sys-size-radius-sm);
-  margin-top: 2px;
-  padding: 3px 4px;
-}
-
-.settings-theme-option-label { color: var(--av-sys-color-text-subtle); font-size: 11px; }
-.settings-theme-option[aria-checked='true'] .settings-theme-option-label { color: var(--av-sys-color-text-default); font-weight: 570; }
 
 .settings-theme-status { color: var(--av-sys-color-text-muted); font-size: 11px; margin: 12px 0 0; }
 
@@ -2517,10 +2507,6 @@ pre {
 
 /* New work stream */
 
-.new-workstream-home { margin: 0 auto; max-width: 860px; overflow-y: auto; padding: 92px 34px 34px; scrollbar-gutter: stable; width: 100%; }
-.new-workstream-welcome { align-items: center; display: flex; gap: 10px; }
-.new-workstream-welcome h1 { font-size: 25px; font-weight: 510; letter-spacing: -0.03em; line-height: 1.15; margin: 0; }
-.new-workstream-welcome-mark { color: var(--av-sys-color-brand-ink); height: 22px; width: 22px; }
 .waiting-workstreams { margin-top: 48px; }
 .waiting-workstreams h2 { color: var(--av-sys-color-text-muted); font-size: 11px; font-weight: 520; margin: 0 0 10px; }
 .waiting-workstream-list { display: grid; gap: 5px; }
@@ -2797,37 +2783,59 @@ pre {
 .markdown-body em { font-style: italic; }
 .markdown-body a { color: var(--av-sys-color-accent-soft); text-decoration: none; text-decoration-thickness: 1px; text-underline-offset: 2px; }
 .markdown-body a:hover { color: var(--av-sys-color-accent-strong); text-decoration: underline; }
-/* A sent mention wears the same brand as the draft it was typed in. */
-.mention-chip { align-items: center; background: color-mix(in srgb, var(--av-sys-color-brand-base) 12%, transparent); border: 1px solid color-mix(in srgb, var(--av-sys-color-brand-base) 26%, transparent); border-radius: var(--av-sys-size-radius-pill); box-sizing: border-box; color: var(--av-sys-color-brand-ink); display: inline-flex; font-size: 0.92em; font-weight: 580; gap: 4px; height: 1.55em; line-height: 1; max-width: 100%; padding: 1px 6px 1px 2px; vertical-align: middle; white-space: nowrap; }
+/* Grok Bot keeps mentions inside the message rather than making them read like
+   links: one flat rectangular chip, the identity mark, and the name. These are
+   the packaged renderer's inserted-chip metrics: the negative block margins
+   optically seat the 20px chip on a prose line without increasing its rhythm. */
+.mention-chip {
+  align-items: center;
+  background: color-mix(in srgb, var(--av-ref-color-neutral-9) 13%, transparent);
+  border: 0;
+  border-radius: 4px;
+  box-sizing: border-box;
+  color: inherit;
+  display: inline-flex;
+  font-size: 12px;
+  font-weight: 500;
+  gap: 4px;
+  line-height: 16px;
+  margin-bottom: -1px;
+  margin-top: -3px;
+  max-width: 100%;
+  padding: 2px 6px 2px 4px;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+/* The user bubble is its own role in Grok Bot. Its mention is a wash of the
+   bubble's inherited ink, so it remains legible in both light and dark themes
+   instead of becoming a light tag with dark text inside a dark bubble. */
+:is(.workstream-screen, .automation-chat-surface) .human-message .mention-chip {
+  background: color-mix(in srgb, currentColor 24%, transparent);
+}
 .mention-chip-connector {
-  background: var(--av-sys-color-surface-raised);
-  border-color: var(--av-ref-color-line-4);
-  color: var(--av-sys-color-text-default);
-  gap: 5px;
-  padding: 1px 1px 1px 5px;
+  border: 0;
+  color: inherit;
 }
 .mention-chip-avatar { align-items: center; background: var(--av-ref-color-neutral-6); border-radius: var(--av-sys-size-radius-pill); color: var(--av-ref-color-neutral-14); display: inline-flex; flex: 0 0 auto; font-size: 6.5px; font-weight: 700; height: 16px; justify-content: center; letter-spacing: -0.02em; overflow: hidden; position: relative; width: 16px; }
 /* Cap-height centring, as on .avatar-fallback above. */
 .mention-chip-avatar > span { text-box: trim-both cap alphabetic; }
 .markdown-body .mention-chip-avatar img { border-radius: inherit; display: block; height: 100%; inset: 0; margin: 0; max-width: none; object-fit: cover; position: absolute; width: 100%; }
 .markdown-body .mention-chip-avatar img[hidden] { display: none; }
-/* Connector mentions keep the company mark but not Settings' citron control
-   treatment. In transcript prose, only connection state carries colour. */
+/* Connector mentions keep the company mark without bringing Settings' larger
+   provider-icon surface or a second status pill into the message. */
 .mention-chip-connector-icon.provider-icon {
   background: transparent;
   border: 0;
   border-radius: 0;
-  color: var(--av-sys-color-text-muted);
+  color: currentColor;
   flex: 0 0 auto;
-  height: 14px;
-  width: 14px;
+  height: 16px;
+  width: 16px;
 }
-.mention-chip-connector-icon.provider-icon .connector-mark { height: 11px; width: 11px; }
+.mention-chip-connector-icon.provider-icon .connector-mark { height: 14px; width: 14px; }
 .mention-chip-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .mention-chip-status {
-  align-items: center;
-  border-radius: var(--av-sys-size-radius-pill);
-  display: inline-flex;
+  display: none;
   flex: 0 0 auto;
   font-size: 0.78em;
   font-weight: 560;
@@ -2941,165 +2949,29 @@ pre {
 .markdown-body .citation-chip-icon svg { height: 0.95em; width: 0.95em; }
 .citation-chip-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 
-/* The embed card. It is a block because image syntax is block-level to the
-   model that wrote it, so it already arrives in a paragraph of its own.
-
-   The shape is an attached file's tile rather than a list row: the kind badge
-   at the head, the title and kind at the foot, and deliberate empty room
-   between — the room is what says "a thing was produced here", so the height
-   is a floor rather than a hug. Every colour is a semantic token, which is how
-   the same rule lands as a white sheet with a hairline on Terra Light and as a
-   near-borderless warm card drawn with space on Air; the kind takes the
-   theme's own label voice for the same reason. */
-.citation-card { background: var(--av-sys-color-surface-elevated); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-sys-size-radius-lg); color: var(--av-sys-color-text-default); cursor: pointer; display: flex; flex-direction: column; font: inherit; gap: 9px; margin: var(--av-sys-space-prose-gap) 0; max-width: 100%; min-height: 170px; overflow: hidden; padding: 11px; text-align: left; width: 176px; }
-/* Written against the element, not against a `:not()` of the audio class: the
-   whole-card hover belongs to the cards that *are* one button, and an audio
-   card is a container with two controls in it. Lighting the container on hover
-   advertises a click the container does not take. */
-button.citation-card:hover { background: var(--av-sys-color-surface-elevated-hover); border-color: var(--av-sys-color-border-strong); }
-.citation-card-audio { cursor: default; }
-.citation-card-badge { align-items: center; align-self: flex-start; border: 1px solid var(--av-ref-color-line-4); border-radius: var(--av-sys-size-radius-sm); color: var(--av-sys-color-text-muted); display: inline-flex; height: 27px; justify-content: center; width: 27px; }
-/* An image is the card's glance at an image resource. A fixed preview box keeps
-   portrait and landscape files from changing the row's height; `cover` fills
-   it without distortion, and the explicit center keeps the crop balanced. */
-.markdown-body .citation-card-image-preview { background: var(--av-sys-color-surface-raised); border-radius: var(--av-sys-size-radius-sm); display: block; height: 72px; margin: 0; max-width: none; object-fit: cover; object-position: center; width: 100%; }
-/* The opening lines of the resource's own text, filling the room between the
-   badge and the title. It is a *glance*, not a reader: the clamp cuts it at
-   four lines, and nothing here scrolls in either axis — a scrollable box
-   inside a card the whole of which is one button would swallow the click it
-   advertises. The kind label's size, and `font-weight: normal` rather than
-   `sys.label.weight`: that token is 560, the same as the title's
-   `sys.font.weight.strong`, so the glance competed with the line it is
-   meant to recede from. The named weights only go up from `strong`; `normal`
-   (400) is the step down that exists without inventing a number. Headings
-   inherit it; `strong` keeps markdown's own weight, so `**Author:**` actually
-   reads as emphasis. `pointer-events: none` plus `inert` on the node keep nested
-   markdown (a link, a code-block copy control) from becoming a second target
-   inside the card.
-
-   The tone is `text.disabled`, the faintest step on `sys.color.text`
-   (strongest to faintest). The preview exists to hint at the document, not
-   to be read here — type as dark as `text.muted` (the kind label) competes
-   with the title for the click. The token names a contrast, not the button's
-   state: the card stays enabled, and this layer is the one that should recede.
-   `.markdown-body` restates the colour on itself because a colour on the host
-   does not inherit into that wrapper. The card and the wrapper's element are
-   named so this is (0,3,1): the feed's
-   `:is(.workstream-screen, .automation-chat-surface) .agent-message .markdown-body`
-   (and the human-bubble twin) is (0,3,0), and a host written as
-   `.citation-card-preview .markdown-body` lost, so inherit never landed and the
-   glance painted at the turn's size and colour. `*` carries the tone into
-   descendants that `.markdown-body strong` (and `a`, `th`) paint themselves,
-   without naming a markdown element a host may not restyle. It also zeros
-   block margins: blank lines stay in the excerpt (they are the block grammar)
-   and the clamp's seams belong here rather than in a source rewrite. */
-.citation-card-preview { -webkit-box-orient: vertical; -webkit-line-clamp: 4; color: var(--av-sys-color-text-disabled); display: -webkit-box; font-size: var(--av-sys-label-font-size); font-weight: normal; line-height: 1.5; max-height: calc(var(--av-sys-label-font-size) * 1.5 * 4); overflow: hidden; pointer-events: none; word-break: break-word; }
-.citation-card .citation-card-preview div.markdown-body { color: inherit; font-size: inherit; font-weight: inherit; line-height: inherit; }
-.citation-card .citation-card-preview div.markdown-body * { color: inherit; margin: 0; }
-/* `*` does not match `::marker`, so the shared `.markdown-body li::marker`
-   colour would otherwise keep the bullets at the turn's ink beside faint
-   text. Inherit here the same way `*` carries the tone, without naming a
-   markdown element. */
-.citation-card .citation-card-preview div.markdown-body ::marker { color: inherit; }
-/* A heading scale of one size: the shared scale's h1 is larger than this
-   tile, and a glance that spent its four lines on a title would hide the
-   sentence that distinguishes one card from another. The same (0,3,1)-plus
-   element that wins the wrapper's inherit wins the scale, so a heading does
-   not keep the shared size while the wrapper's type recedes. */
-.citation-card .citation-card-preview div.markdown-body :is(h1, h2, h3, h4, h5, h6) {
-  color: inherit;
-  font-size: inherit;
-  font-weight: inherit;
-  line-height: inherit;
-  margin: 0;
-}
-/* What stands in for it while the derivative is still being converted. The
-   card does not resize when the text lands because of its own `min-height` and
-   the title block's `margin-top: auto`, not because these bars measure the
-   same as the lines they stand in for — they do not, and saying so here would
-   be a claim the next edit could quietly break. */
-.citation-card-preview-skeleton { display: flex; flex-direction: column; gap: 5px; overflow: hidden; }
-.citation-card-preview-skeleton > span { animation: citation-card-shimmer 1.8s ease-in-out infinite; background: var(--av-sys-color-shimmer-default); border-radius: var(--av-sys-size-radius-pill); height: 7px; }
-.citation-card-preview-skeleton > span:nth-child(1) { width: 100%; }
-.citation-card-preview-skeleton > span:nth-child(2) { animation-delay: 0.12s; width: 82%; }
-.citation-card-preview-skeleton > span:nth-child(3) { animation-delay: 0.24s; width: 60%; }
+/* A block `resource://` embed shares the attachment vocabulary: intrinsic media
+   for an image, or one compact file row. The old tall citation tile made sites
+   and audio look like empty documents and survived after attachments moved on. */
+.citation-card { color: var(--av-sys-color-text-default); cursor: pointer; font: inherit; margin: var(--av-sys-space-prose-gap) 0; max-width: 100%; overflow: hidden; text-align: left; }
+.citation-card.is-file { align-items: center; background: var(--av-cmp-composer-background); border: .5px solid var(--av-cmp-composer-border-color); border-radius: 12px; display: grid; gap: 9px; grid-template-columns: 36px minmax(0, 1fr); min-height: 54px; min-width: min(220px, 100%); padding: 8px; width: min(340px, 100%); }
+.citation-card.is-file:hover { background: var(--av-sys-color-surface-elevated-hover); }
+.citation-card-badge { align-items: center; background: color-mix(in srgb, var(--av-sys-color-accent-base) 18%, var(--av-sys-color-surface-raised)); border-radius: 9px; color: var(--av-sys-color-accent-base); display: inline-flex; height: 36px; justify-content: center; width: 36px; }
+.citation-card.is-image { background: var(--av-ref-color-neutral-4); border: 0; border-radius: 12px; box-shadow: inset 0 0 0 .5px color-mix(in srgb, var(--av-sys-color-text-default) 15%, transparent); display: block; max-height: 200px; min-height: 64px; padding: 0; position: relative; transition: filter 140ms ease; }
+.citation-card.is-image:hover { filter: brightness(1.04); }
+.markdown-body .citation-card-image-preview { display: block; height: 100%; margin: 0; max-width: none; object-fit: cover; width: 100%; }
+.citation-card-preview-skeleton { animation: citation-card-shimmer 1.8s ease-in-out infinite; background: var(--av-sys-color-shimmer-default); display: block; inset: 0; position: absolute; }
 @keyframes citation-card-shimmer {
   0%, 100% { opacity: 0.45; }
   50% { opacity: 1; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .citation-card-preview-skeleton > span { animation: none; }
+  .citation-card-preview-skeleton,
+  .citation-card.is-image { animation: none; transition: none; }
 }
-/* The audio card's transport: the position, the clock, and the control that
-   moves them, stacked in the room above the title.
-
-   The play button sits *under* the bar and the clock rather than in the badge
-   slot, so the card reads top to bottom as what this is, where it is, and what
-   to press — and the badge goes on saying what every other card's badge says.
-
-   It is an `.icon-button`, the same control the header's own icons are, and it
-   takes that class rather than restating it so the two cannot drift. The one
-   thing it has to resolve for itself is the hover fill: `.icon-button` rests
-   transparent and fills with `surface.raised` on hover, which is the step above
-   a *header*, and this button sits on a card that is already
-   `surface.elevated` — the same colour on Terra, one point off it on Air Dark.
-   So the hover here is the card's own `surface.elevated.hover`, the step that
-   is one above this surface, and it is written against `.citation-card-audio`
-   so it wins on specificity rather than on being lower in the file than
-   `.icon-button:hover:not(:disabled)`.
-
-   The bar itself is drawn on a pseudo-element from `--citation-card-played`,
-   which the card publishes as a percentage. That keeps a position that changes
-   four times a second out of the DOM: it is one custom property on one node,
-   not a child element React reconciles on every `timeupdate`. While the bytes
-   are still arriving the empty bar takes the skeleton's own shimmer, so the
-   card says it is asking without borrowing three text-shaped lines for a file
-   that has no text — the track is already the skeleton's own fill, so the
-   loading state adds the shimmer and nothing else. That token rather than a
-   line colour: the line ramp is a hairline against a surface, and on the dark
-   themes it is within a few points of the card it would be drawn on, which
-   left the empty bar invisible and the clock floating under nothing. `margin-top: auto` seats the transport with the title
-   rather than under the badge — the room above it is the same deliberate empty
-   room every other card keeps, and the first `auto` in the column takes the
-   slack, so the title block's own stays true. */
-.citation-card-play { align-self: flex-start; cursor: pointer; }
-.citation-card-audio .citation-card-play:hover:not(:disabled),
-.citation-card-audio .citation-card-play:focus-visible { background: var(--av-sys-color-surface-elevated-hover); }
-.citation-card-transport { display: flex; flex-direction: column; gap: 5px; margin-top: auto; min-width: 0; }
-.citation-card-progress { background: var(--av-sys-color-shimmer-default); border-radius: var(--av-sys-size-radius-pill); height: 3px; overflow: hidden; width: 100%; }
-.citation-card-progress::after { background: var(--av-sys-color-text-muted); content: ''; display: block; height: 100%; width: var(--citation-card-played, 0%); }
-.citation-card-progress[data-loading='true'] { animation: citation-card-shimmer 1.8s ease-in-out infinite; }
-/* Below the rule it answers, not above it. A media query adds no specificity,
-   so this and the shimmer are both (0,2,0) and the cascade falls through to
-   source order — written in the block beside the skeleton's, 29 lines earlier,
-   it lost, and a reader who asked for less motion got the full shimmer. The
-   skeleton's own answer works only because its base rule precedes it. */
-@media (prefers-reduced-motion: reduce) {
-  .citation-card-progress[data-loading='true'] { animation: none; }
-}
-.citation-card-elapsed { color: var(--av-sys-color-text-muted); font-size: var(--av-sys-label-font-size); font-variant-numeric: tabular-nums; letter-spacing: var(--av-sys-label-tracking); }
-/* The element is the playback, not a control: the transport above it is what a
-   reader operates, and the browser's own bar would be a second one. */
-.citation-card-audio-source { display: none; }
-/* `margin-top: auto` puts the title block at the foot whether or not a preview
-   filled the room above it, so a card with an excerpt is the same shape as one
-   without. The audio card's title block is a button, so it carries the reset
-   the span never needed. */
-.citation-card-text { display: flex; flex-direction: column; gap: 3px; margin-top: auto; min-width: 0; }
-.citation-card-open { background: none; border: 0; color: inherit; cursor: pointer; font: inherit; padding: 0; text-align: left; }
-.citation-card-open:hover .citation-card-title { text-decoration: underline; }
-.citation-card-title { font-size: 0.97em; font-weight: var(--av-sys-font-weight-strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.citation-card-kind { color: var(--av-sys-color-text-muted); font-size: var(--av-sys-label-font-size); letter-spacing: var(--av-sys-label-tracking); text-transform: var(--av-sys-label-transform); }
-/* A run of embeds, merged by the rehype pass into one row that scrolls
-   sideways — a column of tiles between two sentences reads as the transcript
-   stalling, and the row spends one card's height however many were announced.
-
-   `overscroll-behavior-x: contain` stops a swipe that reaches the end of the
-   row from chaining outward, where the window would take it as a back
-   gesture; `scrollbar-width: thin` matches the settings icon shelf, the other
-   horizontal scroller in this file, and keeps a full-size overlay bar out of
-   the 10px gap beneath 170px tiles. */
-.citation-card-row { display: flex; gap: 10px; margin: var(--av-sys-space-prose-gap) 0; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: thin; }
+.citation-card-text { display: flex; flex-direction: column; min-width: 0; }
+.citation-card-title { font-size: 14px; font-weight: 540; line-height: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.citation-card-kind { color: var(--av-sys-color-text-muted); font-size: 12px; letter-spacing: 0; line-height: 16px; text-transform: none; }
+.citation-card-row { display: flex; gap: 6px; margin: var(--av-sys-space-prose-gap) 0; max-width: 560px; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: thin; }
 .citation-card-row .citation-card { flex: 0 0 auto; margin: 0; }
 
 /* The grounding pill. It costs one character of line width and no vertical
@@ -3441,7 +3313,7 @@ button.citation-card:hover { background: var(--av-sys-color-surface-elevated-hov
 
 /* Composer */
 
-.composer-dock { background: linear-gradient(to bottom, transparent, var(--av-sys-color-surface-default) 18%); bottom: 0; left: 0; padding: 20px 28px 14px; position: absolute; right: 0; z-index: 3; }
+.composer-dock { background: linear-gradient(to bottom, transparent, var(--av-sys-color-surface-default) 18%); bottom: 0; left: 0; padding: 0 16px 16px; position: absolute; right: 0; z-index: 3; }
 .composer-stack { display: grid; gap: 9px; margin: 0 auto; max-width: var(--av-cmp-feed-width); pointer-events: auto; position: relative; }
 .composer-wrap { margin: 0 auto; max-width: var(--av-cmp-feed-width); position: relative; }
 .composer-stack > .composer-wrap { margin: 0; max-width: none; width: 100%; }
@@ -3558,6 +3430,31 @@ button.citation-card:hover { background: var(--av-sys-color-surface-elevated-hov
 .elicitation-panel,
 .elicitation-collapsed-bar { background: var(--av-ref-color-neutral-1); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-sys-size-radius-xl); box-shadow: var(--av-sys-elevation-shadow-md); width: 100%; }
 .elicitation-panel { padding: 14px 14px 13px; }
+/* GrokBot choice-rows: one inset list, not separate elevated cards. */
+.grokbot-shell .elicitation-panel,
+.grokbot-shell .elicitation-collapsed-bar { background: var(--av-cmp-bubble-background); border: 0; border-radius: 16px; box-shadow: none; padding: 12px; }
+.grokbot-shell .elicitation-panel-header { align-items: center; gap: 8px; min-height: 20px; }
+.grokbot-shell .elicitation-panel-header h3 { color: var(--av-sys-color-text-default); font-family: inherit; font-size: 14px; font-weight: 500; line-height: 20px; margin: 0; overflow-wrap: anywhere; }
+.grokbot-shell .elicitation-header-actions button { height: 20px; width: 20px; }
+.grokbot-shell .elicitation-options { background: var(--av-cmp-elicitation-option-background); border: .5px solid color-mix(in srgb, var(--av-sys-color-text-default) 10%, transparent); border-radius: 8px; gap: 0; margin-top: 10px; padding: 0; }
+.grokbot-shell .elicitation-option { background: transparent; border: 0; border-radius: 0; gap: 8px; grid-template-columns: auto minmax(0, 1fr); min-height: 38px; padding: 8px; position: relative; }
+.grokbot-shell .elicitation-option + .elicitation-option { border-top: .5px solid color-mix(in srgb, var(--av-sys-color-text-default) 10%, transparent); }
+.grokbot-shell .elicitation-option:has(input[type='checkbox']) { grid-template-columns: auto minmax(0, 1fr) auto; }
+.grokbot-shell .elicitation-option:hover { background: var(--av-cmp-row-background-hover); }
+.grokbot-shell .elicitation-option.is-selected,
+.grokbot-shell .elicitation-option.is-selected:hover { background: var(--av-cmp-row-background-selected); }
+.grokbot-shell .elicitation-option:has(input:focus-visible) { outline: 2px solid var(--av-sys-color-text-default); outline-offset: -2px; }
+.grokbot-shell .elicitation-option-copy { grid-column: 2; grid-row: 1; }
+.grokbot-shell .elicitation-option-copy strong { color: var(--av-sys-color-text-default); font-size: 14px; font-weight: 400; line-height: 20px; overflow-wrap: anywhere; }
+.grokbot-shell .elicitation-option > kbd { align-items: center; background: var(--av-cmp-row-background-selected); border: .5px solid color-mix(in srgb, var(--av-sys-color-text-default) 10%, transparent); border-radius: 4px; display: inline-flex; font-size: 11px; grid-column: 1; grid-row: 1; justify-content: center; line-height: 16px; margin: 0; min-width: 18px; padding: 1px 4px; }
+.grokbot-shell .elicitation-checkbox { grid-column: 3; grid-row: 1; }
+.grokbot-shell .elicitation-option:has(input[type='checkbox']) > kbd { display: inline-flex; }
+.grokbot-shell .elicitation-option.is-selected .elicitation-checkbox { background: var(--av-cmp-bubble-human-background); border-color: var(--av-cmp-bubble-human-background); color: var(--av-cmp-bubble-human-foreground); }
+.grokbot-shell .elicitation-actions .button { border-radius: 8px; }
+.grokbot-shell .elicitation-skip { background: var(--av-cmp-row-background-hover); color: var(--av-sys-color-text-default); }
+.grokbot-shell .elicitation-submit:not(:disabled),
+.grokbot-shell .elicitation-submit:hover:not(:disabled) { background: var(--av-cmp-bubble-human-background); color: var(--av-cmp-bubble-human-foreground); }
+.grokbot-shell .elicitation-submit kbd { color: inherit; }
 .elicitation-panel-header { align-items: flex-start; display: flex; gap: 14px; justify-content: space-between; min-height: 34px; }
 .elicitation-panel-header > div:first-child { min-width: 0; }
 .elicitation-panel-header h3 { color: var(--av-ref-color-neutral-14); font-size: 15px; font-weight: 590; line-height: 1.38; margin: 4px 0 0; }
@@ -3574,6 +3471,7 @@ button.citation-card:hover { background: var(--av-sys-color-surface-elevated-hov
 .elicitation-option-copy strong { color: var(--av-ref-color-neutral-14); font-size: 13.5px; font-weight: 520; line-height: 1.35; }
 .elicitation-option-copy small { color: var(--av-ref-color-neutral-10); font-size: 12px; line-height: 1.42; margin-top: 3px; }
 .elicitation-option > kbd { color: var(--av-ref-color-neutral-11); font-family: inherit; font-size: 12px; }
+.elicitation-option:has(input[type='checkbox']) > kbd { display: none; }
 .elicitation-checkbox { align-items: center; border: 1px solid var(--av-ref-color-line-6); border-radius: var(--av-sys-size-radius-xs); color: var(--av-sys-color-brand-on); display: flex; height: 16px; justify-content: center; width: 16px; }
 .elicitation-option:hover .elicitation-checkbox { border-color: var(--av-sys-color-brand-ink); }
 .elicitation-option.is-selected .elicitation-checkbox { background: var(--av-sys-color-brand-base); border-color: var(--av-sys-color-brand-base); }
@@ -3605,21 +3503,21 @@ button.citation-card:hover { background: var(--av-sys-color-surface-elevated-hov
 .workstream-composer.is-file-dragging,
 .transcript-scroll.is-file-dragging,
 .rail-surface.is-file-dragging { box-shadow: inset 0 0 0 2px var(--av-sys-color-brand-base); }
-.composer-attachments,
-.message-attachments { display: flex; flex-wrap: wrap; gap: 7px; }
-.composer-attachments { padding: 11px 13px 1px; }
-.message-attachments { margin: 0 0 9px; }
-.attachment-tile { background: var(--av-ref-color-neutral-4); border: 1px solid var(--av-ref-color-line-4); border-radius: var(--av-sys-size-radius-md); height: 58px; overflow: visible; position: relative; width: 58px; }
+.composer-attachments { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; padding: 11px 13px 1px; }
+.message-attachments { align-items: flex-start; display: flex; flex-direction: column; gap: 8px; margin: 4px 0 9px; max-width: min(100%, 560px); }
+.attachment-tile { background: var(--av-ref-color-neutral-4); border: .5px solid var(--av-ref-color-line-4); border-radius: 12px; height: 58px; overflow: visible; position: relative; width: 58px; }
 .attachment-tile-content { align-items: center; background: transparent; border: 0; border-radius: inherit; color: var(--av-ref-color-neutral-11); display: flex; height: 100%; justify-content: center; overflow: hidden; padding: 0; width: 100%; }
 .attachment-tile-content:not(:disabled) { cursor: zoom-in; }
-.attachment-tile-content img { height: 100%; object-fit: cover; width: 100%; }
-.attachment-extension { font-size: 12px; font-weight: 600; letter-spacing: .01em; max-width: 48px; overflow: hidden; text-overflow: ellipsis; text-transform: lowercase; }
+.attachment-tile-content :is(img, video) { height: 100%; object-fit: cover; width: 100%; }
+.attachment-video-play { align-items: center; color: var(--av-sys-color-text-on-inverse); display: flex; inset: 0; justify-content: center; position: absolute; text-shadow: var(--av-sys-elevation-shadow-sm); }
 .attachment-remove,
 .attachment-retry { align-items: center; background: var(--av-cmp-sidebar-background-solid); border: 1px solid var(--av-ref-color-line-4); border-radius: var(--av-sys-size-radius-pill); color: var(--av-ref-color-neutral-13); display: flex; height: 21px; justify-content: center; opacity: 0; padding: 0; position: absolute; transition: opacity 120ms ease; width: 21px; z-index: 3; }
 .attachment-remove { right: -7px; top: -7px; }
 .attachment-retry { bottom: 4px; left: 50%; opacity: 1; transform: translateX(-50%); }
 .attachment-tile:hover .attachment-remove,
-.attachment-tile:focus-within .attachment-remove { opacity: 1; }
+.attachment-tile:focus-within .attachment-remove,
+.attachment-file-card:hover .attachment-remove,
+.attachment-file-card:focus-within .attachment-remove { opacity: 1; }
 .attachment-tile.is-failed { border-color: var(--av-sys-color-danger-base); }
 .attachment-progress { align-items: center; background: var(--av-sys-color-scrim-subtle); border-radius: inherit; display: flex; inset: 0; justify-content: center; position: absolute; }
 .attachment-progress svg { height: 42px; position: absolute; transform: rotate(-90deg); width: 42px; }
@@ -3627,22 +3525,195 @@ button.citation-card:hover { background: var(--av-sys-color-surface-elevated-hov
 .attachment-progress-track { stroke: var(--av-ref-color-neutral-7); }
 .attachment-progress-value { stroke: var(--av-sys-color-brand-base); stroke-linecap: round; transition: stroke-dashoffset 100ms linear; }
 .attachment-progress small { color: var(--av-ref-color-neutral-14); font-size: 9px; font-variant-numeric: tabular-nums; position: relative; }
-.sent-attachment { height: 86px; width: 86px; }
-.human-message .message-attachments { justify-content: var(--av-cmp-turn-align); }
-.attachment-lightbox-overlay { background: var(--av-sys-color-scrim-solid); inset: 0; position: fixed; z-index: 1000; }
-.attachment-lightbox { background: var(--av-sys-color-scrim-solid); display: grid; grid-template-rows: 58px minmax(0, 1fr); inset: 0; position: fixed; z-index: 1001; }
-.attachment-lightbox-header { align-items: center; border-bottom: 1px solid var(--av-ref-color-line-2); display: grid; grid-template-columns: minmax(0, 1fr) auto auto; padding: 0 16px 0 22px; }
-.attachment-lightbox-header h2 { color: var(--av-ref-color-neutral-13); font-size: 13px; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.human-message .message-attachments { align-items: flex-end; margin-left: auto; }
+
+.message-attachment-images { display: flex; gap: 6px; max-width: 560px; width: 100%; }
+.message-attachment-images.is-single { width: fit-content; }
+.message-attachment-image-cell { display: block; flex: 1 1 0; min-width: 0; overflow: hidden; position: relative; }
+.message-attachment-image-cell:first-child,
+.message-attachment-image-cell:first-child .message-attachment-image { border-bottom-left-radius: 12px; border-top-left-radius: 12px; }
+.message-attachment-image-cell:last-child,
+.message-attachment-image-cell:last-child .message-attachment-image { border-bottom-right-radius: 12px; border-top-right-radius: 12px; }
+.message-attachment-image {
+  background: var(--av-ref-color-neutral-4);
+  border: 0;
+  box-shadow: inset 0 0 0 .5px color-mix(in srgb, var(--av-sys-color-text-default) 15%, transparent);
+  display: block;
+  max-height: 200px;
+  max-width: 100%;
+  min-height: 64px;
+  overflow: hidden;
+  padding: 0;
+  transition: filter 140ms ease;
+}
+.message-attachment-images.is-gallery .message-attachment-image { aspect-ratio: auto !important; height: 192px; width: 100% !important; }
+.message-attachment-image:hover:not(:disabled) { filter: brightness(1.04); }
+.message-attachment-image img { display: block; height: 100%; object-fit: cover; width: 100%; }
+.message-attachment-images.is-single .message-attachment-image img { object-fit: contain; }
+.message-attachment-image-skeleton { align-items: center; color: var(--av-sys-color-text-muted); display: flex; height: 100%; justify-content: center; min-height: 150px; width: 100%; }
+.message-attachment-more { align-items: center; background: var(--av-sys-color-scrim-default); color: var(--av-sys-color-text-on-inverse); display: flex; font-size: 18px; font-weight: 560; inset: 0; justify-content: center; pointer-events: none; position: absolute; }
+
+.attachment-file-card {
+  align-items: center;
+  background: var(--av-cmp-composer-background);
+  border: .5px solid var(--av-cmp-composer-border-color);
+  border-radius: 12px;
+  color: var(--av-sys-color-text-default);
+  display: flex;
+  margin-block: 4px;
+  max-width: min(340px, 100%);
+  min-height: 54px;
+  min-width: min(220px, 100%);
+  overflow: visible;
+  padding: 8px;
+  position: relative;
+}
+.attachment-file-card.is-pending { margin-block: 0; width: min(260px, 100%); }
+.attachment-file-card.is-failed { border-color: var(--av-sys-color-danger-base); }
+.attachment-file-open { align-items: center; background: transparent; display: grid; flex: 1 1 auto; gap: 9px; grid-template-columns: 36px minmax(0, 1fr); min-width: 0; padding: 0; text-align: left; }
+.attachment-file-open:hover:not(:disabled) .attachment-file-name { text-decoration: underline; text-underline-offset: 2px; }
+.attachment-file-icon { align-items: center; background: color-mix(in srgb, var(--av-sys-color-accent-base) 18%, var(--av-sys-color-surface-raised)); border-radius: 9px; color: var(--av-sys-color-accent-base); display: flex; flex: 0 0 auto; height: 36px; justify-content: center; width: 36px; }
+.attachment-file-details { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; }
+.attachment-file-name { display: flex; font-size: 14px; font-weight: 540; line-height: 18px; min-width: 0; white-space: nowrap; }
+.attachment-file-name > span:first-child { overflow: hidden; text-overflow: ellipsis; }
+.attachment-file-name > span:last-child { flex: 0 0 auto; }
+.attachment-file-meta { color: var(--av-sys-color-text-muted); font-size: 12px; line-height: 16px; }
+.attachment-file-card.is-pending .attachment-file-icon { background: var(--av-sys-color-accent-wash); color: var(--av-sys-color-accent-base); }
+.attachment-file-card.is-pending .attachment-file-icon.is-spreadsheet { background: var(--av-sys-color-success-wash); color: var(--av-sys-color-success-base); }
+.attachment-markdown-glyph { font-size: 11px; font-weight: 720; letter-spacing: -.04em; }
+.attachment-file-download,
+.attachment-lightbox-action { align-items: center; background: transparent; border-radius: 8px; color: var(--av-sys-color-text-muted); display: flex; flex: 0 0 auto; height: 34px; justify-content: center; padding: 0; width: 34px; }
+.attachment-file-download:hover,
+.attachment-lightbox-action:hover { background: var(--av-sys-color-surface-raised-hover); color: var(--av-sys-color-text-default); }
+
+.attachment-lightbox-overlay { backdrop-filter: blur(1px); background: var(--av-sys-color-scrim-solid); inset: 0; position: fixed; z-index: 1000; }
+.attachment-lightbox { inset: 0; position: fixed; z-index: 1001; }
+.attachment-lightbox-a11y-title { clip: rect(0, 0, 0, 0); clip-path: inset(50%); height: 1px; overflow: hidden; position: absolute; white-space: nowrap; width: 1px; }
+.attachment-lightbox.is-media-viewer { background: transparent; display: block; }
+.attachment-lightbox.is-document-viewer { background: var(--av-sys-color-surface-default); border: .5px solid var(--av-ref-color-line-4); border-radius: 16px; box-shadow: var(--av-sys-elevation-shadow-lg); display: grid; grid-template-rows: 62px minmax(0, 1fr); inset: 6vh 7.5vw; overflow: hidden; }
+.attachment-lightbox-header { align-items: center; border-bottom: .5px solid var(--av-ref-color-line-3); display: grid; gap: 8px; grid-template-columns: minmax(0, 1fr) auto auto auto; padding: 0 14px 0 24px; }
+.attachment-lightbox-header h2 { color: var(--av-sys-color-text-default); font-size: 14px; font-weight: 560; margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .attachment-lightbox-content { min-height: 0; overflow: auto; }
-.attachment-lightbox-content.is-image { align-items: center; display: flex; justify-content: center; overflow: hidden; padding: 32px; }
-.attachment-lightbox-content.is-image img { border-radius: var(--av-sys-size-radius-sm); box-shadow: var(--av-sys-elevation-shadow-lg); height: auto; max-height: 100%; max-width: 100%; object-fit: contain; width: auto; }
+.attachment-lightbox-content.is-image,
+.attachment-lightbox-content.is-video { align-items: center; display: flex; height: 100%; justify-content: center; overflow: hidden; padding: 52px 72px; }
+.attachment-lightbox-content.is-image img { border-radius: 16px; box-shadow: var(--av-sys-elevation-shadow-lg); height: auto; max-height: 100%; max-width: min(86vw, 1400px); object-fit: contain; user-select: none; width: auto; }
+.attachment-lightbox-content.is-video video { border-radius: 16px; box-shadow: var(--av-sys-elevation-shadow-lg); max-height: 100%; max-width: min(86vw, 1400px); }
+.attachment-lightbox-content.is-image.is-expanded,
+.attachment-lightbox-content.is-video.is-expanded { align-items: flex-start; justify-content: flex-start; overflow: auto; }
+.attachment-lightbox-content.is-image.is-expanded img,
+.attachment-lightbox-content.is-video.is-expanded video { margin: auto; max-height: none; max-width: none; }
 .attachment-lightbox-content.is-audio { align-items: center; display: flex; justify-content: center; padding: 32px; }
 .attachment-lightbox-content.is-audio audio { max-width: 560px; width: 100%; }
-.attachment-lightbox-close { align-items: center; background: var(--av-sys-color-surface-raised); border: 1px solid var(--av-ref-color-line-4); border-radius: var(--av-sys-size-radius-pill); color: var(--av-ref-color-neutral-14); display: flex; height: 34px; justify-content: center; width: 34px; }
+.attachment-lightbox-content.is-html { background: var(--av-sys-color-surface-default); overflow: hidden; }
+.attachment-lightbox-content.is-html iframe { background: var(--av-sys-color-surface-default); border: 0; height: 100%; width: 100%; }
+.attachment-lightbox-close { align-items: center; background: transparent; border-radius: 8px; color: var(--av-sys-color-text-muted); display: flex; height: 34px; justify-content: center; width: 34px; }
+.attachment-lightbox-close:hover { background: var(--av-sys-color-surface-raised-hover); color: var(--av-sys-color-text-default); }
 .attachment-lightbox-document { margin: 0 auto; max-width: 960px; min-height: 100%; padding: 44px 36px 96px; }
-.attachment-lightbox-text { color: var(--av-ref-color-neutral-13); font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: 13px; line-height: 1.65; margin: 0 auto; max-width: 1100px; min-height: 100%; overflow-wrap: anywhere; padding: 44px 36px 96px; white-space: pre-wrap; }
-.attachment-lightbox-status { align-items: center; color: var(--av-ref-color-neutral-11); display: flex; gap: 9px; justify-content: center; min-height: 100%; padding: 32px; }
+.attachment-lightbox-text { color: var(--av-sys-color-text-default); font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: 13px; line-height: 1.65; margin: 0 auto; max-width: 1100px; min-height: 100%; overflow-wrap: anywhere; padding: 44px 36px 96px; white-space: pre-wrap; }
+.attachment-lightbox-status { align-items: center; color: var(--av-sys-color-text-muted); display: flex; gap: 9px; justify-content: center; min-height: 100%; padding: 32px; }
 .attachment-lightbox-status.is-error { color: var(--av-sys-color-danger-soft); }
+.attachment-media-expand { align-items: center; background: transparent; border-radius: 8px; color: var(--av-sys-color-text-subtle); display: flex; height: 36px; justify-content: center; position: absolute; right: 22px; top: 22px; width: 36px; z-index: 3; }
+.attachment-media-expand:hover { background: var(--av-sys-color-scrim-subtle); color: var(--av-sys-color-text-default); }
+.attachment-gallery-arrow { align-items: center; background: var(--av-sys-color-scrim-default); border: .5px solid var(--av-sys-color-border-highlight); border-radius: 999px; color: var(--av-sys-color-text-on-inverse); display: flex; height: 44px; justify-content: center; position: absolute; top: 50%; transform: translateY(-50%); width: 44px; z-index: 3; }
+.attachment-gallery-arrow:hover { background: var(--av-sys-color-scrim-solid); }
+.attachment-gallery-arrow.is-previous { left: 20px; }
+.attachment-gallery-arrow.is-next { right: 20px; }
+@media (prefers-reduced-motion: reduce) {
+  .attachment-lightbox-overlay { backdrop-filter: none; }
+}
+.agent-document-deck-region { margin-top: 10px; max-width: 100%; }
+.agent-document-preamble { margin-bottom: 14px; }
+.agent-document-deck-scroll { max-width: 100%; overflow-x: auto; padding: 4px 10px 8px 4px; }
+.agent-document-deck { position: relative; }
+.agent-document-card {
+  align-items: center;
+  background: var(--av-sys-color-surface-elevated-hover);
+  border: 1px solid var(--av-sys-color-border-default);
+  border-radius: 13px;
+  box-shadow: none;
+  box-sizing: border-box;
+  color: var(--av-sys-color-text-default);
+  cursor: zoom-in;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 36px minmax(0, 1fr);
+  height: 53px;
+  overflow: hidden;
+  padding: 8px;
+  position: absolute;
+  text-align: left;
+  transition: border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
+  width: 220px;
+}
+.agent-document-card:hover,
+.agent-document-card:focus-visible { background: var(--av-sys-color-surface-raised-hover); border-color: var(--av-sys-color-border-strong); box-shadow: var(--av-sys-elevation-shadow-md); transform: translate(-1px, -1px); z-index: 100 !important; }
+.agent-document-card:focus-visible { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: 2px; }
+.agent-document-card:not(:first-child) > * { visibility: hidden; }
+.agent-document-card:not(:first-child):hover > *,
+.agent-document-card:not(:first-child):focus-visible > * { visibility: visible; }
+.agent-document-card-icon {
+  align-items: center;
+  background: var(--av-sys-color-accent-wash);
+  border-radius: 7px;
+  color: var(--av-sys-color-accent-base);
+  display: flex;
+  height: 36px;
+  justify-content: center;
+  width: 36px;
+}
+.agent-document-card-copy { display: flex; flex-direction: column; min-width: 0; }
+.agent-document-card-copy strong {
+  color: var(--av-sys-color-text-default);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 18px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-document-card-copy > span {
+  color: var(--av-sys-color-text-subtle);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 18px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+[data-theme='dark'] .agent-document-card { background: var(--av-sys-color-surface-elevated-hover); border-color: var(--av-sys-color-border-default); }
+[data-theme='dark'] .agent-document-card:hover,
+[data-theme='dark'] .agent-document-card:focus-visible { background: var(--av-sys-color-surface-raised-hover); border-color: var(--av-sys-color-border-strong); box-shadow: var(--av-sys-elevation-shadow-md); }
+[data-theme='dark'] .agent-document-card-icon { background: var(--av-sys-color-accent-wash); color: var(--av-sys-color-accent-base); }
+[data-theme='dark'] .agent-document-card-copy strong { color: var(--av-sys-color-text-default); }
+[data-theme='dark'] .agent-document-card-copy > span { color: var(--av-sys-color-text-subtle); }
+.agent-document-lightbox {
+  background: var(--av-sys-color-surface-raised);
+  border: 1px solid var(--av-ref-color-line-4);
+  border-radius: var(--av-sys-size-radius-lg);
+  box-shadow: var(--av-sys-elevation-shadow-lg);
+  display: grid;
+  grid-template-rows: 66px minmax(0, 1fr);
+  inset: 24px;
+  overflow: hidden;
+  position: fixed;
+  z-index: 1001;
+}
+.agent-document-lightbox-header { align-items: center; border-bottom: 1px solid var(--av-ref-color-line-3); display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr) auto auto; padding: 8px 14px 8px 22px; }
+.agent-document-lightbox-header > div:first-child { min-width: 0; }
+.agent-document-lightbox-header small { color: var(--av-sys-color-text-subtle); display: block; font-size: 10px; font-weight: 620; letter-spacing: .06em; line-height: 1.2; margin-bottom: 3px; text-transform: uppercase; }
+.agent-document-lightbox-header h2 { color: var(--av-sys-color-text-default); font-size: 14px; font-weight: 620; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-document-lightbox-navigation { display: flex; gap: 6px; }
+.agent-document-lightbox-navigation button { align-items: center; background: var(--av-sys-color-surface-raised); border: 1px solid var(--av-ref-color-line-4); border-radius: var(--av-sys-size-radius-pill); color: var(--av-sys-color-text-default); display: flex; height: 34px; justify-content: center; padding: 0; width: 34px; }
+.agent-document-lightbox-navigation button:hover:not(:disabled) { background: var(--av-sys-color-surface-raised-hover); border-color: var(--av-ref-color-line-6); }
+.agent-document-lightbox-navigation button:disabled { color: var(--av-sys-color-text-disabled); cursor: default; }
+.agent-document-lightbox-scroll { min-height: 0; overflow: auto; overscroll-behavior: contain; }
+.agent-document-lightbox-page { margin: 0 auto; max-width: 760px; min-height: 100%; padding: 46px 36px 96px; }
+.agent-document-empty-section { color: var(--av-sys-color-text-subtle); font-size: 14px; }
+@media (max-width: 640px), (max-height: 560px) {
+  .agent-document-lightbox { border-radius: 0; inset: 0; }
+  .agent-document-lightbox-header { padding-left: 14px; }
+  .agent-document-lightbox-page { padding: 30px 20px 72px; }
+}
 .workstream-composer textarea { background: transparent; border: 0; display: block; min-height: 51px; outline: 0; resize: none; width: 100%; }
 .workstream-composer textarea::placeholder { color: var(--av-ref-color-neutral-8); }
 .composer-input-shell { position: relative; }
@@ -3655,6 +3726,8 @@ button.citation-card:hover { background: var(--av-sys-color-surface-elevated-hov
  */
 .workstream-composer textarea,
 .workstream-composer .composer-highlight {
+  font-size: 14px;
+  font-weight: 400;
   line-height: var(--composer-line-height);
   overflow-wrap: break-word;
   overflow-x: hidden;
@@ -3680,13 +3753,14 @@ button.citation-card:hover { background: var(--av-sys-color-surface-elevated-hov
 .workstream-composer.is-composing textarea { color: var(--av-sys-color-text-default); }
 .workstream-composer.is-composing .composer-highlight { visibility: hidden; }
 .composer-mention {
-  background: color-mix(in srgb, var(--av-sys-color-brand-base) 12%, transparent);
-  border-radius: var(--av-sys-size-radius-xs);
+  background: var(--av-cmp-row-background-selected);
+  border-radius: 4px;
   box-decoration-break: clone;
-  box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--av-sys-color-brand-base) 12%, transparent);
-  color: var(--av-sys-color-brand-ink);
+  box-shadow: none;
+  color: var(--av-sys-color-text-default);
   -webkit-box-decoration-break: clone;
 }
+[data-theme='dark'] .composer-mention { background: var(--av-cmp-row-background-selected); color: var(--av-sys-color-text-default); }
 .composer-toolbar { align-items: center; display: flex; justify-content: space-between; min-height: 38px; padding: 2px 7px 6px; }
 .composer-tools,
 .composer-submit-area { align-items: center; display: flex; gap: 5px; }
@@ -3742,20 +3816,23 @@ button.citation-card:hover { background: var(--av-sys-color-surface-elevated-hov
 .composer-send { align-items: center; background: var(--av-cmp-composer-send-background); border-radius: var(--av-cmp-composer-send-radius); color: var(--av-cmp-composer-send-foreground); display: flex; height: 28px; justify-content: center; width: 28px; }
 .composer-error-slot { padding-top: 7px; }
 .composer-error-slot .inline-error { background: var(--av-sys-color-danger-wash); border: 1px solid var(--av-sys-color-danger-edge); border-radius: var(--av-sys-size-radius-sm); margin: 0; padding: 6px 8px; }
-.mention-popover { background: var(--av-sys-color-surface-raised); border: 1px solid var(--av-ref-color-line-4); border-radius: var(--av-sys-size-radius-md); bottom: calc(100% + 7px); box-shadow: var(--av-sys-elevation-shadow-md); left: 0; max-height: 310px; overflow: auto; padding: 4px; position: absolute; width: min(390px, 100%); z-index: 20; }
-.mention-popover > button { align-items: center; background: transparent; border-radius: var(--av-sys-size-radius-sm); display: flex; gap: 9px; min-height: 43px; padding: 6px 7px; text-align: left; width: 100%; }
+.mention-popover { background: var(--av-sys-color-surface-default); border: .5px solid var(--av-cmp-composer-border-color); border-radius: 12px; bottom: calc(100% - 8px); box-shadow: var(--av-sys-elevation-shadow-md); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; left: 40px; max-height: 280px; overflow: auto; padding: 6px; position: absolute; width: min(360px, calc(100% - 40px)); z-index: 20; }
+.mention-popover > button { align-items: center; background: transparent; border-radius: 6px; color: var(--av-sys-color-text-default); display: flex; font-size: 13px; font-weight: 400; gap: 6px; height: 28px; line-height: 18px; min-height: 28px; padding: 6px 8px; text-align: left; width: 100%; }
 /* One marked row, and `is-selected` is the one: the pointer moves the selection
    rather than painting a second highlight beside the keyboard's, so a `:hover`
-   rule here would mark a row Enter is not going to take. The popover sits on
-   `surface-raised`, and Terra Light gives `surface-elevated-hover` the same
-   value as that — a highlighted row nobody could see. The raised surface's own
-   hover shade differs in all four themes. */
+   rule here would mark a row Enter is not going to take. */
 .mention-popover > button:focus-visible,
-.mention-popover > button.is-selected { background: var(--av-sys-color-surface-raised-hover); }
-.mention-icon { align-items: center; display: flex; height: 25px; justify-content: center; width: 25px; }
-.mention-popover button > span:nth-child(2) { display: flex; flex: 1; flex-direction: column; min-width: 0; }
-.mention-popover strong { font-size: 11.5px; }
-.mention-popover small { color: var(--av-sys-color-text-muted); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mention-popover > button.is-selected,
+.mention-popover > button:hover { background: var(--av-cmp-row-background-selected); }
+.mention-icon { align-items: center; display: flex; flex: 0 0 16px; height: 16px; justify-content: center; width: 16px; }
+.mention-icon :is(.avatar-small, .provider-icon) { height: 16px; width: 16px; }
+.mention-popover-copy { align-items: baseline; display: flex; flex: 1; gap: 8px; min-width: 0; }
+.mention-popover strong { font-size: 13px; font-weight: 400; line-height: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mention-popover small { color: var(--av-sys-color-text-muted); font-size: 13px; font-weight: 420; line-height: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mention-popover-kind { color: var(--av-sys-color-text-muted); flex: 0 0 auto; font-size: 13px; font-weight: 420; line-height: 18px; margin-left: auto; }
+[data-theme='dark'] .mention-popover { background: var(--av-sys-color-surface-default); border-color: var(--av-cmp-composer-border-color); }
+[data-theme='dark'] .mention-popover > button:is(.is-selected, :hover) { background: var(--av-cmp-row-background-selected); }
+[data-theme='dark'] .mention-popover :is(small, .mention-popover-kind) { color: var(--av-sys-color-text-muted); }
 .mention-confirm-person { align-items: center; display: flex; gap: 10px; }
 .mention-confirm-person > span { display: flex; flex-direction: column; }
 .mention-confirm-person small { color: var(--av-sys-color-text-muted); font-size: 11px; }
@@ -3793,16 +3870,44 @@ button.citation-card:hover { background: var(--av-sys-color-surface-elevated-hov
    edge. Both sidebars use it; only where each one sits differs. */
 .rail-resizer,
 .sidebar-resizer { align-items: center; cursor: col-resize; display: flex; justify-content: center; touch-action: none; }
-.rail-resizer > span,
-.sidebar-resizer > span { background: var(--av-ref-color-neutral-7); border-radius: var(--av-sys-size-radius-pill); height: 38px; transition: background 100ms ease, height 100ms ease, opacity 100ms ease; width: 2px; }
+.rail-resizer > span { background: var(--av-ref-color-neutral-7); border-radius: var(--av-sys-size-radius-pill); height: 38px; transition: background 100ms ease, height 100ms ease, opacity 100ms ease; width: 2px; }
+.sidebar-resizer > .sidebar-resizer-handle {
+  align-items: center;
+  background: var(--av-sys-color-surface-raised);
+  border: 1px solid var(--av-sys-color-border-default);
+  border-radius: var(--av-sys-size-radius-pill);
+  box-shadow: var(--av-sys-elevation-shadow-md);
+  color: var(--av-sys-color-text-muted);
+  display: flex;
+  height: 28px;
+  justify-content: center;
+  transition: background 100ms ease, border-color 100ms ease, color 100ms ease, opacity 100ms ease, transform 100ms ease;
+  width: 16px;
+}
 .rail-resizer:focus-visible,
 .sidebar-resizer:focus-visible { outline: 0; }
-.rail-resizer:hover > span,
-.rail-resizer:focus-visible > span,
-.rail-resizer.is-resizing > span,
+.sidebar-resizer.is-near > .sidebar-resizer-handle,
+.sidebar-resizer:focus-visible > .sidebar-resizer-handle,
+.sidebar.is-resizing .sidebar-resizer > .sidebar-resizer-handle {
+  background: var(--av-sys-color-surface-raised-hover);
+  border-color: var(--av-sys-color-border-strong);
+  color: var(--av-sys-color-text-default);
+  transform: scale(1.06);
+}
+/* The sidebar uses a real grip rather than the rail's bare line. It stays
+   centered over the divider, appearing only when the generous pointer sensor
+   in the component says the edge is close enough to grab. */
 .sidebar-resizer.is-near > span,
 .sidebar-resizer:focus-visible > span,
-.sidebar.is-resizing .sidebar-resizer > span { background: var(--av-sys-color-brand-ink); height: 54px; }
+.sidebar.is-resizing .sidebar-resizer > span { opacity: 1; }
+/* Kept separate from the sidebar grip so the right rail retains its longer
+   brand-colored resize pill. */
+.rail-resizer:hover > span,
+.rail-resizer:focus-visible > span,
+.rail-resizer.is-resizing > span {
+  background: var(--av-sys-color-brand-ink);
+  height: 54px;
+}
 .rail-resizer { bottom: 8px; position: fixed; right: calc(var(--rail-slot) + 8px); top: 8px; width: 12px; z-index: 41; }
 /* A drag has to track the pointer exactly; only closing the rail is animated. */
 .is-resizing-rail { cursor: col-resize !important; user-select: none !important; }
@@ -4049,7 +4154,6 @@ button.citation-card:hover { background: var(--av-sys-color-surface-elevated-hov
 .suggested-prompt-dismiss { align-items: center; background: transparent; border-radius: var(--av-sys-size-radius-sm); color: var(--av-ref-color-neutral-8); display: flex; height: 25px; justify-content: center; margin-left: 2px; width: 25px; }
 .suggested-prompt-dismiss:hover { background: var(--av-sys-color-surface-raised); color: var(--av-sys-color-text-default); }
 .suggested-prompt-error { color: var(--av-sys-color-danger-base); font-size: 10px; margin: 4px 8px 0; text-align: left; }
-.new-workstream-home > .suggested-prompt-list { margin-left: 0; margin-top: 35px; max-width: none; }
 .message-context-label { color: var(--av-ref-color-neutral-9); font-size: 9px; font-weight: 450; }
 .template-path { align-items: center; background: transparent; color: var(--av-sys-color-accent-base); display: inline-flex; font-size: 10.5px; gap: 4px; margin-top: 19px; }
 .automation-composer-wrap { bottom: 13px; left: 50%; max-width: 920px; position: fixed; transform: translateX(calc(-50% + var(--av-cmp-sidebar-width) / 2)); width: calc(100% - var(--av-cmp-sidebar-width) - 76px); z-index: 4; }
@@ -4287,15 +4391,15 @@ button.citation-card:hover { background: var(--av-sys-color-surface-elevated-hov
 
 @media (max-width: 920px) {
   :root { --av-cmp-sidebar-width: 0px; }
-  .workspace-shell { --av-cmp-sidebar-width: 0px !important; }
-  .main-pane { margin-left: 0; }
-  .sidebar { background: var(--av-cmp-sidebar-background-solid); box-shadow: var(--av-sys-elevation-shadow-drawer); transform: translateX(-100%); transition: transform 160ms ease; width: 300px; z-index: 70; }
-  .sidebar.is-mobile-open { transform: translateX(0); }
-  .sidebar-scrim { background: var(--av-sys-color-scrim-default); display: block; inset: 0; position: fixed; z-index: 65; }
-  .mobile-only,
-  .header-menu-button { display: inline-flex; }
+  .workspace-shell:not(.grokbot-shell) { --av-cmp-sidebar-width: 0px !important; }
+  .workspace-shell:not(.grokbot-shell) .main-pane { margin-left: 0; }
+  .workspace-shell:not(.grokbot-shell) .sidebar { background: var(--av-cmp-sidebar-background-solid); box-shadow: var(--av-sys-elevation-shadow-drawer); transform: translateX(-100%); transition: transform 160ms ease; width: 300px; z-index: 70; }
+  .workspace-shell:not(.grokbot-shell) .sidebar.is-mobile-open { transform: translateX(0); }
+  .workspace-shell:not(.grokbot-shell) .sidebar-scrim { background: var(--av-sys-color-scrim-default); display: block; inset: 0; position: fixed; z-index: 65; }
+  .workspace-shell:not(.grokbot-shell) .mobile-only,
+  .workspace-shell:not(.grokbot-shell) .header-menu-button { display: inline-flex; }
   .mobile-sidebar-trigger { display: none; }
-  .sidebar-resizer { display: none; }
+  .workspace-shell:not(.grokbot-shell) .sidebar-resizer { display: none; }
   .workspace-shell { --rail-slot: min(var(--rail-width), calc(100vw - 16px)); }
   .automation-composer-wrap,
   .rail-open .automation-composer-wrap { transform: translateX(-50%); width: calc(100% - 50px); }
@@ -4702,7 +4806,6 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 
 @media (max-width: 560px) {
   .dialog-content { min-width: 0; width: calc(100vw - 24px); }
-  .new-workstream-home { padding: 82px 16px 24px; }
   .workstream-launch-screen:not(.is-launching) > .launch-dock { padding: 10px 16px 18px; }
   .waiting-workstream-row { grid-template-columns: auto minmax(0, 1fr) 15px; }
   .waiting-workstream-source,
@@ -4748,7 +4851,9 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 }
 
 :is(.workstream-screen, .automation-chat-surface) .agent-message {
-  width: 100%;
+  max-width: min(88%, 640px, calc(100% - 82px));
+  min-width: 0;
+  width: fit-content;
 }
 
 :is(.workstream-screen, .automation-chat-surface) .agent-message > header {
@@ -4786,13 +4891,14 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
      is a few pixels on one line — the kind of thing a screenshot pass looks
      straight past. */
   --turn-bubble-radius: calc(var(--av-sys-size-radius-xl) + 6px);
-  margin-left: var(--av-cmp-turn-margin);
-  max-width: var(--av-cmp-turn-width);
+  margin-left: auto;
+  max-width: min(88%, 640px, calc(100% - 82px));
+  min-width: 0;
   width: fit-content;
 }
 
 :is(.workstream-screen, .automation-chat-surface) .human-message-content {
-  align-items: var(--av-cmp-turn-align);
+  align-items: flex-end;
   display: flex;
   flex-direction: column;
   max-width: 100%;
@@ -4806,6 +4912,45 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   padding: var(--av-cmp-bubble-padding);
   width: fit-content;
 }
+
+/* GrokBot keeps a pasted transcript useful without letting one turn become the
+   whole conversation. At normal desktop scale its collapsed message occupies
+   roughly three quarters of the viewport, capped at the reference's ~560 CSS
+   pixel card; the lower fade and disclosure live inside the bubble rather than
+   adding a second action row beneath it. */
+:is(.workstream-screen, .automation-chat-surface) .human-message-bubble:not([data-expanded]) .human-message-bubble-body {
+  max-height: min(72vh, 560px);
+  overflow: hidden;
+  position: relative;
+}
+
+:is(.workstream-screen, .automation-chat-surface) .human-message-bubble[data-clamped]:not([data-expanded]) .human-message-bubble-body::after {
+  background: linear-gradient(to bottom, transparent, var(--av-cmp-bubble-human-background));
+  bottom: 0;
+  content: '';
+  height: 56px;
+  left: 0;
+  pointer-events: none;
+  position: absolute;
+  right: 0;
+}
+
+.human-message-toggle {
+  align-items: center;
+  background: transparent;
+  color: var(--av-cmp-bubble-human-foreground);
+  display: flex;
+  font-size: 12px;
+  font-weight: 500;
+  gap: 4px;
+  line-height: 18px;
+  margin-top: 4px;
+  padding: 0;
+}
+
+.human-message-toggle:hover { opacity: 0.82; }
+.human-message-toggle svg { transition: transform 140ms; }
+.human-message-toggle[aria-expanded='true'] svg { transform: rotate(180deg); }
 
 /* The two ways a turn can be in the room before the room has it: still in
    flight, or admitted and waiting for the loop. Both are the reader's own words
@@ -4887,7 +5032,7 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
    which is the same relationship on the other side. */
 :is(.workstream-screen, .automation-chat-surface) .human-message > header {
   gap: 5px;
-  justify-content: var(--av-cmp-turn-align);
+  justify-content: flex-end;
   margin-bottom: 4px;
   padding-inline-end: var(--turn-bubble-radius);
 }
@@ -4951,6 +5096,475 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   padding: 3px 0;
 }
 
+/* Grok-inspired conversation shell. These rules intentionally live as one
+   opt-in layer over the existing components: the data and interaction
+   contracts stay shared, while the main work-stream surface owns the new
+   visual hierarchy. */
+.sidebar-commandbar {
+  display: block;
+  margin: 4px 0 12px;
+}
+
+.sidebar-new-chat-draft {
+  align-items: center;
+  background: var(--av-cmp-row-background-hover);
+  border-radius: 8px;
+  color: var(--av-sys-color-text-default);
+  display: flex;
+  font-size: 14px;
+  font-weight: 500;
+  gap: 9px;
+  line-height: 20px;
+  margin: 0 1px 12px;
+  min-height: 44px;
+  padding: 4px 8px;
+}
+
+.sidebar-new-chat-draft-icon {
+  align-items: center;
+  background: var(--av-ref-color-neutral-4);
+  border: 1px solid var(--av-ref-color-line-4);
+  border-radius: 50%;
+  color: var(--av-sys-color-text-subtle);
+  display: flex;
+  flex: 0 0 30px;
+  height: 30px;
+  justify-content: center;
+  width: 30px;
+}
+
+[data-theme='dark'] .sidebar-new-chat-draft-icon {
+  background: var(--av-sys-color-surface-raised-hover);
+  border-color: var(--av-sys-color-border-strong);
+  color: var(--av-sys-color-text-subtle);
+}
+
+.sidebar-new-button {
+  align-items: center;
+  background: transparent;
+  border-radius: var(--av-sys-size-radius-sm);
+  color: var(--av-sys-color-text-muted);
+  display: flex;
+  height: 28px;
+  justify-content: center;
+  transition: color 120ms ease, transform 120ms ease, background 120ms ease;
+  width: 28px;
+}
+
+.sidebar-new-button:hover,
+.sidebar-new-button.is-active {
+  background: var(--av-cmp-row-background-hover);
+  color: var(--av-sys-color-text-default);
+}
+.sidebar-new-button:active { transform: scale(.94); }
+
+.sidebar-search {
+  align-items: center;
+  background: var(--av-cmp-row-background-hover);
+  border: 0;
+  border-radius: 8px;
+  box-shadow: inset 0 0 0 .5px var(--av-cmp-sidebar-border);
+  color: var(--av-sys-color-text-muted);
+  display: flex;
+  gap: 6px;
+  height: 32px;
+  padding: 0 4px 0 8px;
+}
+
+.sidebar-search:focus-within { box-shadow: inset 0 0 0 .5px var(--av-sys-color-border-strong); }
+.sidebar-search input { background: transparent; border: 0; color: var(--av-sys-color-text-default); font-size: 11.5px; min-width: 0; outline: 0; padding: 0; width: 100%; }
+.sidebar-search input::placeholder { color: var(--av-sys-color-text-muted); }
+.sidebar-search input::-webkit-search-cancel-button { display: none; }
+
+.sidebar-secondary-actions {
+  display: flex;
+  gap: 4px;
+  margin: 0 1px 14px;
+}
+
+.sidebar-secondary-actions .sidebar-action {
+  background: transparent;
+  color: var(--av-sys-color-text-muted);
+  flex: 1;
+  font-size: 9.5px;
+  justify-content: center;
+  min-height: 25px;
+  padding: 2px 5px;
+}
+
+.sidebar-secondary-actions .sidebar-action:hover { background: var(--av-sys-color-surface-raised-hover); color: var(--av-sys-color-text-default); }
+
+.workstream-glyph {
+  align-items: center;
+  color: var(--av-sys-color-text-on-inverse);
+  display: inline-flex;
+  flex: 0 0 auto;
+  justify-content: center;
+  position: relative;
+}
+
+.workstream-glyph-shape {
+  border-radius: 38% 62% 56% 44% / 45% 42% 58% 55%;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--av-sys-color-text-on-inverse) 18%, transparent);
+  inset: 1px;
+  position: absolute;
+  transform: rotate(-7deg);
+}
+
+.workstream-glyph-icon { filter: drop-shadow(0 1px 1px color-mix(in srgb, var(--av-sys-color-text-default) 20%, transparent)); position: relative; }
+
+.workstream-row {
+  align-items: center;
+  border-radius: 8px;
+  display: grid;
+  gap: 6px;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  min-height: 44px;
+  padding: 3px 7px;
+}
+
+.workstream-row .sidebar-row-icon { align-items: center; display: flex; height: 30px; justify-content: center; position: relative; width: 30px; }
+.workstream-row-status { bottom: -2px; position: absolute; right: -3px; }
+.workstream-row-status .status-indicator { background: var(--av-sys-color-surface-default); border-radius: var(--av-sys-size-radius-pill); height: 12px; width: 12px; }
+.workstream-row .workstream-row-status .status-dot {
+  height: 6px;
+  inset: auto;
+  left: 50%;
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 6px;
+}
+.workstream-row .sidebar-row-main { align-self: stretch; justify-content: center; }
+.workstream-row .sidebar-row-title { align-items: baseline; color: var(--av-sys-color-text-default); display: flex; font-size: 12px; font-weight: 520; gap: 6px; justify-content: space-between; line-height: 15px; width: 100%; }
+.sidebar-row-title-copy { align-items: center; display: flex; gap: 4px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workstream-row .sidebar-row-title time { color: var(--av-sys-color-text-muted); flex: 0 0 auto; font-size: 10px; font-weight: 450; }
+.workstream-row .sidebar-row-hint { color: var(--av-sys-color-text-muted); font-size: 10.5px; line-height: 13px; margin-top: 0; }
+.workstream-row-people { align-items: center; display: flex; flex-direction: column; gap: 2px; justify-content: center; min-width: 38px; }
+.workstream-row .sidebar-workstream-facepile { margin: 0; }
+.workstream-row .sidebar-workstream-facepile .avatar-stack.is-grok-cluster {
+  display: block;
+  height: 36px;
+  min-width: 38px;
+  position: relative;
+}
+.workstream-row .sidebar-workstream-facepile .is-grok-cluster .avatar-stack-item {
+  margin: 0;
+  position: absolute;
+}
+.workstream-row .sidebar-workstream-facepile .is-grok-cluster .avatar-small {
+  border-color: var(--av-cmp-sidebar-background-solid);
+  height: 23px;
+  width: 23px;
+}
+.workstream-row .sidebar-workstream-facepile .is-grok-cluster .avatar-fallback { font-size: 6px; }
+.workstream-row .sidebar-workstream-facepile .is-grok-cluster .is-grok-position-1 { left: 0; top: 0; z-index: 1; }
+.workstream-row .sidebar-workstream-facepile .is-grok-cluster .is-grok-position-2 { left: 15px; top: 14px; z-index: 3; }
+.workstream-row .sidebar-workstream-facepile .is-grok-cluster[data-visible-count='3'] .is-grok-position-2 { left: 0; }
+.workstream-row .sidebar-workstream-facepile .is-grok-cluster .is-grok-position-3 { left: 15px; top: 14px; z-index: 3; }
+.workstream-row .sidebar-workstream-facepile .is-grok-cluster [data-grok-shape='wedge'] .avatar {
+  border-radius: 46% 54% 42% 58% / 72% 66% 34% 28%;
+  transform: rotate(-4deg);
+}
+.workstream-row .sidebar-workstream-facepile .is-grok-cluster [data-grok-shape='pill'] .avatar {
+  border-radius: 999px;
+  height: 20px;
+  width: 27px;
+}
+.workstream-row .sidebar-workstream-facepile .is-grok-cluster .avatar-overflow {
+  background: transparent;
+  border: 0;
+  color: var(--av-sys-color-text-muted);
+  font-size: 14px;
+  font-weight: 600;
+  left: 42px;
+  margin: 0;
+  min-width: max-content;
+  position: absolute;
+  top: 13px;
+}
+.workstream-row.is-active { background: var(--av-sys-color-surface-raised-hover); }
+
+.workstream-header { min-height: 48px; padding: 5px 10px 5px 13px; }
+.workstream-header-left { gap: 8px; }
+.workstream-header .workstream-title-line h1 { font-size: 13px; }
+.workstream-header .workstream-subtitle { margin-top: 0; }
+
+.workstream-screen:has(> .grokbot-workstream-header) { grid-template-rows: 44px minmax(0, 1fr) auto; }
+.grokbot-workstream-header {
+  align-items: center;
+  background: var(--av-sys-color-surface-default);
+  border-bottom: 0;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  min-width: 0;
+  padding: 0 12px 0 8px;
+}
+.grokbot-header-navigation { display: none; }
+.grokbot-workstream-header > h1 { display: flex; justify-content: flex-start; min-width: 0; }
+.grokbot-conversation-title {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--av-sys-color-text-default);
+  display: flex;
+  font-size: 13px;
+  font-weight: 500;
+  gap: 4px;
+  height: 28px;
+  justify-content: flex-start;
+  line-height: 18px;
+  max-width: 100%;
+  min-width: 0;
+  padding: 4px 6px;
+}
+.grokbot-conversation-title > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.grokbot-conversation-title:hover { background: var(--av-sys-color-surface-elevated-hover); color: var(--av-sys-color-text-default); }
+.grokbot-computer-button.icon-button {
+  color: var(--av-sys-color-text-muted);
+  height: 28px;
+  margin-right: -4px;
+  width: 34px;
+}
+.grokbot-computer-button.icon-button:hover,
+.grokbot-computer-button.icon-button[aria-pressed='true'] {
+  background: var(--av-sys-color-surface-elevated-hover);
+  color: var(--av-sys-color-text-default);
+}
+.grokbot-shell {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 14px;
+  font-weight: 420;
+  letter-spacing: 0;
+  line-height: 20px;
+}
+.grokbot-shell .workstream-row {
+  border-radius: 10px;
+  gap: 8px;
+  height: 54px;
+  min-height: 54px;
+  padding: 8px;
+}
+.grokbot-shell .workstream-row .sidebar-row-icon {
+  flex: 0 0 36px;
+  height: 36px;
+  width: 36px;
+}
+.grokbot-shell .workstream-row-status {
+  bottom: 0;
+  right: 0;
+}
+.grokbot-shell .workstream-row-status .status-indicator {
+  height: 14px;
+  width: 14px;
+}
+.grokbot-shell .workstream-row .workstream-row-status .status-dot {
+  height: 8px;
+  width: 8px;
+}
+.grokbot-shell .workstream-row.is-active { background: var(--av-cmp-row-background-selected); }
+.grokbot-shell .command-shortcut-scrim {
+  justify-content: flex-end;
+  padding: 0 8px 0 24px;
+  right: 0;
+  width: 72px;
+  z-index: 5;
+}
+.grokbot-shell .scope-badge.command-shortcut-pill {
+  background: var(--av-sys-color-surface-subtle);
+  border: 0;
+  border-radius: 4px;
+  color: var(--av-sys-color-text-muted);
+  font-size: 9px;
+  font-weight: 500;
+  gap: 0;
+  height: 14px;
+  line-height: 14px;
+  min-width: 19px;
+  padding: 0 3px;
+}
+.grokbot-shell .sidebar-scroll { padding-top: 0; }
+.grokbot-shell .workstreams-section { margin-top: 10px; }
+.grokbot-shell .sidebar-group { margin-top: 14px; }
+.grokbot-shell .sidebar-group:first-child { margin-top: 0; }
+.grokbot-shell .sidebar-group-heading { min-height: 30px; padding: 8px 8px 6px; }
+.grokbot-shell .sidebar-search input {
+  font-size: 14px;
+  font-weight: 420;
+  line-height: 20px;
+}
+.grokbot-shell .workstream-row .sidebar-row-title {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+}
+.grokbot-shell .workstream-row .sidebar-row-title time {
+  font-size: 12px;
+  font-weight: 420;
+  line-height: 16px;
+}
+.grokbot-shell .workstream-row .sidebar-row-hint {
+  font-size: 13px;
+  font-weight: 420;
+  line-height: 18px;
+}
+.grokbot-shell .sidebar-group h3 {
+  color: var(--av-sys-color-text-muted);
+  font-size: 12px;
+  font-weight: 420;
+  letter-spacing: 0;
+  line-height: 16px;
+  text-transform: none;
+}
+.grokbot-shell .sidebar-group-menu-trigger { display: none; }
+
+/* GrokBot's sidebar does not become a drawer when the conversation gets
+   narrow. It becomes an 88px icon rail, either because the saved compact
+   preference is on or because the conversation needs its protected 424px.
+   The component owns that calculation; this block owns the resulting rail. */
+.grokbot-shell .sidebar.is-compact .sidebar-titlebar {
+  justify-content: center;
+  padding: 0;
+}
+.grokbot-shell .sidebar.is-compact .sidebar-titlebar > .sidebar-new-button,
+.grokbot-shell .sidebar.is-compact .sidebar-commandbar,
+.grokbot-shell .sidebar.is-compact .sidebar-new-chat-draft,
+.grokbot-shell .sidebar.is-compact .sidebar-section-heading,
+.grokbot-shell .sidebar.is-compact .sidebar-group-heading,
+.grokbot-shell .sidebar.is-compact .sidebar-row-main,
+.grokbot-shell .sidebar.is-compact .sidebar-workstream-timer,
+.grokbot-shell .sidebar.is-compact .workstream-row-people,
+.grokbot-shell .sidebar.is-compact .command-shortcut-scrim,
+.grokbot-shell .sidebar.is-compact .sidebar-empty {
+  display: none;
+}
+.grokbot-shell .sidebar.is-compact .sidebar-scroll {
+  padding: 4px 17px 12px;
+}
+.grokbot-shell .sidebar.is-compact .sidebar-section,
+.grokbot-shell .sidebar.is-compact .workstreams-section,
+.grokbot-shell .sidebar.is-compact .sidebar-group {
+  margin-top: 0;
+}
+.grokbot-shell .sidebar.is-compact .pinned-section {
+  border-bottom: var(--av-sys-size-border-hairline) solid var(--av-cmp-sidebar-border);
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+}
+.grokbot-shell .sidebar.is-compact .sidebar-list { gap: 0; }
+.grokbot-shell .sidebar.is-compact .sidebar-context-target { width: 54px; }
+.grokbot-shell .sidebar.is-compact .workstream-row {
+  display: flex;
+  gap: 0;
+  height: 54px;
+  justify-content: center;
+  min-height: 54px;
+  padding: 9px;
+  width: 54px;
+}
+.grokbot-shell .sidebar.is-compact .workstream-row .sidebar-row-icon { flex: 0 0 36px; }
+.grokbot-shell .sidebar.is-compact .sidebar-rail-new-button {
+  border-radius: 10px;
+  flex: 0 0 54px;
+  height: 54px;
+  margin: 0 auto;
+  width: 54px;
+}
+.grokbot-shell .sidebar.is-compact .account-trigger {
+  flex: 0 0 54px;
+  gap: 0;
+  height: 54px;
+  justify-content: center;
+  margin: 0 auto 8px;
+  min-height: 54px;
+  padding: 12px 14px;
+  width: 54px;
+}
+.grokbot-shell .sidebar.is-compact .account-copy { display: none; }
+
+.workstream-screen .human-message-bubble {
+  background: var(--av-cmp-bubble-human-background);
+  border: 0;
+  border-radius: 18px;
+  box-shadow: none;
+  color: var(--av-cmp-bubble-human-foreground);
+  padding: 8px 12px;
+}
+
+.workstream-screen .human-message-bubble .markdown-body,
+.workstream-screen .human-message-bubble .markdown-body :is(p, strong, em, code, a) { color: var(--av-cmp-bubble-human-foreground); }
+.workstream-screen .human-message > header { margin-bottom: 5px; padding-right: 18px; }
+.workstream-screen .human-message .message-author { color: var(--av-sys-color-text-subtle); font-size: 12px; }
+.workstream-screen .human-message time { color: var(--av-sys-color-text-muted); }
+.workstream-screen .agent-message { padding-left: 2px; }
+.workstream-screen .agent-message > header { margin-bottom: 7px; padding-left: 18px; }
+
+/* GrokBot uses four text roles throughout its conversation surfaces rather
+   than per-theme typography. Keep Rally's extra author/time labels on the same
+   label role so the deliberate metadata addition still belongs to the system. */
+:is(.workstream-screen, .new-chat-screen) {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+:is(.workstream-screen, .automation-chat-surface) .agent-message .message-author {
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: 18px;
+  text-transform: none;
+}
+:is(.workstream-screen, .automation-chat-surface) .agent-message .markdown-body,
+:is(.workstream-screen, .automation-chat-surface) .human-message-bubble .markdown-body {
+  font-size: 14px;
+  font-weight: 420;
+  line-height: 20px;
+}
+:is(.workstream-screen, .automation-chat-surface) .human-message .message-author {
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
+}
+:is(.workstream-screen, .automation-chat-surface) .human-message time {
+  font-size: 12px;
+  font-weight: 420;
+  line-height: 16px;
+}
+:is(.workstream-screen, .automation-chat-surface) :is(.agent-work-timing-label, .tool-summary strong) {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
+}
+
+.composer-wrap { max-width: none; width: 100%; }
+.workstream-composer {
+  --composer-text-padding: 12px 15px 2px;
+  background: var(--av-sys-color-surface-raised);
+  border-color: var(--av-sys-color-border-subtle);
+  border-radius: 22px;
+  box-shadow: var(--av-sys-elevation-shadow-sm);
+}
+.workstream-composer textarea { min-height: 42px; }
+.composer-toolbar { min-height: 34px; padding: 1px 6px 5px; }
+.composer-tools > .icon-button { border-radius: var(--av-sys-size-radius-pill); }
+.composer-send { height: 30px; width: 30px; }
+.rally-mention-icon { align-items: center; background: var(--av-sys-color-text-default); border-radius: var(--av-sys-size-radius-pill); color: var(--av-sys-color-text-on-inverse); display: flex; height: 24px; justify-content: center; width: 24px; }
+
+.workspace-shell.rail-open .main-pane { padding-right: var(--rail-slot); }
+.rail-surface {
+  border-bottom: 0;
+  border-radius: 0;
+  border-right: 0;
+  border-top: 0;
+  bottom: 0;
+  box-shadow: none;
+  right: 0;
+  top: 0;
+}
+.rail-section { padding-left: 15px; padding-right: 15px; }
+.rail-section-header h3 { font-size: 10px; letter-spacing: .04em; text-transform: uppercase; }
+.compact-run-list .run-rail-row { grid-template-columns: auto minmax(0, 1fr) auto; }
+
 :is(.workstream-screen, .automation-chat-surface) .plugin-activity summary {
   grid-template-columns: max-content minmax(0, 1fr) auto auto 14px;
   min-height: 34px;
@@ -4963,7 +5577,7 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
    enclosed glyphs down the transcript reads as a toolbar of controls, and these
    are labels. The single neutral is also the only colour with guaranteed
    contrast here — a connector's brand foreground was chosen against its own
-   chip, and this transcript has four themes and no chip. */
+   chip, and this transcript has two appearances and no chip. */
 .plugin-face {
   align-items: center;
   color: var(--av-ref-color-neutral-11);
@@ -5030,8 +5644,9 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 
 :is(.workstream-screen, .automation-chat-surface) .tool-summary strong {
   color: var(--av-ref-color-neutral-10);
-  font-size: 11.5px;
-  font-weight: 480;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
 }
 
 :is(.workstream-screen, .automation-chat-surface) .tool-summary strong::before {
@@ -5042,7 +5657,8 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 :is(.workstream-screen, .automation-chat-surface) .plugin-activity .tool-summary strong {
   color: var(--av-ref-color-neutral-11);
   font-size: 13px;
-  font-weight: 480;
+  font-weight: 500;
+  line-height: 18px;
 }
 
 :is(.workstream-screen, .automation-chat-surface) .plugin-activity .tool-summary strong::before {
@@ -5121,20 +5737,21 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   /* No scrim here, unlike the docks that float over a scrolling transcript: the
      work stream lays the composer out as the third grid row, so nothing passes
      behind it to hide. The gradient it used to paint ended on the pane's own
-     colour and so was invisible — until Airy made the pane transparent, when it
-     became an opaque rectangle cutting the backdrop off at the sidebar's edge. */
+     colour and so was invisible — until the pane became transparent, when it
+     became an opaque rectangle cutting the canvas off at the sidebar's edge. */
   background: none;
   bottom: auto;
   left: auto;
-  padding: 40px 28px 14px;
+  padding: 0 16px 16px;
   pointer-events: none;
   position: relative;
   right: auto;
 }
 
 .workstream-screen .composer-wrap {
-  max-width: 920px;
+  max-width: none;
   pointer-events: auto;
+  width: 100%;
 }
 
 .workstream-screen .composer-queue {
@@ -5143,13 +5760,14 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 }
 
 .workstream-screen .composer-stack {
-  max-width: var(--av-cmp-feed-width-wide);
+  max-width: none;
+  width: 100%;
 }
 
 /* A card or a rule, out of the same five values.
  *
  * The card is a box floating over the transcript; the rule is a hairline the
- * page rests on, which is what Airy draws. Expressing both as one set of tokens
+ * page rests on. Expressing both as one set of tokens
  * rather than as a mode keeps the focus feedback honest: once the border is
  * gone, the rule turning warm is the only thing left saying the field is live,
  * so a theme that flattens the frame has to say what focus looks like. */
@@ -5183,6 +5801,183 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 .workstream-screen .composer-submit-area .button {
   color: var(--av-ref-color-neutral-10);
 }
+
+/* GrokBot's message field is one capsule, not a text box followed by a tool
+   shelf. The shared composer keeps its neutral toolbar layout; only the main
+   work-stream adapter opts into this grid. Attachments get their own row when
+   present, while the empty state remains a single 42px control. */
+:is(.workstream-screen, .new-chat-screen) .workstream-composer.is-message-capsule {
+  --composer-text-padding: 9px 4px 6px;
+  align-items: end;
+  background: var(--av-cmp-composer-background);
+  border: var(--av-cmp-composer-border-width) solid var(--av-cmp-composer-border-color);
+  border-radius: 22px;
+  box-shadow: var(--av-cmp-composer-shadow);
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  min-height: 44px;
+  overflow: hidden;
+}
+
+:is(.workstream-screen, .new-chat-screen) .workstream-composer.is-message-capsule:focus-within {
+  border-color: var(--av-cmp-composer-border-color);
+}
+
+:is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-attachments {
+  flex-wrap: nowrap;
+  grid-column: 1 / -1;
+  grid-row: 1;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 10px 12px 2px;
+  scrollbar-width: none;
+  width: 100%;
+}
+
+:is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-attachments::-webkit-scrollbar { display: none; }
+
+:is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-attachments .attachment-tile {
+  border-radius: 12px;
+  flex: 0 0 64px;
+  height: 64px;
+  width: 64px;
+}
+
+:is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-attachments .attachment-file-card.is-pending {
+  background: transparent;
+  border-color: var(--av-ref-color-line-4);
+  flex: 0 0 220px;
+  height: 60px;
+  min-height: 60px;
+  min-width: 220px;
+  width: 220px;
+}
+
+:is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-input-shell {
+  align-self: end;
+  grid-column: 2;
+  grid-row: 2;
+  min-width: 0;
+}
+
+:is(.workstream-screen, .new-chat-screen) .workstream-composer.is-message-capsule textarea {
+  font-size: 14px;
+  font-weight: 420;
+  line-height: 20px;
+  min-height: 42px;
+}
+:is(.workstream-screen, .new-chat-screen) .workstream-composer.is-message-capsule .composer-highlight {
+  font-size: 14px;
+  font-weight: 420;
+  line-height: 20px;
+}
+
+:is(.workstream-screen, .new-chat-screen) .workstream-composer.is-message-capsule.has-attachments textarea { min-height: 67px; }
+
+:is(.workstream-screen, .new-chat-screen) .workstream-composer.is-message-capsule.has-attachments .composer-input-shell {
+  grid-column: 1 / -1;
+}
+
+:is(.workstream-screen, .new-chat-screen) .workstream-composer.is-message-capsule.has-attachments :is(textarea, .composer-highlight) {
+  padding: 9px 14px 34px;
+}
+
+:is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-toolbar { display: contents; }
+
+:is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-tools {
+  align-self: end;
+  grid-column: 1;
+  grid-row: 2;
+  justify-content: center;
+  padding: 7px;
+}
+
+:is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-tools > .icon-button {
+  background: var(--av-cmp-row-background-hover);
+  border: 0;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 .5px var(--av-sys-color-border-highlight);
+  color: var(--av-sys-color-text-muted);
+  height: 28px;
+  width: 28px;
+}
+
+:is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-tools > .icon-button:hover:not(:disabled) {
+  background: var(--av-ref-color-neutral-4);
+  color: var(--av-ref-color-neutral-13);
+}
+
+:is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-hint { display: none; }
+
+:is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-submit-area {
+  align-self: end;
+  grid-column: 3;
+  grid-row: 2;
+  padding: 7px;
+}
+
+:is(.workstream-screen, .new-chat-screen) .is-message-capsule :is(.composer-send, .microphone-control .dictation-button) {
+  background: var(--av-cmp-composer-send-background);
+  border-radius: 50%;
+  color: var(--av-cmp-composer-send-foreground);
+  height: 28px;
+  width: 28px;
+}
+
+:is(.workstream-screen, .new-chat-screen) .is-message-capsule.has-submit .microphone-control .dictation-button {
+  background: var(--av-cmp-row-background-selected);
+  color: var(--av-sys-color-text-muted);
+}
+
+:is(.workstream-screen, .new-chat-screen) .is-message-capsule :is(.composer-send, .microphone-control .dictation-button):hover:not(:disabled) {
+  filter: brightness(.9);
+}
+
+.composer-action-menu {
+  background: var(--av-sys-color-surface-elevated);
+  border-color: var(--av-sys-color-border-default);
+  border-radius: 12px;
+  box-shadow: var(--av-sys-elevation-shadow-md);
+  box-sizing: border-box;
+  min-width: 200px;
+  padding: 6px;
+  width: 200px;
+}
+
+.composer-action-menu-item.menu-item {
+  border-radius: 6px;
+  color: var(--av-sys-color-text-default);
+  font-size: 13px;
+  font-weight: 420;
+  gap: 4px;
+  line-height: 18px;
+  min-height: 30px;
+  padding: 6px 8px;
+}
+
+.composer-action-menu-item > svg { height: 16px; stroke-width: 1.9; width: 16px; }
+.composer-action-menu-item .composer-teach-task-icon { color: var(--av-sys-color-danger-base); stroke-width: 2.4; }
+
+[data-theme='dark'] :is(.workstream-screen, .new-chat-screen) .workstream-composer.is-message-capsule { border-color: var(--av-cmp-composer-border-color); }
+[data-theme='dark'] :is(.workstream-screen, .new-chat-screen) .workstream-composer.is-message-capsule:focus-within { border-color: var(--av-cmp-composer-border-color-focus); }
+[data-theme='dark'] .attachment-file-card.is-pending .attachment-file-icon { background: var(--av-sys-color-accent-wash); color: var(--av-sys-color-accent-base); }
+[data-theme='dark'] .attachment-file-card.is-pending .attachment-file-icon.is-spreadsheet { background: var(--av-sys-color-success-wash); color: var(--av-sys-color-success-base); }
+[data-theme='dark'] :is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-tools > .icon-button {
+  background: var(--av-cmp-row-background-hover);
+  box-shadow: inset 0 0 0 .5px var(--av-sys-color-border-highlight);
+  color: var(--av-sys-color-text-muted);
+}
+[data-theme='dark'] :is(.workstream-screen, .new-chat-screen) .is-message-capsule.has-submit .microphone-control .dictation-button {
+  background: var(--av-cmp-row-background-selected);
+  color: var(--av-sys-color-text-muted);
+}
+[data-theme='dark'] .composer-action-menu {
+  background: var(--av-sys-color-surface-elevated);
+  border-color: var(--av-cmp-composer-border-color);
+}
+[data-theme='dark'] .composer-action-menu-item.menu-item { color: var(--av-sys-color-text-default); }
+[data-theme='dark'] .composer-action-menu-item.menu-item[data-highlighted] { background: var(--av-cmp-row-background-hover); }
 
 
 .command-popover {
@@ -5223,8 +6018,8 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   width: 100%;
 }
 
-/* This popover is `surface-raised` too. Terra Light gives `elevated-hover` the
-   same value as that base, so command rows use the raised surface's visible
+/* This popover is `surface-raised` too. If `elevated-hover` matches that base,
+   command rows use the raised surface's visible
    hover partner for pointer, focus, and selected states. */
 .command-popover > button:hover,
 .command-popover > button:focus-visible,
@@ -5255,14 +6050,19 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
     padding-right: 24px;
   }
 
-  .workstream-screen .human-message {
-    max-width: 88%;
+  .workstream-screen :is(.human-message, .agent-message) {
+    max-width: min(88%, 640px, calc(100% - 82px));
   }
 
   .workstream-screen .composer-dock {
     padding-left: 16px;
     padding-right: 16px;
   }
+}
+
+@media (max-width: 920px) {
+  .grokbot-workstream-header { grid-template-columns: 28px minmax(0, 1fr) 28px; padding-left: 8px; }
+  .grokbot-header-navigation { display: block; }
 }
 
 /* Starting a work stream.
@@ -5331,22 +6131,6 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 .workstream-launch-screen > .launch-body > * {
   grid-area: 1 / 1;
   min-height: 0;
-}
-
-.launch-home-layer {
-  display: grid;
-  min-height: 0;
-}
-
-.launch-home-layer.is-leaving {
-  animation: launch-home-leave 190ms ease forwards;
-  overflow: hidden;
-  pointer-events: none;
-  z-index: 2;
-}
-
-@keyframes launch-home-leave {
-  to { opacity: 0; transform: translateY(10px); }
 }
 
 .launch-transcript-layer {
@@ -5437,6 +6221,215 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 .workstream-launch-screen:not(.is-launching) .launch-composer .composer-hint {
   color: var(--av-ref-color-neutral-9);
 }
+
+/* New chat follows GrokBot's recipient-first composition surface. The chips
+   stay deliberately dense: each participant reads as one charcoal pill, with
+   the caret beginning immediately after the final selected person. */
+.new-chat-screen:not(.is-launching) > .launch-header {
+  border-bottom: .5px solid var(--av-cmp-sidebar-border);
+  height: 48.5px;
+  overflow: visible;
+  padding: 0;
+  position: relative;
+  z-index: 8;
+}
+
+.new-chat-recipient-bar {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+  height: 48px;
+  padding: 10px 12px 10px 12px;
+  width: 100%;
+}
+
+.new-chat-to-label {
+  color: var(--av-sys-color-text-muted);
+  flex: 0 0 auto;
+  font-size: 14px;
+  font-weight: 420;
+  line-height: 20px;
+}
+
+.new-chat-recipient-input-shell {
+  align-items: center;
+  display: flex;
+  flex: 1;
+  gap: 5px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.new-chat-recipient-input-shell::-webkit-scrollbar { display: none; }
+
+.new-chat-recipient-chip {
+  align-items: center;
+  background: var(--av-sys-color-surface-elevated-hover);
+  border-radius: 999px;
+  color: var(--av-sys-color-text-default);
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 14px;
+  font-weight: 400;
+  gap: 6px;
+  height: 29px;
+  line-height: 20px;
+  padding: 0 7px 0 4px;
+}
+
+.new-chat-recipient-chip .avatar-small {
+  border-color: transparent;
+  height: 23px;
+  width: 23px;
+}
+
+.new-chat-recipient-chip > button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: var(--av-sys-color-text-muted);
+  display: flex;
+  height: 19px;
+  justify-content: center;
+  margin-left: 1px;
+  padding: 0;
+  width: 16px;
+}
+
+.new-chat-recipient-chip > button:hover { color: var(--av-sys-color-text-default); }
+
+[data-theme='dark'] .new-chat-recipient-chip {
+  background: var(--av-sys-color-surface-subtle);
+  color: var(--av-sys-color-text-default);
+}
+
+[data-theme='dark'] .new-chat-recipient-chip > button { color: var(--av-sys-color-text-muted); }
+[data-theme='dark'] .new-chat-recipient-chip > button:hover { color: var(--av-sys-color-text-default); }
+
+.new-chat-recipient-input-shell > input {
+  background: transparent;
+  border: 0;
+  color: var(--av-sys-color-text-default);
+  flex: 1 0 132px;
+  font-size: 14px;
+  font-weight: 420;
+  line-height: 20px;
+  min-width: 132px;
+  outline: 0;
+  padding: 0;
+}
+
+.new-chat-recipient-input-shell > input::placeholder { color: var(--av-sys-color-text-muted); }
+
+.new-chat-close {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: var(--av-sys-color-text-muted);
+  display: flex;
+  border-radius: 50%;
+  flex: 0 0 20px;
+  height: 20px;
+  justify-content: center;
+  padding: 0;
+}
+
+.new-chat-close:hover { color: var(--av-sys-color-text-default); }
+
+.new-chat-recipient-results {
+  background: var(--av-sys-color-surface-default);
+  border: .5px solid var(--av-cmp-composer-border-color);
+  border-radius: 14px;
+  box-shadow: var(--av-sys-elevation-shadow-md);
+  left: 32px;
+  max-height: min(330px, calc(100vh - 150px));
+  overflow-y: auto;
+  padding: 6px;
+  position: absolute;
+  top: 38px;
+  width: min(560px, calc(100% - 52px));
+  z-index: 20;
+}
+
+[data-theme='dark'] .new-chat-recipient-results {
+  background: var(--av-sys-color-surface-elevated);
+  border-color: var(--av-cmp-composer-border-color);
+}
+
+.new-chat-recipient-results > button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  color: var(--av-sys-color-text-default);
+  display: flex;
+  gap: 8px;
+  min-height: 36px;
+  padding: 6px 8px;
+  text-align: left;
+  width: 100%;
+}
+
+.new-chat-recipient-results:has(> .new-chat-recipient-empty) {
+  align-items: center;
+  display: grid;
+  min-height: 59px;
+}
+
+.new-chat-recipient-results > button.is-selected,
+.new-chat-recipient-results > button:hover { background: var(--av-cmp-row-background-selected); }
+[data-theme='dark'] .new-chat-recipient-results > button.is-selected,
+[data-theme='dark'] .new-chat-recipient-results > button:hover { background: var(--av-cmp-row-background-selected); }
+
+.new-chat-recipient-results .avatar-small { height: 24px; width: 24px; }
+.new-chat-recipient-copy { display: flex; flex: 1; min-width: 0; }
+.new-chat-recipient-copy strong { font-size: 14px; font-weight: 420; line-height: 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.new-chat-recipient-shortcut { display: flex; gap: 2px; margin-left: auto; }
+.new-chat-recipient-shortcut kbd {
+  align-items: center;
+  background: var(--av-cmp-row-background-selected);
+  border: 0;
+  border-radius: 4px;
+  color: var(--av-sys-color-text-muted);
+  display: inline-flex;
+  font-family: inherit;
+  font-size: 10px;
+  height: 19px;
+  justify-content: center;
+  min-width: 19px;
+  padding: 0 4px;
+}
+[data-theme='dark'] .new-chat-recipient-shortcut kbd { background: var(--av-sys-color-surface-subtle); color: var(--av-sys-color-text-muted); }
+.new-chat-recipient-empty {
+  color: var(--av-sys-color-text-muted);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 18px;
+  margin: 0;
+  padding: 0 13px;
+  text-align: center;
+}
+
+.new-chat-screen:not(.is-launching) > .launch-dock {
+  background: linear-gradient(to top, var(--av-sys-color-surface-default) 72%, transparent);
+  bottom: 0;
+  left: 0;
+  padding: 0 16px 16px;
+  position: absolute;
+  right: 0;
+}
+
+.new-chat-screen:not(.is-launching) .composer-stack { max-width: none; width: 100%; }
+.new-chat-screen:not(.is-launching) .launch-composer {
+  background: var(--av-cmp-composer-background);
+  border: var(--av-cmp-composer-border-width) solid var(--av-cmp-composer-border-color);
+  border-radius: 22px;
+  box-shadow: var(--av-cmp-composer-shadow);
+}
+.new-chat-screen:not(.is-launching) .launch-composer textarea { min-height: 42px; }
+.new-chat-screen:not(.is-launching) .launch-composer.has-attachments textarea { min-height: 67px; }
+[data-theme='dark'] .new-chat-screen:not(.is-launching) .launch-composer { border-color: var(--av-cmp-composer-border-color); }
 
 @media (max-width: 760px) {
   .workstream-launch-screen:not(.is-launching) > .launch-dock {

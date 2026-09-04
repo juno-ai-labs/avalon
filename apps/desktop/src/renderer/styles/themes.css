@@ -23,38 +23,38 @@
   src: url('../fonts/geist-mono-latin-variable.woff2') format('woff2');
 }
 
-/* Terra — Rally's original low-light palette. */
+/* Rally Light — The light GrokBot-inspired Rally appearance. */
 :root,
-[data-theme='terra'] {
-  color-scheme: dark;
+[data-theme='light'] {
+  color-scheme: light;
 
   /* The neutral ramp, ordered by contrast against the surface rather than by
    * lightness, so a step means the same thing whichever way round a theme
    * runs. Fills at the faint end, text at the strong end. */
-  --av-ref-color-neutral-1: #242521;
-  --av-ref-color-neutral-2: #292a26;
-  --av-ref-color-neutral-3: #30312c;
-  --av-ref-color-neutral-4: #343530;
-  --av-ref-color-neutral-5: #3b3c36;
-  --av-ref-color-neutral-6: #44453f;
-  --av-ref-color-neutral-7: #55564f;
-  --av-ref-color-neutral-8: #6f6f68;
-  --av-ref-color-neutral-9: #77766f;
-  --av-ref-color-neutral-10: #94948c;
-  --av-ref-color-neutral-11: #aaa9a2;
-  --av-ref-color-neutral-12: #cac9c2;
-  --av-ref-color-neutral-13: #dfded9;
-  --av-ref-color-neutral-14: #ecebe5;
+  --av-ref-color-neutral-1: #fcfcfc;
+  --av-ref-color-neutral-2: #f7f7f7;
+  --av-ref-color-neutral-3: #f3f3f3;
+  --av-ref-color-neutral-4: #eeeeee;
+  --av-ref-color-neutral-5: #e4e4e4;
+  --av-ref-color-neutral-6: #cbcbcb;
+  --av-ref-color-neutral-7: #a3a3a3;
+  --av-ref-color-neutral-8: #8f8f8f;
+  --av-ref-color-neutral-9: #777777;
+  --av-ref-color-neutral-10: #696969;
+  --av-ref-color-neutral-11: #555555;
+  --av-ref-color-neutral-12: #3d3d3d;
+  --av-ref-color-neutral-13: #2f2f2f;
+  --av-ref-color-neutral-14: #141414;
 
   /* The line ramp. Borders are not faint fills: a theme that draws with space
    * needs to flatten its lines without erasing the fills that share a contrast
    * level with them. */
-  --av-ref-color-line-1: #292a26;
-  --av-ref-color-line-2: #343530;
-  --av-ref-color-line-3: #3b3c36;
-  --av-ref-color-line-4: #44453f;
-  --av-ref-color-line-5: #55564f;
-  --av-ref-color-line-6: #74746d;
+  --av-ref-color-line-1: #f0f0f0;
+  --av-ref-color-line-2: #e5e5e5;
+  --av-ref-color-line-3: #d9d9d9;
+  --av-ref-color-line-4: #cecece;
+  --av-ref-color-line-5: #b6b6b6;
+  --av-ref-color-line-6: #8d8d8d;
 
   /* The window's backdrop: one painted layer behind every pane, so a theme's
    * light runs unbroken beneath a translucent sidebar and the feed beside it
@@ -75,18 +75,18 @@
   /* The named surfaces. Declared outright by each theme because their
    * relationship inverts between light and dark — a dark theme makes a control
    * recede by darkening it, a light theme by greying it. */
-  --av-sys-color-surface-canvas: #111210;
-  --av-sys-color-surface-default: #1d1e1b;
-  --av-sys-color-surface-subtle: #22231f;
-  --av-sys-color-surface-sunken: #191a17;
-  --av-sys-color-surface-raised: #292a26;
-  --av-sys-color-surface-raised-hover: #30312c;
-  --av-sys-color-surface-elevated: #292a26;
-  --av-sys-color-surface-elevated-hover: #383934;
-  --av-sys-color-surface-inverse-hover: #ffffff;
+  --av-sys-color-surface-canvas: #fcfcfc;
+  --av-sys-color-surface-default: #fcfcfc;
+  --av-sys-color-surface-subtle: #f7f7f7;
+  --av-sys-color-surface-sunken: #f3f3f3;
+  --av-sys-color-surface-raised: #fcfcfc;
+  --av-sys-color-surface-raised-hover: rgba(119, 119, 119, 0.17);
+  --av-sys-color-surface-elevated: #fcfcfc;
+  --av-sys-color-surface-elevated-hover: #eeeeee;
+  --av-sys-color-surface-inverse-hover: #2f2f2f;
 
   /* Text tones, strongest to faintest. */
-  --av-sys-color-text-on-inverse: #171815;
+  --av-sys-color-text-on-inverse: #fcfcfc;
   --av-sys-color-text-default: var(--av-ref-color-neutral-14);
   --av-sys-color-text-subtle: var(--av-ref-color-neutral-12);
   --av-sys-color-text-muted: var(--av-ref-color-neutral-10);
@@ -94,7 +94,7 @@
 
   /* The three borders the stylesheet names directly; each resolves to a step
    * on the line ramp. */
-  --av-sys-color-border-highlight: rgba(255, 255, 255, 0.035);
+  --av-sys-color-border-highlight: rgba(20, 20, 20, 0.05);
   --av-sys-color-border-default: var(--av-ref-color-line-2);
   --av-sys-color-border-subtle: var(--av-ref-color-line-1);
   --av-sys-color-border-strong: var(--av-ref-color-line-3);
@@ -102,54 +102,54 @@
   /* Rally's own colour. `ink` is the brand drawn as a mark or a label on an
    * ordinary surface, which is a different question from `base`: the
    * chartreuse is a fine fill on white and an illegible label on it. */
-  --av-sys-color-brand-base: #cedc00;
-  --av-sys-color-brand-strong: #e0ec25;
-  --av-sys-color-brand-soft: #aab96a;
-  --av-sys-color-brand-ink: #cedc00;
-  --av-sys-color-brand-wash: #25291f;
-  --av-sys-color-brand-edge: #3f4932;
-  --av-sys-color-brand-on: #11140f;
-  --av-sys-color-brand-tint: rgba(206, 220, 0, 0.3);
-  --av-sys-color-brand-tint-strong: rgba(206, 220, 0, 0.45);
-  --av-sys-color-brand-glow: radial-gradient(circle, rgba(206, 220, 0, 0.055), transparent 62%);
+  --av-sys-color-brand-base: #d2822c;
+  --av-sys-color-brand-strong: #b96c1e;
+  --av-sys-color-brand-soft: #c4762a;
+  --av-sys-color-brand-ink: #a2691f;
+  --av-sys-color-brand-wash: #fdf4e8;
+  --av-sys-color-brand-edge: #eccfa8;
+  --av-sys-color-brand-on: #ffffff;
+  --av-sys-color-brand-tint: rgba(210, 130, 44, 0.34);
+  --av-sys-color-brand-tint-strong: rgba(210, 130, 44, 0.5);
+  --av-sys-color-brand-glow: radial-gradient(circle, rgba(210, 130, 44, 0.12), transparent 62%);
   --av-sys-color-brand-hover: var(--av-sys-color-brand-strong);
 
   /* The hue for links, focus and selection. */
-  --av-sys-color-accent-base: #47c7fc;
-  --av-sys-color-accent-strong: #8ec2fb;
-  --av-sys-color-accent-soft: #64aaf4;
-  --av-sys-color-accent-wash: #15202a;
-  --av-sys-color-accent-edge: #283037;
-  --av-sys-color-accent-on: #0d1620;
-  --av-sys-color-accent-tint: rgba(71, 199, 252, 0.42);
+  --av-sys-color-accent-base: #6a80b8;
+  --av-sys-color-accent-strong: #55689b;
+  --av-sys-color-accent-soft: #7b8fc2;
+  --av-sys-color-accent-wash: #eef1f8;
+  --av-sys-color-accent-edge: #c9d3e8;
+  --av-sys-color-accent-on: #ffffff;
+  --av-sys-color-accent-tint: rgba(106, 128, 184, 0.34);
 
   /* Positive state. `fill` and `fill-edge` are a filled control — a switch
    * that is on, a selected preset — which is neither the vivid hue nor the
    * wash. */
-  --av-sys-color-success-base: #6ecb87;
-  --av-sys-color-success-strong: #88d29f;
-  --av-sys-color-success-fill: #315b44;
-  --av-sys-color-success-fill-edge: #3f7255;
-  --av-sys-color-success-soft: #93b69c;
-  --av-sys-color-success-wash: #1b2b20;
-  --av-sys-color-success-edge: #294632;
-  --av-sys-color-success-on: #d7f0e0;
+  --av-sys-color-success-base: #4f8271;
+  --av-sys-color-success-strong: #3d6a5b;
+  --av-sys-color-success-fill: #dfeae5;
+  --av-sys-color-success-fill-edge: #b9d0c6;
+  --av-sys-color-success-soft: #5e8a7a;
+  --av-sys-color-success-wash: #eef4f1;
+  --av-sys-color-success-edge: #cfe0d8;
+  --av-sys-color-success-on: #14261f;
 
   /* Attention short of failure. */
-  --av-sys-color-warning-base: #e6bd45;
-  --av-sys-color-warning-strong: #f0d49c;
-  --av-sys-color-warning-soft: #dec38d;
-  --av-sys-color-warning-wash: #3a3022;
-  --av-sys-color-warning-edge: #604d2c;
-  --av-sys-color-warning-on: #1c1608;
+  --av-sys-color-warning-base: #b8860b;
+  --av-sys-color-warning-strong: #9a7009;
+  --av-sys-color-warning-soft: #8a6208;
+  --av-sys-color-warning-wash: #fbf3e0;
+  --av-sys-color-warning-edge: #ecd9a8;
+  --av-sys-color-warning-on: #241a00;
 
   /* Failure and destructive action. */
-  --av-sys-color-danger-base: #d8756f;
-  --av-sys-color-danger-strong: #ef8a83;
-  --av-sys-color-danger-soft: #dda49e;
-  --av-sys-color-danger-wash: #3a2422;
-  --av-sys-color-danger-edge: #5b302d;
-  --av-sys-color-danger-on: #17100f;
+  --av-sys-color-danger-base: #c3453f;
+  --av-sys-color-danger-strong: #a5332e;
+  --av-sys-color-danger-soft: #b23a34;
+  --av-sys-color-danger-wash: #fdeeed;
+  --av-sys-color-danger-edge: #f2c9c6;
+  --av-sys-color-danger-on: #ffffff;
 
   /* The fixed project icon palette. These fills are identity choices rather
    * than theme accents, so a project keeps the same colour in every theme. */
@@ -174,395 +174,6 @@
    * `completed`, `failed`, `stopped`) and three are the reader’s own
    * (`unread`, `mentioned`, `unseen`), which is why they are one vocabulary:
    * they compete for one dot. */
-  --av-sys-color-workstream-running: #47c7fc;
-  --av-sys-color-workstream-needs-input: #e6bd45;
-  --av-sys-color-workstream-completed: var(--av-ref-color-neutral-9);
-  --av-sys-color-workstream-failed: #d8756f;
-  --av-sys-color-workstream-stopped: #a78668;
-  --av-sys-color-workstream-unread: #6ecb87;
-  --av-sys-color-workstream-mentioned: #f07ab0;
-  --av-sys-color-workstream-unseen: #b48cff;
-
-  /* Failure and destructive action. */
-  --av-sys-color-danger-tint: rgba(216, 117, 111, 0.13);
-  --av-sys-color-danger-tint-strong: rgba(216, 117, 111, 0.28);
-
-  /* What sits between a layer and what it covers. */
-  --av-sys-color-scrim-default: rgba(0, 0, 0, 0.55);
-  --av-sys-color-scrim-subtle: rgba(0, 0, 0, 0.3);
-  --av-sys-color-scrim-solid: rgba(10, 11, 8, 0.98);
-
-  /* The colour of a focus indicator. */
-  --av-sys-color-focus-default: var(--av-sys-color-accent-base);
-  --av-sys-color-focus-quiet: #6a7f95;
-
-  /* Selected text. */
-  --av-sys-color-selection-background: rgba(71, 199, 252, 0.28);
-
-  /* The scrollbar thumb. */
-  --av-sys-color-scrollbar-thumb: #3a3b35;
-
-  /* The sweep across a loading skeleton. */
-  --av-sys-color-shimmer-default: rgba(255, 255, 255, 0.07);
-
-  /* Syntax highlighting. `prism-react-renderer` takes a JavaScript object
-   * rather than a class, so these reach it as `var()` inside an inline style. */
-  --av-sys-color-syntax-plain: #e5e4df;
-  --av-sys-color-syntax-comment: #777772;
-  --av-sys-color-syntax-punctuation: #aaa9a3;
-  --av-sys-color-syntax-tag: #ff8a50;
-  --av-sys-color-syntax-number: #e6a06b;
-  --av-sys-color-syntax-string: #b995f5;
-  --av-sys-color-syntax-operator: #d8d7d2;
-  --av-sys-color-syntax-keyword: #ff7b2c;
-  --av-sys-color-syntax-function: #17a9f5;
-  --av-sys-color-syntax-variable: #e8b75c;
-
-  /* One per participant, chosen by a hash of their id. Six is enough that a
-   * repeat is rare in a room and few enough that each stays distinguishable. */
-  --av-sys-color-person-1: #8db6de;
-  --av-sys-color-person-2: #c79bd5;
-  --av-sys-color-person-3: #81bfa5;
-  --av-sys-color-person-4: #d2a47f;
-  --av-sys-color-person-5: #a6a0d9;
-  --av-sys-color-person-6: #cf9ba2;
-
-  /* Depth. A theme that lifts nothing sets these to `none`. */
-  --av-sys-elevation-shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.28);
-  --av-sys-elevation-shadow-md: 0 12px 35px rgba(0, 0, 0, 0.4);
-  --av-sys-elevation-shadow-lg: 0 22px 75px rgba(0, 0, 0, 0.52);
-  --av-sys-elevation-shadow-rail: -8px 0 28px rgba(0, 0, 0, 0.16);
-  --av-sys-elevation-shadow-rail-strong: -14px 0 42px rgba(0, 0, 0, 0.38);
-  --av-sys-elevation-shadow-drawer: 12px 0 40px rgba(0, 0, 0, 0.35);
-
-  /* Whole box-shadow values for a focus ring, so a theme controls its spread
-   * as well as its colour. */
-  --av-sys-focus-ring-default: 0 0 0 2px rgba(71, 199, 252, 0.25);
-  --av-sys-focus-ring-quiet: 0 0 0 2px rgba(130, 151, 172, 0.12);
-  --av-sys-focus-ring-brand: 0 0 0 2px rgba(206, 220, 0, 0.22);
-
-  /* The corner scale. */
-  --av-sys-size-radius-xs: 4px;
-  --av-sys-size-radius-sm: 5px;
-  --av-sys-size-radius-md: 7px;
-  --av-sys-size-radius-lg: 10px;
-  --av-sys-size-radius-xl: 12px;
-  --av-sys-size-radius-pill: 999px;
-
-  /* Border widths. */
-  --av-sys-size-border-hairline: 1px;
-
-  /* The height of a control. */
-  --av-sys-size-control-height: 32px;
-
-  /* Padding around a pane of content. */
-  --av-sys-space-pane-padding: 20px;
-
-  /* Between message blocks in the feed. */
-  --av-sys-space-stack-gap: 31px;
-
-  /* Between rows in a list. */
-  --av-sys-space-row-gap: 1px;
-
-  /* Between one group of rows and the next. */
-  --av-sys-space-group-gap: 12px;
-
-  /* Between events in the feed. */
-  --av-sys-space-block-gap: 16px;
-
-  /* Between paragraphs. */
-  --av-sys-space-prose-gap: 14px;
-
-  /* The families. `ui` and `mono` are Geist, which ships inside the
-   * application as a `bundled` font source — a family the app only names is a
-   * family the platform substitutes, and weight then resolves against whatever
-   * it picked. */
-  --av-sys-font-family-ui: Geist, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --av-sys-font-family-display: var(--av-sys-font-family-ui);
-  --av-sys-font-family-mono: "Geist Mono", ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
-
-  /* The sizes the interface sets, as against the document size a theme
-   * inherits. */
-  --av-sys-font-size-base: 14px;
-  --av-sys-font-size-prose: 14px;
-  --av-sys-font-size-row: 12.5px;
-  --av-sys-font-size-hint: 10.5px;
-  --av-sys-font-size-action: 13px;
-  --av-sys-font-size-meta: 9.5px;
-  --av-sys-font-size-author: 12px;
-  --av-sys-font-size-title: 13px;
-
-  /* Line height. */
-  --av-sys-font-leading-prose: 1.6;
-  --av-sys-font-leading-base: 1.48;
-
-  /* Weights. Only meaningful to the degree the resolved family supports them. */
-  --av-sys-font-weight-strong: 560;
-  --av-sys-font-weight-heading: 600;
-  --av-sys-font-weight-emphasis: 620;
-
-  /* The four properties that decide whether a label is sentence case or
-   * letterspaced small capitals. They apply to the label over a turn in the
-   * feed as well as the one over a group of navigation rows. */
-  --av-sys-label-font-size: 10px;
-  --av-sys-label-tracking: 0.02em;
-  --av-sys-label-transform: none;
-  --av-sys-label-weight: 560;
-
-  /* The content pane. `background` is the fill drawn over the backdrop, so a
-   * theme that wants its backdrop to show through the feed sets it to
-   * `transparent` rather than to a colour that happens to match. */
-  --av-cmp-pane-background: var(--av-sys-color-surface-default);
-
-  /* The navigation. `background` is a translucent tint, so `background-solid`
-   * exists for the narrow-width drawer, which sits over the content and cannot
-   * be see-through. */
-  --av-cmp-sidebar-background: rgba(122, 124, 108, 0.06);
-  --av-cmp-sidebar-background-solid: #181916;
-  --av-cmp-sidebar-border: #282924;
-  --av-cmp-sidebar-width: 300px;
-
-  /* The mark at a row's leading edge. It is one element whose *shape* is a
-   * theme's decision and whose *colour* stays the row's state, so a theme can
-   * trade a dot for a line without the navigation losing what the dot was
-   * saying. It stretches between `inset-block` and the row, which is what lets
-   * one pair of values describe both a centred dot — `calc(50% - 3px)` — and a
-   * line that runs the height of the row. */
-  --av-cmp-marker-inline-size: 6px;
-  --av-cmp-marker-radius: var(--av-sys-size-radius-pill);
-  --av-cmp-marker-slot: 14px;
-  --av-cmp-marker-inset-block: calc(50% - 3px);
-  --av-cmp-marker-glow: none;
-
-  /* Inside a navigation row. `height-dense` is the floor under the rows whose
-   * height comes from their content; `height` is the floor for a single-line
-   * row. `background-hover` and `background-selected` are the fills; a theme
-   * that marks selection with the marker alone sets the latter to
-   * `transparent`. */
-  --av-cmp-row-height: 31px;
-  --av-cmp-row-padding: 3px 7px;
-  --av-cmp-row-leading: 1.25;
-  --av-cmp-row-hint-gap: 2px;
-  --av-cmp-row-height-dense: 30px;
-  --av-cmp-row-background-hover: var(--av-sys-color-surface-subtle);
-  --av-cmp-row-background-selected: var(--av-ref-color-neutral-4);
-
-  /* The band a group's label sits in. */
-  --av-cmp-group-label-height: 26px;
-  --av-cmp-group-label-gap: 4px;
-
-  /* The fill behind a person's turn. A theme with one continuous ground can
-   * set all three to nothing and let the message sit on the page as plain
-   * text. */
-  --av-cmp-bubble-background: var(--av-sys-color-surface-raised-hover);
-  --av-cmp-bubble-border: var(--av-ref-color-line-3);
-  --av-cmp-bubble-padding: 9px 14px;
-
-  /* The message composer's frame. A theme builds either shape out of the same
-   * five values: a card sets a background, a border and a radius; a rule sets
-   * them to nothing and gives `rule-color` a hairline instead, so the composer
-   * reads as a line the page rests on rather than as a box floating over it.
-   * `rule-color-focus` is what that line does when the field has focus, which
-   * is the only feedback left once the border is gone. `send-background` and
-   * `send-radius` are the send control's own frame, which follows the
-   * composer: a flat composer with a raised button on it reads as two
-   * different surfaces. */
-  --av-cmp-composer-background: var(--av-sys-color-surface-raised);
-  --av-cmp-composer-border-color: var(--av-ref-color-line-3);
-  --av-cmp-composer-border-color-focus: var(--av-ref-color-line-5);
-  --av-cmp-composer-border-width: 1px;
-  --av-cmp-composer-radius: var(--av-sys-size-radius-xl);
-  --av-cmp-composer-shadow: var(--av-sys-elevation-shadow-md);
-  --av-cmp-composer-rule-color: var(--av-ref-color-line-3);
-  --av-cmp-composer-rule-color-focus: var(--av-ref-color-line-5);
-  --av-cmp-composer-padding: 14px 15px 4px;
-  --av-cmp-composer-send-background: var(--av-sys-color-text-default);
-  --av-cmp-composer-send-radius: var(--av-sys-size-radius-md);
-  --av-cmp-composer-send-foreground: var(--av-sys-color-text-on-inverse);
-
-  /* Where a person's own turn sits. The three move together: a turn
-   * left-aligned but still capped reads as text that wraps early for no
-   * reason. */
-  --av-cmp-turn-align: flex-end;
-  --av-cmp-turn-margin: auto;
-  --av-cmp-turn-width: min(72%, 620px);
-
-  /* The reading column, and the label over a turn in it. */
-  --av-cmp-feed-width: 860px;
-  --av-cmp-feed-width-wide: 920px;
-  --av-cmp-feed-padding-y: 42px;
-  --av-cmp-feed-padding-x: 34px;
-  --av-cmp-feed-author-font-size: 10.5px;
-  --av-cmp-feed-author-font-weight: 560;
-
-  /* Rendered markdown. Its colours were already tokens; its *measurements*
-   * were not, which is why Air's headings were smaller than the prose beneath
-   * them — `.markdown-body` scaled with `sys.font.size.prose` and the headings
-   * it contained stayed at a fixed 18/16/14.5/14. A theme that moves its prose
-   * size has to be able to move the scale above it, and the rhythm with it.
-   * The `article-*` values are the note detail's own scale: a note is read as
-   * a document rather than as a turn in a transcript, so its headings run
-   * larger than the feed's. */
-  --av-cmp-markdown-diagram-line: var(--av-ref-color-line-6);
-  --av-cmp-markdown-heading-1: 18px;
-  --av-cmp-markdown-heading-2: 16px;
-  --av-cmp-markdown-heading-3: 14.5px;
-  --av-cmp-markdown-heading-4: 14px;
-  --av-cmp-markdown-heading-leading: 1.3;
-  --av-cmp-markdown-heading-margin: 21px 0 9px;
-  --av-cmp-markdown-strong-weight: 660;
-  --av-cmp-markdown-list-margin: 9px 0 15px;
-  --av-cmp-markdown-list-indent: 26px;
-  --av-cmp-markdown-blockquote-margin: 16px 0;
-  --av-cmp-markdown-rule-margin: 22px 0;
-  --av-cmp-markdown-table-leading: 1.45;
-  --av-cmp-markdown-cell-padding: 6px 8px;
-  --av-cmp-markdown-article-heading-1: 22px;
-  --av-cmp-markdown-article-heading-2: 17px;
-  --av-cmp-markdown-article-heading-3: 14px;
-  --av-cmp-markdown-article-heading-margin: 28px 0 10px;
-
-  /* A surface that deliberately opposes the theme: light on a dark theme and
-   * dark on a light one, so it cannot be a ramp step in either. */
-  --av-cmp-tooltip-background: #e9e8e1;
-  --av-cmp-tooltip-foreground: #1c1d1a;
-
-  /* A switch. The knob is white on a grey track in a light theme, which is
-   * about two to one; the lift from `sys.elevation.shadow.sm` is what makes
-   * the off state read as a control. */
-  --av-cmp-toggle-track: #44453f;
-  --av-cmp-toggle-knob-off: #b0afa8;
-
-  /* Connector faces. Each keeps enough of the provider's own colour to be
-   * recognised at 20px, on a block the theme can still sit behind. */
-  --av-cmp-connector-github-background: #292a2d;
-  --av-cmp-connector-github-foreground: #d0cfd0;
-  --av-cmp-connector-google-background: #302b28;
-  --av-cmp-connector-google-foreground: #e2a084;
-  --av-cmp-connector-drive-background: #29312b;
-  --av-cmp-connector-drive-foreground: #91c4a1;
-  --av-cmp-connector-slack-background: #2b2f33;
-  --av-cmp-connector-slack-foreground: #9fc0d4;
-  --av-cmp-connector-linear-background: #2e2b36;
-  --av-cmp-connector-linear-foreground: #b5a2df;
-  --av-cmp-connector-webhook-background: #312c28;
-  --av-cmp-connector-webhook-foreground: #d7aa83;
-  --av-cmp-connector-search-background: #283037;
-  --av-cmp-connector-search-foreground: #8eb8d6;
-  --av-cmp-connector-plug-background: #30302a;
-  --av-cmp-connector-plug-foreground: #c2bd8a;
-}
-/* Air — Warm paper, amber light, and a great deal of room. */
-[data-theme='air'] {
-  color-scheme: light;
-
-  --av-ref-color-neutral-1: #f2eee6;
-  --av-ref-color-neutral-2: #ece7dd;
-  --av-ref-color-neutral-3: #e4ded2;
-  --av-ref-color-neutral-4: #dad3c5;
-  --av-ref-color-neutral-5: #cdc5b4;
-  --av-ref-color-neutral-6: #b8af9c;
-  --av-ref-color-neutral-7: #a49a88;
-  --av-ref-color-neutral-8: #9b917f;
-  --av-ref-color-neutral-9: #8d8375;
-  --av-ref-color-neutral-10: #7a7164;
-  --av-ref-color-neutral-11: #6b6154;
-  --av-ref-color-neutral-12: #5d5449;
-  --av-ref-color-neutral-13: #332c24;
-  --av-ref-color-neutral-14: #1f1a14;
-
-  --av-ref-color-line-1: #f4f0e8;
-  --av-ref-color-line-2: #eee9df;
-  --av-ref-color-line-3: #e7e1d5;
-  --av-ref-color-line-4: #ddd5c6;
-  --av-ref-color-line-5: #cec5b3;
-  --av-ref-color-line-6: #9c9789;
-
-  --av-sys-backdrop-color: var(--av-sys-color-surface-canvas);
-  --av-sys-backdrop-image: none;
-  --av-sys-backdrop-position: 0% 0%;
-  --av-sys-backdrop-size: auto;
-  --av-sys-backdrop-repeat: no-repeat;
-  --av-sys-backdrop-attachment: fixed;
-  --av-sys-backdrop-blend-mode: normal;
-
-  --av-sys-color-surface-canvas: #f7f3ec;
-  --av-sys-color-surface-default: #f7f3ec;
-  --av-sys-color-surface-subtle: #f2eee6;
-  --av-sys-color-surface-sunken: #ece7dd;
-  --av-sys-color-surface-raised: #fdfbf7;
-  --av-sys-color-surface-raised-hover: #f5f1e8;
-  --av-sys-color-surface-elevated: #fffdf9;
-  --av-sys-color-surface-elevated-hover: #f6f2e9;
-  --av-sys-color-surface-inverse-hover: #2a241d;
-
-  --av-sys-color-text-on-inverse: #f7f3ec;
-  --av-sys-color-text-default: var(--av-ref-color-neutral-14);
-  --av-sys-color-text-subtle: var(--av-ref-color-neutral-12);
-  --av-sys-color-text-muted: var(--av-ref-color-neutral-10);
-  --av-sys-color-text-disabled: var(--av-ref-color-neutral-8);
-
-  --av-sys-color-border-highlight: rgba(45, 38, 30, 0.05);
-  --av-sys-color-border-default: var(--av-ref-color-line-2);
-  --av-sys-color-border-subtle: var(--av-ref-color-line-1);
-  --av-sys-color-border-strong: var(--av-ref-color-line-3);
-
-  --av-sys-color-brand-base: #d2822c;
-  --av-sys-color-brand-strong: #b96c1e;
-  --av-sys-color-brand-soft: #c4762a;
-  --av-sys-color-brand-ink: #a2691f;
-  --av-sys-color-brand-wash: #fdf4e8;
-  --av-sys-color-brand-edge: #eccfa8;
-  --av-sys-color-brand-on: #ffffff;
-  --av-sys-color-brand-tint: rgba(210, 130, 44, 0.34);
-  --av-sys-color-brand-tint-strong: rgba(210, 130, 44, 0.5);
-  --av-sys-color-brand-glow: radial-gradient(circle, rgba(210, 130, 44, 0.12), transparent 62%);
-  --av-sys-color-brand-hover: var(--av-sys-color-brand-strong);
-
-  --av-sys-color-accent-base: #6a80b8;
-  --av-sys-color-accent-strong: #55689b;
-  --av-sys-color-accent-soft: #7b8fc2;
-  --av-sys-color-accent-wash: #eef1f8;
-  --av-sys-color-accent-edge: #c9d3e8;
-  --av-sys-color-accent-on: #ffffff;
-  --av-sys-color-accent-tint: rgba(106, 128, 184, 0.34);
-
-  --av-sys-color-success-base: #4f8271;
-  --av-sys-color-success-strong: #3d6a5b;
-  --av-sys-color-success-fill: #dfeae5;
-  --av-sys-color-success-fill-edge: #b9d0c6;
-  --av-sys-color-success-soft: #5e8a7a;
-  --av-sys-color-success-wash: #eef4f1;
-  --av-sys-color-success-edge: #cfe0d8;
-  --av-sys-color-success-on: #14261f;
-
-  --av-sys-color-warning-base: #b8860b;
-  --av-sys-color-warning-strong: #9a7009;
-  --av-sys-color-warning-soft: #8a6208;
-  --av-sys-color-warning-wash: #fbf3e0;
-  --av-sys-color-warning-edge: #ecd9a8;
-  --av-sys-color-warning-on: #241a00;
-
-  --av-sys-color-danger-base: #c3453f;
-  --av-sys-color-danger-strong: #a5332e;
-  --av-sys-color-danger-soft: #b23a34;
-  --av-sys-color-danger-wash: #fdeeed;
-  --av-sys-color-danger-edge: #f2c9c6;
-  --av-sys-color-danger-on: #ffffff;
-
-  --av-sys-color-project-gray: #6b7280;
-  --av-sys-color-project-brown: #92400e;
-  --av-sys-color-project-red: #dc2626;
-  --av-sys-color-project-orange: #ea580c;
-  --av-sys-color-project-yellow: #ca8a04;
-  --av-sys-color-project-green: #16a34a;
-  --av-sys-color-project-teal: #0d9488;
-  --av-sys-color-project-cyan: #0891b2;
-  --av-sys-color-project-blue: #2563eb;
-  --av-sys-color-project-indigo: #4f46e5;
-  --av-sys-color-project-purple: #9333ea;
-  --av-sys-color-project-pink: #db2777;
-
   --av-sys-color-workstream-running: #1f74b8;
   --av-sys-color-workstream-needs-input: #b07d0a;
   --av-sys-color-workstream-completed: var(--av-ref-color-neutral-9);
@@ -572,22 +183,30 @@
   --av-sys-color-workstream-mentioned: #b83d7e;
   --av-sys-color-workstream-unseen: #6f45c0;
 
+  /* Failure and destructive action. */
   --av-sys-color-danger-tint: rgba(195, 69, 63, 0.1);
   --av-sys-color-danger-tint-strong: rgba(195, 69, 63, 0.24);
 
+  /* What sits between a layer and what it covers. */
   --av-sys-color-scrim-default: rgba(38, 36, 30, 0.34);
   --av-sys-color-scrim-subtle: rgba(38, 36, 30, 0.18);
   --av-sys-color-scrim-solid: rgba(246, 245, 241, 0.98);
 
+  /* The colour of a focus indicator. */
   --av-sys-color-focus-default: var(--av-sys-color-brand-base);
   --av-sys-color-focus-quiet: #c9b48f;
 
+  /* Selected text. */
   --av-sys-color-selection-background: rgba(210, 130, 44, 0.22);
 
-  --av-sys-color-scrollbar-thumb: #dad3c5;
+  /* The scrollbar thumb. */
+  --av-sys-color-scrollbar-thumb: #cbcbcb;
 
-  --av-sys-color-shimmer-default: rgba(45, 38, 30, 0.05);
+  /* The sweep across a loading skeleton. */
+  --av-sys-color-shimmer-default: rgba(20, 20, 20, 0.05);
 
+  /* Syntax highlighting. `prism-react-renderer` takes a JavaScript object
+   * rather than a class, so these reach it as `var()` inside an inline style. */
   --av-sys-color-syntax-plain: #24231e;
   --av-sys-color-syntax-comment: #8a857a;
   --av-sys-color-syntax-punctuation: #5c5850;
@@ -599,6 +218,8 @@
   --av-sys-color-syntax-function: #0a6ba8;
   --av-sys-color-syntax-variable: #8a6208;
 
+  /* One per participant, chosen by a hash of their id. Six is enough that a
+   * repeat is rare in a room and few enough that each stays distinguishable. */
   --av-sys-color-person-1: #2f6f9e;
   --av-sys-color-person-2: #7a4a91;
   --av-sys-color-person-3: #2f7d5c;
@@ -606,6 +227,7 @@
   --av-sys-color-person-5: #4f4a9e;
   --av-sys-color-person-6: #9b4550;
 
+  /* Depth. A theme that lifts nothing sets these to `none`. */
   --av-sys-elevation-shadow-sm: none;
   --av-sys-elevation-shadow-md: 0 8px 26px rgba(30, 28, 22, 0.13);
   --av-sys-elevation-shadow-lg: 0 20px 60px rgba(30, 28, 22, 0.18);
@@ -613,10 +235,13 @@
   --av-sys-elevation-shadow-rail-strong: -14px 0 42px rgba(30, 28, 22, 0.14);
   --av-sys-elevation-shadow-drawer: 12px 0 40px rgba(30, 28, 22, 0.16);
 
+  /* Whole box-shadow values for a focus ring, so a theme controls its spread
+   * as well as its colour. */
   --av-sys-focus-ring-default: 0 0 0 2px rgba(210, 130, 44, 0.32);
   --av-sys-focus-ring-quiet: 0 0 0 2px rgba(210, 130, 44, 0.14);
   --av-sys-focus-ring-brand: 0 0 0 2px rgba(210, 130, 44, 0.3);
 
+  /* The corner scale. */
   --av-sys-size-radius-xs: 2px;
   --av-sys-size-radius-sm: 3px;
   --av-sys-size-radius-md: 4px;
@@ -624,26 +249,40 @@
   --av-sys-size-radius-xl: 8px;
   --av-sys-size-radius-pill: 999px;
 
+  /* Border widths. */
   --av-sys-size-border-hairline: 1px;
 
+  /* The height of a control. */
   --av-sys-size-control-height: 36px;
 
+  /* Padding around a pane of content. */
   --av-sys-space-pane-padding: 34px;
 
+  /* Between message blocks in the feed. */
   --av-sys-space-stack-gap: 58px;
 
+  /* Between rows in a list. */
   --av-sys-space-row-gap: 5px;
 
+  /* Between one group of rows and the next. */
   --av-sys-space-group-gap: 60px;
 
+  /* Between events in the feed. */
   --av-sys-space-block-gap: 28px;
 
+  /* Between paragraphs. */
   --av-sys-space-prose-gap: 22px;
 
+  /* The families. `ui` and `mono` are Geist, which ships inside the
+   * application as a `bundled` font source — a family the app only names is a
+   * family the platform substitutes, and weight then resolves against whatever
+   * it picked. */
   --av-sys-font-family-ui: Geist, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --av-sys-font-family-display: var(--av-sys-font-family-ui);
   --av-sys-font-family-mono: "Geist Mono", ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
 
+  /* The sizes the interface sets, as against the document size a theme
+   * inherits. */
   --av-sys-font-size-base: 15px;
   --av-sys-font-size-prose: 16.5px;
   --av-sys-font-size-row: 14.5px;
@@ -653,63 +292,112 @@
   --av-sys-font-size-author: 12.5px;
   --av-sys-font-size-title: 15px;
 
+  /* Line height. */
   --av-sys-font-leading-prose: 1.85;
   --av-sys-font-leading-base: 1.75;
 
+  /* Weights. Only meaningful to the degree the resolved family supports them. */
   --av-sys-font-weight-strong: 450;
   --av-sys-font-weight-heading: 480;
   --av-sys-font-weight-emphasis: 500;
 
+  /* The four properties that decide whether a label is sentence case or
+   * letterspaced small capitals. They apply to the label over a turn in the
+   * feed as well as the one over a group of navigation rows. */
   --av-sys-label-font-size: 10px;
   --av-sys-label-tracking: 0.18em;
   --av-sys-label-transform: uppercase;
   --av-sys-label-weight: 500;
 
-  --av-cmp-pane-background: transparent;
+  /* The content pane. `background` is the fill drawn over the backdrop, so a
+   * theme that wants its backdrop to show through the feed sets it to
+   * `transparent` rather than to a colour that happens to match. */
+  --av-cmp-pane-background: #fcfcfc;
 
-  --av-cmp-sidebar-background: transparent;
-  --av-cmp-sidebar-background-solid: #f4f0e8;
-  --av-cmp-sidebar-border: rgba(45, 38, 30, 0.11);
-  --av-cmp-sidebar-width: 320px;
+  /* The navigation. `background` is a translucent tint, so `background-solid`
+   * exists for the narrow-width drawer, which sits over the content and cannot
+   * be see-through. */
+  --av-cmp-sidebar-background: #f7f7f7;
+  --av-cmp-sidebar-background-solid: #f7f7f7;
+  --av-cmp-sidebar-border: rgba(20, 20, 20, 0.10);
+  --av-cmp-sidebar-width: 280px;
 
+  /* The mark at a row's leading edge. It is one element whose *shape* is a
+   * theme's decision and whose *colour* stays the row's state, so a theme can
+   * trade a dot for a line without the navigation losing what the dot was
+   * saying. It stretches between `inset-block` and the row, which is what lets
+   * one pair of values describe both a centred dot — `calc(50% - 3px)` — and a
+   * line that runs the height of the row. */
   --av-cmp-marker-inline-size: 2px;
   --av-cmp-marker-radius: 2px;
   --av-cmp-marker-slot: 12px;
   --av-cmp-marker-inset-block: 9px;
   --av-cmp-marker-glow: 0 0 10px rgba(210, 130, 44, 0.6);
 
+  /* Inside a navigation row. `height-dense` is the floor under the rows whose
+   * height comes from their content; `height` is the floor for a single-line
+   * row. `background-hover` and `background-selected` are the fills; a theme
+   * that marks selection with the marker alone sets the latter to
+   * `transparent`. */
   --av-cmp-row-height: 46px;
   --av-cmp-row-padding: 9px 10px;
   --av-cmp-row-leading: 1.55;
   --av-cmp-row-hint-gap: 7px;
   --av-cmp-row-height-dense: 44px;
-  --av-cmp-row-background-hover: rgba(60, 48, 36, 0.045);
-  --av-cmp-row-background-selected: transparent;
+  --av-cmp-row-background-hover: rgba(119, 119, 119, 0.09);
+  --av-cmp-row-background-selected: rgba(119, 119, 119, 0.17);
 
+  /* The band a group's label sits in. */
   --av-cmp-group-label-height: 34px;
   --av-cmp-group-label-gap: 22px;
 
-  --av-cmp-bubble-background: transparent;
+  /* The fill behind a person's turn. A theme with one continuous ground can
+   * set all three to nothing and let the message sit on the page as plain
+   * text. */
+  --av-cmp-bubble-background: #eeeeee;
+
+  /* The inset choice list within an agent question, distinct from its
+   * surrounding message surface. */
+  --av-cmp-elicitation-option-background: #e8e8e8;
+
+  /* The fill behind a person's turn. A theme with one continuous ground can
+   * set all three to nothing and let the message sit on the page as plain
+   * text. */
+  --av-cmp-bubble-human-background: #070707;
+  --av-cmp-bubble-human-foreground: #fcfcfc;
   --av-cmp-bubble-border: transparent;
   --av-cmp-bubble-padding: 0;
 
-  --av-cmp-composer-background: transparent;
-  --av-cmp-composer-border-color: transparent;
-  --av-cmp-composer-border-color-focus: transparent;
-  --av-cmp-composer-border-width: 0;
-  --av-cmp-composer-radius: 0;
-  --av-cmp-composer-shadow: none;
-  --av-cmp-composer-rule-color: rgba(45, 38, 30, 0.14);
-  --av-cmp-composer-rule-color-focus: rgba(210, 130, 44, 0.3);
+  /* The message composer's frame. A theme builds either shape out of the same
+   * five values: a card sets a background, a border and a radius; a rule sets
+   * them to nothing and gives `rule-color` a hairline instead, so the composer
+   * reads as a line the page rests on rather than as a box floating over it.
+   * `rule-color-focus` is what that line does when the field has focus, which
+   * is the only feedback left once the border is gone. `send-background` and
+   * `send-radius` are the send control's own frame, which follows the
+   * composer: a flat composer with a raised button on it reads as two
+   * different surfaces. */
+  --av-cmp-composer-background: #fcfcfc;
+  --av-cmp-composer-border-color: rgba(20, 20, 20, 0.30);
+  --av-cmp-composer-border-color-focus: rgba(20, 20, 20, 0.20);
+  --av-cmp-composer-border-width: 0.5px;
+  --av-cmp-composer-radius: 22px;
+  --av-cmp-composer-shadow: 0 2px 8px -1px rgba(0, 0, 0, 0.05), 0 1px 2px rgba(0, 0, 0, 0.03), 0 0 0 1px rgba(228, 228, 228, 0.04);
+  --av-cmp-composer-rule-color: rgba(20, 20, 20, 0.30);
+  --av-cmp-composer-rule-color-focus: rgba(20, 20, 20, 0.20);
   --av-cmp-composer-padding: 20px 2px 6px;
-  --av-cmp-composer-send-background: transparent;
-  --av-cmp-composer-send-radius: var(--av-sys-size-radius-md);
-  --av-cmp-composer-send-foreground: var(--av-sys-color-brand-base);
+  --av-cmp-composer-send-background: #070707;
+  --av-cmp-composer-send-radius: var(--av-sys-size-radius-pill);
+  --av-cmp-composer-send-foreground: #fcfcfc;
 
+  /* Where a person's own turn sits. The three move together: a turn
+   * left-aligned but still capped reads as text that wraps early for no
+   * reason. */
   --av-cmp-turn-align: flex-start;
   --av-cmp-turn-margin: 0;
   --av-cmp-turn-width: 100%;
 
+  /* The reading column, and the label over a turn in it. */
   --av-cmp-feed-width: 880px;
   --av-cmp-feed-width-wide: 940px;
   --av-cmp-feed-padding-y: 64px;
@@ -717,6 +405,14 @@
   --av-cmp-feed-author-font-size: 12px;
   --av-cmp-feed-author-font-weight: 470;
 
+  /* Rendered markdown. Its colours were already tokens; its *measurements*
+   * were not, which is why Air's headings were smaller than the prose beneath
+   * them — `.markdown-body` scaled with `sys.font.size.prose` and the headings
+   * it contained stayed at a fixed 18/16/14.5/14. A theme that moves its prose
+   * size has to be able to move the scale above it, and the rhythm with it.
+   * The `article-*` values are the note detail's own scale: a note is read as
+   * a document rather than as a turn in a transcript, so its headings run
+   * larger than the feed's. */
   --av-cmp-markdown-diagram-line: var(--av-ref-color-line-6);
   --av-cmp-markdown-heading-1: 25px;
   --av-cmp-markdown-heading-2: 21px;
@@ -736,12 +432,19 @@
   --av-cmp-markdown-article-heading-3: 19px;
   --av-cmp-markdown-article-heading-margin: 48px 0 18px;
 
+  /* A surface that deliberately opposes the theme: light on a dark theme and
+   * dark on a light one, so it cannot be a ramp step in either. */
   --av-cmp-tooltip-background: #2a241d;
   --av-cmp-tooltip-foreground: #f7f3ec;
 
+  /* A switch. The knob is white on a grey track in a light theme, which is
+   * about two to one; the lift from `sys.elevation.shadow.sm` is what makes
+   * the off state read as a control. */
   --av-cmp-toggle-track: #dad3c5;
   --av-cmp-toggle-knob-off: #8d8375;
 
+  /* Connector faces. Each keeps enough of the provider's own colour to be
+   * recognised at 20px, on a block the theme can still sit behind. */
   --av-cmp-connector-github-background: #f0efec;
   --av-cmp-connector-github-foreground: #24292f;
   --av-cmp-connector-google-background: #fbeeea;
@@ -759,31 +462,31 @@
   --av-cmp-connector-plug-background: #f4f3e8;
   --av-cmp-connector-plug-foreground: #6c6a2c;
 }
-/* Air Dark — Near-black, amber, and a great deal of room. */
-[data-theme='air-dark'] {
+/* Rally Dark — The dark GrokBot-inspired Rally appearance. */
+[data-theme='dark'] {
   color-scheme: dark;
 
-  --av-ref-color-neutral-1: #100d09;
-  --av-ref-color-neutral-2: #16120c;
-  --av-ref-color-neutral-3: #1d1710;
-  --av-ref-color-neutral-4: #2a2318;
-  --av-ref-color-neutral-5: #342c1f;
-  --av-ref-color-neutral-6: #453c2e;
-  --av-ref-color-neutral-7: #5c5344;
-  --av-ref-color-neutral-8: #766c5c;
-  --av-ref-color-neutral-9: #8a8070;
-  --av-ref-color-neutral-10: #a19684;
-  --av-ref-color-neutral-11: #b8ac99;
-  --av-ref-color-neutral-12: #d3c8b5;
-  --av-ref-color-neutral-13: #e4dbcb;
-  --av-ref-color-neutral-14: #f2ebdf;
+  --av-ref-color-neutral-1: #070707;
+  --av-ref-color-neutral-2: #111111;
+  --av-ref-color-neutral-3: #1b1b1b;
+  --av-ref-color-neutral-4: #2f2f2f;
+  --av-ref-color-neutral-5: #3d3d3d;
+  --av-ref-color-neutral-6: #555555;
+  --av-ref-color-neutral-7: #696969;
+  --av-ref-color-neutral-8: #777777;
+  --av-ref-color-neutral-9: #8f8f8f;
+  --av-ref-color-neutral-10: #a3a3a3;
+  --av-ref-color-neutral-11: #cbcbcb;
+  --av-ref-color-neutral-12: #e4e4e4;
+  --av-ref-color-neutral-13: #eeeeee;
+  --av-ref-color-neutral-14: #fcfcfc;
 
-  --av-ref-color-line-1: #0f0c08;
-  --av-ref-color-line-2: #131009;
-  --av-ref-color-line-3: #171208;
-  --av-ref-color-line-4: #1d170d;
-  --av-ref-color-line-5: #262013;
-  --av-ref-color-line-6: #4a4030;
+  --av-ref-color-line-1: #131313;
+  --av-ref-color-line-2: #202020;
+  --av-ref-color-line-3: #2c2c2c;
+  --av-ref-color-line-4: #383838;
+  --av-ref-color-line-5: #515151;
+  --av-ref-color-line-6: #7d7d7d;
 
   --av-sys-backdrop-color: var(--av-sys-color-surface-canvas);
   --av-sys-backdrop-image: none;
@@ -793,23 +496,23 @@
   --av-sys-backdrop-attachment: fixed;
   --av-sys-backdrop-blend-mode: normal;
 
-  --av-sys-color-surface-canvas: #100e0c;
-  --av-sys-color-surface-default: #100e0c;
-  --av-sys-color-surface-subtle: #110e0a;
-  --av-sys-color-surface-sunken: #080604;
-  --av-sys-color-surface-raised: #16110b;
-  --av-sys-color-surface-raised-hover: #1e1711;
-  --av-sys-color-surface-elevated: #17120c;
-  --av-sys-color-surface-elevated-hover: #221b13;
-  --av-sys-color-surface-inverse-hover: #fffaf1;
+  --av-sys-color-surface-canvas: #070707;
+  --av-sys-color-surface-default: #070707;
+  --av-sys-color-surface-subtle: #111111;
+  --av-sys-color-surface-sunken: #070707;
+  --av-sys-color-surface-raised: #2f2f2f;
+  --av-sys-color-surface-raised-hover: #313131;
+  --av-sys-color-surface-elevated: #2f2f2f;
+  --av-sys-color-surface-elevated-hover: #3d3d3d;
+  --av-sys-color-surface-inverse-hover: #eeeeee;
 
-  --av-sys-color-text-on-inverse: #0c0a07;
+  --av-sys-color-text-on-inverse: #141414;
   --av-sys-color-text-default: var(--av-ref-color-neutral-14);
   --av-sys-color-text-subtle: var(--av-ref-color-neutral-12);
   --av-sys-color-text-muted: var(--av-ref-color-neutral-10);
   --av-sys-color-text-disabled: var(--av-ref-color-neutral-8);
 
-  --av-sys-color-border-highlight: rgba(242, 235, 223, 0.04);
+  --av-sys-color-border-highlight: rgba(252, 252, 252, 0.05);
   --av-sys-color-border-default: var(--av-ref-color-line-2);
   --av-sys-color-border-subtle: var(--av-ref-color-line-1);
   --av-sys-color-border-strong: var(--av-ref-color-line-3);
@@ -891,12 +594,12 @@
 
   --av-sys-color-selection-background: rgba(224, 140, 58, 0.24);
 
-  --av-sys-color-scrollbar-thumb: #2c2418;
+  --av-sys-color-scrollbar-thumb: #2f2f2f;
 
-  --av-sys-color-shimmer-default: rgba(242, 235, 223, 0.05);
+  --av-sys-color-shimmer-default: rgba(252, 252, 252, 0.05);
 
   --av-sys-color-syntax-plain: #e4dbcb;
-  --av-sys-color-syntax-comment: #6e6455;
+  --av-sys-color-syntax-comment: #777772;
   --av-sys-color-syntax-punctuation: #a19684;
   --av-sys-color-syntax-tag: #e09a5e;
   --av-sys-color-syntax-number: #d9b168;
@@ -972,12 +675,12 @@
   --av-sys-label-transform: uppercase;
   --av-sys-label-weight: 500;
 
-  --av-cmp-pane-background: transparent;
+  --av-cmp-pane-background: #070707;
 
-  --av-cmp-sidebar-background: transparent;
-  --av-cmp-sidebar-background-solid: #0c0a07;
-  --av-cmp-sidebar-border: rgba(239, 230, 218, 0.09);
-  --av-cmp-sidebar-width: 320px;
+  --av-cmp-sidebar-background: #111111;
+  --av-cmp-sidebar-background-solid: #111111;
+  --av-cmp-sidebar-border: rgba(252, 252, 252, 0.10);
+  --av-cmp-sidebar-width: 280px;
 
   --av-cmp-marker-inline-size: 2px;
   --av-cmp-marker-radius: 2px;
@@ -990,28 +693,33 @@
   --av-cmp-row-leading: 1.55;
   --av-cmp-row-hint-gap: 7px;
   --av-cmp-row-height-dense: 44px;
-  --av-cmp-row-background-hover: rgba(239, 230, 218, 0.035);
-  --av-cmp-row-background-selected: transparent;
+  --av-cmp-row-background-hover: rgba(119, 119, 119, 0.17);
+  --av-cmp-row-background-selected: rgba(119, 119, 119, 0.32);
 
   --av-cmp-group-label-height: 34px;
   --av-cmp-group-label-gap: 22px;
 
-  --av-cmp-bubble-background: transparent;
+  --av-cmp-bubble-background: #2f2f2f;
+
+  --av-cmp-elicitation-option-background: var(--av-sys-color-surface-raised-hover);
+
+  --av-cmp-bubble-human-background: #5a5a5a;
+  --av-cmp-bubble-human-foreground: #fcfcfc;
   --av-cmp-bubble-border: transparent;
   --av-cmp-bubble-padding: 0;
 
-  --av-cmp-composer-background: transparent;
-  --av-cmp-composer-border-color: transparent;
-  --av-cmp-composer-border-color-focus: transparent;
-  --av-cmp-composer-border-width: 0;
-  --av-cmp-composer-radius: 0;
-  --av-cmp-composer-shadow: none;
-  --av-cmp-composer-rule-color: rgba(239, 230, 218, 0.09);
-  --av-cmp-composer-rule-color-focus: rgba(232, 161, 92, 0.3);
+  --av-cmp-composer-background: #2f2f2f;
+  --av-cmp-composer-border-color: rgba(252, 252, 252, 0.15);
+  --av-cmp-composer-border-color-focus: rgba(252, 252, 252, 0.20);
+  --av-cmp-composer-border-width: 0.5px;
+  --av-cmp-composer-radius: 22px;
+  --av-cmp-composer-shadow: 0 2px 8px -1px rgba(0, 0, 0, 0.05), 0 1px 2px rgba(0, 0, 0, 0.03), 0 0 0 1px rgba(228, 228, 228, 0.04);
+  --av-cmp-composer-rule-color: rgba(252, 252, 252, 0.15);
+  --av-cmp-composer-rule-color-focus: rgba(252, 252, 252, 0.20);
   --av-cmp-composer-padding: 20px 2px 6px;
-  --av-cmp-composer-send-background: transparent;
-  --av-cmp-composer-send-radius: var(--av-sys-size-radius-md);
-  --av-cmp-composer-send-foreground: var(--av-sys-color-brand-base);
+  --av-cmp-composer-send-background: #fcfcfc;
+  --av-cmp-composer-send-radius: var(--av-sys-size-radius-pill);
+  --av-cmp-composer-send-foreground: #141414;
 
   --av-cmp-turn-align: flex-start;
   --av-cmp-turn-margin: 0;
@@ -1065,311 +773,4 @@
   --av-cmp-connector-search-foreground: #8fb0c6;
   --av-cmp-connector-plug-background: #191509;
   --av-cmp-connector-plug-foreground: #c4b478;
-}
-/* Terra Light — A warm near-white page with hairline rules. */
-[data-theme='terra-light'] {
-  color-scheme: light;
-
-  --av-ref-color-neutral-1: #f4f2ed;
-  --av-ref-color-neutral-2: #ebe9e2;
-  --av-ref-color-neutral-3: #e2dfd7;
-  --av-ref-color-neutral-4: #d9d5cb;
-  --av-ref-color-neutral-5: #cbc7bb;
-  --av-ref-color-neutral-6: #b6b1a3;
-  --av-ref-color-neutral-7: #9c9789;
-  --av-ref-color-neutral-8: #857f72;
-  --av-ref-color-neutral-9: #746e62;
-  --av-ref-color-neutral-10: #635e53;
-  --av-ref-color-neutral-11: #514c43;
-  --av-ref-color-neutral-12: #3b372f;
-  --av-ref-color-neutral-13: #2a2721;
-  --av-ref-color-neutral-14: #1a1814;
-
-  --av-ref-color-line-1: #ebe9e2;
-  --av-ref-color-line-2: #e2dfd7;
-  --av-ref-color-line-3: #d9d5cb;
-  --av-ref-color-line-4: #cbc7bb;
-  --av-ref-color-line-5: #b6b1a3;
-  --av-ref-color-line-6: #9c9789;
-
-  --av-sys-backdrop-color: var(--av-sys-color-surface-canvas);
-  --av-sys-backdrop-image: none;
-  --av-sys-backdrop-position: 0% 0%;
-  --av-sys-backdrop-size: auto;
-  --av-sys-backdrop-repeat: no-repeat;
-  --av-sys-backdrop-attachment: fixed;
-  --av-sys-backdrop-blend-mode: normal;
-
-  --av-sys-color-surface-canvas: #ffffff;
-  --av-sys-color-surface-default: #ffffff;
-  --av-sys-color-surface-subtle: #faf9f6;
-  --av-sys-color-surface-sunken: #f4f2ed;
-  --av-sys-color-surface-raised: #f3f2ed;
-  --av-sys-color-surface-raised-hover: #eae8e1;
-  --av-sys-color-surface-elevated: #ffffff;
-  --av-sys-color-surface-elevated-hover: #f3f2ed;
-  --av-sys-color-surface-inverse-hover: #000000;
-
-  --av-sys-color-text-on-inverse: #ffffff;
-  --av-sys-color-text-default: var(--av-ref-color-neutral-14);
-  --av-sys-color-text-subtle: var(--av-ref-color-neutral-12);
-  --av-sys-color-text-muted: var(--av-ref-color-neutral-10);
-  --av-sys-color-text-disabled: var(--av-ref-color-neutral-8);
-
-  --av-sys-color-border-highlight: rgba(30, 28, 22, 0.05);
-  --av-sys-color-border-default: var(--av-ref-color-line-2);
-  --av-sys-color-border-subtle: var(--av-ref-color-line-1);
-  --av-sys-color-border-strong: var(--av-ref-color-line-3);
-
-  --av-sys-color-brand-base: #cedc00;
-  --av-sys-color-brand-strong: #dbe834;
-  --av-sys-color-brand-soft: #6b7500;
-  --av-sys-color-brand-ink: #67700a;
-  --av-sys-color-brand-wash: #f6f8e2;
-  --av-sys-color-brand-edge: #dde4a8;
-  --av-sys-color-brand-on: #1d2000;
-  --av-sys-color-brand-tint: rgba(140, 152, 0, 0.32);
-  --av-sys-color-brand-tint-strong: rgba(140, 152, 0, 0.5);
-  --av-sys-color-brand-glow: radial-gradient(circle, rgba(206, 220, 0, 0.14), transparent 62%);
-  --av-sys-color-brand-hover: var(--av-sys-color-brand-strong);
-
-  --av-sys-color-accent-base: #1a7fc4;
-  --av-sys-color-accent-strong: #145f96;
-  --av-sys-color-accent-soft: #1a6fae;
-  --av-sys-color-accent-wash: #eef5fb;
-  --av-sys-color-accent-edge: #c3dcef;
-  --av-sys-color-accent-on: #ffffff;
-  --av-sys-color-accent-tint: rgba(26, 127, 196, 0.36);
-
-  --av-sys-color-success-base: #2e8a54;
-  --av-sys-color-success-strong: #247344;
-  --av-sys-color-success-fill: #2e8a54;
-  --av-sys-color-success-fill-edge: #247344;
-  --av-sys-color-success-soft: #35754f;
-  --av-sys-color-success-wash: #edf6f0;
-  --av-sys-color-success-edge: #bcdcc8;
-  --av-sys-color-success-on: #ffffff;
-
-  --av-sys-color-warning-base: #b8860b;
-  --av-sys-color-warning-strong: #9a7009;
-  --av-sys-color-warning-soft: #8a6208;
-  --av-sys-color-warning-wash: #fbf3e0;
-  --av-sys-color-warning-edge: #ecd9a8;
-  --av-sys-color-warning-on: #241a00;
-
-  --av-sys-color-danger-base: #c3453f;
-  --av-sys-color-danger-strong: #a5332e;
-  --av-sys-color-danger-soft: #b23a34;
-  --av-sys-color-danger-wash: #fdeeed;
-  --av-sys-color-danger-edge: #f2c9c6;
-  --av-sys-color-danger-on: #ffffff;
-
-  --av-sys-color-project-gray: #6b7280;
-  --av-sys-color-project-brown: #92400e;
-  --av-sys-color-project-red: #dc2626;
-  --av-sys-color-project-orange: #ea580c;
-  --av-sys-color-project-yellow: #ca8a04;
-  --av-sys-color-project-green: #16a34a;
-  --av-sys-color-project-teal: #0d9488;
-  --av-sys-color-project-cyan: #0891b2;
-  --av-sys-color-project-blue: #2563eb;
-  --av-sys-color-project-indigo: #4f46e5;
-  --av-sys-color-project-purple: #9333ea;
-  --av-sys-color-project-pink: #db2777;
-
-  --av-sys-color-workstream-running: #1a7fc4;
-  --av-sys-color-workstream-needs-input: #b8860b;
-  --av-sys-color-workstream-completed: var(--av-ref-color-neutral-9);
-  --av-sys-color-workstream-failed: #c3453f;
-  --av-sys-color-workstream-stopped: #8a6a4d;
-  --av-sys-color-workstream-unread: #2e8a54;
-  --av-sys-color-workstream-mentioned: #bf3a80;
-  --av-sys-color-workstream-unseen: #7047c9;
-
-  --av-sys-color-danger-tint: rgba(195, 69, 63, 0.1);
-  --av-sys-color-danger-tint-strong: rgba(195, 69, 63, 0.24);
-
-  --av-sys-color-scrim-default: rgba(38, 36, 30, 0.34);
-  --av-sys-color-scrim-subtle: rgba(38, 36, 30, 0.18);
-  --av-sys-color-scrim-solid: rgba(246, 245, 241, 0.98);
-
-  --av-sys-color-focus-default: var(--av-sys-color-accent-base);
-  --av-sys-color-focus-quiet: #8fadc4;
-
-  --av-sys-color-selection-background: rgba(26, 127, 196, 0.2);
-
-  --av-sys-color-scrollbar-thumb: #d2cec4;
-
-  --av-sys-color-shimmer-default: rgba(30, 28, 22, 0.05);
-
-  --av-sys-color-syntax-plain: #24231e;
-  --av-sys-color-syntax-comment: #8a857a;
-  --av-sys-color-syntax-punctuation: #5c5850;
-  --av-sys-color-syntax-tag: #b3441c;
-  --av-sys-color-syntax-number: #9a5518;
-  --av-sys-color-syntax-string: #6a3fb5;
-  --av-sys-color-syntax-operator: #3d3a33;
-  --av-sys-color-syntax-keyword: #a8380f;
-  --av-sys-color-syntax-function: #0a6ba8;
-  --av-sys-color-syntax-variable: #8a6208;
-
-  --av-sys-color-person-1: #2f6f9e;
-  --av-sys-color-person-2: #7a4a91;
-  --av-sys-color-person-3: #2f7d5c;
-  --av-sys-color-person-4: #9a5f2a;
-  --av-sys-color-person-5: #4f4a9e;
-  --av-sys-color-person-6: #9b4550;
-
-  --av-sys-elevation-shadow-sm: 0 1px 3px rgba(30, 28, 22, 0.09);
-  --av-sys-elevation-shadow-md: 0 8px 26px rgba(30, 28, 22, 0.13);
-  --av-sys-elevation-shadow-lg: 0 20px 60px rgba(30, 28, 22, 0.18);
-  --av-sys-elevation-shadow-rail: -8px 0 28px rgba(30, 28, 22, 0.08);
-  --av-sys-elevation-shadow-rail-strong: -14px 0 42px rgba(30, 28, 22, 0.14);
-  --av-sys-elevation-shadow-drawer: 12px 0 40px rgba(30, 28, 22, 0.16);
-
-  --av-sys-focus-ring-default: 0 0 0 2px rgba(26, 127, 196, 0.22);
-  --av-sys-focus-ring-quiet: 0 0 0 2px rgba(96, 92, 83, 0.14);
-  --av-sys-focus-ring-brand: 0 0 0 2px rgba(140, 152, 0, 0.28);
-
-  --av-sys-size-radius-xs: 5px;
-  --av-sys-size-radius-sm: 7px;
-  --av-sys-size-radius-md: 9px;
-  --av-sys-size-radius-lg: 12px;
-  --av-sys-size-radius-xl: 14px;
-  --av-sys-size-radius-pill: 999px;
-
-  --av-sys-size-border-hairline: 1px;
-
-  --av-sys-size-control-height: 32px;
-
-  --av-sys-space-pane-padding: 22px;
-
-  --av-sys-space-stack-gap: 32px;
-
-  --av-sys-space-row-gap: 1px;
-
-  --av-sys-space-group-gap: 13px;
-
-  --av-sys-space-block-gap: 17px;
-
-  --av-sys-space-prose-gap: 15px;
-
-  --av-sys-font-family-ui: Geist, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --av-sys-font-family-display: var(--av-sys-font-family-ui);
-  --av-sys-font-family-mono: "Geist Mono", ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
-
-  --av-sys-font-size-base: 14px;
-  --av-sys-font-size-prose: 14px;
-  --av-sys-font-size-row: 12.5px;
-  --av-sys-font-size-hint: 10.5px;
-  --av-sys-font-size-action: 13px;
-  --av-sys-font-size-meta: 9.5px;
-  --av-sys-font-size-author: 12px;
-  --av-sys-font-size-title: 13px;
-
-  --av-sys-font-leading-prose: 1.62;
-  --av-sys-font-leading-base: 1.48;
-
-  --av-sys-font-weight-strong: 560;
-  --av-sys-font-weight-heading: 600;
-  --av-sys-font-weight-emphasis: 620;
-
-  --av-sys-label-font-size: 10px;
-  --av-sys-label-tracking: 0.02em;
-  --av-sys-label-transform: none;
-  --av-sys-label-weight: 560;
-
-  --av-cmp-pane-background: var(--av-sys-color-surface-default);
-
-  --av-cmp-sidebar-background: rgba(180, 172, 140, 0.11);
-  --av-cmp-sidebar-background-solid: #f7f6f2;
-  --av-cmp-sidebar-border: #e8e5dc;
-  --av-cmp-sidebar-width: 300px;
-
-  --av-cmp-marker-inline-size: 6px;
-  --av-cmp-marker-radius: var(--av-sys-size-radius-pill);
-  --av-cmp-marker-slot: 14px;
-  --av-cmp-marker-inset-block: calc(50% - 3px);
-  --av-cmp-marker-glow: none;
-
-  --av-cmp-row-height: 33px;
-  --av-cmp-row-padding: 3px 7px;
-  --av-cmp-row-leading: 1.25;
-  --av-cmp-row-hint-gap: 2px;
-  --av-cmp-row-height-dense: 30px;
-  --av-cmp-row-background-hover: var(--av-sys-color-surface-raised-hover);
-  --av-cmp-row-background-selected: var(--av-ref-color-neutral-4);
-
-  --av-cmp-group-label-height: 26px;
-  --av-cmp-group-label-gap: 4px;
-
-  --av-cmp-bubble-background: var(--av-sys-color-surface-raised-hover);
-  --av-cmp-bubble-border: var(--av-ref-color-line-3);
-  --av-cmp-bubble-padding: 9px 14px;
-
-  --av-cmp-composer-background: var(--av-sys-color-surface-raised);
-  --av-cmp-composer-border-color: var(--av-ref-color-line-3);
-  --av-cmp-composer-border-color-focus: var(--av-ref-color-line-5);
-  --av-cmp-composer-border-width: 1px;
-  --av-cmp-composer-radius: var(--av-sys-size-radius-xl);
-  --av-cmp-composer-shadow: var(--av-sys-elevation-shadow-md);
-  --av-cmp-composer-rule-color: var(--av-ref-color-line-3);
-  --av-cmp-composer-rule-color-focus: var(--av-ref-color-line-5);
-  --av-cmp-composer-padding: 14px 15px 4px;
-  --av-cmp-composer-send-background: var(--av-sys-color-text-default);
-  --av-cmp-composer-send-radius: var(--av-sys-size-radius-md);
-  --av-cmp-composer-send-foreground: var(--av-sys-color-text-on-inverse);
-
-  --av-cmp-turn-align: flex-end;
-  --av-cmp-turn-margin: auto;
-  --av-cmp-turn-width: min(72%, 620px);
-
-  --av-cmp-feed-width: 860px;
-  --av-cmp-feed-width-wide: 920px;
-  --av-cmp-feed-padding-y: 46px;
-  --av-cmp-feed-padding-x: 34px;
-  --av-cmp-feed-author-font-size: 10.5px;
-  --av-cmp-feed-author-font-weight: 560;
-
-  --av-cmp-markdown-diagram-line: var(--av-ref-color-line-6);
-  --av-cmp-markdown-heading-1: 18px;
-  --av-cmp-markdown-heading-2: 16px;
-  --av-cmp-markdown-heading-3: 14.5px;
-  --av-cmp-markdown-heading-4: 14px;
-  --av-cmp-markdown-heading-leading: 1.3;
-  --av-cmp-markdown-heading-margin: 21px 0 9px;
-  --av-cmp-markdown-strong-weight: 660;
-  --av-cmp-markdown-list-margin: 9px 0 15px;
-  --av-cmp-markdown-list-indent: 26px;
-  --av-cmp-markdown-blockquote-margin: 16px 0;
-  --av-cmp-markdown-rule-margin: 22px 0;
-  --av-cmp-markdown-table-leading: 1.45;
-  --av-cmp-markdown-cell-padding: 6px 8px;
-  --av-cmp-markdown-article-heading-1: 22px;
-  --av-cmp-markdown-article-heading-2: 17px;
-  --av-cmp-markdown-article-heading-3: 14px;
-  --av-cmp-markdown-article-heading-margin: 28px 0 10px;
-
-  --av-cmp-tooltip-background: #2b2823;
-  --av-cmp-tooltip-foreground: #f4f2ed;
-
-  --av-cmp-toggle-track: #c0bbae;
-  --av-cmp-toggle-knob-off: #ffffff;
-
-  --av-cmp-connector-github-background: #f0efec;
-  --av-cmp-connector-github-foreground: #24292f;
-  --av-cmp-connector-google-background: #fbeeea;
-  --av-cmp-connector-google-foreground: #b4472a;
-  --av-cmp-connector-drive-background: #eaf5ee;
-  --av-cmp-connector-drive-foreground: #1a7a48;
-  --av-cmp-connector-slack-background: #eef2f7;
-  --av-cmp-connector-slack-foreground: #2f5b80;
-  --av-cmp-connector-linear-background: #f0eefa;
-  --av-cmp-connector-linear-foreground: #4b41a8;
-  --av-cmp-connector-webhook-background: #fbf1e8;
-  --av-cmp-connector-webhook-foreground: #97552a;
-  --av-cmp-connector-search-background: #edf3f8;
-  --av-cmp-connector-search-foreground: #2a5f85;
-  --av-cmp-connector-plug-background: #f4f3e8;
-  --av-cmp-connector-plug-foreground: #6c6a2c;
 }
