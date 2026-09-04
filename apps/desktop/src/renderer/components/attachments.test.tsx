@@ -16,6 +16,34 @@ describe('attachment presentation', () => {
 
   afterEach(() => vi.unstubAllGlobals());
 
+  it('opens only the selected gallery entry on the first render', async () => {
+    const first = { name: 'first.png', mimeType: 'image/png', loadContent: vi.fn(async () => new Blob(['first'])) };
+    const second = { name: 'second.png', mimeType: 'image/png', loadContent: vi.fn(async () => new Blob(['second'])) };
+    render(<AttachmentLightbox preview={{ ...second, gallery: [first, second], galleryIndex: 1 }} onClose={vi.fn()} />);
+    await screen.findByRole('img', { name: 'second.png' });
+    expect(first.loadContent).not.toHaveBeenCalled();
+    expect(second.loadContent).toHaveBeenCalledOnce();
+  });
+
+  it.each(['mkv', 'ogv'])('previews generic-MIME %s files as video', async (extension) => {
+    render(<AttachmentLightbox preview={{ name: `clip.${extension}`, mimeType: 'application/octet-stream', loadContent: async () => new Blob(['video']) }} onClose={vi.fn()} />);
+    expect((await screen.findByLabelText(`Video: clip.${extension}`)).tagName).toBe('VIDEO');
+  });
+
+  it.each(['html', 'mp4', 'png'])('honors a specific text MIME despite the %s extension', async (extension) => {
+    render(<AttachmentLightbox preview={{ name: `literal.${extension}`, mimeType: 'text/plain', loadContent: async () => new Blob(['<img src="https://example.com/not-loaded">']) }} onClose={vi.fn()} />);
+    expect((await screen.findByText(/<img src=/u)).tagName).toBe('PRE');
+    expect(document.querySelector('iframe, video, .attachment-lightbox-content img')).toBeNull();
+  });
+
+  it('places the HTML network policy before all untrusted source markup', async () => {
+    const source = '<img src="https://example.com/before-head"><!-- <head> --><head></head>';
+    render(<AttachmentLightbox preview={{ name: 'page.html', mimeType: 'text/html', loadContent: async () => new Blob([source]) }} onClose={vi.fn()} />);
+    const frame = await screen.findByTitle<HTMLIFrameElement>('Preview of page.html');
+    expect(frame.getAttribute('sandbox')).toBe('');
+    expect(frame.srcdoc.indexOf('Content-Security-Policy')).toBeLessThan(frame.srcdoc.indexOf(source));
+  });
+
   it('shows image previews, complete-filename tooltips, progress, and remove controls', () => {
     const onOpen = vi.fn();
     const onRemove = vi.fn();
@@ -87,7 +115,7 @@ describe('attachment presentation', () => {
     await waitFor(() => expect(button).not.toBeDisabled());
     fireEvent.click(button);
     expect(screen.getByRole('dialog', { name: 'Preview of diagram.png' })).toBeVisible();
-    fireEvent.keyDown(window, { key: 'Escape' });
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     await waitFor(() => expect(button).toHaveFocus());
   });
@@ -212,7 +240,7 @@ describe('attachment presentation', () => {
     }
     render(<Example />);
 
-    fireEvent.keyDown(window, { key: 'Escape' });
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
     resolveContent(new Blob(['late'], { type: 'image/png' }));
     await Promise.resolve();
 

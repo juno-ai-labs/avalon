@@ -1,9 +1,10 @@
 import { classifyAttachmentKind } from '@rally/contracts';
 import * as Dialog from '@radix-ui/react-dialog';
 import { ChevronLeft, ChevronRight, Download, History, LoaderCircle, Maximize2, Minimize2, X } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { AttachmentPreview } from './attachments';
 import { MarkdownBody } from './workstream-blocks';
+import { attachmentMime, hasGenericAttachmentMime, isVideoAttachment } from '../lib/attachment-media';
 
 type PreviewMode = 'audio' | 'html' | 'image' | 'markdown' | 'text' | 'video';
 
@@ -15,12 +16,11 @@ interface LoadedPreview {
 }
 
 const HTML_FILE_PATTERN = /\.html?$/iu;
-const VIDEO_FILE_PATTERN = /\.(?:m4v|mov|mp4|ogv|webm)$/iu;
 
 function previewMode(preview: AttachmentPreview): PreviewMode {
-  const mimeType = preview.mimeType?.split(';', 1)[0]?.trim().toLowerCase() ?? '';
-  if (mimeType === 'text/html' || HTML_FILE_PATTERN.test(preview.name)) return 'html';
-  if (mimeType.startsWith('video/') || VIDEO_FILE_PATTERN.test(preview.name)) return 'video';
+  const mimeType = attachmentMime(preview.mimeType);
+  if (mimeType === 'text/html' || (hasGenericAttachmentMime(mimeType) && HTML_FILE_PATTERN.test(preview.name))) return 'html';
+  if (isVideoAttachment(mimeType, preview.name)) return 'video';
   if (mimeType.startsWith('text/') && mimeType !== 'text/markdown') return 'text';
   const kind = classifyAttachmentKind({ fileName: preview.name, mimeType: preview.mimeType });
   if (kind === 'audio') return 'audio';
@@ -30,9 +30,9 @@ function previewMode(preview: AttachmentPreview): PreviewMode {
 
 function isolatedHtml(source: string): string {
   const policy = '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; img-src data: blob:; font-src data:; style-src \'unsafe-inline\';">';
-  return source.match(/<head(?:\s[^>]*)?>/iu)
-    ? source.replace(/<head(?:\s[^>]*)?>/iu, (head) => `${head}${policy}`)
-    : `<!doctype html><html><head>${policy}</head><body>${source}</body></html>`;
+  // Establish the policy before parsing any untrusted markup, including
+  // resource tags before a head or a fake head inside a comment.
+  return `<!doctype html><html><head>${policy}</head><body>${source}</body></html>`;
 }
 
 async function downloadPreview(preview: AttachmentPreview, loadedSource?: string): Promise<void> {
@@ -58,15 +58,18 @@ export function AttachmentLightbox({ preview, onClose }: {
   onClose: () => void;
 }): React.JSX.Element | null {
   const gallery = useMemo(() => preview?.gallery?.length ? preview.gallery : preview ? [preview] : [], [preview]);
-  const [activeIndex, setActiveIndex] = useState(0);
+  const [selection, setSelection] = useState({ preview, index: preview?.galleryIndex ?? 0 });
+  if (selection.preview !== preview) {
+    setSelection({ preview, index: preview?.galleryIndex ?? 0 });
+  }
+  const activeIndex = selection.preview === preview ? selection.index : preview?.galleryIndex ?? 0;
+  const setActiveIndex = useCallback((update: (index: number) => number): void => {
+    setSelection((current) => ({ ...current, index: update(current.index) }));
+  }, []);
   const active = gallery[activeIndex] ?? preview;
   const [loaded, setLoaded] = useState<LoadedPreview | null>(null);
   const [expanded, setExpanded] = useState(false);
   const mode = active ? previewMode(active) : null;
-
-  useEffect(() => {
-    setActiveIndex(preview?.galleryIndex ?? 0);
-  }, [preview]);
 
   useEffect(() => {
     setLoaded(null);
@@ -76,18 +79,14 @@ export function AttachmentLightbox({ preview, onClose }: {
   useEffect(() => {
     if (!preview) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
       if (gallery.length > 1 && event.key === 'ArrowLeft') setActiveIndex((index) => (index - 1 + gallery.length) % gallery.length);
       if (gallery.length > 1 && event.key === 'ArrowRight') setActiveIndex((index) => (index + 1) % gallery.length);
     };
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
     window.addEventListener('keydown', onKeyDown);
     return () => {
-      document.body.style.overflow = previousOverflow;
       window.removeEventListener('keydown', onKeyDown);
     };
-  }, [gallery.length, onClose, preview]);
+  }, [gallery.length, preview, setActiveIndex]);
 
   useEffect(() => {
     if (!active || active.src || !active.loadContent || !mode) return;

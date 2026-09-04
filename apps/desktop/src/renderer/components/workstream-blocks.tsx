@@ -1399,7 +1399,7 @@ function AgentDocumentDeck({
     return () => window.removeEventListener('keydown', pageWithKeyboard);
   }, [openIndex, positioned.length]);
 
-  if (positioned.length === 0) {
+  if (streaming || positioned.length === 0) {
     return (
       <MarkdownBody citations={citations} mentions={[...mentions]} streaming={streaming} telemetry={telemetry}>
         {text}
@@ -1437,7 +1437,7 @@ function AgentDocumentDeck({
           <MarkdownBody
             citations={citations}
             mentions={mentionsWithin(mentions, 0, document.preamble.length)}
-            streaming={streaming && positioned.length === 0}
+            streaming={streaming}
             telemetry={telemetry}
           >{document.preamble}</MarkdownBody>
         </div>

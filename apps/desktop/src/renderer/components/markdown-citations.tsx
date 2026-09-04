@@ -190,7 +190,7 @@ export function ResourceIcon({ type }: { type: string }): React.JSX.Element {
 function ResourceChip({ label, resource, onOpen }: {
   label: React.ReactNode;
   resource: CitationResource;
-  onOpen: () => void;
+  onOpen: React.MouseEventHandler<HTMLButtonElement>;
 }): React.JSX.Element {
   return (
     <button
@@ -536,7 +536,11 @@ const LINK_CELLS: Matrix<LinkArgs> = {
     const resource = resolved(args);
     const onOpen = opener(args.render, args.target);
     if (!resource || !onOpen) return <>{args.label}</>;
-    return <ResourceChip label={args.label} onOpen={onOpen} resource={resource} />;
+    return <ResourceChip label={args.label} onOpen={(event) => {
+      if (args.render.citations?.openPreview) {
+        args.render.citations.openPreview(resource.id, event.currentTarget);
+      } else onOpen();
+    }} resource={resource} />;
   },
   // Unchanged: a real anchor, whose click the main process intercepts and sends
   // to the system browser through its existing allowlist.

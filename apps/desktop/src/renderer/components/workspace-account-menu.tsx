@@ -4,16 +4,13 @@ import type { WorkspaceAttention } from '@rally/contracts';
 import {
   Check,
   ChevronDown,
-  ChevronRight,
   CircleHelp,
-  Gauge,
   Info,
   LoaderCircle,
   LogOut,
   Megaphone,
   Plus,
   Settings,
-  Smartphone,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
@@ -224,7 +221,7 @@ export function WorkspaceAccountMenu({
       <DropdownMenu.Root
         onOpenChange={(open) => {
           setMenuOpen(open);
-          if (open && enabled && presentation === 'workspace') onMenuOpen();
+          if (open && enabled) onMenuOpen();
         }}
         open={menuOpen}
       >
@@ -232,7 +229,7 @@ export function WorkspaceAccountMenu({
           <button
             aria-label={[
               currentUser.name,
-              ...(presentation === 'workspace' ? [activeWorkspace.name, backgroundAttentionDescription] : []),
+              activeWorkspace.name, backgroundAttentionDescription,
             ].filter(Boolean).join(', ')}
             className="account-trigger window-no-drag"
             type="button"
@@ -257,16 +254,6 @@ export function WorkspaceAccountMenu({
           >
             {presentation === 'grok' ? (
               <>
-                <DropdownMenu.Item className="menu-item account-menu-item account-menu-item-with-value" onSelect={onOpenSettings}>
-                  <Gauge aria-hidden="true" />
-                  <span>Weekly usage</span>
-                  <span className="account-menu-value">—</span>
-                  <ChevronRight aria-hidden="true" className="account-menu-chevron" />
-                </DropdownMenu.Item>
-                <DropdownMenu.Item className="menu-item account-menu-item" onSelect={() => openPublicPage('/')}>
-                  <Smartphone aria-hidden="true" />
-                  <span>Get Rally for iOS</span>
-                </DropdownMenu.Item>
                 <DropdownMenu.Item className="menu-item account-menu-item" onSelect={onOpenSettings}>
                   <Settings aria-hidden="true" />
                   <span>Settings</span>
@@ -289,7 +276,8 @@ export function WorkspaceAccountMenu({
                   <span>Log out</span>
                 </DropdownMenu.Item>
               </>
-            ) : enabled && (
+            ) : null}
+            {enabled && (
               <>
                 <DropdownMenu.Label className="menu-label workspace-menu-section">Workspaces</DropdownMenu.Label>
                 {workspaces.map((workspace) => {

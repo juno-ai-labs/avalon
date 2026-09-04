@@ -11,6 +11,7 @@ import {
   writeDraftAttachment,
 } from './draft-cache';
 import type { WorkstreamResource } from './types';
+import { isImageAttachment, isVideoAttachment } from './attachment-media';
 
 export type PendingAttachmentStatus = 'uploading' | 'ready' | 'failed';
 
@@ -25,10 +26,8 @@ export interface PendingAttachment {
   error?: string;
 }
 
-const MAX_ATTACHMENTS = 6;
+const MAX_ATTACHMENTS = 10;
 const MAX_ATTACHMENT_BYTES = 25_000_000;
-const IMAGE_FILE_PATTERN = /\.(?:avif|bmp|gif|heic|heif|jpe?g|png|svg|webp)$/iu;
-const VIDEO_FILE_PATTERN = /\.(?:m4v|mkv|mov|mp4|webm)$/iu;
 const DISCONNECTED_ERROR = 'Rally is not connected. Try again after reconnecting.';
 const UNSAVED_ERROR = 'This device is out of room to hold attachments, so they will be lost if you quit before sending.';
 
@@ -66,11 +65,11 @@ async function deleteDraftWithRetry(api: FileAttachmentsApi, id: string): Promis
 }
 
 function isImageFile(file: File): boolean {
-  return file.type.startsWith('image/') || IMAGE_FILE_PATTERN.test(file.name);
+  return isImageAttachment(file.type, file.name);
 }
 
 function isPreviewableMediaFile(file: File): boolean {
-  return isImageFile(file) || file.type.startsWith('video/') || VIDEO_FILE_PATTERN.test(file.name);
+  return isImageFile(file) || isVideoAttachment(file.type, file.name);
 }
 
 /**
@@ -429,7 +428,7 @@ export function useFileAttachments(api: FileAttachmentsApi | null, draftKey: str
         if (attachment.status === 'uploading') void upload(attachment, draftKey);
       }
       // A drop that raced the read was counted against an empty composer, so the
-      // six-file limit is settled here rather than by hiding the excess: the
+      // ten-file limit is settled here rather than by hiding the excess: the
       // overflow is cancelled, uncached, and its draft resources released.
       const overflowing = merged.slice(MAX_ATTACHMENTS);
       for (const attachment of overflowing) discard(attachment, draftKey);

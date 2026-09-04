@@ -239,16 +239,17 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   const railLeaving = useUiStore((state) => state.railLeaving);
   const sidebarCollapsed = useUiStore((state) => state.sidebarCollapsed);
   const sidebarWidth = useUiStore((state) => state.sidebarWidth);
-  const [windowWidth, setWindowWidth] = useState(() => window.innerWidth);
+  const [sidebarConstrained, setSidebarConstrained] = useState(() => window.innerWidth < sidebarWidth + SIDEBAR_CONTENT_MIN_WIDTH);
   useEffect(() => {
-    const measure = (): void => setWindowWidth(window.innerWidth);
+    const measure = (): void => setSidebarConstrained(window.innerWidth < sidebarWidth + SIDEBAR_CONTENT_MIN_WIDTH);
+    measure();
     window.addEventListener('resize', measure);
     return () => window.removeEventListener('resize', measure);
-  }, []);
+  }, [sidebarWidth]);
   // GrokBot protects 424px for the conversation. Its saved expanded width is
   // the other half of the breakpoint, so resizing the sidebar also moves the
   // point at which it becomes an icon rail.
-  const sidebarCompact = sidebarCollapsed || windowWidth < sidebarWidth + SIDEBAR_CONTENT_MIN_WIDTH;
+  const sidebarCompact = sidebarCollapsed || sidebarConstrained;
   const effectiveSidebarWidth = sidebarCompact ? COLLAPSED_SIDEBAR_WIDTH : sidebarWidth;
   // Replacing rather than pushing, so Back cannot return to an automation that
   // is no longer served — true of an archived draft as much as a deleted
@@ -270,6 +271,9 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
       width: railWidth,
     }).catch(() => undefined);
   }, [expandForShellRail, railWidth]);
+  useEffect(() => () => {
+    void desktopBridge().setConversationDetailsOpen({ open: false, width: 0 }).catch(() => undefined);
+  }, []);
   // Nothing here loads the sidebar. Subscribing to the workspace socket is
   // answered with the whole of it — the first page of work streams, the
   // automations and the notes — and WorkspaceDO pushes each list again whenever
@@ -791,7 +795,6 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         onLoadMoreNotes={notes.fetchMore}
         workspace={workspace}
         workstreams={workstreams.data ?? []}
-        windowWidth={windowWidth}
       />
         <span aria-live="polite" className="sr-only">
           {switchingWorkspace ? `Opening ${switchingWorkspace.name}…` : ''}
