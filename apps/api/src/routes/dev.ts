@@ -422,6 +422,11 @@ const SyntheticConnectorEventBodySchema = z.strictObject({
   }),
 });
 
+const SyntheticConnectorEventResultSchema = z.strictObject({
+  activityId: z.string().uuid(),
+  enqueued: z.literal(true),
+});
+
 devRoutes.post("/connector-events", zValidator("json", SyntheticConnectorEventBodySchema), async (c) => {
   if (c.env.APP_ENV !== "development" || c.env.RALLY_DEV_AUTH !== "true") {
     throw new ApiError(404, "not_found", "Development tooling is unavailable");
@@ -460,5 +465,5 @@ devRoutes.post("/connector-events", zValidator("json", SyntheticConnectorEventBo
       externalPeople: [],
     },
   });
-  return c.json({ activityId, enqueued: true }, 202);
+  return c.json(SyntheticConnectorEventResultSchema.parse({ activityId, enqueued: true }), 202);
 });
