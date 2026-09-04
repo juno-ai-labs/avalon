@@ -769,10 +769,14 @@ describe("Terminal authority on real workerd", () => {
       } catch (error) {
         observed.push(error instanceof Error ? error.message : "unknown_terminal_error");
       }
+      // Every conversation attaches its own resources, so the refusal a
+      // non-main child must give is for an attachment addressed to another
+      // conversation of the work stream: here the main child's.
       try {
         await resourceAttacher({
           workspaceId: WORKSPACE_ID,
           workstreamId: WORKSTREAM_ID,
+          substreamId: "0",
           resourceId: "00000000-0000-7000-8000-00000000aa04",
           attachedByUserId: null,
           relationshipType: "generated",
