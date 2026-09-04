@@ -1105,11 +1105,11 @@ describe("boundary contracts", () => {
     const base = {
       region: "global",
       workspaceId: id,
-      workstreamId: id,
+      parentKind: "workstream",
+      parentId: id,
       loopId,
       harnessRunId: id,
       triggerMessageId: id,
-      automationSubscriptionId: null,
       activityId: null,
       executionPrincipal: { type: "user", userId: id },
       reason: "manual_retry",
