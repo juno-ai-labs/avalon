@@ -445,11 +445,10 @@ in list ancestors of either kind so that an `ol` holding a `ul` is a second leve
 
 A surface hosting `MarkdownBody` may override typography — a heading scale, a
 measure — because that is a property of the surface. It may not restyle a
-markdown element. Three surfaces take the exemption: a note reads as a document
+markdown element. Two surfaces take the exemption: a note reads as a document
 page and steps its headings 22/17/14, the meeting briefing sits in a narrow
-rail beside a transcript and holds every level at 15px, and the embed card's
-preview holds every level at the kind label's size so a glance does not spend
-its four lines on a title.
+rail beside a transcript and holds every level at 15px. Compact resource rows
+no longer contain a markdown glance or its heading override.
 
 Each writes the heading exemption as `<host> .markdown-body :is(h1, …)`, naming
 the shared container even though the host alone would select the same elements.
@@ -709,6 +708,27 @@ The traps, both of which have bitten:
 
 ## Changelog
 
+### 2026-09-04 — Compact embeds replace glances, inline players, and automatic inspector opening
+
+**What changed and why:** The requested GrokBot presentation replaces the old
+markdown glance and inline audio transport with compact file rows; images use
+their intrinsic aspect ratio. Audio remains playable in the explicit preview.
+An arriving embed no longer opens the inspector, including on initial load or
+reconnect, because it must not take over the reader's window or scroll position.
+These decisions supersede the earlier glance, recording-player, and auto-open
+entries below; their historical rationale is retained rather than deleted.
+Do not restore those feed surfaces as a fallback for failed preview loading.
+
+### 2026-09-04 — Inline resources use the same explicit preview as block embeds
+
+**What changed and why:** Inline resource chips now pass their activating button
+to `openPreview`, like block embeds. The previous branch still opened the right
+inspector for the same resource, making placement change navigation behavior.
+Unsupported/unavailable content and live generated sites retain the established
+inspector fallback. Preview failure and still-render guards are tested with
+image resources that actually enter the thumbnail-loading path.
+
+
 ### 2026-09-03 — A streaming citation is a skeleton, not raw `[^label]`
 
 **What changed:** `MarkdownBody` renders a streaming body through
@@ -822,6 +842,71 @@ moves.
 The work accordion's chevron
 ([`plugin-activity-rows.md`](plugin-activity-rows.md)) hangs at the same offset
 for the same reason; the two are meant to line up, and they do.
+
+### 2026-09-02 — An announced recording gets a player, not its own bytes as text
+
+**What changed:** Audio joins images on the raw-bytes preview path in
+`useCitations`, and an embed card whose resource classifies as audio renders a
+transport: a play/pause button in the badge slot, a played bar drawn from
+`--citation-card-played`, an `m:ss` clock, and the title block as the button
+that opens the rail. That card is a container rather than a single button, so
+the whole-card hover moved to `button.citation-card:hover`. Starting one card
+pauses whichever was sounding, and a card leaving the transcript pauses its own
+element. The export stylesheet keeps the tile and drops the playback, since a
+picture of a transport is a dead bar with a stopped clock.
+
+**Why:** Every non-image resource went through the derivative reader, which
+calls `Blob.text()`. An audio file has no readable derivative — the preview
+route returns its bytes verbatim, the same answer it gives for an image — so a
+card announcing a recording rendered a paragraph of replacement characters where
+its glance belongs, under a title that said "Audio". Fixing only the decode
+would have left the card a picture of nothing; what a reader wants from an
+announced recording is to play it, and the rail already proves the bytes play by
+handing the same blob to `<audio controls>`.
+
+**Follow-up in the same change (bot review):** exclusivity moved from the `play`
+event to the click, because `play()` is asynchronous and the earlier of two
+quick clicks could come back and pause the card the reader had moved to; `ended`
+now clears the request rather than leaving it pointing at a stopped element; the
+play control gained `aria-pressed` to match the header's toggles; and the export
+stylesheet's `.citation-card-open` moved below `.citation-card-text`, since the
+open button carries both classes and their shared declarations were being
+decided by source order.
+
+**Follow-up in the same change (design):** the badge went back to the speaker
+glyph and the play/pause control moved out of it, into a button under the bar
+and the clock. The badge is what every card uses to say what it is, and spending
+it on the one card's control both hid the kind and put the control above the
+position it moves. That button is the shared `.icon-button`, so it matches the
+header's icons rather than inventing a control shape for one card; only its
+hover fill is resolved against the card's surface.
+
+**Follow-up in the same change (review):** the object URL is held per blob and
+the asking state merges rather than replaces, so a `resource_attached` arriving
+mid-playback no longer returns a listener to 0:00; the card classifies with
+`classifyAttachmentKind` rather than through the icon mapping, so a connector's
+own audio file gets the transport instead of an empty room; and the transport's
+reduced-motion answer moved *below* the rule it overrides, because a media query
+adds no specificity and the earlier placement lost on source order.
+
+**What a future change has to respect:** the card's container is a `span` and
+everything in it is phrasing content, because a lone embed renders inside a
+paragraph and the export reparses the serialized DOM — the first draft used a
+`div`, which Chromium's parser lifted out of its paragraph and replaced with a
+stray empty one, so the saved picture and the live turn disagreed. The card's
+shape is decided from the *record*, not from the settled preview — deciding it on arriving bytes would
+swap a button for a container under a reader who had already focused it. Keep
+the two controls separately named; the accessible name of the play button is the
+only place the playing state is announced, and it must keep following the
+element's events rather than the click. Keep the played position in the custom
+property rather than in a child element. A new class the card can emit needs a
+rule in the export stylesheet — `message-export.test.ts` reads the class list off
+this renderer and fails without one — and the track colour must be a fill token
+rather than a line token: on the dark themes the line ramp is within a few
+points of the card surface, and the empty bar disappeared. The transport is
+deliberately not seekable; the rail's own `<audio controls>` is the full reader,
+and adding a scrubber here means deciding it is worth the target size, not
+merely that it is possible.
 
 ### 2026-09-02 — Clicking a collapsed preview opens its section
 

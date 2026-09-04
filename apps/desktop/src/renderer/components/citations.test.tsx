@@ -23,6 +23,15 @@ function context(overrides: Partial<CitationContext> = {}): CitationContext & { 
 }
 
 describe('resource citations', () => {
+  it('opens an inline resource chip in the preview without opening the inspector', () => {
+    const openPreview = vi.fn();
+    const citations = context({ openPreview });
+    render(<MarkdownBody citations={citations}>{'See [the deck](resource://board-deck).'}</MarkdownBody>);
+    const chip = screen.getByRole('button', { name: 'Open Q3 board deck' });
+    fireEvent.click(chip);
+    expect(openPreview).toHaveBeenCalledWith(DECK.id, chip);
+    expect(citations.open).not.toHaveBeenCalled();
+  });
   it('renders the link form as an inline chip carrying the resource title', () => {
     render(
       <MarkdownBody citations={context()}>
@@ -253,7 +262,7 @@ describe('resource citations', () => {
   it('keeps the card\'s empty room when a preview is unavailable or not offered', async () => {
     const failing = vi.fn(() => Promise.reject(new Error('not convertible')));
     const { unmount } = render(
-      <MarkdownBody citations={context({ preview: failing })}>
+      <MarkdownBody citations={context({ preview: failing, resolve: () => ({ ...DECK, resourceType: 'image', mimeType: 'image/png' }) })}>
         {'![Q3 board deck](resource://board-deck)'}
       </MarkdownBody>,
     );
@@ -276,7 +285,7 @@ describe('resource citations', () => {
   it('asks for no preview in a still, which would keep a skeleton forever', () => {
     const preview = vi.fn(() => new Promise<{ kind: 'text'; text: string }>(() => undefined));
     render(
-      <MarkdownBody citations={context({ preview })} still>
+      <MarkdownBody citations={context({ preview, resolve: () => ({ ...DECK, resourceType: 'image', mimeType: 'image/png' }) })} still>
         {'![Q3 board deck](resource://board-deck)'}
       </MarkdownBody>,
     );

@@ -79,6 +79,35 @@ prove layout, focus, scroll position, or overlap.
 
 ## Changelog
 
+### 2026-09-04 — Review fixes preserve the reference layout without losing behavior
+
+**What changed:** Sidebar search walks subsequent directory pages and offers an
+explicit retry when a page fails. Compact links keep their accessible identity.
+The shell subscribes to the sidebar breakpoint rather than every pixel of a
+window resize. Inspector geometry owns only its applied width delta, adjusts
+when the rail width changes, and never restores stale position/height or exits
+native maximized/full-screen modes. Unmounting the shell releases that delta.
+The new-chat close control appears only when there is a return destination.
+
+**Why:** PR review found regressions introduced while moving the presentation
+onto the shared foundation. Filtering one loaded page hid reachable chats;
+restoring a saved rectangle overwrote subsequent user window changes.
+
+**Reference check:** The installed Grok Bot 0.39.0 archive still specifies an
+88px compact sidebar, 280px default expanded width (240–400px), a protected
+424px conversation, 210/220px drag thresholds, and 54px navigation rows. These
+values and the existing light/dark paint were retained. The real reference
+window was inspected; no generated reference code is added to the repository.
+
+**Consequences:** Media retains the requested theater without Preview/Source or
+extra persistent controls. Gallery selection is established before loading;
+Radix alone owns modal Escape handling and scroll locking. Attachment MIME
+authority and video suffixes are shared with staged and sent tiles. An HTML
+preview establishes its network-denying policy before any supplied markup.
+Streaming document sections remain ordinary streaming Markdown until complete,
+so an unfinished Mermaid section is not interpreted as a settled diagram.
+
+
 ### 2026-09-04 — The Grok presentation stays an adapter over the shared conversation foundation
 
 **What changed:** The Grok-style work-stream screen now renders through the

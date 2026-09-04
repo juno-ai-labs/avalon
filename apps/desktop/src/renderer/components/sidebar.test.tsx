@@ -230,6 +230,15 @@ describe('Sidebar work-stream markers', () => {
     expect(resizer).toHaveAttribute('aria-valuenow', '300');
   });
 
+  it('names compact links and connects their hover descriptions to the link', async () => {
+    const item = workstream('compact-preview', 'Named compact destination', 'completed');
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} compact conversationOnly automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[item]} /></Tooltip.Provider></MemoryRouter>);
+    const link = screen.getByRole('link', { name: item.title });
+    fireEvent.pointerEnter(link.closest('[data-workstream-id]')!);
+    await waitFor(() => expect(link).toHaveAttribute('aria-describedby', `workstream-preview-${item.id}`));
+    expect(document.getElementById(link.getAttribute('aria-describedby')!)).toHaveTextContent(item.title);
+  });
+
   it('forwards a work-stream row hover to the pooled socket warm-up', () => {
     const hovered = workstream('hovered-workstream', 'Warm this work stream', 'completed');
     render(
@@ -2278,6 +2287,18 @@ describe('pinned work streams', () => {
     await waitFor(() => expect(onReorderPinnedWorkstreams).toHaveBeenCalledWith(['ws-c', 'ws-a', 'ws-b']));
   });
 
+  it('reorders filtered pins without moving the hidden pin', async () => {
+    const onReorderPinnedWorkstreams = vi.fn(async (): Promise<void> => undefined);
+    renderWith([
+      pinned(workstream('ws-a', 'Match Alpha', 'completed'), 0),
+      pinned(workstream('ws-b', 'Hidden Bravo', 'completed'), 1),
+      pinned(workstream('ws-c', 'Match Charlie', 'completed'), 2),
+    ], { onReorderPinnedWorkstreams });
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search work streams' }), { target: { value: 'Match' } });
+    fireEvent.keyDown(dragTarget(/Match Charlie/u), { key: 'ArrowUp', altKey: true });
+    await waitFor(() => expect(onReorderPinnedWorkstreams).toHaveBeenCalledWith(['ws-c', 'ws-b', 'ws-a']));
+  });
+
   it('sends nothing when a drag ends where it started', () => {
     const onReorderPinnedWorkstreams = vi.fn(async (): Promise<void> => undefined);
     renderWith(
@@ -2818,6 +2839,30 @@ describe('Sidebar work-stream paging', () => {
     // are usually there by the time the reader arrives.
     scrollTo(nav, 900);
     expect(onLoadMoreWorkstreams).toHaveBeenCalledTimes(1);
+  });
+
+  it('finds a match on a later page even when filtering removes the scrollbar', async () => {
+    const first = workstream('first', 'Recent chat', 'completed');
+    const older = workstream('older', 'Older matching chat', 'completed');
+    function PagedSearch(): React.JSX.Element {
+      const [rows, setRows] = useState([first]);
+      return <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} workspace={workspace}
+        workstreams={rows} hasMoreWorkstreams={rows.length === 1}
+        onLoadMoreWorkstreams={() => setRows([first, older])} />;
+    }
+    render(<MemoryRouter><Tooltip.Provider><PagedSearch /></Tooltip.Provider></MemoryRouter>);
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search work streams' }), { target: { value: 'Older matching' } });
+    expect(await screen.findByRole('link', { name: 'Older matching chat' })).toBeVisible();
+    expect(screen.queryByText('No matching work streams')).toBeNull();
+  });
+
+  it('does not automatically loop a failed search page and offers an explicit retry', () => {
+    const onLoadMoreWorkstreams = vi.fn();
+    renderWithPaging({ hasMoreWorkstreams: true, onLoadMoreWorkstreams });
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search work streams' }), { target: { value: 'Missing' } });
+    expect(onLoadMoreWorkstreams).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole('button', { name: 'Search more work streams' }));
+    expect(onLoadMoreWorkstreams).toHaveBeenCalledTimes(2);
   });
 
   it('asks both lists for their next page, since one set of headings holds both', () => {

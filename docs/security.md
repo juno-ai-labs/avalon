@@ -772,6 +772,16 @@ incident response that may prompt it.
 
 ## Changelog
 
+### 2026-09-04 — Fail visibly when isolated release-smoke processes cannot exit
+
+**What changed and why:** Packaging cleanup sends SIGTERM and then SIGKILL to
+only its discovered marker/profile-scoped processes. Surviving processes and
+permission failures now fail packaging instead of retrying SIGTERM forever.
+The existing settle delay remains between stages, and a launch failure is
+preserved alongside a cleanup failure. No production process or profile is
+included in the cleanup scope.
+
+
 ### 2026-09-04 — Appearance files can no longer execute code
 
 **What changed:** The animated theme-document iframe, its custom protocol,

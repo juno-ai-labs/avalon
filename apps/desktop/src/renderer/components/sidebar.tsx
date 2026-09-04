@@ -80,8 +80,6 @@ interface SidebarProps {
   conversationOnly?: boolean;
   /** The responsive or manually selected GrokBot icon rail. */
   compact?: boolean;
-  /** Current window width, used to keep room for the conversation while resizing. */
-  windowWidth?: number;
   workspace: Workspace;
   members?: WorkspaceMember[];
   automations: AutomationSummary[];
@@ -715,6 +713,8 @@ function WorkstreamRow({
                   navigation element's class resolver untouched. */}
               <div className="sidebar-workstream-preview-anchor">
                 <NavLink
+            aria-describedby={previewOpen ? `workstream-preview-${workstream.id}` : undefined}
+            aria-label={[naming ? 'Rally is naming this work stream' : workstream.title, drag?.position].filter(Boolean).join(', ')}
             aria-keyshortcuts={commandShortcut === undefined ? undefined : `Meta+${commandShortcut}`}
             className={({ isActive }) => clsx(
               'sidebar-row workstream-row',
@@ -819,9 +819,9 @@ function WorkstreamRow({
             <Tooltip.Portal>
               <Tooltip.Content
                 align="center"
-                aria-label={`Preview ${workstream.title}`}
                 className="sidebar-workstream-preview-surface"
                 collisionPadding={8}
+                id={`workstream-preview-${workstream.id}`}
                 side="right"
                 sideOffset={8}
               >
@@ -1084,7 +1084,6 @@ function moveWithin(ids: string[], id: string, index: number): string[] {
 export function Sidebar({
   conversationOnly = false,
   compact = false,
-  windowWidth = window.innerWidth,
   workspace,
   members = [],
   automations,
@@ -1216,6 +1215,19 @@ export function Sidebar({
   const batchPreviewGeneration = useRef(0);
   const [deleteTarget, setDeleteTarget] = useState<AutomationSummary | null>(null);
   const normalizedSearch = searchQuery.trim().toLowerCase();
+  const searchedPage = useRef<{ query: string; rows: typeof workstreams } | null>(null);
+  useEffect(() => {
+    if (!normalizedSearch) {
+      searchedPage.current = null;
+      return;
+    }
+    if (!hasMoreWorkstreams || loadingMoreWorkstreams || !onLoadMoreWorkstreams) return;
+    // A failed page leaves the same rows in place. Do not automatically retry
+    // that failure forever; the explicit load action below can retry it.
+    if (searchedPage.current?.query === normalizedSearch && searchedPage.current.rows === workstreams) return;
+    searchedPage.current = { query: normalizedSearch, rows: workstreams };
+    onLoadMoreWorkstreams();
+  }, [normalizedSearch, hasMoreWorkstreams, loadingMoreWorkstreams, onLoadMoreWorkstreams, workstreams]);
   const visibleWorkstreams = useMemo(() => normalizedSearch
     ? workstreams.filter((workstream) => [workstream.title, workstream.preview, workstream.objective]
       .some((value) => value?.toLowerCase().includes(normalizedSearch)))
@@ -1617,7 +1629,13 @@ export function Sidebar({
   const commitPinnedOrder = async (order: string[]): Promise<void> => {
     setDragOrder(order);
     try {
-      await onReorderPinnedWorkstreams(order);
+      // Search only reorders the visible slots; hidden pins keep their place.
+      const visibleIds = new Set(order);
+      let nextVisible = 0;
+      const completeOrder = orderPinnedWorkstreams(workstreams, null).map((pinned) => (
+        visibleIds.has(pinned.id) ? order[nextVisible++]! : pinned.id
+      ));
+      await onReorderPinnedWorkstreams(completeOrder);
     } catch (error) {
       setMenuError({
         title: 'Pinned work streams could not be reordered',
@@ -1737,7 +1755,7 @@ export function Sidebar({
   }, [effectiveSidebarWidth]);
 
   const resizeSidebar = useCallback((requestedWidth: number): void => {
-    const availableWidth = windowWidth - SIDEBAR_CONTENT_MIN_WIDTH;
+    const availableWidth = window.innerWidth - SIDEBAR_CONTENT_MIN_WIDTH;
     if (compact) {
       if (requestedWidth < SIDEBAR_EXPAND_DRAG_THRESHOLD || availableWidth < MIN_SIDEBAR_WIDTH) return;
       setSidebarCollapsed(false);
@@ -1750,7 +1768,7 @@ export function Sidebar({
     }
     if (availableWidth < MIN_SIDEBAR_WIDTH) return;
     setSidebarWidth(Math.min(requestedWidth, availableWidth));
-  }, [compact, setSidebarCollapsed, setSidebarWidth, windowWidth]);
+  }, [compact, setSidebarCollapsed, setSidebarWidth]);
 
   useEffect(() => {
     if (!resizing) return undefined;
@@ -2038,7 +2056,9 @@ export function Sidebar({
               // holds when nothing is pinned either; with everything pinned the
               // section has nothing left to say and says nothing.
               pinnedWorkstreams.length === 0 && (
-                <p className="sidebar-empty">{normalizedSearch ? 'No matching work streams' : 'No work streams or notes yet'}</p>
+                <p className="sidebar-empty">{normalizedSearch
+                  ? hasMoreWorkstreams ? 'No matches in loaded work streams' : 'No matching work streams'
+                  : 'No work streams or notes yet'}</p>
               )
             ) : (
               groups.map((group) => (
@@ -2128,6 +2148,9 @@ export function Sidebar({
                 to end exactly on a page boundary. */}
             {(loadingMoreWorkstreams || loadingMoreNotes) && (
               <p aria-live="polite" className="sidebar-empty">Loading more…</p>
+            )}
+            {normalizedSearch && hasMoreWorkstreams && !loadingMoreWorkstreams && onLoadMoreWorkstreams && (
+              <button className="sidebar-empty" onClick={onLoadMoreWorkstreams} type="button">Search more work streams</button>
             )}
           </section>
         </nav>

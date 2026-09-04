@@ -3,6 +3,7 @@ import { Download, File, FileText, Play, RefreshCcw, Table2, X } from 'lucide-re
 import { useEffect, useMemo, useState } from 'react';
 import type { PendingAttachment } from '../lib/use-file-attachments';
 import type { MessageAttachment } from '../lib/types';
+import { isImageAttachment, isVideoAttachment } from '../lib/attachment-media';
 
 export interface AttachmentPreview {
   name: string;
@@ -41,14 +42,6 @@ function formatAttachmentSize(bytes: number): string {
   if (bytes < 1_000) return `${bytes}B`;
   if (bytes < 1_000_000) return `${(bytes / 1_000).toFixed(bytes < 10_000 ? 1 : 0)}kB`;
   return `${(bytes / 1_000_000).toFixed(bytes < 10_000_000 ? 1 : 0)}MB`;
-}
-
-function isImageAttachment(mimeType: string, fileName: string): boolean {
-  return mimeType.startsWith('image/') || /\.(?:avif|bmp|gif|heic|heif|ico|jpe?g|png|svg|webp)$/iu.test(fileName);
-}
-
-function isVideoAttachment(mimeType: string, fileName: string): boolean {
-  return mimeType.startsWith('video/') || /\.(?:m4v|mkv|mov|mp4|webm)$/iu.test(fileName);
 }
 
 function pendingFileKind(mimeType: string, fileName: string): 'markdown' | 'spreadsheet' | 'text' | 'generic' {
