@@ -175,9 +175,15 @@ describe("tool schema sanitization", () => {
     // other half of the contract, because two copies kept in step by hand
     // diverged on the first edit that touched only one.
     const cursors = everyConnectorCursor();
-    // A floor, not a total, so adding a paginated tool does not edit this line
-    // while removing every cursor cannot pass it silently.
-    expect(cursors.length).toBeGreaterThanOrEqual(22);
+    // The exact population, per connector. A floor was the first shape of this
+    // and it had three cursors of slack in it: one connector could lose its
+    // coverage entirely while the total still cleared the bound. An exact map
+    // costs one edit when a paginated tool is added, which is the point — that
+    // edit is where somebody states the new tool is meant to be covered.
+    expect(Object.fromEntries(
+      [...new Set(cursors.map(({ connector }) => connector))].sort()
+        .map((connector) => [connector, cursors.filter((c) => c.connector === connector).length]),
+    )).toEqual({ google: 4, granola: 2, linear: 4, notion: 3, slack: 5, x: 4 });
     expect(cursors.flatMap(({ connector, tool, cursor }) => {
       const where = `${connector}.${tool.name}.${cursor}`;
       if (!authorsNullBranch(tool, cursor)) return [`${where}: authors no null branch`];

@@ -182,8 +182,10 @@ sanitizer collapses `type: ["string", "null"]` to `type: "string"` and appends
 prose, which is the same two-halves-disagreeing shape the rule above exists to
 remove. `anyOf: [{ type: "string", minLength: 1 }, { type: "null" }]` passes
 through whole. `droppedNullableBranches` reports the difference and
-`apps/api/test/tool-schema-sanitization.test.ts` asserts over it; a new
-paginated tool is expected to join that assertion.
+`apps/api/test/tool-schema-sanitization.test.ts` asserts over it. That assertion
+enumerates the registry, so a new paginated connector tool is enrolled by
+existing rather than by being remembered; what still has to be remembered is a
+cursor named something outside `CURSOR_PARAMETERS`, which no sweep will find.
 
 If using zod for parsing do not just return the zod error object. Provide natural
 language errors and more importantly provide instructions on how to fix the error.
