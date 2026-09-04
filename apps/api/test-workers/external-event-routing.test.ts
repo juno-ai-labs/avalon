@@ -28,7 +28,14 @@ import { env } from "cloudflare:workers";
 import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { asAutomationId, asSubstreamId, asUserId, asWorkspaceId, type AutomationDraft } from "@rally/contracts";
+import {
+  asAutomationId,
+  asSubstreamId,
+  asUserId,
+  asWorkspaceId,
+  WorkspaceExternalEventMatchResultSchema,
+  type AutomationDraft,
+} from "@rally/contracts";
 
 import type { AutomationDO } from "../src/durable-objects/automation-do";
 import { automationDOName, conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
@@ -276,7 +283,9 @@ async function ingestSlackEvent(eventId: string, providerEventId: string, eventT
 }
 
 async function match(eventId: string) {
-  return workspace().matchExternalEventDestinations({ workspaceId: WORKSPACE_ID, eventId });
+  return WorkspaceExternalEventMatchResultSchema.parse(
+    await workspace().matchExternalEventDestinations({ workspaceId: WORKSPACE_ID, eventId }),
+  );
 }
 
 async function automationRuns(): Promise<{ occurrence_key: string; state: string }[]> {
@@ -343,6 +352,8 @@ describe("external event routing", () => {
         eventType: "slack.message.posted",
         title: "New message",
         summary: "A channel message arrived",
+        textSnippet: "",
+        metadata: {},
         occurredAt: Date.parse(NOW),
         audienceUserIds: [],
         audienceKind: "workspace",

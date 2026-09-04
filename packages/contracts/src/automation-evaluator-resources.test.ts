@@ -93,3 +93,29 @@ describe("dropping a resource id a rule cannot use", () => {
     expect(withoutUnusableAutomationResourceIds({ evaluators: "nope" }, lookup)).toEqual({ evaluators: "nope" });
   });
 });
+
+describe("a filter field's operators when its manifest names none", () => {
+  it("follow the value type, so an array field can be used at all", async () => {
+    const { ConnectorActivityFilterFieldSchema } = await import("./index");
+    const field = (valueType: string) => ConnectorActivityFilterFieldSchema.parse({
+      key: "changedFields",
+      label: "Changed fields",
+      description: "Fields reported as changed.",
+      valueType,
+    });
+
+    // The predicate leaf for an array admits only the set operators, so an
+    // array field defaulting to equals was declared, inspected, and unusable.
+    expect(field("string_array").operators).toEqual(["has_any", "has_all", "has_none"]);
+    expect(field("person_id_array").operators).toEqual(["has_any", "has_all", "has_none"]);
+    expect(field("string").operators).toEqual(["equals"]);
+    expect(field("number").operators).toEqual(["equals"]);
+    expect(ConnectorActivityFilterFieldSchema.parse({
+      key: "labels",
+      label: "Labels",
+      description: "Labels.",
+      valueType: "string_array",
+      operators: ["has"],
+    }).operators).toEqual(["has"]);
+  });
+});

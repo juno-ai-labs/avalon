@@ -1462,11 +1462,15 @@ export const AutomationRunDefinitionV1Schema = z.strictObject({
   runAsUserId: IdSchema,
   modelOverride: z.string().min(1).nullable(),
   trigger: AutomationRunTriggerV1Schema,
-  /** The content that started an inbound-email run, rendered as loop input. */
+  /**
+   * The content that started the run, rendered as loop input: the email for
+   * an inbound-email run, the event for an external-event run. Only an email
+   * is also a resource.
+   */
   opening: z.strictObject({
     textContent: z.string().min(1),
     structuredContent: z.record(z.string(), z.unknown()),
-    resourceId: IdSchema,
+    resourceId: IdSchema.nullable(),
   }).nullable(),
   state: z.enum(["pending", "running", "needs_input", "completed", "failed", "stopped"]),
 });
@@ -3136,13 +3140,30 @@ export const ConnectorActivityFilterValueTypeSchema = z.enum([
   "person_id_array",
 ]);
 
+/**
+ * The operators a filter field offers when its manifest names none.
+ *
+ * Old manifests described equality-only filters, and `equals` stays the
+ * default for the scalar types. It was also the default for the array types,
+ * whose predicate leaf accepts only the set operators, so a field such as
+ * Granola's `changedFields` or Notion's `authorPersonIds` could be declared
+ * and inspected but never used in a rule: every operator the leaf allowed was
+ * one the field did not declare. The default follows the type.
+ */
+export function defaultConnectorActivityFilterOperators(
+  valueType: z.infer<typeof ConnectorActivityFilterValueTypeSchema>,
+): ["equals"] | ["has_any", "has_all", "has_none"] {
+  return valueType === "string_array" || valueType === "person_id_array"
+    ? ["has_any", "has_all", "has_none"]
+    : ["equals"];
+}
+
 export const ConnectorActivityFilterFieldSchema = z.strictObject({
   key: z.string().regex(/^[a-z][a-zA-Z0-9_]{0,63}$/),
   label: z.string().min(1).max(120),
   description: z.string().min(1).max(500),
   valueType: ConnectorActivityFilterValueTypeSchema,
-  /** Old manifests described equality-only filters; preserve exactly that
-   * behavior until a connector explicitly advertises a broader operator. */
+  /** Absent means the type's default, see {@link defaultConnectorActivityFilterOperators}. */
   operators: z.array(z.enum([
     "equals",
     "not_equals",
@@ -3161,9 +3182,12 @@ export const ConnectorActivityFilterFieldSchema = z.strictObject({
     "has_none",
     "exists",
     "not_exists",
-  ])).min(1).default(["equals"]),
+  ])).min(1).optional(),
   sensitive: z.boolean().default(false),
-});
+}).transform((field) => ({
+  ...field,
+  operators: field.operators ?? defaultConnectorActivityFilterOperators(field.valueType),
+}));
 
 export const ConnectorActivityTriggerDescriptorSchema = z.strictObject({
   eventType: z.string().min(1).max(200),
