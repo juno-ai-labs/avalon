@@ -225,6 +225,62 @@ beforeEach(async () => {
 });
 
 describe("conversation parent contract", () => {
+  it("WorkstreamDO admits the creator of a personal room before the child's first effect arrives", async () => {
+    // What creation looks like from the desktop's side: `POST /workstreams`
+    // returns and the client opens the room at once. The parent has reserved
+    // the main conversation and nothing else; the child's `directory_user`
+    // effect, the only writer of the per-user projection, is still on the
+    // Queue. The creator must be readable in that window, and nobody else.
+    await roomParent(PERSONAL_ROOM_ID).reserveChild({
+      workspaceId: WORKSPACE_ID,
+      parentId: PERSONAL_ROOM_ID,
+      substreamId: asSubstreamId("0"),
+      kind: "main",
+      createdByUserId: AUTHOR_ID,
+      authorityGeneration: 1,
+      directory: {
+        title: "Private room",
+        description: "",
+        scope: "personal",
+        systemKind: null,
+        emailAddress: null,
+        titleStatus: "settled",
+        createdAt: NOW,
+      },
+    });
+
+    expect(await roomParent(PERSONAL_ROOM_ID).authorizeViewer(viewer(PERSONAL_ROOM_ID, AUTHOR_ID)))
+      .toEqual({ authorized: true, archived: false });
+    expect(await roomParent(PERSONAL_ROOM_ID).authorizeViewer(viewer(PERSONAL_ROOM_ID, PARTICIPANT_ID)))
+      .toEqual({ authorized: false, archived: false });
+
+    // Once the child reports its participants, its word replaces the
+    // creator's standing: the creator was removed from this room.
+    await bootstrapWorkstreamRuntimeEnvironment(TEST_ENV, WORKSPACE_ID, PERSONAL_ROOM_ID, "workstream");
+    await provisionWorkstreamObject(TEST_ENV, {
+      workspaceId: WORKSPACE_ID,
+      workstreamId: PERSONAL_ROOM_ID,
+      title: "Private room",
+      objective: "",
+      scope: "personal",
+      createdByUserId: AUTHOR_ID,
+      participantUserIds: [PARTICIPANT_ID],
+      harnessStatus: "idle",
+      titleStatus: "settled",
+      emailAddress: null,
+      emailRouteStatus: null,
+      systemKind: null,
+      modelOverride: null,
+      now: Date.now(),
+    });
+    await deliverEffectsToWorkspace(TEST_ENV, conversation(PERSONAL_ROOM_ID));
+
+    expect(await roomParent(PERSONAL_ROOM_ID).authorizeViewer(viewer(PERSONAL_ROOM_ID, PARTICIPANT_ID)))
+      .toEqual({ authorized: true, archived: false });
+    expect(await roomParent(PERSONAL_ROOM_ID).authorizeViewer(viewer(PERSONAL_ROOM_ID, AUTHOR_ID)))
+      .toEqual({ authorized: false, archived: false });
+  });
+
   it("WorkstreamDO admits a personal room's participants and every member of a workspace room", async () => {
     await seedRoom(PERSONAL_ROOM_ID, "personal", [AUTHOR_ID, PARTICIPANT_ID]);
     await seedRoom(WORKSPACE_ROOM_ID, "workspace", [AUTHOR_ID]);

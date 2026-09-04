@@ -1006,8 +1006,12 @@ or uniqueness; it accepts only a greater `(authority_generation, waterline)` for
 the affected `common` or `user:<id>` key, and a greater `source_version` for an
 automation row. A synchronous parent-to-workspace RPC is retained only for the
 provisional directory row at creation, which has to exist before the creator's
-first open reads the directory. Runtime state transitions never use that
-shortcut.
+first open reads the directory. The parent's own answer to that first open is
+the creator's standing: `reserveChild("0")` records who created the main
+conversation, and until the child's first projection arrives the parent admits
+that person as a participant (`ConversationParentObject.isParticipant`); once
+the child has reported, its per-user projection is the only answer. Runtime
+state transitions never use that shortcut.
 
 Creation replays are repair operations, and they repair the directory only.
 `reserveChild` is idempotent on the child, and `projection_keys` suppresses an
@@ -1608,6 +1612,33 @@ directory write at all.
 
 ## Changelog
 
+### 2026-09-04: The creator can open a new room at once, and every substream attaches its own resources
+
+**What changed:** `ConversationParentObject.isParticipant` answers from the
+per-user projection when the child has sent one, and otherwise, until the
+main conversation's first projection has arrived, from the creator recorded
+by `reserveChild("0")`; `WorkstreamDO.authorizeViewer` and `canRead` use it.
+`SubstreamAgent` hands a `runtimeResourceAttacher` to every substream's loop,
+scoped to that substream: the attacher refuses an attachment that names
+another conversation of the same work stream, where before it refused
+everything but substream `"0"` and was not offered elsewhere.
+
+**Why:** Pull request review. The creation path stopped flushing child
+effects synchronously in this change, so the only writer of
+`substream_user_directory` was the Queue consumer, and the creator of a new
+personal work stream got `404 conversation_not_found` from the boot and the
+socket ticket until the first `directory_user` effect had crossed the Queue;
+the contract test had hidden it by delivering the effects by hand before
+asserting. And an automation run lives on a child substream now, so without
+an attacher of its own the multimodal and terminal plugins fell back to the
+id-resolved port, which addresses the parent's substream `"0"` by default,
+and a run's generated or imported resources landed in the drafting
+conversation where the run could not list them.
+
+**Consequences:** The creator's standing is provisional: the moment the child
+reports its participants, its word governs, so a creator removed from the
+room loses access exactly as before. A run's resources are the run's; the
+drafting conversation no longer accumulates them.
 
 ### 2026-09-04: An object's refusal keeps its status across the RPC boundary
 

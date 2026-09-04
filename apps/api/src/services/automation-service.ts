@@ -55,25 +55,28 @@ export async function createAutomation(env: Env, input: {
     owningWorkstreamId: input.owningWorkstreamId,
     authorityGeneration: authority.generation,
   });
-  if (created) {
-    await bootstrapWorkstreamRuntimeEnvironment(env, workspaceId, automationId, "automation");
-    await provisionWorkstreamObject(env, {
-      workspaceId,
-      workstreamId: automationId,
-      title: "New automation",
-      objective: "Describe what this automation should do, when it should run, and who it is for.",
-      scope: "personal",
-      createdByUserId: input.authorUserId,
-      participantUserIds: [input.authorUserId],
-      harnessStatus: "idle",
-      titleStatus: "settled",
-      emailAddress: null,
-      emailRouteStatus: null,
-      systemKind: null,
-      modelOverride: null,
-      now: Date.now(),
-    });
-  }
+  // Both steps run on a replay too. The object's row commits first, and a
+  // first call that died after it answered `created: false` forever after,
+  // skipping the runtime environment and the conversation the automation
+  // needed to be opened at all. Both are idempotent: the D1 anchors are
+  // insert-or-ignore, and the object answers `already_provisioned`.
+  await bootstrapWorkstreamRuntimeEnvironment(env, workspaceId, automationId, "automation");
+  await provisionWorkstreamObject(env, {
+    workspaceId,
+    workstreamId: automationId,
+    title: "New automation",
+    objective: "Describe what this automation should do, when it should run, and who it is for.",
+    scope: "personal",
+    createdByUserId: input.authorUserId,
+    participantUserIds: [input.authorUserId],
+    harnessStatus: "idle",
+    titleStatus: "settled",
+    emailAddress: null,
+    emailRouteStatus: null,
+    systemKind: null,
+    modelOverride: null,
+    now: Date.now(),
+  });
   return { automationId, created };
 }
 

@@ -689,8 +689,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     this.assertParent(request.workspaceId, request.parentId);
     // Archive is reported, not folded into the answer: an archived work stream
     // is still readable by the people who could read it, only not writable.
-    const authorized = row.scope === "workspace"
-      || this.userProjection(request.userId)?.isParticipant === true;
+    const authorized = row.scope === "workspace" || this.isParticipant(request.userId);
     return ConversationParentAuthorizeViewerResultSchema.parse({
       authorized,
       archived: row.archived_at !== null,
@@ -1191,7 +1190,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     const row = this.metadataRow();
     if (!row || row.archived_at !== null) return false;
     if (row.scope === "workspace") return true;
-    return this.userProjection(userId)?.isParticipant === true;
+    return this.isParticipant(userId);
   }
 
   private stateVersionForUser(row: WorkstreamMetadataRow, userId: string) {
