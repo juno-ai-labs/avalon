@@ -154,7 +154,7 @@ export async function emitAgentToolTerminalTelemetry(
     origin: stored.origin,
     parent_tool_call_id: stored.parent_tool_call_id,
     execution_principal_json: stored.execution_principal_json,
-    automation_id: null,
+    automation_id: input.automationId ?? null,
     automation_run_id: input.automationRunId ?? null,
   };
 
