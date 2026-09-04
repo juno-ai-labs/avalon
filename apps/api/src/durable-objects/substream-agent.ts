@@ -5062,20 +5062,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         },
       });
       if (!(error instanceof ApiError)) {
-        // Everything that is not an `ApiError` reaches the person as the same
-        // `substream_command_failed`, so this entry is the only account of what
-        // actually threw, and it has to survive the two error shapes that get
-        // here. A `ZodError`'s `message` is multi-line JSON, which as a `reason`
-        // aggregates into nothing and buries the field that failed inside a
-        // blob; a retry whose fence failed its own contract logged that blob and
-        // read as an unexplained 500. The issues are lifted out as
-        // `path`/`code` pairs — schema shape rather than member data, safe to
-        // record where the values would not be, and the same treatment
-        // `request_failed` gives a validation failure on the HTTP side — while
-        // `reason` keeps a stable code that groups. `frames` names the call
-        // site, which matters most for exactly these errors: a command path runs
-        // several `parse` calls and the message says which field, never which
-        // one of them threw.
+        // The only account of a throw the person receives as a flat
+        // `substream_command_failed`, so `reason` is a code that groups rather
+        // than a message that does not — a `ZodError`'s is multi-line JSON, and
+        // `diagnosticErrorCode` keeps an arbitrary runtime message out of an
+        // indexed field. Issue paths and codes are schema shape, not member
+        // data, as `request_failed` already treats them. See the failure-mode
+        // row in `docs/workstream-durable-object.md`.
         const validation = error instanceof z.ZodError ? error : null;
         logWarn(this.env, "substream_socket_command_failed", {
           workspace_id: attachment.workspaceId,
@@ -5086,7 +5079,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           operation_id: command.operationId,
           reason: validation
             ? "schema_validation_failed"
-            : error instanceof Error ? error.message : "unknown",
+            : diagnosticErrorCode(error, "socket_command_threw"),
           ...(validation
             ? {
               validation_issues: validation.issues.slice(0, 25).map((issue) => ({
@@ -5095,7 +5088,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
               })),
             }
             : {}),
-          frames: harnessErrorFrames(error),
+          // `stack`, matching this file's other two `harnessErrorFrames` sites:
+          // one value under one key is what makes a single log filter find it.
+          stack: harnessErrorFrames(error),
         });
       }
       span.setError(safe.code, safe.message);
