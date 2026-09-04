@@ -584,7 +584,14 @@ run before takes.
 **Consequences:** A test that proves an activation reaches a room's model has
 to give the room a Bind head first. The archived room's rail lists its paused
 automations; resuming one is refused with `automation_room_archived` until the
-room is unarchived.
+room is unarchived. For that refusal to be reachable, the Worker resolves a
+manager's participation with `includeArchived`, so the archived room's people
+still manage its automation and the object, not a blanket 403, says what the
+archive forbids. Two more edges from the same live pass: a feed ticket for a
+run's conversation requested before the run alarm has bootstrapped the object
+answers `409 conversation_not_ready` instead of an untyped 500, and deleting
+an already-deleted automation re-enqueues its directory row so a sidebar entry
+left behind by a lost queue message can be cleared through the API.
 
 ### 2026-09-03: The automation is rebuilt as a conversation parent
 

@@ -7,6 +7,7 @@ import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { logStructuredEvent, logWarn } from "../observability/logger";
+import { ObjectPortError } from "../runtime/object-port";
 import { createIdentityObjectPort } from "../runtime/identity-port";
 import { issueSocketTicket, WORKSTREAM_SOCKET_TICKET_TTL_SECONDS } from "./socket-service";
 import { requireOpenWorkstreamAuthority, requireWorkstreamIngress } from "./workstream-authority";
@@ -87,13 +88,23 @@ export class ConversationService {
     }));
     if (!decision.authorized) throw new ApiError(404, "conversation_not_found", "Conversation not found");
     if (parent.kind === "automation") {
-      await createIdentityObjectPort(this.env, this.auth.workspaceId, parentId, undefined, substreamId)
-        .admitParticipant({
-          userId: this.auth.userId,
-          addedByUserId: this.auth.userId,
-          reason: "explicit",
-          now: Date.now(),
-        });
+      try {
+        await createIdentityObjectPort(this.env, this.auth.workspaceId, parentId, undefined, substreamId)
+          .admitParticipant({
+            userId: this.auth.userId,
+            addedByUserId: this.auth.userId,
+            reason: "explicit",
+            now: Date.now(),
+          });
+      } catch (error) {
+        // A run's conversation exists once the run alarm provisions it. A
+        // reader who arrives in the moment between the run being recorded and
+        // the object being bootstrapped gets a typed retry, not a 500.
+        if (error instanceof ObjectPortError && substreamId !== "0") {
+          throw new ApiError(409, "conversation_not_ready", "This conversation is still being set up; try again shortly");
+        }
+        throw error;
+      }
     }
     return { ...parent, archived: decision.archived || parent.archived };
   }

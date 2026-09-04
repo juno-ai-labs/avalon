@@ -4151,9 +4151,15 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       workspaceId: WorkspaceIdSchema,
       workstreamId: IdSchema,
       userId: UserIdSchema,
+      /** An archived room's participants still manage what the room owns. */
+      includeArchived: z.boolean().optional(),
     }).parse(input);
     this.assertWorkspace(request.workspaceId);
-    return { participant: this.isWorkstreamParticipant(request.workstreamId, request.userId) };
+    return {
+      participant: this.isWorkstreamParticipant(request.workstreamId, request.userId, {
+        includeArchived: request.includeArchived === true,
+      }),
+    };
   }
 
   /**

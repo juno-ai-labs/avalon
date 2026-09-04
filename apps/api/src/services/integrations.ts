@@ -1807,7 +1807,9 @@ function createAvalonAutomationsPlugin(
         if (target.automationId !== null) {
           if (input.parentKind === "automation") {
             if (target.automationId !== authoredAutomationId) {
-              throw new Error("This conversation can only change its own automation; omit automationId");
+              throw new Error(
+                `This conversation edits only its own automation, ${authoredAutomationId}; pass that id or null`,
+              );
             }
           } else {
             const owned = await (await durableObjectStubForWorkspace(
