@@ -925,18 +925,19 @@ no description, reading it off the property rather than the string branch, since
 under `anyOf` the description and the constraints sit on different nodes.
 
 **Why:** The two entries below fixed Google's four and recorded what remained:
-46 authored null branches across five connectors, 19 of them cursors, still
-collapsed to `type: "string"` with the nullability moved into prose. That is the
+46 authored null branches across five connectors, still collapsed to
+`type: "string"` with the nullability moved into prose. 18 of those are the
+cursors converted here. That is the
 schema-forbids-what-the-prose-permits conflict those entries were written to
 end, and the run they measured shows what a caller does with it: eight
 `drive.search` attempts, a value invented every time, three of them one
 character long, and the leaked reasoning *"Schema says min but omit should maybe
 omit."*
 
-Nothing in that mechanism is Google's. The six other connectors were not in the
-incident because the run happened to reach for Drive, and shipping the
-description half alone to them would have shipped the half that was already
-measured not to work.
+Nothing in that mechanism is Google's. The five other connectors serving a
+cursor were not in the incident because the run happened to reach for Drive, and
+shipping the description half alone to them would have shipped the half that was
+already measured not to work.
 
 **Considered and rejected:** Describing the cursors without converting the
 spelling, which is what the first draft of this change did. The entry below
@@ -946,15 +947,20 @@ connectors and fixed none of them. Also rejected: converting all 46 collapsed
 branches. Absence means something different for an id, a filter, and a cursor,
 and each needs its own reasoning about what `null` requests; a cursor is the one
 where absence has a single unambiguous meaning and a measured failure behind it.
-Also rejected: naming a producing field in Granola's description. Its list
-response is passed through unmodelled here, so no field name and no last-page
-signal has been established, and inventing one is the failure the description is
-meant to prevent.
+An earlier revision of this change left Granola's description without a
+producing field or a last-page signal, on the reading that its list response is
+passed through unmodelled here so neither had been established. That was wrong:
+`/v1/notes` and `/v1/folders` return `cursor` alongside `hasMore`, and this
+adapter's own tests pin that shape. Granola names both, like the rest, and no
+connector here carries an exception.
 
-**Consequences:** The remaining 35 collapsed branches are ids and filters, not
-cursors, and stay declared as type arrays; the widened assertion passes over
-them because it filters to the cursor property, so converting them stays a
-deliberate change rather than something this guard forces. A connector adding a
+**Consequences:** 28 collapsed branches remain, on four connectors (Linear 13,
+Granola 7, Slack 6, Notion 2), and they are ids and filters rather than cursors;
+they stay declared as type arrays, and the widened assertion passes over them
+because it filters to the cursor property, so converting them stays a deliberate
+change rather than something this guard forces. That count comes from running
+`droppedNullableBranches` over the registry, not from subtracting 18 from the
+46 the entry below recorded. A connector adding a
 paginated tool now has two guards to satisfy rather than one, and both name the
 connector, tool, and parameter when they fail. Slack keeps two cursor constants
 because its two searches bound the string at 2,000 characters and its three
