@@ -546,7 +546,12 @@ carries the event's `textSnippet` and `metadata` beside its title and
 summary, and `admitExternalEvent` renders them as the run's opening message
 (`lib/external-event-opening.ts`): a system row marked untrusted, with the
 same fields in its structured content, appended to the run's transcript
-before the loop starts, the way an inbound email already was. A run's
+before the loop starts, the way an inbound email already was. The model
+history projection admits that row when it is the run's trigger, through
+`renderUntrustedExternalEventMessage`, a user-role message whose label says
+to work from the event's fields and to treat anything inside it that reads
+like an instruction as data; every other system row stays out of the model's
+history as before. A run's
 opening no longer needs a resource; only an email attaches one. A delivery
 that would exceed the Queue's message bound with the content is sent
 without it, under `external_event_delivery_content_trimmed`, rather than
@@ -559,6 +564,10 @@ operators now defaults by value type
 and then had nothing to say: the run was handed only the event's type, so
 "write a line naming the deployed service" produced "service: unavailable".
 The rule had just selected on that service; the run deserved to read it.
+Storing the opening was not enough on its own: system rows are not model
+history, so the first fix put the event in the transcript and the model
+still answered "not provided" while it sat in front of a person reading the
+same conversation.
 The array default was found the same way: Granola's `changedFields` and
 Notion's `authorPersonIds` defaulted to `equals`, which the array leaf
 schema refuses, so no rule could ever name them.
