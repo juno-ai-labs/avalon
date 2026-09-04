@@ -355,6 +355,14 @@
    * set all three to nothing and let the message sit on the page as plain
    * text. */
   --av-cmp-bubble-background: #eeeeee;
+
+  /* The inset choice list within an agent question, distinct from its
+   * surrounding message surface. */
+  --av-cmp-elicitation-option-background: #e8e8e8;
+
+  /* The fill behind a person's turn. A theme with one continuous ground can
+   * set all three to nothing and let the message sit on the page as plain
+   * text. */
   --av-cmp-bubble-human-background: #070707;
   --av-cmp-bubble-human-foreground: #fcfcfc;
   --av-cmp-bubble-border: transparent;
@@ -692,6 +700,9 @@
   --av-cmp-group-label-gap: 22px;
 
   --av-cmp-bubble-background: #2f2f2f;
+
+  --av-cmp-elicitation-option-background: var(--av-sys-color-surface-raised-hover);
+
   --av-cmp-bubble-human-background: #5a5a5a;
   --av-cmp-bubble-human-foreground: #fcfcfc;
   --av-cmp-bubble-border: transparent;

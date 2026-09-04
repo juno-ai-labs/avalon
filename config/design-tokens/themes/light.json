@@ -217,6 +217,7 @@
     "cmp.group-label.height": "34px",
     "cmp.group-label.gap": "22px",
     "cmp.bubble.background": "#eeeeee",
+    "cmp.elicitation.option-background": "#e8e8e8",
     "cmp.bubble.human-background": "#070707",
     "cmp.bubble.human-foreground": "#fcfcfc",
     "cmp.bubble.border": "transparent",
