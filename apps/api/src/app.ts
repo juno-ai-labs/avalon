@@ -7,6 +7,8 @@ import { apiOperationTelemetry } from "./middleware/api-operation-telemetry";
 import { workspaceRealtimeInvalidation } from "./middleware/workspace-realtime";
 import { authRoutes } from "./routes/auth";
 import { devRoutes } from "./routes/dev";
+// SPIKE — throwaway, `spike/demo-workspace-replay` only. Delete with the spike.
+import { spikeRoutes } from "./spike/routes";
 import { automationRoutes } from "./routes/automations";
 import { conversationRoutes } from "./routes/conversations";
 import { connectionCallbackRoutes, connectionRoutes, webhookIngestionRoutes } from "./routes/connections";
@@ -117,6 +119,8 @@ export function createApp(): Hono<HonoAppEnv> {
   app.route("/auth", authRoutes);
   // Development tooling; every handler re-checks the dev gate itself.
   app.route("/dev", devRoutes);
+  // SPIKE — throwaway, `spike/demo-workspace-replay` only. Delete with the spike.
+  app.route("/dev/spike", spikeRoutes);
   app.route("/connections", connectionCallbackRoutes);
   app.route("/ingest", webhookIngestionRoutes);
   app.route("/ingest/resend", resendInboundRoutes);

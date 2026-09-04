@@ -52,6 +52,9 @@ import {
   toolActivityName,
   withoutUnusableDraftResourceIds,
 } from "@rally/agent-harness";
+// SPIKE — throwaway, `spike/demo-workspace-replay` only. Delete with the spike.
+import { SpikeAssistantFixtureSchema } from "../spike/replay";
+import { spikeFixturePlugins, spikeProviderFetch } from "../spike/fixture-provider";
 import { HttpUrlSchema } from "@rally/contracts/url-schemas";
 import {
   AutomationActivationV1Schema,
@@ -2430,6 +2433,19 @@ export async function runWorkstreamHarness(
   // database supplied by the owning agent. Each statement then resolves to its
   // actual authority without copying connector/resource state into the agent.
   env = withWorkspaceRuntimeDatabase(env, input.workspaceId);
+  // SPIKE — throwaway, `spike/demo-workspace-replay` only. When the run's
+  // execution receipt carries a recorded script, exactly two things differ:
+  // where model bytes come from, and which plugins the recorded calls resolve
+  // against. Everything else is the ordinary path. Delete with the spike.
+  const spikeReplayed = (() => {
+    const raw = (input as { spikeReplay?: unknown }).spikeReplay;
+    if (raw === undefined || raw === null) return null;
+    const parsed = SpikeAssistantFixtureSchema.safeParse(
+      (raw as { assistant?: unknown }).assistant ?? null,
+    );
+    return parsed.success ? parsed.data : null;
+  })();
+  const spikeSurface = spikeReplayed ? spikeFixturePlugins(spikeReplayed) : null;
   const runStartedAtMs = Date.now();
   // The archive gate was a `WHERE` clause because the read was a statement;
   // it is a test on the row here, and the row carries the object's own column
@@ -2548,6 +2564,26 @@ export async function runWorkstreamHarness(
     runAuthoritySnapshot,
     runtime?.runtimeResourceAttacher,
   );
+  // SPIKE — throwaway. Register the plugins a recorded connector call names:
+  // `beforeToolCall` authorizes a credential-free plugin only when the run
+  // registered it as a built-in, and `persistWorkstreamPluginActivation`
+  // refuses any plugin without a tool-surface hash. Delete with the spike.
+  if (spikeSurface) {
+    harnessTools.plugins.push(...spikeSurface.plugins);
+    for (const [tool, mode] of spikeSurface.modeByTool) harnessTools.modeByTool.set(tool, mode);
+    for (const [tool, mode] of spikeSurface.idempotencyByTool) {
+      harnessTools.idempotencyByTool.set(tool, mode);
+    }
+    const builtins = new Set(harnessTools.builtinPluginIds);
+    for (const plugin of spikeSurface.plugins) {
+      builtins.add(plugin.canonicalId);
+      harnessTools.pluginSurfaceHashes.set(
+        plugin.canonicalId,
+        await connectorToolSurfaceHash(plugin.canonicalId, plugin.tools),
+      );
+    }
+    (harnessTools as { builtinPluginIds: ReadonlySet<string> }).builtinPluginIds = builtins;
+  }
   const stopController = new AbortController();
   const harnessSignal = combineAbortSignals(stopController.signal, liveness.signal);
   const activeCredentialPluginIds = new Set<string>();
@@ -2881,7 +2917,11 @@ export async function runWorkstreamHarness(
   try {
     outcome = await runHarness({
       config: {
-        apiKey: env.OPENROUTER_API_KEY,
+        // SPIKE — throwaway. A replayed run never reaches OpenRouter, but Bind
+        // still reads the key to decide the endpoint is available, and an unset
+        // one is `undefined` rather than empty — a `.trim()` of undefined and a
+        // run that dies in 90ms. Delete with the spike.
+        apiKey: env.OPENROUTER_API_KEY ?? (spikeReplayed ? "spike-replay-no-provider" : env.OPENROUTER_API_KEY),
         primaryModel: modelRouting.model,
         fallbackModels: modelRouting.fallbackModels,
         appName: "Rally",
@@ -2894,6 +2934,9 @@ export async function runWorkstreamHarness(
         ttftTimeoutMs: numericEnv(env, "HARNESS_TTFT_TIMEOUT_MS", 45_000),
         streamIdleTimeoutMs: numericEnv(env, "HARNESS_STREAM_IDLE_TIMEOUT_MS", 30_000),
         sameModelRetries: 0,
+        // SPIKE — throwaway. `fetch` is a production injection point on
+        // `OpenRouterConfig`; the spike is its only caller.
+        ...(spikeReplayed ? { fetch: spikeProviderFetch(spikeReplayed) } : {}),
         // Matters most for a work stream pinned from the developer-mode model
         // selector: its route carries no fallbacks by design, so without this a
         // single stalled request throws away however long the run had already
@@ -7728,11 +7771,24 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
         );
         const id = await coreWriteEntityId("elicitation", input, providerIdempotencyKey);
         const at = nowIso();
+        // SPIKE — throwaway. `elicitation_requests.target_user_id` and
+        // `openElicitation`'s `targetUserId` both exist and no production caller
+        // has ever set either — this tool has always sent `null`, so an
+        // "addressed to you" question is unreachable through any production
+        // write path. Delete with the spike.
+        const spikeElicitationTarget = ((): string | null => {
+          const raw = (input as { spikeReplay?: unknown }).spikeReplay;
+          const target = raw && typeof raw === "object"
+            ? (raw as { assistant?: { elicitationTargetUserId?: unknown } })
+              .assistant?.elicitationTargetUserId
+            : null;
+          return typeof target === "string" ? target : null;
+        })();
         const elicitation = {
           id, workstreamId: input.parentId, harnessRunId: input.harnessRunId,
           prompt: args.prompt, responseType: args.responseType, options: args.options,
           minimumSelections: args.minimumSelections, maximumSelections: args.maximumSelections,
-          targetUserId: null, status: "open" as const, answer: null,
+          targetUserId: spikeElicitationTarget, status: "open" as const, answer: null,
           answeredByUserId: null, createdAt: at, answeredAt: null,
         };
         // The replay check used to be a read of its own in front of the batch,
@@ -7751,7 +7807,8 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
             optionsJson: JSON.stringify(args.options),
             minimumSelections: args.minimumSelections,
             maximumSelections: args.maximumSelections,
-            targetUserId: null,
+            // SPIKE — throwaway; `null` in production, see above.
+            targetUserId: spikeElicitationTarget,
             messageId: id,
             structuredContentJson: JSON.stringify({ kind: "elicitation", elicitation }),
             now: Date.parse(at),

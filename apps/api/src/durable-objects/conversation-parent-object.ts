@@ -1,3 +1,5 @@
+// SPIKE — throwaway, `spike/demo-workspace-replay` only. Delete with the spike.
+import { markSpikeRetired, readSpikeRetirement } from "../spike/object-retirement";
 import {
   ConversationEffectEnvelopeSchema,
   EFFECT_QUEUE_MESSAGE_MAX_BYTES,
@@ -247,6 +249,58 @@ export function aggregateUserProjections(
 }
 
 export abstract class ConversationParentDurableObject extends ScheduledDurableObject<Env> {
+  /**
+   * SPIKE — throwaway, `spike/demo-workspace-replay` only.
+   *
+   * Retire this conversation parent: record the fence, drop every stored alarm
+   * entry, and let `armNextAlarm` delete the platform alarm. Both `WorkstreamDO`
+   * and `AutomationDO` inherit it, which is the point — the shared base is the
+   * one place a retirement check belongs. Delete with the spike.
+   */
+  async spikeRetire(input: { retiredGeneration: number; reason: string }): Promise<{
+    cancelledAlarms: number;
+    alarmAfter: number | null;
+  }> {
+    await this.migrationsReady();
+    markSpikeRetired(this.ctx.storage.sql, {
+      retiredAt: Date.now(),
+      retiredGeneration: input.retiredGeneration,
+      reason: input.reason,
+    });
+    let cancelled = 0;
+    for (const kind of new Set(this.scheduledAlarms.list().map((alarm) => alarm.kind))) {
+      cancelled += this.scheduledAlarms.cancelKind(kind);
+    }
+    await this.armNextAlarm();
+    return { cancelledAlarms: cancelled, alarmAfter: await this.ctx.storage.getAlarm() };
+  }
+
+  /** SPIKE — throwaway. What the retirement left behind, for verification. */
+  async spikeRetirementState(): Promise<{
+    retired: boolean;
+    storedAlarms: number;
+    storedAlarmKinds: string[];
+    alarmAt: number | null;
+    pendingOutbox: number;
+  }> {
+    await this.migrationsReady();
+    const pending = this.ctx.storage.sql.exec<{ count: number }>(
+      `SELECT COUNT(*) AS count FROM durable_outbox WHERE state IN ('pending', 'inflight')`,
+    ).toArray()[0]?.count ?? 0;
+    return {
+      retired: readSpikeRetirement(this.ctx.storage.sql) !== null,
+      storedAlarms: this.scheduledAlarms.list().length,
+      storedAlarmKinds: this.scheduledAlarms.list().map((a) => `${a.kind}:${a.key}`),
+      alarmAt: await this.ctx.storage.getAlarm(),
+      pendingOutbox: Number(pending),
+    };
+  }
+
+  /** SPIKE — throwaway. Read by each subclass's derived-alarm hook. */
+  protected spikeRetired(): boolean {
+    return readSpikeRetirement(this.ctx.storage.sql) !== null;
+  }
+
   /** Who this parent is, or `null` before its first row exists. */
   protected abstract parentIdentity(): ConversationParentIdentity | null;
 

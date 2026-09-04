@@ -246,11 +246,14 @@ export class WorkstreamObjectClient {
   async answerElicitation(
     elicitationId: string,
     input: z.infer<typeof AnswerElicitationRequestSchema>,
+    /** SPIKE — throwaway, `spike/demo-workspace-replay` only. Object RPC only. */
+    spikeReplay?: unknown,
   ): Promise<{ elicitation: Elicitation | undefined }> {
     const parsed = AnsweredElicitationSchema.parse(await this.request({
       operation: "answer_elicitation",
       elicitationId,
       input,
+      ...(spikeReplay ? { spikeReplay } : {}),
     }));
     return { elicitation: parsed.elicitation };
   }

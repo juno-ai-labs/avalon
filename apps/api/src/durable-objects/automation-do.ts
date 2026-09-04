@@ -1102,6 +1102,8 @@ export class AutomationDO extends ConversationParentDurableObject {
   }
 
   protected override nextDerivedAlarmCandidates(): readonly number[] {
+    // SPIKE — throwaway, `spike/demo-workspace-replay` only.
+    if (this.spikeRetired()) return [];
     const due = this.nextParentOutboxDueAt();
     return due === null ? [] : [due];
   }

@@ -2925,6 +2925,14 @@ export const SlackSearchAuthorizationSchema = z.strictObject({
 });
 
 export const WorkstreamWorkflowInputSchema = z.object({
+  /**
+   * SPIKE — throwaway, `spike/demo-workspace-replay` only. The demo-pack replay
+   * context for the run this execution receipt names. Typed loosely: the shape
+   * belongs to `apps/api/src/spike`, and this field exists only because
+   * `z.object` strips what it does not declare and the value has to survive
+   * `execution_context_json`. Delete with the spike.
+   */
+  spikeReplay: z.unknown().optional(),
   region: RegionSchema,
   workspaceId: WorkspaceIdSchema,
   /**

@@ -663,6 +663,8 @@ import {
   type WorkspaceConnectorEventSettleRequest,
   type WorkspaceConnectorEventSettleRpcRequest,
 } from "./workspace-connector-event-protocol";
+// SPIKE — throwaway, `spike/demo-workspace-replay` only. Delete with the spike.
+import { markSpikeRetired, readSpikeRetirement } from "../spike/object-retirement";
 import { WORKSPACE_PRODUCT_SCHEMA_STATEMENTS } from "./workspace-product-schema";
 import {
   SLACK_REACTION_COLUMN_STATEMENTS,
@@ -3402,6 +3404,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * and Terminal deadlines are stored entries with their own retry gates.
    */
   protected override nextDerivedAlarmCandidates(): readonly number[] {
+    // SPIKE — throwaway. A retired workspace derives no wake-ups, so
+    // `armNextAlarm` deletes the object's one platform alarm.
+    if (readSpikeRetirement(this.state.storage.sql)) return [];
     const oldest = this.state.storage.sql.exec<{ created_at: number | null }>(
       `SELECT MIN(created_at) AS created_at FROM workspace_activity_events`,
     ).one().created_at;
@@ -5729,6 +5734,27 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       );
     }
     this.assertWorkspace(request.workspaceId);
+    // SPIKE — throwaway. A retired workspace drops every effect tagged at or
+    // below the generation it was retired at. Acknowledged, never refused: a
+    // refusal leaves the sender retrying the same envelope forever.
+    const spikeRetired = readSpikeRetirement(this.state.storage.sql);
+    if (spikeRetired) {
+      const dropped = request.envelopes.filter(
+        (envelope) => envelope.generation <= spikeRetired.retiredGeneration,
+      );
+      if (dropped.length > 0) {
+        this.recordSpikeDroppedEffects(dropped.length, "directory");
+        if (dropped.length === request.envelopes.length) {
+          return WorkspaceDirectoryApplyResultSchema.parse({
+            accepted: dropped.map((envelope) => ({
+              messageId: envelope.messageId,
+              payloadHash: envelope.payloadHash,
+            })),
+            directoryChanged: false,
+          });
+        }
+      }
+    }
     const userIds = [...new Set(request.envelopes.flatMap((envelope) => (
       envelope.effect.kind === "directory_user" ? [envelope.effect.userId] : []
     )))];
@@ -5991,6 +6017,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = WorkspaceRegionalEffectApplyRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
+    // SPIKE — throwaway. Same fence as the directory lane above.
+    const spikeRetiredRegional = readSpikeRetirement(this.state.storage.sql);
+    if (spikeRetiredRegional
+      && request.envelope.generation <= spikeRetiredRegional.retiredGeneration) {
+      this.recordSpikeDroppedEffects(1, "regional");
+      return WorkspaceRegionalEffectApplyResultSchema.parse({
+        replayed: true,
+        notificationIntentId: null,
+      });
+    }
     const result = applyWorkstreamRegionalEnvelope(this.state.storage, request, Date.now());
     if (!result.replayed && request.envelope.effect.kind === "activity_event") {
       await this.refreshProductAlarm();
@@ -6090,6 +6126,105 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       outcome: result.reapedIntentIds.length > 0 ? "deleted" : "empty",
     });
     return result;
+  }
+
+  /**
+   * SPIKE — throwaway, `spike/demo-workspace-replay` only.
+   *
+   * Retire this workspace object: record the fence, drop every stored alarm
+   * entry, and hand back the work streams and automations the caller must
+   * retire beneath it.
+   */
+  async spikeRetireWorkspace(input: {
+    workspaceId: string;
+    retiredGeneration: number;
+    reason: string;
+  }): Promise<{
+    workstreamIds: string[];
+    automations: Array<{ automationId: string; authorUserId: string }>;
+    cancelledAlarms: number;
+    alarmAfter: number | null;
+  }> {
+    await this.initialized;
+    this.assertWorkspace(input.workspaceId);
+    markSpikeRetired(this.state.storage.sql, {
+      retiredAt: Date.now(),
+      retiredGeneration: input.retiredGeneration,
+      reason: input.reason,
+    });
+    const workstreamIds = this.state.storage.sql.exec<{ workstream_id: string }>(
+      `SELECT workstream_id FROM workspace_workstream_directory ORDER BY workstream_id`,
+    ).toArray().map((row) => row.workstream_id);
+    const automations = this.state.storage.sql.exec<{
+      automation_id: string; author_user_id: string;
+    }>(
+      `SELECT automation_id, author_user_id FROM automation_directory
+        WHERE workspace_id = ? AND lifecycle NOT IN ('deleted')
+        ORDER BY automation_id`,
+      input.workspaceId,
+    ).toArray().map((row) => ({
+      automationId: row.automation_id,
+      authorUserId: row.author_user_id,
+    }));
+    let cancelled = 0;
+    for (const kind of new Set(this.scheduledAlarms.list().map((alarm) => alarm.kind))) {
+      cancelled += this.scheduledAlarms.cancelKind(kind);
+    }
+    await this.armNextAlarm();
+    return {
+      workstreamIds,
+      automations,
+      cancelledAlarms: cancelled,
+      alarmAfter: await this.state.storage.getAlarm(),
+    };
+  }
+
+  /** SPIKE — throwaway. What the retirement left behind, plus what it dropped. */
+  async spikeRetirementState(input: { workspaceId: string }): Promise<{
+    retired: boolean;
+    retiredAt: number | null;
+    retiredGeneration: number | null;
+    storedAlarms: number;
+    storedAlarmKinds: string[];
+    alarmAt: number | null;
+    droppedEffects: { directory: number; regional: number };
+    directoryRows: number;
+    directoryLastActivity: Record<string, string | null>;
+  }> {
+    await this.initialized;
+    this.assertWorkspace(input.workspaceId);
+    const retired = readSpikeRetirement(this.state.storage.sql);
+    const directoryRows = Number(this.state.storage.sql.exec<{ count: number }>(
+      `SELECT COUNT(*) AS count FROM workspace_workstream_directory`,
+    ).toArray()[0]?.count ?? 0);
+    return {
+      retired: retired !== null,
+      retiredAt: retired?.retiredAt ?? null,
+      retiredGeneration: retired?.retiredGeneration ?? null,
+      storedAlarms: this.scheduledAlarms.list().length,
+      storedAlarmKinds: this.scheduledAlarms.list().map((a) => `${a.kind}:${a.key}`),
+      alarmAt: await this.state.storage.getAlarm(),
+      droppedEffects: { ...this.spikeDroppedEffects },
+      directoryRows,
+      directoryLastActivity: Object.fromEntries(
+        this.state.storage.sql.exec<{ workstream_id: string; last_activity_at: string | null }>(
+          `SELECT workstream_id, last_activity_at FROM workspace_workstream_directory
+            ORDER BY workstream_id`,
+        ).toArray().map((row) => [row.workstream_id, row.last_activity_at]),
+      ),
+    };
+  }
+
+  /** SPIKE — throwaway. Per-instance; resets on eviction, which is enough to see a straggler. */
+  private readonly spikeDroppedEffects = { directory: 0, regional: 0 };
+
+  private recordSpikeDroppedEffects(count: number, lane: "directory" | "regional"): void {
+    this.spikeDroppedEffects[lane] += count;
+    logWarn(this.env, "spike_retired_workspace_effect_dropped", {
+      workspace_id: this.workspaceId(),
+      lane,
+      dropped_count: count,
+    });
   }
 
   async listWorkstreams(input: WorkspaceDirectoryListRequest): Promise<WorkspaceDirectoryPage> {
