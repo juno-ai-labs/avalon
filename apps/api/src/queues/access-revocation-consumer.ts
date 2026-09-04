@@ -127,6 +127,26 @@ export async function applyAccessRevocation(env: Env, message: AccessRevocationM
     return;
   }
 
+  if (target.scope === "workstream_automations") {
+    // A person who lost a room: every automation the room owns admitted them
+    // through the room, so each becomes an `automation` hop, which names the
+    // conversations. Only WorkspaceDO knows which automations a room owns.
+    const workspace = await durableObjectStubForWorkspace(
+      env,
+      env.WORKSPACE_DOS,
+      workspaceId,
+      workspaceDOName(env.AVALON_REGION, workspaceId),
+      placementAffinity,
+    );
+    const { automationIds = [] } = await workspace.automationIdsOwnedByWorkstream({
+      workspaceId,
+      workstreamId: target.workstreamId,
+    });
+    await publishDescendantRevocations(env, automationIds.map((automationId) =>
+      descendantRevocation(revocation, { scope: "automation", automationId })));
+    return;
+  }
+
   const workstreamId = asWorkstreamId(target.workstreamId);
 
   if (target.scope === "workstream") {

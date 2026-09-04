@@ -19,6 +19,7 @@ import { conversationObjectName } from "../durable-objects/substream-agent";
 import { substreamLoopId, workspaceDOName } from "../durable-objects/names";
 import { WorkspaceOpportunityOriginEventsResultSchema } from "../durable-objects/workspace-opportunity-protocol";
 import { ApiError } from "../lib/api-error";
+import { publishAccessRevocation } from "./access-revocation";
 import { loopActivationWasRecorded } from "../lib/loop-activation-signal";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { truncateUtf16Safe } from "../lib/text";
@@ -689,7 +690,18 @@ export class WorkstreamService {
     if (options.projectEffect !== true && (await this.projectConstraints(id)).activeProject) {
       throw new ApiError(409, "project_audience_managed_by_project", "Change project participants before removing this person");
     }
-    return client.removeParticipant(userId);
+    await client.removeParticipant(userId);
+    // The room closes its own sockets for the person it just removed. The
+    // automations it owns admitted them through the room, and nothing in the
+    // room reaches those objects, so this is where the retraction is
+    // published: whoever writes the fact publishes it, in the same request.
+    await publishAccessRevocation(this.env, {
+      reason: "workstream_participant_removed",
+      workspaceId: asWorkspaceId(this.auth.workspaceId),
+      userId,
+      sessionId: null,
+      target: { scope: "workstream_automations", workstreamId: id },
+    });
   }
 
   private async projectConstraints(workstreamId: string) {
