@@ -74,6 +74,10 @@ describe("X connector", () => {
     };
     const result = await execute(xAdapter(fetcher), "get_user_timeline", { userName: "@nasa" });
     expect(result.summary).toBe("Read the X timeline for @nasa");
+    // X omits the key entirely on this shape of last page, and the cursor
+    // description tells the caller to stop when it is `null`. Left absent, that
+    // stop signal is one the caller never sees.
+    expect(result.output).toMatchObject({ next_cursor: null });
     expect(requested.map((url) => url.pathname)).toEqual([
       "/twitter/user/info",
       "/twitter/user/tweet_timeline",

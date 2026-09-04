@@ -75,10 +75,17 @@ const CURSOR_SOURCE_FIELD: Record<string, string | null> = {
 
 describe("blanked tool arguments", () => {
   it("leaves no connector paginating on a cursor its schema says may be empty", () => {
+    // A positive floor, not merely a declared one. `minLength: 0` is a number,
+    // so a check for "is it declared" accepts it, while the harness only treats
+    // a string as rejecting the blank at `>= 1`
+    // (`schemaRejectsEmptyString` in `tool-arguments.ts`). Between those two a
+    // cursor could be relaxed to `0`, forward `""` to the provider again, and
+    // leave this suite green.
     const permissive = connectorTools().flatMap(({ connector, tool }) =>
       [...CURSOR_PARAMETERS]
         .map((name) => ({ name, schema: stringCursorSchema(tool, name) }))
-        .filter(({ schema }) => schema !== null && typeof schema.minLength !== "number")
+        .filter(({ schema }) => schema !== null
+          && (typeof schema.minLength !== "number" || schema.minLength < 1))
         .map(({ name }) => `${connector}.${tool.name}.${name}`));
 
     expect(permissive).toEqual([]);
