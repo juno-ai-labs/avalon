@@ -1980,7 +1980,20 @@ async function loadAutomationCreatorPluginCatalog(
     const modelPluginId = String(row.model_plugin_id ?? "");
     if (!/^plugin_[a-z][a-z0-9_]{0,62}$/u.test(modelPluginId) || seen.has(modelPluginId)) continue;
     seen.add(modelPluginId);
-    const adapter = registry.get(String(row.connector_type));
+    // A connection whose connector this deployment does not configure (its
+    // secrets are absent locally, or the type is unknown) is skipped, not a
+    // throw that takes the drafting plugin away from every conversation.
+    let adapter: ReturnType<typeof registry.get>;
+    try {
+      adapter = registry.get(String(row.connector_type));
+    } catch (error) {
+      logStructuredEvent(env, "warn", "automation_creator_connector_unavailable", {
+        connector_type: String(row.connector_type),
+        connection_id: String(row.id),
+        reason: error instanceof Error ? error.message : "unknown",
+      });
+      continue;
+    }
     const grantedScopes = parseJson<string[]>(row.granted_scopes_json, []);
     const granted = new Set(grantedScopes);
     const connectionId = String(row.id);
@@ -2015,8 +2028,14 @@ async function loadAutomationCreatorPluginCatalog(
       shortWireName: stableConnectionWireName(modelPluginId),
     };
     const wirePrefix = stableConnectionWireName(modelPluginId);
+    // Two connections of one connector differ only by what a person named
+    // them, so the name a person chose is what the model is shown.
+    const connectionName = typeof row.display_name === "string" && row.display_name.trim() !== ""
+      && row.display_name.trim() !== adapter.manifest.displayName
+      ? `${adapter.manifest.displayName}: ${row.display_name.trim()}`
+      : adapter.manifest.displayName;
     const presentation = connectorPluginPresentation(String(row.connector_type), grantedScopes, wirePrefix, {
-      displayName: adapter.manifest.displayName,
+      displayName: connectionName,
       description: adapter.agentPlugin.description,
       searchAliases: connectorSearchAliases(adapter),
       systemMessage: adapter.agentPlugin.systemMessage,

@@ -307,9 +307,10 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
     {
       definition: creatorDefinition("set_evaluator_rules"),
       serial: true,
-      validateInput: (raw) => evaluatorRuleIssues(raw),
-      execute: async (raw, context) => {
+      validateInput: (raw) => evaluatorRuleIssues(withoutSentinelResourceIds(raw)),
+      execute: async (rawArguments, context) => {
         if (!input.draftMutationPort) throw new Error("automation_draft_mutation_host_unavailable");
+        const raw = withoutSentinelResourceIds(rawArguments);
         // The harness consults `validateInput` only after the executor has
         // already thrown a ZodError, so a semantic check that lives there
         // alone never runs — the rule reaches durable storage unchecked. The
@@ -329,6 +330,41 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
       },
     },
   ];
+  /**
+   * Drop a `resourceId` that means "none".
+   *
+   * `resourceId` is optional, and some models fill every declared property
+   * regardless: the nil and max UUIDs are what they reach for. Both pass the
+   * id pattern, so without this they went looking for a resource that does
+   * not exist and the whole rule was refused for a field the rule never
+   * needed. An id outside these sentinels is still looked up and refused if
+   * unknown.
+   */
+  function withoutSentinelResourceIds(raw: unknown): unknown {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
+    const record = raw as Record<string, unknown>;
+    if (!Array.isArray(record.evaluators)) return raw;
+    return {
+      ...record,
+      evaluators: record.evaluators.map((evaluator) => {
+        if (!evaluator || typeof evaluator !== "object" || Array.isArray(evaluator)) return evaluator;
+        const source = (evaluator as Record<string, unknown>).source;
+        if (!source || typeof source !== "object" || Array.isArray(source)) return evaluator;
+        const resourceId = (source as Record<string, unknown>).resourceId;
+        if (resourceId !== null && resourceId !== undefined && !isSentinelResourceId(resourceId)) return evaluator;
+        const { resourceId: _dropped, ...rest } = source as Record<string, unknown>;
+        void _dropped;
+        return { ...(evaluator as Record<string, unknown>), source: rest };
+      }),
+    };
+  }
+  function isSentinelResourceId(value: unknown): boolean {
+    if (typeof value !== "string") return true;
+    const normalized = value.trim().toLowerCase();
+    return normalized === ""
+      || normalized === "00000000-0000-0000-0000-000000000000"
+      || normalized === "ffffffff-ffff-ffff-ffff-ffffffffffff";
+  }
   function evaluatorRuleIssues(raw: unknown): z.ZodError | null {
         const parsed = AutomationSetEvaluatorRulesInputV1Schema.safeParse(raw);
         if (!parsed.success) return parsed.error;
@@ -362,12 +398,18 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
           const resolvedResource = evaluator.source.resourceId
             ? resolvedAutomationResources.get(evaluator.source.resourceId)
             : undefined;
+          // A resource belongs to a rule when the plugin that reaches it is the
+          // rule's source plugin. A search result that also names binding keys
+          // narrows it further; one that names none is not a refusal.
           if (
             evaluator.source.resourceId
             && (
               !resolvedResource
               || resolvedResource.pluginId !== plugin.pluginId
-              || !resolvedResource.sourceBindingKeys.includes(evaluator.source.sourceBindingKey)
+              || (
+                resolvedResource.sourceBindingKeys.length > 0
+                && !resolvedResource.sourceBindingKeys.includes(evaluator.source.sourceBindingKey)
+              )
             )
           ) {
             issues.push({
