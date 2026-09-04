@@ -463,3 +463,95 @@ describe("set_evaluator_rules on a trigger whose filter fields are open", () => 
     expect(schema).not.toContain("ffffffff-ffff-ffff-ffff-ffffffffffff");
   });
 });
+
+describe("set_evaluator_rules and a resourceId a rule cannot use", () => {
+  function webhookHost() {
+    const staged: unknown[] = [];
+    const state = host({
+      catalog: [{
+        pluginId: "plugin_webhook",
+        displayName: "Generic webhook",
+        icon: "webhook",
+        description: "Deliveries on a webhook.",
+        scope: "workspace",
+        searchAliases: [],
+        systemMessage: "",
+        activityTriggers: [{
+          eventType: "deploy.finished",
+          label: "deploy.finished",
+          description: "A delivery of deploy.finished on this webhook.",
+          eventFamilies: [],
+          filterFields: [],
+          resourceRelationships: [],
+          openFilterFields: true,
+          digestible: false,
+        }],
+        tools: [],
+      }],
+      inspectedPluginIds: new Set(["plugin_webhook"]),
+      loadedPluginIds: new Set(["plugin_webhook"]),
+      draftMutationPort: {
+        submitDraft: async () => ({ accepted: true as const }),
+        setEvaluatorRules: async (rules) => {
+          staged.push(rules);
+          return { accepted: true as const };
+        },
+      },
+    });
+    return { state, staged };
+  }
+  function rule(resourceId: string, attribute = "service") {
+    return {
+      schemaVersion: 1,
+      evaluators: [{
+        evaluatorKey: "checkout_deploys",
+        source: {
+          sourceBindingKey: "deploy_hook",
+          suggestedSourcePluginId: "plugin_webhook",
+          resourceId,
+          event: { kind: "event_type", eventType: "deploy.finished" },
+        },
+        when: {
+          kind: "all",
+          allOf: [{ kind: "string", attribute, operator: "equals", value: "checkout" }],
+        },
+      }],
+    };
+  }
+
+  it("drops any id on a trigger that declares no resource relationship", async () => {
+    const { state, staged } = webhookHost();
+    const tools = createAutomationsPlugin(state).tools;
+
+    // Once the schema stopped advertising the nil UUID the model reshaped its
+    // placeholder to fit the pattern; chasing each new one is a losing race.
+    // A webhook delivery cannot be about one resource, so on this trigger the
+    // field is noise whatever it holds.
+    for (const id of [
+      "00000000-0000-4000-8000-000000000000",
+      "ffffffff-ffff-4fff-8fff-ffffffffffff",
+      "00000000-0000-1000-8000-000000000000",
+      "3d1f8c2a-5b6e-4c7d-8e9f-0a1b2c3d4e5f",
+    ]) {
+      await expect(toolNamed(tools, "set_evaluator_rules").execute(rule(id), toolContext))
+        .resolves.toMatchObject({ output: { accepted: true } });
+    }
+    expect(staged).toHaveLength(4);
+    for (const rules of staged) {
+      expect((rules as { evaluators: Array<{ source: Record<string, unknown> }> }).evaluators[0]!.source)
+        .not.toHaveProperty("resourceId");
+    }
+  });
+
+  it("refuses a dotted key on an open descriptor, since the payload's keys are bare", async () => {
+    const { state, staged } = webhookHost();
+    const tools = createAutomationsPlugin(state).tools;
+
+    // A dotted attribute would compile and then never match anything: the
+    // event context indexes metadata by its bare keys.
+    await expect(toolNamed(tools, "set_evaluator_rules")
+      .execute(rule("00000000-0000-4000-8000-000000000000", "metadata.service"), toolContext))
+      .rejects.toThrow(/without a metadata\. prefix/u);
+    expect(staged).toHaveLength(0);
+  });
+});

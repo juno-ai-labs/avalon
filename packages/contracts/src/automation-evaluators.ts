@@ -338,3 +338,92 @@ export type AutomationSetEvaluatorRulesInputV1 = z.infer<typeof AutomationSetEva
 export type ExternalEventRegistrationProjectionV1 = z.infer<typeof ExternalEventRegistrationProjectionV1Schema>;
 export type WorkspaceExternalEventDeliveryQueueMessage = z.infer<typeof WorkspaceExternalEventDeliveryQueueMessageSchema>;
 export type ConnectorActivityTriggerDescriptorV2 = z.infer<typeof ConnectorActivityTriggerDescriptorV2Schema>;
+
+/**
+ * What a rule normalizer needs to know about a plugin's triggers: which event
+ * types it declares, the families they belong to, and whether any of them can
+ * be narrowed to one resource.
+ */
+export interface AutomationRuleTriggerShape {
+  eventType: string;
+  eventFamilies?: readonly string[] | undefined;
+  resourceRelationships?: readonly unknown[] | undefined;
+}
+
+const ZERO_PAYLOAD_ID = /^0{8}-0{4}-[0-9a-f]0{3}-[0-9a-f]0{3}-0{12}$/u;
+const FULL_PAYLOAD_ID = /^f{8}-f{4}-[0-9a-f]f{3}-[0-9a-f]f{3}-f{12}$/u;
+
+/**
+ * Whether a `resourceId` means "none".
+ *
+ * `resourceId` is optional, and some models fill every declared property
+ * regardless. What they reach for is a placeholder: the nil UUID, the max
+ * UUID, or either reshaped to satisfy the version and variant nibbles the id
+ * pattern asks for. Every one of those is all zeros or all `f` apart from
+ * those two nibbles, and no real id looks like that.
+ */
+export function isSentinelAutomationResourceId(value: unknown): boolean {
+  if (typeof value !== "string") return true;
+  const normalized = value.trim().toLowerCase();
+  return normalized === "" || ZERO_PAYLOAD_ID.test(normalized) || FULL_PAYLOAD_ID.test(normalized);
+}
+
+/**
+ * Drop a rule's `resourceId` where it cannot mean anything.
+ *
+ * Two cases, applied wherever a rule enters an automation: the tool call, the
+ * receipt replay that rebuilds draft state on a later turn, and the accept
+ * path that reads the stored revision. The first is a sentinel, see
+ * {@link isSentinelAutomationResourceId}. The second is structural: when none
+ * of the triggers the rule names declares a resource relationship, no id could
+ * be legitimate, so whatever the model put there is noise rather than a
+ * reference to check. A trigger that does declare relationships keeps the id,
+ * and an unknown one is still refused by the validators that follow.
+ *
+ * Shape-tolerant on purpose: it runs before the schema parse, so it leaves
+ * anything it does not recognize for the parse to describe.
+ */
+export function withoutUnusableAutomationResourceIds(
+  raw: unknown,
+  triggersForPlugin: (pluginId: string) => readonly AutomationRuleTriggerShape[] | undefined,
+): unknown {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
+  const record = raw as Record<string, unknown>;
+  if (!Array.isArray(record.evaluators)) return raw;
+  return {
+    ...record,
+    evaluators: record.evaluators.map((evaluator) => {
+      if (!evaluator || typeof evaluator !== "object" || Array.isArray(evaluator)) return evaluator;
+      const source = (evaluator as Record<string, unknown>).source;
+      if (!source || typeof source !== "object" || Array.isArray(source)) return evaluator;
+      const { resourceId, ...rest } = source as Record<string, unknown>;
+      if (resourceId === undefined) return evaluator;
+      const unusable = resourceId === null
+        || isSentinelAutomationResourceId(resourceId)
+        || !ruleTriggersCanNameAResource(rest, triggersForPlugin);
+      if (!unusable) return evaluator;
+      return { ...(evaluator as Record<string, unknown>), source: rest };
+    }),
+  };
+}
+
+function ruleTriggersCanNameAResource(
+  source: Record<string, unknown>,
+  triggersForPlugin: (pluginId: string) => readonly AutomationRuleTriggerShape[] | undefined,
+): boolean {
+  const pluginId = source.suggestedSourcePluginId;
+  const triggers = typeof pluginId === "string" ? triggersForPlugin(pluginId) : undefined;
+  // An unknown plugin or a malformed event is the validator's to refuse, with
+  // the id still in place so the refusal describes what the model sent.
+  if (!triggers) return true;
+  const event = source.event;
+  if (!event || typeof event !== "object" || Array.isArray(event)) return true;
+  const { kind, eventType, eventFamily } = event as Record<string, unknown>;
+  const named = kind === "event_type" && typeof eventType === "string"
+    ? triggers.filter((trigger) => trigger.eventType === eventType)
+    : kind === "event_family" && typeof eventFamily === "string"
+      ? triggers.filter((trigger) => (trigger.eventFamilies ?? []).includes(eventFamily))
+      : [];
+  if (named.length === 0) return true;
+  return named.some((trigger) => (trigger.resourceRelationships ?? []).length > 0);
+}

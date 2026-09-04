@@ -11,6 +11,7 @@ import type {
 import {
   AddressingClassificationSchema,
   AutomationSetEvaluatorRulesInputV1Schema,
+  withoutUnusableAutomationResourceIds,
   AutomationDraftSchema,
   type AutomationDraft,
 } from "@rally/contracts";
@@ -2807,41 +2808,23 @@ function withoutSentinelIdAlternatives(value: unknown): unknown {
 }
 
 /**
- * Drop a rule's `resourceId` when it means "none".
+ * Drop a rule's `resourceId` where it cannot mean anything, against the
+ * drafting catalog.
  *
- * `resourceId` is optional, and some models fill every declared property
- * regardless: the nil and max UUIDs are what they reach for. Both pass the id
- * pattern, so left alone they went looking for a resource that does not exist
- * and the whole rule was refused for a field it never needed. Applied wherever
- * a rule enters the draft: the tool call, and the receipt replay that rebuilds
- * the draft state on a later turn. An id outside these sentinels is still
- * looked up and refused if unknown.
+ * The rule is the contract's (`withoutUnusableAutomationResourceIds`): a
+ * sentinel id, or an id on a trigger that declares no resource relationship,
+ * is noise the model added to an optional field rather than a reference to
+ * look up. Applied at both places a rule enters the draft: the tool call, and
+ * the receipt replay that rebuilds the draft state on a later turn.
  */
-export function withoutSentinelAutomationResourceIds(raw: unknown): unknown {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
-  const record = raw as Record<string, unknown>;
-  if (!Array.isArray(record.evaluators)) return raw;
-  return {
-    ...record,
-    evaluators: record.evaluators.map((evaluator) => {
-      if (!evaluator || typeof evaluator !== "object" || Array.isArray(evaluator)) return evaluator;
-      const source = (evaluator as Record<string, unknown>).source;
-      if (!source || typeof source !== "object" || Array.isArray(source)) return evaluator;
-      const resourceId = (source as Record<string, unknown>).resourceId;
-      if (resourceId !== null && resourceId !== undefined && !isSentinelResourceId(resourceId)) return evaluator;
-      const { resourceId: _dropped, ...rest } = source as Record<string, unknown>;
-      void _dropped;
-      return { ...(evaluator as Record<string, unknown>), source: rest };
-    }),
-  };
-}
-
-function isSentinelResourceId(value: unknown): boolean {
-  if (typeof value !== "string") return true;
-  const normalized = value.trim().toLowerCase();
-  return normalized === ""
-    || normalized === "00000000-0000-0000-0000-000000000000"
-    || normalized === "ffffffff-ffff-ffff-ffff-ffffffffffff";
+export function withoutUnusableDraftResourceIds(
+  raw: unknown,
+  catalog: readonly Pick<AutomationCreatorPluginCatalogEntry, "pluginId" | "activityTriggers">[],
+): unknown {
+  return withoutUnusableAutomationResourceIds(
+    raw,
+    (pluginId) => catalog.find((entry) => entry.pluginId === pluginId)?.activityTriggers,
+  );
 }
 
 export const AVALON_REQUEST_ELICITATION_TOOL_DEFINITION = {
