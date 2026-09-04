@@ -5,19 +5,12 @@ import { join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 
-import { backdropScheme, fontScheme } from '../common/theme-assets';
+import { fontScheme } from '../common/theme-assets';
 import {
-  BACKDROP_CONTENT_SECURITY_POLICY,
   FONT_SIZE_LIMIT,
   ThemeFontCache,
-  backdropDocumentFor,
-  backdropResponse,
-  backdropUrl,
-  isBackdropUrl,
-  themeAssetSchemes,
+  themeFontSchemes,
 } from './theme-assets';
-
-const DOCUMENTS = { air: '<!doctype html><html><body>orbs</body></html>' };
 
 async function directory(): Promise<string> {
   return mkdtemp(join(tmpdir(), 'rally-theme-fonts-'));
@@ -35,60 +28,13 @@ function ok(body: ArrayBuffer): Response {
   return new Response(body, { status: 200 });
 }
 
-describe('backdrop documents', () => {
-  it('serves the document a theme id names', () => {
-    expect(backdropDocumentFor(backdropUrl('air'), DOCUMENTS)).toBe(DOCUMENTS.air);
-  });
-
-  it.each([
-    [`${backdropScheme}://theme/neu`, 'a theme with no backdrop'],
-    [`${backdropScheme}://elsewhere/air`, 'another host on the scheme'],
-    [`${backdropScheme}://theme/../../etc/passwd`, 'a traversal'],
-    [`${backdropScheme}://theme/`, 'no theme at all'],
-    ['app://rallywithai/index.html', "the renderer's own scheme"],
-    ['not a url', 'nonsense'],
-  ])('serves nothing for %s (%s)', (url) => {
-    expect(backdropDocumentFor(url, DOCUMENTS)).toBeNull();
-    expect(backdropResponse(url, DOCUMENTS).status).toBe(404);
-  });
-
-  /**
-   * The policy is the other half of the sandbox attribute on the frame, and both
-   * halves are load-bearing. Without `default-src 'none'` a backdrop could call
-   * out and report that it had been rendered; without the sandbox its inline
-   * script would be running in the application's own origin.
-   */
-  it('permits painting and denies everything else', () => {
-    const response = backdropResponse(backdropUrl('air'), DOCUMENTS);
-    const policy = response.headers.get('content-security-policy') ?? '';
-
-    expect(policy).toBe(BACKDROP_CONTENT_SECURITY_POLICY);
-    expect(policy).toContain("default-src 'none'");
-    expect(policy).not.toContain('connect-src');
-    expect(policy).not.toMatch(/\bhttps:/u);
-    expect(response.headers.get('content-type')).toBe('text/html; charset=utf-8');
-  });
-
-  /**
-   * The response carries its own policy, so the window's must not be attached
-   * alongside it — that one ends in `frame-ancestors 'none'`, and a backdrop
-   * that cannot be framed never renders. This is the predicate `index.ts` uses
-   * to leave the response alone.
-   */
-  it('is recognisable to the header handler that must skip it', () => {
-    expect(isBackdropUrl(backdropUrl('air'))).toBe(true);
-    expect(isBackdropUrl('app://rallywithai/index.html')).toBe(false);
-  });
-
-  it('registers both schemes without the privileges a fetch would need', () => {
-    expect(themeAssetSchemes.map((entry) => entry.scheme)).toEqual([backdropScheme, fontScheme]);
-    for (const { privileges } of themeAssetSchemes) {
-      expect(privileges).toEqual({ standard: true, secure: true });
-    }
-  });
-});
-
 describe('the remote font cache', () => {
+  it('registers only the private font scheme', () => {
+    expect(themeFontSchemes).toEqual([
+      { scheme: fontScheme, privileges: { standard: true, secure: true } },
+    ]);
+  });
+
   const id = 'a'.repeat(32);
   const url = `${fontScheme}://cache/${id}.woff2`;
   const fonts = { [id]: { url: 'https://fonts.example/geist.woff2' } };

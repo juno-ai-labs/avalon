@@ -368,7 +368,7 @@ describe('OpeningState', () => {
   it.each([['light'], ['dark']] as const)('draws the orb for a %s window', (mode) => {
     window.localStorage.setItem(
       DEVICE_PREFERENCES_STORAGE_KEY,
-      JSON.stringify({ version: 1, theme: { family: 'terra', mode } }),
+      JSON.stringify({ version: 1, theme: mode }),
     );
 
     render(<OpeningState label="Opening automation…" />);

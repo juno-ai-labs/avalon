@@ -6,19 +6,8 @@
  * theme; `pnpm tokens:check` fails if this file and that JSON disagree.
  */
 
-/** The scheme a theme's backdrop document is served from. */
-export const backdropScheme = 'rally-backdrop';
-
 /** The scheme cached remote font files are served from. */
 export const fontScheme = 'rally-font';
-
-/**
- * Themes that bring a backdrop document. A theme not listed here paints its
- * backdrop entirely with `sys.backdrop.*` and mounts no frame at all.
- */
-export const themesWithBackdrop = ['air', 'air-dark'] as const;
-
-export type ThemeWithBackdrop = (typeof themesWithBackdrop)[number];
 
 /**
  * Remote font files, by the cache id `themes.css` asks for. The main process
@@ -39,20 +28,20 @@ export const cachedFonts: Record<string, { url: string; integrity?: string }> = 
  * those references is invalid at computed-value time and `color` falls back
  * to the inherited near-black, on a near-black code block.
  *
- * These are the default theme's values because the exported card is
+ * These are the dark appearance's values because the exported card is
  * deliberately not themed: a fixed light sheet with a fixed dark code block,
  * so that a saved file looks the same whoever saved it. Generated rather than
  * copied so the two cannot drift.
  */
 export const exportSyntaxPalette: Record<string, string> = {
-  '--av-sys-color-syntax-plain': '#e5e4df',
+  '--av-sys-color-syntax-plain': '#e4dbcb',
   '--av-sys-color-syntax-comment': '#777772',
-  '--av-sys-color-syntax-punctuation': '#aaa9a3',
-  '--av-sys-color-syntax-tag': '#ff8a50',
-  '--av-sys-color-syntax-number': '#e6a06b',
-  '--av-sys-color-syntax-string': '#b995f5',
-  '--av-sys-color-syntax-operator': '#d8d7d2',
-  '--av-sys-color-syntax-keyword': '#ff7b2c',
-  '--av-sys-color-syntax-function': '#17a9f5',
-  '--av-sys-color-syntax-variable': '#e8b75c',
+  '--av-sys-color-syntax-punctuation': '#a19684',
+  '--av-sys-color-syntax-tag': '#e09a5e',
+  '--av-sys-color-syntax-number': '#d9b168',
+  '--av-sys-color-syntax-string': '#b9a3d4',
+  '--av-sys-color-syntax-operator': '#c3b8a6',
+  '--av-sys-color-syntax-keyword': '#e08c3a',
+  '--av-sys-color-syntax-function': '#8fb3ce',
+  '--av-sys-color-syntax-variable': '#d9b168',
 };

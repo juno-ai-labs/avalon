@@ -27,12 +27,11 @@ describe('ThemePicker', () => {
   beforeEach(() => {
     window.localStorage.clear();
     delete document.documentElement.dataset['theme'];
-    delete document.documentElement.dataset['themeFamily'];
     delete document.documentElement.dataset['themeMode'];
     installMatchMedia(false);
   });
 
-  it('offers only System, Light, and Dark rather than theme families', () => {
+  it('offers only System, Light, and Dark', () => {
     render(<ThemePicker />);
 
     const modes = screen.getByRole('radiogroup', { name: 'Appearance' });
@@ -46,15 +45,15 @@ describe('ThemePicker', () => {
 
     expect(screen.getByRole('radio', { name: 'System' })).toBeChecked();
     expect(screen.getByText('Following this Mac, which is light right now.')).toBeInTheDocument();
-    expect(readThemeChoice()).toEqual({ family: 'air', mode: 'system' });
+    expect(readThemeChoice()).toBe('system');
   });
 
   it('pins dark without exposing a design choice', () => {
     render(<ThemePicker />);
     fireEvent.click(screen.getByRole('radio', { name: 'Dark' }));
 
-    expect(readThemeChoice()).toEqual({ family: 'air', mode: 'dark' });
-    expect(document.documentElement.dataset['theme']).toBe('air-dark');
+    expect(readThemeChoice()).toBe('dark');
+    expect(document.documentElement.dataset['theme']).toBe('dark');
     expect(screen.getByText('Always dark.')).toBeInTheDocument();
   });
 
@@ -66,7 +65,7 @@ describe('ThemePicker', () => {
     act(() => setDark(true));
 
     expect(screen.getByText('Following this Mac, which is dark right now.')).toBeInTheDocument();
-    expect(document.documentElement.dataset['theme']).toBe('air-dark');
+    expect(document.documentElement.dataset['theme']).toBe('dark');
     stop();
   });
 
@@ -79,7 +78,7 @@ describe('ThemePicker', () => {
     act(() => setDark(true));
 
     expect(screen.getByText('Always light.')).toBeInTheDocument();
-    expect(document.documentElement.dataset['theme']).toBe('air');
+    expect(document.documentElement.dataset['theme']).toBe('light');
     stop();
   });
 });

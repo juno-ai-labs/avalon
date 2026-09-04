@@ -1216,11 +1216,11 @@ describe('MessageBlock markdown', () => {
     const view = render(<MarkdownBody>{'```mermaid\ngraph TD; A-->B\n```'}</MarkdownBody>);
     await waitFor(() => expect(mermaidRender).toHaveBeenCalledTimes(renderCallBaseline + 1));
 
-    act(() => { applyTheme({ family: 'air', mode: 'dark' }); });
+    act(() => { applyTheme('dark'); });
 
     await waitFor(() => expect(mermaidRender).toHaveBeenCalledTimes(renderCallBaseline + 2));
     view.unmount();
-    act(() => { applyTheme({ family: 'terra', mode: 'light' }); });
+    act(() => { applyTheme('light'); });
   });
 
   it('keeps a settled Mermaid diagram mounted when message metadata refreshes', async () => {

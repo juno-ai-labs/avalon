@@ -1,6 +1,6 @@
 {
   "$schema": "../theme.schema.json",
-  "id": "air",
+  "id": "light",
   "name": "Rally Light",
   "appearance": "light",
   "description": "The light GrokBot-inspired Rally appearance.",
@@ -24,10 +24,6 @@
       }
     }
   ],
-  "backdrop": {
-    "description": "The same four blooms as Airy Dark, multiplied into the paper rather than added to it.",
-    "html": "<div class=\"field\" aria-hidden=\"true\">\n  <div class=\"bloom warm\" data-home=\"0.42,0.22\" style=\"--size: 760px\"></div>\n  <div class=\"bloom cool\" data-home=\"0.86,0.72\" style=\"--size: 620px\"></div>\n  <div class=\"bloom clay\" data-home=\"0.10,0.90\" style=\"--size: 560px\"></div>\n  <div class=\"bloom ember\" data-home=\"0.06,0.60\" style=\"--size: 560px\"></div>\n</div>\n\n<style>\n  .field { inset: 0; position: absolute; }\n\n  .bloom {\n    border-radius: 50%;\n    filter: blur(var(--blur, 32px));\n    height: var(--size);\n    margin: calc(var(--size) / -2) 0 0 calc(var(--size) / -2);\n    position: absolute;\n    width: var(--size);\n    will-change: left, top;\n  }\n\n  /* Literal colours, deliberately. A backdrop document is part of the theme,\n     which is the one place a colour is allowed to be written down \u2014 and two of\n     these are not in the palette at all, because nothing in the interface is\n     that hue. Only the warm bloom follows the brand, because the reference\n     writes it as the accent; the other three are fixed hues there, so they are\n     fixed hues here \u2014 a retint should move the light the theme is named for and\n     leave the rest of the field where the design put it.\n\n     `multiply` is what separates this field from the dark one. On paper an\n     additive bloom is glare: it lightens a ground that is already near-white,\n     so the orb reads as a blown-out patch rather than as colour. Multiplying\n     darkens toward the pigment instead, which is how ink behaves on a page \u2014\n     and it is why the alphas here are roughly double the dark theme's and\n     still land softer. */\n  .bloom { mix-blend-mode: multiply; }\n\n  .warm {\n    --blur: 30px;\n    background: radial-gradient(circle,\n      rgb(from var(--av-sys-color-brand-base) r g b / .50) 0%,\n      rgb(from var(--av-sys-color-brand-base) r g b / .16) 42%,\n      rgb(from var(--av-sys-color-brand-base) r g b / 0) 70%);\n  }\n  .cool {\n    --blur: 34px;\n    background: radial-gradient(circle,\n      rgba(112, 158, 141, .42) 0%, rgba(112, 158, 141, .13) 45%, rgba(112, 158, 141, 0) 72%);\n  }\n  .clay {\n    --blur: 40px;\n    background: radial-gradient(circle, rgba(196, 120, 86, .3) 0%, rgba(196, 120, 86, 0) 68%);\n  }\n  .ember {\n    --blur: 36px;\n    background: radial-gradient(circle,\n      rgba(232, 138, 58, .50) 0%, rgba(232, 138, 58, .16) 44%, rgba(232, 138, 58, 0) 72%);\n  }\n</style>\n\n<script>\n  /*\n   * Four blooms orbiting a shared centroid, once every nine minutes.\n   *\n   * The revolution alone would read as a carousel, so each bloom also wanders on\n   * two incommensurate sines, and a hard separation force keeps any two from\n   * merging into one bright patch. Positions are fractions of the viewport, so\n   * the field reflows with the window and never needs a resize listener.\n   */\n  const blooms = [...document.querySelectorAll('[data-home]')].map((el, index) => {\n    const [x, y] = el.dataset.home.split(',').map(Number);\n    return { el, x, y, vx: 0, vy: 0, hx: x, hy: y, seed: index * 2.399, rate: 0.78 + index * 0.16 };\n  });\n\n  const centre = blooms.reduce(\n    (total, b) => ({ x: total.x + b.hx / blooms.length, y: total.y + b.hy / blooms.length }),\n    { x: 0, y: 0 },\n  );\n\n  const place = (b) => {\n    b.el.style.left = (b.x * 100).toFixed(3) + '%';\n    b.el.style.top = (b.y * 100).toFixed(3) + '%';\n  };\n  blooms.forEach(place);\n\n  /* A backdrop that drifts is decoration; for a reader who has asked the system\n     to stop moving things it is an unrelenting distraction they cannot dismiss.\n     The blooms stay exactly where the theme authored them. */\n  const still = matchMedia('(prefers-reduced-motion: reduce)');\n\n  const TAU = Math.PI * 2;\n  const PERIOD = 540;\n  const SEPARATION = 0.34;\n  let clock = 0;\n  let previous;\n  let frame;\n\n  function tick(now) {\n    frame = requestAnimationFrame(tick);\n    const elapsed = Math.min((now - (previous ?? now)) / 1000, 0.05);\n    previous = now;\n    clock += elapsed;\n\n    for (const b of blooms) {\n      const angle = (clock / PERIOD) * TAU * b.rate;\n      const rx = b.hx - centre.x;\n      const ry = b.hy - centre.y;\n      let tx = centre.x + rx * Math.cos(angle) - ry * Math.sin(angle)\n        + Math.sin(clock * 0.0071 + b.seed) * 0.055 + Math.sin(clock * 0.0031 + b.seed * 2.1) * 0.03;\n      let ty = centre.y + rx * Math.sin(angle) + ry * Math.cos(angle)\n        + Math.cos(clock * 0.0059 + b.seed * 1.7) * 0.05 + Math.cos(clock * 0.0027 + b.seed) * 0.028;\n\n      let fx = (tx - b.x) * 0.9;\n      let fy = (ty - b.y) * 0.9;\n\n      for (const other of blooms) {\n        if (other === b) continue;\n        const dx = b.x - other.x;\n        const dy = b.y - other.y;\n        const distance = Math.hypot(dx, dy) || 0.001;\n        if (distance >= SEPARATION) continue;\n        const push = (SEPARATION - distance) * 3.2;\n        fx += (dx / distance) * push;\n        fy += (dy / distance) * push;\n      }\n\n      b.vx = (b.vx + fx * elapsed) * 0.94;\n      b.vy = (b.vy + fy * elapsed) * 0.94;\n      b.x = Math.max(0.04, Math.min(0.96, b.x + b.vx * elapsed));\n      b.y = Math.max(0.05, Math.min(0.95, b.y + b.vy * elapsed));\n      place(b);\n    }\n  }\n\n  function follow() {\n    cancelAnimationFrame(frame);\n    previous = undefined;\n    if (!still.matches) frame = requestAnimationFrame(tick);\n  }\n\n  still.addEventListener('change', follow);\n  follow();\n</script>"
-  },
   "tokens": {
     "ref.color.neutral.1": "#fcfcfc",
     "ref.color.neutral.2": "#f7f7f7",
@@ -49,6 +45,13 @@
     "ref.color.line.4": "#cecece",
     "ref.color.line.5": "#b6b6b6",
     "ref.color.line.6": "#8d8d8d",
+    "sys.backdrop.color": "{sys.color.surface.canvas}",
+    "sys.backdrop.image": "none",
+    "sys.backdrop.position": "0% 0%",
+    "sys.backdrop.size": "auto",
+    "sys.backdrop.repeat": "no-repeat",
+    "sys.backdrop.attachment": "fixed",
+    "sys.backdrop.blend-mode": "normal",
     "sys.color.surface.canvas": "#fcfcfc",
     "sys.color.surface.default": "#fcfcfc",
     "sys.color.surface.subtle": "#f7f7f7",
@@ -58,10 +61,18 @@
     "sys.color.surface.elevated": "#fcfcfc",
     "sys.color.surface.elevated-hover": "#eeeeee",
     "sys.color.surface.inverse-hover": "#2f2f2f",
+    "sys.color.text.default": "{ref.color.neutral.14}",
+    "sys.color.text.subtle": "{ref.color.neutral.12}",
+    "sys.color.text.muted": "{ref.color.neutral.10}",
+    "sys.color.text.disabled": "{ref.color.neutral.8}",
     "sys.color.text.on-inverse": "#fcfcfc",
+    "sys.color.border.default": "{ref.color.line.2}",
+    "sys.color.border.subtle": "{ref.color.line.1}",
+    "sys.color.border.strong": "{ref.color.line.3}",
     "sys.color.border.highlight": "rgba(20, 20, 20, 0.05)",
     "sys.color.brand.base": "#d2822c",
     "sys.color.brand.strong": "#b96c1e",
+    "sys.color.brand.hover": "{sys.color.brand.strong}",
     "sys.color.brand.soft": "#c4762a",
     "sys.color.brand.ink": "#a2691f",
     "sys.color.brand.wash": "#fdf4e8",
@@ -157,6 +168,8 @@
     "sys.size.radius.md": "4px",
     "sys.size.radius.lg": "6px",
     "sys.size.radius.xl": "8px",
+    "sys.size.radius.pill": "999px",
+    "sys.size.border.hairline": "1px",
     "sys.size.control.height": "36px",
     "sys.space.pane.padding": "34px",
     "sys.space.stack.gap": "58px",
@@ -267,5 +280,6 @@
     "cmp.connector.search.foreground": "#2a5f85",
     "cmp.connector.plug.background": "#f4f3e8",
     "cmp.connector.plug.foreground": "#6c6a2c"
-  }
+  },
+  "default": true
 }
