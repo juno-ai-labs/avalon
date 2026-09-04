@@ -68,6 +68,15 @@ create one:
   `automation_draft_proposed` card to the room's feed, keyed on the automation
   and the revision so a retry replays the card. In an automation's own
   conversation the plugin submits to that automation and posts no card.
+- **Editing one that exists.** The plugin's `automations_list` returns what the
+  conversation may change, each with its current definition: in a room, the
+  automations the room owns; in an automation's own conversation, that
+  automation. A submission that names one of them (`automationId` beside the
+  draft, never inside it) writes the next revision of that automation instead
+  of creating another; in a room the card is posted again for the revision, and
+  the person applies it from the automation's page the way they accepted the
+  first one. A room naming an automation it does not own is refused with the
+  tool's own message, and an automation's conversation can name only itself.
 
 `createAutomation` creates the object first (`AutomationDO.create`: the
 automation row in `draft`, its `"0"` child registered, its sidebar row
@@ -529,6 +538,26 @@ was paused or deleted after admission. [`runbook.md`](runbook.md) has the
 production inspection paths.
 
 ## Changelog
+
+### 2026-09-04: A room can edit an automation it owns
+
+**What changed:** `submit_draft` accepts an `automationId` beside the draft,
+and the plugin gains `automations_list`, which the host answers with the
+automations the conversation may change and their current definitions. A
+room's submission naming one of its own automations writes that automation's
+next revision; a room naming any other is refused, and an automation's own
+conversation may name only itself.
+
+**Why:** Every room submission created a new automation, keyed on the
+authoring run, so asking a room to change the reminder it set up yesterday
+produced a second reminder. Editing in the automation's own conversation was
+always possible, but a person asking in the room had no way to reach it from
+there, and the card the room posts is the natural place to continue.
+
+**Consequences:** The target travels as a tool argument and is stripped before
+the draft is parsed, so the stored definition never carries an address.
+`automations_list` reads through `WorkspaceDO.listWorkstreamAutomations` and
+`AutomationDO.readDetail` as the person the run acts for.
 
 
 ### 2026-09-04: A posted result drains into the room, and the rail survives an archive

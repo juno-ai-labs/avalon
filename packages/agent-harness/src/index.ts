@@ -2039,6 +2039,10 @@ const automationDraftSubmissionJsonSchema = {
   type: "object",
   additionalProperties: false,
   properties: {
+    automationId: {
+      type: ["string", "null"],
+      description: "The id of an automation this conversation already owns, from automations_list, to replace its definition with this draft. Null creates a new automation. In an automation's own conversation the draft always goes to that automation."
+    },
     name: { type: "string" },
     description: { type: "string" },
     overview: { type: "string" },
@@ -2457,9 +2461,22 @@ export function parseAutomationSubmission(raw: unknown): z.ZodSafeParseResult<Au
   return AutomationDraftSchema.safeParse(normalizeAutomationDraft(raw));
 }
 
+/**
+ * Which existing automation a submission names, if any.
+ *
+ * Carried beside the draft rather than inside it: the draft is the definition
+ * an automation stores, and the target is the address it is stored at.
+ */
+export function automationSubmissionTarget(raw: unknown): string | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const target = (raw as Record<string, unknown>).automationId;
+  return typeof target === "string" && target.trim() !== "" ? target.trim() : null;
+}
+
 function normalizeAutomationDraft(value: unknown): unknown {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
-  const draft = value as Record<string, unknown>;
+  const draft = { ...(value as Record<string, unknown>) };
+  delete draft.automationId;
   const triggers = Array.isArray(draft.triggers)
     ? draft.triggers.map((trigger) => normalizeAutomationTrigger(trigger))
     : draft.triggers;
@@ -2860,6 +2877,14 @@ export const AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS = [
     get inputSchema() {
       return automationEvaluatorRulesJsonSchema();
     },
+  },
+  {
+    name: "automations_list",
+    description: "List the automations this conversation can edit, each with its current definition: in a work stream, the ones the room owns; in an automation's own conversation, that automation. Start an edit from the definition returned here and submit the whole revised draft with its automationId.",
+    capability: "rally.automation.list",
+    mode: "read",
+    idempotency: "safe",
+    inputSchema: { type: "object", additionalProperties: false, properties: {} },
   },
   {
     name: "submit_draft",
