@@ -14,7 +14,7 @@ import {
   parseAutomationSubmission,
   AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS,
   automationSubmissionTarget,
-  withoutSentinelAutomationResourceIds,
+  withoutUnusableDraftResourceIds,
   type AutomationCreatorPluginCatalogEntry,
   type HarnessTool,
   type HarnessToolContext,
@@ -308,10 +308,10 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
     {
       definition: creatorDefinition("set_evaluator_rules"),
       serial: true,
-      validateInput: (raw) => evaluatorRuleIssues(withoutSentinelAutomationResourceIds(raw)),
+      validateInput: (raw) => evaluatorRuleIssues(withoutUnusableDraftResourceIds(raw, catalog)),
       execute: async (rawArguments, context) => {
         if (!input.draftMutationPort) throw new Error("automation_draft_mutation_host_unavailable");
-        const raw = withoutSentinelAutomationResourceIds(rawArguments);
+        const raw = withoutUnusableDraftResourceIds(rawArguments, catalog);
         // The harness consults `validateInput` only after the executor has
         // already thrown a ZodError, so a semantic check that lives there
         // alone never runs — the rule reaches durable storage unchecked. The
@@ -409,6 +409,15 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
                 // rule the accept-side evaluator applies. The two must agree,
                 // or a rule the conversation could write is refused at accept,
                 // or one it could not write is admitted there.
+                if (descriptor.openFilterFields === true && leaf.attribute.includes(".")) {
+                  issues.push({
+                    code: "custom",
+                    path: ["evaluators", index, "when", "allOf", leafIndex, "attribute"],
+                    message: "Name the payload key bare, without a metadata. prefix: the event's metadata keys are the filter fields themselves.",
+                    input: leaf.attribute,
+                  });
+                  continue;
+                }
                 if (
                   descriptor.openFilterFields !== true
                   && (

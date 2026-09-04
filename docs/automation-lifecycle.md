@@ -541,15 +541,19 @@ production inspection paths.
 
 ### 2026-09-04: A rule's "no resource" sentinel, a poison-pill event, and a replayable dev ingress
 
-**What changed:** `withoutSentinelAutomationResourceIds` (agent harness)
-drops a rule's `resourceId` that is the nil or max UUID or empty, and is
-applied at both places a rule enters the draft: the `set_evaluator_rules`
-call, and the receipt replay that rebuilds the draft state on a later turn.
-The tool's JSON schema no longer lists those two UUIDs as alternatives in its
-id patterns. A searched resource whose search named no binding keys is
-accepted on its plugin alone. The drafting validator's filter-field check now
-has the same `openFilterFields` branch the accept-side evaluator has, so a
-rule on a webhook payload key can be written. The activity consumer acknowledges an admission the workspace ledger refuses
+**What changed:** `withoutUnusableAutomationResourceIds` (contracts) drops
+a rule's `resourceId` where it cannot mean anything: a sentinel (the nil or
+max UUID in any version-and-variant dress, or empty), or any id on a trigger
+that declares no resource relationship. It runs at every place a rule enters
+an automation: the `set_evaluator_rules` call, the receipt replay that
+rebuilds the draft state on a later turn, and the accept path reading the
+stored revision. The tool's JSON schema no longer lists the nil and max UUIDs
+as alternatives in its id patterns. A searched resource whose search named no
+binding keys is accepted on its plugin alone. The drafting validator's
+filter-field check now has the same `openFilterFields` branch the accept-side
+evaluator has, so a rule on a webhook payload key can be written, and both
+sides refuse a dotted key on an open descriptor, whose description now says
+to name the key bare. The activity consumer acknowledges an admission the workspace ledger refuses
 as `connector_event_identity_reused_with_different_content` instead of
 retrying it. The dev ingress derives the synthetic activity id from the
 workspace, connector, connection, and provider event id, so posting the same
@@ -565,15 +569,23 @@ pattern advertised it; the id passed the pattern and no lookup could satisfy
 it, so no event automation could be created. Stripping it on the live call
 alone was not enough: the next turn restored the sentinel from the raw
 receipt, the submit wrote it into the revision, and acceptance refused a
-resource that does not exist. The drafting validator refused every
+resource that does not exist. Removing the two UUIDs from the advertised
+pattern did not stop the model either; it reshaped the placeholder to satisfy
+the version and variant nibbles within minutes, which is why the rule is
+structural rather than a list: a webhook delivery cannot be about one
+resource, so on that trigger the field is noise whatever it holds. A dotted
+key was accepted on an open descriptor and would have compiled into a rule
+that never matched, since the event context indexes metadata by bare keys. The drafting validator refused every
 conditional rule on a webhook while the accept side would have admitted it,
 the disagreement the module's own comment forbids. The first replay attempt minted a fresh id per post, and the ledger refused the
 reuse on every retry with backoff, which kept one message in flight for
 minutes. A seeded connection for a connector with no local credentials threw
 inside the catalog and took drafting down for every conversation.
 
-**Consequences:** A sentinel is the only id treated as absent; any other
-unknown id is still refused with the sentence naming `resources_search`. The
+**Consequences:** On a trigger that can be about one resource, an unknown
+id is still refused with the sentence naming `resources_search`; only there
+does the field carry meaning. A revision written with a placeholder before
+this change is read the same way at accept. The
 identity refusal is terminal and logged once under
 `connector_event_queue_admission_failed`; every other admission failure still
 retries. The dev route cannot express two different payloads under one

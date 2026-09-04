@@ -20,6 +20,7 @@ import {
   type AutomationRunDefinitionV1,
   type AutomationRunTriggerV1,
   type AutomationScope,
+  withoutUnusableAutomationResourceIds,
 } from "@rally/contracts";
 import type {
   ConversationEffectEnvelope,
@@ -1411,13 +1412,23 @@ export class AutomationDO extends ConversationParentDurableObject {
       connectorBindings[pluginId] = connection.id;
     }
 
-    const rules = AutomationSetEvaluatorRulesInputV1Schema.parse(
+    const registry = connectorRegistryForEnv(this.env);
+    // The same normalization the drafting tool applies, so a revision written
+    // before it existed, or by a path that skipped it, is read the same way:
+    // a placeholder id, or an id on a trigger that cannot name a resource,
+    // is dropped rather than looked up and refused.
+    const rules = AutomationSetEvaluatorRulesInputV1Schema.parse(withoutUnusableAutomationResourceIds(
       revision.evaluator_rules_json ? JSON.parse(revision.evaluator_rules_json) : { schemaVersion: 1, evaluators: [] },
-    );
+      (pluginId) => {
+        const connection = connectionsByPlugin.get(pluginId);
+        return connection
+          ? connectorActivityTriggerDescriptors(registry.get(connection.connector_type), connection.config_json)
+          : undefined;
+      },
+    ));
     const blocker = automationDraftAcceptanceBlocker(definition, rules);
     if (blocker) throw new ApiError(422, blocker, "The automation's definition cannot be applied");
     const selectedByBinding = new Map(Object.entries(selections.activitySourcePluginIds));
-    const registry = connectorRegistryForEnv(this.env);
     const inspectedPlugins = new Map<string, {
       pluginId: string;
       activityTriggers: ReturnType<typeof registry.get>["manifest"]["activityTriggers"];

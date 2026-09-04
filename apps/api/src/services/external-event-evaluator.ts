@@ -192,6 +192,11 @@ function validatePredicate(
     const path = ["when", "allOf", leafIndex] as const;
     // An open descriptor names no fields: the caller's payload keys are the
     // vocabulary, and a leaf on a key the event lacks is simply a miss.
+    // A dotted key on an open descriptor would compile and never match: the
+    // event context indexes metadata by its bare keys.
+    if (descriptor.openFilterFields === true && leaf.attribute.includes(".")) {
+      throw evaluatorIssue(evaluatorIndex, [...path, "attribute"], "automation_evaluator_invalid");
+    }
     const field = descriptor.openFilterFields === true
       ? null
       : descriptor.filterFields.find((candidate) => candidate.key === leaf.attribute) ?? undefined;
