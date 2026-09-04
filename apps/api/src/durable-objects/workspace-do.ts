@@ -4361,6 +4361,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         payloadHash: event.payload_hash,
       })];
     });
+    // A silent non-match reads exactly like a lost event to the person whose
+    // automation never fired; the count and the event are what they need.
+    logInfo(this.env, "external_event_matched", {
+      workspace_id: request.workspaceId,
+      event_id: request.eventId,
+      event_type: event.event_type,
+      connector_type: event.connector_type,
+      delivery_count: deliveries.length,
+      destinations: deliveries.map((delivery) => `${delivery.destination.kind}:${delivery.registrationId}`).slice(0, 20),
+    });
     return WorkspaceExternalEventMatchResultSchema.parse({
       matched: deliveries.length > 0,
       deliveries,
