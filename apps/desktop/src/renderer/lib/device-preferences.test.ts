@@ -43,21 +43,21 @@ describe('device preferences', () => {
     expect(window.localStorage.getItem('rally:workspace-name')).toBeNull();
   });
 
-  it('keeps the chosen theme beside the other preferences', () => {
+  it('keeps the chosen appearance beside the other preferences', () => {
     setDeviceSelectedRegion('global');
-    setDeviceTheme({ family: 'air', mode: 'dark' });
+    setDeviceTheme('dark');
 
     expect(readDevicePreferences())
-      .toEqual({ version: 1, selectedRegion: 'global', theme: { family: 'air', mode: 'dark' } });
+      .toEqual({ version: 1, selectedRegion: 'global', theme: 'dark' });
   });
 
   /**
-   * A theme a later build removed — or an older build reading a newer file —
+   * An appearance a later build cannot read — or an older build reading a newer file —
    * costs the person that one preference and nothing else. Rejecting the whole
    * document would take their region and microphone with it, which is a far
    * worse outcome than an appearance reverting to the default.
    */
-  it('drops an unknown theme without discarding the rest of the record', () => {
+  it('drops an unknown appearance without discarding the rest of the record', () => {
     window.localStorage.setItem(DEVICE_PREFERENCES_STORAGE_KEY, JSON.stringify({
       version: 1,
       selectedRegion: 'eu',

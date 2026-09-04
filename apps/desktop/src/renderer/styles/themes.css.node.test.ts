@@ -110,11 +110,9 @@ describe('no colour is written into app.css', () => {
   /**
    * Lines come off the line ramp and fills come off the neutral one.
    *
-   * The two were one ramp until Airy needed borders that all but disappear: at
-   * the border band `--av-ref-color-neutral-4` was simultaneously the default border and the
-   * selected sidebar row's fill, so making the border vanish took the selection
-   * with it. A border that reaches back onto `--n-*` re-creates that coupling
-   * silently — it looks right in whichever theme it was written against.
+   * Keeping line and fill ramps separate lets borders stay subtle without also
+   * erasing selected-row fills. A border that reaches back onto `--n-*`
+   * silently re-creates that coupling.
    */
   it('draws every border and outline from the line ramp', () => {
     const offenders = app
@@ -154,10 +152,10 @@ describe('no colour is written into app.css', () => {
    * The window's backdrop is painted by one element.
    *
    * The shell and the main pane each carried a copy so that the pane, being
-   * opaque, would still show the theme's light. Two copies of one gradient
+   * opaque, would still show the canvas artwork. Two copies of one gradient
    * cannot be kept in register — a `fixed` attachment holds them together only
    * while both elements are viewport-sized — and a seam ran down the sidebar's
-   * edge where Airy's glow stopped and started again. The pane takes a fill it
+   * edge where the artwork stopped and started again. The pane takes a fill it
    * can set to `transparent` instead, and nothing else repaints the backdrop.
    */
   it('paints the backdrop once', () => {
@@ -167,15 +165,7 @@ describe('no colour is written into app.css', () => {
       .filter((block) => /background-image\s*:\s*var\(--av-sys-backdrop-image\)/u.test(block))
       .map((block) => (block.split('{')[0] ?? '').trim().split('\n').pop() ?? '');
 
-    // The Settings miniature is the exception, twice over: it draws the offered
-    // theme's backdrop rather than the running one's, and under the `system`
-    // mode it draws both halves of a family because which one you get depends
-    // on the Mac. Neither is the window's backdrop, and both are 92px wide.
-    expect(painters).toEqual([
-      '.workspace-shell',
-      '.settings-theme-swatch',
-      '.settings-theme-swatch-alternate',
-    ]);
+    expect(painters).toEqual(['.workspace-shell']);
   });
 
   /**
@@ -277,13 +267,6 @@ describe('token references', () => {
   });
 });
 
-describe('Terra Light row hover', () => {
-  it('aliases hover to raised-hover so the fill is darker than the sidebar', () => {
-    const terraLight = themeFiles.find((theme) => theme.id === 'terra-light');
-    expect(terraLight?.tokens['cmp.row.background-hover']).toBe('{sys.color.surface.raised-hover}');
-  });
-});
-
 /**
  * The composer's top edge comes from `rule-color`, in both of its shapes.
  *
@@ -291,9 +274,9 @@ describe('Terra Light row hover', () => {
  * `rule-color` as its `border-color`, in `scripts/build-theme-assets.test.mjs`
  * — mean anything. `border-top` is written from the token unconditionally and
  * before `border-width`, so a theme that leaves it `transparent` does not turn
- * a rule off: it erases the top of a card, which is exactly what Terra shipped.
- * Anchored here so that the day this declaration gains a real opt-in for the
- * rule shape, the premise fails rather than four themes downstream of it.
+ * a rule off: it erases the top of a card. Anchored here so that the day this
+ * declaration gains a real opt-in for the rule shape, the premise fails at the
+ * shared contract rather than in one appearance.
  */
 describe('the composer top edge is drawn from rule-color', () => {
   it('writes border-top from the token in the shared rule', () => {

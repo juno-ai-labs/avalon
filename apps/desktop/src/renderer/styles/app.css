@@ -541,7 +541,7 @@ pre {
    button, which would otherwise shrink to fit its label and centre it. Both
    restate what an item rendered onto Radix's own div already computes. The
    menu is `surface-raised`, so its ordinary highlight uses that surface's own
-   hover partner; Terra Light's `elevated-hover` is the same as the menu base.
+   hover partner; a palette may make `elevated-hover` the same as the menu base.
    The danger rule has equal specificity and follows this one, so source order
    preserves its dedicated tint. */
 /* A Radix menu item is a div, and a div full of text shows the I-beam and lets
@@ -592,20 +592,6 @@ pre {
    are the same measurement, and this comment is the only thing saying so. */
 .workspace-shell.has-overlay-window-controls { --window-controls-inset: 82px; }
 
-/* The frame a theme's backdrop document renders in. It sits between the shell's
-   painted backdrop and every pane, takes no pointer, and takes no focus — the
-   document inside it is decoration with a clock, not an interface. */
-.theme-backdrop {
-  border: 0;
-  color-scheme: normal;
-  height: 100%;
-  inset: 0;
-  pointer-events: none;
-  position: absolute;
-  width: 100%;
-  z-index: 0;
-}
-
 .main-pane {
   /* Its own fill, over the shell's backdrop. A theme that wants the backdrop to
      reach the feed sets this to `transparent`; one that wants the pane to be a
@@ -617,8 +603,7 @@ pre {
   min-width: 0;
   overflow: hidden;
   position: relative;
-  /* Above the backdrop frame, which is positioned and would otherwise paint over
-     this pane's static content for being later in the same stacking context. */
+  /* Above the shell's decorative background layer. */
   z-index: 1;
 }
 
@@ -710,8 +695,8 @@ pre {
 
 /* The row's leading mark.
  *
- * One element, two jobs held apart: its *shape* is the theme's — a dot, or the
- * line Airy draws — and its *colour* is the row's state. Keeping them apart is
+ * One element, two jobs held apart: its *shape* is the design's — a dot or a
+ * line — and its *colour* is the row's state. Keeping them apart is
  * what lets a theme flatten the selection fill to nothing and still leave the
  * navigation saying which stream needs an answer and which one is running.
  *
@@ -1123,10 +1108,10 @@ pre {
 
 .skeleton-row { animation: skeleton-pulse 1.5s ease-in-out infinite; }
 /* `neutral-4`, not `surface-subtle`: the sidebar's own ground is within a
-   shade or two of subtle in both light themes, and bars filled with it were
+   shade or two of subtle in the light appearance, and bars filled with it were
    invisible in a real window even though the DOM was correct. This is the
    same quiet fill a selected row uses, and it separates from the ground in
-   all four themes. */
+   both appearances. */
 .skeleton-bar { background: var(--av-ref-color-neutral-4); border-radius: var(--av-sys-size-radius-pill); display: block; }
 .skeleton-row-marker { border-radius: 50%; flex: 0 0 10px; height: 10px; margin: 0 4px; }
 .skeleton-row-line { height: 0.72em; width: 74%; }
@@ -1292,13 +1277,13 @@ pre {
 .account-menu-chevron { color: var(--av-sys-color-text-muted); height: 14px !important; width: 14px !important; }
 .account-menu-separator.menu-separator { margin: 4px 6px; }
 
-[data-theme='air-dark'] .account-menu-content {
+[data-theme='dark'] .account-menu-content {
   background: var(--av-sys-color-surface-elevated);
   border-color: var(--av-sys-color-border-default);
   box-shadow: var(--av-sys-elevation-shadow-lg);
 }
 
-[data-theme='air-dark'] .account-menu-item.menu-item[data-highlighted] { background: var(--av-cmp-row-background-hover); }
+[data-theme='dark'] .account-menu-item.menu-item[data-highlighted] { background: var(--av-cmp-row-background-hover); }
 .mobile-sidebar-trigger { display: none; left: 8px; position: fixed; top: 9px; z-index: 25; }
 .sidebar-scrim { display: none; }
 .mobile-only { display: none; }
@@ -2068,9 +2053,7 @@ pre {
 .settings-diagnostics dt { align-items: center; color: var(--av-sys-color-text-subtle); display: flex; font-size: 11px; gap: 6px; }
 .settings-diagnostics dd { color: var(--av-sys-color-text-muted); font-size: 10.5px; margin: 0; overflow-wrap: anywhere; text-align: right; }
 
-/* The Appearance picker. Each swatch carries its own `data-theme`, so the
-   miniature below is drawn from the theme it offers rather than from a second
-   copy of that theme's colours. */
+/* Rally has one design with a three-position appearance preference. */
 .settings-theme-card {
   background: var(--av-sys-color-surface-subtle);
   border: 1px solid var(--av-ref-color-line-2);
@@ -2089,12 +2072,7 @@ pre {
 .settings-theme-heading strong { display: block; font-size: 13px; }
 .settings-theme-heading small { color: var(--av-sys-color-text-muted); display: block; font-size: 11px; margin-top: 2px; }
 
-/* The lighting row, above the designs.
- *
- * A segmented control rather than a fourth swatch, because it is not one of
- * them: it says which way round to run whichever design is chosen. The shape
- * carries that — three joined cells read as one setting with three positions,
- * where four separated swatches read as four alternatives. */
+/* System follows the Mac; Light and Dark pin one of Rally's two appearances. */
 .settings-theme-modes {
   background: var(--av-sys-color-surface-subtle);
   border: var(--av-sys-size-border-hairline) solid var(--av-ref-color-line-2);
@@ -2131,124 +2109,6 @@ pre {
   outline: 2px solid var(--av-sys-color-focus-default);
   outline-offset: 1px;
 }
-
-.settings-theme-shelf {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
-.settings-theme-option {
-  align-items: center;
-  background: none;
-  border: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 0;
-}
-
-/* Deliberately without `background-attachment`: the shell anchors the backdrop
-   to the viewport, and a 92px miniature that did the same would show whichever
-   slice of a window-sized gradient happened to fall behind it. Left to scroll,
-   the artwork scales into the swatch and the swatch previews the theme. */
-.settings-theme-swatch {
-  position: relative;
-  background-color: var(--av-sys-backdrop-color);
-  background-image: var(--av-sys-backdrop-image);
-  background-position: var(--av-sys-backdrop-position);
-  background-size: var(--av-sys-backdrop-size);
-  background-repeat: var(--av-sys-backdrop-repeat);
-  background-blend-mode: var(--av-sys-backdrop-blend-mode);
-  border: 1px solid var(--av-ref-color-line-2);
-  border-radius: var(--av-sys-size-radius-lg);
-  display: flex;
-  height: 58px;
-  overflow: hidden;
-  transition: border-color 140ms ease, transform 140ms ease;
-  width: 92px;
-}
-
-.settings-theme-option:hover .settings-theme-swatch { transform: translateY(-2px); }
-.settings-theme-option[aria-checked='true'] .settings-theme-swatch { border-color: var(--av-sys-color-brand-ink); }
-.settings-theme-option:focus-visible .settings-theme-swatch { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: 2px; }
-.settings-theme-option:focus-visible { outline: 0; }
-
-/* The other half of a System swatch.
- *
- * Under `system` a family has two appearances and which one you get depends on
- * the Mac, so the swatch shows both rather than picking one and being quietly
- * wrong for half the day. The split is a mask rather than a clip path because a
- * gradient angle in `deg` is a true angle whatever the box's aspect ratio is,
- * where a polygon's percentages are only 30° at one particular size. `120deg`
- * puts the edge 30° off vertical: the gradient runs perpendicular to its own
- * bands, so the edge angle is the direction minus a right angle. */
-.settings-theme-swatch-alternate {
-  background-color: var(--av-sys-backdrop-color);
-  background-image: var(--av-sys-backdrop-image);
-  background-position: var(--av-sys-backdrop-position);
-  background-size: var(--av-sys-backdrop-size);
-  background-repeat: var(--av-sys-backdrop-repeat);
-  background-blend-mode: var(--av-sys-backdrop-blend-mode);
-  display: flex;
-  inset: 0;
-  mask-image: linear-gradient(120deg, transparent 0 50%, currentColor 50% 100%);
-  position: absolute;
-}
-
-/* The miniature reads its own tokens, which is the whole point: `--av-cmp-sidebar-background`
-   here is the offered theme's, not the running one's. */
-.settings-theme-swatch-sidebar {
-  background: var(--av-cmp-sidebar-background);
-  border-right: 1px solid var(--av-ref-color-line-2);
-  flex: 0 0 26px;
-  position: relative;
-}
-
-/* The same two tokens the real navigation uses, and at swatch scale they still
-   produce the two shapes: `calc(50% - 3px)` is a centred dot, a flat inset is a
-   line down the row's leading edge. */
-.settings-theme-swatch-marker {
-  background: var(--av-sys-color-brand-base);
-  border-radius: var(--av-cmp-marker-radius);
-  inset-block: var(--av-cmp-marker-inset-block);
-  left: 7px;
-  position: absolute;
-  width: var(--av-cmp-marker-inline-size);
-}
-
-.settings-theme-swatch-surface {
-  background: var(--av-cmp-pane-background);
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: 5px;
-  justify-content: center;
-  padding: 0 8px;
-}
-
-/* `display: block` because one of these is not a flex item: the turn's line
-   sits inside the bubble, and an inline span ignores both height and width. */
-.settings-theme-swatch-line { background: var(--av-ref-color-neutral-7); border-radius: var(--av-sys-size-radius-pill); display: block; height: 3px; }
-.settings-theme-swatch-line.is-short { width: 58%; }
-.settings-theme-swatch-line.is-turn { width: 26px; }
-
-/* A person's own turn, on the side the theme puts it. `--av-cmp-turn-align` is
-   the same token the feed uses, so the preview cannot say left while the feed
-   says right — and the bubble around it appears or does not for the same
-   reason. In Air both are flat: the turn is text at the leading edge like
-   everything else. */
-.settings-theme-swatch-turn {
-  align-self: var(--av-cmp-turn-align);
-  background: var(--av-cmp-bubble-background);
-  border: 1px solid var(--av-cmp-bubble-border);
-  border-radius: var(--av-sys-size-radius-sm);
-  margin-top: 2px;
-  padding: 3px 4px;
-}
-
-.settings-theme-option-label { color: var(--av-sys-color-text-subtle); font-size: 11px; }
-.settings-theme-option[aria-checked='true'] .settings-theme-option-label { color: var(--av-sys-color-text-default); font-weight: 570; }
 
 .settings-theme-status { color: var(--av-sys-color-text-muted); font-size: 11px; margin: 12px 0 0; }
 
@@ -3794,12 +3654,12 @@ pre {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-[data-theme='air-dark'] .agent-document-card { background: var(--av-sys-color-surface-elevated-hover); border-color: var(--av-sys-color-border-default); }
-[data-theme='air-dark'] .agent-document-card:hover,
-[data-theme='air-dark'] .agent-document-card:focus-visible { background: var(--av-sys-color-surface-raised-hover); border-color: var(--av-sys-color-border-strong); box-shadow: var(--av-sys-elevation-shadow-md); }
-[data-theme='air-dark'] .agent-document-card-icon { background: var(--av-sys-color-accent-wash); color: var(--av-sys-color-accent-base); }
-[data-theme='air-dark'] .agent-document-card-copy strong { color: var(--av-sys-color-text-default); }
-[data-theme='air-dark'] .agent-document-card-copy > span { color: var(--av-sys-color-text-subtle); }
+[data-theme='dark'] .agent-document-card { background: var(--av-sys-color-surface-elevated-hover); border-color: var(--av-sys-color-border-default); }
+[data-theme='dark'] .agent-document-card:hover,
+[data-theme='dark'] .agent-document-card:focus-visible { background: var(--av-sys-color-surface-raised-hover); border-color: var(--av-sys-color-border-strong); box-shadow: var(--av-sys-elevation-shadow-md); }
+[data-theme='dark'] .agent-document-card-icon { background: var(--av-sys-color-accent-wash); color: var(--av-sys-color-accent-base); }
+[data-theme='dark'] .agent-document-card-copy strong { color: var(--av-sys-color-text-default); }
+[data-theme='dark'] .agent-document-card-copy > span { color: var(--av-sys-color-text-subtle); }
 .agent-document-lightbox {
   background: var(--av-sys-color-surface-raised);
   border: 1px solid var(--av-ref-color-line-4);
@@ -3874,7 +3734,7 @@ pre {
   color: var(--av-sys-color-text-default);
   -webkit-box-decoration-break: clone;
 }
-[data-theme='air-dark'] .composer-mention { background: var(--av-cmp-row-background-selected); color: var(--av-sys-color-text-default); }
+[data-theme='dark'] .composer-mention { background: var(--av-cmp-row-background-selected); color: var(--av-sys-color-text-default); }
 .composer-toolbar { align-items: center; display: flex; justify-content: space-between; min-height: 38px; padding: 2px 7px 6px; }
 .composer-tools,
 .composer-submit-area { align-items: center; display: flex; gap: 5px; }
@@ -3944,9 +3804,9 @@ pre {
 .mention-popover strong { font-size: 13px; font-weight: 400; line-height: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mention-popover small { color: var(--av-sys-color-text-muted); font-size: 13px; font-weight: 420; line-height: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mention-popover-kind { color: var(--av-sys-color-text-muted); flex: 0 0 auto; font-size: 13px; font-weight: 420; line-height: 18px; margin-left: auto; }
-[data-theme='air-dark'] .mention-popover { background: var(--av-sys-color-surface-default); border-color: var(--av-cmp-composer-border-color); }
-[data-theme='air-dark'] .mention-popover > button:is(.is-selected, :hover) { background: var(--av-cmp-row-background-selected); }
-[data-theme='air-dark'] .mention-popover :is(small, .mention-popover-kind) { color: var(--av-sys-color-text-muted); }
+[data-theme='dark'] .mention-popover { background: var(--av-sys-color-surface-default); border-color: var(--av-cmp-composer-border-color); }
+[data-theme='dark'] .mention-popover > button:is(.is-selected, :hover) { background: var(--av-cmp-row-background-selected); }
+[data-theme='dark'] .mention-popover :is(small, .mention-popover-kind) { color: var(--av-sys-color-text-muted); }
 .mention-confirm-person { align-items: center; display: flex; gap: 10px; }
 .mention-confirm-person > span { display: flex; flex-direction: column; }
 .mention-confirm-person small { color: var(--av-sys-color-text-muted); font-size: 11px; }
@@ -5247,7 +5107,7 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   width: 30px;
 }
 
-[data-theme='air-dark'] .sidebar-new-chat-draft-icon {
+[data-theme='dark'] .sidebar-new-chat-draft-icon {
   background: var(--av-sys-color-surface-raised-hover);
   border-color: var(--av-sys-color-border-strong);
   color: var(--av-sys-color-text-subtle);
@@ -5691,7 +5551,7 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
    enclosed glyphs down the transcript reads as a toolbar of controls, and these
    are labels. The single neutral is also the only colour with guaranteed
    contrast here — a connector's brand foreground was chosen against its own
-   chip, and this transcript has four themes and no chip. */
+   chip, and this transcript has two appearances and no chip. */
 .plugin-face {
   align-items: center;
   color: var(--av-ref-color-neutral-11);
@@ -5851,8 +5711,8 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   /* No scrim here, unlike the docks that float over a scrolling transcript: the
      work stream lays the composer out as the third grid row, so nothing passes
      behind it to hide. The gradient it used to paint ended on the pane's own
-     colour and so was invisible — until Airy made the pane transparent, when it
-     became an opaque rectangle cutting the backdrop off at the sidebar's edge. */
+     colour and so was invisible — until the pane became transparent, when it
+     became an opaque rectangle cutting the canvas off at the sidebar's edge. */
   background: none;
   bottom: auto;
   left: auto;
@@ -5881,7 +5741,7 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 /* A card or a rule, out of the same five values.
  *
  * The card is a box floating over the transcript; the rule is a hairline the
- * page rests on, which is what Airy draws. Expressing both as one set of tokens
+ * page rests on. Expressing both as one set of tokens
  * rather than as a mode keeps the focus feedback honest: once the border is
  * gone, the rule turning warm is the only thing left saying the field is live,
  * so a theme that flattens the frame has to say what focus looks like. */
@@ -6073,25 +5933,25 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 .composer-action-menu-item > svg { height: 16px; stroke-width: 1.9; width: 16px; }
 .composer-action-menu-item .composer-teach-task-icon { color: var(--av-sys-color-danger-base); stroke-width: 2.4; }
 
-[data-theme='air-dark'] :is(.workstream-screen, .new-chat-screen) .workstream-composer.is-message-capsule { border-color: var(--av-cmp-composer-border-color); }
-[data-theme='air-dark'] :is(.workstream-screen, .new-chat-screen) .workstream-composer.is-message-capsule:focus-within { border-color: var(--av-cmp-composer-border-color-focus); }
-[data-theme='air-dark'] .attachment-file-card.is-pending .attachment-file-icon { background: var(--av-sys-color-accent-wash); color: var(--av-sys-color-accent-base); }
-[data-theme='air-dark'] .attachment-file-card.is-pending .attachment-file-icon.is-spreadsheet { background: var(--av-sys-color-success-wash); color: var(--av-sys-color-success-base); }
-[data-theme='air-dark'] :is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-tools > .icon-button {
+[data-theme='dark'] :is(.workstream-screen, .new-chat-screen) .workstream-composer.is-message-capsule { border-color: var(--av-cmp-composer-border-color); }
+[data-theme='dark'] :is(.workstream-screen, .new-chat-screen) .workstream-composer.is-message-capsule:focus-within { border-color: var(--av-cmp-composer-border-color-focus); }
+[data-theme='dark'] .attachment-file-card.is-pending .attachment-file-icon { background: var(--av-sys-color-accent-wash); color: var(--av-sys-color-accent-base); }
+[data-theme='dark'] .attachment-file-card.is-pending .attachment-file-icon.is-spreadsheet { background: var(--av-sys-color-success-wash); color: var(--av-sys-color-success-base); }
+[data-theme='dark'] :is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-tools > .icon-button {
   background: var(--av-cmp-row-background-hover);
   box-shadow: inset 0 0 0 .5px var(--av-sys-color-border-highlight);
   color: var(--av-sys-color-text-muted);
 }
-[data-theme='air-dark'] :is(.workstream-screen, .new-chat-screen) .is-message-capsule.has-submit .microphone-control .dictation-button {
+[data-theme='dark'] :is(.workstream-screen, .new-chat-screen) .is-message-capsule.has-submit .microphone-control .dictation-button {
   background: var(--av-cmp-row-background-selected);
   color: var(--av-sys-color-text-muted);
 }
-[data-theme='air-dark'] .composer-action-menu {
+[data-theme='dark'] .composer-action-menu {
   background: var(--av-sys-color-surface-elevated);
   border-color: var(--av-cmp-composer-border-color);
 }
-[data-theme='air-dark'] .composer-action-menu-item.menu-item { color: var(--av-sys-color-text-default); }
-[data-theme='air-dark'] .composer-action-menu-item.menu-item[data-highlighted] { background: var(--av-cmp-row-background-hover); }
+[data-theme='dark'] .composer-action-menu-item.menu-item { color: var(--av-sys-color-text-default); }
+[data-theme='dark'] .composer-action-menu-item.menu-item[data-highlighted] { background: var(--av-cmp-row-background-hover); }
 
 
 .command-popover {
@@ -6132,8 +5992,8 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   width: 100%;
 }
 
-/* This popover is `surface-raised` too. Terra Light gives `elevated-hover` the
-   same value as that base, so command rows use the raised surface's visible
+/* This popover is `surface-raised` too. If `elevated-hover` matches that base,
+   command rows use the raised surface's visible
    hover partner for pointer, focus, and selected states. */
 .command-popover > button:hover,
 .command-popover > button:focus-visible,
@@ -6413,13 +6273,13 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 
 .new-chat-recipient-chip > button:hover { color: var(--av-sys-color-text-default); }
 
-[data-theme='air-dark'] .new-chat-recipient-chip {
+[data-theme='dark'] .new-chat-recipient-chip {
   background: var(--av-sys-color-surface-subtle);
   color: var(--av-sys-color-text-default);
 }
 
-[data-theme='air-dark'] .new-chat-recipient-chip > button { color: var(--av-sys-color-text-muted); }
-[data-theme='air-dark'] .new-chat-recipient-chip > button:hover { color: var(--av-sys-color-text-default); }
+[data-theme='dark'] .new-chat-recipient-chip > button { color: var(--av-sys-color-text-muted); }
+[data-theme='dark'] .new-chat-recipient-chip > button:hover { color: var(--av-sys-color-text-default); }
 
 .new-chat-recipient-input-shell > input {
   background: transparent;
@@ -6466,7 +6326,7 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   z-index: 20;
 }
 
-[data-theme='air-dark'] .new-chat-recipient-results {
+[data-theme='dark'] .new-chat-recipient-results {
   background: var(--av-sys-color-surface-elevated);
   border-color: var(--av-cmp-composer-border-color);
 }
@@ -6493,8 +6353,8 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 
 .new-chat-recipient-results > button.is-selected,
 .new-chat-recipient-results > button:hover { background: var(--av-cmp-row-background-selected); }
-[data-theme='air-dark'] .new-chat-recipient-results > button.is-selected,
-[data-theme='air-dark'] .new-chat-recipient-results > button:hover { background: var(--av-cmp-row-background-selected); }
+[data-theme='dark'] .new-chat-recipient-results > button.is-selected,
+[data-theme='dark'] .new-chat-recipient-results > button:hover { background: var(--av-cmp-row-background-selected); }
 
 .new-chat-recipient-results .avatar-small { height: 24px; width: 24px; }
 .new-chat-recipient-copy { display: flex; flex: 1; min-width: 0; }
@@ -6514,7 +6374,7 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   min-width: 19px;
   padding: 0 4px;
 }
-[data-theme='air-dark'] .new-chat-recipient-shortcut kbd { background: var(--av-sys-color-surface-subtle); color: var(--av-sys-color-text-muted); }
+[data-theme='dark'] .new-chat-recipient-shortcut kbd { background: var(--av-sys-color-surface-subtle); color: var(--av-sys-color-text-muted); }
 .new-chat-recipient-empty {
   color: var(--av-sys-color-text-muted);
   font-size: 13px;
@@ -6543,7 +6403,7 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 }
 .new-chat-screen:not(.is-launching) .launch-composer textarea { min-height: 42px; }
 .new-chat-screen:not(.is-launching) .launch-composer.has-attachments textarea { min-height: 67px; }
-[data-theme='air-dark'] .new-chat-screen:not(.is-launching) .launch-composer { border-color: var(--av-cmp-composer-border-color); }
+[data-theme='dark'] .new-chat-screen:not(.is-launching) .launch-composer { border-color: var(--av-cmp-composer-border-color); }
 
 @media (max-width: 760px) {
   .workstream-launch-screen:not(.is-launching) > .launch-dock {

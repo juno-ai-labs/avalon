@@ -1584,15 +1584,13 @@ height instead of a column.
 form exists to say "a thing was produced here", and the file-tile shape —
 the one attachment cards across chat products have converged on — says that at
 a glance. Styling stayed entirely in semantic tokens rather than per-theme
-rules, which is what lets one rule land as a white sheet with a hairline border
-on Terra Light, a raised dark panel on Terra, and a near-borderless warm card
-in Air's letterspaced label voice, with no component knowing which theme is
-running.
+rules, which is what lets one rule land correctly in both light and dark without
+the component knowing which appearance is running.
 
 **Considered and rejected:** a `cmp.citation-card.*` token group. Every value
 the card needs already has a semantic answer (`surface-elevated`, the line
-ramp, `sys.label.*`), and a component group would be twelve values restated in
-four themes to express decisions the vocabulary already makes.
+ramp, `sys.label.*`), and a component group would restate values in both
+appearances to express decisions the vocabulary already makes.
 
 **What a future change has to respect:** the exported message card mirrors this
 markup with its own fixed-light rules in `message-export.ts` — a reshape here

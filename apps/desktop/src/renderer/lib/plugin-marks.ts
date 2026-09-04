@@ -24,7 +24,7 @@ import type { ComponentType } from 'react';
  * Every mark is drawn in `currentColor`: the package's `mono` variant already
  * is, and `.connector-mark` recolours the brands that ship no `mono` — see the
  * rule beside it. That is what this feed wants, one contrasting neutral across
- * four themes, rather than eight brand palettes of which several disappear
+ * both appearances, rather than separate brand palettes that can disappear
  * against one ground or the other.
  */
 /**

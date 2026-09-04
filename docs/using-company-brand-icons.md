@@ -99,11 +99,11 @@ carries 19 element ids and 18 `url(#…)` references, and two Google cards sit o
 the Settings page at once, so inlining it twice duplicates every one of them.
 
 This is a deliberate design decision, not a limitation. Brand colour was built
-and compared side by side: X and Notion are near-black and vanish on a dark
-theme, Granola's is near-black and vanishes on a light one, and only some brands
-ship the light/dark art that would fix it. One contrasting neutral is legible on
-all four themes, needs no per-theme artwork, and needs no component that knows
-which theme is on — which [`theming.md`](theming.md) forbids anyway.
+and compared side by side: X and Notion are near-black and vanish in dark,
+Granola's is near-black and vanishes in light, and only some brands ship the
+light/dark art that would fix it. One contrasting neutral is legible in both
+appearances, needs no appearance-specific artwork, and needs no component that
+knows which appearance is on — which [`theming.md`](theming.md) forbids anyway.
 
 ### Sizing
 

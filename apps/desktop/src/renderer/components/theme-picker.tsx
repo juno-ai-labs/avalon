@@ -1,7 +1,7 @@
 import {
   appearanceModeDescriptions,
 } from '../../common/themes';
-import { persistThemeChoice, useTheme, withMode } from '../lib/theme';
+import { persistThemeChoice, useTheme } from '../lib/theme';
 
 /**
  * Rally has one visual language. This control only decides whether that GrokBot
@@ -9,7 +9,7 @@ import { persistThemeChoice, useTheme, withMode } from '../lib/theme';
  */
 export function ThemePicker(): React.JSX.Element {
   const { choice, resolved } = useTheme();
-  const lighting = resolved === 'air-dark' ? 'dark' : 'light';
+  const lighting = resolved;
 
   return (
     <div className="settings-theme-card">
@@ -23,10 +23,10 @@ export function ThemePicker(): React.JSX.Element {
       <div aria-label="Appearance" className="settings-theme-modes" role="radiogroup">
         {appearanceModeDescriptions.map((mode) => (
           <button
-            aria-checked={choice.mode === mode.id}
+            aria-checked={choice === mode.id}
             className="settings-theme-mode"
             key={mode.id}
-            onClick={() => persistThemeChoice(withMode(choice, mode.id))}
+            onClick={() => persistThemeChoice(mode.id)}
             role="radio"
             title={mode.description}
             type="button"
@@ -37,9 +37,9 @@ export function ThemePicker(): React.JSX.Element {
       </div>
 
       <p aria-live="polite" className="settings-theme-status">
-        {choice.mode === 'system'
+        {choice === 'system'
           ? `Following this Mac, which is ${lighting} right now.`
-          : `Always ${choice.mode}.`}
+          : `Always ${choice}.`}
       </p>
     </div>
   );

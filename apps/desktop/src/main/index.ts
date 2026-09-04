@@ -94,7 +94,7 @@ import {
 import { logError, logWarn } from '../common/logger';
 import { parseDesktopSettingsSection } from '../common/settings';
 import type { DesktopSettingsSection } from '../common/settings';
-import { backdropScheme, fontScheme } from '../common/theme-assets';
+import { fontScheme } from '../common/theme-assets';
 import {
   defaultThemeChoice,
   parseThemeChoice,
@@ -143,9 +143,7 @@ import { LockdownModeController } from './lockdown-mode';
 import { MenuBarController, type MenuBarTray } from './menu-bar';
 import {
   ThemeFontCache,
-  backdropResponse,
-  isBackdropUrl,
-  themeAssetSchemes,
+  themeFontSchemes,
 } from './theme-assets';
 import { MenuBarContentStore } from './menu-bar-content';
 import {
@@ -722,7 +720,7 @@ protocol.registerSchemesAsPrivileged([{
     standard: true,
     secure: true,
   },
-}, ...themeAssetSchemes]);
+}, ...themeFontSchemes]);
 
 // Keep development credentials and user data out of the production Rally
 // namespace. Development Electron binaries are not signed with the stable
@@ -758,7 +756,7 @@ function userDataDirectory(): string {
  * The theme choice the last renderer reported, resolved for `backgroundColor`
  * on every window this process opens. It is read from the preference file at
  * startup so the very first window of a launch is already the right colour;
- * before that read completes it is Terra following the Mac, what Rally ships
+ * before that read completes it is the Rally palette following the Mac, what Rally ships
  * with.
  *
  * The choice, not the appearance. `system` resolves against whatever the Mac is
@@ -4315,12 +4313,6 @@ function installContentSecurityPolicy(): void {
     // header this handler writes is cased differently from the one the protocol
     // set. A boundary that survives on header casing is not a boundary.
     if (isMessageExportUrl(details.url)) return callback({});
-    // And a backdrop document carries its own for the same reason: it is served
-    // under `default-src 'none'` with no `connect-src`, which is stricter than
-    // anything below in every direction except the one that matters here — this
-    // handler's policy ends in `frame-ancestors 'none'`, and a backdrop that
-    // cannot be framed is a backdrop that never renders.
-    if (isBackdropUrl(details.url)) return callback({});
     const configuredOrigins = Object.values(runtimeConfig().api).flatMap((rawUrl) => {
       const url = new URL(rawUrl);
       const socketProtocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -4338,7 +4330,7 @@ function installContentSecurityPolicy(): void {
       responseHeaders: {
         ...details.responseHeaders,
         'Content-Security-Policy': [
-          `default-src 'self'; script-src ${scriptSources}; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' blob:; font-src 'self' data: ${fontScheme}:; connect-src ${connectSources}; object-src 'none'; base-uri 'self'; form-action 'none'; frame-src ${backdropScheme}:; frame-ancestors 'none'`,
+          `default-src 'self'; script-src ${scriptSources}; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' blob:; font-src 'self' data: ${fontScheme}:; connect-src ${connectSources}; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'`,
         ],
       },
     });
@@ -4476,7 +4468,6 @@ if (!singleInstanceLock) {
     }
     await installRendererProtocol();
     installMessageExportProtocol();
-    protocol.handle(backdropScheme, (request) => backdropResponse(request.url));
     protocol.handle(fontScheme, (request) => themeFontCache.respond(request.url));
     installContentSecurityPolicy();
     registerIpc();

@@ -1,117 +1,32 @@
 /**
- * The two schemes a theme's assets are served from.
+ * The cache behind `rally-font://cache/<id>.woff2`.
  *
- * Both exist so that a theme can bring something richer than a CSS value without
- * that thing gaining the application's origin:
- *
- * - `rally-backdrop://theme/<id>` is a whole document a theme paints behind the
- *   window. It may run scripts — an orbiting field of light is not expressible
- *   as a `background-image` — so it is served to a browsing context of its own
- *   under a policy that permits painting and nothing else.
- * - `rally-font://cache/<id>.woff2` is a font file a theme named by URL. The
- *   main process fetches it once and keeps it; the renderer only ever asks for
- *   this scheme, so a theme cannot make the reader's machine call a remote host
- *   on every launch.
- *
- * The reasoning is the message exporter's, one document earlier: a second scheme
- * costs a registration and removes the question of what the application's own
- * origin is ever granted. See `docs/security.md` and `docs/theming.md`.
- *
- * Nothing here imports `electron`. The fetch and the protocol registration are
- * passed in from `index.ts`, which is what lets the parsing and the cache — the
- * parts with a wrong answer — be tested without a running application.
+ * A design-token file may name a remote font. The main process fetches it once
+ * and keeps it; the renderer only ever asks for this private scheme, so opening
+ * Rally does not repeatedly contact a font host. Nothing here imports Electron:
+ * the fetch function and protocol registration are supplied by `index.ts`,
+ * keeping the parsing and cache independently testable.
  */
 
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { backdropScheme, cachedFonts, fontScheme } from '../common/theme-assets';
+import { cachedFonts, fontScheme } from '../common/theme-assets';
 import { logWarn } from '../common/logger';
-import { backdropDocuments } from './theme-backdrops';
-
-/**
- * What a backdrop document is allowed to do: draw, animate, and nothing else.
- *
- * `default-src 'none'` with no `connect-src` denies every network call, so a
- * backdrop cannot report that it was rendered. `script-src 'unsafe-inline'` is
- * the point of the scheme rather than a concession to it — the document exists
- * to run its own animation — and it is safe only because the frame is sandboxed
- * *without* `allow-same-origin`, which puts that script in an opaque origin with
- * no reachable parent, no storage, and no bridge. Both halves are load-bearing:
- * this policy without the sandbox attribute would still be a document that can
- * read the application's DOM.
- */
-export const BACKDROP_CONTENT_SECURITY_POLICY = [
-  "default-src 'none'",
-  "style-src 'unsafe-inline'",
-  "script-src 'unsafe-inline'",
-  'img-src data:',
-  'font-src data:',
-  "form-action 'none'",
-  "base-uri 'none'",
-].join('; ');
-
-/** Deliberately narrower than the renderer's: neither scheme fetches anything. */
-export const themeAssetSchemes = [
-  { scheme: backdropScheme, privileges: { standard: true, secure: true } },
+/** Deliberately narrower than the renderer: the scheme itself fetches nothing. */
+export const themeFontSchemes = [
   { scheme: fontScheme, privileges: { standard: true, secure: true } },
 ];
 
-const BACKDROP_HOST = 'theme';
 const FONT_HOST = 'cache';
 const FONT_FILE = /^\/([0-9a-f]{32})\.woff2$/u;
 
 /** A file larger than this is not a font file. */
 export const FONT_SIZE_LIMIT = 8 * 1024 * 1024;
 
-/** The URL a theme's backdrop frame points at. */
-export function backdropUrl(theme: string): string {
-  return `${backdropScheme}://${BACKDROP_HOST}/${theme}`;
-}
-
-/** Whether a response belongs to a backdrop, and so already carries a policy. */
-export function isBackdropUrl(url: string): boolean {
-  return url.startsWith(`${backdropScheme}:`);
-}
-
-/**
- * The document for a backdrop URL, or `null` for anything else.
- *
- * The theme id is looked up in a generated table rather than joined onto a path.
- * There is no traversal to defend against because there is nothing to traverse.
- */
-export function backdropDocumentFor(
-  url: string,
-  documents: Record<string, string> = backdropDocuments,
-): string | null {
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return null;
-  }
-  if (parsed.protocol !== `${backdropScheme}:` || parsed.host !== BACKDROP_HOST) return null;
-  const id = decodeURIComponent(parsed.pathname).replace(/^\/+/u, '');
-  return Object.hasOwn(documents, id) ? documents[id]! : null;
-}
-
 function notFound(): Response {
   return new Response('Not found', { status: 404 });
-}
-
-export function backdropResponse(
-  url: string,
-  documents?: Record<string, string>,
-): Response {
-  const document = backdropDocumentFor(url, documents);
-  if (document === null) return notFound();
-  return new Response(document, {
-    headers: {
-      'content-type': 'text/html; charset=utf-8',
-      'content-security-policy': BACKDROP_CONTENT_SECURITY_POLICY,
-    },
-  });
 }
 
 function integrityOf(bytes: ArrayBuffer): string {

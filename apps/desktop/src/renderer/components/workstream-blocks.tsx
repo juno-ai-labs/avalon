@@ -2056,7 +2056,7 @@ function PluginGlyphMark({ icon }: { icon: PluginGroupIcon }): React.JSX.Element
  * No chip, no ring: a row of enclosed glyphs reads as a toolbar, and these are
  * not controls. The glyph takes a single high-contrast neutral rather than each
  * connector's brand colour, because a brand colour chosen to sit on its own
- * chip has no guaranteed contrast against a transcript in four themes.
+ * chip has no guaranteed contrast against a transcript in both appearances.
  *
  * `pulsing` is how a group says it is still working. It replaces the per-plugin
  * spinner: one mark that breathes carries the same fact in the space the mark
