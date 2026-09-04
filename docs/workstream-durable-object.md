@@ -1608,6 +1608,27 @@ directory write at all.
 
 ## Changelog
 
+
+### 2026-09-04: An object's refusal keeps its status across the RPC boundary
+
+**What changed:** `asApiError` in `lib/api-error.ts` rebuilds an `ApiError`
+from an error that crossed a Durable Object RPC, and the Worker's error
+handler uses it. A thrown `ApiError` arrives on the Worker side with its
+`name`, `message`, `status`, and `code` but as a plain `Error`, so the
+handler's `instanceof` test folded every object refusal into
+`500 internal_error`: accepting an automation with no ready draft, running a
+paused one, reading a deleted one.
+
+**Why:** `AutomationDO` throws `ApiError` directly rather than returning the
+`DurableObjectRpcResult` envelope the older ports use, which is the cheaper
+shape for a new object. The property survival was measured on workerd before
+relying on it (`test/rpc-api-error.test.ts` pins the shape); a plain `Error`
+whose name happens to be `ApiError` without the fields is still a 500.
+
+**Consequences:** An object may throw `ApiError` and expect the client to see
+its status. Anything that catches object errors on the Worker side should use
+`asApiError` rather than `instanceof`.
+
 ### 2026-09-03: Automations become conversation parents, and both effect legs ride the Queue
 
 **What changed:** A `SubstreamAgent` has a typed parent, `{kind: "workstream" |

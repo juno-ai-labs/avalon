@@ -687,6 +687,21 @@ what that leaves exposed.
 
 ## Changelog
 
+
+### 2026-09-04: No feed ticket for an archived work stream
+
+**What changed:** `ConversationService.socketTicket` refuses a `workstream`
+parent that is archived with `404 conversation_not_found`, the same answer its
+boot gives. An automation's conversation keeps taking tickets after its
+archive, with `parentArchived` in the admission so the object seats a reader
+and refuses writes.
+
+**Why:** The work-stream object refuses every read of an archived room, boot
+and snapshot included. A ticket for one opened a socket that logged
+`substream_socket_snapshot_prepare_failed` and never sent a frame or a close,
+so the client waited on nothing. Refusing at the ticket makes the archive
+visible at the first request rather than as a silent socket.
+
 ### 2026-09-03: One feed ticket for every conversation, named by its parent
 
 **What changed:** The feed ticket is issued at
