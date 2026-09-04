@@ -530,6 +530,33 @@ production inspection paths.
 
 ## Changelog
 
+
+### 2026-09-04: A posted result drains into the room, and the rail survives an archive
+
+**What changed:** The pending-input drain in `workstream-transcript-storage.ts`
+tested the canonical payload's role, which is `system` for an
+`automation_activation`, and threw `pending_input_bind_role_invalid` on every
+drain of one. A pending input that throws stays first in line, so the first
+result an automation posted into a room stopped that room from processing
+anything after it, and the object logged the failure about sixty times a
+second until the room was archived. The guard now reads the bind payload the
+transition appends, which is the `user` message the model sees.
+`WorkspaceDO.listWorkstreamAutomations` admits a participant of an archived
+room, whose automations are paused rather than gone, and both directory reads
+refuse with a typed 403 instead of an uncaught error.
+
+**Why:** Found by driving the room-scoped flow on a running stack with live
+inference: the workerd suite's post-result case exercised the idle-activation
+path, which initializes the loop from canonical history and never reaches the
+drain, so it passed against the defect. The Node transcript-storage suite now
+carries the case with a Bind head in place, which is the path a room that has
+run before takes.
+
+**Consequences:** A test that proves an activation reaches a room's model has
+to give the room a Bind head first. The archived room's rail lists its paused
+automations; resuming one is refused with `automation_room_archived` until the
+room is unarchived.
+
 ### 2026-09-03: The automation is rebuilt as a conversation parent
 
 **What changed:** `AutomationAgent` is deleted (Wrangler tag `v9`) and
