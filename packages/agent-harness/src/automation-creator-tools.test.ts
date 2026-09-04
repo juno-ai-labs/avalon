@@ -156,11 +156,24 @@ describe("the automations plugin", () => {
     state.draftState.evaluatorRules = AutomationSetEvaluatorRulesInputV1Schema.parse(eventDrivenRules);
     const tools = createAutomationsPlugin(state).tools;
 
-    await toolNamed(tools, "submit_draft").execute({ ...eventDrivenDraft, automationId: "a-1" }, toolContext);
+    const named = "3d1f8c2a-5b6e-4c7d-8e9f-0a1b2c3d4e5f";
+    await toolNamed(tools, "submit_draft").execute({ ...eventDrivenDraft, automationId: named }, toolContext);
     await toolNamed(tools, "submit_draft").execute({ ...eventDrivenDraft, automationId: null }, toolContext);
     await toolNamed(tools, "submit_draft").execute(eventDrivenDraft, toolContext);
+    // What a model that fills every property puts here: a slash, a nil UUID.
+    // Neither names an automation, and handed through they threw from the
+    // directory lookup as a bare schema error the model retried identically.
+    await toolNamed(tools, "submit_draft").execute({ ...eventDrivenDraft, automationId: "/" }, toolContext);
+    await toolNamed(tools, "submit_draft")
+      .execute({ ...eventDrivenDraft, automationId: "00000000-0000-4000-8000-000000000000" }, toolContext);
 
-    expect(targets).toEqual([{ automationId: "a-1" }, { automationId: null }, { automationId: null }]);
+    expect(targets).toEqual([
+      { automationId: named },
+      { automationId: null },
+      { automationId: null },
+      { automationId: null },
+      { automationId: null },
+    ]);
     // The draft is the definition an automation stores; the address it is
     // stored at is not part of it.
     expect(drafts.every((draft) => !("automationId" in (draft as object)))).toBe(true);
