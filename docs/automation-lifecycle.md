@@ -541,10 +541,15 @@ production inspection paths.
 
 ### 2026-09-04: A rule's "no resource" sentinel, a poison-pill event, and a replayable dev ingress
 
-**What changed:** `set_evaluator_rules` drops a `resourceId` that is the nil
-or max UUID or empty before validating and staging the rule, and a searched
-resource whose search named no binding keys is accepted on its plugin alone.
-The activity consumer acknowledges an admission the workspace ledger refuses
+**What changed:** `withoutSentinelAutomationResourceIds` (agent harness)
+drops a rule's `resourceId` that is the nil or max UUID or empty, and is
+applied at both places a rule enters the draft: the `set_evaluator_rules`
+call, and the receipt replay that rebuilds the draft state on a later turn.
+The tool's JSON schema no longer lists those two UUIDs as alternatives in its
+id patterns. A searched resource whose search named no binding keys is
+accepted on its plugin alone. The drafting validator's filter-field check now
+has the same `openFilterFields` branch the accept-side evaluator has, so a
+rule on a webhook payload key can be written. The activity consumer acknowledges an admission the workspace ledger refuses
 as `connector_event_identity_reused_with_different_content` instead of
 retrying it. The dev ingress derives the synthetic activity id from the
 workspace, connector, connection, and provider event id, so posting the same
@@ -553,11 +558,16 @@ connector is not registered in this region with a warning
 (`automation_creator_connector_unavailable`) rather than throwing, and shows
 the connection's display name beside the connector's.
 
-**Why:** All four were found by drafting event automations across several
+**Why:** All of these were found by drafting event automations across several
 connectors on a running stack with live inference. The model filled the
-optional `resourceId` with a sentinel on every rule, the id passed the pattern,
-and no lookup could satisfy it, so no event automation could be created. The
-first replay attempt minted a fresh id per post, and the ledger refused the
+optional `resourceId` with a sentinel on every rule, because the schema's own
+pattern advertised it; the id passed the pattern and no lookup could satisfy
+it, so no event automation could be created. Stripping it on the live call
+alone was not enough: the next turn restored the sentinel from the raw
+receipt, the submit wrote it into the revision, and acceptance refused a
+resource that does not exist. The drafting validator refused every
+conditional rule on a webhook while the accept side would have admitted it,
+the disagreement the module's own comment forbids. The first replay attempt minted a fresh id per post, and the ledger refused the
 reuse on every retry with backoff, which kept one message in flight for
 minutes. A seeded connection for a connector with no local credentials threw
 inside the catalog and took drafting down for every conversation.
