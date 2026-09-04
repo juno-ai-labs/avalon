@@ -1087,6 +1087,120 @@ describe("connector tools selected for harness runs", () => {
     expect(database.proposedDraftCards).toHaveLength(2);
   });
 
+  it("drops a replayed rule's sentinel resourceId before it can reach the next revision", async () => {
+    const database = new ToolSelectionDatabase([
+      connection(WORKSPACE_CONNECTION_ID, "workspace", null),
+    ]);
+    database.objectStore.prepare(
+      `INSERT INTO runs
+         (run_id, substream_id, status, budget, attempt_epoch, model_iteration,
+          next_action_cursor, input_fence_seq, revision, started_at,
+          active_elapsed_ms, idle_elapsed_ms, step_count, subrequest_count,
+          retry_count, tool_count, input_tokens, output_tokens, cost_micros,
+          output_bytes, created_at, updated_at)
+       VALUES (?, '0', 'running', '{}', 0, 0, '', 0, 0, 1,
+               0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1)`,
+    ).run(HARNESS_RUN_ID);
+    database.objectStore.prepare(
+      `INSERT INTO tool_effects
+         (effect_intent_id, run_id, attempt_epoch, tool_position, occurrence_key,
+          tool_name, mode, request_hash, authority_revision, status, tool_call_id,
+          connection_id, input_json, output_summary, execution_plan_json,
+          started_at, settled_at)
+       VALUES (?, ?, 0, 1, ?, 'automation_plugin_inspect', 'read', ?,
+               'development_fixture', 'completed', 'inspect-sentinel',
+               NULL, ?, 'Inspected Google', ?, 1, 2)`,
+    ).run(
+      "sentinel-inspection",
+      HARNESS_RUN_ID,
+      "development_fixture:sentinel-inspection",
+      "sentinel-inspection-input",
+      JSON.stringify({ pluginId: "plugin_google" }),
+      JSON.stringify({
+        canonicalToolName: "plugin_inspect",
+        capability: "rally.automation.plugins.inspect",
+      }),
+    );
+    // The receipt holds what the model sent, sentinel included: the strip
+    // happens on the live call, and a replay that rebuilt the draft from the
+    // raw receipt put the sentinel back, so the next submit wrote it into the
+    // revision and acceptance refused a resource that does not exist.
+    const sentinelRules = {
+      schemaVersion: 1,
+      evaluators: [{
+        evaluatorKey: "mail_received",
+        source: {
+          sourceBindingKey: "google_source",
+          suggestedSourcePluginId: "plugin_google",
+          resourceId: "00000000-0000-0000-0000-000000000000",
+          event: { kind: "event_type", eventType: "email.received" },
+        },
+        when: { kind: "always" },
+      }],
+    };
+    database.objectStore.prepare(
+      `INSERT INTO tool_effects
+         (effect_intent_id, run_id, attempt_epoch, tool_position, occurrence_key,
+          tool_name, mode, request_hash, authority_revision, status, tool_call_id,
+          connection_id, input_json, output_summary, execution_plan_json,
+          started_at, settled_at)
+       VALUES (?, ?, 0, 2, ?, 'automation_set_evaluator_rules', 'write', ?,
+               'development_fixture', 'completed', 'sentinel-rules',
+               NULL, ?, 'Stored evaluator rules', ?, 2, 3)`,
+    ).run(
+      "sentinel-evaluators",
+      HARNESS_RUN_ID,
+      "development_fixture:sentinel-evaluators",
+      "sentinel-evaluator-input",
+      JSON.stringify(sentinelRules),
+      JSON.stringify({
+        canonicalToolName: "set_evaluator_rules",
+        capability: "rally.automation.evaluators.set",
+      }),
+    );
+    const selected = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
+    const automations = selected.plugins.find((plugin) => plugin.canonicalId === "rally:automations");
+    if (!automations) throw new Error("automations_plugin_missing");
+    __integrationTesting.recordCredentialPluginActivation(
+      `connection:${WORKSPACE_CONNECTION_ID}`,
+      selected.frozenConnections,
+      new Set<string>(),
+      selected.loadedAutomationPluginIds,
+    );
+    const submit = automations.tools.find((tool) => tool.definition.name === "submit_draft");
+    if (!submit) throw new Error("automation_creator_tools_missing");
+
+    await expect(submit.execute({
+      name: "New mail summary",
+      description: "Summarize new mail.",
+      overview: "Reports newly received messages.",
+      instructions: "Summarize the message.",
+      triggers: [{
+        type: "connector_activity",
+        connectorType: "google",
+        sourceBindingKey: "google_source",
+        suggestedSourcePluginId: "plugin_google",
+        eventTypes: ["email.received"],
+        deterministicFilters: {},
+      }],
+      requiredCapabilities: [],
+      expectedOutputs: [],
+      defaultBehavior: {},
+      recommendedPlugins: [],
+      memoryTables: [],
+      suggestedScope: "personal",
+      followUpQuestion: null,
+      elicitation: null,
+      ready: true,
+    }, { toolCallId: "submit-after-sentinel-replay" } as never))
+      .resolves.toMatchObject({ output: { accepted: true } });
+    expect(database.submittedDefinitions).toHaveLength(1);
+    const submitted = database.submittedDefinitions[0] as {
+      evaluatorRules: { evaluators: Array<{ source: Record<string, unknown> }> };
+    };
+    expect(submitted.evaluatorRules.evaluators[0]!.source).not.toHaveProperty("resourceId");
+  });
+
   it("inherits tools committed into a deferred parent plugin after activation", async () => {
     const database = new ToolSelectionDatabase([
       connection(WORKSPACE_CONNECTION_ID, "workspace", null),

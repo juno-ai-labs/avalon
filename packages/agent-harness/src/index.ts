@@ -2782,8 +2782,67 @@ const requestElicitationInputJsonSchema = memoizedValue(
   () => z.toJSONSchema(RequestElicitationInputSchema) as Record<string, unknown>,
 );
 const automationEvaluatorRulesJsonSchema = memoizedValue(
-  () => z.toJSONSchema(AutomationSetEvaluatorRulesInputV1Schema) as Record<string, unknown>,
+  () => withoutSentinelIdAlternatives(
+    z.toJSONSchema(AutomationSetEvaluatorRulesInputV1Schema),
+  ) as Record<string, unknown>,
 );
+
+const SENTINEL_ID_ALTERNATIVES = "|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff";
+
+/**
+ * The id pattern Zod emits for a UUID admits the nil and max UUIDs as
+ * alternatives. A model reading that pattern takes them as legal values and
+ * fills an optional id with one rather than leaving it out; every id in a rule
+ * names something real, so the tool's schema stops advertising them.
+ */
+function withoutSentinelIdAlternatives(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(withoutSentinelIdAlternatives);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, entry]) => [
+    key,
+    key === "pattern" && typeof entry === "string"
+      ? entry.replace(SENTINEL_ID_ALTERNATIVES, "")
+      : withoutSentinelIdAlternatives(entry),
+  ]));
+}
+
+/**
+ * Drop a rule's `resourceId` when it means "none".
+ *
+ * `resourceId` is optional, and some models fill every declared property
+ * regardless: the nil and max UUIDs are what they reach for. Both pass the id
+ * pattern, so left alone they went looking for a resource that does not exist
+ * and the whole rule was refused for a field it never needed. Applied wherever
+ * a rule enters the draft: the tool call, and the receipt replay that rebuilds
+ * the draft state on a later turn. An id outside these sentinels is still
+ * looked up and refused if unknown.
+ */
+export function withoutSentinelAutomationResourceIds(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
+  const record = raw as Record<string, unknown>;
+  if (!Array.isArray(record.evaluators)) return raw;
+  return {
+    ...record,
+    evaluators: record.evaluators.map((evaluator) => {
+      if (!evaluator || typeof evaluator !== "object" || Array.isArray(evaluator)) return evaluator;
+      const source = (evaluator as Record<string, unknown>).source;
+      if (!source || typeof source !== "object" || Array.isArray(source)) return evaluator;
+      const resourceId = (source as Record<string, unknown>).resourceId;
+      if (resourceId !== null && resourceId !== undefined && !isSentinelResourceId(resourceId)) return evaluator;
+      const { resourceId: _dropped, ...rest } = source as Record<string, unknown>;
+      void _dropped;
+      return { ...(evaluator as Record<string, unknown>), source: rest };
+    }),
+  };
+}
+
+function isSentinelResourceId(value: unknown): boolean {
+  if (typeof value !== "string") return true;
+  const normalized = value.trim().toLowerCase();
+  return normalized === ""
+    || normalized === "00000000-0000-0000-0000-000000000000"
+    || normalized === "ffffffff-ffff-ffff-ffff-ffffffffffff";
+}
 
 export const AVALON_REQUEST_ELICITATION_TOOL_DEFINITION = {
   name: "request_elicitation",

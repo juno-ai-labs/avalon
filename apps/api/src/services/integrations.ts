@@ -49,6 +49,7 @@ import {
   type PluginAuthorization,
   type PluginAuthorizationOccasion,
   toolActivityName,
+  withoutSentinelAutomationResourceIds,
 } from "@rally/agent-harness";
 import { HttpUrlSchema } from "@rally/contracts/url-schemas";
 import {
@@ -1714,7 +1715,9 @@ function createAvalonAutomationsPlugin(
             inspectedPluginIds.add(pluginId);
           }
         } else if (plan.canonicalToolName === "set_evaluator_rules") {
-          const restored = AutomationSetEvaluatorRulesInputV1Schema.safeParse(raw);
+          const restored = AutomationSetEvaluatorRulesInputV1Schema.safeParse(
+            withoutSentinelAutomationResourceIds(raw),
+          );
           if (restored.success) {
             draftState.evaluatorRules = restored.data;
           }
