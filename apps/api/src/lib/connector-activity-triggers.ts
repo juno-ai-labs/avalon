@@ -45,7 +45,7 @@ export function connectorActivityTriggerDescriptors(
   return (eventTypes.length > 0 ? eventTypes : ["webhook.received"]).map((eventType) => ({
     eventType,
     label: eventType,
-    description: `A delivery of ${eventType} on this webhook. Any key the caller posts under metadata may be filtered on, with the operators of its type.`,
+    description: `A delivery of ${eventType} on this webhook. Any key the caller posts under metadata may be filtered on, with the operators of its type; name the key bare, without a metadata. prefix.`,
     eventFamilies: [],
     filterFields: [],
     resourceRelationships: [],
