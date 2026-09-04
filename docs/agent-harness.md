@@ -1181,7 +1181,10 @@ silently return every test to the shared key while each still passes alone.
 **What changed:** `HarnessOutcome` gains `completedByTool`, set when a tool's
 `halt: "completed"` ends the loop. The host's terminal result reads a
 completed outcome with no final text as `completed` when that flag is set,
-and as `failed` with `empty_completion` otherwise, as before.
+and as `failed` with `empty_completion` otherwise, as before. The run
+storage's host-outcome checkpoint no longer refuses a completed outcome
+with no final turn; it had, and the first cut of this change left every
+tool-ended run un-terminalized under `host_outcome_content_mismatch`.
 
 **Why:** A ready draft submitted from an automation's own conversation ends
 the run from `submit_draft`, and the model is not asked for a closing

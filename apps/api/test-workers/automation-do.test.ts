@@ -481,6 +481,38 @@ describe("AutomationDO", () => {
       connectorBindings: { plugin_webhook: WEBHOOK_CONNECTION_ID },
     });
     expect(await activeRegistrations()).toBe(2);
+
+    // The event that wakes the run is what the run reads: a matching delivery
+    // is admitted, and the loop puts the event's fields in front of the model
+    // as the run's input, labelled as the connector's words. Every event
+    // automation drafted live fired correctly and then answered that the
+    // event's fields were not provided, because the row never reached the
+    // model.
+    expect(await automationStub().admitExternalEvent({
+      ...addressed(),
+      registrationId: "00000000-0000-7000-8000-00000000ad71",
+      payloadHash: `sha256:${"d".repeat(64)}`,
+      event: {
+        id: "00000000-0000-7000-8000-00000000ad72",
+        eventSequence: 1,
+        eventType: "deploy.finished",
+        title: "checkout deployed",
+        summary: "Deploy of checkout finished.",
+        textSnippet: "",
+        metadata: { service: "checkout", durationSeconds: 240 },
+        occurredAt: Date.parse(NOW),
+        audienceUserIds: [],
+        audienceKind: "workspace",
+      },
+    })).toEqual({ admitted: true, outcomeCode: "automation_occurrence_admitted" });
+    const [admitted] = await runRows();
+    const run = await settledChildRun(admitted!.run_id);
+    expect(run).toMatchObject({ status: "completed", error_json: null });
+    const eventInput = provider.calls.flatMap((call) => call.messages)
+      .map((message) => promptText(message.content))
+      .find((text) => text.includes("EVENT THAT STARTED THIS RUN"));
+    expect(eventInput).toContain("checkout deployed");
+    expect(eventInput).toContain("\"service\": \"checkout\"");
   });
 
   it("refuses to apply a revision naming a plugin the workspace has no connection for", async () => {

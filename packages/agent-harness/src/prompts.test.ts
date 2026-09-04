@@ -8,6 +8,7 @@ import {
   renderScheduledDigestBriefMessage,
   renderTriggerActivityMessage,
   renderUntrustedAutomationResultMessage,
+  renderUntrustedExternalEventMessage,
   renderUntrustedInboundEmailMessage,
   renderUntrustedSlackOriginMessage,
   renderWorkstreamDescriptionMessages,
@@ -388,6 +389,7 @@ describe("prompt renderers", () => {
       metadata: { body: injection },
     });
     const emailMessage = renderUntrustedInboundEmailMessage(injection);
+    const eventMessage = renderUntrustedExternalEventMessage(injection);
     // An automation's result is its model's prose wrapped around whatever its
     // connector tools read, so both the name and the body are outside content.
     const activationMessage = renderUntrustedAutomationResultMessage({
@@ -433,6 +435,8 @@ describe("prompt renderers", () => {
     // however many user-role messages the renderer grows.
     expect(activityMessage).toMatchObject({ role: "user" });
     expect(emailMessage).toMatchObject({ role: "user" });
+    expect(eventMessage).toMatchObject({ role: "user" });
+    expect(eventMessage.content).toContain(injection);
     expect(activationMessage).toMatchObject({ role: "user" });
     expect(activationMessage.content).toContain(injection);
     expect(digestMessage).toMatchObject({ role: "user" });
