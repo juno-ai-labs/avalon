@@ -122,7 +122,7 @@ describe('WorkstreamComposer mention confirmation', () => {
     );
 
     expect(document.querySelector('.workstream-composer')).toHaveClass('is-message-capsule');
-    expect(screen.getByRole('button', { name: 'Attach a file' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Composer actions' })).toBeVisible();
     expect(screen.getByRole('button', { name: 'Start voice input' })).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Choose microphone' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Mention a participant' })).not.toBeInTheDocument();
@@ -483,7 +483,7 @@ describe('WorkstreamComposer mention confirmation', () => {
     // exactly this reason.
     const options = await screen.findAllByRole('option');
     expect(options.map(mentionOptionCopy)).toEqual([
-      { badge: 'ASSISTANT', description: 'Ask Rally to join this part of the conversation', label: 'Rally' },
+      { badge: 'Bot', description: null, label: 'Rally' },
       { badge: 'Person', description: 'adam@example.com', label: 'Adam' },
     ]);
   });
@@ -507,12 +507,12 @@ describe('WorkstreamComposer mention confirmation', () => {
 
     const options = await screen.findAllByRole('option');
     expect(options.map(mentionOptionCopy)).toEqual([
-      { badge: 'ASSISTANT', description: 'Ask Rally to join this part of the conversation', label: 'Rally' },
+      { badge: 'Bot', description: null, label: 'Rally' },
       { badge: 'Person', description: 'adam@example.com', label: 'Adam' },
       { badge: 'Person', description: 'bob@example.com · not participating', label: 'Bob Builder' },
       { badge: 'Person', description: 'cara@example.com · not participating', label: 'Cara Chen' },
     ]);
-    expect(options[0]).toHaveAccessibleName('Rally — Ask Rally to join this part of the conversation — ASSISTANT');
+    expect(options[0]).toHaveAccessibleName('Rally — Ask Rally to join this part of the conversation — Bot');
     expect(options[1]).toHaveAccessibleName('Adam — adam@example.com — Person');
     expect(options[2]).toHaveAccessibleName('Bob Builder — bob@example.com · not participating — Person');
     expect(options[3]).toHaveAccessibleName('Cara Chen — cara@example.com · not participating — Person');
@@ -554,7 +554,7 @@ describe('WorkstreamComposer mention confirmation', () => {
     const composer = screen.getByLabelText('Message the work stream');
 
     fireEvent.change(composer, { target: { value: '@' } });
-    fireEvent.click(await screen.findByRole('option', { name: /Rally .* ASSISTANT/u }));
+    fireEvent.click(await screen.findByRole('option', { name: /Rally .* Bot/u }));
 
     expect(composer).toHaveValue('@Rally ');
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }));

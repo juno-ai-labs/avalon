@@ -384,6 +384,26 @@ with the backfill first. See [`regionalization.md`](regionalization.md).
 
 ## Changelog
 
+### 2026-09-04 — New chat uses GrokBot's recipient-first launcher without losing create semantics
+
+**What changed:** A workspace-level new chat opens with a `To:` recipient bar,
+searchable people results, and the compact message capsule. Typing `@` opens the
+inline mention list; attachments and the developer-only model override live in
+the capsule action menu. Project-owned creation keeps its project participant
+contract and existing toolbar. Both shapes still use the same durable create,
+draft, attachment, mention, optimistic transcript, and failure-recovery paths.
+
+**Why:** The old participant modifier and permanent toolbar made the rebased
+launcher visibly different from the GrokBot conversation entry point. Removing
+the controls outright would have made the visual rewrite a behavioral
+regression, especially for model-pinned debugging and attachment-only creates.
+
+**Consequences:** Tests for workspace creation interact with the recipient bar
+and action menu; project tests interact with the project participant modifier.
+The workspace launcher does not fetch the work-stream directory or suggested
+work, so restoring either query would also restore the loading and layout churn
+the focused launcher removed.
+
 ### 2026-09-02 — Follow-up creation now enters through the owning substream
 
 **What changed:** The work-stream composer sends an idempotent `create_message`
@@ -412,8 +432,9 @@ keep the redundant navigation model. Redirecting New work stream to an existing
 room would remove the explicit create affordance.
 
 **Consequences:** The launcher no longer queries the work-stream directory or
-suggested-work endpoints. Its participant picker, draft, attachments, mentions,
-and optimistic creation path are unchanged.
+suggested-work endpoints. Its draft, attachments, mentions, and optimistic
+creation path are unchanged; the workspace-level participant interaction was
+later replaced by the recipient-first launcher recorded above.
 
 ### 2026-08-30 — A personal project's participant row uses one Radix tooltip
 

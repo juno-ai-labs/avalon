@@ -35,12 +35,12 @@ describe('context rail state', () => {
 
   it('clamps and persists sidebar resizing', () => {
     useUiStore.getState().setSidebarWidth(120);
-    expect(useUiStore.getState().sidebarWidth).toBe(224);
-    expect(window.localStorage.getItem('rally.sidebar-width')).toBe('224');
+    expect(useUiStore.getState().sidebarWidth).toBe(240);
+    expect(window.localStorage.getItem('rally.sidebar-width')).toBe('240');
 
     useUiStore.getState().setSidebarWidth(900);
-    expect(useUiStore.getState().sidebarWidth).toBe(360);
-    expect(window.localStorage.getItem('rally.sidebar-width')).toBe('360');
+    expect(useUiStore.getState().sidebarWidth).toBe(400);
+    expect(window.localStorage.getItem('rally.sidebar-width')).toBe('400');
   });
 
   it('opens the requested contextual variant and resets stale detail state', () => {

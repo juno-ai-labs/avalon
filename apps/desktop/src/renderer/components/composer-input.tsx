@@ -448,6 +448,30 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
                       <Paperclip aria-hidden="true" />
                       <span>Attach files</span>
                     </DropdownMenu.Item>
+                    {model && debugEnabled && model.kind === 'choice' && <>
+                      <DropdownMenu.Separator className="menu-separator" />
+                      <DropdownMenu.Label className="menu-label">Model</DropdownMenu.Label>
+                      <DropdownMenu.RadioGroup
+                        onValueChange={(chosen) =>
+                          model.onChange(chosen === UNPINNED_AGENT_MODEL ? null : chosen as AgentModelOverride)}
+                        value={model.value ?? UNPINNED_AGENT_MODEL}
+                      >
+                        <DropdownMenu.RadioItem className="menu-item model-selector-item" value={UNPINNED_AGENT_MODEL}>
+                          <span>{UNPINNED_AGENT_MODEL_LABEL}</span>
+                          <DropdownMenu.ItemIndicator asChild>
+                            <Check aria-hidden="true" size={15} />
+                          </DropdownMenu.ItemIndicator>
+                        </DropdownMenu.RadioItem>
+                        {AGENT_MODEL_GROUPS.flatMap((group) => group.models).map((choice) => (
+                          <DropdownMenu.RadioItem className="menu-item model-selector-item" key={choice.id} value={choice.id}>
+                            <span>{choice.label}</span>
+                            <DropdownMenu.ItemIndicator asChild>
+                              <Check aria-hidden="true" size={15} />
+                            </DropdownMenu.ItemIndicator>
+                          </DropdownMenu.RadioItem>
+                        ))}
+                      </DropdownMenu.RadioGroup>
+                    </>}
                     {onTeachTask && (
                       <DropdownMenu.Item className="menu-item composer-action-menu-item" onSelect={onTeachTask}>
                         <CircleDot aria-hidden="true" className="composer-teach-task-icon" />

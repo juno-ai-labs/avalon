@@ -151,7 +151,7 @@ describe('Grok Bot mention-chip geometry', () => {
     );
 
     expect(chip).not.toBeNull();
-    expect(chip).toContain('background: color-mix(in srgb, #777 13%, transparent);');
+    expect(chip).toContain('background: color-mix(in srgb, var(--av-ref-color-neutral-9) 13%, transparent);');
     expect(chip).toContain('border-radius: 4px;');
     expect(chip).toContain('font-size: 12px;');
     expect(chip).toContain('font-weight: 500;');

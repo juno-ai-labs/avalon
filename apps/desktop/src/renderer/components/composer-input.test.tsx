@@ -77,7 +77,7 @@ describe('ComposerInput IME composition guard', () => {
 });
 
 describe('ComposerInput message capsule', () => {
-  it('shows only attachment and voice chrome around an empty draft', () => {
+  it('shows only the action menu and voice chrome around an empty draft', () => {
     renderInput({
       api: { getTranscriptionSocketTicket: vi.fn() },
       layout: 'message-capsule',
@@ -86,7 +86,7 @@ describe('ComposerInput message capsule', () => {
     });
 
     expect(document.querySelector('.workstream-composer')).toHaveClass('is-message-capsule');
-    expect(screen.getByRole('button', { name: 'Attach a file' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Composer actions' })).toBeVisible();
     expect(screen.getByRole('button', { name: 'Start voice input' })).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Mention a participant' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Choose microphone' })).not.toBeInTheDocument();

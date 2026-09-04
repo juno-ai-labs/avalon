@@ -51,6 +51,25 @@ function sleep(milliseconds) {
   return new Promise((resolveSleep) => setTimeout(resolveSleep, milliseconds));
 }
 
+async function stopSmokeProcesses(marker, appPath, userDataDirectory) {
+  while (true) {
+    const smokePids = new Set([
+      ...runningSmokePids(marker),
+      ...runningRendererPids(appPath, userDataDirectory),
+    ]);
+    if (smokePids.size === 0) return;
+
+    for (const pid of smokePids) {
+      try {
+        process.kill(pid, 'SIGTERM');
+      } catch {
+        // It may have exited between discovery and termination.
+      }
+    }
+    await sleep(100);
+  }
+}
+
 /**
  * Launch a packaged app through LaunchServices with an isolated Electron
  * profile, require both main and renderer processes, and keep them alive long
@@ -97,16 +116,9 @@ export async function smokeLaunch(appPath, userDataDirectory) {
       cause: error,
     });
   } finally {
-    const smokePids = new Set([
-      ...runningSmokePids(marker),
-      ...runningRendererPids(appPath, canonicalUserDataDirectory),
-    ]);
-    for (const pid of smokePids) {
-      try {
-        process.kill(pid, 'SIGTERM');
-      } catch {
-        // It may have exited between the liveness check and cleanup.
-      }
-    }
+    // Wait for the isolated app and helpers to exit before the packager removes
+    // their profile. Returning immediately after SIGTERM lets a final telemetry
+    // flush recreate files while fs.rm is walking the directory.
+    await stopSmokeProcesses(marker, appPath, canonicalUserDataDirectory);
   }
 }

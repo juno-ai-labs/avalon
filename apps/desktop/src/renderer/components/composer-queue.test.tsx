@@ -126,7 +126,7 @@ describe('ComposerQueue', () => {
         onReorder={vi.fn(async () => undefined)}
       />,
     );
-    const chip = screen.getByText('@Ada Lovelace').closest('.mention-chip');
+    const chip = screen.getByText('Ada Lovelace').closest('.mention-chip');
     expect(chip).toHaveAttribute('data-person-id', personId);
     expect(screen.queryByText('@Spoofed label')).not.toBeInTheDocument();
     // A queued row is a preview of something not yet said: nothing in it opens.
