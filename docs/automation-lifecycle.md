@@ -478,7 +478,7 @@ catalogs the columns; the occurrence keys and run states are in the tables
 above. `run_id` is the child substream id, and `harness_run_id` is unique per
 run.
 
-`WorkspaceDO` migration 31 rebuilt `automation_directory` (automation id,
+`WorkspaceDO` migration 32 rebuilt `automation_directory` (automation id,
 workspace, author, `source_version`, hash, lifecycle, scope, owning work stream,
 title, description, next run, projected time) and
 `workspace_external_event_registrations` (no generation, version, or hash; a
