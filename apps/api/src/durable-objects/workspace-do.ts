@@ -4320,6 +4320,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       eventType: event.event_type,
       title: event.title,
       summary: event.summary,
+      textSnippet: event.text_snippet ?? "",
+      metadata,
       occurredAt: event.occurred_at,
       audienceUserIds: JSON.parse(event.target_user_ids_json) as string[],
       audienceKind: visibility.kind === "workspace" || visibility.scope === "workspace"

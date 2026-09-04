@@ -250,6 +250,14 @@ export const WorkspaceExternalEventSchema = z.strictObject({
   eventType: NonEmptyStringSchema,
   title: NonEmptyStringSchema,
   summary: z.string(),
+  /**
+   * What the run that this event wakes gets to read. The matcher already
+   * evaluated the rule over these; without them the run knew only that
+   * something of this type happened, and could not name the deployed service
+   * its own rule had just selected on.
+   */
+  textSnippet: z.string().default(""),
+  metadata: z.record(z.string(), z.unknown()).default({}),
   occurredAt: z.number().int().nonnegative(),
   audienceUserIds: z.array(IdSchema),
   audienceKind: z.enum(["workspace", "restricted"]),

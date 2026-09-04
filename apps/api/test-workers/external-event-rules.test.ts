@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
-import { asUserId, asWorkspaceId } from "@rally/contracts";
+import { asUserId, asWorkspaceId, WorkspaceExternalEventMatchResultSchema } from "@rally/contracts";
 
 import { workspaceDOName } from "../src/durable-objects/names";
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
@@ -158,8 +158,14 @@ async function ingest(
   return eventId;
 }
 
+async function matchFor(eventId: string) {
+  return WorkspaceExternalEventMatchResultSchema.parse(
+    await workspace().matchExternalEventDestinations({ workspaceId: WORKSPACE_ID, eventId }),
+  );
+}
+
 async function destinationsFor(eventId: string): Promise<string[]> {
-  const result = await workspace().matchExternalEventDestinations({ workspaceId: WORKSPACE_ID, eventId });
+  const result = await matchFor(eventId);
   return result.deliveries
     .map((delivery) => (delivery.destination.kind === "automation" ? delivery.destination.automationId : "workstream"))
     .sort();
@@ -184,6 +190,26 @@ describe("external event rules across connectors", () => {
     expect(await destinationsFor(opened)).toEqual([AUTOMATIONS.prOpened]);
     expect(await destinationsFor(closed)).toEqual([]);
     expect(await destinationsFor(linear)).toEqual([]);
+  });
+
+  it("hands the run the event it matched on: snippet and metadata ride the delivery", async () => {
+    await register(AUTOMATIONS.slowDeploys, [
+      rule(AUTOMATIONS.slowDeploys, 1, "generic_webhook", "deploy.finished", { kind: "always" }),
+    ]);
+    const eventId = await ingest("generic_webhook", "deploy.finished", {
+      textSnippet: "checkout deployed in 7 minutes",
+      metadata: { service: "checkout", durationMs: 420_000 },
+    });
+
+    const [delivery] = (await matchFor(eventId)).deliveries;
+
+    // What the rule selected on is what the run gets to read; a run that saw
+    // only the event type could not name the service its rule was about.
+    expect(delivery?.event).toMatchObject({
+      id: eventId,
+      textSnippet: "checkout deployed in 7 minutes",
+      metadata: { service: "checkout", durationMs: 420_000 },
+    });
   });
 
   it("combines string, string-set, number, boolean and presence leaves as one AND group", async () => {

@@ -8,6 +8,7 @@ import {
   asSubstreamId,
   asWorkspaceId,
   asUserId,
+  WorkspaceExternalEventMatchResultSchema,
   type WorkspaceId
 } from "@rally/contracts";
 import { z } from "zod";
@@ -32,6 +33,7 @@ import { diagnosticErrorCode, logInfo, logWarn } from "../observability/logger";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { restrictedActivityUserIds } from "../lib/activity-visibility";
 import {
+  MAX_CONNECTOR_EVENT_QUEUE_BYTES,
   enqueueWorkspaceConnectorEventProcess,
 } from "../services/workspace-connector-event-ingress";
 import {
@@ -716,15 +718,18 @@ export async function processConnectorEvent(
   // settle must still know the activity was claimed and keep it out of
   // Suggested Work.
   const workspace = await workspaceDirectory(env, asWorkspaceId(activity.workspace_id));
-  const matched = await workspace.matchExternalEventDestinations({
+  // Parsed on this side: the delivery carries the event's metadata, whose
+  // open shape the RPC type system cannot name, so the stub's answer is
+  // untyped until the contract reads it.
+  const matched = WorkspaceExternalEventMatchResultSchema.parse(await workspace.matchExternalEventDestinations({
     workspaceId: activity.workspace_id,
     eventId: activity.id,
-  });
+  }));
   const opportunity = matched.matched
     ? "claimed"
     : await enqueueActivityOpportunity(env, activity.id, asWorkspaceId(activity.workspace_id));
   await projectActivityEvent(env, activity);
-  await Promise.all(matched.deliveries.map((delivery) => env.ACTIVITY_QUEUE.send(delivery)));
+  await Promise.all(matched.deliveries.map((delivery) => env.ACTIVITY_QUEUE.send(deliveryWithinQueueBound(env, delivery))));
   logInfo(env, "connector_event_processing_completed", {
     workspace_id: activity.workspace_id,
     connection_id: activity.connection_id,
@@ -739,6 +744,30 @@ export async function processConnectorEvent(
     opportunity_outcome: opportunity,
     outcome: "processed",
   });
+}
+
+/**
+ * A delivery carries the event's snippet and metadata for the run to read. The
+ * event itself fit the Queue's message bound on ingress, but a delivery adds
+ * the destination and registration on top, so one near the bound is sent
+ * without the content rather than not at all: the run still fires, and reads
+ * from its opening that the content was too large to carry.
+ */
+function deliveryWithinQueueBound<T extends { event: { textSnippet: string; metadata: Record<string, unknown> } }>(
+  env: Env,
+  delivery: T,
+): T {
+  const bytes = new TextEncoder().encode(JSON.stringify(delivery)).byteLength;
+  if (bytes <= MAX_CONNECTOR_EVENT_QUEUE_BYTES) return delivery;
+  logWarn(env, "external_event_delivery_content_trimmed", {
+    workspace_id: (delivery as { workspaceId?: string }).workspaceId ?? null,
+    connector_event_id: (delivery.event as { id?: string }).id ?? null,
+    payload_bytes: bytes,
+  });
+  return {
+    ...delivery,
+    event: { ...delivery.event, textSnippet: "", metadata: { contentTrimmed: true } },
+  };
 }
 
 function activityRowFromWorkspaceEvent(event: WorkspaceConnectorEvent): ActivityRow {

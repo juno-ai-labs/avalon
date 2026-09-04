@@ -44,6 +44,7 @@ import {
 import type { Env } from "../env";
 import { connectorActivityTriggerDescriptors } from "../lib/connector-activity-triggers";
 import { ApiError } from "../lib/api-error";
+import { externalEventOpening } from "../lib/external-event-opening";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { sha256 } from "../lib/crypto";
 import { assertDurableObjectJurisdiction, durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
@@ -682,7 +683,7 @@ export class AutomationDO extends ConversationParentDurableObject {
       eventType: request.event.eventType,
       occurredAt: request.event.occurredAt,
       payloadHash: request.payloadHash,
-    }, null);
+    }, externalEventOpening(request.event));
     return {
       admitted: true,
       outcomeCode: admitted.reused ? "automation_occurrence_replayed" : "automation_occurrence_admitted",
@@ -1109,7 +1110,7 @@ export class AutomationDO extends ConversationParentDurableObject {
   private async admitOccurrence(
     occurrenceKey: string,
     trigger: AutomationRunTriggerV1,
-    opening: { textContent: string; structuredContent: Record<string, unknown>; resourceId: string } | null,
+    opening: { textContent: string; structuredContent: Record<string, unknown>; resourceId: string | null } | null,
   ): Promise<{ runId: string; reused: boolean }> {
     const row = this.row();
     if (!row || row.accepted_definition_revision === null) {
@@ -1193,14 +1194,17 @@ export class AutomationDO extends ConversationParentDurableObject {
     });
     let triggerMessageId: string | null = null;
     if (definition.opening) {
-      await attachWorkstreamRuntimeResource(this.env, {
-        workspaceId: row.workspace_id,
-        workstreamId: row.automation_id,
-        substreamId: runId,
-        resourceId: definition.opening.resourceId,
-        attachedByUserId: null,
-        relationshipType: "inbound_email",
-      });
+      // Only an email is also a resource the run can open; an event is prose.
+      if (definition.opening.resourceId) {
+        await attachWorkstreamRuntimeResource(this.env, {
+          workspaceId: row.workspace_id,
+          workstreamId: row.automation_id,
+          substreamId: runId,
+          resourceId: definition.opening.resourceId,
+          attachedByUserId: null,
+          relationshipType: "inbound_email",
+        });
+      }
       const appended = await createMessageObjectPort(this.env, row.workspace_id, row.automation_id, undefined, runId)
         .appendMessage({
           messageId: uuidV7(Date.now()),
