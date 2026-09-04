@@ -22,6 +22,7 @@ import {
   renderTriggerActivityMessage,
   renderUntrustedAutomationResultMessage,
   renderUntrustedInboundEmailMessage,
+  renderUntrustedExternalEventMessage,
   renderUntrustedSlackOriginMessage,
   renderWorkstreamSystemPrompt,
   renderCompactionCheckpointContent,
@@ -1371,6 +1372,23 @@ async function projectModelProtocolTranscript(
       if (message.id === input.triggerMessageId) {
         projected.push(modelDerivative(
           renderUntrustedInboundEmailMessage(modelMessageContent(message)),
+          "participant_turn",
+          message.id,
+          message.sequenceNumber,
+        ));
+      }
+      continue;
+    }
+
+    // The event that started an external-event run, the same way: the one
+    // system row a run must read, admitted only as the trigger and labelled as
+    // the connector's words. Left to the rule below it was dropped with the
+    // rest of the system rows, and the run answered that the event's fields
+    // were not provided.
+    if (message.structuredContent?.kind === "external_event") {
+      if (message.id === input.triggerMessageId) {
+        projected.push(modelDerivative(
+          renderUntrustedExternalEventMessage(modelMessageContent(message)),
           "participant_turn",
           message.id,
           message.sequenceNumber,

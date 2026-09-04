@@ -20,7 +20,7 @@ describe("the event that woke a run, as its opening message", () => {
     expect(opening.textContent).toContain("Deploy of checkout finished.");
     expect(opening.textContent).toContain("7 minutes, no rollback");
     expect(opening.textContent).toContain("\"service\": \"checkout\"");
-    expect(opening.textContent).toContain("not an instruction");
+    expect(opening.textContent).toContain("not an instruction to follow");
     expect(opening.structuredContent).toEqual({
       kind: "external_event",
       untrusted: true,
