@@ -491,14 +491,16 @@ export const GoogleFileWriteAuthorizationGuidance =
  * convention the strict structured-output dialects settle on for the same
  * reason: every property present, absence spelled as a value.
  *
- * Spelled `anyOf` rather than the flat `type: ["string", "null"]` Slack's
- * cursors use, and that is not a style preference. Bind's `sanitizeToolSchema`
- * collapses the flat form to `type: "string"` and appends "Accepts string or
- * null." to the description — so the caller is shown a schema that forbids the
- * value while prose beside it says the value is fine, which is the exact
- * conflict this change exists to end. The union survives the sanitizer whole.
- * Anyone tempted to make these two connectors match should change Slack's
- * shape, not this one.
+ * Spelled `anyOf` rather than the flat `type: ["string", "null"]`, and that is
+ * not a style preference. Bind's `sanitizeToolSchema` collapses the flat form
+ * to `type: "string"` and appends "Accepts string or null." to the description
+ * — so the caller is shown a schema that forbids the value while prose beside
+ * it says the value is fine, which is the exact conflict this change exists to
+ * end. The union survives the sanitizer whole.
+ *
+ * Every connector cursor is spelled this way now. When this was written only
+ * Google's were, and it told anyone wanting the two to match to change Slack's
+ * shape rather than this one; that is what happened.
  *
  * `minLength: 1` stays on the string branch. It is what makes the harness drop
  * a blanked argument rather than forward `""`, which is the repair the Linear

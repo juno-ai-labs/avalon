@@ -14,6 +14,7 @@ import { __integrationTesting } from "../src/services/integrations";
 import { TERMINAL_TOOL_DEFINITIONS } from "../src/services/terminal/contract";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import { createTestConnectorRegistry, unconfiguredConnectorTypes } from "./helpers/connector-registry";
+import { authorsNullBranch, everyConnectorCursor } from "./helpers/connector-cursors";
 
 /**
  * Every authored tool schema, walked from the registries rather than listed by
@@ -145,28 +146,59 @@ describe("tool schema sanitization", () => {
     expect(rejected).toEqual([]);
   });
 
-  it("delivers the null branch every Google cursor authors, in the one spelling that survives", () => {
-    // The fix these four carry is that "no cursor" is expressible as a value.
-    // It is expressible only if the null branch reaches the model, and the
-    // sanitizer collapses `type: ["string", "null"]` to `type: "string"`,
-    // moving the nullability into the description — a schema forbidding the
-    // value beside prose permitting it, which is the conflict the fix exists to
-    // end. Written as an assertion because two automated reviews read the two
-    // spellings as equivalent, which is what a reviewer's head is bad at and a
-    // test is good at.
-    const google = createTestConnectorRegistry().get("google");
-    const paginated = google.agentPlugin.tools.filter((tool) => (
-      Object.hasOwn((tool.inputSchema as { properties?: Record<string, unknown> }).properties ?? {}, "pageToken")
-    ));
-    expect(paginated.map((tool) => tool.name)).toEqual([
-      "gmail.search",
-      "calendar.list_calendars",
-      "calendar.list_events",
-      "drive.search",
-    ]);
-    expect(paginated.flatMap((tool) => droppedNullableBranches(
-      tool.inputSchema as Record<string, unknown>,
-    ).map((finding) => `${tool.name}.${finding}`))).toEqual([]);
+  it("delivers the null branch every connector cursor authors, in the one spelling that survives", () => {
+    // The fix these carry is that "no cursor" is expressible as a value. It is
+    // expressible only if the cursor authors a null branch AND that branch
+    // reaches the model, so both halves are asserted here.
+    //
+    // `droppedNullableBranches` alone covers only the second. It reports a
+    // declaration whose authored null the sanitizer dropped, so a cursor
+    // rewritten to a plain `{ type: "string" }` reports nothing at all and
+    // sails through: first-page `null` forbidden outright, guard green. The
+    // authored check below is what closes that, and it is the failure mode this
+    // suite exists to catch rather than a hypothetical one.
+    //
+    // The sanitizer half stays because the two spellings are not equivalent:
+    // it collapses `type: ["string", "null"]` to `type: "string"` and moves the
+    // nullability into the description — a schema forbidding the value beside
+    // prose permitting it, which is the conflict the fix exists to end. Written
+    // as an assertion because two automated reviews read the two spellings as
+    // equivalent, which is what a reviewer's head is bad at and a test is good
+    // at.
+    //
+    // Every connector, not Google's four: a cursor is a cursor whichever
+    // adapter serves it, and the assertion this widened from could pass while
+    // eighteen cursors on five other connectors stayed collapsed.
+    //
+    // Which properties are cursors, and how one is read, come from
+    // `helpers/connector-cursors.ts` — shared with the sweep that guards the
+    // other half of the contract, because two copies kept in step by hand
+    // diverged on the first edit that touched only one.
+    const cursors = everyConnectorCursor();
+    // The exact population, per connector. A floor was the first shape of this
+    // and it had three cursors of slack in it: one connector could lose its
+    // coverage entirely while the total still cleared the bound. An exact map
+    // costs one edit when a paginated tool is added, which is the point — that
+    // edit is where somebody states the new tool is meant to be covered.
+    expect(Object.fromEntries(
+      [...new Set(cursors.map(({ connector }) => connector))].sort()
+        .map((connector) => [connector, cursors.filter((c) => c.connector === connector).length]),
+    )).toEqual({ google: 4, granola: 2, linear: 4, notion: 3, slack: 5, x: 4 });
+    expect(cursors.flatMap(({ connector, tool, cursor }) => {
+      const where = `${connector}.${tool.name}.${cursor}`;
+      if (!authorsNullBranch(tool, cursor)) return [`${where}: authors no null branch`];
+      // Filtered to the cursor itself. `droppedNullableBranches` reports every
+      // collapsed property on the schema, and a tool that takes a cursor
+      // usually also takes flat-nullable ids and filters that are still
+      // collapsed — Slack's `search_messages` alone carries four. Those are the
+      // backlog the Google entry in `connectors.md` counts, and converting them
+      // is a change per parameter with its own reasoning about what absence
+      // means there. Asserting over them here would fail for work this guard is
+      // not about.
+      return droppedNullableBranches(tool.inputSchema as Record<string, unknown>)
+        .filter((finding) => finding.startsWith(`${cursor}: `))
+        .map((finding) => `${where.slice(0, where.lastIndexOf("."))}.${finding}`);
+    })).toEqual([]);
   });
 
   it("leaves no tool with a composition branch the sanitizer strips a constraint from", () => {

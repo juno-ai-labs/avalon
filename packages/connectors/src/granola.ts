@@ -56,11 +56,24 @@ const folderIdJsonSchema = {
   pattern: "^fol_[A-Za-z0-9]{14}$",
   description: "An optional Granola folder ID returned by list_folders.",
 } as const;
+/**
+ * Granola's page cursor. `anyOf` rather than `type: ["string", "null"]` because
+ * Bind's `sanitizeToolSchema` collapses the flat form to `type: "string"`, so
+ * the null branch never reached the model and `minLength: 1` read as a floor a
+ * caller with no cursor still had to clear; `GOOGLE_PAGE_TOKEN_SCHEMA` in
+ * [`index.ts`](index.ts) has the run that measured what a caller does then.
+ *
+ * The producing field and the last-page signal are `cursor` and
+ * `hasMore: false`, which is the shape `/v1/notes` and `/v1/folders` return and
+ * which this adapter's own tests pin. An earlier draft called them unestablished
+ * and left both out of the description; that was wrong, and it left the one
+ * connector here whose caller could page forever without being told where to
+ * stop.
+ */
 const cursorJsonSchema = {
-  type: ["string", "null"],
-  minLength: 1,
-  maxLength: 4_096,
-  description: "An optional opaque cursor returned by the preceding page.",
+  anyOf: [{ type: "string", minLength: 1, maxLength: 4_096 }, { type: "null" }],
+  description:
+    "Send `null` for the first page. To continue an earlier call, pass back the exact `cursor` string a previous call to this tool returned, with that call's other arguments unchanged. It is an opaque cursor: a long provider-generated string, not a page number, an offset, or an index. Never construct, guess, shorten, or increment this token; when you have no token from a previous call, the value is `null`. A result whose `hasMore` is false is the last page: stop there rather than calling again.",
 } as const;
 const dateFilterJsonSchema = {
   type: ["string", "null"],

@@ -865,6 +865,37 @@ describe("Slack connector", () => {
     )).rejects.toMatchObject({ code: "provider_error", message: "internal_error" });
   });
 
+  it("reports a last search page as a null cursor rather than Slack's blank", async () => {
+    // Slack reports a last page as `next_cursor: ""`, and the cursor
+    // description tells the caller to stop when it is `null`. Handed the blank
+    // verbatim the caller reads another page, cannot send it back because the
+    // string branch rejects it, and either invents a token or sends `null` and
+    // re-fetches page one forever. Same repair `boundXPage` makes for X.
+    const fetcher: FetchLike = async () => json({
+      ok: true,
+      results: { messages: [{ channel_id: "CIDEAS", message_ts: "1786130000.000100" }], next_cursor: "" },
+    });
+    const adapter = createSlackConnector({
+      clientId: "client",
+      clientSecret: "secret",
+      signingSecret: "signing",
+      redirectUri: "https://api.example.com/connections/slack/callback",
+      fetch: fetcher,
+    });
+    const connection = slackWorkspaceToolConnection();
+    const context = {
+      connection,
+      principal: { type: "workspace" as const, workspaceId: asWorkspaceId(connection.workspaceId) },
+      invocationAuthorization: { slackActionToken: "event-only-action-token" },
+      signal: neverAborts(),
+    };
+
+    await expect(adapter.executeTool("search_messages", { query: "gizmo" }, context))
+      .resolves.toMatchObject({ output: { next_cursor: null } });
+    await expect(adapter.executeTool("search", { query: "gizmo" }, context))
+      .resolves.toMatchObject({ output: { next_cursor: null } });
+  });
+
   it("uses hidden event authorization for workspace message search", async () => {
     const requests: Array<Record<string, unknown>> = [];
     const fetcher: FetchLike = vi.fn(async (input, init) => {
