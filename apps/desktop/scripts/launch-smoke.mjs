@@ -51,23 +51,29 @@ function sleep(milliseconds) {
   return new Promise((resolveSleep) => setTimeout(resolveSleep, milliseconds));
 }
 
-async function stopSmokeProcesses(marker, appPath, userDataDirectory) {
-  while (true) {
-    const smokePids = new Set([
-      ...runningSmokePids(marker),
-      ...runningRendererPids(appPath, userDataDirectory),
-    ]);
+export async function stopIsolatedProcesses(discover, kill = process.kill, settle = () => sleep(100)) {
+  // Two explicit termination stages, not an unbounded retry of SIGTERM.
+  for (const signal of ['SIGTERM', 'SIGKILL']) {
+    const smokePids = discover();
     if (smokePids.size === 0) return;
-
     for (const pid of smokePids) {
       try {
-        process.kill(pid, 'SIGTERM');
-      } catch {
-        // It may have exited between discovery and termination.
+        kill(pid, signal);
+      } catch (error) {
+        if (error?.code !== 'ESRCH') throw error;
       }
     }
-    await sleep(100);
+    await settle();
   }
+  const survivors = discover();
+  if (survivors.size > 0) throw new Error(`Isolated smoke processes did not exit: ${[...survivors].join(', ')}`);
+}
+
+async function stopSmokeProcesses(marker, appPath, userDataDirectory) {
+  await stopIsolatedProcesses(() => new Set([
+    ...runningSmokePids(marker),
+    ...runningRendererPids(appPath, userDataDirectory),
+  ]));
 }
 
 /**
@@ -89,6 +95,7 @@ export async function smokeLaunch(appPath, userDataDirectory) {
     marker,
   ]);
   let launchedPid;
+  let launchError;
   try {
     let rendererPids = new Set();
     for (let attempt = 0; attempt < 20; attempt += 1) {
@@ -111,14 +118,16 @@ export async function smokeLaunch(appPath, userDataDirectory) {
       }
     }
   } catch (error) {
-    if (launchedPid && error?.message?.includes('Renderer helper')) throw error;
-    throw new Error(`Packaged Rally process ${launchedPid ?? '(missing)'} exited during launch smoke`, {
-      cause: error,
-    });
-  } finally {
-    // Wait for the isolated app and helpers to exit before the packager removes
-    // their profile. Returning immediately after SIGTERM lets a final telemetry
-    // flush recreate files while fs.rm is walking the directory.
-    await stopSmokeProcesses(marker, appPath, canonicalUserDataDirectory);
+    launchError = launchedPid && error?.message?.includes('Renderer helper')
+      ? error
+      : new Error(`Packaged Rally process ${launchedPid ?? '(missing)'} exited during launch smoke`, { cause: error });
   }
+  // Cleanup always runs, but cannot erase the launch failure it is cleaning up.
+  try {
+    await stopSmokeProcesses(marker, appPath, canonicalUserDataDirectory);
+  } catch (cleanupError) {
+    if (launchError) throw new AggregateError([launchError, cleanupError], 'Launch smoke and cleanup both failed', { cause: cleanupError });
+    throw cleanupError;
+  }
+  if (launchError) throw launchError;
 }

@@ -29,6 +29,7 @@ import { basename, dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { WorkspaceChangeGuard } from './workspace-change-guard';
+import { conversationDetailsGeometry } from './conversation-details-geometry';
 import { revalidateWorkspaceActivation } from './workspace-activation';
 import { claimActiveWorkspace } from './workspace-selection';
 import {
@@ -463,7 +464,8 @@ async function reportTelemetryProductIntent(
 }
 
 let mainWindow: BrowserWindow | null = null;
-let conversationDetailsExpansion: { originalBounds: ReturnType<BrowserWindow['getBounds']> } | null = null;
+let conversationDetailsExpansion = 0;
+let conversationDetailsAppliedWidth = 0;
 let settingsWindow: BrowserWindow | null = null;
 /**
  * LIMIT UNSET — open, enforcing nothing. Awaiting a value from the team; see
@@ -1278,9 +1280,8 @@ function startSuggestedWorkstreamFromMenuBar(suggestion: MenuBarSuggestion): voi
       emitDeepLink(`${customProtocol}://workstreams/${workstreamId}`, 'menu_bar');
     })
     .catch((error: unknown) => {
-      // The click has to land somewhere. Opening Rally puts the person in
-      // front of the same suggestion on the home screen, where starting it
-      // again reports its own failure.
+      // Keep the failed action visible by bringing Rally forward. Suggestions
+      // remain in the native menu bar; the new-chat screen has no suggestion cards.
       logWarn('rally', 'could not start a suggested work stream from the menu bar', error);
       openMainWindowFromMenuBar();
     });
@@ -3325,35 +3326,26 @@ function registerIpc(): void {
     }
     if (!mainWindow || mainWindow.isDestroyed()) return;
     const bounds = mainWindow.getBounds();
-    if (input.open) {
-      if (mainWindow.isMaximized() || mainWindow.isFullScreen()) return;
-      if (conversationDetailsExpansion) return;
-      const workArea = electronScreen.getDisplayMatching(bounds).workArea;
-      const targetWidth = Math.min(workArea.width, bounds.width + Math.round(input.width));
-      const targetX = Math.max(workArea.x, Math.min(bounds.x, workArea.x + workArea.width - targetWidth));
-      conversationDetailsExpansion = { originalBounds: bounds };
-      if (targetWidth !== bounds.width || targetX !== bounds.x) {
-        mainWindow.setBounds({ ...bounds, x: targetX, width: targetWidth }, true);
-      }
+    if (mainWindow.isMaximized() || mainWindow.isFullScreen()) {
+      // Native window modes belong to the person. Never unmaximize or arm a
+      // delayed restore that could overwrite a later open/close cycle.
+      conversationDetailsExpansion = 0;
       return;
     }
-    const expansion = conversationDetailsExpansion;
-    conversationDetailsExpansion = null;
-    if (!expansion) return;
-    const restoreOriginalBounds = (): void => {
-      if (!mainWindow || mainWindow.isDestroyed()) return;
-      mainWindow.setBounds(expansion.originalBounds, true);
-    };
-    if (mainWindow.isFullScreen()) {
-      mainWindow.once('leave-full-screen', restoreOriginalBounds);
-      return;
+    if (!input.open && conversationDetailsExpansion === 0) return;
+    const next = conversationDetailsGeometry(
+      bounds,
+      electronScreen.getDisplayMatching(bounds).workArea,
+      conversationDetailsExpansion,
+      input.open ? input.width : 0,
+      mainWindow.getMinimumSize()[0] ?? 0,
+      conversationDetailsAppliedWidth,
+    );
+    conversationDetailsExpansion = next.addedWidth;
+    conversationDetailsAppliedWidth = next.bounds.width;
+    if (next.bounds.width !== bounds.width || next.bounds.x !== bounds.x) {
+      mainWindow.setBounds(next.bounds, true);
     }
-    if (mainWindow.isMaximized()) {
-      mainWindow.unmaximize();
-      restoreOriginalBounds();
-      return;
-    }
-    restoreOriginalBounds();
   });
   ipcMain.handle('message-export:save', async (event, request: unknown) => {
     assertTrustedIpcSender(event);
@@ -4295,7 +4287,7 @@ async function createMainWindow(): Promise<void> {
   mainWindow.on('closed', () => {
     realtimeSocketBroker.closeOwner(mainWindowWebContentsId);
     rendererReady = false;
-    conversationDetailsExpansion = null;
+    conversationDetailsExpansion = 0;
     mainWindow = null;
   });
 

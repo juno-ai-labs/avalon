@@ -320,18 +320,19 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
     setRecipientPickerOpen(true);
     requestAnimationFrame(() => recipientInputRef.current?.focus());
   }, []);
-  const closeNewChat = useCallback((): void => {
-    const returnTo = typeof location.state === 'object'
+  const returnTo = typeof location.state === 'object'
       && location.state !== null
       && 'returnTo' in location.state
       && typeof location.state.returnTo === 'string'
       ? location.state.returnTo
       : null;
+  const canCloseNewChat = Boolean(returnTo && returnTo !== location.pathname);
+  const closeNewChat = useCallback((): void => {
     if (returnTo && returnTo !== location.pathname) {
       void navigate(returnTo, { replace: true });
       return;
     }
-  }, [location.pathname, location.state, navigate]);
+  }, [location.pathname, returnTo, navigate]);
   const owningProject = projects.data?.items.find((project) => project.id === owningProjectId);
   const personalProjectParticipantIds = useMemo(() => new Set(
     owningProject?.scope === 'personal'
@@ -643,8 +644,8 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
                 }}
                 onFocus={() => setRecipientPickerOpen(true)}
                 onKeyDown={(event) => {
-                  if (event.metaKey && /^[1-9]$/u.test(event.key)) {
-                    const member = recipientCandidates[Number(event.key) - 1];
+                  if (event.metaKey && /^Digit[1-9]$/u.test(event.code)) {
+                    const member = recipientCandidates[Number(event.code.slice(-1)) - 1];
                     if (member) {
                       event.preventDefault();
                       event.stopPropagation();
@@ -670,9 +671,9 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
                 value={recipientQuery}
               />
             </div>
-            <button aria-label="Close new chat" className="new-chat-close" onClick={closeNewChat} type="button">
+            {canCloseNewChat && <button aria-label="Close new chat" className="new-chat-close" onClick={closeNewChat} type="button">
               <X aria-hidden="true" size={16} strokeWidth={1.7} />
-            </button>
+            </button>}
           </div>
         )}
         {launching && (

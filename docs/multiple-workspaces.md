@@ -399,6 +399,15 @@ best-effort remote revocation.
 
 ## Changelog
 
+### 2026-09-04 — Keep workspace capabilities in the compact account presentation
+
+**What changed and why:** The Grok-style account menu now performs discovery on
+open and includes the same flagged switching, invitation, and creation controls
+as the workspace presentation. The prior presentation branch accidentally
+excluded them. Styling is not a capability boundary; nonfunctional usage and
+iOS placeholders were removed instead of pretending Rally implements them.
+
+
 ### 2026-09-02 — A switch signs the account in itself, and the regions are US and EU
 
 **What changed:** A switch or a creation that finds no identity credential on
