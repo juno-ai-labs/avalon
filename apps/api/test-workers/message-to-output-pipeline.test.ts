@@ -59,6 +59,7 @@ import {
   SubstreamLoopStorage,
 } from "../src/durable-objects/substream-loop-storage";
 import type { WorkstreamObjectProductService } from "../src/durable-objects/workstream-object-product";
+import { WorkstreamMessageStorage } from "../src/durable-objects/workstream-message-storage";
 import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
 import { createSchedulingObjectPort } from "../src/runtime/scheduling-port";
 import { launchWorkstreamHarness } from "../src/services/workstream-service";
@@ -89,6 +90,7 @@ const STREAM_FAILURE_PRIMARY_MODEL = "pipeline-b06/primary";
 const STREAM_FAILURE_FALLBACK_MODEL = "pipeline-b06/fallback";
 const INTERLEAVED_TOOLS_MODEL = "pipeline-b12/primary";
 const QUEUED_FOLLOW_UP_MODEL = "pipeline-queued/primary";
+const RETRY_AFTER_ASSISTANT_TURN_MODEL = "pipeline-retry-fence/primary";
 
 /**
  * What the polls below wait for is alarm delivery and the drain finishing under
@@ -112,6 +114,18 @@ const SUBSCRIPTION_SETTLE_TIMEOUT_MS = 2_000;
 interface SocketFrame extends Record<string, unknown> {
   type: string;
 }
+
+/**
+ * Where the one test that reads a log entry parks its capture.
+ *
+ * On the isolate rather than the object, because `logWarn` writes to the
+ * `console` of the isolate the command runs in — so the original has to be
+ * parked beside the collector and both restored in the same place.
+ */
+type WarnCaptureScope = typeof globalThis & {
+  __rallyWarnLog?: unknown[];
+  __rallyWarnOriginal?: typeof console.warn;
+};
 
 /** Failure codes that mean the run died before the provider boundary. */
 const PRE_PROVIDER_FAILURES = [
@@ -1398,6 +1412,91 @@ describe("a member's message travels the whole pipeline", () => {
     });
   });
 
+  it("retries a run whose newest turn is the assistant turn it failed on", async () => {
+    // The retry a person actually clicks. Every other retry case here settles a
+    // run that never spoke, so the newest conversation turn is the member
+    // message that started it and its id is a UUID — which is how the fence
+    // resolved from that turn came to be held as one, and why holding it as one
+    // survived review. A real run speaks first: it answers, calls a tool, and
+    // dies on a later step, leaving its own assistant turn newest, and an
+    // assistant turn's id is `<loopId>:turn:<ordinal>`. Held as a UUID, the
+    // retry threw `ZodError` before reaching any of its own guards, and the
+    // socket reported the generic `substream_command_failed` — so the button
+    // did nothing and explained nothing.
+    const stub = agentStub();
+    try {
+      await installScriptedProvider(stub, [
+        [
+          { choices: [{ delta: { content: "here is what I found" }, finish_reason: null }] },
+          {
+            choices: [{
+              delta: {
+                tool_calls: [{
+                  index: 0,
+                  id: "retry-fence-tool-1",
+                  type: "function",
+                  function: { name: "core_current_time", arguments: "{}" },
+                }],
+              },
+              finish_reason: "tool_calls",
+            }],
+          },
+        ],
+        // The step after the one that spoke. A refusal is the provider's own
+        // terminal status, so the run fails where production's did — at the
+        // provider — with the turn it already materialized left standing.
+        "refuse",
+      ], {
+        primaryModel: RETRY_AFTER_ASSISTANT_TURN_MODEL,
+        fallbackModels: [],
+      });
+      const opened = await initializeWorkstream(stub, "answer, then break");
+      const failed = await settledRun(stub, opened.body.harnessRunId as string);
+      expect(failed.status).toBe("failed");
+      await waitForLoopRelease(stub);
+
+      await runInDurableObject(stub, async (instance, state) => {
+        const productService =
+          (instance as unknown as { product: WorkstreamObjectProductService }).product;
+        const newest = state.storage.sql.exec<{ id: string }>(
+          `SELECT id FROM canonical_conversation_turn_details
+            WHERE substream_id = '0' ORDER BY sequence_number DESC LIMIT 1`,
+        ).one();
+        // The premise, asserted rather than assumed: this case only exercises
+        // the retry if the turn its fence resolves to is an assistant turn.
+        expect(newest.id).toBe(`${substreamLoopId(WORKSTREAM_ID)}:turn:1`);
+
+        const retryRunId = asHarnessRunId("00000000-0000-7000-8000-0000000000f2");
+        const retry = await productService.retry(AUTH, retryRunId);
+        // The fence is that assistant turn, carried whole. Dropping it to
+        // `null` would also parse, and would replay against the trigger's own
+        // window — losing anything said after the failure.
+        expect(retry.activationRequest.workflowInput).toMatchObject({
+          harnessRunId: retryRunId,
+          transcriptFenceMessageId: newest.id,
+          reason: "manual_retry",
+        });
+        // The receipt is what the replay reads back, so the fence has to
+        // survive the round trip through storage, not just the call.
+        expect(WorkstreamWorkflowInputSchema.parse(JSON.parse(
+          state.storage.sql.exec<{ execution_context_json: string }>(
+            `SELECT execution_context_json FROM runs WHERE run_id = ?`,
+            retryRunId,
+          ).one().execution_context_json,
+        )).transcriptFenceMessageId).toBe(newest.id);
+        // The other half of what was broken: the fence has to resolve, not just
+        // parse. `resolveTranscriptFence` looks it up through this exact query,
+        // and a turn key is what that column holds — so a fence the contract now
+        // accepts and the storage cannot find would fail just as completely, one
+        // stage later, as `fence_message_not_found`.
+        expect(new WorkstreamMessageStorage(state.storage)
+          .message({ messageId: newest.id })?.id).toBe(newest.id);
+      });
+    } finally {
+      await restoreProviderFetch(stub);
+    }
+  });
+
   it("records stop on the loop and makes retry durable as a subordinate execution receipt", async () => {
     const stub = agentStub();
     const opened = await initializeWorkstream(stub, "first message");
@@ -2231,6 +2330,170 @@ describe("a member's message travels the whole pipeline", () => {
         operationId,
       ).one())).toEqual({ status: "admitted", origin: "manual_retry" });
     socket.close(1000, "done");
+  });
+
+  it("retries the latest run when two runs share a created_at", async () => {
+    // `created_at` is milliseconds and two runs can be admitted inside one, so
+    // "the latest run" is only well defined once the ordering carries a
+    // tie-break. This read happens twice — once to choose the run, once inside
+    // the commit to prove it is still the latest — and only the second carried
+    // one, so on a tie the two could resolve to different rows and the
+    // transaction refused a retry the person was looking straight at. Both
+    // rows here are retryable, so nothing but that disagreement can refuse it.
+    const stub = agentStub();
+    const opened = await initializeWorkstream(stub, "first message");
+    await settledRun(stub, opened.body.harnessRunId as string);
+    await waitForLoopRelease(stub);
+
+    await runInDurableObject(stub, async (instance, state) => {
+      const productService =
+        (instance as unknown as { product: WorkstreamObjectProductService }).product;
+      const template = state.storage.sql.exec<Record<string, SqlStorageValue>>(
+        `SELECT execution_principal_json, execution_context_json FROM runs
+          WHERE execution_context_json IS NOT NULL LIMIT 1`,
+      ).one();
+      // Newer than the settled opening run, and identical to each other: the
+      // tie has to be at the top of the ordering to be the tie that decides.
+      const tied = Number(state.storage.sql.exec<{ newest: number }>(
+        `SELECT MAX(created_at) AS newest FROM runs`,
+      ).one().newest) + 1_000;
+      const lower = "00000000-0000-7000-8000-00000000aa01";
+      const higher = "00000000-0000-7000-8000-00000000aa02";
+      for (const runId of [lower, higher]) {
+        state.storage.sql.exec(
+          `INSERT INTO runs (
+             run_id, substream_id, status, budget, attempt_epoch, model_iteration,
+             next_action_cursor, input_fence_seq, revision, started_at, active_elapsed_ms,
+             idle_elapsed_ms, step_count, subrequest_count, retry_count, tool_count,
+             input_tokens, output_tokens, cost_micros, output_bytes, origin,
+             execution_principal_json, execution_context_json, chain_depth, created_at, updated_at
+           ) VALUES (?, '0', 'failed', '{}', 0, 0, '', 0, 0, ?, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                     'member_message', ?, ?, 0, ?, ?)`,
+          runId,
+          tied,
+          String(template.execution_principal_json),
+          String(template.execution_context_json),
+          tied,
+          tied,
+        );
+      }
+      // The premise, asserted rather than assumed: the two orderings really do
+      // resolve this tie differently, so the case is not quietly proving
+      // nothing. Asserted as a disagreement rather than as a specific winner,
+      // because which row an unspecified tie resolves to is SQLite's to choose:
+      // `runs_recency_idx` is `(created_at DESC, run_id DESC)` and satisfies the
+      // un-tie-broken clause on its own, so a planner that starts using it would
+      // make the naive read agree — and a premise pinned to today's winner would
+      // then fail as if `retryWithAuthority` had regressed. If this assertion
+      // ever fires, the scenario stopped reproducing the bug; the behavior
+      // asserted below did not change.
+      const naive = state.storage.sql.exec<{ run_id: string }>(
+        `SELECT run_id FROM runs WHERE substream_id = '0' AND parent_tool_call_id IS NULL
+          ORDER BY created_at DESC LIMIT 1`,
+      ).one().run_id;
+      const tieBroken = state.storage.sql.exec<{ run_id: string }>(
+        `SELECT run_id FROM runs WHERE substream_id = '0' AND parent_tool_call_id IS NULL
+          ORDER BY created_at DESC, run_id DESC LIMIT 1`,
+      ).one().run_id;
+      expect(tieBroken).toBe(higher);
+      expect(naive).not.toBe(tieBroken);
+
+      const retryRunId = asHarnessRunId("00000000-0000-7000-8000-0000000000f3");
+      await expect(productService.retry(AUTH, retryRunId)).resolves.toMatchObject({
+        harnessRunId: retryRunId,
+        activationRequest: { cause: "manual_retry" },
+      });
+    });
+  });
+
+  it("names the field when a stored execution context fails its own contract", async () => {
+    // The other half of the retry outage: whatever a command throws that is not
+    // an `ApiError` reaches the person as one flat `substream_command_failed`,
+    // so this log entry is the only account of what happened. A `ZodError`'s
+    // `message` is multi-line JSON, and logging it as `reason` produced a blob
+    // that grouped with nothing and hid the failing field inside itself — the
+    // real retry failure read for its whole life as an unexplained 500. A
+    // stored context that stops parsing is not hypothetical either: schema v37
+    // exists because a contract change did exactly this to every receipt
+    // written before it.
+    const stub = agentStub();
+    const opened = await initializeWorkstream(stub, "first message");
+    await settledRun(stub, opened.body.harnessRunId as string);
+    await waitForLoopRelease(stub);
+    await runInDurableObject(stub, (_instance, state) => {
+      // A receipt that is valid JSON and a valid object — the column's own
+      // CHECK holds — and no longer a valid workflow input.
+      state.storage.sql.exec(
+        `UPDATE runs SET execution_context_json = json_remove(execution_context_json, '$.reason')
+          WHERE execution_context_json IS NOT NULL`,
+      );
+    });
+    const { socket } = await openSubscribedSocket(
+      stub,
+      "00000000-0000-7000-8000-0000000005f3",
+    );
+    // Collected inside the object, and only after lowering its level. `logWarn`
+    // writes to the `console` of the isolate the command runs in rather than
+    // the runner's, and this Worker's test config sets `LOG_LEVEL` to `error`,
+    // which drops every warning before it is written — a spy taken outside, or
+    // taken here without the level, records nothing and lets every assertion
+    // below pass vacuously.
+    await runInDurableObject(stub, (instance) => {
+      const target = instance as unknown as { env: Env };
+      target.env = new Proxy(target.env, {
+        get: (current, property, receiver) => (
+          property === "LOG_LEVEL" ? "warn" : Reflect.get(current, property, receiver)
+        ),
+      });
+      const scope = globalThis as WarnCaptureScope;
+      scope.__rallyWarnLog = [];
+      scope.__rallyWarnOriginal = console.warn;
+      console.warn = (entry: unknown) => { scope.__rallyWarnLog!.push(entry); };
+    });
+    try {
+      const operationId = "00000000-0000-7000-8000-0000000005f4";
+      const receipt = nextSocketCommandOutcome(socket);
+      socket.send(JSON.stringify({ type: "retry_harness", operationId }));
+      expect(await receipt).toMatchObject({
+        type: "client_command_failed",
+        command: "retry_harness",
+        error: { status: 500, code: "substream_command_failed" },
+      });
+      const entry = (await runInDurableObject(stub, () => structuredClone(
+        (globalThis as WarnCaptureScope).__rallyWarnLog ?? [],
+      )) as Record<string, unknown>[])
+        .find((call) => call.event === "substream_socket_command_failed");
+      expect(entry).toMatchObject({
+        command: "retry_harness",
+        operation_id: operationId,
+        // A code that groups, rather than one run's JSON blob.
+        reason: "schema_validation_failed",
+        validation_issues: [{ path: "reason", code: "invalid_type" }],
+      });
+      // Which `parse` threw. The message names the field; only the frames name
+      // the call site, and a command path runs several. Under `stack`, the key
+      // this file's other `harnessErrorFrames` sites already use.
+      expect(entry?.stack).toEqual(expect.any(String));
+      // The paths and codes are schema shape. The stored context's own values
+      // are not, and the entry must not carry them. Asserted against the loop
+      // id because the context genuinely holds it: the opening message text
+      // would pass this even through a real leak, since neither a `ZodError`'s
+      // issue list nor the receipt ever carries message content.
+      expect(JSON.stringify(entry)).not.toContain(substreamLoopId(WORKSTREAM_ID));
+    } finally {
+      // The object's `env` proxy dies with the instance, but `console` and the
+      // collector are the isolate's, which every later test in this file shares:
+      // left patched, they divert those tests' warnings into a stale array
+      // instead of emitting them. Restored through the object because that is
+      // the isolate the patch was applied in.
+      await runInDurableObject(stub, () => {
+        const scope = globalThis as WarnCaptureScope;
+        if (scope.__rallyWarnOriginal) console.warn = scope.__rallyWarnOriginal;
+        delete scope.__rallyWarnOriginal;
+        delete scope.__rallyWarnLog;
+      });
+      socket.close(1000, "done");
+    }
   });
 
   it("does not replay an old reorder command over newer queue state", async () => {

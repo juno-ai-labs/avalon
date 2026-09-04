@@ -3039,8 +3039,16 @@ export const WorkstreamWorkflowInputSchema = z.object({
    * at launch rather than at projection time so a replayed attempt reads the
    * same window. Optional rather than nullable so every existing producer keeps
    * parsing unchanged.
+   *
+   * A transcript turn id, not an entity id — hence `TranscriptTurnIdSchema` and
+   * not `IdSchema` like the trigger above it. A trigger is always an input and
+   * carries a UUID; the *newest* turn is whatever the transcript ends with, and
+   * an assistant turn's id is `<loopId>:turn:<ordinal>`. See
+   * {@link TranscriptTurnIdSchema} for the rule, and the 2026-09-03 changelog
+   * entry in `docs/workstream-durable-object.md` for what typing it as a UUID
+   * cost.
    */
-  transcriptFenceMessageId: IdSchema.nullable().optional(),
+  transcriptFenceMessageId: TranscriptTurnIdSchema.nullable().optional(),
   automationSubscriptionId: IdSchema.nullable(),
   /**
    * The occurrence snapshot frozen by AutomationAgent before the child exists.
