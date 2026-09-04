@@ -1667,7 +1667,7 @@ describe("editing an automation a conversation already owns", () => {
     await expect(submit.execute(
       { ...manualDraft("Someone else's job"), automationId: OWNED_AUTOMATION_ID },
       { toolCallId: "edit-another-automation" } as never,
-    )).rejects.toThrow("only change its own automation");
+    )).rejects.toThrow("edits only its own automation");
     expect(database.submittedDefinitions).toEqual([]);
 
     await expect(submit.execute(

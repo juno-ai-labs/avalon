@@ -1597,7 +1597,11 @@ export class AutomationDO extends ConversationParentDurableObject {
    */
   private assertManager(row: AutomationRow, actor: AutomationActor): void {
     if (row.scope === "workstream") {
-      if (actor.participantOfOwningWorkstream) return;
+      // The room's participants manage it, and so does the person who asked
+      // for it: the directory row that names the room's participants lands
+      // through the effect queue, and a card that says "accept" must not be
+      // refused while that row is still in flight.
+      if (actor.participantOfOwningWorkstream || row.author_user_id === actor.userId) return;
       throw forbidden();
     }
     if (row.author_user_id === actor.userId || row.run_as_user_id === actor.userId) return;
