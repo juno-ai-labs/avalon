@@ -79,6 +79,67 @@ prove layout, focus, scroll position, or overlap.
 
 ## Changelog
 
+### 2026-09-04 — Elicitation prompts join the conversation design
+
+The old shadowed prompt and separately rounded options were missed by the
+GrokBot presentation pass. The shell now uses the installed reference's 16px
+container radius, 12px inset, 8px joined-list radius, thin row dividers, and
+leading letter badges. Light options use the source's `#e8e8e8`; dark options
+adapt the existing raised-hover token. Letter shortcuts supplement numeric
+shortcuts; selection, custom answers, multi-select limits, Skip, Submit, and
+collapse/reopen retain their existing semantics. Unlike the reference's
+immediate single-choice submission, Rally still requires explicit Submit.
+
+### 2026-09-04 — Review fixes preserve the reference layout without losing behavior
+
+**What changed:** Sidebar search walks subsequent directory pages and offers an
+explicit retry when a page fails. Compact links keep their accessible identity.
+The shell subscribes to the sidebar breakpoint rather than every pixel of a
+window resize. Inspector geometry owns only its applied width delta, adjusts
+when the rail width changes, and never restores stale position/height or exits
+native maximized/full-screen modes. Unmounting the shell releases that delta.
+The new-chat close control appears only when there is a return destination.
+
+**Why:** PR review found regressions introduced while moving the presentation
+onto the shared foundation. Filtering one loaded page hid reachable chats;
+restoring a saved rectangle overwrote subsequent user window changes.
+
+**Reference check:** The installed Grok Bot 0.39.0 archive still specifies an
+88px compact sidebar, 280px default expanded width (240–400px), a protected
+424px conversation, 210/220px drag thresholds, and 54px navigation rows. These
+values and the existing light/dark paint were retained. The real reference
+window was inspected; no generated reference code is added to the repository.
+
+**Consequences:** Media retains the requested theater without Preview/Source or
+extra persistent controls. Gallery selection is established before loading;
+Radix alone owns modal Escape handling and scroll locking. Attachment MIME
+authority and video suffixes are shared with staged and sent tiles. An HTML
+preview establishes its network-denying policy before any supplied markup.
+Streaming document sections remain ordinary streaming Markdown until complete,
+so an unfinished Mermaid section is not interpreted as a settled diagram.
+
+
+### 2026-09-04 — The Grok presentation stays an adapter over the shared conversation foundation
+
+**What changed:** The Grok-style work-stream screen now renders through the
+shared `ConversationSurface` introduced on main, including addressed socket
+commands, attachment state, and work-stream-only document cards. Opening a
+resource remains an explicit user action: receiving an embed no longer opens or
+resizes the inspector automatically. The presentation's literal light and dark
+colours were also moved onto the theme system's semantic surface, row, text,
+border, status, scrim, and elevation tokens.
+
+**Why:** Rebasing the visual branch onto the shared conversation architecture
+left a half-old screen: it imported a deleted auto-open hook, skipped the
+work-stream document-card opt-in, and carried colours that bypassed the theme
+registry. Keeping a second composition to preserve the visual rewrite would
+immediately recreate the feed divergence this module removed.
+
+**Consequences:** Presentation changes belong in the shared surface and its
+explicit host options; product semantics remain in the work-stream adapter.
+Theme-specific paint must be expressed through registered tokens, and an
+attachment or embed may open a preview only from a person's click.
+
 ### 2026-09-04: The automation header asks before deleting, offers only what the object accepts, and hears its own chat
 
 **What changed:** `components/delete-automation-dialog.tsx` is the one
@@ -183,6 +244,313 @@ on purpose. A row that scrolls away open and comes back closed re-measures
 shorter than the size cache expects, and the virtualizer declines to compensate
 a re-measurement during a backward scroll, so the transcript jumps under the
 reader by the whole delta.
+
+### 2026-09-02 — Settled media survives transcript metadata refreshes
+
+**What changed:** Sent-image attachments and citation contexts now key their
+asynchronous previews by the semantic content of the attachment or resource
+records, rather than the JavaScript identity of the arrays carrying them.
+
+**Why:** Transcript composition filters attachments into a new array on every
+render, and socket hydration may replace a work stream's resource array without
+changing a record. Treating either allocation as new media cleared settled
+thumbnails, revoked their object URLs, and restarted the same reads. The clear
+itself rendered again in the attachment case, producing an indefinite
+thumbnail/skeleton loop whose alternating row heights made the virtual feed
+stutter and correct its scroll position back and forth.
+
+**Considered and rejected:** hiding the movement with a transition or weakening
+virtual row measurement. Both would leave the repeated network reads and object
+URL churn intact, while making the virtualizer less accurate about the DOM it
+actually has to place.
+
+**What a future change has to respect:** transport and composition layers may
+recreate arrays around unchanged records. An asynchronous media effect must
+restart only when one of the fields it consumes changes; a metadata-only
+refresh must keep the settled preview mounted.
+
+### 2026-09-02 — Width-sensitive message rows use their live height
+
+**What changed:** A settled code block now keeps the same React component type
+when refreshed mention or citation metadata reparses its surrounding Markdown,
+so a finished Mermaid diagram remains mounted. The work-stream feed's
+virtualizer also measures each rendered row from its current border box on the
+next animation frame instead of accepting the size carried by an earlier
+ResizeObserver notification.
+
+**Why:** Switching between the expanded sidebar and the icon rail can reflow a
+long answer by thousands of pixels. Production hydration also refreshes message
+metadata independently of the stored text; the previous inline code renderer
+looked like a new React component on every such refresh, so a rendered Mermaid
+diagram repeatedly collapsed to its source fallback. More than one resize
+notification may already be queued while those shapes change; replaying an
+older height made the virtual transcript chase the same oscillation, and
+bottom-follow exposed the disagreement as a vertical twitch.
+
+**Considered and rejected:** weakening bottom-follow, delaying every resize, or
+caching rendered SVG across component lifetimes. The reader was still at the
+end and the browser already had the correct current layout, so the first two
+would hide or prolong the virtualizer's stale measurement. A process-wide SVG
+cache would retain unbounded conversation content to repair a component that
+did not need to unmount in the first place.
+
+**What a future change has to respect:** message rows are width-sensitive and
+can be much taller than the viewport. Their virtual measurement must describe
+the DOM at callback time; do not reintroduce cached or queued-entry geometry as
+the authoritative row height. Metadata-only Markdown refreshes must also keep
+the code renderer's component identity stable.
+
+### 2026-09-02 — Sidebar rows keep their preview beside both sidebar forms
+
+**What changed:** Every work-stream row now opens the same compact preview card
+to its right after a short hover or focus delay, whether the sidebar is the
+expanded list or the 88px icon rail. The card repeats the source's 16px compact
+identity glyph, name, relative activity time, and at most two lines of the
+standing row preview. The navigation row itself keeps GrokBot's separate 36px
+identity inside a 54px-high row and a 54px-wide compact selection seat. A plain
+positioning wrapper anchors the preview so Radix never receives React Router's
+callback-based row class and cannot strip the expanded row's layout classes.
+
+**Why:** Collapsing the sidebar correctly protects conversation space, but it
+also removes the name and latest-message context that makes an icon meaningful.
+GrokBot solves that loss with one stable hover-card contract rather than a
+compact-only tooltip, so the interaction does not change when the window does.
+
+**Considered and rejected:** A label-only tooltip in compact mode. It would
+leave recent activity undiscoverable and make the expanded and compact rows
+behave differently even though they represent the same destination.
+
+**Consequences:** The preview is informational and pointer-transparent; the row
+continues to own navigation, warmup, drag, and context-menu behavior. Keep its
+source-matched 260px width, 8px offset, 10px inset, 12px radius, and two-line
+clamp in sync if the sidebar row contract changes.
+
+### 2026-09-02 — The work-stream sidebar collapses to GrokBot's icon rail
+
+**What changed:** The GrokBot shell now has the same two sidebar forms as its
+reference: a 280px default expanded list that remains resizable from 240–400px,
+and an 88px compact rail containing centered work-stream glyphs, the bottom New
+chat action, and the account avatar. Compact preference is persisted and toggled
+with Command-B. The layout also enters compact mode whenever the current window
+cannot fit the saved expanded width beside a protected 424px conversation. The
+edge resizer collapses below 210px and expands at 220px, matching the reference's
+hysteresis.
+
+**Why:** Treating every sub-920px window as a hidden mobile drawer removed the
+navigation entirely at the size where GrokBot preserves spatial context with a
+rail. A fixed CSS breakpoint also diverged as soon as the person resized their
+sidebar: the reference derives its threshold from the saved expanded width.
+
+**Considered and rejected:** A media query at 704px. That only matches GrokBot's
+default 280px sidebar; it is wrong for every saved width between 240 and 400px
+and cannot represent a manual compact preference at a large window size.
+
+**Consequences:** The GrokBot shell keeps 88px of left navigation at narrow
+desktop sizes instead of exposing the old drawer trigger. Row text, search,
+section labels, participant clusters, timers, and command-shortcut badges are
+presentation-only hidden in compact mode; the work-stream links keep their
+accessible names and their existing navigation, context-menu, drag, unread, and
+socket-warmup behavior.
+
+### 2026-09-02 — Attachment previews use the GrokBot theater
+
+**What changed:** Image and video previews now open over a dimmed copy of the
+conversation, centered at their natural fit, with one top-right control that
+switches between fit-to-window and full-size. The filename, zoom strip, download,
+close, caption, and thumbnail chrome no longer surround media. HTML opens directly
+in the inset document preview; its Preview/Source switch is gone.
+
+**Why:** The prior lightbox exposed every available operation at once. GrokBot's
+preview is deliberately quieter: the content is the modal, the conversation
+remains visible behind it, and Escape or the surrounding scrim closes it.
+
+**Considered and rejected:** Keeping the source switch only for HTML. Source is
+not the presentation a person asked to preview, and download remains available in
+the document header when they need the file itself.
+
+**Consequences:** Gallery arrow keys and visible previous/next buttons remain for
+multi-image messages, but single media previews have only the fit/full-size
+control. Previewable block resource embeds use this same surface instead of the
+right inspector; true live generated sites keep their dedicated runtime panel.
+HTML keeps the existing scriptless, network-denying sandbox.
+
+### 2026-09-02 — Attachments use the GrokBot feed and preview treatment
+
+**What changed:** Message images now preserve their intrinsic size within a
+560-by-200-pixel envelope; image batches become a compact three-tile row with a
+folded-count overlay and gallery navigation. Other attachments render as compact
+filename-and-size cards with a separate download action. Image previews gained
+fit/full-size control and keyboard gallery navigation; HTML files gain a
+sandboxed rendered surface, while the existing text, Markdown, audio, and
+resource-history previews remain available.
+
+**Why:** The old renderer reduced every sent attachment to the same square tile,
+which hid the content hierarchy visible in the reference application and made a
+web page, a screenshot, and a downloadable file look interchangeable.
+
+**Considered and rejected:** Importing the extracted GrokBot renderer bundle.
+That code is application-specific and minified around private protocols. Rally
+reimplements the visible behavior over its existing authenticated content loader,
+and HTML previews deny scripts and network access instead of acquiring another
+trusted renderer origin.
+
+**Consequences:** Assistant and human attachments retain their existing side
+alignment. A feed row may eagerly fetch image bytes for thumbnails, but non-image
+content remains lazy until preview or download. The lightbox locks body scrolling
+while open and restores focus to the invoking control when it closes.
+
+### 2026-09-02 — Production-data pass closes oversized turns and shell-menu drift
+
+**What changed:** Long human turns now collapse inside their existing bubble
+with GrokBot's faded **Show more** treatment, and the disclosure state lives
+above the virtual window so scrolling a row away does not reset it. The active
+GrokBot shell also selects the independent floating account card instead of the
+workspace-switcher presentation. Mention filtering now considers a member's
+email as well as their display name.
+
+**Why:** A production transcript paste expanded to tens of thousands of pixels,
+the bottom account control reopened Rally's old workspace UI, and a person
+whose query matched only their email produced an apparently missing `@` menu.
+All three failures were visible-shell behavior; none required changing durable
+messages, workspace authority, or mention payloads.
+
+**Considered and rejected:** Truncating stored message text would make the rest
+unrecoverable, and moving workspace switching into the Grok card would recreate
+the chrome this branch intentionally removed. The complete turn remains one
+click away, while the existing workspace presentation and mutations remain
+implemented for surfaces that opt into them.
+
+**Consequences:** Human and agent turns keep the same bounded width rules. A
+collapsed human turn is additionally bounded to the reference card height and
+re-measures through the existing feed virtualizer when opened. The account card
+does not fetch background-workspace counts merely because it opened.
+
+### 2026-09-02 — Sidebar participants use GrokBot's compact cluster
+
+**What changed:** Work-stream participant previews now occupy a small overlapping
+circle, wedge, and pill cluster with the overflow count immediately to its right.
+
+**Why:** A horizontal chain of same-shaped avatars consumed the row's title room
+and did not match the compact participant mark used by the reference interface.
+
+**Considered and rejected:** Applying the cluster to every `AvatarStack` would
+also reshape headers, participant controls, and presence surfaces. The sidebar
+opts in so those semantic uses retain their ordinary row layout.
+
+**Consequences:** The directory still decides which three people and overflow
+count are available. Unlike the retired horizontal "who else" strip, the
+cluster represents the full participant preview, including the current person;
+this remains a renderer-only geometry change.
+
+### 2026-09-01 — Sidebar creation moves into GrokBot's titlebar row
+
+**What changed:** The work-stream creation action now sits alone at the right
+edge of the macOS titlebar row, aligned with the traffic lights. Search occupies
+its own full-width rounded row directly below it.
+
+**Why:** GrokBot separates window-level creation from navigation filtering. The
+previous shared toolbar made the plus a filled leading control beside search,
+which changed both the hierarchy and the vertical rhythm of the reference
+header.
+
+**Considered and rejected:** Absolutely positioning the plus over the existing
+search row would resemble one screenshot while leaving the DOM and drag regions
+as one toolbar. The two-row structure keeps the titlebar draggable and makes the
+creation link an explicit no-drag target.
+
+**Consequences:** The search and work-stream list keep their existing behavior,
+and only their top offset changes. Overlay scrolling no longer reserves a blank
+strip beside either one, and the sidebar resize handle now begins below the
+shorter titlebar row.
+
+### 2026-09-01 — Work-stream input becomes a compact message capsule
+
+**What changed:** The active conversation now uses a 42-pixel empty composer
+with one attachment action, one-line input, and a trailing voice action. A
+non-empty draft adds Send, attachments expand above the writing row, and the
+main surface omits the dedicated mention, microphone-menu, and model controls.
+
+**Why:** GrokBot treats input as a compact continuation of the conversation.
+Rally's forced text height plus a second toolbar row made the empty field more
+than twice as tall and left a large dead band under the transcript.
+
+**Considered and rejected:** Shrinking the old two-row toolbar with global CSS
+would leave its extra controls in the accessibility tree and would also alter
+the automation and launch composers. Removing typed mentions, drag/drop, or
+dictation was rejected because those are interaction capabilities rather than
+the mismatched toolbar presentation.
+
+**Consequences:** The main work-stream adapter explicitly selects the capsule
+layout. Typed `@`, slash commands, attachment paste/drop, voice input, Send,
+Stop, draft persistence, and bounded multiline resizing keep their existing
+handlers; other composer hosts retain the shared default.
+
+### 2026-09-01 — GrokBot shell removes Rally-specific navigation chrome
+
+**What changed:** The active desktop shell now mounts a work-stream-only left
+navigation and a compact centered conversation title that opens the details
+rail. Project, automation, note, meeting, socket, HyperSight, participant-add,
+and overflow controls are absent from those two visible chrome regions.
+
+**Why:** This branch is a frontend rewrite against GrokBot's three-column
+conversation model. Keeping every existing Rally affordance visible would make
+the result a restyled Rally screen rather than a faithful reconstruction; the
+product-specific controls will be added back deliberately after the shell is
+settled.
+
+**Considered and rejected:** Deleting routes, data queries, or mutations along
+with their controls would turn a visual experiment into a product/backend
+change and make later reintroduction needlessly expensive. CSS-only hiding was
+also rejected because invisible controls should not remain in the accessibility
+tree.
+
+**Consequences:** Deep links and existing non-shell surfaces still work, but
+they are no longer discoverable through the main left navigation. The centered
+title is now the single details-rail affordance on an open work stream.
+
+### 2026-09-01 — Agent documents become paged section-card stacks
+
+**What changed:** The main work-stream feed now splits Rally responses at
+top-level h2 headings, represents those sections as 20-pixel-offset square
+cards, and opens them in a modal reader that pages by controls, arrow keys, or
+horizontal swipe. Preamble and heading-less responses remain readable inline.
+
+**Why:** Structured agent output should be scannable as a document set without
+turning long Rally prose into message bubbles or making readers expand several
+inline accordions before they can move between sections.
+
+**Considered and rejected:** Replacing `MarkdownBody`'s shared heading behavior
+globally would also change automation, attachment, export, and embedded preview
+surfaces. Splitting on h3-h6 was rejected because those headings express
+structure inside an h2 section rather than a new document card.
+
+**Consequences:** The main work-stream adapter explicitly opts agent turns into
+the card reader. The source parser must continue to ignore heading-like text in
+code, lists, and blockquotes, and the noninteractive export path must continue
+to emit the complete response.
+
+### 2026-09-01 — Work streams adopt the compact conversation shell
+
+**What changed:** The main frontend now uses deterministic color/icon work-stream
+identities, compact searchable navigation with participant face piles, attributed
+right-aligned human bubbles, open Rally prose, an attached details rail, a small
+plus attachment action, and a Rally-plus-people `@` picker. The Electron window
+grows with the details rail when the display has spare width.
+
+**Why:** The previous screen distributed one conversation across visually
+unrelated navigation, feed, composer, and inspector treatments. The new shell
+makes the work stream the stable visual object and keeps human and agent turns
+immediately distinguishable without changing their durable contracts.
+
+**Considered and rejected:** A theme-only skin could not change row hierarchy,
+message attribution, mention candidates, or window geometry. Bubbling Rally's
+output was also rejected because long agent prose is easier to read as an open
+document and the product requirement keeps that distinction explicit.
+
+**Consequences:** Shared renderer primitives retain neutral defaults; the main
+work-stream screen opts into the new feed treatment. Work-stream ids now seed
+appearance, so changing the hash or palette order is a visible migration.
+Electron window geometry remains a narrow main-window-only capability.
 
 ### 2026-09-02 — Every human turn carries the same identity line, the reader's own included
 

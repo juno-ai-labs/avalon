@@ -25,7 +25,7 @@ afterEach(() => {
 function pinAppearance(mode: 'light' | 'dark'): void {
   window.localStorage.setItem(
     DEVICE_PREFERENCES_STORAGE_KEY,
-    JSON.stringify({ version: 1, theme: { family: 'terra', mode } }),
+    JSON.stringify({ version: 1, theme: mode }),
   );
 }
 

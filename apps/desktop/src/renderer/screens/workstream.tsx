@@ -9,6 +9,7 @@ import {
   Lock,
   Mail,
   Menu,
+  Monitor,
   PanelRight,
   UserPlus,
   X,
@@ -27,6 +28,7 @@ import { type RailVariant, useUiStore } from '../lib/ui-store';
 import type { SocketState } from '../lib/use-workstream-socket';
 import type { WorkstreamDetail } from '../lib/types';
 import { AvatarStack, Badge, IconButton, InlineError, SocketStatusIndicator, StatusDot, TitleSkeleton } from '../components/primitives';
+import { WorkstreamGlyph } from '../components/workstream-glyph';
 import { ConversationSurface } from './conversation-surface';
 
 // The feed, composer and rail live in `conversation-surface.tsx`, shared with
@@ -55,6 +57,7 @@ export {
 const RENAME_HINT = 'Double-click to rename';
 
 export function WorkstreamHeader({
+  grokBotMode = false,
   workstream,
   socketState,
   onAddParticipant,
@@ -64,6 +67,7 @@ export function WorkstreamHeader({
   currentUserId = null,
   workspaceTarget,
 }: {
+  grokBotMode?: boolean;
   workstream: WorkstreamDetail;
   socketState: SocketState;
   onAddParticipant: () => void;
@@ -196,10 +200,46 @@ export function WorkstreamHeader({
   };
   const naming = useNamingSkeleton(workstream);
 
+  if (grokBotMode) {
+    return (
+      <header className="grokbot-workstream-header window-drag">
+        <div className="grokbot-header-navigation window-no-drag">
+          <IconButton className="header-menu-button" label="Open navigation" onClick={() => setSidebarOpen(true)}>
+            <Menu size={16} />
+          </IconButton>
+        </div>
+        {naming ? (
+          <h1><TitleSkeleton className="title-skeleton-header" /></h1>
+        ) : (
+          <h1>
+            <button
+              aria-pressed={showing('context')}
+              className="grokbot-conversation-title window-no-drag"
+              onClick={() => toggleRail('context')}
+              type="button"
+            >
+              <WorkstreamGlyph id={workstream.id} size={20} />
+              <span>{workstream.title}</span>
+            </button>
+          </h1>
+        )}
+        <IconButton
+          aria-pressed={showing('context')}
+          className="grokbot-computer-button window-no-drag"
+          label={showing('context') ? 'Hide work-stream context' : 'Work-stream context'}
+          onClick={() => toggleRail('context')}
+        >
+          <Monitor size={16} strokeWidth={1.8} />
+        </IconButton>
+      </header>
+    );
+  }
+
   return (
     <header className="workstream-header window-drag">
       <div className="workstream-header-left window-no-drag">
         <IconButton className="header-menu-button" label="Open navigation" onClick={() => setSidebarOpen(true)}><Menu size={16} /></IconButton>
+        <WorkstreamGlyph id={workstream.id} size={30} />
         <div className="workstream-title-block">
           {/* The one place a title arriving on its own is worth announcing. A
               work stream created a second ago is named while its author is
@@ -368,6 +408,7 @@ export function WorkstreamScreen(): React.JSX.Element {
       renderHeader={(context) => (
         <WorkstreamHeader
           currentUserId={session?.user.id ?? null}
+          grokBotMode
           onAddParticipant={context.openParticipantDialog}
           onOpenRail={context.openRail}
           onRename={context.rename}

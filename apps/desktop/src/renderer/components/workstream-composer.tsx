@@ -1,4 +1,4 @@
-import { LoaderCircle, Square, UserPlus } from 'lucide-react';
+import { LoaderCircle, Sparkles, Square, UserPlus } from 'lucide-react';
 import { type RefObject, useMemo, useRef, useState } from 'react';
 import type { RallyApi, MentionIdentity } from '../lib/api';
 import { workstreamDraftKey } from '../lib/draft-keys';
@@ -18,7 +18,7 @@ import type { WorkstreamMessageDeliveryMode } from '../lib/use-workstream-socket
 import type { AttachmentPreview } from './attachments';
 import { ComposerQueue, type ComposerQueueItem } from './composer-queue';
 import { ComposerInput } from './composer-input';
-import { Avatar, Badge, Button, Modal } from './primitives';
+import { Avatar, Button, Modal } from './primitives';
 import type { RallyRegion } from '../../common/desktop';
 
 /**
@@ -32,7 +32,8 @@ interface MentionCandidate {
   id: string;
   label: string;
   description: string;
-  member: WorkspaceMember;
+  kind: 'rally' | 'person';
+  member?: WorkspaceMember;
 }
 
 interface WorkstreamComposerProps {
@@ -59,6 +60,7 @@ interface WorkstreamComposerProps {
   onRemoveAttachment: (localId: string) => void;
   onRetryAttachment: (localId: string) => void;
   onStop: () => Promise<void>;
+  onTeachTask?: () => void;
   queueItems?: ComposerQueueItem[];
   onReorderQueue?: (inputIds: string[]) => Promise<void>;
 }
@@ -100,6 +102,7 @@ export function WorkstreamComposer({
   onRemoveAttachment,
   onRetryAttachment,
   onStop,
+  onTeachTask,
   queueItems = [],
   onReorderQueue,
 }: WorkstreamComposerProps): React.JSX.Element {
@@ -117,7 +120,12 @@ export function WorkstreamComposer({
   const [confirming, setConfirming] = useState(false);
   const readyAttachmentCount = attachments.filter((attachment) => attachment.status === 'ready').length;
   const participantIds = useMemo(() => new Set(workstream.participants.map((person) => person.id)), [workstream.participants]);
-  const candidates = useMemo<MentionCandidate[]>(() => members
+  const candidates = useMemo<MentionCandidate[]>(() => [{
+    id: 'rally-assistant',
+    label: 'Rally',
+    description: 'Ask Rally to join this part of the conversation',
+    kind: 'rally' as const,
+  }, ...members
     // The same rule the participants rail applies: a membership that is not
     // active is one the work-stream endpoint refuses, so naming it here would
     // only produce a failure nobody can act on.
@@ -126,13 +134,18 @@ export function WorkstreamComposer({
       id: member.id,
       label: member.name,
       description: participantIds.has(member.id) ? member.email : `${member.email} · not participating`,
+      kind: 'person' as const,
       member,
-    })), [members, participantIds]);
+    }))], [members, participantIds]);
 
   const mentionLabels = useMemo(() => candidates.map((candidate) => candidate.label), [candidates]);
   const visibleCandidates = mentionQuery === null
     ? []
-    : candidates.filter((candidate) => candidate.label.toLowerCase().includes(mentionQuery.toLowerCase())).slice(0, 8);
+    : candidates.filter((candidate) => {
+        const query = mentionQuery.toLowerCase();
+        return candidate.label.toLowerCase().includes(query)
+          || candidate.member?.email.toLowerCase().includes(query);
+      }).slice(0, 8);
   const mentionNavigation = useMentionNavigation(
     visibleCandidates.map((candidate) => candidate.id),
     (index) => {
@@ -256,18 +269,19 @@ export function WorkstreamComposer({
       return;
     }
     setText(completed.text);
-    const identity: MentionIdentity = {
-      type: 'person',
-      label: candidate.label,
-      userId: candidate.member.id,
-      connectorType: null,
-      startOffset: completed.startOffset,
-      endOffset: completed.endOffset,
-    };
-    setSelectedMentions((current) => upsertMentionIdentity(
-      rebaseMentionIdentities(text, completed.text, current),
-      identity,
-    ));
+    setSelectedMentions((current) => {
+      const rebased = rebaseMentionIdentities(text, completed.text, current);
+      if (!candidate.member) return rebased;
+      const identity: MentionIdentity = {
+        type: 'person',
+        label: candidate.label,
+        userId: candidate.member.id,
+        connectorType: null,
+        startOffset: completed.startOffset,
+        endOffset: completed.endOffset,
+      };
+      return upsertMentionIdentity(rebased, identity);
+    });
     setMentionQuery(null);
     requestAnimationFrame(() => {
       textarea?.focus();
@@ -358,7 +372,7 @@ export function WorkstreamComposer({
         <div className="mention-popover" id="workstream-mention-listbox" role="listbox" aria-label="Mentions">
           {visibleCandidates.map((candidate, index) => (
             <button
-              aria-label={`${candidate.label} — ${candidate.description} — ${PERSON_MENTION_TYPE}`}
+              aria-label={`${candidate.label} — ${candidate.description} — ${candidate.kind === 'rally' ? 'Bot' : PERSON_MENTION_TYPE}`}
               aria-selected={index === mentionNavigation.activeIndex}
               className={index === mentionNavigation.activeIndex ? 'is-selected' : undefined}
               id={mentionOptionId(candidate.id)}
@@ -373,10 +387,15 @@ export function WorkstreamComposer({
               type="button"
             >
               <span aria-hidden="true" className="mention-icon">
-                <Avatar member={candidate.member} size="small" />
+                {candidate.member
+                  ? <Avatar member={candidate.member} size="small" />
+                  : <span className="rally-mention-icon"><Sparkles size={14} /></span>}
               </span>
-              <span><strong>{candidate.label}</strong><small>{candidate.description}</small></span>
-              <Badge>{PERSON_MENTION_TYPE}</Badge>
+              <span className="mention-popover-copy">
+                <strong>{candidate.label}</strong>
+                {candidate.kind === 'person' && <small>{candidate.description}</small>}
+              </span>
+              <span className="mention-popover-kind">{candidate.kind === 'rally' ? 'Bot' : PERSON_MENTION_TYPE}</span>
             </button>
           ))}
         </div>
@@ -393,6 +412,7 @@ export function WorkstreamComposer({
         attachments={attachments}
         error={error}
         fileInputRef={fileInputRef}
+        layout="message-capsule"
         onAttach={onAttach}
         onKeyDown={(event) => {
           if (mentionNavigation.handleKeyDown(event)) return;
@@ -415,36 +435,13 @@ export function WorkstreamComposer({
         mentionListbox={visibleCandidates.length > 0
           ? { id: 'workstream-mention-listbox', activeOptionId: mentionNavigation.activeOptionId }
           : undefined}
-        // The run first, the pin second. What a run recorded is what actually
-        // ran — the pin where it was pinned, the flag's served answer where it
-        // was not, and the only place that served variation is visible to a
-        // client at all. The pin is the fallback rather than the source because
-        // it answers for almost nobody, but it does answer for the one case the
-        // run cannot: a run that failed before its first token records no model,
-        // and a pinned work stream must never be described as following a flag
-        // it does not consult.
-        model={{
-          kind: 'settled',
-          // Trimmed before it is believed. `harness_runs.model` is not
-          // constrained to be non-empty, and a Worker whose `OPENROUTER_*`
-          // variable is unset resolves to `""` — `modelId` in
-          // `agent-model-flags.ts` normalizes an absent variable to the empty
-          // string — which is stored and reaches here. Empty means the same
-          // thing null does, so it falls through to the pin rather than
-          // rendering a pill with no name in it.
-          model: workstream.latestHarnessRun?.model?.trim() || workstream.modelOverride || null,
-          // The pin decides what the control may claim about the future, which
-          // is not the same question as what it shows. Only a pinned work
-          // stream is fixed to this model; an unpinned one re-resolves the flag
-          // on every launch and may land somewhere else next run.
-          pinned: workstream.modelOverride != null,
-        }}
         onMention={beginMention}
         onOpenAttachment={onOpenAttachment}
         onRemoveAttachment={onRemoveAttachment}
         onRetryAttachment={onRetryAttachment}
         onSelect={() => refreshOpenMentionQuery(text)}
         onSubmit={send}
+        onTeachTask={onTeachTask}
         onValueChange={updateText}
         placeholder={placeholder}
         ref={textareaRef}

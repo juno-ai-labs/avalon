@@ -13,7 +13,11 @@ import {
 } from '../lib/app-session';
 import { desktopBridge } from '../lib/platform';
 import { uuidV7 } from '../lib/telemetry';
-import { useUiStore } from '../lib/ui-store';
+import {
+  COLLAPSED_SIDEBAR_WIDTH,
+  SIDEBAR_CONTENT_MIN_WIDTH,
+  useUiStore,
+} from '../lib/ui-store';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { useProjectDirectories } from '../lib/use-project-directories';
 import { useNotesQuery } from '../lib/use-notes-query';
@@ -26,7 +30,6 @@ import {
   setCachedWorkstreams,
 } from '../lib/workstreams-cache';
 import type { AutomationSummary, NoteDetail, NoteSummary, Workspace, WorkspaceMember, WorkstreamDetail, WorkstreamSummary } from '../lib/types';
-import { ThemeBackdrop } from './theme-backdrop';
 import { Sidebar } from './sidebar';
 import { WorkspaceAccountMenu } from './workspace-account-menu';
 
@@ -234,7 +237,20 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   const railOpen = useUiStore((state) => state.railOpen);
   const railWidth = useUiStore((state) => state.railWidth);
   const railLeaving = useUiStore((state) => state.railLeaving);
+  const sidebarCollapsed = useUiStore((state) => state.sidebarCollapsed);
   const sidebarWidth = useUiStore((state) => state.sidebarWidth);
+  const [sidebarConstrained, setSidebarConstrained] = useState(() => window.innerWidth < sidebarWidth + SIDEBAR_CONTENT_MIN_WIDTH);
+  useEffect(() => {
+    const measure = (): void => setSidebarConstrained(window.innerWidth < sidebarWidth + SIDEBAR_CONTENT_MIN_WIDTH);
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, [sidebarWidth]);
+  // GrokBot protects 424px for the conversation. Its saved expanded width is
+  // the other half of the breakpoint, so resizing the sidebar also moves the
+  // point at which it becomes an icon rail.
+  const sidebarCompact = sidebarCollapsed || sidebarConstrained;
+  const effectiveSidebarWidth = sidebarCompact ? COLLAPSED_SIDEBAR_WIDTH : sidebarWidth;
   // Replacing rather than pushing, so Back cannot return to an automation that
   // is no longer served — true of an archived draft as much as a deleted
   // automation.
@@ -246,6 +262,18 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
 
   // The main pane keeps room for an inspector that is still fading out.
   const showShellRail = (railOpen || railLeaving) && !location.pathname.startsWith('/notes/');
+  const expandForShellRail = railOpen && !location.pathname.startsWith('/notes/');
+  useEffect(() => {
+    void desktopBridge().setConversationDetailsOpen({
+      // A leaving rail remains laid out for its short cross-fade, but no longer
+      // owns window geometry. This preserves the true pre-panel bounds.
+      open: expandForShellRail,
+      width: railWidth,
+    }).catch(() => undefined);
+  }, [expandForShellRail, railWidth]);
+  useEffect(() => () => {
+    void desktopBridge().setConversationDetailsOpen({ open: false, width: 0 }).catch(() => undefined);
+  }, []);
   // Nothing here loads the sidebar. Subscribing to the workspace socket is
   // answered with the whole of it — the first page of work streams, the
   // automations and the notes — and WorkspaceDO pushes each list again whenever
@@ -397,6 +425,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   }, [workspaceKey]);
   const shellClassName = [
     'workspace-shell',
+    'grokbot-shell',
     windowControlsShellClass(runtime?.platform),
     showShellRail ? 'rail-open' : '',
     switchingWorkspaceKey !== null ? 'is-switching-workspace' : '',
@@ -423,7 +452,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   // rather than resizing to a width nothing is about to show.
   const shellStyle = {
     '--rail-width': `${railWidth}px`,
-    '--av-cmp-sidebar-width': `${sidebarWidth}px`,
+    '--av-cmp-sidebar-width': `${effectiveSidebarWidth}px`,
   } as CSSProperties;
 
   return (
@@ -433,18 +462,6 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
       backgroundWorkstreamIds={backgroundRealtimeIds}
     >
       <div className={shellClassName} style={shellStyle}>
-      {/*
-        The main window only. The standalone Settings and meeting windows reach
-        their own surfaces before `AppShell` and deliberately do not mount this:
-        both are dense forms, and a field of moving light behind one costs more
-        legibility than it buys. They keep `surface-default` as a flat ground.
-
-        So on Air the two windows do look different side by side, which is a
-        decision rather than an oversight — `docs/theming.md` records it in the
-        Invariants, and a test fails if a third surface starts mounting one
-        without that decision being revisited.
-      */}
-      <ThemeBackdrop />
       <Sidebar
         accountMenu={(
           <WorkspaceAccountMenu
@@ -521,6 +538,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
               }
             }}
             signingInWorkspaceKey={signingInWorkspaceKey}
+            presentation="grok"
             staleAt={workspaceAttention.isError && workspaceAttention.dataUpdatedAt > 0
               ? new Date(workspaceAttention.dataUpdatedAt).toISOString()
               : null}
@@ -530,6 +548,8 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
           />
         )}
         automations={automations.data ?? []}
+        compact={sidebarCompact}
+        conversationOnly
         members={members.data ?? []}
         // Not `isLoading`: the first page is not fetched, so there is no
         // in-flight request to report. The sidebar is waiting exactly while it

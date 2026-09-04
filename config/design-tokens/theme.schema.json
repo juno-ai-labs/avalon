@@ -110,24 +110,6 @@
           ]
         }
       }
-    },
-    "backdrop": {
-      "description": "A document painted behind the whole window, for a backdrop no CSS value can express \u2014 anything that has to move under its own power. It renders in a sandboxed iframe on a scheme of its own under `default-src 'none'`, so it can paint and animate and can do nothing else.",
-      "type": "object",
-      "required": [
-        "html"
-      ],
-      "additionalProperties": false,
-      "properties": {
-        "html": {
-          "description": "Markup for the document body, inline. It may carry <style> and <script>. The generator prepends the theme's tokens as custom properties, so it can name them.",
-          "type": "string",
-          "minLength": 1
-        },
-        "description": {
-          "type": "string"
-        }
-      }
     }
   },
   "properties": {
@@ -163,9 +145,6 @@
       "items": {
         "$ref": "#/definitions/font"
       }
-    },
-    "backdrop": {
-      "$ref": "#/definitions/backdrop"
     },
     "tokens": {
       "type": "object",

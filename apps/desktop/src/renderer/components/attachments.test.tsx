@@ -16,6 +16,34 @@ describe('attachment presentation', () => {
 
   afterEach(() => vi.unstubAllGlobals());
 
+  it('opens only the selected gallery entry on the first render', async () => {
+    const first = { name: 'first.png', mimeType: 'image/png', loadContent: vi.fn(async () => new Blob(['first'])) };
+    const second = { name: 'second.png', mimeType: 'image/png', loadContent: vi.fn(async () => new Blob(['second'])) };
+    render(<AttachmentLightbox preview={{ ...second, gallery: [first, second], galleryIndex: 1 }} onClose={vi.fn()} />);
+    await screen.findByRole('img', { name: 'second.png' });
+    expect(first.loadContent).not.toHaveBeenCalled();
+    expect(second.loadContent).toHaveBeenCalledOnce();
+  });
+
+  it.each(['mkv', 'ogv'])('previews generic-MIME %s files as video', async (extension) => {
+    render(<AttachmentLightbox preview={{ name: `clip.${extension}`, mimeType: 'application/octet-stream', loadContent: async () => new Blob(['video']) }} onClose={vi.fn()} />);
+    expect((await screen.findByLabelText(`Video: clip.${extension}`)).tagName).toBe('VIDEO');
+  });
+
+  it.each(['html', 'mp4', 'png'])('honors a specific text MIME despite the %s extension', async (extension) => {
+    render(<AttachmentLightbox preview={{ name: `literal.${extension}`, mimeType: 'text/plain', loadContent: async () => new Blob(['<img src="https://example.com/not-loaded">']) }} onClose={vi.fn()} />);
+    expect((await screen.findByText(/<img src=/u)).tagName).toBe('PRE');
+    expect(document.querySelector('iframe, video, .attachment-lightbox-content img')).toBeNull();
+  });
+
+  it('places the HTML network policy before all untrusted source markup', async () => {
+    const source = '<img src="https://example.com/before-head"><!-- <head> --><head></head>';
+    render(<AttachmentLightbox preview={{ name: 'page.html', mimeType: 'text/html', loadContent: async () => new Blob([source]) }} onClose={vi.fn()} />);
+    const frame = await screen.findByTitle<HTMLIFrameElement>('Preview of page.html');
+    expect(frame.getAttribute('sandbox')).toBe('');
+    expect(frame.srcdoc.indexOf('Content-Security-Policy')).toBeLessThan(frame.srcdoc.indexOf(source));
+  });
+
   it('shows image previews, complete-filename tooltips, progress, and remove controls', () => {
     const onOpen = vi.fn();
     const onRemove = vi.fn();
@@ -40,6 +68,33 @@ describe('attachment presentation', () => {
     expect(onRemove).toHaveBeenCalledOnce();
   });
 
+  it('shows pending video as a media tile and opens the local preview', () => {
+    const onOpen = vi.fn();
+    render(<PendingAttachmentTile
+      attachment={{
+        localId: 'draft-video',
+        file: new File(['video'], 'walkthrough.mp4', { type: 'video/mp4' }),
+        previewUrl: 'blob:local-video',
+        progress: 100,
+        status: 'ready',
+      }}
+      onOpen={onOpen}
+      onRemove={vi.fn()}
+      onRetry={vi.fn()}
+    />);
+
+    const preview = screen.getByRole('button', { name: 'Preview walkthrough.mp4' });
+    expect(preview.querySelector('video')).toHaveAttribute('src', 'blob:local-video');
+    expect(document.querySelector('.attachment-tile')).toHaveClass('is-video');
+    expect(document.querySelector('.attachment-video-play')).toBeVisible();
+    fireEvent.click(preview);
+    expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({
+      mimeType: 'video/mp4',
+      name: 'walkthrough.mp4',
+      src: 'blob:local-video',
+    }));
+  });
+
   it('loads a sent image lazily and opens it in the lightbox', async () => {
     const attachment: MessageAttachment = {
       id: 'resource-1',
@@ -60,9 +115,39 @@ describe('attachment presentation', () => {
     await waitFor(() => expect(button).not.toBeDisabled());
     fireEvent.click(button);
     expect(screen.getByRole('dialog', { name: 'Preview of diagram.png' })).toBeVisible();
-    fireEvent.keyDown(window, { key: 'Escape' });
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     await waitFor(() => expect(button).toHaveFocus());
+  });
+
+  it('keeps a settled thumbnail mounted across equivalent transcript refreshes', async () => {
+    const attachment: MessageAttachment = {
+      id: 'stable-image',
+      fileName: 'settled.png',
+      mimeType: 'image/png',
+      sizeBytes: 5,
+      contentAvailable: true,
+      createdAt: '2026-08-04T00:00:00.000Z',
+    };
+    const loadContent = vi.fn(async () => new Blob(['image'], { type: 'image/png' }));
+    const onOpen = vi.fn();
+    const view = render(
+      <MessageAttachments attachments={[attachment]} loadContent={loadContent} onOpen={onOpen} />,
+    );
+
+    const image = await screen.findByRole('img', { name: 'settled.png' });
+    expect(loadContent).toHaveBeenCalledOnce();
+
+    // A socket snapshot recreates both the record and the containing array.
+    // Neither is a media change, so the blob URL and DOM image must survive it.
+    view.rerender(
+      <MessageAttachments attachments={[{ ...attachment }]} loadContent={loadContent} onOpen={onOpen} />,
+    );
+    await Promise.resolve();
+
+    expect(screen.getByRole('img', { name: 'settled.png' })).toBe(image);
+    expect(loadContent).toHaveBeenCalledOnce();
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
   });
 
   it('loads generated audio lazily and exposes an AI-voice player', async () => {
@@ -155,7 +240,7 @@ describe('attachment presentation', () => {
     }
     render(<Example />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Close preview' }));
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
     resolveContent(new Blob(['late'], { type: 'image/png' }));
     await Promise.resolve();
 

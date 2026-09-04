@@ -27,7 +27,6 @@ import {
 import type { ConversationParentKind } from '@rally/contracts/conversation-parent';
 import type { DesktopSession } from '../../common/desktop';
 import { useAppSession } from '../lib/app-session';
-import { useAutoOpenLatestEmbeddedResource } from '../lib/use-auto-open-embedded-resource';
 import { useCitations } from '../lib/use-citations';
 import { ApiError, type MentionIdentity } from '../lib/api';
 import { workstreamDraftKey } from '../lib/draft-keys';
@@ -859,6 +858,7 @@ export function ConversationSurface({
   // excerpt is the same derivative the rail's panel shows.
   const citations = useCitations({
     loadResourceContent,
+    onOpenPreview: setAttachmentPreview,
     resources: routedDetail?.resources ?? NO_RESOURCES,
   });
   // The store holds the rail's open state, but on the render that changes the
@@ -959,21 +959,6 @@ export function ConversationSurface({
     },
     [canonicalTranscript, harnessRunning, transcriptOverlays.data],
   );
-  // An embed card in the last two text turns opens the inspector onto that
-  // document: when this feed first belongs to the route, and again when a
-  // new turn announces a card this visit has not already opened. Closing
-  // the rail during a live stream does not reopen it when that turn
-  // settles — the visit key is the turn id, shared by the overlay and the
-  // canonical block. `payloadBelongsToRoute` is the fence —
-  // WorkstreamScreen stays mounted across work streams, and a handoff
-  // render can still hold the previous transcript.
-  useAutoOpenLatestEmbeddedResource({
-    enabled: payloadBelongsToRoute,
-    open: citations.open,
-    resolve: citations.resolve,
-    transcript,
-    workstreamId: id,
-  });
   // Held here rather than in the row: the virtualizer unmounts a row that
   // leaves the window but keeps the height it measured, so an open row that
   // came back closed would shrink under a cache that still expects it open.
@@ -1843,6 +1828,7 @@ export function ConversationSurface({
             />
           ) : (
             <MessageFeed
+              agentDocumentCards={parentKind === 'workstream'}
               citations={citations}
               currentUserId={session?.user.id}
               currentUserName={session?.user.name}
@@ -1904,6 +1890,7 @@ export function ConversationSurface({
             onStop={async () => {
               await stop.mutateAsync();
             }}
+            onTeachTask={() => void navigate('/automations/new')}
             onReorderQueue={reorderQueue}
             queueItems={queueItems}
             sending={sending}

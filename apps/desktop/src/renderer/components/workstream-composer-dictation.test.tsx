@@ -119,7 +119,7 @@ describe('WorkstreamComposer live dictation', () => {
 
     const input = screen.getByRole('textbox', { name: 'Message the work stream' });
     fireEvent.change(input, { target: { value: 'Existing draft' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Click or hold to dictate' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Start voice input' }));
     await waitFor(() => expect(dictationHarness.start).toHaveBeenCalledOnce());
 
     act(() => dictationHarness.emit?.('live words'));
@@ -227,7 +227,7 @@ describe('WorkstreamComposer live dictation', () => {
       </Tooltip.Provider>,
     );
 
-    fireEvent.pointerDown(screen.getByRole('button', { name: 'Click or hold to dictate' }), { button: 0, pointerId: 1 });
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Start voice input' }), { button: 0, pointerId: 1 });
     await waitFor(() => expect(screen.getByRole('button', { name: 'Stop dictation' })).toBeVisible());
     now = 100;
     fireEvent.pointerUp(screen.getByRole('button', { name: 'Stop dictation' }), { button: 0, pointerId: 1 });
@@ -261,7 +261,7 @@ describe('WorkstreamComposer live dictation', () => {
       </Tooltip.Provider>,
     );
 
-    fireEvent.pointerDown(screen.getByRole('button', { name: 'Click or hold to dictate' }), { button: 0, pointerId: 1 });
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Start voice input' }), { button: 0, pointerId: 1 });
     await waitFor(() => expect(screen.getByRole('button', { name: 'Stop dictation' })).toBeVisible());
     now = 400;
     fireEvent.pointerUp(screen.getByRole('button', { name: 'Stop dictation' }), { button: 0, pointerId: 1 });

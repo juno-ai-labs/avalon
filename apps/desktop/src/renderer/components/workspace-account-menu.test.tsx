@@ -53,6 +53,15 @@ function openMenu(): void {
 
 describe('workspace account menu', () => {
   afterEach(() => vi.useRealTimers());
+  it('keeps workspace discovery and switching available in the Grok presentation', () => {
+    const props = renderMenu({ presentation: 'grok' });
+    openMenu();
+    expect(props.onMenuOpen).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole('menuitem', { name: /Europe Studio.*EU/u }));
+    expect(props.onSwitchWorkspace).toHaveBeenCalledWith(eu);
+    expect(screen.queryByText('Weekly usage')).not.toBeInTheDocument();
+    expect(screen.queryByText('Get Rally for iOS')).not.toBeInTheDocument();
+  });
   it('shows background attention, a cross-region tag, and one-action switching', () => {
     const props = renderMenu();
 

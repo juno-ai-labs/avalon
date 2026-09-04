@@ -449,6 +449,7 @@ describe('MessageBlock human identity', () => {
       .toHaveClass('message-context-label');
     expect(screen.getByLabelText('Message from Adam')).toHaveClass('own-human-message');
     expect(screen.getByText('Adam')).toHaveClass('message-author');
+    expect(document.querySelector('.message-author-dot')).toBeInTheDocument();
   });
 
   it('shows compact identity for a coworker prompt', () => {
@@ -563,10 +564,10 @@ describe('MessageBlock markdown', () => {
 
     render(<MessageBlock {...actions} message={message} />);
 
-    const chip = screen.getByText('@Ada Lovelace').closest('.mention-chip');
+    const chip = screen.getByText('Ada Lovelace').closest('.mention-chip');
     expect(chip).toHaveAttribute('data-person-id', personId);
     expect(chip?.tagName).toBe('SPAN');
-    expect(screen.queryByRole('link', { name: '@Ada Lovelace' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Ada Lovelace' })).not.toBeInTheDocument();
     expect(screen.queryByText('@Spoofed label')).not.toBeInTheDocument();
     expect(chip?.querySelector('img')).toHaveAttribute('src', 'https://example.com/ada.png');
   });
@@ -590,7 +591,7 @@ describe('MessageBlock markdown', () => {
 
     render(<MessageBlock {...actions} message={message} />);
 
-    expect(screen.getByText('@Ada Lovelace').closest('.mention-chip'))
+    expect(screen.getByText('Ada Lovelace').closest('.mention-chip'))
       .toHaveAttribute('data-person-id', personId);
   });
 
@@ -1215,11 +1216,29 @@ describe('MessageBlock markdown', () => {
     const view = render(<MarkdownBody>{'```mermaid\ngraph TD; A-->B\n```'}</MarkdownBody>);
     await waitFor(() => expect(mermaidRender).toHaveBeenCalledTimes(renderCallBaseline + 1));
 
-    act(() => { applyTheme({ family: 'air', mode: 'dark' }); });
+    act(() => { applyTheme('dark'); });
 
     await waitFor(() => expect(mermaidRender).toHaveBeenCalledTimes(renderCallBaseline + 2));
     view.unmount();
-    act(() => { applyTheme({ family: 'terra', mode: 'light' }); });
+    act(() => { applyTheme('light'); });
+  });
+
+  it('keeps a settled Mermaid diagram mounted when message metadata refreshes', async () => {
+    const renderCallBaseline = mermaidRender.mock.calls.length;
+    mermaidRender.mockResolvedValue({ svg: '<svg viewBox="0 0 40 20"><text>Stable graph</text></svg>' });
+    const markdown = '```mermaid\ngraph TD; A-->B\n```';
+    const view = render(<MarkdownBody mentions={[]}>{markdown}</MarkdownBody>);
+
+    expect(await screen.findByText('Stable graph')).toBeVisible();
+    expect(mermaidRender).toHaveBeenCalledTimes(renderCallBaseline + 1);
+
+    // A new array is what production transcript hydration supplies even when
+    // the message has no changed mentions.
+    view.rerender(<MarkdownBody mentions={[]}>{markdown}</MarkdownBody>);
+    await act(async () => { await Promise.resolve(); });
+
+    expect(screen.getByText('Stable graph')).toBeVisible();
+    expect(mermaidRender).toHaveBeenCalledTimes(renderCallBaseline + 1);
   });
 
   it('keeps code copy retryable when clipboard access is unavailable', async () => {
@@ -1237,6 +1256,103 @@ describe('MessageBlock markdown', () => {
 
     await waitFor(() => expect(copyText).toHaveBeenCalledWith('const ready = true;'));
     expect(screen.getByRole('button', { name: 'Copy code' })).toBeEnabled();
+  });
+});
+
+describe('MessageBlock agent document cards', () => {
+  const documentMessage: Message = {
+    ...baseMessage,
+    id: 'message-agent-document',
+    authorType: 'agent',
+    author: undefined,
+    text: [
+      'Here is the complete review.',
+      '',
+      '## Findings',
+      '',
+      'The first finding.',
+      '',
+      '### Detail',
+      '',
+      'Nested detail stays with Findings.',
+      '',
+      '## Recommendation',
+      '',
+      'Ship the focused change.',
+      '',
+      '## Sources',
+      '',
+      'The supporting evidence.',
+    ].join('\n'),
+  };
+
+  it('turns each h2 into a stacked file-style card while leaving the preamble readable', () => {
+    render(<MessageBlock {...actions} agentDocumentCards message={documentMessage} />);
+
+    expect(screen.getByText('Here is the complete review.')).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /Open section/u })).toHaveLength(3);
+    expect(screen.getByRole('button', { name: 'Open section 1 of 3: Findings' })).toHaveStyle({ left: '0px', top: '0px' });
+    expect(screen.getByRole('button', { name: 'Open section 2 of 3: Recommendation' })).toHaveStyle({ left: '20px', top: '20px' });
+    expect(screen.getByText('3 sections')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Collapse all sections' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Expand section' })).not.toBeInTheDocument();
+  });
+
+  it('opens the selected card and pages with controls and arrow keys', async () => {
+    render(<MessageBlock {...actions} agentDocumentCards message={documentMessage} />);
+    const opener = screen.getByRole('button', { name: 'Open section 2 of 3: Recommendation' });
+    fireEvent.click(opener);
+
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Recommendation' })).toBeInTheDocument();
+    expect(screen.getAllByText('Section 2 of 3')).toHaveLength(2);
+    expect(screen.getByRole('dialog').querySelector('.agent-document-lightbox-page'))
+      .toHaveTextContent('Ship the focused change.');
+
+    fireEvent.keyDown(window, { key: 'ArrowRight' });
+    expect(screen.getByRole('heading', { name: 'Sources' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Next section' })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Previous section' }));
+    expect(screen.getByRole('heading', { name: 'Recommendation' })).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: 'ArrowLeft' });
+    expect(screen.getByRole('heading', { name: 'Findings' })).toBeInTheDocument();
+    expect(screen.getByText('Nested detail stays with Findings.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Previous section' })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close document' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(opener).toHaveFocus();
+  });
+
+  it('pages forward and back with horizontal swipe gestures', () => {
+    render(<MessageBlock {...actions} agentDocumentCards message={documentMessage} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Open section 2 of 3: Recommendation' }));
+    const dialog = screen.getByRole('dialog');
+
+    fireEvent.pointerDown(dialog, { clientX: 240, clientY: 120 });
+    fireEvent.pointerUp(dialog, { clientX: 120, clientY: 125 });
+    expect(screen.getByRole('heading', { name: 'Sources' })).toBeInTheDocument();
+
+    fireEvent.pointerDown(dialog, { clientX: 120, clientY: 120 });
+    fireEvent.pointerUp(dialog, { clientX: 230, clientY: 126 });
+    expect(screen.getByRole('heading', { name: 'Recommendation' })).toBeInTheDocument();
+  });
+
+  it('keeps heading-less responses on the normal open-prose renderer', () => {
+    render(<MessageBlock {...actions} agentDocumentCards message={{ ...documentMessage, text: 'A direct answer with no sections.' }} />);
+
+    expect(screen.getByText('A direct answer with no sections.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Open section/u })).not.toBeInTheDocument();
+    expect(document.querySelector('.agent-document-deck')).not.toBeInTheDocument();
+  });
+
+  it('keeps ordinary headings open when the host does not opt into document cards', () => {
+    render(<MessageBlock {...actions} message={documentMessage} />);
+
+    expect(screen.getByRole('heading', { name: 'Findings' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: /section/u })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Open section/u })).not.toBeInTheDocument();
   });
 });
 

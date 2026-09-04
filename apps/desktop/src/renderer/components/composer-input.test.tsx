@@ -75,3 +75,32 @@ describe('ComposerInput IME composition guard', () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 });
+
+describe('ComposerInput message capsule', () => {
+  it('shows only the action menu and voice chrome around an empty draft', () => {
+    renderInput({
+      api: { getTranscriptionSocketTicket: vi.fn() },
+      layout: 'message-capsule',
+      submitDisabled: true,
+      value: '',
+    });
+
+    expect(document.querySelector('.workstream-composer')).toHaveClass('is-message-capsule');
+    expect(screen.getByRole('button', { name: 'Composer actions' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Start voice input' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Mention a participant' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Choose microphone' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Send' })).not.toBeInTheDocument();
+  });
+
+  it('adds send without taking dictation away when the draft has content', () => {
+    renderInput({
+      api: { getTranscriptionSocketTicket: vi.fn() },
+      layout: 'message-capsule',
+      value: 'Hello there',
+    });
+
+    expect(screen.getByRole('button', { name: 'Send' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Start voice input' })).toBeVisible();
+  });
+});
