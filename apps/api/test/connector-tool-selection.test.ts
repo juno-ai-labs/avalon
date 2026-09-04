@@ -1617,6 +1617,141 @@ describe("connector tools selected for harness runs", () => {
   });
 });
 
+describe("editing an automation a conversation already owns", () => {
+  it("writes the named automation's next revision instead of creating another", async () => {
+    const database = new ToolSelectionDatabase([]);
+    database.automationOwners.set(OWNED_AUTOMATION_ID, WORKSTREAM_ID);
+    const submit = await automationCreatorTool(database, workflowInput(), "submit_draft");
+
+    await expect(submit.execute(
+      { ...manualDraft("Weekly digest"), automationId: OWNED_AUTOMATION_ID },
+      { toolCallId: "edit-owned" } as never,
+    )).resolves.toMatchObject({ output: { accepted: true } });
+
+    expect(database.submittedDefinitions).toHaveLength(1);
+    expect(database.submittedDefinitions[0]).toMatchObject({
+      automationId: OWNED_AUTOMATION_ID,
+      draft: { name: "Weekly digest" },
+    });
+    // The run id is the id a *new* automation would have been given, so an
+    // edit that quietly created one instead would submit under that name.
+    expect(database.submittedDefinitions[0]).not.toMatchObject({ automationId: HARNESS_RUN_ID });
+    expect(database.createdAutomations).toEqual([]);
+    expect(database.proposedDraftCards).toHaveLength(1);
+    expect(database.proposedDraftCards[0]).toMatchObject({
+      workstreamId: WORKSTREAM_ID,
+      card: { automationId: OWNED_AUTOMATION_ID, automationName: "Weekly digest" },
+    });
+  });
+
+  it("refuses an automation another room owns, and submits nothing", async () => {
+    const database = new ToolSelectionDatabase([]);
+    database.automationOwners.set(FOREIGN_AUTOMATION_ID, OTHER_WORKSTREAM_ID);
+    const submit = await automationCreatorTool(database, workflowInput(), "submit_draft");
+
+    await expect(submit.execute(
+      { ...manualDraft("Weekly digest"), automationId: FOREIGN_AUTOMATION_ID },
+      { toolCallId: "edit-foreign" } as never,
+    )).rejects.toThrow("not one this work stream owns");
+
+    expect(database.submittedDefinitions).toEqual([]);
+    expect(database.createdAutomations).toEqual([]);
+    expect(database.proposedDraftCards).toEqual([]);
+  });
+
+  it("lets an automation's own conversation change only that automation", async () => {
+    const database = new ToolSelectionDatabase([]);
+    database.automationOwners.set(OWNED_AUTOMATION_ID, WORKSTREAM_ID);
+    const submit = await automationCreatorTool(database, automationConversationInput(), "submit_draft");
+
+    await expect(submit.execute(
+      { ...manualDraft("Someone else's job"), automationId: OWNED_AUTOMATION_ID },
+      { toolCallId: "edit-another-automation" } as never,
+    )).rejects.toThrow("only change its own automation");
+    expect(database.submittedDefinitions).toEqual([]);
+
+    await expect(submit.execute(
+      { ...manualDraft("Named itself"), automationId: AUTOMATION_ID },
+      { toolCallId: "edit-itself-by-id" } as never,
+    )).resolves.toMatchObject({ output: { accepted: true } });
+    await expect(submit.execute(
+      { ...manualDraft("Named nothing"), automationId: null },
+      { toolCallId: "edit-itself-by-default" } as never,
+    )).resolves.toMatchObject({ output: { accepted: true } });
+
+    expect(database.submittedDefinitions.map((request) => request.automationId))
+      .toEqual([AUTOMATION_ID, AUTOMATION_ID]);
+    // Nothing is created here either: the automation this conversation belongs
+    // to already exists, and its own chat has no room to post a proposal into.
+    expect(database.createdAutomations).toEqual([]);
+    expect(database.proposedDraftCards).toEqual([]);
+  });
+
+  it("lists the room's automations with their definitions, and one automation's chat lists only itself", async () => {
+    const database = new ToolSelectionDatabase([]);
+    database.workstreamAutomations.set(WORKSTREAM_ID, [
+      OWNED_AUTOMATION_ID,
+      SECOND_OWNED_AUTOMATION_ID,
+    ]);
+    database.automationDetails.set(OWNED_AUTOMATION_ID, automationDetail(OWNED_AUTOMATION_ID, "Weekly digest"));
+    database.automationDetails.set(
+      SECOND_OWNED_AUTOMATION_ID,
+      automationDetail(SECOND_OWNED_AUTOMATION_ID, "Standup notes", {
+        lifecycle: "paused",
+        status: "paused",
+        acceptedDefinitionRevision: null,
+        currentDefinitionRevision: 1,
+      }),
+    );
+    database.automationDetails.set(AUTOMATION_ID, automationDetail(AUTOMATION_ID, "Drive digest"));
+
+    const roomList = await automationCreatorTool(database, workflowInput(), "automations_list");
+    await expect(roomList.execute({}, { toolCallId: "list-in-room" } as never))
+      .resolves.toMatchObject({
+        output: {
+          automations: [
+            {
+              automationId: OWNED_AUTOMATION_ID,
+              name: "Weekly digest",
+              lifecycle: "active",
+              scope: "workstream",
+              currentDefinitionRevision: 3,
+              acceptedDefinitionRevision: 2,
+              currentDefinition: { name: "Weekly digest", triggers: [{ type: "manual" }] },
+            },
+            {
+              automationId: SECOND_OWNED_AUTOMATION_ID,
+              name: "Standup notes",
+              lifecycle: "paused",
+              currentDefinitionRevision: 1,
+              acceptedDefinitionRevision: null,
+              currentDefinition: { name: "Standup notes" },
+            },
+          ],
+        },
+      });
+    expect(database.workstreamAutomationListReads).toMatchObject([
+      { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID, userId: USER_ID },
+    ]);
+    expect(database.detailReads.map((request) => request.automationId))
+      .toEqual([OWNED_AUTOMATION_ID, SECOND_OWNED_AUTOMATION_ID]);
+
+    database.detailReads.length = 0;
+    database.workstreamAutomationListReads.length = 0;
+    const ownList = await automationCreatorTool(database, automationConversationInput(), "automations_list");
+    await expect(ownList.execute({}, { toolCallId: "list-in-automation" } as never))
+      .resolves.toMatchObject({
+        output: {
+          automations: [{ automationId: AUTOMATION_ID, name: "Drive digest" }],
+        },
+      });
+    // The room's rail is never consulted from an automation's own conversation:
+    // the one automation it may edit is the one it belongs to.
+    expect(database.workstreamAutomationListReads).toEqual([]);
+    expect(database.detailReads.map((request) => request.automationId)).toEqual([AUTOMATION_ID]);
+  });
+});
+
 function authorityStreamResponse(events: unknown[]): Response {
   const body = `${events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("")}data: [DONE]\n\n`;
   return new Response(body, { headers: { "content-type": "text/event-stream" } });
