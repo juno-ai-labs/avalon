@@ -1,7 +1,7 @@
 import { asWorkspaceId } from "@rally/contracts";
 import { asWorkstreamId } from "@rally/contracts";
 import { DatabaseSync } from "node:sqlite";
-import { ServerSocketEventSchema, WorkstreamWorkflowInputSchema } from "@rally/contracts";
+import { ServerSocketEventSchema } from "@rally/contracts";
 import { describe, expect, it } from "vitest";
 
 import {
