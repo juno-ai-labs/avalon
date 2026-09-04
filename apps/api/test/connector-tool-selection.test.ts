@@ -1,5 +1,10 @@
 import { asAutomationId, asHarnessRunId, asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
-import type { AutomationRunDefinitionV1, WorkstreamWorkflowInput } from "@rally/contracts";
+import type {
+  AutomationDetail,
+  AutomationDraft,
+  AutomationRunDefinitionV1,
+  WorkstreamWorkflowInput,
+} from "@rally/contracts";
 import { runHarness, type HarnessEvent } from "@rally/agent-harness";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -31,6 +36,13 @@ const AUTOMATION_ID = asAutomationId("00000000-0000-4000-8000-000000000009");
 const RUN_ID = "00000000-0000-4000-8000-000000000014";
 const CHILD_HARNESS_RUN_ID = asHarnessRunId("00000000-0000-4000-8000-000000000012");
 const AUTOMATION_RESOURCE_ID = "00000000-0000-4000-8000-000000000013";
+/** An automation this room owns, the one an edit from the room may name. */
+const OWNED_AUTOMATION_ID = "00000000-0000-4000-8000-000000000015";
+/** A second one, so a room's list is more than the single row it must contain. */
+const SECOND_OWNED_AUTOMATION_ID = "00000000-0000-4000-8000-000000000016";
+/** An automation another room owns, which no edit from this room may name. */
+const FOREIGN_AUTOMATION_ID = "00000000-0000-4000-8000-000000000017";
+const OTHER_WORKSTREAM_ID = asWorkstreamId("00000000-0000-4000-8000-000000000018");
 
 const GOOGLE_WORKSPACE_CAPABILITIES = [
   "drive.read",
@@ -87,6 +99,18 @@ class ToolSelectionDatabase {
   defaultPluginIds: string[] = [];
   readonly runDefinitionReads: Array<Record<string, unknown>> = [];
   readonly proposedDraftCards: Array<Record<string, unknown>> = [];
+  /** Every `create` request, so an edit can be shown not to make a second automation. */
+  readonly createdAutomations: Array<Record<string, unknown>> = [];
+  /** Every `readDetail` request the directory port sent, in order. */
+  readonly detailReads: Array<Record<string, unknown>> = [];
+  /** Every `listWorkstreamAutomations` request, in order. */
+  readonly workstreamAutomationListReads: Array<Record<string, unknown>> = [];
+  /** Which work stream owns each automation, keyed by automation id. */
+  readonly automationOwners = new Map<string, string>();
+  /** The automations each work stream's rail lists, keyed by work-stream id. */
+  readonly workstreamAutomations = new Map<string, string[]>();
+  /** What each automation answers `readDetail` with, keyed by automation id. */
+  readonly automationDetails = new Map<string, AutomationDetail>();
   readonly replayOutputs = new Map<string, unknown>();
   memberStatus = "active";
 
@@ -131,6 +155,37 @@ class ToolSelectionDatabase {
     extra: {
       appendDraftProposedCard: vi.fn(async (request: Record<string, unknown>) => {
         this.proposedDraftCards.push(request);
+      }),
+    },
+  });
+
+  /**
+   * The workspace, for the two directory reads a room's automation edit makes:
+   * who owns the automation the model named, and which ones the room owns.
+   */
+  readonly workspaces = testSubstreamAgentsBinding(this.objectStore, {
+    extra: {
+      automationOwner: vi.fn(async (request: Record<string, unknown>) => ({
+        owningWorkstreamId: this.automationOwners.get(String(request.automationId)) ?? null,
+      })),
+      listWorkstreamAutomations: vi.fn(async (request: Record<string, unknown>) => {
+        this.workstreamAutomationListReads.push(request);
+        const ids = this.workstreamAutomations.get(String(request.workstreamId)) ?? [];
+        return {
+          items: ids.map((id) => {
+            const detail = this.automationDetails.get(id);
+            return {
+              id,
+              name: detail?.name ?? "Unnamed",
+              description: detail?.description ?? "",
+              emailAddress: null,
+              status: detail?.status ?? "draft",
+              nextRunAt: null,
+              lastRunAt: null,
+              updatedAt: detail?.updatedAt ?? "2026-08-01T00:00:00.000Z",
+            };
+          }),
+        };
       }),
     },
   });
@@ -247,10 +302,22 @@ function env(database: ToolSelectionDatabase): Env {
         // from a room is `test-workers/automation-do.test.ts`'s subject, and
         // what this file proves about a submission is what reaches
         // `submitDefinition`.
-        create: vi.fn(async () => ({ created: false })),
+        create: vi.fn(async (request: Record<string, unknown>) => {
+          database.createdAutomations.push(request);
+          return { created: false };
+        }),
         submitDefinition: vi.fn(async (request: Record<string, unknown>) => {
           database.submittedDefinitions.push(request);
           return { definitionRevision: 1 };
+        }),
+        // The definition an edit starts from. One shared stub answers for every
+        // automation id, so the fixture keyed by the requested id is what
+        // decides whether a read reached the automation the caller meant.
+        readDetail: vi.fn(async (request: Record<string, unknown>) => {
+          database.detailReads.push(request);
+          const detail = database.automationDetails.get(String(request.automationId));
+          if (!detail) throw new Error(`no_automation_detail_fixture:${String(request.automationId)}`);
+          return detail;
         }),
         // A run reads its definition from its automation by revision when it
         // starts; the plugin defaults it preloads come from there.
@@ -260,6 +327,7 @@ function env(database: ToolSelectionDatabase): Env {
         }),
       },
     }),
+    WORKSPACE_DOS: database.workspaces,
     PUBLIC_API_BASE_URL: "https://api.with-avalon.com",
     GOOGLE_CONNECTOR_OAUTH_CLIENT_ID: "google-connector-client",
     GOOGLE_CONNECTOR_OAUTH_CLIENT_SECRET: "google-connector-secret",
@@ -309,6 +377,90 @@ function automationRunInput(reason = "Automation test"): WorkstreamWorkflowInput
       trigger: { kind: "manual", requestedByUserId: USER_ID },
     },
   };
+}
+
+/**
+ * An automation's own conversation: the automation is the parent and the chat
+ * is its main substream, with no run in flight. This is the loop that drafts
+ * and edits that one automation, so the drafting tools are registered here;
+ * a run under the same parent carries `automationRun` and gets none.
+ */
+function automationConversationInput(): WorkstreamWorkflowInput {
+  return {
+    region: "global",
+    workspaceId: WORKSPACE_ID,
+    parentKind: "automation",
+    parentId: AUTOMATION_ID,
+    loopId: `workstream:${AUTOMATION_ID}:substream:0:loop`,
+    harnessRunId: HARNESS_RUN_ID,
+    triggerMessageId: null,
+    activityId: null,
+    executionPrincipal: { type: "user", userId: USER_ID },
+    reason: "Automation chat test",
+  };
+}
+
+/** A submittable draft with no trigger that needs a plugin or an evaluator. */
+function manualDraft(name: string): AutomationDraft {
+  return {
+    name,
+    description: `${name}, on request.`,
+    overview: `Runs ${name} when somebody asks for it.`,
+    instructions: `Do ${name}.`,
+    triggers: [{ type: "manual" }],
+    requiredCapabilities: [],
+    expectedOutputs: [],
+    defaultBehavior: {},
+    recommendedPlugins: [],
+    memoryTables: [],
+    suggestedScope: "workstream",
+    followUpQuestion: null,
+    elicitation: null,
+    ready: true,
+  };
+}
+
+/** What one automation answers `readDetail` with. */
+function automationDetail(
+  automationId: string,
+  name: string,
+  overrides: Partial<AutomationDetail> = {},
+): AutomationDetail {
+  return {
+    id: automationId,
+    name,
+    description: `${name}, on request.`,
+    emailAddress: null,
+    scope: "workstream",
+    owningWorkstreamId: WORKSTREAM_ID,
+    status: "active",
+    nextRunAt: null,
+    lastRunAt: null,
+    updatedAt: "2026-08-01T00:00:00.000Z",
+    lifecycle: "active",
+    authorUserId: USER_ID,
+    runAsUserId: USER_ID,
+    currentDefinition: manualDraft(name),
+    currentDefinitionRevision: 3,
+    acceptedDefinitionRevision: 2,
+    connectorBindings: {},
+    recentRuns: [],
+    ...overrides,
+  };
+}
+
+/** One drafting tool from a run's assembled surface, by name. */
+async function automationCreatorTool(
+  database: ToolSelectionDatabase,
+  input: WorkstreamWorkflowInput,
+  name: string,
+): Promise<Awaited<ReturnType<typeof __integrationTesting.loadHarnessTools>>["tools"][number]> {
+  const selected = await __integrationTesting.loadHarnessTools(env(database), input);
+  const plugin = selected.plugins.find((candidate) => candidate.canonicalId === "rally:automations");
+  if (!plugin) throw new Error("automations_plugin_missing");
+  const tool = plugin.tools.find((candidate) => candidate.definition.name === name);
+  if (!tool) throw new Error(`automation_creator_tool_missing:${name}`);
+  return tool;
 }
 
 /** The definition the automation answers a run's read with. */
