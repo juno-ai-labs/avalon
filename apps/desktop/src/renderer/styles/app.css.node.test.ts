@@ -112,11 +112,11 @@ describe('GrokBot sidebar header geometry', () => {
     expect(search).not.toBeNull();
     expect(scroll).not.toBeNull();
     expect(scrollbar).not.toBeNull();
-    expect(titlebar).toContain('height: 36px;');
+    expect(titlebar).toContain('height: 44px;');
     expect(commandbar).toContain('display: block;');
     expect(create).toContain('background: transparent;');
     expect(search).toContain('border-radius: 8px;');
-    expect(search).toContain('height: 28px;');
+    expect(search).toContain('height: 32px;');
     expect(scroll).toContain('scrollbar-gutter: auto;');
     expect(scrollbar).toContain('width: 0;');
   });
@@ -143,6 +143,31 @@ describe('member picker controls', () => {
   });
 });
 
+describe('Grok Bot mention-chip geometry', () => {
+  it('uses the inserted-chip metrics and the user-turn ink wash', () => {
+    const chip = rule('.mention-chip');
+    const userChip = rule(
+      ':is(.workstream-screen, .automation-chat-surface) .human-message .mention-chip',
+    );
+
+    expect(chip).not.toBeNull();
+    expect(chip).toContain('background: color-mix(in srgb, #777 13%, transparent);');
+    expect(chip).toContain('border-radius: 4px;');
+    expect(chip).toContain('font-size: 12px;');
+    expect(chip).toContain('font-weight: 500;');
+    expect(chip).toContain('gap: 4px;');
+    expect(chip).toContain('line-height: 16px;');
+    expect(chip).toContain('margin-bottom: -1px;');
+    expect(chip).toContain('margin-top: -3px;');
+    expect(chip).toContain('padding: 2px 6px 2px 4px;');
+    expect(chip).not.toMatch(/(?:^|\n)\s*height:/u);
+    expect(userChip).not.toBeNull();
+    expect(userChip).toContain(
+      'background: color-mix(in srgb, currentColor 24%, transparent);',
+    );
+  });
+});
+
 describe('citation card image preview', () => {
   it('fills its box from the center without distorting the image', () => {
     // The shared `.markdown-body img` sets `height: auto` and a prose margin.
@@ -150,11 +175,10 @@ describe('citation card image preview', () => {
     const image = rule('.markdown-body .citation-card-image-preview');
 
     expect(image).not.toBeNull();
-    expect(image).toContain('height: 72px;');
+    expect(image).toContain('height: 100%;');
     expect(image).toContain('margin: 0;');
     expect(image).toContain('max-width: none;');
     expect(image).toContain('object-fit: cover;');
-    expect(image).toContain('object-position: center;');
     expect(image).toContain('width: 100%;');
   });
 });
@@ -530,7 +554,6 @@ describe('markdown list markers', () => {
     ['.note-detail-article'],
     ['.meeting-notes-body'],
     ['.inspector-detail-document'],
-    ['.citation-card-preview'],
   ])(
     'leaves markdown element styling to the shared container in %s',
     (host) => {
@@ -552,7 +575,7 @@ describe('markdown list markers', () => {
   // silent visual regression as the missing markers, arriving the same way.
   // Naming `.markdown-body` in the selector settles it on specificity instead,
   // and this is what stops the class being tidied back out.
-  it.each([['.note-detail-article'], ['.meeting-notes-body'], ['.citation-card-preview']])(
+  it.each([['.note-detail-article'], ['.meeting-notes-body']])(
     'wins its heading scale on specificity rather than source order in %s',
     (host) => {
       const headingRules = preludes()
@@ -566,37 +589,12 @@ describe('markdown list markers', () => {
     },
   );
 
-  it('draws the embed card preview in the faintest text tone', () => {
-    const preview = rule('.citation-card-preview');
-    expect(preview).toContain('var(--av-sys-color-text-disabled)');
-    expect(preview).not.toContain('--av-ref-color-neutral-9');
-    expect(preview).toContain('font-weight: normal');
-    expect(preview).not.toContain('--av-sys-label-weight');
-  });
-
-  // The feed paints `.markdown-body` at (0,3,0). A host written as
-  // `.citation-card-preview .markdown-body` is (0,2,0) and loses, so inherit
-  // never lands and the glance keeps the turn's type. Naming the card and the
-  // wrapper's element is (0,3,1). `*` carries the tone into `strong` without
-  // naming a markdown element.
-  it('wins the embed-card preview tone on specificity rather than source order', () => {
-    const body = rule('.citation-card .citation-card-preview div.markdown-body');
-    const descendants = rule('.citation-card .citation-card-preview div.markdown-body *');
-    const headings = preludes()
-      .filter((prelude) => prelude.includes('.citation-card-preview'))
-      .filter((prelude) => elementsIn(prelude).some((element) => /^h[1-6]$/u.test(element)));
-
-    expect(body).not.toBeNull();
-    expect(body).toContain('color: inherit');
-    expect(body).toContain('font-size: inherit');
-    expect(descendants).not.toBeNull();
-    expect(descendants).toContain('color: inherit');
-    expect(descendants).toContain('margin: 0');
-    expect(rule('.citation-card .citation-card-preview div.markdown-body ::marker'))
-      .toContain('color: inherit');
-    expect(headings).toEqual([
-      '.citation-card .citation-card-preview div.markdown-body :is(h1, h2, h3, h4, h5, h6)',
-    ]);
+  it('does not restore the retired embed-card text preview', () => {
+    expect(rule('.citation-card-preview')).toBeNull();
+    expect(preludes().filter((prelude) => (
+      prelude.includes('.citation-card-preview')
+      && !prelude.includes('.citation-card-preview-skeleton')
+    ))).toEqual([]);
   });
 
   // The preview's inherit is a nested-MarkdownBody fix. If it ever leaked onto
@@ -610,7 +608,7 @@ describe('markdown list markers', () => {
       return /(^|;|\s)color\s*:\s*inherit/u.test(rule(prelude) ?? '');
     });
 
-    expect(markdownInherit.length).toBeGreaterThan(0);
+    expect(markdownInherit).toEqual([]);
     for (const prelude of markdownInherit) {
       expect(prelude).toContain('.citation-card-preview');
     }

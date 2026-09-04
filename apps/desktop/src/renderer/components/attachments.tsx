@@ -1,5 +1,5 @@
 import clsx from 'clsx';
-import { Download, File, RefreshCcw, X } from 'lucide-react';
+import { Download, File, FileText, Play, RefreshCcw, Table2, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import type { PendingAttachment } from '../lib/use-file-attachments';
 import type { MessageAttachment } from '../lib/types';
@@ -47,6 +47,24 @@ function isImageAttachment(mimeType: string, fileName: string): boolean {
   return mimeType.startsWith('image/') || /\.(?:avif|bmp|gif|heic|heif|ico|jpe?g|png|svg|webp)$/iu.test(fileName);
 }
 
+function isVideoAttachment(mimeType: string, fileName: string): boolean {
+  return mimeType.startsWith('video/') || /\.(?:m4v|mkv|mov|mp4|webm)$/iu.test(fileName);
+}
+
+function pendingFileKind(mimeType: string, fileName: string): 'markdown' | 'spreadsheet' | 'text' | 'generic' {
+  if (mimeType === 'text/markdown' || /\.(?:md|mdown|markdown)$/iu.test(fileName)) return 'markdown';
+  if (mimeType === 'text/csv' || /\.(?:csv|numbers|ods|tsv|xls|xlsx)$/iu.test(fileName)) return 'spreadsheet';
+  if (mimeType.startsWith('text/') || /\.(?:log|rtf|text|txt)$/iu.test(fileName)) return 'text';
+  return 'generic';
+}
+
+function PendingFileIcon({ kind }: { kind: ReturnType<typeof pendingFileKind> }): React.JSX.Element {
+  if (kind === 'markdown') return <span aria-hidden="true" className="attachment-markdown-glyph">M↧</span>;
+  if (kind === 'spreadsheet') return <Table2 aria-hidden="true" size={19} />;
+  if (kind === 'text') return <FileText aria-hidden="true" size={19} />;
+  return <File aria-hidden="true" size={19} />;
+}
+
 async function downloadAttachment(name: string, loadContent: (signal?: AbortSignal) => Promise<Blob>): Promise<void> {
   const blob = await loadContent();
   const url = URL.createObjectURL(blob);
@@ -82,11 +100,13 @@ export function PendingAttachmentTile({ actionsDisabled = false, attachment, onO
   onRetry: () => void;
 }): React.JSX.Element {
   const image = isImageAttachment(attachment.file.type, attachment.file.name) && attachment.previewUrl;
+  const video = isVideoAttachment(attachment.file.type, attachment.file.name) && attachment.previewUrl;
   const fileName = splitFileName(attachment.file.name);
-  if (!image) {
+  if (!image && !video) {
+    const kind = pendingFileKind(attachment.file.type, attachment.file.name);
     return (
       <div className={clsx('attachment-file-card', 'is-pending', attachment.status === 'failed' && 'is-failed')} title={attachment.file.name}>
-        <span className="attachment-file-icon"><File aria-hidden="true" size={19} /></span>
+        <span className={clsx('attachment-file-icon', `is-${kind}`)}><PendingFileIcon kind={kind} /></span>
         <span className="attachment-file-details">
           <span className="attachment-file-name"><span>{fileName.base}</span><span>{fileName.suffix}</span></span>
           <span className="attachment-file-meta">{formatAttachmentSize(attachment.file.size)}</span>
@@ -100,14 +120,16 @@ export function PendingAttachmentTile({ actionsDisabled = false, attachment, onO
     );
   }
   return (
-    <div className={clsx('attachment-tile', attachment.status === 'failed' && 'is-failed')} title={attachment.file.name}>
+    <div className={clsx('attachment-tile', video && 'is-video', attachment.status === 'failed' && 'is-failed')} title={attachment.file.name}>
       <button
         aria-label={`Preview ${attachment.file.name}`}
         className="attachment-tile-content"
         onClick={(event) => onOpen({ name: attachment.file.name, mimeType: attachment.file.type, src: attachment.previewUrl!, returnFocus: event.currentTarget })}
         type="button"
       >
-        <img alt="" src={attachment.previewUrl} />
+        {image
+          ? <img alt="" src={attachment.previewUrl} />
+          : <><video aria-hidden="true" muted playsInline preload="metadata" src={attachment.previewUrl} /><span className="attachment-video-play"><Play aria-hidden="true" fill="currentColor" size={18} /></span></>}
       </button>
       {attachment.status === 'uploading' && <ProgressRing progress={attachment.progress} />}
       {attachment.status === 'failed' && (
