@@ -14,7 +14,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { asSubstreamId } from "@rally/contracts";
 
-import { substreamAgentName } from "../src/durable-objects/names";
+import { conversationObjectName } from "../src/durable-objects/names";
 import {
   LOOP_ID,
   USER_ID,
@@ -58,7 +58,7 @@ function agent(): DurableObjectStub {
     `00000000-0000-7000-8000-${String(unique).padStart(12, "0")}`,
   );
   return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
-    substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID, substreamId),
+    conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID, substreamId),
   ));
 }
 
@@ -122,7 +122,7 @@ describe("admitting a subordinate execution receipt", () => {
     });
 
     await expect(activate(stub, runInput(RUN_A, {
-      workstreamId: "00000000-0000-7000-8000-0000000004ff",
+      parentId: "00000000-0000-7000-8000-0000000004ff",
     }))).resolves.toMatchObject({
       status: 409,
       payload: { error: "substream_run_identity_mismatch" },

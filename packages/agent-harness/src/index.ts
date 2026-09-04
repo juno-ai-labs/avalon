@@ -11,6 +11,8 @@ import type {
 import {
   AddressingClassificationSchema,
   AutomationSetEvaluatorRulesInputV1Schema,
+  isSentinelAutomationResourceId,
+  withoutUnusableAutomationResourceIds,
   AutomationDraftSchema,
   type AutomationDraft,
 } from "@rally/contracts";
@@ -2039,6 +2041,10 @@ const automationDraftSubmissionJsonSchema = {
   type: "object",
   additionalProperties: false,
   properties: {
+    automationId: {
+      type: ["string", "null"],
+      description: "The id of an automation this conversation already owns, from automations_list, to replace its definition with this draft. Null creates a new automation. In an automation's own conversation the draft always goes to that automation."
+    },
     name: { type: "string" },
     description: { type: "string" },
     overview: { type: "string" },
@@ -2430,6 +2436,7 @@ export function executeAutomationCreatorDiscoveryTool(
           label: trigger.label,
           description: trigger.description,
           filterFields: trigger.filterFields,
+          ...(trigger.openFilterFields ? { openFilterFields: true } : {}),
         })),
       },
     } : { error: "plugin_not_found", pluginId };
@@ -2457,9 +2464,33 @@ export function parseAutomationSubmission(raw: unknown): z.ZodSafeParseResult<Au
   return AutomationDraftSchema.safeParse(normalizeAutomationDraft(raw));
 }
 
+/**
+ * Which existing automation a submission names, if any.
+ *
+ * Carried beside the draft rather than inside it: the draft is the definition
+ * an automation stores, and the target is the address it is stored at.
+ */
+export function automationSubmissionTarget(raw: unknown): string | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const target = (raw as Record<string, unknown>).automationId;
+  if (typeof target !== "string") return null;
+  const trimmed = target.trim();
+  // The same fill-every-property habit that put a placeholder in a rule's
+  // resourceId puts one here: a slash, a nil UUID, a word. None of those names
+  // an automation, and handing one to the directory lookup threw from inside
+  // the object as a bare schema error the model could not act on. Only a
+  // well-formed id that is not a placeholder is a target; anything else is
+  // "no target", which creates a new automation the way an omitted field does.
+  if (!UUID_TARGET_PATTERN.test(trimmed) || isSentinelAutomationResourceId(trimmed)) return null;
+  return trimmed;
+}
+
+const UUID_TARGET_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
+
 function normalizeAutomationDraft(value: unknown): unknown {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
-  const draft = value as Record<string, unknown>;
+  const draft = { ...(value as Record<string, unknown>) };
+  delete draft.automationId;
   const triggers = Array.isArray(draft.triggers)
     ? draft.triggers.map((trigger) => normalizeAutomationTrigger(trigger))
     : draft.triggers;
@@ -2764,8 +2795,49 @@ const requestElicitationInputJsonSchema = memoizedValue(
   () => z.toJSONSchema(RequestElicitationInputSchema) as Record<string, unknown>,
 );
 const automationEvaluatorRulesJsonSchema = memoizedValue(
-  () => z.toJSONSchema(AutomationSetEvaluatorRulesInputV1Schema) as Record<string, unknown>,
+  () => withoutSentinelIdAlternatives(
+    z.toJSONSchema(AutomationSetEvaluatorRulesInputV1Schema),
+  ) as Record<string, unknown>,
 );
+
+const SENTINEL_ID_ALTERNATIVES = "|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff";
+
+/**
+ * The id pattern Zod emits for a UUID admits the nil and max UUIDs as
+ * alternatives. A model reading that pattern takes them as legal values and
+ * fills an optional id with one rather than leaving it out; every id in a rule
+ * names something real, so the tool's schema stops advertising them.
+ */
+function withoutSentinelIdAlternatives(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(withoutSentinelIdAlternatives);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, entry]) => [
+    key,
+    key === "pattern" && typeof entry === "string"
+      ? entry.replace(SENTINEL_ID_ALTERNATIVES, "")
+      : withoutSentinelIdAlternatives(entry),
+  ]));
+}
+
+/**
+ * Drop a rule's `resourceId` where it cannot mean anything, against the
+ * drafting catalog.
+ *
+ * The rule is the contract's (`withoutUnusableAutomationResourceIds`): a
+ * sentinel id, or an id on a trigger that declares no resource relationship,
+ * is noise the model added to an optional field rather than a reference to
+ * look up. Applied at both places a rule enters the draft: the tool call, and
+ * the receipt replay that rebuilds the draft state on a later turn.
+ */
+export function withoutUnusableDraftResourceIds(
+  raw: unknown,
+  catalog: readonly Pick<AutomationCreatorPluginCatalogEntry, "pluginId" | "activityTriggers">[],
+): unknown {
+  return withoutUnusableAutomationResourceIds(
+    raw,
+    (pluginId) => catalog.find((entry) => entry.pluginId === pluginId)?.activityTriggers,
+  );
+}
 
 export const AVALON_REQUEST_ELICITATION_TOOL_DEFINITION = {
   name: "request_elicitation",
@@ -2860,6 +2932,14 @@ export const AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS = [
     get inputSchema() {
       return automationEvaluatorRulesJsonSchema();
     },
+  },
+  {
+    name: "automations_list",
+    description: "List the automations this conversation can edit, each with its current definition: in a work stream, the ones the room owns; in an automation's own conversation, that automation. Start an edit from the definition returned here and submit the whole revised draft with its automationId.",
+    capability: "rally.automation.list",
+    mode: "read",
+    idempotency: "safe",
+    inputSchema: { type: "object", additionalProperties: false, properties: {} },
   },
   {
     name: "submit_draft",
@@ -3394,6 +3474,13 @@ export interface RunHarnessInput {
 
 export interface HarnessOutcome {
   status: "completed" | "needs_input" | "failed" | "stopped";
+  /**
+   * The run ended because a tool said the work was done (`halt: "completed"`),
+   * not because the model wrote a final answer. The host reads a completed
+   * outcome with no final text as a failure otherwise, since a model that
+   * stops talking mid-task has failed; a tool that ends the run has not.
+   */
+  completedByTool?: true;
   content: string;
   model: string | null;
   iterations: number;

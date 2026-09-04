@@ -17,7 +17,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { asSubstreamId } from "@rally/contracts";
 
-import { substreamAgentName } from "../src/durable-objects/names";
+import { conversationObjectName } from "../src/durable-objects/names";
 import { SubstreamLoopStorage } from "../src/durable-objects/substream-loop-storage";
 import type { WorkstreamObjectProductService } from "../src/durable-objects/workstream-object-product";
 import {
@@ -52,7 +52,7 @@ function substreamStub(): DurableObjectStub {
   const substreamId = asSubstreamId(
     `00000000-0000-7000-8000-${String(unique).padStart(12, "0")}`,
   );
-  const name = substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID, substreamId);
+  const name = conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID, substreamId);
   const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(name));
   testStubs.push(stub);
   return stub;

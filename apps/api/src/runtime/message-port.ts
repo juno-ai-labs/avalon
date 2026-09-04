@@ -35,6 +35,8 @@ export function createMessageObjectPort(
   workspaceId: string,
   workstreamId: string,
   localStorage?: WorkstreamMessageStorage,
+  /** Which of the parent's conversations; the main one by default. */
+  substreamId?: string,
 ): MessageObjectPort {
-  return createObjectPort(env, workspaceId, workstreamId, CONTRACT, localStorage);
+  return createObjectPort(env, workspaceId, workstreamId, CONTRACT, localStorage, substreamId);
 }

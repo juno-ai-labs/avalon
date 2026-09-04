@@ -42,6 +42,8 @@ export function createSchedulingObjectPort(
   workstreamId: string,
   /** The same in-isolate seam the other durable runtime ports take. */
   localStorage?: WorkstreamSchedulingStorage,
+  /** Which of the parent's conversations; the main one by default. */
+  substreamId?: string,
 ): SchedulingObjectPort {
   return createObjectPort(
     env,
@@ -49,5 +51,6 @@ export function createSchedulingObjectPort(
     workstreamId,
     CONTRACT,
     localStorage,
+    substreamId,
   );
 }

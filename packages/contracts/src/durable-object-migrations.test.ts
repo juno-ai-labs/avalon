@@ -121,37 +121,9 @@ describe("DurableObjectMigrationCommandSchema", () => {
       .safeParse({ ...command, objectName: null }).success).toBe(true);
   });
 
-  it("accepts only a correctly named WorkspaceDO automation cutover", () => {
-    const cutover = {
-      ...command,
-      automationCutover: {
-        workspaceId: "00000000-0000-7000-8000-0000000000a1",
-        expectedDraftIds: ["00000000-0000-7000-8000-0000000000d1"],
-      },
-    };
-    expect(DurableObjectMigrationCommandSchema.safeParse(cutover).success).toBe(true);
-    expect(DurableObjectMigrationCommandSchema.safeParse({
-      ...cutover,
-      objectId: null,
-      automationCutover: { workspaceId: cutover.automationCutover.workspaceId },
-    }).success).toBe(true);
+  it("requires an object ID", () => {
     expect(DurableObjectMigrationCommandSchema.safeParse({ ...command, objectId: null }).success).toBe(false);
-    expect(DurableObjectMigrationCommandSchema.safeParse({
-      ...cutover,
-      className: "SubstreamAgent",
-    }).success).toBe(false);
-    expect(DurableObjectMigrationCommandSchema.safeParse({
-      ...cutover,
-      objectName: "global:00000000-0000-7000-8000-0000000000ff",
-    }).success).toBe(false);
   });
-
-  /**
-   * A command crosses the same regional boundary a report does and clears the
-   * same bar. The name is carried for a log line only, so the day a Durable
-   * Object name grows a workspace slug this stops carrying it rather than
-   * quietly shipping it.
-   */
   it("refuses a name that is not opaque", () => {
     expect(DurableObjectMigrationCommandSchema
       .safeParse({ ...command, objectName: "eu:acme-corporation:payroll" }).success).toBe(false);

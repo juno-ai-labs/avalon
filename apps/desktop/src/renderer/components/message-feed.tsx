@@ -40,10 +40,6 @@ interface MessageFeedProps {
   messages: readonly Message[];
   onAnswerElicitation: (elicitationId: string, answer: string | string[] | null, customResponse?: string) => Promise<void>;
   onOpenAttachment?: (preview: AttachmentPreview) => void;
-  /** Takes over an automation whose principal lost access; see its card. */
-  onClaimExecutionPrincipal?: (automationId: string) => void;
-  claimingExecutionPrincipalFor?: string | null;
-  claimExecutionPrincipalError?: string | undefined;
   /** Creates the automation a proposal card names; see its card. */
   onAcceptDraft?: (automationId: string) => void;
   acceptingDraftFor?: string | null;
@@ -94,9 +90,6 @@ export function MessageFeed({
   messages,
   onAnswerElicitation,
   onOpenAttachment,
-  onClaimExecutionPrincipal,
-  claimingExecutionPrincipalFor,
-  claimExecutionPrincipalError,
   onAcceptDraft,
   acceptingDraftFor,
   acceptDraftError,
@@ -136,9 +129,6 @@ export function MessageFeed({
           onAnswerElicitation={onAnswerElicitation}
           onOpenAttachment={onOpenAttachment}
           rowDisclosure={rowDisclosure}
-          {...(onClaimExecutionPrincipal ? { onClaimExecutionPrincipal } : {})}
-          claimingExecutionPrincipalFor={claimingExecutionPrincipalFor ?? null}
-          claimExecutionPrincipalError={claimExecutionPrincipalError}
           {...(onAcceptDraft ? { onAcceptDraft } : {})}
           acceptingDraftFor={acceptingDraftFor ?? null}
           acceptDraftError={acceptDraftError}

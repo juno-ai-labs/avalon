@@ -26,6 +26,7 @@ export interface IdentityRow extends Record<string, SqlStorageValue> {
   exact_state: string;
   state_reason_code: string;
   origin_type: string;
+  parent_kind: string;
   system_kind: string | null;
   created_by_user_id: string | null;
   automation_subscription_id: string | null;
@@ -60,7 +61,6 @@ export interface WorkstreamProvisionInput {
   title: string;
   objective: string;
   scope: string;
-  originType: string;
   createdByUserId: string | null;
   participantUserIds: readonly string[];
   harnessStatus: string;
@@ -68,9 +68,6 @@ export interface WorkstreamProvisionInput {
   emailAddress: string | null;
   emailRouteStatus: string | null;
   systemKind: string | null;
-  automationSubscriptionId: string | null;
-  automationRunId: string | null;
-  plannedFor: number | null;
   modelOverride: string | null;
   now: number;
 }
@@ -103,7 +100,7 @@ export class WorkstreamIdentityStorage {
   identity(): IdentityRow | undefined {
     return first(this.sql.exec<IdentityRow>(
       `SELECT workstream_key, parent_workspace_key, title, description, description_source,
-              title_status, scope, exact_state, state_reason_code, origin_type, system_kind,
+              title_status, scope, exact_state, state_reason_code, origin_type, parent_kind, system_kind,
               created_by_user_id, automation_subscription_id, automation_run_id,
               created_from_opportunity_id, planned_for, email_address, email_route_status,
               model_override, archived_at, created_at, updated_at
@@ -209,29 +206,6 @@ export class WorkstreamIdentityStorage {
     });
   }
 
-  /**
-   * Note which automation run this work stream is carrying, and that it began.
-   *
-   * The schedule executor's write, after the run it just launched. `running`
-   * is stamped the way the retired `_runtime_workstreams` update trigger did
-   * it — only on a move, leaving `state_reason_code` and `state_changed_at`
-   * alone when the work stream is already there.
-   */
-  bindAutomationRun(input: { automationRunId: string; now: number }): void {
-    this.sql.exec(
-      `UPDATE workstream
-          SET automation_run_id = ?1,
-              state_reason_code = CASE WHEN exact_state = 'running'
-                THEN state_reason_code ELSE 'runtime_running' END,
-              state_changed_at = CASE WHEN exact_state = 'running'
-                THEN state_changed_at ELSE ?2 END,
-              exact_state = 'running',
-              updated_at = ?2
-        WHERE id = 1`,
-      input.automationRunId,
-      input.now,
-    );
-  }
 
   /**
    * Give the work stream the name a pass settled on, if that pass still holds.
@@ -557,7 +531,7 @@ export class WorkstreamIdentityStorage {
         : "idle";
       this.sql.exec(
         `UPDATE workstream
-            SET title = ?, description = ?, scope = ?, origin_type = ?,
+            SET title = ?, description = ?, scope = ?,
                 created_by_user_id = ?, system_kind = ?,
                 -- Preserved when the producer has no route to write. The
                 -- digest and activity batches never named these columns, so
@@ -566,8 +540,7 @@ export class WorkstreamIdentityStorage {
                 -- rather than leave the column alone.
                 email_address = COALESCE(?, email_address),
                 email_route_status = COALESCE(?, email_route_status),
-                automation_subscription_id = ?,
-                automation_run_id = ?, planned_for = ?, model_override = ?,
+                model_override = ?,
                 exact_state = ?, state_reason_code = ?, title_status = ?,
                 description_source = 'derived', listing_epoch = listing_epoch + 1,
                 created_at = ?, last_people_activity_at = ?, state_changed_at = ?,
@@ -576,14 +549,10 @@ export class WorkstreamIdentityStorage {
         input.title,
         input.objective,
         input.scope,
-        input.originType,
         input.createdByUserId,
         input.systemKind,
         input.emailAddress,
         input.emailRouteStatus,
-        input.automationSubscriptionId,
-        input.automationRunId,
-        input.plannedFor,
         input.modelOverride,
         exactState,
         exactState === "idle" ? "provisioned" : `run_${exactState}`,

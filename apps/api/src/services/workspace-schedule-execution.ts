@@ -22,13 +22,11 @@ import {
   RegionSchema,
   asWorkspaceId,
   type ConnectorPollWorkflowInput,
-  type Workstream,
 } from "@rally/contracts";
 import { newId } from "@rally/db";
 
 import type { Env } from "../env";
 import type {
-  WorkspaceDirectoryPlannedAutomationRequest,
   WorkspaceDirectoryScheduleTargetsRequest,
   WorkspaceDirectoryScheduleTargetsResult,
 } from "../durable-objects/workspace-directory-protocol";
@@ -70,7 +68,6 @@ import { createHarnessRunPortFactory } from "../runtime/harness-run-port";
  * passes its stub. Typed structurally so neither side has to import the other.
  */
 export interface WorkspaceScheduleDirectory {
-  plannedAutomationWorkstream(input: WorkspaceDirectoryPlannedAutomationRequest): Promise<Workstream | null>;
   workstreamScheduleTargets(
     input: WorkspaceDirectoryScheduleTargetsRequest,
   ): Promise<WorkspaceDirectoryScheduleTargetsResult>;

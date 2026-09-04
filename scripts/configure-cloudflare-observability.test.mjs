@@ -12,13 +12,12 @@ import {
 } from "./configure-cloudflare-observability.mjs";
 
 test("saved views cover both regional APIs and every documented failure mode", () => {
-  assert.equal(SAVED_QUERY_DEFINITIONS.length, 9);
+  assert.equal(SAVED_QUERY_DEFINITIONS.length, 8);
   assert.deepEqual(
     SAVED_QUERY_DEFINITIONS.map((definition) => definition.name),
     [
       "Avalon · Failures",
       "Avalon · Invalid model output",
-      "Avalon · Slow inference",
       "Avalon · Degraded connector workflows",
       "Avalon · Rejected model calls",
       "Avalon · Broken response contracts",
@@ -64,22 +63,21 @@ test("saved-query assessment reports every missing, stale, and duplicated defini
   assert.deepEqual(assessment.verified.map((definition) => definition.name), [
     "Avalon · Failures",
     "Avalon · Invalid model output",
-    "Avalon · Slow inference",
     "Avalon · Degraded connector workflows",
+    "Avalon · Rejected model calls",
   ]);
   assert.deepEqual(assessment.differences.map((difference) => ({
     kind: difference.kind,
     name: difference.definition.name,
   })), [
-    { kind: "stale", name: "Avalon · Rejected model calls" },
-    { kind: "duplicated", name: "Avalon · Broken response contracts" },
-    { kind: "missing", name: "Avalon · Harness run outcomes" },
+    { kind: "stale", name: "Avalon · Broken response contracts" },
+    { kind: "duplicated", name: "Avalon · Harness run outcomes" },
     { kind: "missing", name: "Avalon · Slow root runs" },
     { kind: "missing", name: "Avalon · Slow Terminal bootstrap" },
   ]);
 });
 
-test("saved-query assessment exposes all five production-style missing definitions", () => {
+test("saved-query assessment exposes every production-style missing definition", () => {
   const assessment = assessSavedQueries(
     SAVED_QUERY_DEFINITIONS.slice(0, 4).map((definition) => structuredClone(definition)),
   );

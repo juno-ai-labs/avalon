@@ -77,7 +77,10 @@ export function objectPortRequestSchema<TOperation extends string>(
 ) {
   return z.strictObject({
     workspaceId: z.string().uuid(),
+    /** The conversation parent's id, of either kind; the field predates typed parents. */
     workstreamId: z.string().uuid(),
+    /** Which of the parent's conversations; absent means the main one. */
+    substreamId: z.union([z.literal("0"), z.string().uuid()]).optional(),
     operation: z.string().min(1).max(64).refine(isOperation, {
       message: unknownOperationMessage,
     }),

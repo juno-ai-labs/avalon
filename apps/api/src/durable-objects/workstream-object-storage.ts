@@ -1,27 +1,26 @@
+import { ConversationParentKindSchema, type ConversationParentKind } from "@rally/contracts/conversation-parent";
 import {
   AgentCompactionStateSchema,
   ActiveStreamCheckpointsSchema,
   ServerSocketEventSchema,
   asWorkspaceId,
-  asWorkstreamId,
   type AgentCompactionState,
   type ActiveStreamCheckpoint,
   type ServerSocketEvent,
   type WorkspaceId,
-  type WorkstreamId,
 } from "@rally/contracts";
 import { z } from "zod";
 
 import { uuidV7 } from "../lib/uuid-v7";
 import { applyWorkstreamObjectSchema } from "./workstream-object-schema";
 import {
-  WorkstreamRegionalEffectSchema,
-  WorkstreamRegionalEffectEnvelopeSchema,
+  ConversationEffectEnvelopeSchema,
+  ConversationEffectSchema,
+  conversationEffectHash,
   isPersonNotificationEffect,
-  workstreamRegionalEffectHash,
-  type WorkstreamRegionalEffect,
-  type WorkstreamRegionalEffectEnvelope,
-} from "./workstream-regional-effect";
+  type ConversationEffect,
+  type ConversationEffectEnvelope,
+} from "@rally/contracts/conversation-effects";
 import {
   acknowledgeSemanticRealtimeReference,
   deferSemanticRealtimeReference,
@@ -33,8 +32,6 @@ import {
 const ACTIVE_OUTPUT_CHUNK_MAX_BYTES = 60 * 1024;
 const SOCKET_TICKET_RECEIPT_RETENTION_MS = 5 * 60_000;
 const REGIONAL_EFFECT_CHANNEL = "regional_effect_v1";
-const REGIONAL_EFFECT_RETRY_BASE_MS = 5_000;
-const REGIONAL_EFFECT_RETRY_MAX_MS = 5 * 60_000;
 
 interface RealtimeStateRow extends Record<string, SqlStorageValue> {
   event_sequence: number;
@@ -81,6 +78,7 @@ interface ProjectionKeyRow extends Record<string, SqlStorageValue> {
 interface AuthorityRow extends Record<string, SqlStorageValue> {
   workstream_key: string;
   parent_workspace_key: string;
+  parent_kind: ConversationParentKind;
   region: "global" | "eu";
   authority_mode: string;
   authority_generation: number;
@@ -88,7 +86,7 @@ interface AuthorityRow extends Record<string, SqlStorageValue> {
 
 export interface RegionalEffectCommand {
   partitionKey: string;
-  effect: WorkstreamRegionalEffect;
+  effect: ConversationEffect;
   /** Required for immutable activity/notification effects. */
   sourceVersion?: number;
   /** Stable across retries; required for immutable activity/notification effects. */
@@ -97,9 +95,17 @@ export interface RegionalEffectCommand {
   dependsOnProjectionKey?: string;
 }
 
+/**
+ * What this conversation object is: the workspace it lives in and the parent
+ * it belongs to. `parentId` is stored in the root row's `workstream_key`
+ * column (the name predates typed parents and is held by released migration
+ * text); `parentKind` says whether that id names a work stream or an
+ * automation.
+ */
 export interface WorkstreamObjectIdentity {
   workspaceId: WorkspaceId;
-  workstreamId: WorkstreamId;
+  parentKind: ConversationParentKind;
+  parentId: string;
 }
 
 function first<T extends Record<string, SqlStorageValue>>(
@@ -412,13 +418,18 @@ function insertIdentity(
   region: "global" | "eu",
   now: number,
 ): void {
-  const existing = first(storage.sql.exec<{ workstream_key: string; parent_workspace_key: string }>(
-    `SELECT workstream_key, parent_workspace_key FROM workstream WHERE id = 1`,
+  const existing = first(storage.sql.exec<{
+    workstream_key: string;
+    parent_workspace_key: string;
+    parent_kind: string;
+  }>(
+    `SELECT workstream_key, parent_workspace_key, parent_kind FROM workstream WHERE id = 1`,
   ));
   if (existing) {
     if (
-      existing.workstream_key !== identity.workstreamId
+      existing.workstream_key !== identity.parentId
       || existing.parent_workspace_key !== identity.workspaceId
+      || existing.parent_kind !== identity.parentKind
     ) {
       throw new Error("workstream_object_identity_mismatch");
     }
@@ -432,15 +443,16 @@ function insertIdentity(
     // automation inserts — say so in their own SQL.
     storage.sql.exec(
       `INSERT INTO workstream
-         (id, workstream_key, parent_workspace_key, parent_do_id, parent_generation,
+         (id, workstream_key, parent_kind, parent_workspace_key, parent_do_id, parent_generation,
           region, authority_mode, title, description, preview, scope, exact_state,
           state_reason_code, next_sequence_number, next_attention_ordinal,
           authority_epoch, scope_epoch, source_authorization_floor, listing_epoch,
           deletion_epoch, run_revision, created_at, last_people_activity_at,
           state_changed_at, completed_at, updated_at)
-       VALUES (1, ?, ?, NULL, 0, ?, 'preparing', '', '', '', 'personal', 'restoring',
+       VALUES (1, ?, ?, ?, NULL, 0, ?, 'preparing', '', '', '', 'personal', 'restoring',
                'awaiting_authoritative_import', 1, 1, 0, 0, 0, 0, 0, 0, ?, ?, ?, NULL, ?)`,
-      identity.workstreamId,
+      identity.parentId,
+      identity.parentKind,
       identity.workspaceId,
       region,
       now,
@@ -486,11 +498,19 @@ export class WorkstreamObjectStore {
   }
 
   identity(): WorkstreamObjectIdentity | null {
-    const row = first(this.storage.sql.exec<{ workstream_key: string; parent_workspace_key: string }>(
-      `SELECT workstream_key, parent_workspace_key FROM workstream WHERE id = 1`,
+    const row = first(this.storage.sql.exec<{
+      workstream_key: string;
+      parent_workspace_key: string;
+      parent_kind: string;
+    }>(
+      `SELECT workstream_key, parent_workspace_key, parent_kind FROM workstream WHERE id = 1`,
     ));
     if (!row) return null;
-    return { workstreamId: asWorkstreamId(row.workstream_key), workspaceId: asWorkspaceId(row.parent_workspace_key) };
+    return {
+      parentKind: ConversationParentKindSchema.parse(row.parent_kind),
+      parentId: row.workstream_key,
+      workspaceId: asWorkspaceId(row.parent_workspace_key),
+    };
   }
 
   databaseSize(): number {
@@ -656,26 +676,33 @@ export class WorkstreamObjectStore {
   }
 
   /**
-   * Enqueue regional effects inside a caller-owned SQLite transaction.
+   * Enqueue effects for this conversation's parent inside a caller-owned SQLite
+   * transaction.
    *
    * This is intentionally synchronous: transcript promotion uses it before
    * its canonical turn and pending-input state can commit. The caller remains
    * responsible for arming the object alarm after the outer transaction; the
    * outbox row is the durable authority and activation recovery also sees it.
+   * The envelope names the parent by kind and id and this substream by id, so
+   * the Queue consumer that carries it needs nothing but the message.
    */
   enqueueEffectsInCurrentTransaction(commands: readonly RegionalEffectCommand[]): number {
     const authority = first(this.storage.sql.exec<AuthorityRow>(
-      `SELECT workstream_key, parent_workspace_key, region, authority_mode, authority_generation
+      `SELECT workstream_key, parent_workspace_key, parent_kind, region, authority_mode,
+              authority_generation
          FROM workstream WHERE id = 1`,
     ));
     if (!authority || authority.authority_mode !== "authoritative"
       || authority.authority_generation <= 0) {
       throw new Error("workstream_regional_effect_authority_fenced");
     }
+    const substreamId = first(this.storage.sql.exec<{ external_substream_id: string }>(
+      `SELECT external_substream_id FROM substream_agent_identity WHERE id = 1`,
+    ))?.external_substream_id ?? "0";
     const messageIds = commands.map(() => uuidV7());
     let enqueued = 0;
     for (const [index, command] of commands.entries()) {
-      const effect = WorkstreamRegionalEffectSchema.parse(command.effect);
+      const effect = ConversationEffectSchema.parse(command.effect);
       const projectionKey = effect.kind === "directory_common"
         ? "common"
         : effect.kind === "directory_user"
@@ -684,7 +711,7 @@ export class WorkstreamObjectStore {
       let sourceVersion: number;
       let messageId: string;
       let requiredProjectionVersion: number | null = null;
-      let payloadHash = workstreamRegionalEffectHash(effect);
+      let payloadHash = conversationEffectHash(effect);
 
       if (projectionKey) {
         const previous = first(this.storage.sql.exec<ProjectionKeyRow>(
@@ -729,18 +756,20 @@ export class WorkstreamObjectStore {
           if (requiredProjectionVersion <= 0) {
             throw new Error("workstream_notification_projection_dependency_uncommitted");
           }
-          payloadHash = workstreamRegionalEffectHash(effect, requiredProjectionVersion);
+          payloadHash = conversationEffectHash(effect, requiredProjectionVersion);
         } else if (command.dependsOnProjectionKey !== undefined) {
           throw new Error("workstream_regional_effect_dependency_not_supported");
         }
       }
 
-      const envelope = WorkstreamRegionalEffectEnvelopeSchema.parse({
-        kind: "workstream_regional_effect",
+      const envelope = ConversationEffectEnvelopeSchema.parse({
+        kind: "conversation_effect",
         contractVersion: 1,
         region: authority.region,
         workspaceId: authority.parent_workspace_key,
-        workstreamId: authority.workstream_key,
+        parentKind: authority.parent_kind,
+        parentId: authority.workstream_key,
+        substreamId,
         generation: authority.authority_generation,
         messageId,
         partitionKey: projectionKey ?? command.partitionKey,
@@ -805,7 +834,7 @@ export class WorkstreamObjectStore {
     return committed;
   }
 
-  dueRegionalEffects(now = Date.now(), limit = 10): WorkstreamRegionalEffectEnvelope[] {
+  dueRegionalEffects(now = Date.now(), limit = 10): ConversationEffectEnvelope[] {
     const rows = this.storage.sql.exec<RegionalEffectOutboxRow>(
       `SELECT message_id, payload_json, payload_hash, attempts
          FROM durable_outbox
@@ -823,7 +852,7 @@ export class WorkstreamObjectStore {
       Math.max(1, Math.min(limit, 100)),
     ).toArray();
     return rows.map((row) => {
-      const parsed = WorkstreamRegionalEffectEnvelopeSchema.parse(JSON.parse(row.payload_json));
+      const parsed = ConversationEffectEnvelopeSchema.parse(JSON.parse(row.payload_json));
       if (parsed.messageId !== row.message_id || parsed.payloadHash !== row.payload_hash) {
         throw new Error("workstream_regional_effect_outbox_corrupt");
       }
@@ -831,55 +860,8 @@ export class WorkstreamObjectStore {
     });
   }
 
-  regionalEffect(messageId: string, payloadHash: string): WorkstreamRegionalEffectEnvelope | null {
-    const row = first(this.storage.sql.exec<RegionalEffectOutboxRow>(
-      `SELECT message_id, payload_json, payload_hash, attempts
-         FROM durable_outbox
-        WHERE channel = ? AND message_id = ? AND payload_hash = ?
-          AND state IN ('pending', 'inflight')`,
-      REGIONAL_EFFECT_CHANNEL,
-      messageId,
-      payloadHash,
-    ));
-    if (!row) return null;
-    const parsed = WorkstreamRegionalEffectEnvelopeSchema.parse(JSON.parse(row.payload_json));
-    if (parsed.messageId !== row.message_id || parsed.payloadHash !== row.payload_hash) {
-      throw new Error("workstream_regional_effect_outbox_corrupt");
-    }
-    return parsed;
-  }
-
-  markRegionalEffectsQueued(messages: readonly WorkstreamRegionalEffectEnvelope[]): void {
-    const now = Date.now();
-    this.storage.transactionSync(() => {
-      for (const message of messages) {
-        const row = first(this.storage.sql.exec<{ attempts: number }>(
-          `SELECT attempts FROM durable_outbox
-            WHERE message_id = ? AND payload_hash = ? AND state IN ('pending', 'inflight')`,
-          message.messageId,
-          message.payloadHash,
-        ));
-        if (!row) continue;
-        const attempts = row.attempts + 1;
-        const delay = Math.min(
-          REGIONAL_EFFECT_RETRY_MAX_MS,
-          REGIONAL_EFFECT_RETRY_BASE_MS * 2 ** Math.min(attempts - 1, 6),
-        );
-        this.storage.sql.exec(
-          `UPDATE durable_outbox
-              SET state = 'inflight', attempts = ?, not_before = ?
-            WHERE message_id = ? AND payload_hash = ?`,
-          attempts,
-          now + delay,
-          message.messageId,
-          message.payloadHash,
-        );
-      }
-    });
-  }
-
   deferRegionalEffects(
-    messages: readonly WorkstreamRegionalEffectEnvelope[],
+    messages: readonly ConversationEffectEnvelope[],
     notBefore: number,
   ): void {
     this.storage.transactionSync(() => {
@@ -898,7 +880,8 @@ export class WorkstreamObjectStore {
     });
   }
 
-  acknowledgeRegionalEffect(messageId: string, payloadHash: string): boolean {
+  /** Drop one outbox row the Queue has taken; from here retry is the Queue's. */
+  deleteRegionalEffect(messageId: string, payloadHash: string): boolean {
     return this.storage.sql.exec<{ message_id: string }>(
       `DELETE FROM durable_outbox
         WHERE channel = ? AND message_id = ? AND payload_hash = ?

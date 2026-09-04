@@ -144,19 +144,33 @@ function environment(database: DatabaseSync): {
           };
         },
       },
-      extra: { flushEffectsToWorkstreamDO: vi.fn(async () => ({ status: 200, bodyJson: "{}" })) },
     }),
     WORKSTREAM_DOS: testSubstreamAgentsBinding(database, {
-      extra: { flushWorkspaceDirectoryEffects: vi.fn(async () => ({ status: 200, bodyJson: "{}" })) },
+      extra: { reserveChild: parentReserveChild() },
     }),
     WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
       extra: {
-        hasWorkstreamDirectory: vi.fn(async () => true),
         opportunityOriginEvents: vi.fn(async () => []),
       },
     }),
   });
   return { env, initializeInputs };
+}
+
+/**
+ * The parent's half of a create.
+ *
+ * `WorkstreamObjectCreationService` reserves the main conversation on the
+ * parent object before the child is initialized, and the real `reserveChild`
+ * answers with the generation the parent is at. Nothing in this file asserts on
+ * the reservation, but a create that cannot make it never reaches `initialize`,
+ * which is what these tests read.
+ */
+function parentReserveChild() {
+  return vi.fn(async (input: { authorityGeneration: number }) => ({
+    reserved: true as const,
+    authorityGeneration: input.authorityGeneration,
+  }));
 }
 
 function createInput(overrides: Record<string, unknown> = {}) {

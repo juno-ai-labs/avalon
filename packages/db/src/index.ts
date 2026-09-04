@@ -1,5 +1,4 @@
 import type {
-  AutomationSummary,
   ExternalActor,
   Scope,
 } from "@rally/contracts";
@@ -196,41 +195,10 @@ export function createDatabase(db: D1DatabaseLike) {
   // through `_runtime_workstreams`, `_runtime_workstream_participants` and
   // `_runtime_messages`, and `addParticipant` wrote the participant view; each
   // is an operation on the work stream's own authority now, reached from
-  // `apps/api` where the object ports live. This module keeps the tables D1
-  // still owns.
-  const automations = {
-    async list(workspaceId: string): Promise<AutomationSummary[]> {
-      const result = await db
-        .prepare(
-          `SELECT s.id, s.email_address, t.name, t.description, s.scope, s.status,
-             s.next_run_at, s.last_run_at, s.updated_at,
-             CASE WHEN t.latest_version_number > v.version_number THEN 1 ELSE 0 END AS update_available
-           FROM automation_subscriptions s
-           JOIN automation_templates t ON t.id = s.template_id
-           JOIN automation_template_versions v ON v.id = s.template_version_id
-           WHERE s.workspace_id = ? AND t.archived_at IS NULL AND s.lifecycle_state = 'visible'
-           ORDER BY t.name COLLATE NOCASE`
-        )
-        .bind(workspaceId)
-        .all<Record<string, unknown>>();
-      return (result.results ?? []).map((row) => ({
-        id: String(row.id),
-        name: String(row.name),
-        description: String(row.description),
-        emailAddress: row.email_address == null ? null : String(row.email_address),
-        scope: String(row.scope) as Scope,
-        status: String(row.status) as AutomationSummary["status"],
-        // These rows predate the attention reason and cannot carry one: the
-        // subscription table has no column for it.
-        attention: null,
-        nextRunAt: row.next_run_at == null ? null : String(row.next_run_at),
-        lastRunAt: row.last_run_at == null ? null : String(row.last_run_at),
-        updatedAt: String(row.updated_at),
-        updateAvailable: Number(row.update_available) === 1
-      }));
-    }
-  };
-
+  // `apps/api` where the object ports live. The automation reader that
+  // followed it read subscription and template tables D1 dropped in 0090;
+  // automations live in their own objects now. This module keeps the tables
+  // D1 still owns.
   const activities = {
     async claim(activityId: string): Promise<boolean> {
       const result = await db
@@ -250,7 +218,7 @@ export function createDatabase(db: D1DatabaseLike) {
     }
   };
 
-  return { raw: db, automations, activities };
+  return { raw: db, activities };
 }
 
 export type AvalonDatabase = ReturnType<typeof createDatabase>;

@@ -7,15 +7,12 @@ subordinate execution receipt for one activation of that loop; it never creates
 or identifies the loop. The loop is not a participant, separate persona,
 terminal, or general code-execution environment.
 
-Automation authoring runs the compiler through this harness from a second host,
-`AutomationAgent`, rather than from a SubstreamAgent. That host owns compiler
-admission, the ordered draft turns, the durable stream events a reconnecting
-client replays, tool receipts, elicitation, stop and retry, and the draft-only
-architect tools; accepted generated runs continue to execute in private
-SubstreamAgents through the ordinary persistent loop. What the two hosts share is
-the ordered transcript schema and the harness itself — **not** the persistent
-loop: an automation's compiler run keeps no Bind projection, and a run picked
-back up after an eviction re-enters the model from the stored conversation. See
+An automation is drafted in a conversation of its own, and every run of it is a
+conversation of its own, both `SubstreamAgent`s under the automation's
+`AutomationDO`; there is no second host. The drafting tools are the loadable
+`rally:automations` plugin, available in a work stream and in an automation's
+chat alike and withheld from a run, and a run's loop reads its definition from
+the parent by revision at start. See
 [`automation-lifecycle.md`](automation-lifecycle.md).
 
 ## Where the code lives
@@ -211,13 +208,13 @@ After admission Rally validates the execution principal and records the run scop
 
 ### Context and stable prompts
 
-Context is assembled for the execution principal from the work-stream title and objective, recent persisted messages, current and planned execution times, the run reason, and the selected trigger. Automation runs also receive the pinned template name/version, instructions, expected outputs, default behavior, subscription overrides, and the active destinations Rally will deliver the result to. A triggering activity or inbound email is added as explicitly untrusted user-role evidence, never promoted into the system prompt.
+Context is assembled for the execution principal from the work-stream title and objective, recent persisted messages, current and planned execution times, the run reason, and the selected trigger. An automation run also receives, from `AutomationDO.readRunDefinition` by its pinned revision, the definition's name, instructions, expected outputs, and default behavior, and the owning room as the one entry in `resultDelivery` when a room owns the automation. A triggering activity or inbound email is added as explicitly untrusted user-role evidence, never promoted into the system prompt.
 
 Attached resources are exposed as an authorized index and hydrated lazily through tools. Their manifests and contents remain untrusted evidence. A partial read is not represented as the whole resource: the prompt requires exact cursor continuation when more coverage is needed and requires the answer to disclose any remaining `charactersBefore` or `charactersAfter` boundary. Full workspace history, unrelated resources, and another participant's private connector data are excluded.
 
 All base prompts are rendered by typed, dependency-free functions in `@rally/agent-harness`, and the prompt version is frozen with the run. Per-run time, reason, IDs, and trigger evidence are user-role messages rather than mutations of the system prefix, so retries and route fallbacks see stable policy. Bind validates the transcript before inference and heals dangling or orphaned tool-protocol rows; Rally records diagnostics without adding provider-controlled text to the system prompt.
 
-Prompt authority is layered as platform policy, authorized work-stream and automation configuration, current human instructions, then explicitly untrusted provider/resource/tool data. Both the work-stream agent and automation architect receive a compact, stable-ID-sorted catalog derived only from their already-authorized plugin registry and partitioned into `Currently active` and `Available to load`. Loading a plugin adds its static code-authored guidance under `Active Plugin Instructions` and exposes its exact typed tools on the next model turn. The catalog is stated as capability rather than as a suggestion, because the tools visible on any given turn are only the ones already loaded: an available plugin can answer a question, so consulting the catalog is part of searching, and asking a person for something a listed plugin could look up is a claim that it is unavailable rather than a request for missing input. The automation architect may use those real connector tools to inspect live provider context while drafting; it prefers reads and never performs a provider write merely to test a proposed automation. Remote account labels, resources, and provider content never become trusted plugin prose. User-authored automation draft state remains user-role context.
+Prompt authority is layered as platform policy, authorized work-stream and automation configuration, current human instructions, then explicitly untrusted provider/resource/tool data. Every run receives a compact, stable-ID-sorted catalog derived only from its already-authorized plugin registry and partitioned into `Currently active` and `Available to load`. Loading a plugin adds its static code-authored guidance under `Active Plugin Instructions` and exposes its exact typed tools on the next model turn. The catalog is stated as capability rather than as a suggestion, because the tools visible on any given turn are only the ones already loaded: an available plugin can answer a question, so consulting the catalog is part of searching, and asking a person for something a listed plugin could look up is a claim that it is unavailable rather than a request for missing input. An agent drafting an automation may use those real connector tools to inspect live provider context; it prefers reads and never performs a provider write merely to test a proposed automation. Remote account labels, resources, and provider content never become trusted plugin prose. User-authored automation draft state remains user-role context.
 
 ### Behavior policy
 
@@ -227,7 +224,7 @@ Every address, identifier, URL, name, date, and quoted fact in an outward-facing
 
 Interactive multi-round work starts with a short plan and reports meaningful phase changes. Headless runs skip progress narration. Completions lead with the outcome, evidence, and blockers; private reasoning is never emitted.
 
-An automation run's final message is what Rally posts to the work stream that owns the automation, when one does, so the run is told that room as the single entry in the automation context's `resultDelivery` and told not to post the result there itself. When the list is empty, which it is for every personal and workspace automation, the same `# Result delivery` section says so and tells the run that any sending its instructions ask for is its own work, done with its tools inside the run; left silent, a run that *describes* emailing a summary has not emailed it. The section is rendered only for automation runs — as a standing bullet it was charged to every interactive run, where the list is absent and a rule about it can only be resolved and then ignored. [`automation-lifecycle.md`](automation-lifecycle.md) owns why an automation has no destinations of its own.
+A run of a room's automation posts its result into that room itself, once, through the `automation_post_result` tool of the preloaded `rally:automation-result` plugin, which is offered to no other run; the room is named as the single entry in the automation context's `resultDelivery`. Nothing posts after the run. When the list is empty, which it is for every personal and workspace automation, the `# Result delivery` section says so and tells the run that any sending its instructions ask for is its own work, done with its tools inside the run; left silent, a run that *describes* emailing a summary has not emailed it. The section is rendered only for automation runs, and its populated arm says the same thing the plugin's system message does: nothing posts there for the run, and `automation_post_result`, called once after the work is done, is the one way. [`automation-lifecycle.md`](automation-lifecycle.md) owns why an automation has no destinations of its own.
 
 A document-shaped request is written as a Markdown file in the work stream's terminal workspace and published as a generated resource, rather than streamed into the transcript (`DOCUMENT_GENERATION_POLICY`, `prompts/document-generation.ts`). The section carries the document-type trigger, the narration discipline, the same-path revision rule with its import recovery, the participant override in both directions, and the inline fallback when the workspace cannot be reached. It names no tool: the Terminal plugin's activated system message already carries the write-beneath-the-resource-directory-then-publish mechanics, and this section renders before that plugin loads. It is standing platform policy on every work-stream run, with an explicit output-surface tie-breaker: an externally delivered run includes the complete usable result in its final message because recipients cannot open Rally resource embeds. [`terminal-workspaces.md`](terminal-workspaces.md) owns the publish path the normal work-stream rule steers into.
 
@@ -237,36 +234,28 @@ An answer says what it rests on, inline (`CITATION_POLICY`, `prompts/citations.t
 
 Written answers are GitHub-flavoured Markdown, and TeX or math delimiters are never written — Unicode or plain words are used instead (`RESPONSE_FORMATTING_POLICY`, composed into the work-stream system prompt and both meeting prompts). Elicitation questions and option labels are plain text because their surface does not render Markdown. The TeX rule exists because no Rally surface renders TeX and several routed models emit it for symbols; [`model-text-normalization.md`](model-text-normalization.md) owns the display-side repair this pairs with, and `prompts.test.ts` pins the rule's exact wording because that document depends on it.
 
-### Automation compilation
-
-Natural-language automation creation compiles to the validated draft schema. The compiler preserves established choices, defaults to personal scope and manual execution when omitted, and writes three to eight self-contained outcome-focused steps. A calendar recurrence carries the IANA timezone a person named for it and null otherwise, and the account zones it would otherwise have to guess at — the requester's and the workspace's — are rendered into a user-role message the policy defers to by name; exact provider events use deterministic triggers and meaning-based conditions use semantic triggers. Connector manifests expose trusted activity descriptors with exact event names and typed deterministic filters through plugin search, inspection, and loading. Each connector-activity or semantic-activity trigger names a reusable source binding key and suggests one inspected plugin; acceptance binds that slot to one authorized connection without requiring the source plugin to be preloaded at runtime. Required capabilities are the minimum external grants. Where a result should go is written into the instructions like any other step, and the run sends it there itself with its connector tools; the submit-draft schema carries no delivery field, and Rally posts the result nowhere but the room that owns the automation, if one does.
-
-Request-scoped attachment tools may be added directly to the preloaded automation architect. They inherit its `automation_*` wire prefix and are not catalog-loaded connector capabilities. The API host freezes their admitted resource IDs and owns every authorization recheck; the harness only exposes the supplied strict tools for that compiler run.
-
-The compiler narrates while it researches, and the composer streams that narration. `compileAutomation` emits `started` once for the whole compile, a `thinking` frame per inference request, a `tool` row per discovery call, and `delta` frames carrying the architect's own text: the plan it states alongside its first tool calls, and a progress update every three or four calls after that. The `# Narration` section of the compiler policy owns what belongs in that text — settled sentences about the automation, never a question, never internal deliberation, never a tool or field name — and the submission turn is the one turn that carries none of it, because Rally renders the settled result from the saved draft and the elicitation instead. Narration accumulates into one composer bubble across turns, so the compiler tracks what earlier turns settled: a route restart replays only its own turn, and the reset frame restores the earlier updates rather than clearing text the reader has already seen.
-
-The compiler may retain an incomplete draft while asking one focused question. An omitted calendar timezone stays null through the draft and into storage, and is resolved at acceptance, inside the automation's own object, against the scope it is being accepted with and the account it will run for; an explicit trigger timezone wins there, and a zone the runtime cannot format refuses acceptance rather than being replaced. Null is the distinction that makes the resolution possible at all — a default filled in at compile time is indistinguishable from a zone the person named, and answers for the scope the compiler guessed rather than the one the automation was created with. Missing resources, event sources, destinations, or unsupported schedules still require input. The compiler never invents credentials, access, resource IDs, event types, or filter fields; ready drafts must use an inspected connector's declared activity vocabulary. Because most of what makes a submission *ready* is a cross-field refinement no JSON Schema can state — a binding key, an inspected plugin, one declared prefilter event type — `automation_submit_draft` supplies `normalizeAutomationDraft` and `AutomationDraftSchema` — one shared parse, used by both its executor and its `validateInput` — so a rejected submission comes back to the model as the named field rather than as an external fault. The normalize step is half of that: it is what decodes the JSON-string fields at all. Structured output the compiler cannot parse becomes `502 model_output_invalid` with a request ID; the repair pass belongs to `client.structured`, which this path does not use.
-
 ### Connection plugins and authority narrowing
 
 Every connector adapter supplies a static agent-plugin descriptor whose provider type and code-authored tool order must match its manifest. At run start Rally creates one Bind plugin per eligible installed connection, identified as `connection:<uuid>` with a stable hashed wire prefix. Its tools are narrowed to the connection's frozen grants and run policy:
 
 - Ad-hoc runs may include workspace connections and the initiating user's personal connections that a person has not disabled. A stored `needs_reconnect` no longer removes a connection from a run — see [Stored status is a belief, not a gate](connectors.md#stored-status-is-a-belief-not-a-gate).
-- Automation runs include explicitly bound connection/capability pairs and eligible connections attached through work-stream resources. Attached connections remain limited to the immutable grants frozen for the run.
+- Automation runs include the connections the automation's definition bound at apply time (`readRunDefinition().defaultPluginIds` and `connectorBindings`) and eligible connections attached through the run's resources. Attached connections remain limited to the immutable grants frozen for the run.
 - Inbound-email runs remove external connector writes.
 
 Bound connections, attached resources, and previously used plugins are activation hints, not extra authority. Hints are filtered through the frozen scope and reauthorized before restoration. Other eligible plugins appear only in a bounded catalog and are discovered and activated with the always-active `rally_discovery` tools: `list_plugins`, `search_plugins`, and `load_plugin`. Search normalizes case and punctuation, ranks exact field matches ahead of distinct keyword overlap across ids, names, aliases, and descriptions, and returns at most twenty matches plus `totalMatches` so a truncated result can be narrowed. It uses OR discovery rather than requiring the entire query to occur in one catalog field. An explicit load may run a convergent host-owned `onActivate` preparation hook after reauthorization and dynamic tool loading. Successful preparation is single-flighted for the run, then activation is durably recorded before the plugin's tools or trusted guidance become visible. Failed preparation remains retryable only when the host returns model-safe retry guidance; provider details are not exposed.
 
-When that durable activation belongs to a credential plugin, the work-stream
-host also records its model-facing `plugin_*` ID in the automation-drafting
-state for the run. Explicit loads, preloads, and restored hints all cross the
-same bridge. `automation_submit_draft` can therefore enforce that a ready
-definition names only connectors the model both loaded through discovery and
-inspected through the automation catalog, without maintaining an unrelated
-second notion of “loaded.” Because restored durable activations deliberately
-skip `onActivate`, the Automations plugin prepares itself on its first tool call
-too: it rebuilds completed plugin inspections and staged evaluator rules from
-the run's tool receipts before validating a resumed draft.
+When that durable activation belongs to a credential plugin, the host also
+records its model-facing `plugin_*` ID in the automation-drafting state for the
+run. Explicit loads, preloads, and restored hints all cross the same bridge.
+`automation_submit_draft` can therefore enforce that a ready definition names
+only connectors the model both loaded through discovery and inspected through
+the automation catalog, without maintaining an unrelated second notion of
+"loaded." Because restored durable activations deliberately skip `onActivate`,
+the `rally:automations` plugin prepares itself on its first tool call too: it
+rebuilds completed plugin inspections and staged evaluator rules from the run's
+tool receipts before validating a resumed draft. Its first submission from a
+work stream creates the room's automation and posts the proposal card; from an
+automation's own chat it submits a revision to that automation.
 
 A hosted-MCP connection may supply `HarnessPlugin.loadTools` instead of a
 code-authored tool array. It still appears through the same static trusted
@@ -281,7 +270,7 @@ returns `plugin_tools_unavailable` and leaves the plugin inactive. The protocol,
 validation, and provider declaration are owned by
 [`hosted-mcp-connectors.md`](hosted-mcp-connectors.md).
 
-Every run owns a fresh Bind registry. Canonical tool names are local to their owning plugin and contain no repeated plugin prefix; Bind adds the plugin's stable short name when it renders the model-facing wire name. `rally_discovery` intentionally retains the global controls `list_plugins`, `search_plugins`, and `load_plugin`. The always-active `rally_core` plugin owns exact time and structured elicitation; elicitation uses `provider_key` idempotency because the receipt-derived key is also the durable question identity. `rally_automation_architect` owns automation research and draft submission. Workstream agents load `rally_workstream` by default for current-workstream context, resources, and delegation. Specialized memory and table capabilities retain their own stable plugin identities. The public-web tools live in the loadable `rally_web` plugin. A runtime registers only the applicable bundles, so plugin instructions and durable receipt identities cannot advertise tools absent from that run.
+Every run owns a fresh Bind registry. Canonical tool names are local to their owning plugin and contain no repeated plugin prefix; Bind adds the plugin's stable short name when it renders the model-facing wire name. `rally_discovery` intentionally retains the global controls `list_plugins`, `search_plugins`, and `load_plugin`. The always-active `rally_core` plugin owns exact time and structured elicitation; elicitation uses `provider_key` idempotency because the receipt-derived key is also the durable question identity. `rally_automations` (canonical id `rally:automations`, deferred in a room, preloaded in an automation's own conversation) owns automation research, the `automations_list` an edit starts from, and draft submission; `rally_automation_result` is preloaded only on a run of a room's automation and holds `automation_post_result`. Workstream agents load `rally_workstream` by default for current-workstream context, resources, and delegation. Specialized memory and table capabilities retain their own stable plugin identities. The public-web tools live in the loadable `rally_web` plugin. A runtime registers only the applicable bundles, so plugin instructions and durable receipt identities cannot advertise tools absent from that run.
 
 In a provider-verified region, ordinary work-stream runs also register the
 deferred built-in `rally:terminal` plugin. It has no connection row. An explicit
@@ -317,7 +306,7 @@ pricing or usage is logged and produces no image charge rather than hiding the
 plugin or refusing the call. [`agent-tools.md`](agent-tools.md#multimodal-generation-tool-contract-registry)
 owns the exact schemas and resource result.
 
-Loading never widens the frozen scope. At run start, before credential decryption, before every tool call, and between model turns, Rally revalidates the execution principal, work-stream state, automation subscription and pinned template version, trigger evidence and status, connection identity/scope/owner, current grants, capability, and whether a person has disabled it. Revocation drops a plugin. A stored `needs_reconnect` does not: it is a belief about a past moment, and a call it would have withheld now reaches the provider and fails on the provider's answer. Workspace calls use the workspace principal while preserving the initiating user in audit data; personal calls remain owner-only.
+Loading never widens the frozen scope. At run start, before credential decryption, before every tool call, and between model turns, Rally revalidates the execution principal, work-stream state, an automation run's live state in its parent, trigger evidence and status, connection identity/scope/owner, current grants, capability, and whether a person has disabled it. Revocation drops a plugin. A stored `needs_reconnect` does not: it is a belief about a past moment, and a call it would have withheld now reaches the provider and fails on the provider's answer. Workspace calls use the workspace principal while preserving the initiating user in audit data; personal calls remain owner-only.
 
 Revalidation also says why it is asking, because the two occasions need different work. An **activation** — a `load_plugin`, a restored hint, the initial preload — happens a handful of times per run and is checked all the way to the provider. A **continuation** runs before every inference, and is answered from Rally's own records: the principal, the work stream, the automation authority, the connection's identity, scope, owner, grants, and disablement are what that check exists to catch, and all of them are already known here. Asking the provider instead would spend a round trip per active plugin per turn to rediscover them, and on a connector whose health check writes it would repeat that write. A credential the provider has since refused therefore surfaces on the next tool call rather than between turns — which is the right place, since that is where a provider call was going to happen anyway.
 
@@ -385,7 +374,7 @@ Web discovery and page reading are bounded Firecrawl tools. Search returns ranke
 
 ### Elicitation
 
-The canonical `request_elicitation` tool belongs to `rally:core` and is rendered to the model as `core_request_elicitation`. It creates a typed text/radio/single/multi-select block and pauses the shared harness loop. The request row retains the stable original tool slot. When a person answers, the loop atomically accepts one tool result containing that answer and promotes the visible participant response before any later provider call. The participant turn is canonical UI history, not a second Bind user message; the model therefore receives the answer exactly once through the suspended tool protocol. Original tool-call position and dense result-acceptance order are separate identities, so another result accepted while the elicitation waits does not renumber either fact. In a work stream, the work stream becomes `needs_input`; a valid answer clears attention when no blockers remain and activates the same `SubstreamAgent` loop. In automation creation, the architect first saves its best partial state with `automation_submit_draft`, then calls the same core elicitation tool; the next creator request resumes from the saved draft and answered conversation.
+The canonical `request_elicitation` tool belongs to `rally:core` and is rendered to the model as `core_request_elicitation`. It creates a typed text/radio/single/multi-select block and pauses the shared harness loop. The request row retains the stable original tool slot. When a person answers, the loop atomically accepts one tool result containing that answer and promotes the visible participant response before any later provider call. The participant turn is canonical UI history, not a second Bind user message; the model therefore receives the answer exactly once through the suspended tool protocol. Original tool-call position and dense result-acceptance order are separate identities, so another result accepted while the elicitation waits does not renumber either fact. In a work stream, the work stream becomes `needs_input`; a valid answer clears attention when no blockers remain and activates the same `SubstreamAgent` loop. When drafting an automation, the agent first saves its best partial state with `automation_submit_draft` (a revision that is not `ready`), then calls the same core elicitation tool; the next turn resumes from the saved draft and the answered conversation.
 
 ### Durable receipts and terminal state
 
@@ -679,8 +668,9 @@ decision, outcome, latency, available token/cache/cost counters, and hashed
 credential/workspace identities. Harness-run usage also stores turn/tool
 timings and counts. Provider error bodies and credentials are not retained in
 that recovery ledger. For Global workspaces, the Global lakehouse separately
-uses the closed source vocabulary `workstream`, `automation_compiler`,
-`inline_child`, and `meeting_notes` for analytical capture.
+uses the closed source vocabulary `workstream`, `inline_child`, and
+`meeting_notes` for analytical capture; an automation run is a `workstream`
+source with its automation and run ids beside it.
 EU workspaces intentionally have no analytical inference capture.
 
 The harness also emits lossless events that the Global host sends to the
@@ -706,18 +696,15 @@ The desktop retains room and per-message stream cursors across socket and route 
 ### Transcript row attribution
 
 Every chat surface renders one row component, so a tool row must mean the same
-thing wherever it appears. Two rules keep the work stream and the automation
-composer from wording or attributing the same call differently.
+thing wherever it appears, in a work stream's feed and in an automation's chat
+alike.
 
 A row's icon is the plugin that **owns** the tool being called, and nothing
-else. In the compiler, that owner comes from the `automation:` prefix on the
-Bind plugin id; in a work stream, it is resolved from
-`tool_invocations.connection_id`, which already records the connector that ran
-the tool. Tools Rally owns — web research, plugin discovery, memory, tables,
+else. It is resolved from `tool_invocations.connection_id`, which already
+records the connector that ran the tool. Tools Rally owns — web research, plugin discovery, memory, tables,
 work-stream reads — have no connector behind them and carry no plugin icon.
-Both the contract's `ToolInvocation.plugin` and the compiler's `tool` stream
-event hold a single nullable plugin, so a row with several icons cannot be
-represented. A discovery row may still *name* several plugins in its label
+The contract's `ToolInvocation.plugin` holds a single nullable plugin, so a
+row with several icons cannot be represented. A discovery row may still *name* several plugins in its label
 without claiming any of them ran the tool.
 
 A row's label is prose from `toolActivityName` in
@@ -765,53 +752,34 @@ elicitation answers, inbound email, and Slack opening, follow-up, and elicitatio
 messages go directly from durable transcript/trigger context to the model. The
 plugin remains available, so the agent can explicitly call `memory_search` when
 the task needs older context. Non-message ad-hoc runs search workspace, user, and
-work-stream memory at admission. An automation run's memory tools execute inside
-its named `AutomationAgent` and reach that automation's own memory; the workspace-side
-automation scope union was retired with the 2026-08-28 automation cutover, and
-`resolveMemoryAccess` refuses a subscription-declaring run by name
-(`memory_automation_scope_retired`) rather than reading a subscription row no
-reachable store still holds.
+work-stream memory at admission. A conversation whose parent is an automation, its
+drafting chat and every run alike, searches the workspace scope and the
+automation's own scope of kind `automation`, keyed by the automation id and
+writable: what a run learns is what the next run should know, and what the
+person said while drafting is part of that. The person's own scope stays out,
+because a run acts for the automation rather than as the person, and a
+workspace automation's runs would otherwise write into whichever member
+happened to be its principal. The parent kind on the run's input is the fact
+that decides it; there is no subscription id and no origin type left to read.
 
-**A run in a work stream an automation created, carrying no subscription of its
-own, is none of those**, and the run's own `automationSubscriptionId` — not the
-work stream's origin — is what decides which it is. That covers more than a
-member's reply: an elicitation answer, a manual retry, and, least obviously,
-the automation's *own* continuation through a
-scheduled wake-up, because `launchWorkstreamHarness` declares no subscription
-either. Their search authority includes workspace memory, plus that member's own
-when a person is behind it; message runs exercise that authority only through an
-explicit memory tool call. The subscription's automation scope stays reachable
-exactly from a run that declares it and whose principal matches it, and a work stream an
-automation created owns no work-stream scope, because the next run of that
-subscription gets a different work stream and anything left in this one could
-never be recalled.
+**A work stream's runs never reach an automation's scope**, whoever started
+them and whatever posted into the room: a room's automation posts a result as
+an `automation_activation` message, and the reply to it is an ordinary
+work-stream run with the room's union. That covers a member's reply, an
+elicitation answer, a manual retry, and a scheduled wake-up alike. Their search
+authority is workspace memory, plus that member's own when a person is behind
+it, plus the work stream's; message runs exercise that authority only through
+an explicit memory tool call.
 
 **The union is not the whole story, and in one direction it currently overstates
 what is withheld.** The protocol projector reauthorizes replayed *attachment*
 results and nothing else, so a completed `memory_search` or `memory_table_query`
 receipt from an earlier run in the same transcript window is replayed to the next
-run verbatim, out of R2, whatever that run's own union is. A reply therefore
-resolves no automation scope but can still be handed the items the automation's
-run recalled from one. That gap predates this rule and is not created by it —
-two people in one ad-hoc work stream reach it the same way — but automation and
-owner-user memory only started travelling it once these runs stopped dying.
-Until the projector filters a replayed memory result against the current union,
-the scope union is the authority for what a run may *search*, not a guarantee
-about everything in its context.
-
-Memory is not the whole of what such a run does without: `automationContext` —
-the subscription's instructions, expected outputs, result delivery, and its
-`rally_tables` durable tables — and the subscription's default plugins are both
-gated on the same field, so a reply is also a *less capable* run than the one it
-is answering. The sharpest edge is the tables: `table_search` answers a run that
-cannot reach them with an empty result rather than a refusal, so a member asking
-for a row in the table the automation visibly keeps gets told there is no such
-table. Whether these runs should instead inherit what the automation was
-configured with is one unanswered product question about who may read and act on
-an automation's configuration; whether a work stream an automation created
-should start owning a work-stream scope once people are talking in it is a
-second. Neither is the memory union's to decide on its own, and neither writes a
-row today, so both stay open.
+run verbatim, out of R2, whatever that run's own union is. That gap predates
+this rule and is not created by it; two people in one ad-hoc work stream reach
+it the same way. Until the projector filters a replayed memory result against
+the current union, the scope union is the authority for what a run may
+*search*, not a guarantee about everything in its context.
 
 Memory items retain structured provenance, access metadata, expiry, revisions, and reversible invalidation, but no confidence field. Agents add by scope kind and update or invalidate by item ID plus expected revision. Workspace writes require a workspace principal or an owner/admin user. WorkspaceDO FTS is synchronous; OpenRouter `qwen/qwen3-embedding-8b` embeddings and the regional Vectorize projection advance through a replayable WorkspaceDO outbox. Requests explicitly ask for 1,024 dimensions—supported by Qwen3 Embedding 8B's Matryoshka representation—to match the immutable Vectorize index shape and distinguish query from document input. The model is a fixed inference-gateway constant with no Flagship role, Worker override, or model fallback. A fixed-model-and-dimension-derived namespace prevents embeddings from different semantic spaces from ever being compared; OpenRouter reporting a different resolved model fails the request closed, and retrieval falls back to FTS. Changing the constant requires a code change paired with requeueing active memories, and retrieval safely falls back to FTS until that rebuild completes. Hybrid hits are always reloaded from WorkspaceDO before exposure and rechecked against current D1 membership. A non-message root run that performs automatic admission recall stores an immutable snapshot and hash; a message-origin run stores no memory-context hash.
 
@@ -824,7 +792,7 @@ insert contention is a separate typed failure because inserts do not have an
 `expectedRevision`; after bounded host retries it directs the model to query by
 the declared natural key and retry only the rows that remain absent.
 
-Automation drafts may declare automation-scoped tables. Acceptance materializes an independent table set under the new subscription, so every work stream from that subscription shares its rows while subscribers to a shared template do not share state. Every automation run receives the materialized table IDs, column IDs, natural keys, purpose, and usage/update instructions in its authorized task context. Table rows are never added to admission recall; the agent must query only the rows and columns needed for the current run.
+An automation's definition may describe the tables it keeps (`memoryTables`), and a run receives that description from `readRunDefinition`. Nothing materializes them at apply time: a run creates the table it needs with the `rally_tables` plugin's `create` tool under the automation's scope the first time it needs one, and every later run of that automation finds it there. Table rows are never added to admission recall; the agent must query only the rows and columns needed for the current run.
 
 ### Scheduled wake-ups
 
@@ -1009,15 +977,14 @@ participants remain deferred product work.
   hook rather than by what it was given, and cannot recurse.
 - **The model never selects a memory scope.** `memory_search` accepts exactly one
   content query or exact item ID; the host derives the authorized scope union
-  from the frozen principal and the run's own declared subscription, and every
+  from the frozen principal and the parent kind on the run's input, and every
   hit is reauthorized and reloaded from WorkspaceDO before exposure and
   rechecked against current D1 membership.
-- **A work stream an automation created owns no work-stream memory scope**, and
-  `resolveMemoryAccess` is the only thing that still says so. Migration 0036
-  held it as a D1 trigger; 0090 dropped that with the rest of D1's product
-  enforcement when memory moved into WorkspaceDO, which validates no scope
-  owner at all. Break it and memory accrues in a work stream the next run of
-  that subscription will never see.
+- **An automation's conversations own no work-stream memory scope**, and
+  `resolveMemoryAccess` is the only thing that says so: WorkspaceDO validates
+  no scope owner at all. A run under an automation writes into the automation's
+  scope, which the next run reads; a work-stream scope keyed by the run's
+  substream would be one nothing reads again.
 - **Whatever starts a run hands the host something to render.** A run whose
   instructions exist only as a transcript `system` row reaches the model with
   nothing but its work stream's objective, because the protocol projector drops
@@ -1025,9 +992,9 @@ participants remain deferred product work.
 - **A cancellation is a durable request, observed by the lease owner**, which alone
   commits the fenced `stopped` transition. Stopping never kills an in-flight
   provider or tool operation out of band.
-- **A row carries exactly one plugin icon, the one that owns the tool.** Both
-  `ToolInvocation.plugin` and the compiler's `tool` stream event hold a single
-  nullable plugin, so a row with several icons cannot be represented.
+- **A row carries exactly one plugin icon, the one that owns the tool.**
+  `ToolInvocation.plugin` holds a single nullable plugin, so a row with several
+  icons cannot be represented.
 - **Prompt sections are a pure render of run state.** Bodies are rebuilt from the
   active set on every turn in Bind's total order rather than spliced into the
   previous prompt, so a resumed attempt produces the same bytes as a fresh one and
@@ -1069,7 +1036,7 @@ and general child participants remain deferred product work.
 
 ## Failure modes and limits
 
-Root ordinary work-stream runs allow 1,000 model iterations and have no tool-call, wall-clock, or cost ceiling. A work-stream loop otherwise continues until completion, elicitation, its safe-boundary stop, ambiguous write, lease or authority loss, context failure, or provider failure. Per-tool time and plugin-catalog tokens remain bounded, and request establishment, time to first token, and inter-chunk idle time have separate watchdogs. Deliberately bounded one-shot callers such as meeting notes and automation compilation retain their own independent ceilings. Active plugin count, active tool-schema bytes, model-visible tool-result bytes, and replay payload bytes are not capped by the agent runtime. Web results, fetched bytes, and attachments remain independently bounded by their owning tools. Live context size comes only from OpenRouter's returned prompt and completion token counts; Rally does not estimate it from serialized bytes. After a completed provider turn exceeds 80% of the selected model's OpenRouter `context_length` (with Monad's 200,000-token fallback when the catalog is unavailable), Bind replaces the whole live context beneath the system prompt with one synthetic user message carrying an LLM continuation summary; no earlier message survives verbatim. Work-stream checkpoints store one principal-and-resource-inventory-revision-scoped summary regionally with the durable sequence boundary. The live checkpoint and every authorized replay append a freshly rendered, fixed-size resource inventory before newer messages; a scope mismatch falls back to durable transcript replay only within its 2,000-message and 4-MiB serialized preflight bounds. [`context-compaction.md`](context-compaction.md) owns that policy — the threshold, the summary prompt, the deterministic appendix, the checkpoint shape, and the stored row — and is the document to read and update before changing any of them.
+Root ordinary work-stream runs allow 1,000 model iterations and have no tool-call, wall-clock, or cost ceiling. A work-stream loop otherwise continues until completion, elicitation, its safe-boundary stop, ambiguous write, lease or authority loss, context failure, or provider failure. Per-tool time and plugin-catalog tokens remain bounded, and request establishment, time to first token, and inter-chunk idle time have separate watchdogs. Deliberately bounded one-shot callers such as meeting notes retain their own independent ceilings. Active plugin count, active tool-schema bytes, model-visible tool-result bytes, and replay payload bytes are not capped by the agent runtime. Web results, fetched bytes, and attachments remain independently bounded by their owning tools. Live context size comes only from OpenRouter's returned prompt and completion token counts; Rally does not estimate it from serialized bytes. After a completed provider turn exceeds 80% of the selected model's OpenRouter `context_length` (with Monad's 200,000-token fallback when the catalog is unavailable), Bind replaces the whole live context beneath the system prompt with one synthetic user message carrying an LLM continuation summary; no earlier message survives verbatim. Work-stream checkpoints store one principal-and-resource-inventory-revision-scoped summary regionally with the durable sequence boundary. The live checkpoint and every authorized replay append a freshly rendered, fixed-size resource inventory before newer messages; a scope mismatch falls back to durable transcript replay only within its 2,000-message and 4-MiB serialized preflight bounds. [`context-compaction.md`](context-compaction.md) owns that policy — the threshold, the summary prompt, the deterministic appendix, the checkpoint shape, and the stored row — and is the document to read and update before changing any of them.
 
 A published document is readable in the desktop client, and was not until 2026-08-27. A generated resource appears in the work-stream rail under **Artifacts**, and its detail panel now renders the resource's readable content beneath the metadata, through `/resources/:id/preview` — the same authorized route `AttachmentLightbox` uses, which materializes extracted text for a file that is not already text. The gap that remains is narrower: the rail resolves an inspector target only from the loaded work stream's own resources, so a document cited from *another* work stream still has nowhere to open. [`markdown-rendering.md`](markdown-rendering.md) owns the citation half of this and records the same limit.
 
@@ -1170,7 +1137,7 @@ proof.
 | `apps/api/test/agent-inference-logging.test.ts` | That no legacy D1/R2 path remains and provider refusals stay content-free in Workers Logs. |
 | `apps/api/test/inference-lakehouse.test.ts` | Exact request/attempt archival, pointer integrity, Pipeline delivery, and oversized-record preservation. |
 | `packages/db/test/agent-inference-retirement-migration.test.ts` | Migration 0094 removes the regional payload-log table and workspace preference while preserving workspace rows and foreign-key integrity. |
-| `packages/agent-harness/src/*.test.ts` | Persistent-loop projection and activation boundaries, including resumed-history preservation, empty system activations, takeover replay, and fail-closed ordering before model-catalog or inference I/O; plus prompt golden hashes, skill bounds, `toolActivityName`, transport retry/fallback behavior, and the automation compiler submission loop. |
+| `packages/agent-harness/src/*.test.ts` | Persistent-loop projection and activation boundaries, including resumed-history preservation, empty system activations, takeover replay, and fail-closed ordering before model-catalog or inference I/O; plus prompt golden hashes, skill bounds, `toolActivityName`, transport retry/fallback behavior, and the automation drafting tools. |
 
 Run one with
 `pnpm --filter @rally/api exec vitest run test/harness-run-runtime.test.ts` — the
@@ -1208,6 +1175,73 @@ Nothing pins `breakerScope`, so deleting that one property from `routePlan` woul
 silently return every test to the shared key while each still passes alone.
 
 ## Changelog
+
+### 2026-09-04: A run a tool ended is completed, not an empty answer
+
+**What changed:** `HarnessOutcome` gains `completedByTool`, set when a tool's
+`halt: "completed"` ends the loop. The host's terminal result reads a
+completed outcome with no final text as `completed` when that flag is set,
+and as `failed` with `empty_completion` otherwise, as before. The run
+storage's host-outcome checkpoint no longer refuses a completed outcome
+with no final turn; it had, and the first cut of this change left every
+tool-ended run un-terminalized under `host_outcome_content_mismatch`.
+
+**Why:** A ready draft submitted from an automation's own conversation ends
+the run from `submit_draft`, and the model is not asked for a closing
+message. The host saw a completed outcome with no final turn and recorded
+the run as failed with "the model returned no durable final response", so
+every successful ready submission on the live stack was logged as a failed
+run and the conversation showed a failure pill under a draft that had just
+been accepted. The failure code is right for a model that stops talking
+mid-task; it is wrong for a tool that says the task is done.
+
+**Consequences:** A completed run may have no final turn. Anything that
+counts failed runs no longer counts tool-ended ones; anything that renders a
+completed run must tolerate the absence of a final message, which the
+needs-input path already required.
+
+### 2026-09-03: Drafting is a conversation, and a run reads its automation by revision
+
+**What changed:** The separate compiler host is gone with the first automation
+object. The drafting tools are the loadable `rally:automations` plugin, in a
+work stream and in an automation's own chat alike (deferred in a room and
+preloaded in the automation's own chat, which is otherwise an ordinary
+`SubstreamAgent` with the ordinary catalog),
+and `automation_submit_draft` writes a definition revision to the automation.
+A run's loop input carries `automationRun: {automationId, runId,
+definitionRevision, trigger}` and nothing else about the automation; the prompt
+context, the bound plugins, and the tables description come from
+`AutomationDO.readRunDefinition` at start, and `assertRunAuthorityStillValid`
+reads `readRunState` before each provider write. The result reaches an owning
+room through the run's own `automation_post_result` tool, in a plugin preloaded
+only on such a run. Memory for a conversation under an automation is the
+workspace store's `automation` scope; the retired scope union, the subscription
+id, and the origin type are gone. The `automation_compiler` and
+`automation_result_disposition` model roles no longer exist.
+
+**Why:** [`automation-lifecycle.md`](automation-lifecycle.md) carries the
+reasoning. For this document: a second host running the same harness had to
+re-implement admission, receipts, elicitation, stop, retry, and a socket to
+stream narration, all of which the persistent loop already had; putting the
+drafting conversation on a `SubstreamAgent` deletes that host and leaves one
+loop. Reading the definition by revision rather than freezing a copy in the
+loop input is what lets a run's contract be four fields, and what stops every
+definition field from becoming a stored-context migration. The memory scope
+followed the parent kind because that is the one fact a run under an automation
+reliably carries.
+
+**Considered and rejected:** Preloading `rally:automations` in an automation's
+own chat, so the drafting tools are visible on the first turn. The plan this
+shipped from expected it; the code loads the plugin through the catalog in
+both places, and this entry records the code. Picking it up means passing a
+`preload` decision through `createAvalonAutomationsPlugin` keyed on
+`parentKind`.
+
+**Consequences:** Both arms of `# Result delivery` and the result plugin's system message now say one thing: the tool posts, nothing else does. A future prompt edit has to keep the populated arm naming `automation_post_result` and no other path. The compiler-only
+`automation_*` attachment tools, narration frames, and the compiler's `tool`
+stream event are gone; a row's plugin comes from `tool_invocations` only. The
+retired memory rule about "a work stream an automation created" has no subject
+left: a run is a substream under the automation, never a work stream.
 
 ### 2026-09-03 — The harness no longer has a HyperSight execution mode
 

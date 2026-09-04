@@ -49,7 +49,6 @@ const contractComplete = {
   OPENROUTER_FALLBACK_MODELS: "google/gemini-3.6-flash",
   OPENROUTER_CLASSIFIER_MODEL: "google/gemini-2.5-flash-lite",
   OPENROUTER_STRUCTURED_MODEL: "google/gemini-2.5-flash-lite",
-  OPENROUTER_AUTOMATION_MODEL: "x-ai/grok-4.5",
   TOOL_DEFAULT_TIMEOUT_MS: "30000",
   WEB_SEARCH_MAX_RESULTS: "8",
   WEB_FETCH_MAX_BYTES: "2000000",

@@ -44,8 +44,6 @@ const workstream: WorkstreamDetail = {
   title: 'Monday invoice review',
   titleStatus: 'settled' as const,
   emailAddress: 'luminous-tidal-structured-curie@automation.rallywith.ai',
-  origin: 'automation',
-  automationName: 'Weekly invoice monitor',
   harnessStatus: 'completed',
   scope: 'workspace' as const,
   lastActivityAt: '2026-07-31T20:00:12.000Z',
@@ -59,24 +57,12 @@ const workstream: WorkstreamDetail = {
   pinPosition: null,
   participantUserIds: [],
   participantExtraCount: 0,
-  plannedFor: '2026-08-03T16:00:00.000Z',
   createdAt: '2026-07-31T20:00:00.000Z',
   participants: [],
   viewers: [],
   resources: [],
   connections: [],
   backgroundTasks: [],
-  automationRuns: [],
-  automationSubscriptionId: 'subscription-1',
-  automationSubscription: {
-    id: 'subscription-1',
-    name: 'Weekly invoice monitor',
-    scope: 'workspace',
-    status: 'active',
-    triggerSummary: 'Every Monday at 9:00 AM',
-    executionScope: 'Workspace',
-  },
-  automationRunId: 'automation-run-1',
   latestHarnessRunId: 'harness-run-1',
   latestHarnessRun: {
     id: 'harness-run-1',
@@ -128,18 +114,14 @@ describe('InspectorRail details', () => {
     expect(useUiStore.getState().railWidth).toBe(360);
   });
 
-  it('shows automation-subscription and bounded harness-run metadata while debugging is on', async () => {
+  it('shows bounded harness-run metadata while debugging is on', async () => {
     render(
       <Tooltip.Provider>
         <InspectorRail workstream={workstream} />
       </Tooltip.Provider>,
     );
 
-    expect(await screen.findByText('Every Monday at 9:00 AM')).toBeVisible();
-    expect(screen.getAllByText('Weekly invoice monitor')).toHaveLength(2);
-    expect(screen.getByText('subscription-1')).toBeVisible();
-    expect(screen.getByText('automation-run-1')).toBeVisible();
-    expect(screen.getByText('google/gemini-2.5-flash-lite')).toBeVisible();
+    expect(await screen.findByText('google/gemini-2.5-flash-lite')).toBeVisible();
     expect(screen.getByText('automation schedule')).toBeVisible();
     expect(screen.getByText('harness-run-1')).toBeVisible();
     expect(screen.getByText('workstream-1')).toBeVisible();
@@ -175,7 +157,7 @@ describe('InspectorRail details', () => {
     );
 
     const address = (): HTMLElement => screen.getByText(workstream.emailAddress ?? '');
-    await waitFor(() => expect(screen.getByText('Origin')).toBeVisible());
+    await waitFor(() => expect(screen.getByText('Harness run')).toBeVisible());
     expect(address()).toHaveAttribute('title', workstream.emailAddress);
 
     announceApplicationSettings({ lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true, productAnalyticsEnabled: true, productAnalyticsEffective: true, productAnalyticsPreferencePending: false, nativeCrashRestartRequired: false });
@@ -1100,6 +1082,7 @@ describe("a work stream's own automations in the rail", () => {
   const automation: WorkstreamAutomationSummary = {
     id: 'automation-1',
     name: 'Weekly changelog',
+    description: 'What shipped this week.',
     status: 'active',
     updatedAt: '2026-09-01T09:00:00.000Z',
   };
@@ -1163,13 +1146,24 @@ describe("a work stream's own automations in the rail", () => {
     expect(screen.getByText('No automations')).toBeInTheDocument();
   });
 
-  it('leads with what is wrong rather than with the status that hides it', () => {
-    // An automation whose trigger cannot fire still reads "active", and that is
-    // exactly the row somebody has to look at.
+  it('labels a draft as one, and still opens it', () => {
+    // A draft is listed so the room can find the conversation it is being
+    // written in; the label keeps it from reading as something that runs.
+    const onOpenWorkstreamAutomation = vi.fn();
     renderRail({
-      workstreamAutomations: [{ ...automation, attention: 'unsupported_trigger' }],
+      workstreamAutomations: [{ ...automation, status: 'draft' }],
+      onOpenWorkstreamAutomation,
     });
 
-    expect(screen.getByText('Needs attention')).toBeInTheDocument();
+    expect(screen.getByText('Draft')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Weekly changelog/ }));
+    expect(onOpenWorkstreamAutomation).toHaveBeenCalledWith('automation-1');
+  });
+
+  it('shows no automations section on a parent that cannot own any', () => {
+    renderRail({ automationsSection: false, workstreamAutomations: [] });
+
+    expect(screen.queryByRole('heading', { level: 3, name: 'Automations' })).toBeNull();
+    expect(screen.queryByText('No automations')).toBeNull();
   });
 });

@@ -118,8 +118,6 @@ const headerWorkstream: WorkstreamDetail = {
   id: 'workstream-header',
   title: 'Daily product brief',
   titleStatus: 'settled' as const,
-  origin: 'automation',
-  automationName: 'Daily monitor',
   harnessStatus: 'completed',
   scope: 'workspace',
   lastActivityAt: '2026-08-07T12:00:00.000Z',
@@ -139,7 +137,6 @@ const headerWorkstream: WorkstreamDetail = {
   resources: [],
   connections: [],
   backgroundTasks: [],
-  automationRuns: [],
 };
 
 describe('running work-stream message delivery', () => {
@@ -307,23 +304,6 @@ describe('WorkstreamHeader origin affordances', () => {
     expect(copyText).not.toHaveBeenCalledWith(expect.stringContaining('rallywithai://'));
   });
 
-  it('removes origin icons while preserving automation runs in the More menu', async () => {
-    renderWorkstreamHeader();
-
-    expect(document.querySelector('.header-origin-icon')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Automation runs' })).not.toBeInTheDocument();
-
-    fireEvent.pointerDown(screen.getByRole('button', { name: 'More work-stream actions' }), {
-      button: 0,
-      ctrlKey: false,
-    });
-    const runsItem = await screen.findByRole('menuitem', { name: 'Automation runs' });
-    expect(runsItem.querySelector('svg')).toBeNull();
-
-    fireEvent.click(runsItem);
-    expect(useUiStore.getState()).toMatchObject({ railOpen: true, railVariant: 'runs' });
-  });
-
   it('marks the panel holding the right sidebar as open and closes it from there', () => {
     renderWorkstreamHeader();
 
@@ -342,16 +322,6 @@ describe('WorkstreamHeader origin affordances', () => {
     expect(screen.getByRole('button', { name: 'Work-stream context' })).toHaveAttribute('aria-pressed', 'false');
   });
 
-  it('does not expose automation runs or an origin icon for ad-hoc work streams', async () => {
-    renderWorkstreamHeader({ ...headerWorkstream, origin: 'ad_hoc' });
-
-    expect(document.querySelector('.header-origin-icon')).toBeNull();
-    fireEvent.pointerDown(screen.getByRole('button', { name: 'More work-stream actions' }), {
-      button: 0,
-      ctrlKey: false,
-    });
-    expect(screen.queryByRole('menuitem', { name: 'Automation runs' })).not.toBeInTheDocument();
-  });
 });
 
 describe('WorkstreamHeader inline rename', () => {

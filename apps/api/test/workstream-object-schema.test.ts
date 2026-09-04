@@ -1,7 +1,7 @@
 import { asWorkspaceId } from "@rally/contracts";
 import { asWorkstreamId } from "@rally/contracts";
 import { DatabaseSync } from "node:sqlite";
-import { ServerSocketEventSchema, WorkstreamWorkflowInputSchema } from "@rally/contracts";
+import { ServerSocketEventSchema } from "@rally/contracts";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -715,92 +715,6 @@ describe("the Workstream Durable Object relational schema", () => {
     }
   });
 
-  it("strips delivery targets from a child's stored automation run context when version 37 applies", () => {
-    const database = new DatabaseSync(":memory:");
-    const storage = objectStorage(database);
-    try {
-      applyDurableObjectSqliteMigrations({
-        storage,
-        migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.filter((migration) => migration.version < 37),
-        component: "workstream",
-        workerVersionId: "worker-before",
-        now: 1_000,
-      });
-      seedWorkstreamObjectRoot(database, { workstreamId: WORKSTREAM_ID, workspaceId: WORKSPACE_ID });
-      seedWorkstreamRun(database, {
-        id: RUN_ID,
-        origin: "automation",
-        executionPrincipalJson: JSON.stringify({ type: "user", userId: AUTHOR_ID }),
-      });
-      // The receipt a run dispatched before this deploy left behind: the frozen
-      // context as the automation object wrote it while `deliveryTargets` was
-      // still a required field, which is `[]` for every run that had none.
-      const automationRunContext = {
-        schemaVersion: 1,
-        automationId: "00000000-0000-7000-8000-0000000000b1",
-        workspaceId: WORKSPACE_ID,
-        runId: "00000000-0000-7000-8000-0000000000b2",
-        authorityGeneration: 1,
-        definitionRevision: 1,
-        definition: {
-          name: "Daily competitor briefing",
-          description: "Brief",
-          overview: "Produce the daily competitor briefing.",
-          instructions: "Write the briefing.",
-          requiredCapabilities: [],
-          expectedOutputs: ["Competitor briefing"],
-          defaultBehavior: {},
-          recommendedPlugins: [],
-          memoryTables: [],
-        },
-        defaultPluginIds: [],
-        activitySourcePluginIds: {},
-        connectorBindings: {},
-        owningWorkstreamId: null,
-        scope: "personal",
-        authoringOrigin: null,
-        modelOverride: null,
-        executionPrincipal: { type: "user", userId: AUTHOR_ID },
-        trigger: { kind: "manual", requestedByUserId: AUTHOR_ID },
-        opening: null,
-        memoryScope: { automationId: "00000000-0000-7000-8000-0000000000b1", authorityGeneration: 1 },
-      };
-      const stored = {
-        region: "global",
-        workspaceId: WORKSPACE_ID,
-        workstreamId: WORKSTREAM_ID,
-        loopId: substreamLoopId(WORKSTREAM_ID),
-        harnessRunId: RUN_ID,
-        triggerMessageId: null,
-        automationSubscriptionId: automationRunContext.automationId,
-        activityId: null,
-        executionPrincipal: { type: "user", userId: AUTHOR_ID },
-        reason: "automation",
-        automationRunContext: { ...automationRunContext, deliveryTargets: [] },
-      };
-      storage.sql.exec(
-        `UPDATE runs SET execution_context_json = ? WHERE run_id = ?`,
-        JSON.stringify(stored),
-        RUN_ID,
-      );
-      expect(WorkstreamWorkflowInputSchema.safeParse(stored).success).toBe(false);
-
-      applyWorkstreamObjectSchema(storage, "worker-after", 2_000);
-
-      const row = database.prepare(
-        `SELECT execution_context_json FROM runs WHERE run_id = ?`,
-      ).get(RUN_ID) as { execution_context_json: string };
-      // Parsed with the schema the child reads it through on claim, lease
-      // recovery and settlement, not merely inspected for the key: the whole
-      // defect is that this parse throws.
-      const parsed = WorkstreamWorkflowInputSchema.safeParse(JSON.parse(row.execution_context_json));
-      expect(parsed.success).toBe(true);
-      expect(parsed.success && parsed.data.automationRunContext).toEqual(automationRunContext);
-    } finally {
-      database.close();
-    }
-  });
-
   it("removes the retired dashboard state in version 38", () => {
     const database = new DatabaseSync(":memory:");
     const storage = objectStorage(database);
@@ -1028,11 +942,12 @@ describe("the Workstream Durable Object relational schema", () => {
     const store = new WorkstreamObjectStore(objectStorage(database), "worker-one", "global");
     try {
       await store.waitUntilReady();
-      store.ensureIdentity({ workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID }, "global");
+      store.ensureIdentity({ workspaceId: WORKSPACE_ID, parentKind: "workstream", parentId: WORKSTREAM_ID }, "global");
 
       expect(() => store.ensureIdentity({
         workspaceId: WORKSPACE_ID,
-        workstreamId: asWorkstreamId("00000000-0000-7000-8000-0000000000ff"),
+        parentKind: "workstream",
+        parentId: asWorkstreamId("00000000-0000-7000-8000-0000000000ff"),
       }, "global")).toThrow("workstream_object_identity_mismatch");
     } finally {
       database.close();
@@ -1046,7 +961,7 @@ describe("the Workstream Durable Object relational schema", () => {
     const store = new WorkstreamObjectStore(storage, "worker-one", "eu");
     try {
       await store.waitUntilReady();
-      store.ensureIdentity({ workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID }, "eu");
+      store.ensureIdentity({ workspaceId: WORKSPACE_ID, parentKind: "workstream", parentId: WORKSTREAM_ID }, "eu");
       const at = "2026-08-16T12:00:00.000Z";
       activateRealtimeExecution(storage, Date.parse(at));
       store.commitRealtimeEvent(ServerSocketEventSchema.parse({
@@ -1155,7 +1070,7 @@ describe("the Workstream Durable Object relational schema", () => {
     const store = new WorkstreamObjectStore(storage, "worker-one", "global");
     try {
       await store.waitUntilReady();
-      store.ensureIdentity({ workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID }, "global");
+      store.ensureIdentity({ workspaceId: WORKSPACE_ID, parentKind: "workstream", parentId: WORKSTREAM_ID }, "global");
       const at = "2026-08-21T03:00:00.000Z";
       activateRealtimeExecution(storage, Date.parse(at));
       store.commitRealtimeEvent(ServerSocketEventSchema.parse({

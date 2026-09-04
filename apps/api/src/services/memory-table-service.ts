@@ -1,4 +1,5 @@
 import type {
+  AutomationMemoryTable,
   MemoryTableColumnType,
   WorkstreamWorkflowInput,
 } from "@rally/contracts";
@@ -7,6 +8,7 @@ import { nowIso } from "@rally/db";
 import type { HarnessTool, HarnessToolResult } from "@rally/agent-harness";
 import { z } from "zod";
 import type { Env } from "../env";
+import { ApiError } from "../lib/api-error";
 import { sha256 } from "../lib/crypto";
 import { workspaceDOName } from "../durable-objects/names";
 import {
@@ -27,12 +29,12 @@ import {
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import {
   MEMORY_SCOPE_KINDS,
+  ensureScope,
   resolveMemoryAccess,
   writableScope,
   type MemoryScope,
 } from "./memory-service";
 import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
-import { executeAutomationMemoryToolForRun } from "./automation-memory-client";
 
 type ColumnType = MemoryTableColumnType;
 
@@ -226,10 +228,10 @@ function decodeCursor(cursor: string | undefined): { offset: number; dataRevisio
 /**
  * The shape an automation's durable tables are described to a run in.
  *
- * The materialization that used to produce these rows here moved into the
- * named AutomationAgent with the 2026-08-28 automation cutover; the shape
- * stays exported because the run prompt context is still typed against it,
- * with `readAutomationMemoryBootstrapForRun` as the source.
+ * Produced by {@link automationScopeMemoryTables} from whatever lives in the
+ * automation's memory scope: the tables its definition declared, created at
+ * apply by {@link materializeAutomationMemoryTables}, and any a run made for
+ * itself with the `create` tool.
  */
 export interface MaterializedMemoryTable {
   memoryTableId: string;
@@ -477,7 +479,7 @@ function mutationRecord(
     operation: args.operation,
     actorPrincipalJson: JSON.stringify(input.executionPrincipal),
     harnessRunId: input.harnessRunId,
-    workstreamId: input.workstreamId,
+    workstreamId: input.parentId,
     rationale: args.rationale,
     inputHash: args.inputHash,
     mutationJson: JSON.stringify(args.mutation),
@@ -575,6 +577,9 @@ function normalizeFilter(
   };
 }
 
+/** How many tables one search or one scope listing hands back. */
+const MEMORY_TABLE_SEARCH_LIMIT = 20;
+
 async function tableSearch(env: Env, input: WorkstreamWorkflowInput, query: string) {
   const scopes = await resolveMemoryAccess(env, input);
   if (scopes.length === 0) return { query, tables: [] };
@@ -583,7 +588,7 @@ async function tableSearch(env: Env, input: WorkstreamWorkflowInput, query: stri
     workspaceId: input.workspaceId,
     scopeIds: scopes.map((scope) => scope.memoryScopeId),
     like: `%${likePattern(query)}%`,
-    limit: 20,
+    limit: MEMORY_TABLE_SEARCH_LIMIT,
   }));
   const tables = [];
   for (const memoryTableId of found.memoryTableIds) {
@@ -748,7 +753,7 @@ async function createTable(
     provenanceJson: JSON.stringify({
       source: "agent",
       harnessRunId: input.harnessRunId,
-      workstreamId: input.workstreamId,
+      workstreamId: input.parentId,
     }),
     // The request's column shape is strict and does not carry the table id the
     // object already has; the id-bearing shape above exists for `pseudoTable`.
@@ -838,7 +843,7 @@ async function insertRows(
       provenanceJson: JSON.stringify({
         source: "agent",
         harnessRunId: input.harnessRunId,
-        workstreamId: input.workstreamId,
+        workstreamId: input.parentId,
         executionPrincipal: input.executionPrincipal,
         rationale: args.rationale,
       }),
@@ -849,7 +854,7 @@ async function insertRows(
         operation: "insert_rows",
         actorPrincipalJson: JSON.stringify(input.executionPrincipal),
         harnessRunId: input.harnessRunId,
-        workstreamId: input.workstreamId,
+        workstreamId: input.parentId,
         rationale: args.rationale,
         inputHash,
         mutationJson: JSON.stringify({ naturalKeyHashes: prepared.map((row) => row.keyHash) }),
@@ -1224,28 +1229,176 @@ export function createMemoryTableTools(env: Env, input: WorkstreamWorkflowInput)
       execute: (raw, context) => invalidateRows(env, input, raw, context),
     },
   ];
-  if (!input.automationRunContext) return tools;
-  const operations = [
-    "table_search",
-    "table_describe",
-    "table_query",
-    "table_create",
-    "table_insert_rows",
-    "table_update_rows",
-    "table_invalidate_rows",
-  ] as const;
-  return tools.map((tool, index) => ({
-    ...tool,
-    execute: async (raw, context) => executeAutomationMemoryToolForRun(
-      env,
-      input,
-      operations[index]!,
-      raw,
-      context.providerIdempotencyKey,
-    ),
-  }));
+  return tools;
 }
 
 export const __memoryTableTesting = {
   normalizeFilter,
 };
+
+/**
+ * The tables an automation's definition declares, created in its memory scope.
+ *
+ * Called from the automation's apply, after the revision is accepted. A
+ * declaration that no run could find was dead data: the draft asked the model
+ * for tables, the definition carried them, and nothing made them. Creation
+ * goes through the same object path the `create` tool uses, with the same
+ * deterministic table id (scope plus lower-cased name) and a receipt keyed by
+ * the automation, its revision, and the table's position, so a replayed apply
+ * converges and a table a run already created under that name is reopened
+ * when its shape matches and refused when it does not. Nothing here drops a
+ * table: a revision that stops declaring one leaves it and its rows in the
+ * scope.
+ */
+export async function materializeAutomationMemoryTables(
+  env: Env,
+  input: {
+    workspaceId: string;
+    automationId: string;
+    definitionRevision: number;
+    runAsUserId: string;
+    tables: readonly AutomationMemoryTable[];
+  },
+): Promise<Array<{ name: string; memoryTableId: string; outcome: "created" | "opened" }>> {
+  if (input.tables.length === 0) return [];
+  const scope = await ensureScope(env, input.workspaceId, "automation", input.automationId, true);
+  const workspace = await workspaceMemoryObject(env, input.workspaceId);
+  const harnessRunId = `automation-apply:${input.automationId}:${input.definitionRevision}`;
+  const results: Array<{ name: string; memoryTableId: string; outcome: "created" | "opened" }> = [];
+  for (const [index, declared] of input.tables.entries()) {
+    const declaration = {
+      scopeKind: "automation" as const,
+      name: declared.name,
+      description: declared.description,
+      usageInstructions: declared.usageInstructions,
+      columns: declared.columns,
+      keyColumns: declared.keyColumns,
+      rationale: "Declared by the automation's definition",
+    };
+    const receiptId = `${harnessRunId}:${index}`;
+    const inputHash = await mutationInputHash("create", declaration);
+    const mutationId = await deterministicId("mtm", harnessRunId, receiptId);
+    const memoryTableId = await deterministicId("mtt", scope.memoryScopeId, declared.name.toLocaleLowerCase());
+    const columns = declared.columns.map((column, position) => ({
+      memoryTableColumnId: `${memoryTableId}:column:${position}`,
+      name: column.name,
+      description: column.description,
+      valueType: column.type,
+      isRequired: column.required,
+      isSearchable: column.searchable,
+      position,
+    }));
+    const byName = new Map(columns.map((column) => [column.name.toLocaleLowerCase(), column]));
+    const keyColumnIds = declared.keyColumns.map((name) => byName.get(name.toLocaleLowerCase())!.memoryTableColumnId);
+    const mutation = {
+      memoryTableMutationId: mutationId,
+      receiptId,
+      operation: "create" as const,
+      actorPrincipalJson: JSON.stringify({ type: "user", userId: input.runAsUserId }),
+      harnessRunId,
+      workstreamId: input.automationId,
+      rationale: declaration.rationale,
+      inputHash,
+      mutationJson: JSON.stringify(declaration),
+      resultJson: JSON.stringify({ memoryTableId, name: declared.name }),
+    };
+    const outcome = WorkspaceMemoryTableCreateResultSchema.parse(await workspace.createMemoryTable({
+      workspaceId: input.workspaceId,
+      memoryTableId,
+      memoryScopeId: scope.memoryScopeId,
+      name: declared.name,
+      description: declared.description,
+      usageInstructions: declared.usageInstructions,
+      keyColumnIdsJson: JSON.stringify(keyColumnIds),
+      provenanceJson: JSON.stringify({
+        source: "automation_definition",
+        automationId: input.automationId,
+        definitionRevision: input.definitionRevision,
+      }),
+      columns,
+      mutation,
+      at: nowIso(),
+    }));
+    if (outcome.outcome === "receipt_mismatch") throw new Error("memory_table_mutation_receipt_mismatch");
+    if (outcome.outcome === "name_exists") {
+      const existing = await scopeTable(env, input.workspaceId, scope, outcome.memoryTableId);
+      if (!existing || !tableSchemaMatches(existing, declaration)) {
+        throw new ApiError(
+          422,
+          "automation_memory_table_conflict",
+          `A durable table named "${declared.name}" already exists in this automation's memory with a different shape`,
+        );
+      }
+      results.push({ name: declared.name, memoryTableId: outcome.memoryTableId, outcome: "opened" });
+      continue;
+    }
+    results.push({ name: declared.name, memoryTableId, outcome: outcome.outcome === "replayed" ? "opened" : "created" });
+  }
+  return results;
+}
+
+/**
+ * Every live table in an automation's memory scope, as a run is told about
+ * them: the declared ones apply created, and any a previous run added.
+ */
+export async function automationScopeMemoryTables(
+  env: Env,
+  workspaceId: string,
+  automationId: string,
+): Promise<MaterializedMemoryTable[]> {
+  const scope = await ensureScope(env, workspaceId, "automation", automationId, true);
+  const workspace = await workspaceMemoryObject(env, workspaceId);
+  const found = WorkspaceMemoryTableSearchResultSchema.parse(await workspace.searchMemoryTables({
+    workspaceId,
+    scopeIds: [scope.memoryScopeId],
+    like: "%",
+    limit: MEMORY_TABLE_SEARCH_LIMIT,
+  }));
+  const tables: MaterializedMemoryTable[] = [];
+  for (const memoryTableId of found.memoryTableIds) {
+    const table = await scopeTable(env, workspaceId, scope, memoryTableId);
+    if (!table) continue;
+    const keyIds = new Set(table.keyColumns.map((column) => column.memoryTableColumnId));
+    tables.push({
+      memoryTableId: table.table.memoryTableId,
+      memoryScopeId: table.table.memoryScopeId,
+      scopeKind: "automation",
+      name: table.table.name,
+      description: table.table.description,
+      usageInstructions: table.table.usageInstructions,
+      keyColumns: table.columns.filter((column) => keyIds.has(column.memoryTableColumnId)).map((column) => column.name),
+      columns: table.columns.map((column) => ({
+        memoryTableColumnId: column.memoryTableColumnId,
+        name: column.name,
+        description: column.description,
+        type: column.valueType,
+        required: column.isRequired,
+        searchable: column.isSearchable,
+      })),
+    });
+  }
+  return tables;
+}
+
+/** A table read within one known scope, without a run's authority to resolve. */
+async function scopeTable(
+  env: Env,
+  workspaceId: string,
+  scope: MemoryScope,
+  memoryTableId: string,
+): Promise<AuthorizedTable | null> {
+  const workspace = await workspaceMemoryObject(env, workspaceId);
+  const found = WorkspaceMemoryTableResultSchema.parse(await workspace.memoryTableWithColumns({
+    workspaceId,
+    memoryTableId,
+  }));
+  if (found.outcome !== "found" || found.table.memoryScopeId !== scope.memoryScopeId) return null;
+  const keyIds = new Set(JSON.parse(found.table.keyColumnIdsJson) as string[]);
+  const columns = [...found.columns].sort((left, right) => left.position - right.position);
+  return {
+    table: found.table,
+    columns,
+    scope,
+    keyColumns: columns.filter((column) => keyIds.has(column.memoryTableColumnId)),
+  };
+}

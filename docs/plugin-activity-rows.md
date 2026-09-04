@@ -484,13 +484,10 @@ no state, requests nothing, and never changes what a run does.
 
 It deliberately does **not** cover:
 
-- **The automation draft wizard's feed** (`screens/new-automation.tsx`), which
-  is the other adapter over the shared conversation family — see
-  [`conversation-surfaces.md`](conversation-surfaces.md). It still shows one row
-  per tool call. That feed has no plugin activities behind it, so a grouped row
-  there could only ever sum call durations, and the wizard's tool calls are a
-  handful of authoring steps rather than the screenful a work-stream run
-  produces. It does share `.plugin-face`, so its plugin marks are bare too.
+- **Nothing else.** The automation draft wizard's feed, which used to be a
+  second adapter showing one row per tool call, is gone; an automation's chat
+  is the same `SubstreamAgent` feed as a work stream's and collapses the same
+  way (see [`conversation-surfaces.md`](conversation-surfaces.md)).
 - **What the backend records.** Tool blocks, plugin activities, ids, and labels
   are [`workstream-durable-object.md`](workstream-durable-object.md)'s and
   [`agent-harness.md`](agent-harness.md)'s; this module adds nothing to the wire

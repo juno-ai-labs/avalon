@@ -552,11 +552,10 @@ function environment(database: DatabaseSync): Env {
       },
     }),
     WORKSTREAM_DOS: testSubstreamAgentsBinding(database, {
-      extra: { flushWorkspaceDirectoryEffects: vi.fn(async () => ({ status: 200, bodyJson: "{}" })) },
+      extra: { reserveChild: parentReserveChild() },
     }),
     WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
       extra: {
-        hasWorkstreamDirectory: vi.fn(async () => true),
         opportunityOriginEvents: vi.fn(async (request: { opportunityId: string }) => {
           const rows = database.prepare(
             `SELECT a.*, c.connector_type
@@ -616,6 +615,21 @@ function environment(database: DatabaseSync): Env {
     OPENROUTER_CLASSIFIER_MODEL: "google/gemini-2.5-flash-lite",
     OPENROUTER_FALLBACK_MODELS: "google/gemini-3.6-flash",
   });
+}
+
+/**
+ * The parent's half of a create.
+ *
+ * Creation reserves the main conversation on the parent object before the child
+ * is initialized, and the real `reserveChild` answers with the generation the
+ * parent is at. No origin assertion reads the reservation, but a create that
+ * cannot make it never reaches the attach these tests are about.
+ */
+function parentReserveChild() {
+  return vi.fn(async (input: { authorityGeneration: number }) => ({
+    reserved: true as const,
+    authorityGeneration: input.authorityGeneration,
+  }));
 }
 
 function opportunityRequest() {

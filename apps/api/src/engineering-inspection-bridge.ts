@@ -26,7 +26,7 @@ import {
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { z } from "zod";
 
-import { substreamAgentName, workspaceDOName } from "./durable-objects/names";
+import { conversationObjectName, workspaceDOName } from "./durable-objects/names";
 import {
   resolveInspectionWorkspaceRoute,
   resolveInspectionWorkstreamRoute,
@@ -293,7 +293,7 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
       this.env,
       this.env.SUBSTREAM_AGENTS,
       request.workspaceId,
-      substreamAgentName(
+      conversationObjectName(
         this.env.AVALON_REGION,
         request.workspaceId,
         request.workstreamId,

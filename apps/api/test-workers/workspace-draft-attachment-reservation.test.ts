@@ -4,10 +4,9 @@ import { env } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import { asUserId, asWorkspaceId, asWorkstreamId, conversationEffectHash } from "@rally/contracts";
 
 import { workspaceDOName } from "../src/durable-objects/names";
-import { workstreamRegionalEffectHash } from "../src/durable-objects/workstream-regional-effect";
 
 /** Its own workspace, for the reason `workspace-directory-reads` states. */
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000008c0");
@@ -134,7 +133,6 @@ describe("WorkspaceDO pending attachment reservations", () => {
       lastActivityAt: "2026-08-28T12:01:00.000Z",
       completedAt: null,
       archivedAt: null,
-      originType: "ad_hoc" as const,
       createdByUserId: USER_ID,
       latestAttentionOrdinal: 1,
       unreadTrackingStartOrdinal: 0,
@@ -150,17 +148,18 @@ describe("WorkspaceDO pending attachment reservations", () => {
     await workspace().applyWorkstreamDirectoryEffects({
       workspaceId: WORKSPACE_ID,
       envelopes: [{
-        kind: "workstream_regional_effect" as const,
+        kind: "parent_effect" as const,
         contractVersion: 1 as const,
         region: "global" as const,
         workspaceId: WORKSPACE_ID,
-        workstreamId: WORKSTREAM_ID,
+        parentKind: "workstream" as const,
+        parentId: WORKSTREAM_ID,
         generation: 1,
         messageId: "00000000-0000-7000-8000-0000000008a5",
         partitionKey: "common",
         sourceVersion: 1,
         requiredProjectionVersion: null,
-        payloadHash: workstreamRegionalEffectHash(effect),
+        payloadHash: conversationEffectHash(effect),
         effect,
       }],
     });

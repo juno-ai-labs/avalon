@@ -5,8 +5,8 @@ export function workspaceDOName(region: Region, workspaceId: WorkspaceId): strin
   return `${region}:${workspaceId}`;
 }
 
-/** One canonical lifecycle authority for an automation, from first prompt. */
-export function automationAgentName(
+/** One automation object: the parent of an automation's conversation and its runs. */
+export function automationDOName(
   region: Region,
   workspaceId: WorkspaceId,
   automationId: AutomationId,
@@ -14,7 +14,7 @@ export function automationAgentName(
   return `${region}:${workspaceId}:automation:${automationId}`;
 }
 
-/** One non-agent control object for each work stream. */
+/** One non-agent control object for each work stream: the parent of its substreams. */
 export function workstreamDOName(
   region: Region,
   workspaceId: WorkspaceId,
@@ -24,22 +24,22 @@ export function workstreamDOName(
 }
 
 /**
- * One agent object per substream.
+ * One conversation object per substream, named by its parent.
  *
- * The main substream deliberately retains the historical WorkstreamRoom name.
- * Class rename can preserve an already-jurisdictional object, while the
- * maintenance import populates a new jurisdictional ID when the historical
- * name lived in an unrestricted namespace. Additional substreams receive
- * independent objects.
+ * `parentId` is a work stream id or an automation id; the kind is not in the
+ * name because both are UUIDs and the object records its own kind. The main
+ * substream (`"0"`) deliberately retains the historical WorkstreamRoom name, so
+ * no deployed object moved when the parent became typed. Additional substreams
+ * receive independent objects suffixed by their substream id.
  */
-export function substreamAgentName(
+export function conversationObjectName(
   region: Region,
   workspaceId: WorkspaceId,
-  workstreamId: WorkstreamId,
+  parentId: string,
   substreamId: SubstreamId | "0" = "0",
 ): string {
-  const workstreamName = workstreamDOName(region, workspaceId, workstreamId);
-  return substreamId === "0" ? workstreamName : `${workstreamName}:${substreamId}`;
+  const parentName = `${region}:${workspaceId}:${parentId}`;
+  return substreamId === "0" ? parentName : `${parentName}:${substreamId}`;
 }
 
 /**
@@ -50,10 +50,12 @@ export function substreamAgentName(
  * second logical loop for the same substream.
  */
 export function substreamLoopId(
-  workstreamId: WorkstreamId,
+  parentId: string,
   substreamId: SubstreamId | "0" = "0",
 ): string {
-  return `workstream:${workstreamId}:substream:${substreamId}:loop`;
+  // The `workstream:` prefix is historical and kept: renaming it would mint a
+  // second loop identity for every deployed substream.
+  return `workstream:${parentId}:substream:${substreamId}:loop`;
 }
 
 /**

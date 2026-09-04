@@ -1,4 +1,11 @@
-import { asAutomationId, asHarnessRunId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import {
+  asAutomationId,
+  asHarnessRunId,
+  asSubstreamId,
+  asUserId,
+  asWorkspaceId,
+  asWorkstreamId,
+} from "@rally/contracts";
 import type { WorkstreamWorkflowInput } from "@rally/contracts";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -22,34 +29,25 @@ const WORKSPACE_ID = asWorkspaceId("00000000-0000-4000-8000-000000000001");
 const WORKSTREAM_ID = asWorkstreamId("00000000-0000-4000-8000-000000000002");
 const RUN_ID = "00000000-0000-4000-8000-000000000003";
 const USER_ID = asUserId("00000000-0000-4000-8000-000000000004");
-const SUBSCRIPTION_ID = asAutomationId("00000000-0000-4000-8000-000000000005");
+const AUTOMATION_ID = asAutomationId("00000000-0000-4000-8000-000000000005");
 const ACTIVITY_ID = "00000000-0000-4000-8000-000000000006";
+const HARNESS_RUN_ID = asHarnessRunId("00000000-0000-4000-8000-000000000007");
 const CONNECTION_ID = "00000000-0000-4000-8000-000000000008";
+
+type RunState = "pending" | "running" | "needs_input" | "completed" | "failed" | "stopped";
+type Lifecycle = "draft" | "active" | "paused" | "deleted";
 
 type AuthorityState = {
   memberStatus: string;
   archivedAt: string | null;
-  subscriptionStatus: string;
-  subscriptionLifecycleState: string;
-  templateVersionId: string;
-  templateArchivedAt: string | null;
-  automationRunStatus: string;
-  triggerType: string;
-  triggerActivityId: string | null;
-  hasEnabledSchedule: number;
-  emailRouteStatus: string;
   activityExists: boolean;
   /**
-   * What the automation's own durable object says about the run right now.
-   *
-   * Separate from the legacy `subscription*` fields above, and deliberately so:
-   * those are the D1 rows the revalidation must *not* re-read, while this is
-   * the one live fact it does — whether the automation still consents to the
-   * run it admitted.
+   * What the automation's own object says about the run right now, and the
+   * one live fact the revalidation re-reads: whether the automation still
+   * consents to the run it admitted. `null` is a run the automation does not
+   * know.
    */
-  agentLifecycle: string;
-  agentAuthorityGeneration: number;
-  agentRunPresent: boolean;
+  run: { state: RunState; lifecycle: Lifecycle } | null;
 };
 
 /** The connector event the WorkspaceDO answers a trigger lookup with. */
@@ -87,27 +85,28 @@ function connectorActivity() {
 class AuthorityDatabase {
   readonly binding: D1Database;
   legacyActivityReads = 0;
+  /** Every `readRunState` request, so a test can assert which run was asked about. */
+  readonly runStateReads: Array<Record<string, unknown>> = [];
   /**
-   * The work stream's own object.
+   * The conversation parent's own object.
    *
-   * The archive gate and the automation ids the revalidation reads are the
-   * identity authority's row, so they are held by the real storage class over
-   * a real object store rather than by another arm of the matcher below.
+   * The archive gate the revalidation reads is the identity authority's row,
+   * so it is held by the real storage class over a real object store rather
+   * than by another arm of the matcher below. Seeded for the parent the input
+   * names: the automation for an automation run, the work stream otherwise.
    */
   readonly objectStore: DatabaseSync;
   readonly env: Env;
 
-  constructor(readonly state: AuthorityState) {
+  constructor(readonly state: AuthorityState, parentId: string = AUTOMATION_ID) {
     this.binding = createTestD1Database({
       prepare: (sql: string) => createTestD1PreparedStatement(new AuthorityStatement(this, sql)),
     });
     this.objectStore = testWorkstreamObjectStore();
     openStores.push(this.objectStore);
     seedWorkstreamObjectRoot(this.objectStore, {
-      workstreamId: WORKSTREAM_ID,
+      workstreamId: parentId,
       workspaceId: WORKSPACE_ID,
-      automationSubscriptionId: SUBSCRIPTION_ID,
-      automationRunId: RUN_ID,
       archivedAt: state.archivedAt === null ? null : Date.parse(state.archivedAt),
     });
 
@@ -129,14 +128,13 @@ class AuthorityDatabase {
       }),
       // The automation's own object, which is the only authority on whether it
       // still wants this run finished.
-      AUTOMATION_AGENTS: createCloudflareTestBinding<Env["AUTOMATION_AGENTS"]>({
+      AUTOMATION_DOS: createCloudflareTestBinding<Env["AUTOMATION_DOS"]>({
         idFromName: (name: string) => createTestDurableObjectId(name),
         get: () => ({
-          readRunAuthority: async () => ({
-            lifecycle: this.state.agentLifecycle,
-            authorityGeneration: this.state.agentAuthorityGeneration,
-            runPresent: this.state.agentRunPresent,
-          }),
+          readRunState: async (request: Record<string, unknown>) => {
+            this.runStateReads.push(request);
+            return this.state.run;
+          },
         }),
       }),
     });
@@ -179,21 +177,6 @@ class AuthorityStatement {
     if (sql.includes("SELECT placement_affinity FROM workspaces")) {
       return { placement_affinity: "wnam" } as T;
     }
-    if (sql.includes("FROM automation_subscriptions s")) {
-      expect(this.values).toEqual([RUN_ID, WORKSTREAM_ID, SUBSCRIPTION_ID, WORKSPACE_ID]);
-      return {
-        subscription_status: this.database.state.subscriptionStatus,
-        subscription_lifecycle_state: this.database.state.subscriptionLifecycleState,
-        template_version_id: this.database.state.templateVersionId,
-        email_route_status: this.database.state.emailRouteStatus,
-        template_archived_at: this.database.state.templateArchivedAt,
-        automation_run_id: RUN_ID,
-        automation_run_status: this.database.state.automationRunStatus,
-        trigger_type: this.database.state.triggerType,
-        trigger_activity_id: this.database.state.triggerActivityId,
-        has_enabled_schedule: this.database.state.hasEnabledSchedule,
-      } as T;
-    }
     if (sql.includes("SELECT id FROM activities")) {
       this.database.legacyActivityReads += 1;
       expect(this.values).toEqual([ACTIVITY_ID, WORKSPACE_ID]);
@@ -207,61 +190,31 @@ function state(overrides: Partial<AuthorityState> = {}): AuthorityState {
   return {
     memberStatus: "active",
     archivedAt: null,
-    subscriptionStatus: "active",
-    subscriptionLifecycleState: "visible",
-    templateVersionId: "version-one",
-    templateArchivedAt: null,
-    automationRunStatus: "running",
-    triggerType: "schedule",
-    triggerActivityId: null,
-    hasEnabledSchedule: 1,
-    emailRouteStatus: "active",
     activityExists: true,
-    agentLifecycle: "active",
-    agentAuthorityGeneration: 1,
-    agentRunPresent: true,
+    run: { state: "running", lifecycle: "active" },
     ...overrides,
   };
 }
 
+/** A run under an automation: the automation is the parent, the run is its child substream. */
 function input(activityId: string | null = null): WorkstreamWorkflowInput {
   return {
     region: "global",
     workspaceId: WORKSPACE_ID,
-    workstreamId: WORKSTREAM_ID,
-    loopId: `workstream:${WORKSTREAM_ID}:substream:0:loop`,
-    harnessRunId: asHarnessRunId("00000000-0000-4000-8000-000000000007"),
+    parentKind: "automation",
+    parentId: AUTOMATION_ID,
+    substreamId: asSubstreamId(RUN_ID),
+    loopId: `workstream:${AUTOMATION_ID}:substream:${RUN_ID}:loop`,
+    harnessRunId: HARNESS_RUN_ID,
     triggerMessageId: null,
-    automationSubscriptionId: SUBSCRIPTION_ID,
     activityId,
     executionPrincipal: { type: "user", userId: USER_ID },
     reason: "automation",
-    automationRunContext: {
+    automationRun: {
       schemaVersion: 1,
-      automationId: SUBSCRIPTION_ID,
-      workspaceId: WORKSPACE_ID,
+      automationId: AUTOMATION_ID,
       runId: RUN_ID,
-      authorityGeneration: 1,
       definitionRevision: 1,
-      definition: {
-        name: "Issue watcher",
-        description: "Watches issues.",
-        overview: "Report matching issues.",
-        instructions: "Report the issue.",
-        requiredCapabilities: [],
-        expectedOutputs: [],
-        defaultBehavior: {},
-        recommendedPlugins: [],
-        memoryTables: [],
-      },
-      defaultPluginIds: [],
-      activitySourcePluginIds: {},
-      connectorBindings: {},
-      owningWorkstreamId: null,
-  scope: "personal" as const,
-  authoringOrigin: null,
-      modelOverride: null,
-      executionPrincipal: { type: "user", userId: USER_ID },
       trigger: activityId
         ? {
             kind: "external_event",
@@ -271,67 +224,95 @@ function input(activityId: string | null = null): WorkstreamWorkflowInput {
             payloadHash: "activity-hash",
           }
         : { kind: "manual", requestedByUserId: USER_ID },
-      opening: null,
-      memoryScope: { automationId: SUBSCRIPTION_ID, authorityGeneration: 1 },
     },
   };
 }
 
+/** A run in a work stream, which no automation has to consent to. */
+function workstreamInput(): WorkstreamWorkflowInput {
+  return {
+    region: "global",
+    workspaceId: WORKSPACE_ID,
+    parentKind: "workstream",
+    parentId: WORKSTREAM_ID,
+    loopId: `workstream:${WORKSTREAM_ID}:substream:0:loop`,
+    harnessRunId: HARNESS_RUN_ID,
+    triggerMessageId: null,
+    activityId: null,
+    executionPrincipal: { type: "user", userId: USER_ID },
+    reason: "human_message",
+  };
+}
+
 describe("durable run authority revalidation", () => {
-  it("keeps an admitted run immutable when its automation is later paused", async () => {
+  it("admits a running automation run and re-reads only the automation's consent", async () => {
     const database = new AuthorityDatabase(state());
     const snapshot = await __integrationTesting.assertRunAuthorityStillValid(database.env, input());
-    database.state.subscriptionStatus = "paused";
+    expect(snapshot).toEqual({
+      automationRunId: RUN_ID,
+      automationTemplateVersionId: `${AUTOMATION_ID}:1`,
+      triggerType: "manual",
+    });
+    // Asked about this run of this automation, not about the automation alone:
+    // an automation that is active again after a pause and resume still does
+    // not consent to the run the pause stopped.
+    expect(database.runStateReads).toEqual([{
+      workspaceId: WORKSPACE_ID,
+      automationId: AUTOMATION_ID,
+      runId: RUN_ID,
+    }]);
     await expect(__integrationTesting.assertRunAuthorityStillValid(database.env, input(), snapshot))
       .resolves.toEqual(snapshot);
   });
 
-  it("keeps an admitted run immutable when its automation is later deleted", async () => {
-    const database = new AuthorityDatabase(state());
+  it("keeps a run that is waiting on a person alive", async () => {
+    const database = new AuthorityDatabase(state({ run: { state: "needs_input", lifecycle: "active" } }));
     const snapshot = await __integrationTesting.assertRunAuthorityStillValid(database.env, input());
-    database.state.subscriptionLifecycleState = "deleted";
     await expect(__integrationTesting.assertRunAuthorityStillValid(database.env, input(), snapshot))
       .resolves.toEqual(snapshot);
   });
 
-  it("does not revoke an admitted run when a later schedule is disabled", async () => {
+  it("stops a run whose automation was paused after it was admitted", async () => {
     const database = new AuthorityDatabase(state());
     const snapshot = await __integrationTesting.assertRunAuthorityStillValid(database.env, input());
-    database.state.hasEnabledSchedule = 0;
+    database.state.run = { state: "running", lifecycle: "paused" };
     await expect(__integrationTesting.assertRunAuthorityStillValid(database.env, input(), snapshot))
-      .resolves.toEqual(snapshot);
+      .rejects.toThrow(/no longer running/i);
   });
 
-  it("rejects a template-version change so run authority cannot widen", async () => {
+  it.each([
+    "stopped",
+    "completed",
+    "failed",
+    "pending",
+  ] as const)("stops a run its automation marked %s before a provider write", async (runState) => {
     const database = new AuthorityDatabase(state());
     const snapshot = await __integrationTesting.assertRunAuthorityStillValid(database.env, input());
-    const changed = input();
-    changed.automationRunContext = {
-      ...changed.automationRunContext!,
-      definitionRevision: 2,
-    };
-    await expect(__integrationTesting.assertRunAuthorityStillValid(database.env, changed, snapshot))
-      .rejects.toThrow(/immutable run authority changed/i);
+    database.state.run = { state: runState, lifecycle: "active" };
+    await expect(__integrationTesting.assertRunAuthorityStillValid(database.env, input(), snapshot))
+      .rejects.toThrow(/no longer running/i);
+  });
+
+  it("stops a run its automation no longer knows", async () => {
+    const database = new AuthorityDatabase(state());
+    const snapshot = await __integrationTesting.assertRunAuthorityStillValid(database.env, input());
+    database.state.run = null;
+    await expect(__integrationTesting.assertRunAuthorityStillValid(database.env, input(), snapshot))
+      .rejects.toThrow(/no longer running/i);
   });
 
   it("does not re-read mutable connector evidence after admission", async () => {
-    const database = new AuthorityDatabase(state({
-      triggerType: "issue.created",
-      triggerActivityId: ACTIVITY_ID,
-    }));
+    const database = new AuthorityDatabase(state());
     const activityInput = input(ACTIVITY_ID);
     const snapshot = await __integrationTesting.assertRunAuthorityStillValid(database.env, activityInput);
+    expect(snapshot.triggerType).toBe("external_event");
     database.state.activityExists = false;
     await expect(__integrationTesting.assertRunAuthorityStillValid(database.env, activityInput, snapshot))
       .resolves.toEqual(snapshot);
   });
 
   it("does not consult WorkspaceDO for connector evidence frozen into the run", async () => {
-    const database = new AuthorityDatabase(state({
-      triggerType: "issue.created",
-      triggerActivityId: ACTIVITY_ID,
-      activityExists: false,
-    }));
+    const database = new AuthorityDatabase(state({ activityExists: false }));
     let durableActivityExists = true;
     const connectorEvent = vi.fn(async () => durableActivityExists
       ? { connectorType: "github", activity: connectorActivity() }
@@ -359,28 +340,30 @@ describe("durable run authority revalidation", () => {
     expect(connectorEvent).not.toHaveBeenCalled();
   });
 
-  it("stops a run whose automation was paused after it was admitted", async () => {
-    const database = new AuthorityDatabase(state());
-    const snapshot = await __integrationTesting.assertRunAuthorityStillValid(database.env, input());
-    database.state.agentLifecycle = "paused";
-    await expect(__integrationTesting.assertRunAuthorityStillValid(database.env, input(), snapshot))
-      .rejects.toThrow(/no longer running/i);
+  it("rejects a removed member before the automation is even asked", async () => {
+    const database = new AuthorityDatabase(state({ memberStatus: "removed" }));
+    await expect(__integrationTesting.assertRunAuthorityStillValid(database.env, input()))
+      .rejects.toThrow(/not an active workspace member/i);
+    expect(database.runStateReads).toEqual([]);
   });
 
-  it("stops a run left behind by a newer authority generation", async () => {
-    const database = new AuthorityDatabase(state());
-    const snapshot = await __integrationTesting.assertRunAuthorityStillValid(database.env, input());
-    // What a pause-and-resume, or a re-accepted definition, looks like from
-    // here: the automation is running again, but not the run this tool belongs
-    // to. Lifecycle alone would read as consent.
-    database.state.agentAuthorityGeneration = 2;
-    await expect(__integrationTesting.assertRunAuthorityStillValid(database.env, input(), snapshot))
-      .rejects.toThrow(/no longer running/i);
-  });
-
-  it("rejects an archived work stream before a tool can run", async () => {
+  it("rejects an archived parent before a tool can run", async () => {
     const database = new AuthorityDatabase(state({ archivedAt: "2026-08-03T00:00:00.000Z" }));
     await expect(__integrationTesting.assertRunAuthorityStillValid(database.env, input()))
-      .rejects.toThrow(/work stream is no longer active/i);
+      .rejects.toThrow(/no longer active/i);
+    expect(database.runStateReads).toEqual([]);
+  });
+
+  it("treats a run with no automation reference as a work-stream run and asks no automation", async () => {
+    const database = new AuthorityDatabase(state(), WORKSTREAM_ID);
+    const snapshot = await __integrationTesting.assertRunAuthorityStillValid(database.env, workstreamInput());
+    expect(snapshot).toEqual({
+      automationRunId: null,
+      automationTemplateVersionId: null,
+      triggerType: null,
+    });
+    expect(database.runStateReads).toEqual([]);
+    await expect(__integrationTesting.assertRunAuthorityStillValid(database.env, workstreamInput(), snapshot))
+      .resolves.toEqual(snapshot);
   });
 });

@@ -32,6 +32,8 @@ export function createResourceObjectPort(
   workspaceId: string,
   workstreamId: string,
   localStorage?: WorkstreamResourceStorage,
+  /** Which of the parent's conversations; the main one by default. */
+  substreamId?: string,
 ): ResourceObjectPort {
-  return createObjectPort(env, workspaceId, workstreamId, CONTRACT, localStorage);
+  return createObjectPort(env, workspaceId, workstreamId, CONTRACT, localStorage, substreamId);
 }

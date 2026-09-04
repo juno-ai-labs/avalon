@@ -1,4 +1,4 @@
-import type { AutomationDraftQuestion, ElicitationData, Message } from './types';
+import type { ElicitationData, Message } from './types';
 
 export type ElicitationAnswer = string | string[] | null;
 type MessageUpdater = (update: (messages: Message[]) => Message[]) => void;
@@ -41,14 +41,6 @@ export function normalizeElicitation(source: ElicitationSource): ElicitationData
     ...(source.answer === undefined ? {} : { answer: source.answer }),
     ...(source.createdAt ? { createdAt: source.createdAt } : {}),
   };
-}
-
-export function automationQuestionToElicitation(question: AutomationDraftQuestion): ElicitationData {
-  return normalizeElicitation({
-    ...question,
-    createdAt: question.presentedAt,
-    status: 'open',
-  });
 }
 
 export function resolveElicitationMessages(

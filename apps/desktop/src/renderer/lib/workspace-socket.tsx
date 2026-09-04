@@ -502,6 +502,14 @@ export function WorkspaceSocketProvider({
                 sidebarList.data.waterline,
                 sidebarList.data.items.map(mapAutomationSummary),
               );
+              // The list is pushed whenever an automation's own row changes,
+              // and the change that matters most to an open automation page
+              // is one the page cannot see otherwise: its chat submitting a
+              // revision. No HTTP request of the desktop's is in play then,
+              // so no sync topic follows; the list push is the one signal,
+              // and the detail surfaces it feeds refetch on it.
+              void queryClient.invalidateQueries({ queryKey: ['automation'] });
+              void queryClient.invalidateQueries({ queryKey: ['automation-runs'] });
             } else {
               applyVersionedNotePage(
                 queryClient,

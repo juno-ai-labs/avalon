@@ -20,6 +20,8 @@ const workstreamId = '018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d3';
 const harnessRunId = '018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d4';
 const userInvocationId = '018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d5';
 const workspaceInvocationId = '018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d6';
+const automationId = '018f3f4e-7b5a-7cc1-9a6f-2aa0324b7903';
+const automationRunId = '018f3f4e-7b5a-7cc1-9a6f-2aa0324b7904';
 
 function fixture() {
   const database = preRetirementProductSqliteDatabase();
@@ -132,37 +134,6 @@ describe('agent tool usage telemetry', () => {
       VALUES ('${workstreamId}', '${workspaceId}', 'Run', '', 'ad_hoc', '${userId}',
               '2026-08-12T20:00:00.000Z', '2026-08-12T20:00:00.000Z',
               '2026-08-12T20:00:00.000Z');
-      INSERT INTO automation_templates
-        (id, workspace_id, owner_user_id, name, description, sharing_state,
-         latest_version_number, created_at, updated_at)
-      VALUES ('018f3f4e-7b5a-7cc1-9a6f-2aa0324b7901', '${workspaceId}', '${userId}',
-              'Automation', '', 'private', 1, '2026-08-12T20:00:00.000Z', '2026-08-12T20:00:00.000Z');
-      INSERT INTO automation_template_versions
-        (id, template_id, version_number, instructions, trigger_definitions_json,
-         created_by_user_id, created_at)
-      VALUES ('018f3f4e-7b5a-7cc1-9a6f-2aa0324b7902',
-              '018f3f4e-7b5a-7cc1-9a6f-2aa0324b7901', 1, 'Run', '[]', '${userId}',
-              '2026-08-12T20:00:00.000Z');
-      INSERT INTO automation_subscriptions
-        (id, workspace_id, template_id, template_version_id, scope, owner_user_id,
-         execution_principal_json, status, created_at, updated_at)
-      VALUES ('018f3f4e-7b5a-7cc1-9a6f-2aa0324b7903', '${workspaceId}',
-              '018f3f4e-7b5a-7cc1-9a6f-2aa0324b7901',
-              '018f3f4e-7b5a-7cc1-9a6f-2aa0324b7902', 'personal', '${userId}',
-              '{"type":"user","userId":"${userId}"}', 'active',
-              '2026-08-12T20:00:00.000Z', '2026-08-12T20:00:00.000Z');
-      UPDATE workstreams
-         SET origin_type = 'automation',
-             automation_subscription_id = '018f3f4e-7b5a-7cc1-9a6f-2aa0324b7903',
-             automation_run_id = '018f3f4e-7b5a-7cc1-9a6f-2aa0324b7904'
-       WHERE id = '${workstreamId}';
-      INSERT INTO automation_runs
-        (id, workspace_id, automation_subscription_id, workstream_id, trigger_type,
-         started_at, completed_at, status, created_at)
-      VALUES ('018f3f4e-7b5a-7cc1-9a6f-2aa0324b7904', '${workspaceId}',
-              '018f3f4e-7b5a-7cc1-9a6f-2aa0324b7903', '${workstreamId}', 'scheduled',
-              '2026-08-12T19:00:00.000Z', '2026-08-12T19:10:00.000Z', 'completed',
-              '2026-08-12T19:00:00.000Z');
     `);
     // The run, its invocation receipts, and the product work-stream row live
     // in the work stream's object since migration 0090; the emitter is handed
@@ -173,10 +144,7 @@ describe('agent tool usage telemetry', () => {
       workspaceId,
       title: "Run",
       description: "",
-      originType: "automation",
       createdByUserId: userId,
-      automationSubscriptionId: "018f3f4e-7b5a-7cc1-9a6f-2aa0324b7903",
-      automationRunId: "018f3f4e-7b5a-7cc1-9a6f-2aa0324b7904",
     }, Date.parse("2026-08-12T20:00:00.000Z"));
     workstreamObjectRun(
       objectStore,
@@ -211,23 +179,23 @@ describe('agent tool usage telemetry', () => {
       `UPDATE tool_effects SET error_json = ? WHERE effect_intent_id = ?`,
     ).run('{"code":"provider_timeout","message":"secret provider response"}', userInvocationId);
     const routedEnv =
-      // The work stream's automation run was a third table in the receipt's
-      // join; it is the identity authority's read now, answered by the real
+      // The receipt itself lives in the work stream's object, read by the real
       // storage class over the same object store this test seeds.
       createTestEnv({ ...env, SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore) });
+    // Which automation this run belongs to is the loop input's to say: the
+    // stored receipt carries no automation columns, so the caller passes the
+    // same provenance the started event carried.
+    const terminal = {
+      workspaceId,
+      workstreamId,
+      harnessRunId,
+      invocationId: userInvocationId,
+      automationId,
+      automationRunId,
+    };
 
-    await emitAgentToolTerminalTelemetry(routedEnv, {
-      workspaceId,
-      workstreamId,
-      harnessRunId,
-      invocationId: userInvocationId,
-    });
-    await emitAgentToolTerminalTelemetry(routedEnv, {
-      workspaceId,
-      workstreamId,
-      harnessRunId,
-      invocationId: userInvocationId,
-    });
+    await emitAgentToolTerminalTelemetry(routedEnv, terminal);
+    await emitAgentToolTerminalTelemetry(routedEnv, terminal);
 
     const row = database.prepare(
       `SELECT envelope_json, subject_user_id FROM telemetry_accepted_events
@@ -251,7 +219,7 @@ describe('agent tool usage telemetry', () => {
         replayed: false,
       },
     });
-    expect(JSON.parse(row.envelope_json).properties).toHaveProperty('automationId');
+    expect(JSON.parse(row.envelope_json).properties.automationId).toBe(automationId);
     expect(row.envelope_json).not.toContain('secret');
     expect(database.prepare(
       `SELECT COUNT(*) AS count FROM telemetry_accepted_events

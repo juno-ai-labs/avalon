@@ -54,7 +54,6 @@ const state = vi.hoisted(() => ({
     developerSettings: false,
     meetingRecordingEnabled: true,
     suggestedWorkEnabled: false,
-    automationWorkspaceTemplatesEnabled: false,
     controlTowerRefreshSeconds: 60,
   },
   onTranscript: undefined as undefined | ((transcript: string) => void),
@@ -160,7 +159,6 @@ describe('MeetingNotesScreen', () => {
       developerSettings: false,
       meetingRecordingEnabled: true,
       suggestedWorkEnabled: false,
-      automationWorkspaceTemplatesEnabled: false,
       controlTowerRefreshSeconds: 60,
     };
     state.permissions = { microphone: 'granted', systemAudio: 'granted' };
@@ -562,7 +560,6 @@ describe('MeetingNotesScreen', () => {
       developerSettings: false,
       meetingRecordingEnabled: false,
       suggestedWorkEnabled: false,
-      automationWorkspaceTemplatesEnabled: false,
       controlTowerRefreshSeconds: 60,
     });
 

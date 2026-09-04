@@ -2118,6 +2118,30 @@ describe("agent harness", () => {
     });
   });
 
+  it("marks a run a tool ended as completed by that tool, so the host does not read its silence as failure", async () => {
+    const fetcher = vi.fn(async () => streamResponse([{
+      choices: [{
+        delta: { tool_calls: [toolDelta(0, "submit-1", "submit")] },
+        finish_reason: "tool_calls",
+      }],
+    }])) as typeof fetch;
+
+    const outcome = await runHarness({
+      ...runInput(fetcher),
+      corePlugins: [testCorePlugin([
+        {
+          ...harnessTool("submit", "write", []),
+          execute: async () => ({ output: { accepted: true }, summary: "Submitted", halt: "completed" }),
+        },
+      ])],
+    });
+
+    expect(outcome).toMatchObject({ status: "completed", completedByTool: true });
+    // One model turn: the tool's halt ends the loop, nothing asks the model
+    // for a closing message.
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
   it("honors a durable stop only after the active tool step settles", async () => {
     const responses = [
       streamResponse([{

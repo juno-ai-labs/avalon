@@ -597,7 +597,7 @@ Manifests and facets are cross-validated at registry construction: a connector t
    consumer then settles the authoritative event as processed or failed. A
    transient failure calls per-message `retry()` and an exhausted message enters
    the existing regional activities DLQ.
-9. Each match becomes its own identifiers-and-hashes-only message on the same regional Queue. The consumer claims that delivery under its own lease and calls `AutomationAgent.admitExternalEvent` or `SubstreamAgent.appendWatchedResourceEvent`; the destination re-checks its own authority generation and lifecycle, admits at most one occurrence per canonical event, and the consumer settles the delivery back to WorkspaceDO under the lease token.
+9. Each match becomes its own message on the same regional Queue, carrying the registration, the destination, and the event inline. The consumer calls `AutomationDO.admitExternalEvent` or `SubstreamAgent.appendWatchedResourceEvent`; the destination re-checks its own lifecycle and activation boundary and admits at most one occurrence per canonical event, keyed on the event id, so there is no delivery ledger and no lease to settle.
 10. WorkspaceDO retains/reaps the canonical event according to product retention. Legacy D1 `activities` rows are imported and scrubbed before the route opens; live events never create a D1 body handoff.
 
 **Why the event is present in ingress but absent from processing:** the first

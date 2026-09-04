@@ -1,5 +1,10 @@
-import { asHarnessRunId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
-import type { WorkstreamWorkflowInput } from "@rally/contracts";
+import { asAutomationId, asHarnessRunId, asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import type {
+  AutomationDetail,
+  AutomationDraft,
+  AutomationRunDefinitionV1,
+  WorkstreamWorkflowInput,
+} from "@rally/contracts";
 import { runHarness, type HarnessEvent } from "@rally/agent-harness";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -11,6 +16,7 @@ import {
   createTestD1Database,
   createTestD1PreparedStatement,
   createTestD1Result,
+  createTestD1Results,
   createTestEnv,
 } from "./helpers/cloudflare-test";
 import {
@@ -27,9 +33,17 @@ const OTHER_USER_ID = "00000000-0000-4000-8000-000000000005";
 const WORKSPACE_CONNECTION_ID = "00000000-0000-4000-8000-000000000006";
 const OWNER_CONNECTION_ID = "00000000-0000-4000-8000-000000000007";
 const OTHER_CONNECTION_ID = "00000000-0000-4000-8000-000000000008";
-const SUBSCRIPTION_ID = "00000000-0000-4000-8000-000000000009";
+const AUTOMATION_ID = asAutomationId("00000000-0000-4000-8000-000000000009");
+const RUN_ID = "00000000-0000-4000-8000-000000000014";
 const CHILD_HARNESS_RUN_ID = asHarnessRunId("00000000-0000-4000-8000-000000000012");
 const AUTOMATION_RESOURCE_ID = "00000000-0000-4000-8000-000000000013";
+/** An automation this room owns, the one an edit from the room may name. */
+const OWNED_AUTOMATION_ID = "00000000-0000-4000-8000-000000000015";
+/** A second one, so a room's list is more than the single row it must contain. */
+const SECOND_OWNED_AUTOMATION_ID = "00000000-0000-4000-8000-000000000016";
+/** An automation another room owns, which no edit from this room may name. */
+const FOREIGN_AUTOMATION_ID = "00000000-0000-4000-8000-000000000017";
+const OTHER_WORKSTREAM_ID = asWorkstreamId("00000000-0000-4000-8000-000000000018");
 
 const GOOGLE_WORKSPACE_CAPABILITIES = [
   "drive.read",
@@ -80,13 +94,39 @@ interface ConnectionRow extends Record<string, unknown> {
 class ToolSelectionDatabase {
   readonly binding: D1Database;
   readonly connections: ConnectionRow[];
-  readonly admittedAutomationDrafts: Array<Record<string, unknown>> = [];
+  /** Every `submitDefinition` request the automations plugin sent, in order. */
+  readonly submittedDefinitions: Array<Record<string, unknown>> = [];
+  /** The plugin defaults the automation's definition names; see {@link runDefinition}. */
+  defaultPluginIds: string[] = [];
+  readonly runDefinitionReads: Array<Record<string, unknown>> = [];
   readonly proposedDraftCards: Array<Record<string, unknown>> = [];
+  /** Every `create` request, so an edit can be shown not to make a second automation. */
+  readonly createdAutomations: Array<Record<string, unknown>> = [];
+  /**
+   * The runtime bootstrap and conversation provisioning a creation runs, on a
+   * replay too: the D1 anchor batches, the `bootstrapRuntime` requests, and
+   * the identity `provision` operations, each recorded rather than executed.
+   * What they do is `test-workers/automation-do.test.ts`'s subject.
+   */
+  readonly anchorBatches: string[][] = [];
+  readonly bootstrappedConversations: Array<Record<string, unknown>> = [];
+  readonly provisionedConversations: Array<Record<string, unknown>> = [];
+  /** Every `readDetail` request the directory port sent, in order. */
+  readonly detailReads: Array<Record<string, unknown>> = [];
+  /** Every `listWorkstreamAutomations` request, in order. */
+  readonly workstreamAutomationListReads: Array<Record<string, unknown>> = [];
+  /** Which work stream owns each automation, keyed by automation id. */
+  readonly automationOwners = new Map<string, string>();
+  /** The automations each work stream's rail lists, keyed by work-stream id. */
+  readonly workstreamAutomations = new Map<string, string[]>();
+  /** What each automation answers `readDetail` with, keyed by automation id. */
+  readonly automationDetails = new Map<string, AutomationDetail>();
   readonly replayOutputs = new Map<string, unknown>();
   memberStatus = "active";
 
   constructor(
     connections: ConnectionRow[],
+    /** The definition's connector bindings, capability to connection; see {@link runDefinition}. */
     readonly automationBindings: Array<{ capability: string; connection_id: string }> = [],
     readonly attachedConnectionIds: string[] = [],
   ) {
@@ -101,6 +141,13 @@ class ToolSelectionDatabase {
     });
     this.binding = createTestD1Database({
       prepare: (sql: string) => createTestD1PreparedStatement(new ToolSelectionStatement(this, sql)),
+      // The regional anchor and route a creation's bootstrap writes.
+      batch: async (statements: D1PreparedStatement[]) => {
+        this.anchorBatches.push(statements.map((statement) =>
+          (statement as unknown as ToolSelectionStatement).describe()
+        ));
+        return createTestD1Results(statements.map(() => ({ success: true, results: [] })));
+      },
     });
     // Which resources this work stream has attached is the object's answer now,
     // and which connection owns each of them is the workspace's. The fixture
@@ -121,10 +168,63 @@ class ToolSelectionDatabase {
   }
 
   readonly objectStore = testWorkstreamObjectStore();
+  /** The helper's own stub, for the identity reads the room's tools make. */
+  private readonly roomAgent = (() => {
+    const binding = testSubstreamAgentsBinding(this.objectStore);
+    return binding.get(binding.idFromName("room")) as unknown as {
+      executeIdentityOperation(request: unknown): unknown;
+    };
+  })();
   readonly agents = testSubstreamAgentsBinding(this.objectStore, {
     extra: {
       appendDraftProposedCard: vi.fn(async (request: Record<string, unknown>) => {
         this.proposedDraftCards.push(request);
+      }),
+      // A created automation's own conversation is opened and provisioned on
+      // the shared object store's binding; recorded, not executed, because
+      // the store here is the room's and the helper would seed a second root
+      // into it.
+      bootstrapRuntime: vi.fn(async (request: Record<string, unknown>) => {
+        this.bootstrappedConversations.push(request);
+        return { status: 200, bodyJson: "{}" };
+      }),
+      executeIdentityOperation: vi.fn(async (request: { operation: string } & Record<string, unknown>) => {
+        if (request.operation !== "provision") {
+          return this.roomAgent.executeIdentityOperation(request);
+        }
+        this.provisionedConversations.push(request);
+        return { status: 200, bodyJson: JSON.stringify({ ok: true, value: null }) };
+      }),
+    },
+  });
+
+  /**
+   * The workspace, for the two directory reads a room's automation edit makes:
+   * who owns the automation the model named, and which ones the room owns.
+   */
+  readonly workspaces = testSubstreamAgentsBinding(this.objectStore, {
+    extra: {
+      automationOwner: vi.fn(async (request: Record<string, unknown>) => ({
+        owningWorkstreamId: this.automationOwners.get(String(request.automationId)) ?? null,
+      })),
+      listWorkstreamAutomations: vi.fn(async (request: Record<string, unknown>) => {
+        this.workstreamAutomationListReads.push(request);
+        const ids = this.workstreamAutomations.get(String(request.workstreamId)) ?? [];
+        return {
+          items: ids.map((id) => {
+            const detail = this.automationDetails.get(id);
+            return {
+              id,
+              name: detail?.name ?? "Unnamed",
+              description: detail?.description ?? "",
+              emailAddress: null,
+              status: detail?.status ?? "draft",
+              nextRunAt: null,
+              lastRunAt: null,
+              updatedAt: detail?.updatedAt ?? "2026-08-01T00:00:00.000Z",
+            };
+          }),
+        };
       }),
     },
   });
@@ -148,13 +248,15 @@ class ToolSelectionStatement {
     return this;
   }
 
+  /** The statement's SQL with its whitespace collapsed, for a batch's record. */
+  describe(): string {
+    return this.sql.replace(/\s+/gu, " ").trim();
+  }
+
   async all<T>(): Promise<D1Result<T>> {
     const sql = this.sql.replace(/\s+/gu, " ").trim();
     let results: unknown[];
-    if (sql.includes("json_each(s.connector_bindings_json)")) {
-      expect(this.values).toEqual([SUBSCRIPTION_ID, WORKSPACE_ID]);
-      results = this.database.automationBindings;
-    } else if (sql.includes("SELECT DISTINCT connection_id FROM resources")) {
+    if (sql.includes("SELECT DISTINCT connection_id FROM resources")) {
       const requested = new Set(this.values.slice(1).map(String));
       results = this.database.attachedConnectionIds
         .filter((connectionId) => requested.has(resourceFor(connectionId)))
@@ -182,22 +284,6 @@ class ToolSelectionStatement {
       expect(this.values).toEqual([WORKSPACE_ID, USER_ID]);
       return { status: this.database.memberStatus } as T;
     }
-    if (sql.includes("FROM workstreams") && sql.includes("automation_subscription_id")) {
-      expect(this.values).toEqual([WORKSTREAM_ID, WORKSPACE_ID]);
-      return {
-        archived_at: null,
-        automation_subscription_id: null,
-        automation_run_id: null,
-      } as T;
-    }
-    if (sql.includes("SELECT default_plugins_json FROM automation_subscriptions")) {
-      expect(this.values).toEqual([SUBSCRIPTION_ID, WORKSPACE_ID]);
-      const pluginIds = [...new Set(this.database.automationBindings.map((binding) => {
-        const row = this.database.connections.find((connectionRow) => connectionRow.id === binding.connection_id);
-        return row?.model_plugin_id;
-      }).filter((pluginId): pluginId is string => Boolean(pluginId)))];
-      return { default_plugins_json: JSON.stringify(pluginIds) } as T;
-    }
     if (sql.includes("FROM connector_connections") && sql.includes("WHERE id = ? AND workspace_id = ?")) {
       const [connectionId, workspaceId] = this.values;
       return (this.database.connections.find((row) =>
@@ -206,6 +292,11 @@ class ToolSelectionStatement {
     }
     if (sql.includes("SELECT id FROM workspaces")) {
       return { id: WORKSPACE_ID } as T;
+    }
+    // The bootstrap's schema probe: no legacy `title` column, so the anchor
+    // takes its final shape.
+    if (sql.includes("FROM pragma_table_info('workstreams')")) {
+      return null;
     }
     throw new Error(`Unexpected tool-selection first query: ${sql}`);
   }
@@ -253,14 +344,40 @@ function env(database: ToolSelectionDatabase): Env {
       }),
     }),
     SUBSTREAM_AGENTS: database.agents,
-    AUTOMATION_AGENTS: testSubstreamAgentsBinding(database.objectStore, {
+    AUTOMATION_DOS: testSubstreamAgentsBinding(database.objectStore, {
       extra: {
-        admitAuthoredDraft: vi.fn(async (request: Record<string, unknown>) => {
-          database.admittedAutomationDrafts.push(request);
+        // Answered as already existing. The Worker still bootstraps and
+        // provisions the automation's own conversation on a replay, and the
+        // doubles above record that rather than run it: creating an
+        // automation from a room is `test-workers/automation-do.test.ts`'s
+        // subject, and what this file proves about a submission is what
+        // reaches `submitDefinition`.
+        create: vi.fn(async (request: Record<string, unknown>) => {
+          database.createdAutomations.push(request);
+          return { created: false };
+        }),
+        submitDefinition: vi.fn(async (request: Record<string, unknown>) => {
+          database.submittedDefinitions.push(request);
           return { definitionRevision: 1 };
+        }),
+        // The definition an edit starts from. One shared stub answers for every
+        // automation id, so the fixture keyed by the requested id is what
+        // decides whether a read reached the automation the caller meant.
+        readDetail: vi.fn(async (request: Record<string, unknown>) => {
+          database.detailReads.push(request);
+          const detail = database.automationDetails.get(String(request.automationId));
+          if (!detail) throw new Error(`no_automation_detail_fixture:${String(request.automationId)}`);
+          return detail;
+        }),
+        // A run reads its definition from its automation by revision when it
+        // starts; the plugin defaults it preloads come from there.
+        readRunDefinition: vi.fn(async (request: Record<string, unknown>) => {
+          database.runDefinitionReads.push(request);
+          return runDefinition(database);
         }),
       },
     }),
+    WORKSPACE_DOS: database.workspaces,
     PUBLIC_API_BASE_URL: "https://api.with-avalon.com",
     GOOGLE_CONNECTOR_OAUTH_CLIENT_ID: "google-connector-client",
     GOOGLE_CONNECTOR_OAUTH_CLIENT_SECRET: "google-connector-secret",
@@ -269,18 +386,163 @@ function env(database: ToolSelectionDatabase): Env {
   });
 }
 
-function workflowInput(automationSubscriptionId: string | null = null): WorkstreamWorkflowInput {
+function workflowInput(): WorkstreamWorkflowInput {
   return {
     region: "global",
     workspaceId: WORKSPACE_ID,
-    workstreamId: WORKSTREAM_ID,
+    parentKind: "workstream",
+    parentId: WORKSTREAM_ID,
     loopId: `workstream:${WORKSTREAM_ID}:substream:0:loop`,
     harnessRunId: HARNESS_RUN_ID,
     triggerMessageId: null,
-    automationSubscriptionId,
     activityId: null,
     executionPrincipal: { type: "user", userId: USER_ID },
-    reason: automationSubscriptionId ? "Automation test" : "Ad-hoc test",
+    reason: "Ad-hoc test",
+  };
+}
+
+/**
+ * A run under an automation: the automation is the parent, the run its child
+ * substream, and the loop carries a reference to the definition rather than a
+ * copy of it.
+ */
+function automationRunInput(reason = "Automation test"): WorkstreamWorkflowInput {
+  return {
+    region: "global",
+    workspaceId: WORKSPACE_ID,
+    parentKind: "automation",
+    parentId: AUTOMATION_ID,
+    substreamId: asSubstreamId(RUN_ID),
+    loopId: `workstream:${AUTOMATION_ID}:substream:${RUN_ID}:loop`,
+    harnessRunId: HARNESS_RUN_ID,
+    triggerMessageId: null,
+    activityId: null,
+    executionPrincipal: { type: "user", userId: USER_ID },
+    reason,
+    automationRun: {
+      schemaVersion: 1,
+      automationId: AUTOMATION_ID,
+      runId: RUN_ID,
+      definitionRevision: 1,
+      trigger: { kind: "manual", requestedByUserId: USER_ID },
+    },
+  };
+}
+
+/**
+ * An automation's own conversation: the automation is the parent and the chat
+ * is its main substream, with no run in flight. This is the loop that drafts
+ * and edits that one automation, so the drafting tools are registered here;
+ * a run under the same parent carries `automationRun` and gets none.
+ */
+function automationConversationInput(): WorkstreamWorkflowInput {
+  return {
+    region: "global",
+    workspaceId: WORKSPACE_ID,
+    parentKind: "automation",
+    parentId: AUTOMATION_ID,
+    loopId: `workstream:${AUTOMATION_ID}:substream:0:loop`,
+    harnessRunId: HARNESS_RUN_ID,
+    triggerMessageId: null,
+    activityId: null,
+    executionPrincipal: { type: "user", userId: USER_ID },
+    reason: "Automation chat test",
+  };
+}
+
+/** A submittable draft with no trigger that needs a plugin or an evaluator. */
+function manualDraft(name: string): AutomationDraft {
+  return {
+    name,
+    description: `${name}, on request.`,
+    overview: `Runs ${name} when somebody asks for it.`,
+    instructions: `Do ${name}.`,
+    triggers: [{ type: "manual" }],
+    requiredCapabilities: [],
+    expectedOutputs: [],
+    defaultBehavior: {},
+    recommendedPlugins: [],
+    memoryTables: [],
+    suggestedScope: "workstream",
+    followUpQuestion: null,
+    elicitation: null,
+    ready: true,
+  };
+}
+
+/** What one automation answers `readDetail` with. */
+function automationDetail(
+  automationId: string,
+  name: string,
+  overrides: Partial<AutomationDetail> = {},
+): AutomationDetail {
+  return {
+    id: automationId,
+    name,
+    description: `${name}, on request.`,
+    emailAddress: null,
+    scope: "workstream",
+    owningWorkstreamId: WORKSTREAM_ID,
+    status: "active",
+    nextRunAt: null,
+    lastRunAt: null,
+    updatedAt: "2026-08-01T00:00:00.000Z",
+    lifecycle: "active",
+    authorUserId: USER_ID,
+    runAsUserId: USER_ID,
+    currentDefinition: manualDraft(name),
+    currentDefinitionRevision: 3,
+    acceptedDefinitionRevision: 2,
+    connectorBindings: {},
+    recentRuns: [],
+    ...overrides,
+  };
+}
+
+/** One drafting tool from a run's assembled surface, by name. */
+async function automationCreatorTool(
+  database: ToolSelectionDatabase,
+  input: WorkstreamWorkflowInput,
+  name: string,
+): Promise<Awaited<ReturnType<typeof __integrationTesting.loadHarnessTools>>["tools"][number]> {
+  const selected = await __integrationTesting.loadHarnessTools(env(database), input);
+  const plugin = selected.plugins.find((candidate) => candidate.canonicalId === "rally:automations");
+  if (!plugin) throw new Error("automations_plugin_missing");
+  const tool = plugin.tools.find((candidate) => candidate.definition.name === name);
+  if (!tool) throw new Error(`automation_creator_tool_missing:${name}`);
+  return tool;
+}
+
+/** The definition the automation answers a run's read with. */
+function runDefinition(database: ToolSelectionDatabase): AutomationRunDefinitionV1 {
+  return {
+    schemaVersion: 1,
+    automationId: AUTOMATION_ID,
+    runId: RUN_ID,
+    definitionRevision: 1,
+    definition: {
+      name: "Drive digest",
+      description: "Summarize new files.",
+      overview: "Watch Drive and summarize what is new.",
+      instructions: "Summarize the new files.",
+      requiredCapabilities: [],
+      expectedOutputs: [],
+      defaultBehavior: {},
+      recommendedPlugins: [],
+      memoryTables: [],
+    },
+    defaultPluginIds: database.defaultPluginIds,
+    activitySourcePluginIds: {},
+    connectorBindings: Object.fromEntries(
+      database.automationBindings.map((binding) => [binding.capability, binding.connection_id]),
+    ),
+    scope: "personal",
+    owningWorkstreamId: null,
+    runAsUserId: USER_ID,
+    modelOverride: null,
+    trigger: { kind: "manual", requestedByUserId: USER_ID },
+    opening: null,
+    state: "running",
   };
 }
 
@@ -837,8 +1099,8 @@ describe("connector tools selected for harness runs", () => {
     )).resolves.toMatchObject({ output: { accepted: true } });
     await expect(submit.execute(readyDraft, { toolCallId: "submit-after-load" } as never))
       .resolves.toMatchObject({ output: { accepted: true } });
-    expect(database.admittedAutomationDrafts).toHaveLength(1);
-    expect(database.admittedAutomationDrafts[0]).toMatchObject({
+    expect(database.submittedDefinitions).toHaveLength(1);
+    expect(database.submittedDefinitions[0]).toMatchObject({
       automationId: HARNESS_RUN_ID,
       evaluatorRules,
     });
@@ -870,9 +1132,123 @@ describe("connector tools selected for harness runs", () => {
       readyDraft,
       { toolCallId: "submit-after-eviction" } as never,
     )).resolves.toMatchObject({ output: { accepted: true } });
-    expect(database.admittedAutomationDrafts.map((draft) => draft.automationId))
+    expect(database.submittedDefinitions.map((draft) => draft.automationId))
       .toEqual([HARNESS_RUN_ID, HARNESS_RUN_ID]);
     expect(database.proposedDraftCards).toHaveLength(2);
+  });
+
+  it("drops a replayed rule's sentinel resourceId before it can reach the next revision", async () => {
+    const database = new ToolSelectionDatabase([
+      connection(WORKSPACE_CONNECTION_ID, "workspace", null),
+    ]);
+    database.objectStore.prepare(
+      `INSERT INTO runs
+         (run_id, substream_id, status, budget, attempt_epoch, model_iteration,
+          next_action_cursor, input_fence_seq, revision, started_at,
+          active_elapsed_ms, idle_elapsed_ms, step_count, subrequest_count,
+          retry_count, tool_count, input_tokens, output_tokens, cost_micros,
+          output_bytes, created_at, updated_at)
+       VALUES (?, '0', 'running', '{}', 0, 0, '', 0, 0, 1,
+               0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1)`,
+    ).run(HARNESS_RUN_ID);
+    database.objectStore.prepare(
+      `INSERT INTO tool_effects
+         (effect_intent_id, run_id, attempt_epoch, tool_position, occurrence_key,
+          tool_name, mode, request_hash, authority_revision, status, tool_call_id,
+          connection_id, input_json, output_summary, execution_plan_json,
+          started_at, settled_at)
+       VALUES (?, ?, 0, 1, ?, 'automation_plugin_inspect', 'read', ?,
+               'development_fixture', 'completed', 'inspect-sentinel',
+               NULL, ?, 'Inspected Google', ?, 1, 2)`,
+    ).run(
+      "sentinel-inspection",
+      HARNESS_RUN_ID,
+      "development_fixture:sentinel-inspection",
+      "sentinel-inspection-input",
+      JSON.stringify({ pluginId: "plugin_google" }),
+      JSON.stringify({
+        canonicalToolName: "plugin_inspect",
+        capability: "rally.automation.plugins.inspect",
+      }),
+    );
+    // The receipt holds what the model sent, sentinel included: the strip
+    // happens on the live call, and a replay that rebuilt the draft from the
+    // raw receipt put the sentinel back, so the next submit wrote it into the
+    // revision and acceptance refused a resource that does not exist.
+    const sentinelRules = {
+      schemaVersion: 1,
+      evaluators: [{
+        evaluatorKey: "mail_received",
+        source: {
+          sourceBindingKey: "google_source",
+          suggestedSourcePluginId: "plugin_google",
+          resourceId: "00000000-0000-0000-0000-000000000000",
+          event: { kind: "event_type", eventType: "email.received" },
+        },
+        when: { kind: "always" },
+      }],
+    };
+    database.objectStore.prepare(
+      `INSERT INTO tool_effects
+         (effect_intent_id, run_id, attempt_epoch, tool_position, occurrence_key,
+          tool_name, mode, request_hash, authority_revision, status, tool_call_id,
+          connection_id, input_json, output_summary, execution_plan_json,
+          started_at, settled_at)
+       VALUES (?, ?, 0, 2, ?, 'automation_set_evaluator_rules', 'write', ?,
+               'development_fixture', 'completed', 'sentinel-rules',
+               NULL, ?, 'Stored evaluator rules', ?, 2, 3)`,
+    ).run(
+      "sentinel-evaluators",
+      HARNESS_RUN_ID,
+      "development_fixture:sentinel-evaluators",
+      "sentinel-evaluator-input",
+      JSON.stringify(sentinelRules),
+      JSON.stringify({
+        canonicalToolName: "set_evaluator_rules",
+        capability: "rally.automation.evaluators.set",
+      }),
+    );
+    const selected = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
+    const automations = selected.plugins.find((plugin) => plugin.canonicalId === "rally:automations");
+    if (!automations) throw new Error("automations_plugin_missing");
+    __integrationTesting.recordCredentialPluginActivation(
+      `connection:${WORKSPACE_CONNECTION_ID}`,
+      selected.frozenConnections,
+      new Set<string>(),
+      selected.loadedAutomationPluginIds,
+    );
+    const submit = automations.tools.find((tool) => tool.definition.name === "submit_draft");
+    if (!submit) throw new Error("automation_creator_tools_missing");
+
+    await expect(submit.execute({
+      name: "New mail summary",
+      description: "Summarize new mail.",
+      overview: "Reports newly received messages.",
+      instructions: "Summarize the message.",
+      triggers: [{
+        type: "connector_activity",
+        connectorType: "google",
+        sourceBindingKey: "google_source",
+        suggestedSourcePluginId: "plugin_google",
+        eventTypes: ["email.received"],
+        deterministicFilters: {},
+      }],
+      requiredCapabilities: [],
+      expectedOutputs: [],
+      defaultBehavior: {},
+      recommendedPlugins: [],
+      memoryTables: [],
+      suggestedScope: "personal",
+      followUpQuestion: null,
+      elicitation: null,
+      ready: true,
+    }, { toolCallId: "submit-after-sentinel-replay" } as never))
+      .resolves.toMatchObject({ output: { accepted: true } });
+    expect(database.submittedDefinitions).toHaveLength(1);
+    const submitted = database.submittedDefinitions[0] as {
+      evaluatorRules: { evaluators: Array<{ source: Record<string, unknown> }> };
+    };
+    expect(submitted.evaluatorRules.evaluators[0]!.source).not.toHaveProperty("resourceId");
   });
 
   it("inherits tools committed into a deferred parent plugin after activation", async () => {
@@ -1195,9 +1571,15 @@ describe("connector tools selected for harness runs", () => {
       ],
     );
 
-    const automationInput = workflowInput(SUBSCRIPTION_ID);
-    automationInput.automationRunContext = { defaultPluginIds: ["plugin_google"] } as never;
-    const selected = await __integrationTesting.loadHarnessTools(env(database), automationInput);
+    database.defaultPluginIds = ["plugin_google"];
+    const selected = await __integrationTesting.loadHarnessTools(env(database), automationRunInput());
+
+    // Read from the automation for this run, by the reference the loop carries.
+    expect(database.runDefinitionReads).toEqual([{
+      workspaceId: WORKSPACE_ID,
+      automationId: AUTOMATION_ID,
+      runId: RUN_ID,
+    }]);
 
     expect(googleToolNames(selected.tools)).toEqual(GOOGLE_WORKSPACE_TOOLS);
     expect(new Set(selected.connectionByTool.values())).toEqual(new Set([WORKSPACE_CONNECTION_ID]));
@@ -1219,7 +1601,7 @@ describe("connector tools selected for harness runs", () => {
 
     const selected = await __integrationTesting.loadHarnessTools(
       env(database),
-      workflowInput(SUBSCRIPTION_ID),
+      automationRunInput(),
     );
 
     expect(googleToolNames(selected.tools)).toEqual(GOOGLE_WORKSPACE_TOOLS);
@@ -1245,8 +1627,7 @@ describe("connector tools selected for harness runs", () => {
         { capability: "sheets.write", connection_id: WORKSPACE_CONNECTION_ID },
       ],
     );
-    const input = workflowInput(SUBSCRIPTION_ID);
-    input.reason = "inbound_email";
+    const input = automationRunInput("inbound_email");
 
     const selected = await __integrationTesting.loadHarnessTools(env(database), input);
 
@@ -1397,6 +1778,141 @@ describe("connector tools selected for harness runs", () => {
     }));
     expect(events.some((event) => event.type === "tool_completed")).toBe(false);
     expect(providerFetch).not.toHaveBeenCalled();
+  });
+});
+
+describe("editing an automation a conversation already owns", () => {
+  it("writes the named automation's next revision instead of creating another", async () => {
+    const database = new ToolSelectionDatabase([]);
+    database.automationOwners.set(OWNED_AUTOMATION_ID, WORKSTREAM_ID);
+    const submit = await automationCreatorTool(database, workflowInput(), "submit_draft");
+
+    await expect(submit.execute(
+      { ...manualDraft("Weekly digest"), automationId: OWNED_AUTOMATION_ID },
+      { toolCallId: "edit-owned" } as never,
+    )).resolves.toMatchObject({ output: { accepted: true } });
+
+    expect(database.submittedDefinitions).toHaveLength(1);
+    expect(database.submittedDefinitions[0]).toMatchObject({
+      automationId: OWNED_AUTOMATION_ID,
+      draft: { name: "Weekly digest" },
+    });
+    // The run id is the id a *new* automation would have been given, so an
+    // edit that quietly created one instead would submit under that name.
+    expect(database.submittedDefinitions[0]).not.toMatchObject({ automationId: HARNESS_RUN_ID });
+    expect(database.createdAutomations).toEqual([]);
+    expect(database.proposedDraftCards).toHaveLength(1);
+    expect(database.proposedDraftCards[0]).toMatchObject({
+      workstreamId: WORKSTREAM_ID,
+      card: { automationId: OWNED_AUTOMATION_ID, automationName: "Weekly digest" },
+    });
+  });
+
+  it("refuses an automation another room owns, and submits nothing", async () => {
+    const database = new ToolSelectionDatabase([]);
+    database.automationOwners.set(FOREIGN_AUTOMATION_ID, OTHER_WORKSTREAM_ID);
+    const submit = await automationCreatorTool(database, workflowInput(), "submit_draft");
+
+    await expect(submit.execute(
+      { ...manualDraft("Weekly digest"), automationId: FOREIGN_AUTOMATION_ID },
+      { toolCallId: "edit-foreign" } as never,
+    )).rejects.toThrow("not one this work stream owns");
+
+    expect(database.submittedDefinitions).toEqual([]);
+    expect(database.createdAutomations).toEqual([]);
+    expect(database.proposedDraftCards).toEqual([]);
+  });
+
+  it("lets an automation's own conversation change only that automation", async () => {
+    const database = new ToolSelectionDatabase([]);
+    database.automationOwners.set(OWNED_AUTOMATION_ID, WORKSTREAM_ID);
+    const submit = await automationCreatorTool(database, automationConversationInput(), "submit_draft");
+
+    await expect(submit.execute(
+      { ...manualDraft("Someone else's job"), automationId: OWNED_AUTOMATION_ID },
+      { toolCallId: "edit-another-automation" } as never,
+    )).rejects.toThrow("edits only its own automation");
+    expect(database.submittedDefinitions).toEqual([]);
+
+    await expect(submit.execute(
+      { ...manualDraft("Named itself"), automationId: AUTOMATION_ID },
+      { toolCallId: "edit-itself-by-id" } as never,
+    )).resolves.toMatchObject({ output: { accepted: true } });
+    await expect(submit.execute(
+      { ...manualDraft("Named nothing"), automationId: null },
+      { toolCallId: "edit-itself-by-default" } as never,
+    )).resolves.toMatchObject({ output: { accepted: true } });
+
+    expect(database.submittedDefinitions.map((request) => request.automationId))
+      .toEqual([AUTOMATION_ID, AUTOMATION_ID]);
+    // Nothing is created here either: the automation this conversation belongs
+    // to already exists, and its own chat has no room to post a proposal into.
+    expect(database.createdAutomations).toEqual([]);
+    expect(database.proposedDraftCards).toEqual([]);
+  });
+
+  it("lists the room's automations with their definitions, and one automation's chat lists only itself", async () => {
+    const database = new ToolSelectionDatabase([]);
+    database.workstreamAutomations.set(WORKSTREAM_ID, [
+      OWNED_AUTOMATION_ID,
+      SECOND_OWNED_AUTOMATION_ID,
+    ]);
+    database.automationDetails.set(OWNED_AUTOMATION_ID, automationDetail(OWNED_AUTOMATION_ID, "Weekly digest"));
+    database.automationDetails.set(
+      SECOND_OWNED_AUTOMATION_ID,
+      automationDetail(SECOND_OWNED_AUTOMATION_ID, "Standup notes", {
+        lifecycle: "paused",
+        status: "paused",
+        acceptedDefinitionRevision: null,
+        currentDefinitionRevision: 1,
+      }),
+    );
+    database.automationDetails.set(AUTOMATION_ID, automationDetail(AUTOMATION_ID, "Drive digest"));
+
+    const roomList = await automationCreatorTool(database, workflowInput(), "automations_list");
+    await expect(roomList.execute({}, { toolCallId: "list-in-room" } as never))
+      .resolves.toMatchObject({
+        output: {
+          automations: [
+            {
+              automationId: OWNED_AUTOMATION_ID,
+              name: "Weekly digest",
+              lifecycle: "active",
+              scope: "workstream",
+              currentDefinitionRevision: 3,
+              acceptedDefinitionRevision: 2,
+              currentDefinition: { name: "Weekly digest", triggers: [{ type: "manual" }] },
+            },
+            {
+              automationId: SECOND_OWNED_AUTOMATION_ID,
+              name: "Standup notes",
+              lifecycle: "paused",
+              currentDefinitionRevision: 1,
+              acceptedDefinitionRevision: null,
+              currentDefinition: { name: "Standup notes" },
+            },
+          ],
+        },
+      });
+    expect(database.workstreamAutomationListReads).toMatchObject([
+      { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID, userId: USER_ID },
+    ]);
+    expect(database.detailReads.map((request) => request.automationId))
+      .toEqual([OWNED_AUTOMATION_ID, SECOND_OWNED_AUTOMATION_ID]);
+
+    database.detailReads.length = 0;
+    database.workstreamAutomationListReads.length = 0;
+    const ownList = await automationCreatorTool(database, automationConversationInput(), "automations_list");
+    await expect(ownList.execute({}, { toolCallId: "list-in-automation" } as never))
+      .resolves.toMatchObject({
+        output: {
+          automations: [{ automationId: AUTOMATION_ID, name: "Drive digest" }],
+        },
+      });
+    // The room's rail is never consulted from an automation's own conversation:
+    // the one automation it may edit is the one it belongs to.
+    expect(database.workstreamAutomationListReads).toEqual([]);
+    expect(database.detailReads.map((request) => request.automationId)).toEqual([AUTOMATION_ID]);
   });
 });
 

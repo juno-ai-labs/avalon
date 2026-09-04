@@ -96,6 +96,7 @@ export class SlackWorkspaceWorkstreamService {
       this.env,
       this.workspaceId,
       workstreamId,
+      "workstream",
     );
     // The repository's `create` batched the root, its participants and the
     // opening message through the retired compatibility views, and had to
@@ -111,7 +112,6 @@ export class SlackWorkspaceWorkstreamService {
       titleStatus: input.title == null ? "naming" : "settled",
       objective: input.objective,
       scope: input.scope ?? "personal",
-      originType: "ad_hoc",
       createdByUserId: creatorUserId,
       participantUserIds: [
         ...new Set([...(creatorUserId ? [creatorUserId] : []), ...(input.participantUserIds ?? [])]),
@@ -120,9 +120,6 @@ export class SlackWorkspaceWorkstreamService {
       emailAddress: emailRoute.emailAddress,
       emailRouteStatus: "reserved",
       systemKind: null,
-      automationSubscriptionId: null,
-      automationRunId: null,
-      plannedFor: null,
       modelOverride: null,
       now: at,
     });

@@ -7,15 +7,15 @@ import {
   asAutomationId,
   asSubstreamId,
   asWorkspaceId,
-  asWorkstreamId,
   asUserId,
+  WorkspaceExternalEventMatchResultSchema,
   type WorkspaceId
 } from "@rally/contracts";
 import { z } from "zod";
 
-import { WorkstreamRegionalEffectQueueMessageSchema } from "../durable-objects/workstream-regional-effect";
+import { EffectQueueMessageSchema } from "@rally/contracts/conversation-effects";
 import { ProjectDefaultResourceQueueMessageSchema } from "../durable-objects/workspace-project-protocol";
-import { automationAgentName, substreamAgentName, workspaceDOName } from "../durable-objects/names";
+import { automationDOName, conversationObjectName, workspaceDOName } from "../durable-objects/names";
 import {
   WorkspaceConnectorEventClaimResultSchema,
   WorkspaceConnectorEventProcessQueueMessageSchema,
@@ -33,16 +33,15 @@ import { diagnosticErrorCode, logInfo, logWarn } from "../observability/logger";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { restrictedActivityUserIds } from "../lib/activity-visibility";
 import {
+  MAX_CONNECTOR_EVENT_QUEUE_BYTES,
   enqueueWorkspaceConnectorEventProcess,
 } from "../services/workspace-connector-event-ingress";
 import {
-  acknowledgeWorkstreamOutboxEffect,
   applyQueuedWorkspaceDirectoryEffect,
   applyWorkstreamRegionalEffect,
-  isWorkspaceDirectoryEffect,
-  loadWorkstreamRegionalEffect,
   processWorkstreamNotificationIntent,
-} from "../services/workstream-regional-effect-service";
+} from "../services/conversation-effect-service";
+import { conversationParentStub } from "../services/conversation-parent-client";
 import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
 import { consumeWorkstreamBatchUpdate } from "../services/workstream-batch-update";
 import { WorkstreamService } from "../services/workstream-service";
@@ -168,90 +167,70 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
       message.ack();
       return;
     }
-    const workspace = await workspaceDirectory(env, input.workspaceId);
-    const leaseId = uuidV7();
+    // The message is the delivery: registration, destination and event travel
+    // together, and the object it lands on is idempotent on the event and the
+    // registration, so a redelivery finds its own receipt and does nothing.
     try {
-      const claim = await workspace.claimExternalEventDelivery({
-        schemaVersion: 1,
-        workspaceId: input.workspaceId,
-        workspaceEventId: input.workspaceEventId,
-        deliveryId: input.deliveryId,
-        payloadHash: input.payloadHash,
-        leaseId,
-      });
-      if (claim.outcome === "delivered") {
-        message.ack();
-        return;
-      }
-      if (claim.outcome === "busy") {
-        message.retry({ delaySeconds: Math.max(1, Math.ceil((claim.retryAt - Date.now()) / 1_000)) });
-        return;
-      }
-      let delivered: boolean;
-      let outcomeCode: string;
-      if (claim.destination.kind === "automation") {
+      if (input.destination.kind === "automation") {
         const automation = await durableObjectStubForWorkspace(
           env,
-          env.AUTOMATION_AGENTS,
+          env.AUTOMATION_DOS,
           input.workspaceId,
-          automationAgentName(
-            input.region,
-            input.workspaceId,
-            asAutomationId(claim.destination.automationId),
-          ),
+          automationDOName(input.region, input.workspaceId, asAutomationId(input.destination.automationId)),
         );
         const result = await automation.admitExternalEvent({
-          schemaVersion: 1,
-          automationId: claim.destination.automationId,
           workspaceId: input.workspaceId,
-          authorityGeneration: claim.destination.authorityGeneration,
-          workspaceEventId: input.workspaceEventId,
-          eventSequence: claim.event.eventSequence,
-          eventType: claim.event.eventType,
-          occurredAt: claim.event.occurredAt,
+          automationId: input.destination.automationId,
+          registrationId: input.registrationId,
+          event: input.event,
           payloadHash: input.payloadHash,
         });
-        delivered = result.admitted || result.outcomeCode === "automation_occurrence_replayed";
-        outcomeCode = result.outcomeCode;
+        logInfo(env, "external_event_delivery_terminal", {
+          workspace_id: input.workspaceId,
+          connector_event_id: input.event.id,
+          registration_id: input.registrationId,
+          destination_kind: "automation",
+          automation_id: input.destination.automationId,
+          outcome: result.admitted ? "admitted" : "refused",
+          reason: result.outcomeCode,
+        });
       } else {
         const substream = await durableObjectStubForWorkspace(
           env,
           env.SUBSTREAM_AGENTS,
           input.workspaceId,
-          substreamAgentName(
+          conversationObjectName(
             input.region,
             input.workspaceId,
-            asWorkstreamId(claim.destination.workstreamId),
-            asSubstreamId(claim.destination.substreamId),
+            input.destination.workstreamId,
+            input.destination.substreamId === "0" ? "0" : asSubstreamId(input.destination.substreamId),
           ),
         );
         const result = await substream.appendWatchedResourceEvent({
           schemaVersion: 1,
           workspaceId: input.workspaceId,
-          workstreamId: claim.destination.workstreamId,
-          substreamId: claim.destination.substreamId,
-          resourceId: claim.destination.resourceId,
-          authorityGeneration: claim.destination.authorityGeneration,
-          deliveryId: input.deliveryId,
-          event: claim.event,
+          workstreamId: input.destination.workstreamId,
+          substreamId: input.destination.substreamId,
+          resourceId: input.destination.resourceId,
+          registrationId: input.registrationId,
+          event: input.event,
         });
-        delivered = result.outcome !== "refused";
-        outcomeCode = result.code;
+        logInfo(env, "external_event_delivery_terminal", {
+          workspace_id: input.workspaceId,
+          connector_event_id: input.event.id,
+          registration_id: input.registrationId,
+          destination_kind: "workstream_resource_update",
+          workstream_id: input.destination.workstreamId,
+          outcome: result.outcome,
+          reason: result.code,
+        });
       }
-      await workspace.settleExternalEventDelivery({
-        schemaVersion: 1,
-        workspaceId: input.workspaceId,
-        deliveryId: input.deliveryId,
-        leaseId,
-        outcome: delivered ? "delivered" : "not_delivered",
-        outcomeCode,
-      });
       message.ack();
     } catch (error) {
       logWarn(env, "external_event_delivery_failed", {
         workspace_id: input.workspaceId,
-        connector_event_id: input.workspaceEventId,
-        delivery_id: input.deliveryId,
+        connector_event_id: input.event.id,
+        registration_id: input.registrationId,
         reason: diagnosticErrorCode(error, "external_event_delivery_failed"),
       });
       message.retry();
@@ -313,105 +292,9 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
     return;
   }
   if (await consumeWorkstreamBatchUpdate(message, env)) return;
-  const regionalEffect = WorkstreamRegionalEffectQueueMessageSchema.safeParse(message.body);
-  if (regionalEffect.success) {
-    if (regionalEffect.data.region !== env.AVALON_REGION) {
-      logInfo(env, "workstream_regional_effect_terminal", {
-        workspace_id: regionalEffect.data.workspaceId,
-        workstream_id: regionalEffect.data.workstreamId,
-        message_id: regionalEffect.data.messageId,
-        outcome: "skipped",
-        reason: "region_mismatch",
-        queue_attempts: message.attempts,
-      });
-      message.ack();
-      return;
-    }
-    let effectKind: string | null = null;
-    try {
-      const envelope = await loadWorkstreamRegionalEffect(env, regionalEffect.data);
-      if (!envelope) {
-        // An already acknowledged DO outbox row no longer needs work, and the
-        // replay receipt lives in WorkspaceDO beside the state it fenced —
-        // there is nothing regional left to mark.
-        logInfo(env, "workstream_regional_effect_terminal", {
-          workspace_id: regionalEffect.data.workspaceId,
-          workstream_id: regionalEffect.data.workstreamId,
-          message_id: regionalEffect.data.messageId,
-          outcome: "already_acknowledged",
-          reason: "outbox_effect_missing",
-          queue_attempts: message.attempts,
-        });
-        message.ack();
-        return;
-      }
-      effectKind = envelope.effect.kind;
-      if (isWorkspaceDirectoryEffect(envelope.effect)) {
-        await applyQueuedWorkspaceDirectoryEffect(env, envelope);
-        await acknowledgeWorkstreamOutboxEffect(env, envelope);
-        logInfo(env, "workstream_regional_effect_terminal", {
-          workspace_id: envelope.workspaceId,
-          workstream_id: envelope.workstreamId,
-          message_id: envelope.messageId,
-          effect_kind: envelope.effect.kind,
-          outcome: "applied",
-          reason: "directory_effect_acknowledged",
-          outbox_acknowledged: true,
-          queue_attempts: message.attempts,
-        });
-        message.ack();
-        return;
-      }
-      const applied = await applyWorkstreamRegionalEffect(env, envelope);
-      let notificationOutcome: "delivered" | "skipped" | null = null;
-      if (applied.notificationIntentId) {
-        const outcome = await processWorkstreamNotificationIntent(
-          env,
-          regionalEffect.data.workspaceId,
-          applied.notificationIntentId,
-        );
-        if (outcome === "busy") {
-          logInfo(env, "workstream_regional_effect_deferred", {
-            workspace_id: envelope.workspaceId,
-            workstream_id: envelope.workstreamId,
-            message_id: envelope.messageId,
-            effect_kind: envelope.effect.kind,
-            notification_intent_id: applied.notificationIntentId,
-            reason: "notification_busy",
-            queue_attempts: message.attempts,
-            retry_delay_seconds: 30,
-          });
-          message.retry({ delaySeconds: 30 });
-          return;
-        }
-        notificationOutcome = outcome;
-      }
-      await acknowledgeWorkstreamOutboxEffect(env, envelope);
-      logInfo(env, "workstream_regional_effect_terminal", {
-        workspace_id: envelope.workspaceId,
-        workstream_id: envelope.workstreamId,
-        message_id: envelope.messageId,
-        effect_kind: envelope.effect.kind,
-        outcome: notificationOutcome ?? "applied",
-        reason: notificationOutcome ? "notification_terminal" : "effect_applied",
-        notification_intent_id: applied.notificationIntentId,
-        replayed: applied.replayed,
-        outbox_acknowledged: true,
-        queue_attempts: message.attempts,
-      });
-      message.ack();
-    } catch (error) {
-      logWarn(env, "workstream_regional_effect_processing_failed", {
-        workspace_id: regionalEffect.data.workspaceId,
-        workstream_id: regionalEffect.data.workstreamId,
-        message_id: regionalEffect.data.messageId,
-        effect_kind: effectKind,
-        queue_attempts: message.attempts,
-        reason: error instanceof Error ? error.message : "unknown",
-      });
-      const attempts = Math.max(1, message.attempts);
-      message.retry({ delaySeconds: Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6)) });
-    }
+  const effect = EffectQueueMessageSchema.safeParse(message.body);
+  if (effect.success) {
+    await consumeEffect(message, effect.data, env);
     return;
   }
 
@@ -654,15 +537,23 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
       });
       message.ack();
     } catch (error) {
+      const reason = diagnosticErrorCode(error, "connector_event_admission_failed");
       logWarn(env, "connector_event_queue_admission_failed", {
         workspace_id: input.request.workspaceId,
         connector_type: input.request.event.connectorType,
         ingress_event_id: input.request.ingressEventId,
         requested_attempt: input.attempt,
         queue_attempts: message.attempts,
-        reason: diagnosticErrorCode(error, "connector_event_admission_failed"),
+        reason,
         error_name: error instanceof Error ? error.name : typeof error,
       });
+      // An event that reuses an identity with different content is refused
+      // the same way on every delivery; retrying it only repeats the refusal
+      // with backoff until the Queue gives up. It is terminal here.
+      if (reason === "connector_event_identity_reused_with_different_content") {
+        message.ack();
+        return;
+      }
       const attempts = Math.max(1, message.attempts);
       message.retry({ delaySeconds: Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6)) });
     }
@@ -683,6 +574,98 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
     queue_attempts: message.attempts,
   });
   message.ack();
+}
+
+/**
+ * One effect message, at-least-once and unordered.
+ *
+ * A child's effect goes to its parent, a parent's to the workspace. Both
+ * receivers keep receipts keyed by message id and payload hash, so a
+ * redelivery is answered without being applied twice. The message is the
+ * envelope: nothing is loaded back from the sender and nothing is
+ * acknowledged to it, because the sender deleted its outbox row when the
+ * Queue accepted the message.
+ */
+async function consumeEffect(
+  message: Message<unknown>,
+  envelope: z.infer<typeof EffectQueueMessageSchema>,
+  env: Env,
+): Promise<void> {
+  const fields = {
+    workspace_id: envelope.workspaceId,
+    parent_kind: envelope.parentKind,
+    workstream_id: envelope.parentId,
+    message_id: envelope.messageId,
+    effect_kind: envelope.effect.kind,
+    queue_attempts: message.attempts,
+  };
+  if (envelope.region !== env.AVALON_REGION) {
+    logInfo(env, "conversation_effect_terminal", { ...fields, outcome: "skipped", reason: "region_mismatch" });
+    message.ack();
+    return;
+  }
+  try {
+    if (envelope.kind === "conversation_effect") {
+      const parent = await conversationParentStub(env, envelope);
+      await parent.receiveChildEffects({ substreamId: envelope.substreamId, envelopes: [envelope] });
+      logInfo(env, "conversation_effect_terminal", {
+        ...fields,
+        substream_id: envelope.substreamId,
+        outcome: "applied",
+        reason: "parent_accepted",
+      });
+      message.ack();
+      return;
+    }
+    if (envelope.effect.kind === "directory_common" || envelope.effect.kind === "directory_user") {
+      await applyQueuedWorkspaceDirectoryEffect(env, envelope);
+      logInfo(env, "conversation_effect_terminal", { ...fields, outcome: "applied", reason: "directory_effect_applied" });
+      message.ack();
+      return;
+    }
+    if (envelope.effect.kind === "directory_automation") {
+      const workspace = await workspaceDirectory(env, envelope.workspaceId);
+      await workspace.applyAutomationDirectory({ workspaceId: envelope.workspaceId, envelope });
+      logInfo(env, "conversation_effect_terminal", { ...fields, outcome: "applied", reason: "automation_directory_applied" });
+      message.ack();
+      return;
+    }
+    const applied = await applyWorkstreamRegionalEffect(env, envelope);
+    let notificationOutcome: "delivered" | "skipped" | null = null;
+    if (applied.notificationIntentId) {
+      const outcome = await processWorkstreamNotificationIntent(
+        env,
+        envelope.workspaceId,
+        applied.notificationIntentId,
+      );
+      if (outcome === "busy") {
+        logInfo(env, "conversation_effect_deferred", {
+          ...fields,
+          notification_intent_id: applied.notificationIntentId,
+          reason: "notification_busy",
+          retry_delay_seconds: 30,
+        });
+        message.retry({ delaySeconds: 30 });
+        return;
+      }
+      notificationOutcome = outcome;
+    }
+    logInfo(env, "conversation_effect_terminal", {
+      ...fields,
+      outcome: notificationOutcome ?? "applied",
+      reason: notificationOutcome ? "notification_terminal" : "effect_applied",
+      notification_intent_id: applied.notificationIntentId,
+      replayed: applied.replayed,
+    });
+    message.ack();
+  } catch (error) {
+    logWarn(env, "conversation_effect_processing_failed", {
+      ...fields,
+      reason: error instanceof Error ? error.message : "unknown",
+    });
+    const attempts = Math.max(1, message.attempts);
+    message.retry({ delaySeconds: Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6)) });
+  }
 }
 
 async function admitConnectorEvent(
@@ -735,22 +718,25 @@ export async function processConnectorEvent(
   // settle must still know the activity was claimed and keep it out of
   // Suggested Work.
   const workspace = await workspaceDirectory(env, asWorkspaceId(activity.workspace_id));
-  const matched = await workspace.matchExternalEventDestinations({
+  // Parsed on this side: the delivery carries the event's metadata, whose
+  // open shape the RPC type system cannot name, so the stub's answer is
+  // untyped until the contract reads it.
+  const matched = WorkspaceExternalEventMatchResultSchema.parse(await workspace.matchExternalEventDestinations({
     workspaceId: activity.workspace_id,
     eventId: activity.id,
-  });
-  const opportunity = matched.claimed
+  }));
+  const opportunity = matched.matched
     ? "claimed"
     : await enqueueActivityOpportunity(env, activity.id, asWorkspaceId(activity.workspace_id));
   await projectActivityEvent(env, activity);
-  await Promise.all(matched.deliveries.map((delivery) => env.ACTIVITY_QUEUE.send(delivery)));
+  await Promise.all(matched.deliveries.map((delivery) => env.ACTIVITY_QUEUE.send(deliveryWithinQueueBound(env, delivery))));
   logInfo(env, "connector_event_processing_completed", {
     workspace_id: activity.workspace_id,
     connection_id: activity.connection_id,
     connector_type: activity.connector_type,
     provider: activity.provider,
     connector_event_id: activity.id,
-    deterministic_route_claimed: matched.claimed,
+    deterministic_route_claimed: matched.matched,
     deterministic_delivery_count: matched.deliveries.length,
     // What Suggested Work did with it, not merely whether it was offered: an
     // event whose type is excluded from candidacy is offered and declined.
@@ -758,6 +744,30 @@ export async function processConnectorEvent(
     opportunity_outcome: opportunity,
     outcome: "processed",
   });
+}
+
+/**
+ * A delivery carries the event's snippet and metadata for the run to read. The
+ * event itself fit the Queue's message bound on ingress, but a delivery adds
+ * the destination and registration on top, so one near the bound is sent
+ * without the content rather than not at all: the run still fires, and reads
+ * from its opening that the content was too large to carry.
+ */
+function deliveryWithinQueueBound<T extends { event: { textSnippet: string; metadata: Record<string, unknown> } }>(
+  env: Env,
+  delivery: T,
+): T {
+  const bytes = new TextEncoder().encode(JSON.stringify(delivery)).byteLength;
+  if (bytes <= MAX_CONNECTOR_EVENT_QUEUE_BYTES) return delivery;
+  logWarn(env, "external_event_delivery_content_trimmed", {
+    workspace_id: (delivery as { workspaceId?: string }).workspaceId ?? null,
+    connector_event_id: (delivery.event as { id?: string }).id ?? null,
+    payload_bytes: bytes,
+  });
+  return {
+    ...delivery,
+    event: { ...delivery.event, textSnippet: "", metadata: { contentTrimmed: true } },
+  };
 }
 
 function activityRowFromWorkspaceEvent(event: WorkspaceConnectorEvent): ActivityRow {

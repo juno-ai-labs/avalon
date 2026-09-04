@@ -24,7 +24,7 @@ import type {
 } from "@rally/contracts";
 import { z } from "zod";
 
-import { substreamAgentName } from "../durable-objects/names";
+import { conversationObjectName } from "../durable-objects/names";
 import type {
   SubstreamAgent,
   SubstreamProductRequest,
@@ -66,7 +66,7 @@ async function objectStub(
     env,
     env.SUBSTREAM_AGENTS,
     workspaceId,
-    substreamAgentName(env.AVALON_REGION, asWorkspaceId(workspaceId), asWorkstreamId(workstreamId), asSubstreamId(substreamId)),
+    conversationObjectName(env.AVALON_REGION, asWorkspaceId(workspaceId), asWorkstreamId(workstreamId), asSubstreamId(substreamId)),
   );
 }
 
@@ -74,8 +74,9 @@ export async function attachWorkstreamRuntimeResource(
   env: Env,
   input: WorkstreamRuntimeResourceAttachment,
 ): Promise<void> {
-  const response = await (await objectStub(env, input.workspaceId, input.workstreamId))
-    .attachRuntimeResource(input);
+  const { substreamId, ...attachment } = input;
+  const response = await (await objectStub(env, input.workspaceId, input.workstreamId, substreamId))
+    .attachRuntimeResource(attachment);
   if (response.status < 200 || response.status >= 300) {
     const body = rpcResultBody(response) as { error?: unknown } | null;
     throw new Error(typeof body?.error === "string" ? body.error : "runtime_resource_attach_failed");
@@ -85,6 +86,8 @@ export async function attachWorkstreamRuntimeResource(
 export interface WorkstreamRuntimeResourceAttachment {
   workspaceId: string;
   workstreamId: string;
+  /** Which of the parent's conversations; the main one by default. */
+  substreamId?: string;
   resourceId: string;
   attachedByUserId: string | null;
   relationshipType?: ResourceRelationshipType;

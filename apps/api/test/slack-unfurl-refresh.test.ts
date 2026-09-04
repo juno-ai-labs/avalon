@@ -334,7 +334,6 @@ describe("Slack work-stream unfurl refresh", () => {
               originType: "ad_hoc",
               originLabel: null,
               createdByUserId: userId,
-              automationSubscriptionId: null,
               automationRunId: null,
               plannedFor: null,
             }],
@@ -519,7 +518,6 @@ async function currentCardHash(input: {
           title: "Quarterly planning",
           harnessStatus: input.harnessStatus,
           lastActivityAt: "2026-08-10T12:00:00.000Z",
-          automationName: null,
         },
     url,
   ));

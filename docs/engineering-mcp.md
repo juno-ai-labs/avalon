@@ -17,7 +17,7 @@ by virtue of product membership.
   the shared raw-SQL Durable Object RPC.
 - `apps/api/src/durable-objects/scheduled-alarms.ts` makes every scheduled
   authority inherit that RPC. WorkspaceDO, WorkstreamDO, SubstreamAgent, and
-  AutomationAgent therefore have the capability, although this MCP initially
+  AutomationDO therefore have the capability, although this MCP initially
   routes only the first three.
 - `packages/contracts/src/engineering-inspection.ts` is the runtime-validated
   RPC vocabulary shared by both Workers.
@@ -99,8 +99,10 @@ permits schema reads, arbitrary queries, and mutations because production
 inspection and repair are the product requirement. Product code must continue
 to use typed domain RPCs and must never depend on this surface.
 
-AutomationAgent inherits inspection through the requested scheduler hierarchy,
-but no automation MCP tool is registered.
+AutomationDO inherits inspection through the requested scheduler hierarchy,
+but no automation MCP tool is registered; an automation's conversations are
+`SubstreamAgent`s reached with the substream tools under the automation id as
+the parent.
 
 The Worker does not retain query history, cache results, copy databases, or
 provide a D1 fallback. It also does not turn Access identity into Rally product

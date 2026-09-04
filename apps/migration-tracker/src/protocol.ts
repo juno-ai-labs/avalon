@@ -240,6 +240,7 @@ export const REPORTING_CLASSES = [
   "SubstreamAgent",
   "WorkstreamDO",
   "WorkspaceDO",
+  "AutomationDO",
 ] as const;
 
 export const MigrationRunRequestSchema = z.object({
