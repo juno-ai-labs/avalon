@@ -11,6 +11,7 @@ import type {
 import {
   AddressingClassificationSchema,
   AutomationSetEvaluatorRulesInputV1Schema,
+  isSentinelAutomationResourceId,
   withoutUnusableAutomationResourceIds,
   AutomationDraftSchema,
   type AutomationDraft,
@@ -2472,8 +2473,19 @@ export function parseAutomationSubmission(raw: unknown): z.ZodSafeParseResult<Au
 export function automationSubmissionTarget(raw: unknown): string | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const target = (raw as Record<string, unknown>).automationId;
-  return typeof target === "string" && target.trim() !== "" ? target.trim() : null;
+  if (typeof target !== "string") return null;
+  const trimmed = target.trim();
+  // The same fill-every-property habit that put a placeholder in a rule's
+  // resourceId puts one here: a slash, a nil UUID, a word. None of those names
+  // an automation, and handing one to the directory lookup threw from inside
+  // the object as a bare schema error the model could not act on. Only a
+  // well-formed id that is not a placeholder is a target; anything else is
+  // "no target", which creates a new automation the way an omitted field does.
+  if (!UUID_TARGET_PATTERN.test(trimmed) || isSentinelAutomationResourceId(trimmed)) return null;
+  return trimmed;
 }
+
+const UUID_TARGET_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 
 function normalizeAutomationDraft(value: unknown): unknown {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
