@@ -2690,18 +2690,18 @@ describe("a member's message travels the whole pipeline", () => {
     await settledRun(stub, opened.body.harnessRunId as string);
     await waitForLoopRelease(stub);
     const retryRunId = asHarnessRunId("00000000-0000-7000-8000-0000000005da");
+    // Retried and archived under one input gate. The retry arms the loop's
+    // activation alarm for now, and between two separate requests workerd may
+    // fire it: the retry then runs before the archive, and what the assertion
+    // sees is that run's outcome rather than an admitted run the archive
+    // fenced. Storage awaits keep the gate closed, so nothing interleaves here.
     await runInDurableObject(stub, async (instance) => {
       const productService = (instance as unknown as {
         product: WorkstreamObjectProductService;
       }).product;
       await productService.retry(AUTH, retryRunId);
+      await productService.update(AUTH, { archived: true });
     });
-
-    expect((await product(stub, {
-      operation: "update",
-      auth: AUTH,
-      input: { archived: true },
-    })).status).toBe(200);
     await runDurableObjectAlarm(stub);
 
     expect(await runInDurableObject(stub, async (instance, state) => ({
