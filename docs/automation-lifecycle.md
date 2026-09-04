@@ -589,7 +589,12 @@ an automation: the `set_evaluator_rules` call, the receipt replay that
 rebuilds the draft state on a later turn, and the accept path reading the
 stored revision. The tool's JSON schema no longer lists the nil and max UUIDs
 as alternatives in its id patterns. A searched resource whose search named no
-binding keys is accepted on its plugin alone. The drafting validator's
+binding keys is accepted on its plugin alone. `submit_draft`'s optional
+`automationId` is read the same way: only a well-formed id that is not a
+placeholder names an automation to edit; a slash or a nil UUID is no target,
+and the submission creates a new automation as an omitted field does. Handed
+through, the placeholder threw from the directory lookup as a bare schema
+error the model retried identically. The drafting validator's
 filter-field check now has the same `openFilterFields` branch the accept-side
 evaluator has, so a rule on a webhook payload key can be written, and both
 sides refuse a dotted key on an open descriptor, whose description now says
