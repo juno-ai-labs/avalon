@@ -419,10 +419,17 @@ function normalizeUserName(value: string): string {
  * as no cursor, X answers with page one, and page one says `next_cursor: ""`
  * again. Reporting the end of the list as `null` is what makes a last page
  * legible as one, the same shape Slack returns.
+ *
+ * The key is always emitted, including where X omitted it. It reports some last
+ * pages as `has_next_page: false` with no cursor at all, and returning that
+ * untouched left the cursor description promising a `null` a caller never saw:
+ * the same gap, in the same sentence, that `slackSearchPage` closes for Slack.
+ * Every caller of this is one of the four paginated tools whose cursor carries
+ * that promise, so there is no unpaginated response here to add a key to.
  */
 function boundXPage(output: Record<string, unknown>): unknown {
   const bounded = boundXValue(output);
-  if (!isRecord(bounded) || !Object.hasOwn(bounded, "next_cursor")) return bounded;
+  if (!isRecord(bounded)) return bounded;
   return { ...bounded, next_cursor: stringValue(bounded, "next_cursor") || null };
 }
 

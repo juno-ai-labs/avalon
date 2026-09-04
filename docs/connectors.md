@@ -924,7 +924,11 @@ the cursor property: the other collapsed branches on those same tools are the
 backlog counted below and are not converted here.
 `tool-argument-empty-strings.test.ts` gains the matching sweep for a cursor with
 no description, reading it off the property rather than the string branch, since
-under `anyOf` the description and the constraints sit on different nodes. Both
+under `anyOf` the description and the constraints sit on different nodes. Its
+older sweep now demands a positive `minLength` rather than a declared one:
+`minLength: 0` is a number, so "is it declared" accepted it, while the harness
+only drops a blank at `>= 1`, and a cursor relaxed to `0` would have forwarded
+`""` to the provider again with the suite still green. Both
 sweeps read cursors through one shared helper, because two copies kept in step
 by hand diverged on the first edit that touched only one of them.
 
@@ -938,6 +942,13 @@ one forever. An earlier revision of this change instead described the last page
 as "no `next_cursor`", on the reading that these tools leave the key absent.
 They do not, and a description is not the place to record a provider's quirk
 that a normalizer can remove.
+
+X had the same gap in the other direction: `boundXPage` normalized a blank
+cursor but returned a response that omitted the key untouched, and X reports
+some last pages as `has_next_page: false` with no cursor at all. The key is now
+always emitted. Every caller of that helper is one of the four paginated tools
+whose description promises the `null`, so there is no unpaginated response it
+adds a key to.
 
 **Why:** The two Google cursor entries below fixed that connector's four and
 recorded what remained:
