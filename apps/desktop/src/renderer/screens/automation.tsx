@@ -125,7 +125,7 @@ function AutomationDetailScreen({ id }: { id: string }): React.JSX.Element {
           automation={detail}
           error={act.error?.message}
           onApply={() => act.mutate('apply')}
-          onDelete={() => act.mutate('delete')}
+          onDelete={() => act.mutateAsync('delete').then(() => undefined)}
           onPause={() => act.mutate('pause')}
           onResume={() => act.mutate('resume')}
           onRunNow={() => act.mutate('run')}

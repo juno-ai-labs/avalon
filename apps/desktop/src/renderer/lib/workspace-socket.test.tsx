@@ -1057,6 +1057,58 @@ describe('WorkspaceSocketProvider', () => {
       .toEqual([expect.objectContaining({ name: 'Caught up while away' })]);
   });
 
+  it('refetches an open automation page when its list row is pushed', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const automationId = '00000000-0000-7000-8000-000000000005';
+    queryClient.setQueryData(['automation', automationId], { id: automationId, currentDefinition: null });
+    queryClient.setQueryData(['automation-runs', automationId], []);
+    const getWorkspaceSocketTicket = vi.fn(async () => ({
+      url: 'wss://api.rally.test/socket/workspaces/workspace-1',
+      ticket: 'workspace-ticket',
+      protocols: socketTicketProtocols('workspace-ticket'),
+    }));
+    render(
+      <QueryClientProvider client={queryClient}>
+        <WorkspaceSocketProvider
+          api={{ getWorkspaceSocketTicket }}
+          workspaceId="00000000-0000-7000-8000-000000000001"
+        >
+          <div />
+        </WorkspaceSocketProvider>
+      </QueryClientProvider>,
+    );
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    expect(queryClient.getQueryState(['automation', automationId])?.isInvalidated).toBe(false);
+
+    // The automation's own chat submitted a revision: the object pushed the
+    // sidebar list and nothing else, since no HTTP request of the desktop's
+    // was in play. The page's detail query has to hear it, or Create stays
+    // disabled on a stale definition until something else refetches.
+    act(() => socket.message({
+      type: 'workspace_sidebar_list',
+      occurredAt: '2026-08-17T20:00:00.000Z',
+      list: 'automations',
+      waterline: 3,
+      items: [{
+        id: automationId,
+        name: 'Weekly changelog',
+        description: 'Every Monday',
+        emailAddress: null,
+        scope: 'workspace',
+        status: 'draft',
+        nextRunAt: null,
+        lastRunAt: null,
+        updatedAt: '2026-08-17T19:00:00.000Z',
+      }],
+    }));
+
+    expect(queryClient.getQueryState(['automation', automationId])?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(['automation-runs', automationId])?.isInvalidated).toBe(true);
+  });
+
   it('drops a sidebar list whose version is not newer than the one applied', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();

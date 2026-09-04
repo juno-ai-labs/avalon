@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import { CirclePause, Ellipsis, Mail, Play, Trash2 } from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
+import { DeleteAutomationDialog } from './delete-automation-dialog';
 import type { AutomationDetail, AutomationRun } from '../lib/types';
 import { formatRelative } from '../lib/format';
 import { Badge, Button, IconButton, InlineError, StatusDot } from './primitives';
@@ -20,7 +22,8 @@ export interface AutomationHeaderProps {
   onApply: () => void;
   onPause: () => void;
   onResume: () => void;
-  onDelete: () => void;
+  /** Runs the deletion once the person has confirmed it; a rejection stays in the dialog. */
+  onDelete: () => Promise<void>;
   onRunNow: () => void;
 }
 
@@ -35,9 +38,12 @@ export interface AutomationHeaderProps {
  */
 export function automationApplyEnabled(automation: Pick<
   AutomationDetail,
-  'currentDefinition' | 'currentDefinitionRevision' | 'acceptedDefinitionRevision'
+  'currentDefinition' | 'currentDefinitionRevision' | 'acceptedDefinitionRevision' | 'lifecycle'
 >): boolean {
-  return automation.currentDefinition?.ready === true
+  // A pause is lifted by Resume and by nothing else; the object refuses an
+  // apply while paused rather than resuming as a side effect of an edit.
+  return automation.lifecycle !== 'paused'
+    && automation.currentDefinition?.ready === true
     && automation.currentDefinitionRevision !== automation.acceptedDefinitionRevision;
 }
 
@@ -92,7 +98,10 @@ export function AutomationHeader({
   const applyEnabled = automationApplyEnabled(automation) && pending === null;
   const applyLabel = automation.acceptedDefinitionRevision === null ? 'Create' : 'Apply changes';
   const listedRuns = runs ?? automation.recentRuns;
-  const canRun = automation.lifecycle === 'active' || automation.lifecycle === 'paused';
+  // The object runs only an active automation (`automation_not_active`
+  // otherwise), so a paused one is not offered a command that always fails.
+  const canRun = automation.lifecycle === 'active';
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   return (
     <header className="workstream-header automation-header window-drag">
       <div className="automation-header-row">
@@ -126,11 +135,13 @@ export function AutomationHeader({
             onClick={onApply}
             title={applyEnabled
               ? undefined
-              : definition === null
-                ? 'Describe the automation in the conversation first.'
-                : !definition.ready
-                  ? 'The draft still has an open question.'
-                  : 'The running revision is already this one.'}
+              : automation.lifecycle === 'paused'
+                ? 'Resume the automation before applying a change.'
+                : definition === null
+                  ? 'Describe the automation in the conversation first.'
+                  : !definition.ready
+                    ? 'The draft still has an open question.'
+                    : 'The running revision is already this one.'}
           >
             {pending === 'apply' ? `${applyLabel === 'Create' ? 'Creating' : 'Applying'}…` : applyLabel}
           </Button>
@@ -154,12 +165,21 @@ export function AutomationHeader({
                   <Play size={14} /> {pending === 'run' ? 'Starting…' : 'Run now'}
                 </DropdownMenu.Item>
                 <DropdownMenu.Separator className="menu-separator" />
-                <DropdownMenu.Item className="menu-item menu-item-danger" disabled={pending !== null} onSelect={onDelete}>
+                <DropdownMenu.Item
+                  className="menu-item menu-item-danger"
+                  disabled={pending !== null}
+                  onSelect={() => setConfirmingDelete(true)}
+                >
                   <Trash2 size={14} /> {automation.lifecycle === 'draft' ? 'Delete draft' : 'Delete automation'}
                 </DropdownMenu.Item>
               </DropdownMenu.Content>
             </DropdownMenu.Portal>
           </DropdownMenu.Root>
+          <DeleteAutomationDialog
+            onClose={() => setConfirmingDelete(false)}
+            onConfirm={onDelete}
+            target={confirmingDelete ? { name, status: automation.lifecycle } : null}
+          />
         </div>
       </div>
       <div className="automation-header-details window-no-drag">
