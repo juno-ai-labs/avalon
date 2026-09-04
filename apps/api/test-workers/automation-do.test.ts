@@ -27,6 +27,7 @@ import {
   asSubstreamId,
   asUserId,
   asWorkspaceId,
+  AutomationSetEvaluatorRulesInputV1Schema,
   type AutomationDraft,
 } from "@rally/contracts";
 import {
@@ -74,6 +75,32 @@ const RUN_SETTLE_TIMEOUT_MS = 15_000;
  */
 let automationOrdinal = 0;
 let AUTOMATION_ID = asAutomationId("00000000-0000-7000-8000-0000000000ad");
+
+const WEBHOOK_CONNECTION_ID = "00000000-0000-7000-8000-00000000ad70";
+
+const WEBHOOK_DEFINITION: AutomationDraft = {
+  name: "Deploy watcher",
+  description: "Reports checkout deploys",
+  overview: "Watches deploy events on a webhook",
+  instructions: "Say which service deployed.",
+  triggers: [{
+    type: "connector_activity",
+    connectorType: "generic_webhook",
+    sourceBindingKey: "deploy_hook",
+    suggestedSourcePluginId: "plugin_webhook",
+    eventTypes: ["deploy.finished", "deploy.failed"],
+    deterministicFilters: {},
+  }],
+  requiredCapabilities: [],
+  expectedOutputs: [],
+  defaultBehavior: {},
+  recommendedPlugins: [],
+  memoryTables: [],
+  suggestedScope: "personal",
+  followUpQuestion: null,
+  elicitation: null,
+  ready: true,
+};
 
 const DEFINITION: AutomationDraft = {
   name: "Manual helper",
@@ -184,6 +211,25 @@ async function seedSlackConnection(): Promise<void> {
       RESOURCE_ID,
       WORKSPACE_ID,
       SLACK_CONNECTION_ID,
+      NOW,
+      NOW,
+    );
+  });
+}
+
+/** A generic webhook connection whose configured event types are its triggers. */
+async function seedWebhookConnection(): Promise<void> {
+  await runInDurableObject(workspaceStub(), (_instance, state) => {
+    state.storage.sql.exec(
+      `INSERT OR REPLACE INTO connector_connections
+         (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+          display_name, granted_scopes_json, status, cursor_json, config_json,
+          created_at, updated_at, model_plugin_id)
+       VALUES (?, ?, 'generic_webhook', 'workspace', NULL, 'deploy-hook', 'Deploy hook', '[]', 'healthy',
+               '{}', ?, ?, ?, 'plugin_webhook')`,
+      WEBHOOK_CONNECTION_ID,
+      WORKSPACE_ID,
+      JSON.stringify({ eventTypes: ["deploy.finished", "deploy.failed"] }),
       NOW,
       NOW,
     );
@@ -382,6 +428,59 @@ describe("AutomationDO", () => {
     expect(queued.length).toBeGreaterThanOrEqual(1);
     expect(new Set(queued.map((envelope) => envelope.effect.kind))).toEqual(new Set(["directory_automation"]));
     expect(queued.at(-1)?.effect).toMatchObject({ lifecycle: "active", title: "Manual helper" });
+  });
+
+  it("applies a webhook rule whatever the model put in resourceId, since a delivery is about no resource", async () => {
+    await seedWebhookConnection();
+    await createDraft();
+    // What the drafting model sends: an optional id filled with a placeholder
+    // reshaped to satisfy the pattern, and once a real-looking one. A webhook
+    // trigger declares no resource relationship, so neither can mean anything,
+    // and a revision that carries them is read as if it did not.
+    const rules = {
+      schemaVersion: 1 as const,
+      evaluators: [
+        {
+          evaluatorKey: "checkout_deploys",
+          source: {
+            sourceBindingKey: "deploy_hook",
+            suggestedSourcePluginId: "plugin_webhook",
+            resourceId: "00000000-0000-4000-8000-000000000000",
+            event: { kind: "event_type" as const, eventType: "deploy.finished" },
+          },
+          when: {
+            kind: "all" as const,
+            allOf: [{ kind: "string" as const, attribute: "service", operator: "equals" as const, value: "checkout" }],
+          },
+        },
+        {
+          evaluatorKey: "any_failure",
+          source: {
+            sourceBindingKey: "deploy_hook",
+            suggestedSourcePluginId: "plugin_webhook",
+            resourceId: "3d1f8c2a-5b6e-4c7d-8e9f-0a1b2c3d4e5f",
+            event: { kind: "event_type" as const, eventType: "deploy.failed" },
+          },
+          when: { kind: "always" as const },
+        },
+      ],
+    };
+    const submitted = await automationStub().submitDefinition({
+      ...addressed(),
+      draft: WEBHOOK_DEFINITION,
+      evaluatorRules: AutomationSetEvaluatorRulesInputV1Schema.parse(rules),
+      submittedByRunId: null,
+    });
+    expect(submitted).toEqual({ definitionRevision: 1, ready: true });
+
+    const detail = await apply();
+
+    expect(detail).toMatchObject({
+      lifecycle: "active",
+      acceptedDefinitionRevision: 1,
+      connectorBindings: { plugin_webhook: WEBHOOK_CONNECTION_ID },
+    });
+    expect(await activeRegistrations()).toBe(2);
   });
 
   it("refuses to apply a revision naming a plugin the workspace has no connection for", async () => {
