@@ -30,6 +30,7 @@ const DISPATCHED_OPERATIONS = [
   "settleResidualReceipts",
   "receiptForCall",
   "receiptsForRun",
+  "receiptsForCapabilities",
   "receiptsByIds",
   "attachmentDependencies",
   "recordAttachmentDependencies",
