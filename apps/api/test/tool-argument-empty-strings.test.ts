@@ -1,6 +1,7 @@
 import { normalizeToolArguments, validateToolArguments } from "@rally/agent-harness";
 import type { ToolDefinition } from "@rally/contracts";
 import { describe, expect, it } from "vitest";
+import type { z } from "zod";
 import { __integrationTesting } from "../src/services/integrations";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import { createTestConnectorRegistry, unconfiguredConnectorTypes } from "./helpers/connector-registry";
@@ -29,6 +30,14 @@ function connectorTools(): Array<{ connector: string; tool: ToolDefinition }> {
     manifest.tools.map((tool) => ({ connector: manifest.type, tool })));
 }
 
+
+/** The validation issues that are about one property, ignoring everything else. */
+function cursorIssues(error: z.ZodError | null, name: string): string[] {
+  if (!error) return [];
+  return error.issues
+    .filter((issue) => issue.path[0] === name)
+    .map((issue) => issue.message);
+}
 
 /**
  * What every cursor description has to say, whichever connector serves it.
@@ -143,6 +152,37 @@ describe("blanked tool arguments", () => {
         .map((name) => `${connector}.${tool.name}.${name}`));
 
     expect(surviving).toEqual([]);
+  });
+
+  it("carries a null cursor through to every connector that now advertises one", () => {
+    // The other half of the blank rule, and the one this suite was missing.
+    // These cursors tell the model to send `null` when it has none, so `null`
+    // has to survive normalization and validate against the schema it was
+    // promised by. Were the harness to start stripping `null` from optional
+    // properties the way it strips `""`, every cursor here would regress to
+    // having no way to say "no cursor" — and the only thing that would notice
+    // is a run in production, which is how this class of defect was found the
+    // first three times.
+    const failures = connectorTools().flatMap(({ connector, tool }) =>
+      [...CURSOR_PARAMETERS]
+        .filter((name) => stringCursorSchema(tool, name) !== null)
+        .flatMap((name) => {
+          const schema = tool.inputSchema as Record<string, unknown>;
+          const normalized = normalizeToolArguments({ [name]: null }, schema, tool.mode);
+          const where = `${connector}.${tool.name}.${name}`;
+          const kept = (normalized as Record<string, unknown>)[name] === null;
+          return [
+            ...(kept ? [] : [`${where}: null did not survive normalization`]),
+            // Only issues about the cursor itself. The object under test
+            // carries one property, so a tool with required fields reports
+            // those as missing too; blaming the cursor for them would make this
+            // fail for every tool that requires anything.
+            ...(cursorIssues(validateToolArguments(normalized, schema), name)
+              .map((issue) => `${where}: null is rejected by the advertised schema (${issue})`)),
+          ];
+        }));
+
+    expect(failures).toEqual([]);
   });
 
   it("turns the call that failed in production into the one the model meant", () => {
