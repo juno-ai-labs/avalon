@@ -18,6 +18,7 @@ import {
 import { AuthService } from "../src/services/auth-service";
 import { RegionalOnboardingService } from "../src/services/platform-onboarding-service";
 import { acceptInvitationForUser, WorkspaceService } from "../src/services/workspace-service";
+import { WorkstreamService } from "../src/services/workstream-service";
 import {
   createCloudflareTestBinding,
   createTestDurableObjectId,
@@ -196,6 +197,36 @@ describe("removing a member", () => {
     expect(remaining.count).toBe(3);
     // A refusal writes nothing, so nothing is announced either.
     expect(sent).toEqual([]);
+  });
+});
+
+describe("removing a room participant", () => {
+  it("publishes a revocation addressed to the automations the room owns", async () => {
+    const database = seed();
+    const { env, sent } = environment(database);
+    const ROOM = "00000000-0000-7000-8000-0000000000a1";
+    const removed = vi.fn(async () => undefined);
+    const service = new WorkstreamService(env, auth(OWNER, "owner"));
+    vi.spyOn(service as unknown as { authoritativeClient: () => Promise<unknown> }, "authoritativeClient")
+      .mockResolvedValue({ removeParticipant: removed });
+    vi.spyOn(service as unknown as { projectConstraints: () => Promise<unknown> }, "projectConstraints")
+      .mockResolvedValue({ activeProject: null });
+
+    await service.removeParticipant(ROOM, MEMBER);
+
+    expect(removed).toHaveBeenCalledWith(MEMBER);
+    const revocations = sent
+      .map((published) => AccessRevocationMessageSchema.safeParse(published.body))
+      .flatMap((parsed) => parsed.success ? [parsed.data] : []);
+    // The room closed its own sockets; its automations admitted this person
+    // through the room and nothing else would tell them.
+    expect(revocations).toEqual([expect.objectContaining({
+      reason: "workstream_participant_removed",
+      workspaceId: WORKSPACE,
+      userId: MEMBER,
+      sessionId: null,
+      target: { scope: "workstream_automations", workstreamId: ROOM },
+    })]);
   });
 });
 
@@ -586,6 +617,7 @@ describe("carrying one revocation to the objects", () => {
     automationIds?: string[];
     substreamIds?: string[];
     automationChildren?: string[];
+    ownedAutomationIds?: string[];
     failAt?: boolean;
   } = {}) {
     const visits: Visit[] = [];
@@ -597,7 +629,7 @@ describe("carrying one revocation to the objects", () => {
      * on an automation, which holds none of its own, and what each object
      * answers with is the whole difference between the hops.
      */
-    const namespace = (answer: () => unknown): DurableObjectNamespace => {
+    const namespace = (answer: () => unknown, owned?: () => unknown): DurableObjectNamespace => {
       const binding: DurableObjectNamespace = createCloudflareTestBinding<DurableObjectNamespace>({
         idFromName: (name: string) => createTestDurableObjectId(name),
         get: (id: DurableObjectId) => ({
@@ -605,6 +637,11 @@ describe("carrying one revocation to the objects", () => {
             visits.push({ name: id.toString(), revocation });
             if (options.failAt) throw new Error("object unreachable");
             return answer();
+          },
+          automationIdsOwnedByWorkstream: async (request: unknown) => {
+            listed.push({ name: id.toString(), request });
+            if (options.failAt) throw new Error("object unreachable");
+            return owned?.();
           },
           listChildren: async (request: unknown) => {
             listed.push({ name: id.toString(), request });
@@ -629,7 +666,7 @@ describe("carrying one revocation to the objects", () => {
       WORKSPACE_DOS: namespace(() => ({
         workstreamIds: options.workstreamIds ?? [],
         automationIds: options.automationIds ?? [],
-      })),
+      }), () => ({ automationIds: options.ownedAutomationIds ?? [] })),
       WORKSTREAM_DOS: namespace(() => ({
         substreamIds: options.substreamIds ?? [],
       })),
@@ -707,6 +744,21 @@ describe("carrying one revocation to the objects", () => {
       { scope: "substream", workstreamId: AUTOMATION, substreamId: "0" },
       { scope: "substream", workstreamId: AUTOMATION, substreamId: RUN },
     ]);
+  });
+
+  it("turns a lost room into one hop per automation the room owns", async () => {
+    const OWNED = "00000000-0000-7000-8000-0000000000d2";
+    const { env, visits, listed, sent } = fanOut({ ownedAutomationIds: [OWNED] });
+    await applyAccessRevocation(env, message({ scope: "workstream_automations", workstreamId: WORKSTREAM }));
+
+    // Removing a participant is a write the room makes locally, and nothing
+    // in the room reaches the automations it owns, whose conversations
+    // admitted the person through the room. The workspace names them; each
+    // becomes the ordinary automation hop.
+    expect(visits).toEqual([]);
+    expect(listed).toHaveLength(1);
+    expect(listed[0]?.request).toEqual({ workspaceId: WORKSPACE, workstreamId: WORKSTREAM });
+    expect(targetsOf(sent)).toEqual([{ scope: "automation", automationId: OWNED }]);
   });
 
   it("stops at an automation with no conversations of its own", async () => {
