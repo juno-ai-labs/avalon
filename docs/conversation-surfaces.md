@@ -79,6 +79,27 @@ prove layout, focus, scroll position, or overlap.
 
 ## Changelog
 
+### 2026-09-04 — The Grok presentation stays an adapter over the shared conversation foundation
+
+**What changed:** The Grok-style work-stream screen now renders through the
+shared `ConversationSurface` introduced on main, including addressed socket
+commands, attachment state, and work-stream-only document cards. Opening a
+resource remains an explicit user action: receiving an embed no longer opens or
+resizes the inspector automatically. The presentation's literal light and dark
+colours were also moved onto the theme system's semantic surface, row, text,
+border, status, scrim, and elevation tokens.
+
+**Why:** Rebasing the visual branch onto the shared conversation architecture
+left a half-old screen: it imported a deleted auto-open hook, skipped the
+work-stream document-card opt-in, and carried colours that bypassed the theme
+registry. Keeping a second composition to preserve the visual rewrite would
+immediately recreate the feed divergence this module removed.
+
+**Consequences:** Presentation changes belong in the shared surface and its
+explicit host options; product semantics remain in the work-stream adapter.
+Theme-specific paint must be expressed through registered tokens, and an
+attachment or embed may open a preview only from a person's click.
+
 ### 2026-09-04: The automation header asks before deleting, offers only what the object accepts, and hears its own chat
 
 **What changed:** `components/delete-automation-dialog.tsx` is the one

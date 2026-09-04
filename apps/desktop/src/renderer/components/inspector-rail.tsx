@@ -242,7 +242,6 @@ function ContextContent({
   automationsSection = true,
   onAddParticipant,
   onAddResource,
-  onOpenRun,
   onToggleWatch,
 }: Pick<InspectorRailProps,
   | 'workstream'
@@ -252,7 +251,6 @@ function ContextContent({
   | 'automationsSection'
   | 'onAddParticipant'
   | 'onAddResource'
-  | 'onOpenRun'
   | 'onToggleWatch'
 >): React.JSX.Element {
   const debugEnabled = useDebugEnabled();
@@ -328,24 +326,6 @@ function ContextContent({
           <p className="rail-empty-line">No resources attached</p>
         ) : (
           <ResourceCards onToggleWatch={onToggleWatch} resources={[...sources, ...artifacts]} />
-        )}
-      </Section>
-
-      <Section title="Recent runs">
-        {runs.length === 0 ? (
-          <p className="rail-empty-line">No runs yet</p>
-        ) : (
-          <ul className="run-rail-list compact-run-list">
-            {runs.slice(0, 3).map((run) => (
-              <li key={run.id}>
-                <button className="run-rail-row" onClick={() => onOpenRun?.(run)} type="button">
-                  <StatusDot compact status={run.status} />
-                  <span className="run-rail-copy"><strong>{run.title}</strong><small>{formatRelative(run.triggerTime)}</small></span>
-                  <ChevronRight aria-hidden="true" size={14} />
-                </button>
-              </li>
-            ))}
-          </ul>
         )}
       </Section>
 
