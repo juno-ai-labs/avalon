@@ -507,6 +507,40 @@ export abstract class ConversationParentDurableObject extends ScheduledDurableOb
     };
   }
 
+  /**
+   * Whether this person is a participant, as far as the parent knows.
+   *
+   * The per-user projection is the answer once the child has sent one. Before
+   * that, the one thing the parent knows is who created the main conversation,
+   * recorded at `reserveChild`: the creator is a participant of a conversation
+   * that has not yet reported its participants, and stops being one the moment
+   * the child's projection says otherwise. Without this fallback the person who
+   * had just created a personal work stream could not open it until the
+   * child's first effect had crossed the Queue, and the boot and the socket
+   * ticket answered 404 in that window.
+   */
+  protected isParticipant(userId: string): boolean {
+    const projection = this.userProjection(userId);
+    if (projection) return projection.isParticipant === true;
+    // No projection for this person. If the main conversation has reported
+    // at all, its silence about them is the answer; only before its first
+    // projection does the creator stand in.
+    if (this.mainChildHasReported()) return false;
+    return this.mainChildCreatedBy() === userId;
+  }
+
+  private mainChildHasReported(): boolean {
+    return first(this.parentSql.exec<{ substream_id: string }>(
+      `SELECT substream_id FROM substream_directory WHERE substream_id = '0'`,
+    )) !== null;
+  }
+
+  protected mainChildCreatedBy(): string | null {
+    return first(this.parentSql.exec<{ created_by_user_id: string | null }>(
+      `SELECT created_by_user_id FROM conversation_children WHERE substream_id = '0'`,
+    ))?.created_by_user_id ?? null;
+  }
+
   protected userProjection(userId: string): DirectoryUserEffect | null {
     const effects = this.parentSql.exec<StoredProjectionRow>(
       `SELECT effect_json FROM substream_user_directory WHERE user_id = ? ORDER BY substream_id`,
