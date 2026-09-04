@@ -579,8 +579,15 @@ export class AutomationDO extends ConversationParentDurableObject {
     const request = AutomationActorRequestSchema.parse(input);
     const row = this.assertAutomation(request.workspaceId, request.automationId);
     this.assertManager(row, request.actor);
-    if (row.lifecycle === "deleted") return;
     const now = Date.now();
+    if (row.lifecycle === "deleted") {
+      // Already gone here; say so to the workspace again. The directory row
+      // is the one thing a lost queue message can leave behind, and a repeat
+      // delete is the natural way to ask for it to be cleared.
+      this.state.storage.transactionSync(() => this.enqueueDirectory(now));
+      await this.armNextAlarm();
+      return;
+    }
     const schedules = this.schedules().map((schedule) => schedule.schedule_id);
     this.state.storage.transactionSync(() => {
       this.stopOpenRuns(now);
