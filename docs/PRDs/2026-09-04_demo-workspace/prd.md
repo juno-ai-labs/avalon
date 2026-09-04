@@ -5,9 +5,10 @@
 > An internal operator prepares a fresh, populated workspace for each Rally
 > demo and retires its predecessor. Companion: [state.md](state.md).
 > Standing contract: [the Rally implementation brief](../2026-08-05_avalon-implementation-brief/prd.md).
-> Evidence: [spike report, beginning at §0](https://github.com/juno-ai-labs/avalon/blob/87e73efbc8944a9bee990d2d8deb8dbe6038d28a/SPIKE-REPORT.md#0-re-verified-against-main-rally-12710--read-this-first)
-> and [working spike code](https://github.com/juno-ai-labs/avalon/tree/87e73efbc8944a9bee990d2d8deb8dbe6038d28a/apps/api/src/spike),
-> from `spike/demo-workspace-replay-main`.
+> Evidence: [the spike report, beginning at §0](research.md#0-re-verified-against-main-rally-12710--read-this-first),
+> kept in this folder so it cannot outlive its source. The code it describes is
+> throwaway and unmerged; it stayed on `spike/demo-workspace-replay-main` at
+> `87e73ef`.
 
 ## Summary
 
