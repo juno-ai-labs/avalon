@@ -86,6 +86,21 @@ export function showsAutomation(pathname: string, automationId: string): boolean
   return pathname === `/automations/${automationId}`;
 }
 
+/**
+ * The shell class that says the window's own buttons are painted over the page,
+ * or none. Reserving room for them is `docs/assumptions.md` item 25.
+ *
+ * Only macOS paints them there: the main window asks `hiddenInset` of darwin
+ * and `hidden` of everything else, and off darwin that leaves the buttons in
+ * the window manager's own frame or, on Windows, not drawn at all. `undefined`
+ * — the runtime config still in flight — answers the same as any other
+ * non-macOS platform, which is the reading that leaves a header where it
+ * already is rather than jumping it sideways when the answer lands.
+ */
+export function windowControlsShellClass(platform: string | undefined): string {
+  return platform === 'darwin' ? 'has-overlay-window-controls' : '';
+}
+
 export function openWorkstreamId(pathname: string): string | null {
   const id = /^\/workstreams\/([^/]+)$/.exec(pathname)?.[1];
   if (id === undefined || id === 'new') return null;
@@ -217,6 +232,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     invitationApi,
     pendingInvitation,
     abandonAccountSignIn,
+    runtime,
     session,
     signOut,
   } = useAppSession();
@@ -389,6 +405,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   }, [workspaceKey]);
   const shellClassName = [
     'workspace-shell',
+    windowControlsShellClass(runtime?.platform),
     showShellRail ? 'rail-open' : '',
     switchingWorkspaceKey !== null ? 'is-switching-workspace' : '',
     enteringWorkspaceKey === workspaceKey ? 'is-entering-workspace' : '',

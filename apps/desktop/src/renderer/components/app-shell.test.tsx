@@ -12,6 +12,7 @@ import {
   openWorkstreamId,
   showsAutomation,
   upsertProjectDirectory,
+  windowControlsShellClass,
   workstreamMatchesBatchFilter,
 } from './app-shell';
 
@@ -233,5 +234,31 @@ describe('showsAutomation', () => {
     expect(showsAutomation('/automations/new', automationId)).toBe(false);
     expect(showsAutomation('/automations/00000000-0000-7000-8000-000000000009', automationId)).toBe(false);
     expect(showsAutomation('/workstreams/new', automationId)).toBe(false);
+  });
+});
+
+/**
+ * The mapping itself, not just the decision behind it.
+ *
+ * A predicate returning `true` proves nothing about which class the shell then
+ * writes, and nothing in this suite renders `AppShell` — so an inverted ternary
+ * at the call site would put the traffic-light defect back on macOS with every
+ * test still green. Returning the class name is what makes that reachable here.
+ */
+describe('windowControlsShellClass', () => {
+  // The main window asks `hiddenInset` of darwin, which paints the traffic
+  // lights over the page. Everywhere else it asks `hidden`, and the buttons are
+  // in the window manager's frame or not drawn at all.
+  it('names the class on macOS and nothing anywhere else', () => {
+    expect(windowControlsShellClass('darwin')).toBe('has-overlay-window-controls');
+    expect(windowControlsShellClass('win32')).toBe('');
+    expect(windowControlsShellClass('linux')).toBe('');
+  });
+
+  // The runtime config is fetched, so the platform is briefly unknown. Reading
+  // that as "nothing to clear" leaves the header where it already is rather
+  // than jumping it sideways when the answer lands.
+  it('names nothing while the platform is still unknown', () => {
+    expect(windowControlsShellClass(undefined)).toBe('');
   });
 });
