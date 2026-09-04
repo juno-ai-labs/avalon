@@ -316,6 +316,8 @@ const BroadcastRequestSchema = z.strictObject({
 const RuntimeResourceRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   workstreamId: IdSchema,
+  /** Which of the parent's conversations; this one when absent. */
+  substreamId: z.string().min(1).optional(),
   resourceId: IdSchema,
   attachedByUserId: IdSchema.nullable(),
   relationshipType: ResourceRelationshipTypeSchema.optional(),
@@ -2419,7 +2421,16 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     return value ?? null;
   }
 
-  /** Resource-link writer for a harness already executing in this object. */
+  /**
+   * Resource-link writer for a harness already executing in this object.
+   *
+   * Handed to every substream's loop, not only the main conversation's: a run
+   * under an automation is a child substream, and without its own attacher
+   * the plugins fell back to the id-resolved port, which addresses the
+   * parent's substream `"0"` by default and so filed a run's generated or
+   * imported resources in the drafting conversation, where the run could not
+   * see them.
+   */
   private localRuntimeResourceAttacher(
     workspaceId: string,
     workstreamId: string,
@@ -2448,10 +2459,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   /** Attach a generated resource without re-entering the resident object. */
   private async runRuntimeResourceAttachment(input: SubstreamRuntimeResourceRequest): Promise<void> {
     const identity = this.objectStore.identity();
+    // The attachment carries a scope, not a location: this object refuses one
+    // addressed to another work stream or, when it names a conversation, to
+    // another conversation of this one.
     if (!identity
       || identity.workspaceId !== input.workspaceId
       || identity.parentId !== input.workstreamId
-      || this.externalSubstreamId() !== "0") {
+      || (input.substreamId !== undefined && input.substreamId !== this.externalSubstreamId())) {
       throw new Error("workstream_runtime_identity_mismatch");
     }
     const resource = await this.product.attachRuntimeResource(
@@ -3449,12 +3463,12 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
             // attacher still is, and deliberately: it carries a *scope* rather
             // than a location — it refuses an attachment addressed to another
             // work stream, which a port resolved by ids would happily deliver.
-            ...(this.externalSubstreamId() === "0" ? {
-              runtimeResourceAttacher: this.localRuntimeResourceAttacher(
-                input.workspaceId,
-                input.parentId,
-              ),
-            } : {}),
+            // Every substream gets its own, so a run's resources land on the
+            // run and not on the parent's main conversation.
+            runtimeResourceAttacher: this.localRuntimeResourceAttacher(
+              input.workspaceId,
+              input.parentId,
+            ),
           },
         );
     } catch (error) {

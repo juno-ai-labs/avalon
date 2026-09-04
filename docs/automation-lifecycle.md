@@ -550,6 +550,22 @@ production inspection paths.
 
 ## Changelog
 
+### 2026-09-04: A replayed create provisions the conversation it skipped
+
+**What changed:** `AutomationService.createAutomation` runs the runtime
+bootstrap and the conversation provisioning on every call, not only when the
+object answers `created: true`; both are idempotent (insert-or-ignore anchors,
+`already_provisioned` from the object).
+
+**Why:** Pull request review. The object's row committed first, so a first
+call that died between it and the provisioning answered `created: false`
+forever after and skipped both, leaving an automation whose conversation could
+not be opened. Room drafting reaches this directly: its automation id is the
+stable harness run id, so a retry is the same call again.
+
+**Consequences:** A replay costs one bootstrap RPC and one provisioning RPC
+that answer at once; nothing else.
+
 ### 2026-09-04: Apply reconciles on replay, refuses a pause, and creates the declared tables; a retried admission arms its run
 
 **What changed:** `AutomationDO.apply` records `applied_effects_revision`

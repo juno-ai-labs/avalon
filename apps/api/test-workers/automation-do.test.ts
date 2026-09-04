@@ -37,6 +37,7 @@ import {
 } from "@rally/contracts/conversation-effects";
 
 import type { AutomationDO } from "../src/durable-objects/automation-do";
+import type { SubstreamAgent } from "../src/durable-objects/substream-agent";
 import {
   AUTOMATION_RUN_ALARM_KIND,
   AUTOMATION_SCHEDULE_ALARM_KIND,
@@ -44,6 +45,7 @@ import {
 import { automationDOName, conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
 import type { Env } from "../src/env";
 import { createAutomation } from "../src/services/automation-service";
+import { readWorkstreamAuthorityControl } from "../src/services/workstream-authority";
 import {
   consumeEffectBodies,
   deliverChildEffects,
@@ -749,6 +751,95 @@ describe("AutomationDO", () => {
     expect((await alarms()).filter((alarm) => alarm.kind === AUTOMATION_RUN_ALARM_KIND)).toHaveLength(1);
     const run = await settledChildRun(first.runId);
     expect(run).toMatchObject({ status: "completed" });
+  });
+
+  it("provisions the conversation on a replayed create, so a first call that died after the row is repaired", async () => {
+    // The object's row commits first; a first call that failed between it
+    // and the conversation's provisioning used to answer `created: false`
+    // forever after and skip both, leaving an automation nobody could open.
+    // Room drafting reaches this directly: its automation id is the stable
+    // harness run id, so the retry is the same call again.
+    const authority = await readWorkstreamAuthorityControl(TEST_ENV);
+    expect(await automationStub().create({
+      ...addressed(),
+      authorUserId: AUTHOR_ID,
+      scope: "personal",
+      owningWorkstreamId: null,
+      authorityGeneration: authority.generation,
+    })).toEqual({ created: true });
+
+    const replayed = await createAutomation(TEST_ENV, {
+      workspaceId: WORKSPACE_ID,
+      authorUserId: AUTHOR_ID,
+      scope: "personal",
+      owningWorkstreamId: null,
+      automationId: AUTOMATION_ID,
+    });
+
+    expect(replayed).toEqual({ automationId: AUTOMATION_ID, created: false });
+    const conversation = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, AUTOMATION_ID),
+    ));
+    expect(await runInDurableObject(conversation, (_instance, state) =>
+      state.storage.sql.exec<{ title: string }>(`SELECT title FROM workstream WHERE id = 1`).one().title))
+      .toBe("New automation");
+    // And a second replay is a no-op rather than a second provisioning.
+    await expect(createAutomation(TEST_ENV, {
+      workspaceId: WORKSPACE_ID,
+      authorUserId: AUTHOR_ID,
+      scope: "personal",
+      owningWorkstreamId: null,
+      automationId: AUTOMATION_ID,
+    })).resolves.toEqual({ automationId: AUTOMATION_ID, created: false });
+  });
+
+  it("attaches a run's resources to the run, not to the drafting conversation", async () => {
+    await activeAutomation();
+    const started = await automationStub().runNow({ ...addressed(), actor: actor(), idempotencyKey: "attach-run-01" });
+    await settledChildRun(started.runId);
+    const resourceId = "00000000-0000-7000-8000-00000000ad90";
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT OR REPLACE INTO resources
+           (id, workspace_id, connection_id, resource_type, provider,
+            provider_resource_id, title, metadata_json, created_at, updated_at)
+         VALUES (?, ?, NULL, 'generated_image', 'rally', ?, 'Chart', '{}', ?, ?)`,
+        resourceId, WORKSPACE_ID, resourceId, NOW, NOW,
+      );
+    });
+    const links = (stub: DurableObjectStub<SubstreamAgent>) => runInDurableObject(stub, (_instance, state) =>
+      state.storage.sql.exec<{ resource_id: string }>(`SELECT resource_id FROM workstream_resource_links`).toArray()
+        .map((row) => row.resource_id));
+
+    // The attacher a run's harness holds is the run object's own: it takes an
+    // attachment for this conversation and refuses one addressed to another.
+    // Before, only substream "0" had one, and a run's plugins fell back to a
+    // port addressed at the parent's main conversation.
+    await runInDurableObject(childStub(started.runId), async (instance) => {
+      const attacher = (instance as unknown as {
+        localRuntimeResourceAttacher: (workspaceId: string, workstreamId: string) =>
+          (input: Record<string, unknown>) => Promise<void>;
+      }).localRuntimeResourceAttacher(WORKSPACE_ID, AUTOMATION_ID);
+      await attacher({
+        workspaceId: WORKSPACE_ID,
+        workstreamId: AUTOMATION_ID,
+        substreamId: started.runId,
+        resourceId,
+        attachedByUserId: null,
+      });
+      await expect(attacher({
+        workspaceId: WORKSPACE_ID,
+        workstreamId: AUTOMATION_ID,
+        substreamId: "0",
+        resourceId,
+        attachedByUserId: null,
+      })).rejects.toThrow("workstream_runtime_identity_mismatch");
+    });
+
+    expect(await links(childStub(started.runId))).toEqual([resourceId]);
+    expect(await links(env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, AUTOMATION_ID),
+    )))).toEqual([]);
   });
 
   it("admits a manual run once per idempotency key", async () => {
