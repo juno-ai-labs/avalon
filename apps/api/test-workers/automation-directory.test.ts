@@ -175,7 +175,7 @@ describe("automation directory", () => {
       workspaceId: WORKSPACE_ID,
       workstreamId: ROOM_ID,
       userId: MEMBER_ID,
-    }))).rejects.toThrow("automation_directory_access_denied");
+    }))).rejects.toMatchObject({ code: "automation_directory_access_denied", status: 403 });
   });
 
   it("keeps the three scopes apart in one workspace", async () => {
