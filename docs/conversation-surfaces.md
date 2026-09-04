@@ -79,6 +79,17 @@ prove layout, focus, scroll position, or overlap.
 
 ## Changelog
 
+### 2026-09-04 — Elicitation prompts join the conversation design
+
+The old shadowed prompt and separately rounded options were missed by the
+GrokBot presentation pass. The shell now uses the installed reference's 16px
+container radius, 12px inset, 8px joined-list radius, thin row dividers, and
+leading letter badges. Light options use the source's `#e8e8e8`; dark options
+adapt the existing raised-hover token. Letter shortcuts supplement numeric
+shortcuts; selection, custom answers, multi-select limits, Skip, Submit, and
+collapse/reopen retain their existing semantics. Unlike the reference's
+immediate single-choice submission, Rally still requires explicit Submit.
+
 ### 2026-09-04 — Review fixes preserve the reference layout without losing behavior
 
 **What changed:** Sidebar search walks subsequent directory pages and offers an

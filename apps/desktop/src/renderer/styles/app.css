@@ -3430,6 +3430,31 @@ pre {
 .elicitation-panel,
 .elicitation-collapsed-bar { background: var(--av-ref-color-neutral-1); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-sys-size-radius-xl); box-shadow: var(--av-sys-elevation-shadow-md); width: 100%; }
 .elicitation-panel { padding: 14px 14px 13px; }
+/* GrokBot choice-rows: one inset list, not separate elevated cards. */
+.grokbot-shell .elicitation-panel,
+.grokbot-shell .elicitation-collapsed-bar { background: var(--av-cmp-bubble-background); border: 0; border-radius: 16px; box-shadow: none; padding: 12px; }
+.grokbot-shell .elicitation-panel-header { align-items: center; gap: 8px; min-height: 20px; }
+.grokbot-shell .elicitation-panel-header h3 { color: var(--av-sys-color-text-default); font-family: inherit; font-size: 14px; font-weight: 500; line-height: 20px; margin: 0; overflow-wrap: anywhere; }
+.grokbot-shell .elicitation-header-actions button { height: 20px; width: 20px; }
+.grokbot-shell .elicitation-options { background: var(--av-cmp-elicitation-option-background); border: .5px solid color-mix(in srgb, var(--av-sys-color-text-default) 10%, transparent); border-radius: 8px; gap: 0; margin-top: 10px; padding: 0; }
+.grokbot-shell .elicitation-option { background: transparent; border: 0; border-radius: 0; gap: 8px; grid-template-columns: auto minmax(0, 1fr); min-height: 38px; padding: 8px; position: relative; }
+.grokbot-shell .elicitation-option + .elicitation-option { border-top: .5px solid color-mix(in srgb, var(--av-sys-color-text-default) 10%, transparent); }
+.grokbot-shell .elicitation-option:has(input[type='checkbox']) { grid-template-columns: auto minmax(0, 1fr) auto; }
+.grokbot-shell .elicitation-option:hover { background: var(--av-cmp-row-background-hover); }
+.grokbot-shell .elicitation-option.is-selected,
+.grokbot-shell .elicitation-option.is-selected:hover { background: var(--av-cmp-row-background-selected); }
+.grokbot-shell .elicitation-option:has(input:focus-visible) { outline: 2px solid var(--av-sys-color-text-default); outline-offset: -2px; }
+.grokbot-shell .elicitation-option-copy { grid-column: 2; grid-row: 1; }
+.grokbot-shell .elicitation-option-copy strong { color: var(--av-sys-color-text-default); font-size: 14px; font-weight: 400; line-height: 20px; overflow-wrap: anywhere; }
+.grokbot-shell .elicitation-option > kbd { align-items: center; background: var(--av-cmp-row-background-selected); border: .5px solid color-mix(in srgb, var(--av-sys-color-text-default) 10%, transparent); border-radius: 4px; display: inline-flex; font-size: 11px; grid-column: 1; grid-row: 1; justify-content: center; line-height: 16px; margin: 0; min-width: 18px; padding: 1px 4px; }
+.grokbot-shell .elicitation-checkbox { grid-column: 3; grid-row: 1; }
+.grokbot-shell .elicitation-option:has(input[type='checkbox']) > kbd { display: inline-flex; }
+.grokbot-shell .elicitation-option.is-selected .elicitation-checkbox { background: var(--av-cmp-bubble-human-background); border-color: var(--av-cmp-bubble-human-background); color: var(--av-cmp-bubble-human-foreground); }
+.grokbot-shell .elicitation-actions .button { border-radius: 8px; }
+.grokbot-shell .elicitation-skip { background: var(--av-cmp-row-background-hover); color: var(--av-sys-color-text-default); }
+.grokbot-shell .elicitation-submit:not(:disabled),
+.grokbot-shell .elicitation-submit:hover:not(:disabled) { background: var(--av-cmp-bubble-human-background); color: var(--av-cmp-bubble-human-foreground); }
+.grokbot-shell .elicitation-submit kbd { color: inherit; }
 .elicitation-panel-header { align-items: flex-start; display: flex; gap: 14px; justify-content: space-between; min-height: 34px; }
 .elicitation-panel-header > div:first-child { min-width: 0; }
 .elicitation-panel-header h3 { color: var(--av-ref-color-neutral-14); font-size: 15px; font-weight: 590; line-height: 1.38; margin: 4px 0 0; }
@@ -3446,6 +3471,7 @@ pre {
 .elicitation-option-copy strong { color: var(--av-ref-color-neutral-14); font-size: 13.5px; font-weight: 520; line-height: 1.35; }
 .elicitation-option-copy small { color: var(--av-ref-color-neutral-10); font-size: 12px; line-height: 1.42; margin-top: 3px; }
 .elicitation-option > kbd { color: var(--av-ref-color-neutral-11); font-family: inherit; font-size: 12px; }
+.elicitation-option:has(input[type='checkbox']) > kbd { display: none; }
 .elicitation-checkbox { align-items: center; border: 1px solid var(--av-ref-color-line-6); border-radius: var(--av-sys-size-radius-xs); color: var(--av-sys-color-brand-on); display: flex; height: 16px; justify-content: center; width: 16px; }
 .elicitation-option:hover .elicitation-checkbox { border-color: var(--av-sys-color-brand-ink); }
 .elicitation-option.is-selected .elicitation-checkbox { background: var(--av-sys-color-brand-base); border-color: var(--av-sys-color-brand-base); }

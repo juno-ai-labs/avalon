@@ -2,6 +2,7 @@
   "$schema": "./registry.schema.json",
   "description": "Every token a Rally theme may set. A theme file supplies values for these paths and no others.",
   "groups": {
+    "cmp.elicitation": "The inset choice list within an agent question, distinct from its surrounding message surface.",
     "ref.color.neutral": "The neutral ramp, ordered by contrast against the surface rather than by lightness, so a step means the same thing whichever way round a theme runs. Fills at the faint end, text at the strong end.",
     "ref.color.line": "The line ramp. Borders are not faint fills: a theme that draws with space needs to flatten its lines without erasing the fills that share a contrast level with them.",
     "sys.backdrop": "The window's backdrop: one painted layer behind every pane, so a theme's light runs unbroken beneath a translucent sidebar and the feed beside it rather than being repainted per pane and showing a seam at the join. Each token is a CSS `background-*` longhand under its own name, so a theme declares a backdrop the way a stylesheet would and the browser's own sizing, centring and tiling rules apply unchanged. `image` also accepts `{\"svg\": \"<svg \u2026>\"}` for artwork drawn in the theme file and `{\"url\": \"https://\u2026\"}` for one fetched over the network, and an array for layers.",
@@ -627,6 +628,9 @@
       "$type": "dimension"
     },
     "cmp.bubble.background": {
+      "$type": "color"
+    },
+    "cmp.elicitation.option-background": {
       "$type": "color"
     },
     "cmp.bubble.human-background": {

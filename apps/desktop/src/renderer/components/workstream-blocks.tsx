@@ -2349,7 +2349,7 @@ export function ElicitationPanel({
         }
         const target = event.target as HTMLElement;
         if (isText || target.matches('input, textarea') || event.metaKey || event.ctrlKey || event.altKey) return;
-        const index = Number(event.key) - 1;
+        const index = /^[a-z]$/iu.test(event.key) ? event.key.toUpperCase().charCodeAt(0) - 65 : Number(event.key) - 1;
         if (!Number.isInteger(index) || index < 0 || index >= options.length + (allowOther ? 1 : 0)) return;
         event.preventDefault();
         const option = options[index];
@@ -2363,7 +2363,7 @@ export function ElicitationPanel({
         </div>
         <div className="elicitation-header-actions">
           <button aria-label="Collapse question" onClick={() => setCollapsed(true)} type="button">
-            <ChevronDown aria-hidden="true" size={16} />
+            <X aria-hidden="true" size={16} />
           </button>
         </div>
       </header>
@@ -2389,11 +2389,10 @@ export function ElicitationPanel({
                 value={option.value}
               />
               <span className="elicitation-option-copy"><strong>{normalizeModelText(option.label)}</strong>{option.description && <small>{normalizeModelText(option.description)}</small>}</span>
+              <kbd aria-hidden="true">{index < 26 ? String.fromCharCode(65 + index) : index + 1}</kbd>
               {isMulti ? (
                 <span aria-hidden="true" className="elicitation-checkbox">{selected.includes(option.value) && <Check size={12} strokeWidth={3} />}</span>
-              ) : (
-                <kbd aria-hidden="true">{index + 1}</kbd>
-              )}
+              ) : null}
             </label>
           ))}
           {allowOther && (
@@ -2426,11 +2425,10 @@ export function ElicitationPanel({
                   value={text}
                 />
               </span>
+              <kbd aria-hidden="true">{options.length < 26 ? String.fromCharCode(65 + options.length) : options.length + 1}</kbd>
               {isMulti ? (
                 <span aria-hidden="true" className="elicitation-checkbox">{customSelected && <Check size={12} strokeWidth={3} />}</span>
-              ) : (
-                <kbd aria-hidden="true">{options.length + 1}</kbd>
-              )}
+              ) : null}
             </div>
           )}
         </fieldset>

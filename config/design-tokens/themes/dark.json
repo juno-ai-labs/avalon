@@ -198,6 +198,7 @@
     "cmp.group-label.height": "34px",
     "cmp.group-label.gap": "22px",
     "cmp.bubble.background": "#2f2f2f",
+    "cmp.elicitation.option-background": "{sys.color.surface.raised-hover}",
     "cmp.bubble.human-background": "#5a5a5a",
     "cmp.bubble.human-foreground": "#fcfcfc",
     "cmp.bubble.border": "transparent",
