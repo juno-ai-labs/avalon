@@ -539,6 +539,36 @@ production inspection paths.
 
 ## Changelog
 
+### 2026-09-04: A rule's "no resource" sentinel, a poison-pill event, and a replayable dev ingress
+
+**What changed:** `set_evaluator_rules` drops a `resourceId` that is the nil
+or max UUID or empty before validating and staging the rule, and a searched
+resource whose search named no binding keys is accepted on its plugin alone.
+The activity consumer acknowledges an admission the workspace ledger refuses
+as `connector_event_identity_reused_with_different_content` instead of
+retrying it. The dev ingress derives the synthetic activity id from the
+workspace, connector, connection, and provider event id, so posting the same
+event twice is a replay. The drafting catalog skips a connection whose
+connector is not registered in this region with a warning
+(`automation_creator_connector_unavailable`) rather than throwing, and shows
+the connection's display name beside the connector's.
+
+**Why:** All four were found by drafting event automations across several
+connectors on a running stack with live inference. The model filled the
+optional `resourceId` with a sentinel on every rule, the id passed the pattern,
+and no lookup could satisfy it, so no event automation could be created. The
+first replay attempt minted a fresh id per post, and the ledger refused the
+reuse on every retry with backoff, which kept one message in flight for
+minutes. A seeded connection for a connector with no local credentials threw
+inside the catalog and took drafting down for every conversation.
+
+**Consequences:** A sentinel is the only id treated as absent; any other
+unknown id is still refused with the sentence naming `resources_search`. The
+identity refusal is terminal and logged once under
+`connector_event_queue_admission_failed`; every other admission failure still
+retries. The dev route cannot express two different payloads under one
+provider event id, which is the ledger's rule, not the route's.
+
 ### 2026-09-04: A webhook's triggers are its configured event types, and its payload keys are the filter fields
 
 **What changed:** `connectorActivityTriggerDescriptors` (`lib/connector-activity-triggers.ts`)

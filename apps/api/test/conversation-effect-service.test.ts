@@ -20,6 +20,7 @@ import {
   workspaceNotificationIntentMaintenanceTarget,
 } from "../src/durable-objects/workspace-notification-intent-storage";
 import { consumeActivityQueue } from "../src/queues/activity-consumer";
+import { workspaceConnectorEventQueueMessage } from "../src/services/workspace-connector-event-ingress";
 import {
   applyQueuedWorkspaceDirectoryEffect,
   applyWorkstreamRegionalEffect,
@@ -1081,6 +1082,95 @@ describe("the activity Queue consumer's effect legs", () => {
     } finally {
       database.close();
       workspace.database.close();
+    }
+  });
+});
+
+describe("the activity Queue consumer's connector ingress", () => {
+  /** A synthetic event, shaped as the dev ingress and every adapter enqueue it. */
+  async function ingressMessage() {
+    return workspaceConnectorEventQueueMessage({
+      connectorType: "generic_webhook",
+      activity: {
+        id: "00000000-0000-7000-8000-0000000000e1",
+        workspaceId: WORKSPACE_ID,
+        region: "global",
+        connectionId: "00000000-0000-7000-8000-0000000000e2",
+        connectionScope: "workspace",
+        connectionOwnerUserId: null,
+        provider: "generic_webhook",
+        providerEventId: "evt-1",
+        eventType: "deploy.finished",
+        resourceType: null,
+        providerResourceId: null,
+        actor: {},
+        subject: {},
+        occurredAt: AT,
+        receivedAt: AT,
+        title: "Deploy finished",
+        summary: "",
+        textSnippet: "",
+        payloadRef: null,
+        visibility: { kind: "workspace" },
+        targetUserIds: [],
+        entityKeys: [],
+        dedupeKey: "generic_webhook:evt-1",
+        rawContentHash: null,
+        metadata: {},
+        externalPeople: [],
+      },
+    });
+  }
+
+  function refusingWorkspace(error: Error): Env["WORKSPACE_DOS"] {
+    return createCloudflareTestBinding<Env["WORKSPACE_DOS"]>({
+      idFromName: () => createTestDurableObjectId("workspace-ingress"),
+      get: () => ({
+        ingestConnectorEvent: async () => {
+          throw error;
+        },
+      }),
+    });
+  }
+
+  it("drops an event whose identity was already used for different content", async () => {
+    const database = seedAuthority();
+    const env = createTestEnv({
+      DB: sqliteD1(database),
+      AVALON_REGION: "global",
+      APP_ENV: "test",
+      WORKSPACE_DOS: refusingWorkspace(new Error("connector_event_identity_reused_with_different_content")),
+    });
+    const { batch, ack, retry } = queued(await ingressMessage());
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      // The ledger answers the same way on every delivery: the id belongs to
+      // another payload. Retrying only repeats the refusal with backoff until
+      // the Queue gives up, so the refusal is terminal on the first delivery.
+      await consumeActivityQueue(batch, env);
+      expect(ack).toHaveBeenCalledOnce();
+      expect(retry).not.toHaveBeenCalled();
+    } finally {
+      database.close();
+    }
+  });
+
+  it("still retries an admission that failed for any other reason", async () => {
+    const database = seedAuthority();
+    const env = createTestEnv({
+      DB: sqliteD1(database),
+      AVALON_REGION: "global",
+      APP_ENV: "test",
+      WORKSPACE_DOS: refusingWorkspace(new Error("Durable Object reset because its code was updated")),
+    });
+    const { batch, ack, retry } = queued(await ingressMessage());
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      await consumeActivityQueue(batch, env);
+      expect(retry).toHaveBeenCalledOnce();
+      expect(ack).not.toHaveBeenCalled();
+    } finally {
+      database.close();
     }
   });
 });

@@ -535,15 +535,23 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
       });
       message.ack();
     } catch (error) {
+      const reason = diagnosticErrorCode(error, "connector_event_admission_failed");
       logWarn(env, "connector_event_queue_admission_failed", {
         workspace_id: input.request.workspaceId,
         connector_type: input.request.event.connectorType,
         ingress_event_id: input.request.ingressEventId,
         requested_attempt: input.attempt,
         queue_attempts: message.attempts,
-        reason: diagnosticErrorCode(error, "connector_event_admission_failed"),
+        reason,
         error_name: error instanceof Error ? error.name : typeof error,
       });
+      // An event that reuses an identity with different content is refused
+      // the same way on every delivery; retrying it only repeats the refusal
+      // with backoff until the Queue gives up. It is terminal here.
+      if (reason === "connector_event_identity_reused_with_different_content") {
+        message.ack();
+        return;
+      }
       const attempts = Math.max(1, message.attempts);
       message.retry({ delaySeconds: Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6)) });
     }
