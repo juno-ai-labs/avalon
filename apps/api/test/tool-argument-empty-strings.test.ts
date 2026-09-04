@@ -138,11 +138,10 @@ const CURSOR_CONTRACT = [
  * The result field each connector's cursor description names as its source.
  *
  * Every connector serving a cursor needs an entry, so a new one is a decision
- * somebody makes rather than a gap the sweep steps over. `null` records a
- * connector whose producing field is deliberately unnamed: Granola's list
- * response is passed through unmodelled in this repository, so no field has
- * been established, and naming one would be exactly the guess these
- * descriptions exist to stop.
+ * somebody makes rather than a gap the sweep steps over. `null` is available
+ * for a connector whose producing field genuinely cannot be named, and nothing
+ * uses it: the one candidate was Granola, whose shape turned out to be pinned
+ * by its own adapter tests.
  */
 const CURSOR_SOURCE_FIELD: Record<string, string | null> = {
   google: "nextPageToken",
@@ -150,7 +149,7 @@ const CURSOR_SOURCE_FIELD: Record<string, string | null> = {
   notion: "next_cursor",
   slack: "next_cursor",
   x: "next_cursor",
-  granola: null,
+  granola: "cursor",
 };
 
 describe("blanked tool arguments", () => {

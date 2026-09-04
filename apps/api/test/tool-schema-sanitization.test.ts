@@ -147,8 +147,18 @@ describe("tool schema sanitization", () => {
 
   it("delivers the null branch every connector cursor authors, in the one spelling that survives", () => {
     // The fix these carry is that "no cursor" is expressible as a value. It is
-    // expressible only if the null branch reaches the model, and the sanitizer
-    // collapses `type: ["string", "null"]` to `type: "string"`, moving the
+    // expressible only if the cursor authors a null branch AND that branch
+    // reaches the model, so both halves are asserted here.
+    //
+    // `droppedNullableBranches` alone covers only the second. It reports a
+    // declaration whose authored null the sanitizer dropped, so a cursor
+    // rewritten to a plain `{ type: "string" }` reports nothing at all and
+    // sails through: first-page `null` forbidden outright, guard green. The
+    // authored check below is what closes that, and it is the failure mode this
+    // suite exists to catch rather than a hypothetical one.
+    //
+    // The sanitizer half stays because the two spellings are not equivalent:
+    // it collapses `type: ["string", "null"]` to `type: "string"` and moves the
     // nullability into the description — a schema forbidding the value beside
     // prose permitting it, which is the conflict the fix exists to end. Written
     // as an assertion because two automated reviews read the two spellings as
@@ -157,23 +167,28 @@ describe("tool schema sanitization", () => {
     //
     // Every connector, not Google's four: a cursor is a cursor whichever
     // adapter serves it, and the assertion this widened from could pass while
-    // fifteen cursors on six other connectors stayed collapsed.
+    // eighteen cursors on five other connectors stayed collapsed.
     const cursors = everyConnectorCursor();
     // A floor, not a total, so adding a paginated tool does not edit this line
     // while removing every cursor cannot pass it silently.
-    expect(cursors.length).toBeGreaterThanOrEqual(19);
-    // Filtered to the cursor itself. `droppedNullableBranches` reports every
-    // collapsed property on the schema, and a tool that takes a cursor usually
-    // also takes flat-nullable ids and filters that are still collapsed —
-    // Slack's `search_messages` alone carries four. Those are the backlog the
-    // Google entry in `connectors.md` counts at 46 across five connectors, and
-    // converting them is a change per parameter with its own reasoning about
-    // what absence means there. Asserting over them here would fail for work
-    // this guard is not about.
-    expect(cursors.flatMap(({ connector, tool, cursor }) => droppedNullableBranches(
-      tool.inputSchema as Record<string, unknown>,
-    ).filter((finding) => finding.startsWith(`${cursor}: `))
-      .map((finding) => `${connector}.${tool.name}.${finding}`))).toEqual([]);
+    expect(cursors.length).toBeGreaterThanOrEqual(22);
+    expect(cursors.flatMap(({ connector, tool, cursor }) => {
+      const where = `${connector}.${tool.name}.${cursor}`;
+      const declaration = (tool.inputSchema as { properties?: Record<string, unknown> })
+        .properties?.[cursor];
+      if (!authorsNull(declaration)) return [`${where}: authors no null branch`];
+      // Filtered to the cursor itself. `droppedNullableBranches` reports every
+      // collapsed property on the schema, and a tool that takes a cursor
+      // usually also takes flat-nullable ids and filters that are still
+      // collapsed — Slack's `search_messages` alone carries four. Those are the
+      // backlog the Google entry in `connectors.md` counts, and converting them
+      // is a change per parameter with its own reasoning about what absence
+      // means there. Asserting over them here would fail for work this guard is
+      // not about.
+      return droppedNullableBranches(tool.inputSchema as Record<string, unknown>)
+        .filter((finding) => finding.startsWith(`${cursor}: `))
+        .map((finding) => `${where.slice(0, where.lastIndexOf("."))}.${finding}`);
+    })).toEqual([]);
   });
 
   it("leaves no tool with a composition branch the sanitizer strips a constraint from", () => {
@@ -197,6 +212,17 @@ function everyConnectorCursor(): Array<{ connector: string; tool: ToolDefinition
 }
 
 /**
+ * Whether a declaration authors a `null` alternative, in either spelling.
+ *
+ * Deliberately not `admitsNull` from `tool-schema-safety.ts`: that one is read
+ * by the sanitizer report, and importing it here would make this assertion and
+ * the thing it checks share a definition of the property they disagree about.
+ */
+function authorsNull(declaration: unknown): boolean {
+  return admitsBranch(declaration, "null");
+}
+
+/**
  * Whether a declaration is a string one, in either spelling.
  *
  * The name alone is not enough: `after` is also Slack's name for two numeric
@@ -206,12 +232,28 @@ function everyConnectorCursor(): Array<{ connector: string; tool: ToolDefinition
  * for the same reason.
  */
 function admitsString(declaration: unknown): boolean {
+  return admitsBranch(declaration, "string");
+}
+
+/**
+ * Whether a declaration admits `type` directly or through a composition branch.
+ *
+ * Depth-bounded, and a schema deeper than the bound reads as "does not admit".
+ * That direction is safe only because both callers are filters that decide
+ * whether a property is a cursor at all: an unreadable declaration drops out of
+ * the sweep rather than passing it. `stringBranch` in
+ * `tool-argument-empty-strings.test.ts` raises instead, because there the same
+ * answer would silently uncover a cursor the sweep had been covering. Neither
+ * shape occurs today; the bound is here so a future one cannot recurse forever.
+ */
+function admitsBranch(declaration: unknown, type: "string" | "null", depth = 0): boolean {
+  if (depth > 4) return false;
   if (!declaration || typeof declaration !== "object" || Array.isArray(declaration)) return false;
   const schema = declaration as Record<string, unknown>;
   const declared = Array.isArray(schema.type) ? schema.type : [schema.type];
-  if (declared.includes("string")) return true;
+  if (declared.includes(type)) return true;
   const branches = Array.isArray(schema.anyOf) ? schema.anyOf : Array.isArray(schema.oneOf) ? schema.oneOf : [];
-  return branches.some((branch) => admitsString(branch));
+  return branches.some((branch) => admitsBranch(branch, type, depth + 1));
 }
 
 /**

@@ -63,15 +63,17 @@ const folderIdJsonSchema = {
  * caller with no cursor still had to clear; `GOOGLE_PAGE_TOKEN_SCHEMA` in
  * [`index.ts`](index.ts) has the run that measured what a caller does then.
  *
- * The description names no producing field and no last-page signal, unlike the
- * other connectors', because Granola's list response is passed through
- * unmodelled here and neither has been established. Saying where the value
- * comes from in general terms is true; naming a field would be a guess.
+ * The producing field and the last-page signal are `cursor` and
+ * `hasMore: false`, which is the shape `/v1/notes` and `/v1/folders` return and
+ * which this adapter's own tests pin. An earlier draft called them unestablished
+ * and left both out of the description; that was wrong, and it left the one
+ * connector here whose caller could page forever without being told where to
+ * stop.
  */
 const cursorJsonSchema = {
   anyOf: [{ type: "string", minLength: 1, maxLength: 4_096 }, { type: "null" }],
   description:
-    "Send `null` for the first page. To continue an earlier call, pass back the exact cursor the preceding page returned, with that call's other arguments unchanged. It is an opaque cursor: a long provider-generated string, not a page number, an offset, or an index. Never construct, guess, shorten, or increment this token; when you have no token from a previous call, the value is `null`.",
+    "Send `null` for the first page. To continue an earlier call, pass back the exact `cursor` string a previous call to this tool returned, with that call's other arguments unchanged. It is an opaque cursor: a long provider-generated string, not a page number, an offset, or an index. Never construct, guess, shorten, or increment this token; when you have no token from a previous call, the value is `null`. A result whose `hasMore` is false is the last page: stop there rather than calling again.",
 } as const;
 const dateFilterJsonSchema = {
   type: ["string", "null"],
