@@ -4812,15 +4812,10 @@ export class WorkstreamObjectProductService {
       model: string | null;
       execution_context_json: string | null;
     }>(
-      // Ordered exactly like the re-read that revalidates it inside the commit
-      // below, `run_id` tie-break included. `created_at` alone is not a total
-      // order — two runs admitted in the same millisecond tie, and SQLite is
-      // free to break that tie either way — so with only one of the two reads
-      // carrying the tie-break, the transaction could resolve "latest" to a
-      // different run than the one this read picked and refuse the retry as
-      // `harness_not_retryable` while the run in front of the person was
-      // retryable. Which run a tie resolves to matters far less than the two
-      // reads resolving it identically; keep these `ORDER BY` clauses equal.
+      // `created_at` is milliseconds and not a total order, so this read and the
+      // one that revalidates it inside the commit below must break a tie the
+      // same way or the transaction refuses a retryable run. Which row wins
+      // matters far less than the two agreeing.
       `SELECT run_id, status, trigger_part_id, model, execution_context_json FROM runs
         WHERE substream_id = '0' AND parent_tool_call_id IS NULL
         -- Must match the stillLatest re-read in the commit below.
