@@ -5062,6 +5062,14 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         },
       });
       if (!(error instanceof ApiError)) {
+        // The only account of a throw the person receives as a flat
+        // `substream_command_failed`, so `reason` is a code that groups rather
+        // than a message that does not — a `ZodError`'s is multi-line JSON, and
+        // `diagnosticErrorCode` keeps an arbitrary runtime message out of an
+        // indexed field. Issue paths and codes are schema shape, not member
+        // data, as `request_failed` already treats them. See the failure-mode
+        // row in `docs/workstream-durable-object.md`.
+        const validation = error instanceof z.ZodError ? error : null;
         logWarn(this.env, "substream_socket_command_failed", {
           workspace_id: attachment.workspaceId,
           workstream_id: attachment.workstreamId,
@@ -5069,7 +5077,20 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           user_id: attachment.userId,
           command: command.type,
           operation_id: command.operationId,
-          reason: error instanceof Error ? error.message : "unknown",
+          reason: validation
+            ? "schema_validation_failed"
+            : diagnosticErrorCode(error, "socket_command_threw"),
+          ...(validation
+            ? {
+              validation_issues: validation.issues.slice(0, 25).map((issue) => ({
+                path: issue.path.map(String).join(".") || "(root)",
+                code: issue.code,
+              })),
+            }
+            : {}),
+          // `stack`, matching this file's other two `harnessErrorFrames` sites:
+          // one value under one key is what makes a single log filter find it.
+          stack: harnessErrorFrames(error),
         });
       }
       span.setError(safe.code, safe.message);

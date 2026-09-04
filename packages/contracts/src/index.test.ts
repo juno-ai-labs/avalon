@@ -1147,6 +1147,50 @@ describe("boundary contracts", () => {
       .toBe(false);
   });
 
+  it("fences a retry on an assistant turn, whose id is not a UUID", () => {
+    const loopId = `workstream:${id}:substream:0:loop`;
+    const base = {
+      region: "global",
+      workspaceId: id,
+      workstreamId: id,
+      loopId,
+      harnessRunId: id,
+      triggerMessageId: id,
+      automationSubscriptionId: null,
+      activityId: null,
+      executionPrincipal: { type: "user", userId: id },
+      reason: "manual_retry",
+    };
+
+    // The shape a retry actually resolves: the newest turn after a run that
+    // spoke is that run's own assistant turn, and those ids are derived from the
+    // loop identity and a turn ordinal rather than minted as UUIDs. Held as a
+    // UUID this rejected every such fence, which is every failed run somebody
+    // watched fail.
+    expect(WorkstreamWorkflowInputSchema.parse({
+      ...base,
+      transcriptFenceMessageId: `${loopId}:turn:12`,
+    }).transcriptFenceMessageId).toBe(`${loopId}:turn:12`);
+
+    // A participant turn reuses the client message UUID, and still parses.
+    expect(WorkstreamWorkflowInputSchema.parse({
+      ...base,
+      transcriptFenceMessageId: id,
+    }).transcriptFenceMessageId).toBe(id);
+
+    // Still a fence or nothing: absent and null both mean "bound by the
+    // trigger", while an empty string names no turn at all.
+    expect(WorkstreamWorkflowInputSchema.parse({
+      ...base,
+      transcriptFenceMessageId: null,
+    }).transcriptFenceMessageId).toBeNull();
+    expect(WorkstreamWorkflowInputSchema.parse(base).transcriptFenceMessageId).toBeUndefined();
+    expect(WorkstreamWorkflowInputSchema.safeParse({
+      ...base,
+      transcriptFenceMessageId: "",
+    }).success).toBe(false);
+  });
+
   it("exposes bounded harness-run metadata for the contextual rail", () => {
     expect(HarnessRunMetadataSchema.parse({
       id,

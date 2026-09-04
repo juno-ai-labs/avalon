@@ -983,7 +983,9 @@ participants remain deferred product work.
   platform policy.
 - **The trigger's two jobs stay separate on a retry.** As *identity* it admits a
   brief or an inbound email to the model at all; as *bound*
-  (`transcriptFenceMessageId`) it is the newest message the run may see. The fence
+  (`transcriptFenceMessageId`) it is the newest *turn* the run may see — a turn,
+  because the newest one is usually the agent's and an assistant turn's id is
+  `<loopId>:turn:<ordinal>` rather than a UUID. The fence
   is resolved once at launch and travels in the durable workflow input, never
   re-read at projection time — an attempt that replays must read the same window it
   read the first time.
