@@ -192,7 +192,8 @@ describe("automation-creator plugin catalog", () => {
       plugin: {
         pluginId: "plugin_webhook",
         tools: [],
-        activityTriggers: [expect.objectContaining({ eventType: "webhook.received" })],
+        // A webhook connection's triggers are its configured event types, with the payload's own keys as filter fields.
+        activityTriggers: [expect.objectContaining({ eventType: "order.created", openFilterFields: true })],
       },
     });
 

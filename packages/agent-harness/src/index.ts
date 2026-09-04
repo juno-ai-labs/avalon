@@ -2434,6 +2434,7 @@ export function executeAutomationCreatorDiscoveryTool(
           label: trigger.label,
           description: trigger.description,
           filterFields: trigger.filterFields,
+          ...(trigger.openFilterFields ? { openFilterFields: true } : {}),
         })),
       },
     } : { error: "plugin_not_found", pluginId };

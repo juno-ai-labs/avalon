@@ -3172,6 +3172,8 @@ export const ConnectorActivityTriggerDescriptorSchema = z.strictObject({
   /** Authoring-only families. Accepted rules expand these to exact event types. */
   eventFamilies: z.array(z.string().min(1).max(200)).default([]),
   filterFields: z.array(ConnectorActivityFilterFieldSchema).default([]),
+  /** The payload's own keys are the filter fields; a rule may name any of them. */
+  openFilterFields: z.boolean().optional(),
   resourceRelationships: z.array(z.strictObject({
     // Duplicated from `ConnectorResourceRelationshipSchema` in
     // `automation-evaluators.ts` rather than imported, and the two must be

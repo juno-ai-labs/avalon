@@ -373,7 +373,7 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
             issues.push({
               code: "custom",
               path: ["evaluators", index, "source", "resourceId"],
-              message: "This resource is not one this plugin can watch. Find it with resources_search and use an ID it returns for this source binding.",
+              message: "This resource is not one this plugin can watch. Find it with resources_search and use an ID it returns for this source binding, or omit resourceId when the rule is not about one resource.",
               input: evaluator.source.resourceId,
             });
           }
