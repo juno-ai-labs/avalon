@@ -171,10 +171,15 @@ export class AutomationService {
         automationId,
       });
       if (owned.owningWorkstreamId) {
+        // Archived included: the room's people still manage its automation
+        // after the archive, and the object itself answers what the archive
+        // forbids (`automation_room_archived` on resume) rather than a blanket
+        // refusal that hides it.
         participantOfOwningWorkstream = (await workspace.workstreamParticipant({
           workspaceId: this.auth.workspaceId,
           workstreamId: owned.owningWorkstreamId,
           userId: this.auth.userId,
+          includeArchived: true,
         })).participant;
       }
     } catch {
