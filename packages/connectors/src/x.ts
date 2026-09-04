@@ -42,11 +42,21 @@ const idInputSchema = {
   description: "The numeric X ID.",
 } as const;
 
+/**
+ * X's page cursor. `anyOf` rather than `type: ["string", "null"]` because Bind's
+ * `sanitizeToolSchema` collapses the flat form to `type: "string"`, leaving a
+ * caller with no cursor a `minLength: 1` floor and no way to say "none";
+ * `GOOGLE_PAGE_TOKEN_SCHEMA` in [`index.ts`](index.ts) has what a caller does
+ * with that.
+ *
+ * The last page is `next_cursor: null` because these tools normalize X's own
+ * `""` to `null` on the way out, which is the repair that stopped a model
+ * reading a falsy cursor as another page and paging back to page one forever.
+ */
 const cursorInputSchema = {
-  type: ["string", "null"],
-  minLength: 1,
-  maxLength: 2_048,
-  description: "An optional cursor returned by the preceding page.",
+  anyOf: [{ type: "string", minLength: 1, maxLength: 2_048 }, { type: "null" }],
+  description:
+    "Send `null` for the first page. To continue an earlier call, pass back the exact `next_cursor` string a previous call to this tool returned, with that call's other arguments unchanged. It is an opaque cursor: a long provider-generated string, not a page number, an offset, or an index. Never construct, guess, shorten, or increment this token; when you have no token from a previous call, the value is `null`. A result whose `next_cursor` is `null` is the last page: stop there rather than calling again.",
 } as const;
 
 const userNameInputSchema = {
@@ -409,10 +419,17 @@ function normalizeUserName(value: string): string {
  * as no cursor, X answers with page one, and page one says `next_cursor: ""`
  * again. Reporting the end of the list as `null` is what makes a last page
  * legible as one, the same shape Slack returns.
+ *
+ * The key is always emitted, including where X omitted it. It reports some last
+ * pages as `has_next_page: false` with no cursor at all, and returning that
+ * untouched left the cursor description promising a `null` a caller never saw:
+ * the same gap, in the same sentence, that `slackSearchPage` closes for Slack.
+ * Every caller of this is one of the four paginated tools whose cursor carries
+ * that promise, so there is no unpaginated response here to add a key to.
  */
 function boundXPage(output: Record<string, unknown>): unknown {
   const bounded = boundXValue(output);
-  if (!isRecord(bounded) || !Object.hasOwn(bounded, "next_cursor")) return bounded;
+  if (!isRecord(bounded)) return bounded;
   return { ...bounded, next_cursor: stringValue(bounded, "next_cursor") || null };
 }
 

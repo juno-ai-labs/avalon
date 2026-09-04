@@ -1,9 +1,11 @@
 import { normalizeToolArguments, validateToolArguments } from "@rally/agent-harness";
 import type { ToolDefinition } from "@rally/contracts";
 import { describe, expect, it } from "vitest";
+import type { z } from "zod";
 import { __integrationTesting } from "../src/services/integrations";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import { createTestConnectorRegistry, unconfiguredConnectorTypes } from "./helpers/connector-registry";
+import { CURSOR_PARAMETERS, propertySchema, stringCursorSchema } from "./helpers/connector-cursors";
 
 /**
  * A small model blanks an optional parameter it has nothing to put in rather
@@ -21,79 +23,6 @@ import { createTestConnectorRegistry, unconfiguredConnectorTypes } from "./helpe
  * is the second half of what these tests hold.
  */
 
-/**
- * Every parameter name a connector paginates with. A cursor is opaque to the
- * model, so it is the parameter most often blanked and the one where an empty
- * value can never mean anything.
- *
- * `after` is also Slack's name for two numeric filters, so the walk below
- * matches on the declared type as well: a cursor is a string.
- */
-const CURSOR_PARAMETERS = new Set(["after", "cursor", "startCursor", "pageToken"]);
-
-function stringCursorSchema(tool: ToolDefinition, name: string): Record<string, unknown> | null {
-  if (!CURSOR_PARAMETERS.has(name)) return null;
-  const schema = propertySchema(tool, name);
-  if (!schema) return null;
-  const found = stringBranch(schema, 0);
-  // A shape this helper cannot read is a hard failure, not a skip. The sweep
-  // below reports the cursors that *are* permissive; a cursor it silently
-  // stopped matching leaves the tool uncovered and the suite green, which is
-  // the worse of the two outcomes and the one that actually happened when
-  // Google's cursors moved to `anyOf`.
-  if (found === "unreadable") {
-    throw new Error(`Unrecognized cursor schema shape for ${tool.name}.${name}: ${JSON.stringify(schema)}`);
-  }
-  return found;
-}
-
-/**
- * The string alternative of a cursor declaration, however it is spelled.
- *
- * Flat (`type: ["string", "null"]`) and union (`anyOf: [{string}, {null}]`)
- * both occur, and the constraint that matters — `minLength` — sits on whichever
- * branch carries the string.
- *
- * Three outcomes, and the middle one is the point. A declaration that states a
- * type and it is not `string` is not a string cursor at all — Slack's
- * `read_message_context.after` is a count — so it is `null`, skipped, correct.
- * A declaration this helper cannot read is `"unreadable"`, which the caller
- * throws on: a cursor it silently stopped matching leaves the tool uncovered
- * and the suite green, which is what happened when Google's cursors moved to
- * `anyOf`.
- */
-function stringBranch(
-  schema: Record<string, unknown>,
-  depth: number,
-): Record<string, unknown> | null | "unreadable" {
-  if (depth > 4) return "unreadable";
-  const declared = (Array.isArray(schema.type) ? schema.type : [schema.type])
-    .filter((value): value is string => typeof value === "string");
-  if (declared.includes("string")) return schema;
-  if (declared.length > 0) return null;
-
-  const branches = Array.isArray(schema.anyOf)
-    ? schema.anyOf
-    : Array.isArray(schema.oneOf)
-      ? schema.oneOf
-      : null;
-  if (!branches?.length) return "unreadable";
-  let sawUnreadable = false;
-  for (const branch of branches) {
-    // A branch that is not a schema object is not a branch this helper can rule
-    // on, and skipping it quietly is the same silent pass the throw above
-    // exists to stop.
-    if (!branch || typeof branch !== "object" || Array.isArray(branch)) {
-      sawUnreadable = true;
-      continue;
-    }
-    const nested = stringBranch(branch as Record<string, unknown>, depth + 1);
-    if (nested === "unreadable") sawUnreadable = true;
-    else if (nested !== null) return nested;
-  }
-  return sawUnreadable ? "unreadable" : null;
-}
-
 function connectorTools(): Array<{ connector: string; tool: ToolDefinition }> {
   const registry = createTestConnectorRegistry();
   expect(unconfiguredConnectorTypes(registry)).toEqual([]);
@@ -101,23 +30,114 @@ function connectorTools(): Array<{ connector: string; tool: ToolDefinition }> {
     manifest.tools.map((tool) => ({ connector: manifest.type, tool })));
 }
 
-function propertySchema(tool: ToolDefinition, name: string): Record<string, unknown> | null {
-  const properties = (tool.inputSchema as { properties?: Record<string, unknown> }).properties;
-  const declared = properties?.[name];
-  return declared && typeof declared === "object" && !Array.isArray(declared)
-    ? declared as Record<string, unknown>
-    : null;
+
+/** The validation issues that are about one property, ignoring everything else. */
+function cursorIssues(error: z.ZodError | null, name: string): string[] {
+  if (!error) return [];
+  return error.issues
+    .filter((issue) => issue.path[0] === name)
+    .map((issue) => issue.message);
 }
+
+/**
+ * What every cursor description has to say, whichever connector serves it.
+ *
+ * Both clauses are the fix rather than decoration. A caller with no cursor
+ * needs a value it can legitimately send, and a caller with one needs to be
+ * told the value is copied rather than composed; the run that produced this
+ * rule had a description in front of it four times and still invented a token
+ * on all eight attempts, because the prose said "omit" while `minLength: 1`
+ * said "at least one character".
+ *
+ * Matched case-insensitively, and on the shortest phrase that carries the
+ * meaning, because the wording gets edited for tone and an assertion pinned to
+ * a whole sentence fails a rewrite that kept every instruction.
+ */
+const CURSOR_CONTRACT = [
+  {
+    label: "`null` as the value to send when there is no cursor",
+    says: (text: string) => text.includes("`null`"),
+  },
+  {
+    label: "that the cursor is never constructed",
+    says: (text: string) => text.toLowerCase().includes("never construct"),
+  },
+] as const;
+
+/**
+ * The result field each connector's cursor description names as its source.
+ *
+ * Every connector serving a cursor needs an entry, so a new one is a decision
+ * somebody makes rather than a gap the sweep steps over. `null` is available
+ * for a connector whose producing field genuinely cannot be named, and nothing
+ * uses it: the one candidate was Granola, whose shape turned out to be pinned
+ * by its own adapter tests.
+ */
+const CURSOR_SOURCE_FIELD: Record<string, string | null> = {
+  google: "nextPageToken",
+  linear: "pageInfo.endCursor",
+  notion: "next_cursor",
+  slack: "next_cursor",
+  x: "next_cursor",
+  granola: "cursor",
+};
 
 describe("blanked tool arguments", () => {
   it("leaves no connector paginating on a cursor its schema says may be empty", () => {
+    // A positive floor, not merely a declared one. `minLength: 0` is a number,
+    // so a check for "is it declared" accepts it, while the harness only treats
+    // a string as rejecting the blank at `>= 1`
+    // (`schemaRejectsEmptyString` in `tool-arguments.ts`). Between those two a
+    // cursor could be relaxed to `0`, forward `""` to the provider again, and
+    // leave this suite green.
     const permissive = connectorTools().flatMap(({ connector, tool }) =>
       [...CURSOR_PARAMETERS]
         .map((name) => ({ name, schema: stringCursorSchema(tool, name) }))
-        .filter(({ schema }) => schema !== null && typeof schema.minLength !== "number")
+        .filter(({ schema }) => schema !== null
+          && (typeof schema.minLength !== "number" || schema.minLength < 1))
         .map(({ name }) => `${connector}.${tool.name}.${name}`));
 
     expect(permissive).toEqual([]);
+  });
+
+  it("leaves no connector paginating on a cursor whose description drops the contract", () => {
+    // Declaring `minLength: 1` moved a model off `""` and onto an invented
+    // token (`"/"`, `"1"`, `"next"` on Google's `pageToken`), which no
+    // normalizer can recognize as the omission it meant. A cursor is opaque, so
+    // the only thing that stops the invention is the schema saying what to send
+    // when there is none and which field produced the value when there is.
+    //
+    // Asserted on the text rather than on the presence of a description,
+    // because both instructions are load-bearing and either could be edited
+    // away under a `description` that is still a string. A blank one fails here
+    // too: it carries neither fragment.
+    //
+    // Read off the property rather than the string branch `stringCursorSchema`
+    // returns: under the `anyOf` spelling the description sits on the property
+    // and the constraints sit on the branch, and a check against the branch
+    // would report every converted cursor as undescribed.
+    const failures = connectorTools().flatMap(({ connector, tool }) =>
+      [...CURSOR_PARAMETERS]
+        .filter((name) => stringCursorSchema(tool, name) !== null)
+        .flatMap((name) => {
+          const where = `${connector}.${tool.name}.${name}`;
+          const description = propertySchema(tool, name)?.description;
+          if (typeof description !== "string") return [`${where}: no description`];
+          if (!Object.hasOwn(CURSOR_SOURCE_FIELD, connector)) {
+            return [`${where}: connector missing from CURSOR_SOURCE_FIELD`];
+          }
+          const source = CURSOR_SOURCE_FIELD[connector];
+          return [
+            ...CURSOR_CONTRACT
+              .filter((clause) => !clause.says(description))
+              .map((clause) => `${where}: does not state ${clause.label}`),
+            ...(source !== null && !description.includes(`\`${source}\``)
+              ? [`${where}: does not name \`${source}\` as the producing field`]
+              : []),
+          ];
+        }));
+
+    expect(failures).toEqual([]);
   });
 
   it("drops a blanked cursor from every connector tool that takes one", () => {
@@ -132,6 +152,37 @@ describe("blanked tool arguments", () => {
         .map((name) => `${connector}.${tool.name}.${name}`));
 
     expect(surviving).toEqual([]);
+  });
+
+  it("carries a null cursor through to every connector that now advertises one", () => {
+    // The other half of the blank rule, and the one this suite was missing.
+    // These cursors tell the model to send `null` when it has none, so `null`
+    // has to survive normalization and validate against the schema it was
+    // promised by. Were the harness to start stripping `null` from optional
+    // properties the way it strips `""`, every cursor here would regress to
+    // having no way to say "no cursor" — and the only thing that would notice
+    // is a run in production, which is how this class of defect was found the
+    // first three times.
+    const failures = connectorTools().flatMap(({ connector, tool }) =>
+      [...CURSOR_PARAMETERS]
+        .filter((name) => stringCursorSchema(tool, name) !== null)
+        .flatMap((name) => {
+          const schema = tool.inputSchema as Record<string, unknown>;
+          const normalized = normalizeToolArguments({ [name]: null }, schema, tool.mode);
+          const where = `${connector}.${tool.name}.${name}`;
+          const kept = (normalized as Record<string, unknown>)[name] === null;
+          return [
+            ...(kept ? [] : [`${where}: null did not survive normalization`]),
+            // Only issues about the cursor itself. The object under test
+            // carries one property, so a tool with required fields reports
+            // those as missing too; blaming the cursor for them would make this
+            // fail for every tool that requires anything.
+            ...(cursorIssues(validateToolArguments(normalized, schema), name)
+              .map((issue) => `${where}: null is rejected by the advertised schema (${issue})`)),
+          ];
+        }));
+
+    expect(failures).toEqual([]);
   });
 
   it("turns the call that failed in production into the one the model meant", () => {

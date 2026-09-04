@@ -75,6 +75,24 @@ export const LinearCapabilityScopes = {
   [LinearCapabilities.agent]: LinearAgentOAuthScopes,
 } as const;
 
+/**
+ * The one page cursor every paginated Linear tool takes, as the model reads it.
+ *
+ * `GOOGLE_PAGE_TOKEN_SCHEMA` in [`index.ts`](index.ts) has why the description
+ * and the `anyOf` spelling are one rule rather than two, and the run that
+ * measured it. Two facts are Linear's own: the last page is
+ * `pageInfo.hasNextPage: false` rather than a missing `endCursor`, which Linear
+ * still returns on the final page; and "other arguments unchanged" is asked for
+ * because a relay cursor is a position within the connection it was issued for,
+ * so pairing one with changed filters is not a defined continuation of
+ * anything. What Linear returns for that pairing has not been measured here.
+ */
+const LINEAR_CURSOR_SCHEMA = {
+  anyOf: [{ type: "string", minLength: 1, maxLength: 500 }, { type: "null" }],
+  description:
+    "Send `null` for the first page. To continue an earlier call, pass back the exact `pageInfo.endCursor` string a previous call to this tool returned, with that call's other arguments unchanged. It is an opaque cursor: a long provider-generated string, not a page number, an offset, or an index. Never construct, guess, shorten, or increment this token; when you have no token from a previous call, the value is `null`. A result whose `pageInfo.hasNextPage` is false is the last page: stop there rather than calling again.",
+} as const;
+
 const linearTools: ToolDefinition[] = [
   {
     name: "search_issues",
@@ -88,7 +106,7 @@ const linearTools: ToolDefinition[] = [
       properties: {
         query: { type: "string", minLength: 1, maxLength: 500 },
         first: { type: "integer", minimum: 1, maximum: 25 },
-        after: { type: ["string", "null"], minLength: 1, maxLength: 500 },
+        after: LINEAR_CURSOR_SCHEMA,
       },
       required: ["query"],
     },
@@ -141,7 +159,7 @@ const linearTools: ToolDefinition[] = [
       properties: {
         teamId: { type: ["string", "null"], minLength: 1, maxLength: 200, description: "Limit the result to one team, from list_teams." },
         first: { type: "integer", minimum: 1, maximum: 50, description: "Defaults to 50." },
-        after: { type: ["string", "null"], minLength: 1, maxLength: 500 },
+        after: LINEAR_CURSOR_SCHEMA,
       },
     },
   },
@@ -1666,7 +1684,7 @@ function idInputSchema(name: string): Record<string, unknown> {
 function pageInputSchema(maximum: number): Record<string, unknown> {
   return {
     type: "object", additionalProperties: false,
-    properties: { first: { type: "integer", minimum: 1, maximum }, after: { type: ["string", "null"], minLength: 1, maxLength: 500 } },
+    properties: { first: { type: "integer", minimum: 1, maximum }, after: LINEAR_CURSOR_SCHEMA },
   };
 }
 

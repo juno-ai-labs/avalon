@@ -708,6 +708,8 @@ configuration that was actually established.
 
 Every rule below was learned from a defect in production or in review, and each names the failure that produced it. A new adapter is expected to satisfy all of them; several are enforced by the compiler or by `apps/api/test/connector-credential-freshness.test.ts`, which enumerates the registry so a connector is enrolled by existing rather than by someone remembering it.
 
+**A pagination cursor says what to send when there is none, and spells that value `anyOf`.** Every cursor names the result field it is copied from, states that it is opaque and never constructed, and declares `anyOf: [{string, minLength: 1}, {null}]`, which is the only spelling Bind's sanitizer delivers intact. Both halves are enforced by `apps/api/test/tool-argument-empty-strings.test.ts` and `apps/api/test/tool-schema-sanitization.test.ts`, which enumerate the registry through `apps/api/test/helpers/connector-cursors.ts` so a connector is enrolled by existing; a cursor named outside `CURSOR_PARAMETERS` is the one case still enrolled by someone remembering. *A run told to read a shared Drive folder invented `"/"`, `"1"`, and `"next"` for `pageToken` across eight calls, each rejected whole by Google, and then answered from public web search instead; the description added first did not stop it, because `minLength: 1` reads as a floor to clear when nothing says absence is expressible.*
+
 **Never refuse an incoming request because a stored status says the connection is unhealthy.** Gate on `disabled` — a person's decision — and on nothing else; see [Stored status is a belief, not a gate](#stored-status-is-a-belief-not-a-gate). *A Slack installation refused sixteen hours of events, unfurls, identity links and automation deliveries without once asking Slack whether the grant still worked, and overwrote the accurate diagnosis of its own failure while doing so.*
 
 **Never reach a provider with a credential nobody refreshed.** Enforced structurally: provider-calling entry points take `AuthorizedConnectorConnection`, which only the credential door can mint. *A Granola personal connection became unloadable minutes after it was connected, reporting `plugin_not_authorized` while the connections screen showed it healthy, because `load_plugin` revalidation health-checked it without refreshing first.*
@@ -904,6 +906,93 @@ one to a fixture list to make a new adapter pass — declare the exemption in th
 fixture table instead, where it is reviewable.
 
 ## Changelog
+
+### 2026-09-03 — Every other connector's cursor gets the repair Google's got
+
+**What changed:** The cursor on Linear, Notion, Slack, Granola, and X is
+declared `anyOf: [{string, minLength: 1}, {null}]` instead of the flat
+`type: ["string", "null"]`, which is the spelling that survives Bind's
+sanitizer. Linear's `after`, Notion's `startCursor`, and Slack's `cursor` also
+gain the description they never had; Granola's and X's are rewritten to say that
+`null` is the first-page value, because their old wording said "optional" beside
+a schema that had just stopped permitting absence.
+
+The guard added with Google's change is widened from its four cursors to every
+cursor on every registered connector, matched on declared type as well as name
+so Slack's numeric `search_messages.after` is not read as one. It is scoped to
+the cursor property: the other collapsed branches on those same tools are the
+backlog counted below and are not converted here.
+`tool-argument-empty-strings.test.ts` gains the matching sweep for a cursor with
+no description, reading it off the property rather than the string branch, since
+under `anyOf` the description and the constraints sit on different nodes. Its
+older sweep now demands a positive `minLength` rather than a declared one:
+`minLength: 0` is a number, so "is it declared" accepted it, while the harness
+only drops a blank at `>= 1`, and a cursor relaxed to `0` would have forwarded
+`""` to the provider again with the suite still green. Both
+sweeps read cursors through one shared helper, because two copies kept in step
+by hand diverged on the first edit that touched only one of them.
+
+Slack's `search` and `search_messages` now report a last page as
+`next_cursor: null` rather than passing the provider's `""` through, which is
+the repair `boundXPage` already makes for X. Without it those two tools would
+carry a description whose stop condition the caller never sees: a blank cursor
+reads as another page, cannot be sent back because the string branch rejects
+it, and the caller either invents a token or sends `null` and re-fetches page
+one forever. An earlier revision of this change instead described the last page
+as "no `next_cursor`", on the reading that these tools leave the key absent.
+They do not, and a description is not the place to record a provider's quirk
+that a normalizer can remove.
+
+X had the same gap in the other direction: `boundXPage` normalized a blank
+cursor but returned a response that omitted the key untouched, and X reports
+some last pages as `has_next_page: false` with no cursor at all. The key is now
+always emitted. Every caller of that helper is one of the four paginated tools
+whose description promises the `null`, so there is no unpaginated response it
+adds a key to.
+
+**Why:** The two Google cursor entries below fixed that connector's four and
+recorded what remained:
+46 authored null branches across five connectors, still collapsed to
+`type: "string"` with the nullability moved into prose. 18 of those are the
+cursors converted here. That is the
+schema-forbids-what-the-prose-permits conflict those entries were written to
+end, and the run they measured shows what a caller does with it: eight
+`drive.search` attempts, a value invented every time, three of them one
+character long, and the leaked reasoning *"Schema says min but omit should maybe
+omit."*
+
+Nothing in that mechanism is Google's. The five other connectors serving a
+cursor were not in the incident because the run happened to reach for Drive, and
+shipping the description half alone to them would have shipped the half that was
+already measured not to work.
+
+**Considered and rejected:** Describing the cursors without converting the
+spelling, which is what the first draft of this change did. The entry below
+establishes that a description alone did not survive contact with a caller that
+had it in front of it four times, so that draft would have added prose to five
+connectors and fixed none of them. Also rejected: converting all 46 collapsed
+branches. Absence means something different for an id, a filter, and a cursor,
+and each needs its own reasoning about what `null` requests; a cursor is the one
+where absence has a single unambiguous meaning and a measured failure behind it.
+An earlier revision of this change left Granola's description without a
+producing field or a last-page signal, on the reading that its list response is
+passed through unmodelled here so neither had been established. That was wrong:
+`/v1/notes` and `/v1/folders` return `cursor` alongside `hasMore`, and this
+adapter's own tests pin that shape. Granola names both, like the rest, and no
+connector here carries an exception.
+
+**Consequences:** 28 collapsed branches remain, on four connectors (Linear 13,
+Granola 7, Slack 6, Notion 2), and they are ids and filters rather than cursors;
+they stay declared as type arrays, and the widened assertion passes over them
+because it filters to the cursor property, so converting them stays a deliberate
+change rather than something this guard forces. That count comes from running
+`droppedNullableBranches` over the registry, not from subtracting 18 from the
+46 those entries recorded. A connector adding a
+paginated tool now has two guards to satisfy rather than one, and both name the
+connector, tool, and parameter when they fail. Slack keeps two cursor constants
+because its two searches bound the string at 2,000 characters and its three
+conversation reads never did; that absence is preserved rather than closed,
+since the number would be the team's to set.
 
 ### 2026-09-03 — A connection can name a connector Rally did not ship
 

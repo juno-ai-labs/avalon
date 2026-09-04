@@ -182,8 +182,10 @@ sanitizer collapses `type: ["string", "null"]` to `type: "string"` and appends
 prose, which is the same two-halves-disagreeing shape the rule above exists to
 remove. `anyOf: [{ type: "string", minLength: 1 }, { type: "null" }]` passes
 through whole. `droppedNullableBranches` reports the difference and
-`apps/api/test/tool-schema-sanitization.test.ts` asserts over it; a new
-paginated tool is expected to join that assertion.
+`apps/api/test/tool-schema-sanitization.test.ts` asserts over it. That assertion
+enumerates the registry, so a new paginated connector tool is enrolled by
+existing rather than by being remembered; what still has to be remembered is a
+cursor named something outside `CURSOR_PARAMETERS`, which no sweep will find.
 
 If using zod for parsing do not just return the zod error object. Provide natural
 language errors and more importantly provide instructions on how to fix the error.
@@ -383,6 +385,32 @@ tools as one protocol:
 - a bulk mutation makes the path-to-revision relationship explicit and rejects
   the whole operation on one conflict. Its error identifies the conflicting
   paths without supplying replacement tokens.
+
+A pagination cursor is the same protocol with one tool on both ends, and it
+fails the same way when the description is left off. A model that has not paged
+yet holds no cursor, so an undescribed `pageToken`, `after`, `cursor`, or
+`startCursor` reads as a field to fill in, gets filled with something invented,
+and the provider rejects the whole call. Four things belong in that description
+and none can be inferred from the parameter's name and bounds: which field of
+this tool's own result produces the value, that it is opaque and must never be
+constructed, guessed, shortened or incremented, that the rest of the call is
+held unchanged when it is passed, and what the last page looks like. All four
+are answerable for every cursor Rally serves. If a provider's pagination shape
+looks unestablished, that is a reason to go and establish it rather than an
+exception: the one parameter that seemed to qualify turned out to have its shape
+pinned by its own adapter's tests, and shipping without it would have left that
+caller the only one able to page forever. That third
+one is not pedantry: a cursor is a position within the query it was issued for,
+so pairing one with changed filters is not a defined continuation of either.
+Google is the measured case, and it resumes the old search rather than running
+the new one, which reaches the caller as a wrong answer instead of an error.
+
+The description is half of it. Say what to send when there is no cursor, and say
+it in the spelling Principle 1 requires — `anyOf` with a `null` branch, never a
+type array — or the schema goes on forbidding the value the prose recommends,
+and the caller resolves that contradiction in favour of the schema. Two walks in
+`tool-argument-empty-strings.test.ts` and `tool-schema-sanitization.test.ts`
+hold the two halves across every registered connector.
 
 Also identify mutation paths that do not participate in the protocol. If a
 general shell can write the same files, say so and serialize it with typed
@@ -836,6 +864,34 @@ future agent tool or plugin, not just this family.
   untrusted.
 
 ## Changelog
+
+### 2026-09-03 — The cursor rule is both halves, and it holds across every connector
+
+**What changed:** Principle 9 now covers pagination cursors, and says the
+description and the `null` branch are one rule rather than two. The
+`droppedNullableBranches` assertion below widens from Google's four cursors to
+every cursor on every registered connector, and
+`tool-argument-empty-strings.test.ts` gains the matching sweep for a cursor
+carrying no description.
+
+**Why:** The entry below converted Google's four and recorded that 46 authored
+null branches across five connectors were still collapsed, "which is a change
+per connector rather than a line in this one". The 18 of those that are cursors
+are now converted, so the assertion can be widened as that entry anticipated.
+Its count of 19 cursors reads Slack's `search_messages.after` as one; that
+parameter is a numeric timestamp filter sharing a cursor's name, which is why
+both sweeps now match on the declared type as well.
+Splitting the rule across two documents was the risk worth closing: an author
+reading Principle 9 for a cursor's prose would not have reached Principle 1 for
+its spelling, and prose alone was already measured not to work.
+
+**Consequences:** 28 collapsed branches remain, on four connectors (Linear 13,
+Granola 7, Slack 6, Notion 2), and they are ids and filters rather than cursors;
+the widened assertion filters to the cursor property so it does not fail for
+them. An author who needs `null` on one of those still gets the rule from
+Principle 1; what is enforced automatically is the cursor case. Counted by
+running `droppedNullableBranches` over the registry rather than by subtracting
+from the entry below, so the figure describes the tree it ships with.
 
 ### 2026-09-03 — A parameter that may be "none" says so as a value, spelled `anyOf`
 
