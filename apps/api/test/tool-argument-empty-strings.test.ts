@@ -109,6 +109,50 @@ function propertySchema(tool: ToolDefinition, name: string): Record<string, unkn
     : null;
 }
 
+/**
+ * What every cursor description has to say, whichever connector serves it.
+ *
+ * Both clauses are the fix rather than decoration. A caller with no cursor
+ * needs a value it can legitimately send, and a caller with one needs to be
+ * told the value is copied rather than composed; the run that produced this
+ * rule had a description in front of it four times and still invented a token
+ * on all eight attempts, because the prose said "omit" while `minLength: 1`
+ * said "at least one character".
+ *
+ * Matched case-insensitively, and on the shortest phrase that carries the
+ * meaning, because the wording gets edited for tone and an assertion pinned to
+ * a whole sentence fails a rewrite that kept every instruction.
+ */
+const CURSOR_CONTRACT = [
+  {
+    label: "`null` as the value to send when there is no cursor",
+    says: (text: string) => text.includes("`null`"),
+  },
+  {
+    label: "that the cursor is never constructed",
+    says: (text: string) => text.toLowerCase().includes("never construct"),
+  },
+] as const;
+
+/**
+ * The result field each connector's cursor description names as its source.
+ *
+ * Every connector serving a cursor needs an entry, so a new one is a decision
+ * somebody makes rather than a gap the sweep steps over. `null` records a
+ * connector whose producing field is deliberately unnamed: Granola's list
+ * response is passed through unmodelled in this repository, so no field has
+ * been established, and naming one would be exactly the guess these
+ * descriptions exist to stop.
+ */
+const CURSOR_SOURCE_FIELD: Record<string, string | null> = {
+  google: "nextPageToken",
+  linear: "pageInfo.endCursor",
+  notion: "next_cursor",
+  slack: "next_cursor",
+  x: "next_cursor",
+  granola: null,
+};
+
 describe("blanked tool arguments", () => {
   it("leaves no connector paginating on a cursor its schema says may be empty", () => {
     const permissive = connectorTools().flatMap(({ connector, tool }) =>
@@ -120,24 +164,44 @@ describe("blanked tool arguments", () => {
     expect(permissive).toEqual([]);
   });
 
-  it("leaves no connector paginating on a cursor whose schema never says where it comes from", () => {
+  it("leaves no connector paginating on a cursor whose description drops the contract", () => {
     // Declaring `minLength: 1` moved a model off `""` and onto an invented
     // token (`"/"`, `"1"`, `"next"` on Google's `pageToken`), which no
     // normalizer can recognize as the omission it meant. A cursor is opaque, so
-    // the only thing that stops the invention is the schema saying which field
-    // produced the value and what to send when there is none.
+    // the only thing that stops the invention is the schema saying what to send
+    // when there is none and which field produced the value when there is.
+    //
+    // Asserted on the text rather than on the presence of a description,
+    // because both instructions are load-bearing and either could be edited
+    // away under a `description` that is still a string. A blank one fails here
+    // too: it carries neither fragment.
     //
     // Read off the property rather than the string branch `stringCursorSchema`
     // returns: under the `anyOf` spelling the description sits on the property
     // and the constraints sit on the branch, and a check against the branch
     // would report every converted cursor as undescribed.
-    const undocumented = connectorTools().flatMap(({ connector, tool }) =>
+    const failures = connectorTools().flatMap(({ connector, tool }) =>
       [...CURSOR_PARAMETERS]
         .filter((name) => stringCursorSchema(tool, name) !== null)
-        .filter((name) => typeof propertySchema(tool, name)?.description !== "string")
-        .map((name) => `${connector}.${tool.name}.${name}`));
+        .flatMap((name) => {
+          const where = `${connector}.${tool.name}.${name}`;
+          const description = propertySchema(tool, name)?.description;
+          if (typeof description !== "string") return [`${where}: no description`];
+          if (!Object.hasOwn(CURSOR_SOURCE_FIELD, connector)) {
+            return [`${where}: connector missing from CURSOR_SOURCE_FIELD`];
+          }
+          const source = CURSOR_SOURCE_FIELD[connector];
+          return [
+            ...CURSOR_CONTRACT
+              .filter((clause) => !clause.says(description))
+              .map((clause) => `${where}: does not state ${clause.label}`),
+            ...(source !== null && !description.includes(`\`${source}\``)
+              ? [`${where}: does not name \`${source}\` as the producing field`]
+              : []),
+          ];
+        }));
 
-    expect(undocumented).toEqual([]);
+    expect(failures).toEqual([]);
   });
 
   it("drops a blanked cursor from every connector tool that takes one", () => {
