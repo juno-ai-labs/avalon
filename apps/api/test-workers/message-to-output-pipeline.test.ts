@@ -59,6 +59,7 @@ import {
   SubstreamLoopStorage,
 } from "../src/durable-objects/substream-loop-storage";
 import type { WorkstreamObjectProductService } from "../src/durable-objects/workstream-object-product";
+import { WorkstreamMessageStorage } from "../src/durable-objects/workstream-message-storage";
 import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
 import { createSchedulingObjectPort } from "../src/runtime/scheduling-port";
 import { launchWorkstreamHarness } from "../src/services/workstream-service";
@@ -113,6 +114,18 @@ const SUBSCRIPTION_SETTLE_TIMEOUT_MS = 2_000;
 interface SocketFrame extends Record<string, unknown> {
   type: string;
 }
+
+/**
+ * Where the one test that reads a log entry parks its capture.
+ *
+ * On the isolate rather than the object, because `logWarn` writes to the
+ * `console` of the isolate the command runs in — so the original has to be
+ * parked beside the collector and both restored in the same place.
+ */
+type WarnCaptureScope = typeof globalThis & {
+  __rallyWarnLog?: unknown[];
+  __rallyWarnOriginal?: typeof console.warn;
+};
 
 /** Failure codes that mean the run died before the provider boundary. */
 const PRE_PROVIDER_FAILURES = [
@@ -1411,7 +1424,6 @@ describe("a member's message travels the whole pipeline", () => {
     // socket reported the generic `substream_command_failed` — so the button
     // did nothing and explained nothing.
     const stub = agentStub();
-    let socket: WebSocket | null = null;
     try {
       await installScriptedProvider(stub, [
         [
@@ -1439,10 +1451,6 @@ describe("a member's message travels the whole pipeline", () => {
         fallbackModels: [],
       });
       const opened = await initializeWorkstream(stub, "answer, then break");
-      ({ socket } = await openSubscribedSocket(
-        stub,
-        "00000000-0000-7000-8000-0000000005f2",
-      ));
       const failed = await settledRun(stub, opened.body.harnessRunId as string);
       expect(failed.status).toBe("failed");
       await waitForLoopRelease(stub);
@@ -1476,9 +1484,15 @@ describe("a member's message travels the whole pipeline", () => {
             retryRunId,
           ).one().execution_context_json,
         )).transcriptFenceMessageId).toBe(newest.id);
+        // The other half of what was broken: the fence has to resolve, not just
+        // parse. `resolveTranscriptFence` looks it up through this exact query,
+        // and a turn key is what that column holds — so a fence the contract now
+        // accepts and the storage cannot find would fail just as completely, one
+        // stage later, as `fence_message_not_found`.
+        expect(new WorkstreamMessageStorage(state.storage)
+          .message({ messageId: newest.id })?.id).toBe(newest.id);
       });
     } finally {
-      socket?.close(1000, "test complete");
       await restoreProviderFetch(stub);
     }
   });
@@ -2363,13 +2377,26 @@ describe("a member's message travels the whole pipeline", () => {
           tied,
         );
       }
-      // The premise, asserted rather than assumed: without a tie-break SQLite
-      // resolves this tie to the other row, so the two reads really do disagree
-      // and this case is not quietly proving nothing.
-      expect(state.storage.sql.exec<{ run_id: string }>(
+      // The premise, asserted rather than assumed: the two orderings really do
+      // resolve this tie differently, so the case is not quietly proving
+      // nothing. Asserted as a disagreement rather than as a specific winner,
+      // because which row an unspecified tie resolves to is SQLite's to choose:
+      // `runs_recency_idx` is `(created_at DESC, run_id DESC)` and satisfies the
+      // un-tie-broken clause on its own, so a planner that starts using it would
+      // make the naive read agree — and a premise pinned to today's winner would
+      // then fail as if `retryWithAuthority` had regressed. If this assertion
+      // ever fires, the scenario stopped reproducing the bug; the behavior
+      // asserted below did not change.
+      const naive = state.storage.sql.exec<{ run_id: string }>(
         `SELECT run_id FROM runs WHERE substream_id = '0' AND parent_tool_call_id IS NULL
           ORDER BY created_at DESC LIMIT 1`,
-      ).one().run_id).not.toBe(higher);
+      ).one().run_id;
+      const tieBroken = state.storage.sql.exec<{ run_id: string }>(
+        `SELECT run_id FROM runs WHERE substream_id = '0' AND parent_tool_call_id IS NULL
+          ORDER BY created_at DESC, run_id DESC LIMIT 1`,
+      ).one().run_id;
+      expect(tieBroken).toBe(higher);
+      expect(naive).not.toBe(tieBroken);
 
       const retryRunId = asHarnessRunId("00000000-0000-7000-8000-0000000000f3");
       await expect(productService.retry(AUTH, retryRunId)).resolves.toMatchObject({
@@ -2418,8 +2445,9 @@ describe("a member's message travels the whole pipeline", () => {
           property === "LOG_LEVEL" ? "warn" : Reflect.get(current, property, receiver)
         ),
       });
-      const scope = globalThis as typeof globalThis & { __rallyWarnLog?: unknown[] };
+      const scope = globalThis as WarnCaptureScope;
       scope.__rallyWarnLog = [];
+      scope.__rallyWarnOriginal = console.warn;
       console.warn = (entry: unknown) => { scope.__rallyWarnLog!.push(entry); };
     });
     try {
@@ -2432,7 +2460,7 @@ describe("a member's message travels the whole pipeline", () => {
         error: { status: 500, code: "substream_command_failed" },
       });
       const entry = (await runInDurableObject(stub, () => structuredClone(
-        (globalThis as typeof globalThis & { __rallyWarnLog?: unknown[] }).__rallyWarnLog ?? [],
+        (globalThis as WarnCaptureScope).__rallyWarnLog ?? [],
       )) as Record<string, unknown>[])
         .find((call) => call.event === "substream_socket_command_failed");
       expect(entry).toMatchObject({
@@ -2443,12 +2471,27 @@ describe("a member's message travels the whole pipeline", () => {
         validation_issues: [{ path: "reason", code: "invalid_type" }],
       });
       // Which `parse` threw. The message names the field; only the frames name
-      // the call site, and a command path runs several.
-      expect(entry?.frames).toEqual(expect.any(String));
-      // The paths and codes are schema shape. The stored context is not, and
-      // the entry must not carry it.
-      expect(JSON.stringify(entry)).not.toContain("first message");
+      // the call site, and a command path runs several. Under `stack`, the key
+      // this file's other `harnessErrorFrames` sites already use.
+      expect(entry?.stack).toEqual(expect.any(String));
+      // The paths and codes are schema shape. The stored context's own values
+      // are not, and the entry must not carry them. Asserted against the loop
+      // id because the context genuinely holds it: the opening message text
+      // would pass this even through a real leak, since neither a `ZodError`'s
+      // issue list nor the receipt ever carries message content.
+      expect(JSON.stringify(entry)).not.toContain(substreamLoopId(WORKSTREAM_ID));
     } finally {
+      // The object's `env` proxy dies with the instance, but `console` and the
+      // collector are the isolate's, which every later test in this file shares:
+      // left patched, they divert those tests' warnings into a stale array
+      // instead of emitting them. Restored through the object because that is
+      // the isolate the patch was applied in.
+      await runInDurableObject(stub, () => {
+        const scope = globalThis as WarnCaptureScope;
+        if (scope.__rallyWarnOriginal) console.warn = scope.__rallyWarnOriginal;
+        delete scope.__rallyWarnOriginal;
+        delete scope.__rallyWarnLog;
+      });
       socket.close(1000, "done");
     }
   });
