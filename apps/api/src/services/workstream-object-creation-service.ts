@@ -32,6 +32,8 @@ import {
 import { WorkstreamEmailRoutingService } from "./workstream-email-routing-service";
 import { WorkstreamObjectClient } from "./workstream-object-client";
 import { readWorkstreamAuthorityControl } from "./workstream-authority";
+// SPIKE — throwaway, `spike/demo-workspace-replay` only. Delete with the spike.
+import type { ReplayContext } from "../spike/replay";
 
 type ParsedCreateInput = z.infer<typeof CreateWorkstreamRequestSchema>;
 type CreateInput = Omit<ParsedCreateInput, "mentions"> & {
@@ -83,6 +85,14 @@ interface CreateOptions {
    * quiet.
    */
   notifyParticipants?: boolean;
+  /**
+   * SPIKE — throwaway, `spike/demo-workspace-replay` only. The demo-pack replay
+   * context: a historical instant for the created work stream and its opening
+   * turn, plus the recorded model output for the run this create starts. Only
+   * the spike's own dev-gated seeder supplies one; `POST /workstreams` does
+   * not, and `CreateWorkstreamRequestSchema` has no field for it.
+   */
+  spikeReplay?: ReplayContext;
   /**
    * The caller's open `workstream_create` span. Creation is the slowest thing
    * a person waits on in Avalon, and every step below is an awaited round trip
@@ -403,6 +413,8 @@ export class WorkstreamObjectCreationService {
       originResourceIds,
       modelOverride: body.modelOverride ?? null,
       originType: "ad_hoc",
+      // SPIKE — throwaway, `spike/demo-workspace-replay` only.
+      ...(options.spikeReplay ? { spikeReplay: options.spikeReplay } : {}),
       automationSubscriptionId: null,
       automationRunId: null,
       plannedFor: null,

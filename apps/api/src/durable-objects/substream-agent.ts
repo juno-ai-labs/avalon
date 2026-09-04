@@ -127,6 +127,9 @@ import {
   type WorkstreamRegionalEffectEnvelope,
 } from "./workstream-regional-effect";
 import { automationAgentName, substreamAgentName, substreamLoopId, workspaceDOName, workstreamDOName } from "./names";
+// SPIKE — throwaway, `spike/demo-workspace-replay` only. Delete with the spike.
+import { markSpikeRetired, readSpikeRetirement } from "../spike/object-retirement";
+import { ReplayContextSchema as SpikeReplayContextSchema } from "../spike/replay";
 import { WorkstreamObjectStore } from "./workstream-object-storage";
 import type { SequencedSemanticRealtimeReference } from "./workstream-semantic-realtime-outbox";
 import { WorkstreamTerminalStorage } from "./workstream-terminal-storage";
@@ -367,7 +370,10 @@ const ProductRequestSchema = z.discriminatedUnion("operation", [
   z.strictObject({ operation: z.literal("attach_resource"), auth: ProductAuthSchema, resourceId: IdSchema }),
   z.strictObject({ operation: z.literal("detach_resource"), auth: ProductAuthSchema, resourceId: IdSchema }),
   z.strictObject({ operation: z.literal("answer_elicitation"), auth: ProductAuthSchema,
-    elicitationId: IdSchema, input: AnswerElicitationRequestSchema }),
+    elicitationId: IdSchema, input: AnswerElicitationRequestSchema,
+    // SPIKE — throwaway, `spike/demo-workspace-replay` only. Object RPC only;
+    // no HTTP route carries it. Delete with the spike.
+    spikeReplay: SpikeReplayContextSchema.optional() }),
 ]);
 /**
  * The flow a product operation belongs to. An operation outside the three
@@ -2700,6 +2706,19 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private async acceptProductRequest(request: Request, traced = false): Promise<Response> {
     const parsed = ProductRequestSchema.safeParse(await request.json().catch(() => null));
     if (!parsed.success) return jsonResponse({ error: "invalid_product_request" }, 400);
+    // SPIKE — throwaway, `spike/demo-workspace-replay` only. A retired
+    // workspace's work streams stay readable and refuse every write, in the
+    // object rather than at the edge: `workspaces.abandoned_at` already turns
+    // the caller's session away, but nothing today stops a queue consumer, an
+    // alarm, or an internal service from writing to the object directly.
+    // Delete with the spike.
+    if (parsed.data.operation !== "get" && parsed.data.operation !== "boot"
+      && readSpikeRetirement(this.state.storage.sql) !== null) {
+      return jsonResponse({
+        error: "workspace_retired",
+        message: "This workspace has been retired",
+      }, 409);
+    }
     const flow = traced ? productRequestFlow(parsed.data.operation) : null;
     if (flow === null) return this.runProductRequest(parsed.data, noFlowSpan);
     const workstreamId = parsed.data.operation === "initialize"
@@ -2854,6 +2873,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           current,
           request.elicitationId,
           request.input,
+          request.spikeReplay,
         );
         if (result.activationRequest) {
           try {
@@ -3115,6 +3135,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         telemetryOperationId: z.string().nullable().optional(),
         slackOrigin: z.unknown().nullable().optional(),
         slackSearchAuthorization: z.unknown().nullable().optional(),
+        // SPIKE — throwaway, `spike/demo-workspace-replay` only.
+        spikeReplay: z.unknown().nullable().optional(),
       }).parse(JSON.parse(pending.authorization_json));
       const runId = asHarnessRunId(uuidV7(now));
       const input = WorkstreamWorkflowInputSchema.parse({
@@ -3145,6 +3167,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         ...(authorization.slackSearchAuthorization
           ? { slackSearchAuthorization: authorization.slackSearchAuthorization }
           : {}),
+        // SPIKE — throwaway. Carries the frozen replay context from the message
+        // that started this run onto the run's own execution receipt.
+        ...(authorization.spikeReplay ? { spikeReplay: authorization.spikeReplay } : {}),
         reason: authorization.reason,
       });
       const leaseOwner = uuidV7(now + 1);
@@ -5589,6 +5614,49 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    * this child. Normal mutations use the alarm; callers that are about to make
    * a route discoverable must prove the parent has accepted every older fact.
    */
+  /**
+   * SPIKE — throwaway, `spike/demo-workspace-replay` only.
+   *
+   * Retire this substream: record the fence, drop every stored alarm entry, and
+   * let `armNextAlarm` delete the object's one platform alarm, which it now can
+   * because the derived-candidate hook answers empty. The transcript is left
+   * intact — retiring a workspace is not deleting it, and the spike has to read
+   * W1 back afterwards to prove nothing leaked out of it.
+   */
+  async spikeRetire(input: { retiredGeneration: number; reason: string }): Promise<{
+    cancelledAlarms: number;
+    alarmAfter: number | null;
+  }> {
+    await this.initialized;
+    markSpikeRetired(this.state.storage.sql, {
+      retiredAt: Date.now(),
+      retiredGeneration: input.retiredGeneration,
+      reason: input.reason,
+    });
+    let cancelled = 0;
+    for (const kind of new Set(this.scheduledAlarms.list().map((alarm) => alarm.kind))) {
+      cancelled += this.scheduledAlarms.cancelKind(kind);
+    }
+    await this.armNextAlarm();
+    return { cancelledAlarms: cancelled, alarmAfter: await this.state.storage.getAlarm() };
+  }
+
+  /** SPIKE — throwaway. What the retirement left behind, for verification. */
+  async spikeRetirementState(): Promise<{
+    retired: boolean;
+    storedAlarms: number;
+    alarmAt: number | null;
+    pendingRegionalEffects: number;
+  }> {
+    await this.initialized;
+    return {
+      retired: readSpikeRetirement(this.state.storage.sql) !== null,
+      storedAlarms: this.scheduledAlarms.list().length,
+      alarmAt: await this.state.storage.getAlarm(),
+      pendingRegionalEffects: this.objectStore.dueRegionalEffects(Number.MAX_SAFE_INTEGER, 100).length,
+    };
+  }
+
   async flushEffectsToWorkstreamDO(): Promise<number> {
     await this.initialized;
     let delivered = 0;
@@ -6327,6 +6395,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    * lease held only while a run is streaming — so it stays derived.
    */
   protected override nextDerivedAlarmCandidates(now: number): readonly number[] {
+    // SPIKE — throwaway, `spike/demo-workspace-replay` only.
+    if (readSpikeRetirement(this.state.storage.sql)) return [];
     const candidates: Array<number | null> = [
       this.objectStore.nextRegionalEffectDueAt(),
       this.objectStore.nextSemanticRealtimeDueAt(),

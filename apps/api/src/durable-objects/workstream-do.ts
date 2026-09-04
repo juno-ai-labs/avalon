@@ -50,6 +50,8 @@ import {
   workspaceDOName,
   workstreamDOName,
 } from "./names";
+// SPIKE — throwaway, `spike/demo-workspace-replay` only. Delete with the spike.
+import { markSpikeRetired, readSpikeRetirement } from "../spike/object-retirement";
 import { WorkspaceDirectoryApplyResultSchema } from "./workspace-directory-protocol";
 import { responseToRpcResult, type DurableObjectRpcResult } from "./rpc-result";
 import {
@@ -824,6 +826,44 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
   }
 
   /** Maintenance activation fence: do not open a route before WorkspaceDO has its directory row. */
+  /** SPIKE — throwaway, `spike/demo-workspace-replay` only. See SubstreamAgent. */
+  async spikeRetire(input: { retiredGeneration: number; reason: string }): Promise<{
+    cancelledAlarms: number;
+    alarmAfter: number | null;
+  }> {
+    await this.initialized;
+    markSpikeRetired(this.state.storage.sql, {
+      retiredAt: Date.now(),
+      retiredGeneration: input.retiredGeneration,
+      reason: input.reason,
+    });
+    let cancelled = 0;
+    for (const kind of new Set(this.scheduledAlarms.list().map((alarm) => alarm.kind))) {
+      cancelled += this.scheduledAlarms.cancelKind(kind);
+    }
+    await this.armNextAlarm();
+    return { cancelledAlarms: cancelled, alarmAfter: await this.state.storage.getAlarm() };
+  }
+
+  /** SPIKE — throwaway. What the retirement left behind, for verification. */
+  async spikeRetirementState(): Promise<{
+    retired: boolean;
+    storedAlarms: number;
+    alarmAt: number | null;
+    pendingOutbox: number;
+  }> {
+    await this.initialized;
+    const pending = this.state.storage.sql.exec<{ count: number }>(
+      `SELECT COUNT(*) AS count FROM durable_outbox WHERE state IN ('pending', 'inflight')`,
+    ).toArray()[0]?.count ?? 0;
+    return {
+      retired: readSpikeRetirement(this.state.storage.sql) !== null,
+      storedAlarms: this.scheduledAlarms.list().length,
+      alarmAt: await this.state.storage.getAlarm(),
+      pendingOutbox: Number(pending),
+    };
+  }
+
   async flushWorkspaceDirectoryEffects(): Promise<number> {
     await this.initialized;
     let delivered = 0;
@@ -1842,6 +1882,8 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
   }
 
   protected override nextDerivedAlarmCandidates(): readonly number[] {
+    // SPIKE — throwaway, `spike/demo-workspace-replay` only.
+    if (readSpikeRetirement(this.state.storage.sql)) return [];
     const regional = first(this.state.storage.sql.exec<{ due_at: number | null }>(
       `SELECT MIN(not_before) AS due_at FROM durable_outbox WHERE state IN ('pending', 'inflight')`,
     ))?.due_at ?? null;

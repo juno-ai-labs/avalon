@@ -58,6 +58,8 @@ import {
 } from "../lib/audience-containment";
 import { logWarn } from "../observability/logger";
 import { mentionedPersonNames, prepareMentionMarkdown, type MentionPerson } from "@rally/contracts/message-mentions";
+// SPIKE — throwaway, `spike/demo-workspace-replay` only. Delete with the spike.
+import { ReplayContextSchema, spikeOccurredAt, type ReplayContext } from "../spike/replay";
 import { uuidV7 } from "../lib/uuid-v7";
 import { connectionFromRow } from "../mappers/connection";
 import {
@@ -148,6 +150,8 @@ export const WorkstreamObjectCreateMessageInputSchema = z.object({
   expectedToolInvocationId: z.string().uuid().optional(),
   slackOrigin: z.unknown().optional(),
   slackSearchAuthorization: z.unknown().optional(),
+  /** SPIKE — throwaway. Historical instant plus recorded model output. */
+  spikeReplay: ReplayContextSchema.optional(),
 }).refine((value) => value.text.trim().length > 0 || value.attachmentIds.length > 0, {
   message: "A message must include text or an attachment",
 });
@@ -169,6 +173,8 @@ export const InitializeWorkstreamObjectInputSchema = z.strictObject({
   participantUserIds: z.array(z.string().uuid()),
   attachmentIds: z.array(z.string().uuid()).max(10),
   originResourceIds: z.array(z.string().uuid()).default([]),
+  /** SPIKE — throwaway. Historical instant plus recorded model output. */
+  spikeReplay: ReplayContextSchema.optional(),
   /**
    * Who may read it from birth. Defaulted to `personal`: a work stream nobody
    * has said anything about is the one somebody just started for themselves,
@@ -671,9 +677,14 @@ export class WorkstreamObjectProductService {
     // that then fails can cost is one wake that finds nothing to do. The
     // horizon is the base class's, for the same cancellation it names — see
     // `ScheduledDurableObject.armAlarmBeforeDueWork`.
+    // SPIKE — throwaway. `Date.now()` rather than `input.now`: the row's
+    // instant may be historical under a replay context, and the alarm horizon
+    // is real-clock recovery machinery rather than a visible event time.
+    // Production behaviour is unchanged, because for a live admission the two
+    // are the same value.
     await ensureStorageAlarmNoLaterThan(
       this.storage,
-      input.now + SCHEDULED_ALARM_CANCELLATION_RECOVERY_MS,
+      Date.now() + SCHEDULED_ALARM_CANCELLATION_RECOVERY_MS,
     );
     return this.loops.reserveInputPreparation({
       inputId: input.inputId,
@@ -1132,7 +1143,11 @@ export class WorkstreamObjectProductService {
         ))
       : [];
     const actorName = names.get(input.creatorUserId)?.name ?? UNKNOWN_MEMBER_DISPLAY_NAME;
-    const now = Date.now();
+    // SPIKE — throwaway. `occurredAt` replaces the visible instant and the two
+    // time-derived identities minted from it, and nothing else: the alarm this
+    // create arms, the lease the run takes, and every retry gate below still
+    // read the real clock.
+    const now = spikeOccurredAt(input.spikeReplay, Date.now());
     const messageId = uuidV7(now);
     const runId = asHarnessRunId(uuidV7(now));
     const model = input.modelOverride
@@ -1407,6 +1422,9 @@ export class WorkstreamObjectProductService {
       } : {}),
       ...(input.telemetryOperationId ? { telemetryOperationId: input.telemetryOperationId } : {}),
       ...(input.telemetrySubjectUserId ? { telemetrySubjectUserId: input.telemetrySubjectUserId } : {}),
+      // SPIKE — throwaway. Rides the execution receipt so the run the create
+      // starts replays recorded output rather than reaching a provider.
+      ...(input.spikeReplay ? { spikeReplay: input.spikeReplay } : {}),
       reason: input.reason,
     };
   }
@@ -3814,7 +3832,12 @@ export class WorkstreamObjectProductService {
       }
       return this.pendingMessageResult(existingPending, false);
     }
-    const reservationNow = Date.now();
+    // SPIKE — throwaway. Same rule as `initialize`: this instant becomes the
+    // turn's `created_at`, its UUIDv7, and its attachment stamps. The
+    // preparation claim's own expiry is derived from real time by
+    // `beginInputPreparation`, which is why a historical instant here cannot
+    // strand the head-of-line gate.
+    const reservationNow = spikeOccurredAt(input.spikeReplay, Date.now());
     const preparation = await this.reserveInputPreparation({
       root: localRoot,
       inputId: uuidV7(reservationNow),
@@ -3885,7 +3908,17 @@ export class WorkstreamObjectProductService {
       .flatMap((mention) => mention.type === "connector" && mention.connectorType
         ? [mention.connectorType] : []);
     let shouldInvoke = Boolean(input.forcedHarnessOrigin) || participantCount <= 1 || attachmentRows.length > 0;
-    if (!shouldInvoke) {
+    // SPIKE — throwaway, `spike/demo-workspace-replay` only. Admitting a human
+    // message asks a *model* whether it addresses Rally, so a seeded message
+    // cannot be admitted at all without a live provider — the classifier throws
+    // `OPENROUTER_API_KEY is not configured` and the whole admission fails. A
+    // replayed pack states the answer instead: `forcedHarnessOrigin` above says
+    // a message starts a run, and its absence says it does not.
+    // Delete with the spike.
+    if (!shouldInvoke && input.spikeReplay) {
+      // deliberately left as false: a recorded human message that was meant to
+      // start a run carries `forcedHarnessOrigin`.
+    } else if (!shouldInvoke) {
       const activeTask = this.loops.loop()?.status === "executing";
       const classification = await classifyWorkstreamMessage(this.env, {
         workspaceId: auth.workspaceId,
@@ -4086,6 +4119,9 @@ export class WorkstreamObjectProductService {
             telemetryOperationId: input.telemetryOperationId ?? null,
             slackOrigin: input.slackOrigin ?? null,
             slackSearchAuthorization: input.slackSearchAuthorization ?? null,
+            // SPIKE — throwaway. The only carrier available: a message-started
+            // run's execution context is rebuilt from this blob at activation.
+            spikeReplay: input.spikeReplay ?? null,
           }),
           attachmentsJson: JSON.stringify(attachmentDescriptors),
           mentionsJson: JSON.stringify(mentions),
@@ -4346,8 +4382,10 @@ export class WorkstreamObjectProductService {
     auth: AuthContext,
     elicitationId: string,
     rawInput: WorkstreamObjectAnswerElicitationInput,
+    /** SPIKE — throwaway. Recorded model output for the run this answer resumes. */
+    spikeReplay?: ReplayContext,
   ): Promise<WorkstreamObjectAnswerElicitationResult> {
-    return this.answerElicitationWithAuthority(auth, elicitationId, rawInput, true);
+    return this.answerElicitationWithAuthority(auth, elicitationId, rawInput, true, spikeReplay);
   }
 
   /** Answer from a room socket whose hibernation attachment already admitted this identity. */
@@ -4364,6 +4402,8 @@ export class WorkstreamObjectProductService {
     elicitationId: string,
     rawInput: WorkstreamObjectAnswerElicitationInput,
     reauthorizeWorkspaceMembership: boolean,
+    /** SPIKE — throwaway, `spike/demo-workspace-replay` only. */
+    spikeReplay?: ReplayContext,
   ): Promise<WorkstreamObjectAnswerElicitationResult> {
     const input = AnswerElicitationRequestSchema.parse(rawInput);
     const requestHash = workstreamImportHash({
@@ -4570,6 +4610,8 @@ export class WorkstreamObjectProductService {
           reason: "elicitation_answer",
           elicitationId,
           parentHarnessRunId: row.run_id,
+          // SPIKE — throwaway. Rides onto the run this answer resumes.
+          spikeReplay: spikeReplay ?? null,
         }),
         attachmentsJson: "[]",
         mentionsJson: "[]",
