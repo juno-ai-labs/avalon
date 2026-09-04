@@ -9,11 +9,12 @@ import {
   nonObjectRootUnionBranches,
   weakenedCompositionBranches,
 } from "@rally/agent-harness";
-import type { ToolDefinition, WorkstreamWorkflowInput } from "@rally/contracts";
+import type { WorkstreamWorkflowInput } from "@rally/contracts";
 import { __integrationTesting } from "../src/services/integrations";
 import { TERMINAL_TOOL_DEFINITIONS } from "../src/services/terminal/contract";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import { createTestConnectorRegistry, unconfiguredConnectorTypes } from "./helpers/connector-registry";
+import { authorsNullBranch, everyConnectorCursor } from "./helpers/connector-cursors";
 
 /**
  * Every authored tool schema, walked from the registries rather than listed by
@@ -168,15 +169,18 @@ describe("tool schema sanitization", () => {
     // Every connector, not Google's four: a cursor is a cursor whichever
     // adapter serves it, and the assertion this widened from could pass while
     // eighteen cursors on five other connectors stayed collapsed.
+    //
+    // Which properties are cursors, and how one is read, come from
+    // `helpers/connector-cursors.ts` — shared with the sweep that guards the
+    // other half of the contract, because two copies kept in step by hand
+    // diverged on the first edit that touched only one.
     const cursors = everyConnectorCursor();
     // A floor, not a total, so adding a paginated tool does not edit this line
     // while removing every cursor cannot pass it silently.
     expect(cursors.length).toBeGreaterThanOrEqual(22);
     expect(cursors.flatMap(({ connector, tool, cursor }) => {
       const where = `${connector}.${tool.name}.${cursor}`;
-      const declaration = (tool.inputSchema as { properties?: Record<string, unknown> })
-        .properties?.[cursor];
-      if (!authorsNull(declaration)) return [`${where}: authors no null branch`];
+      if (!authorsNullBranch(tool, cursor)) return [`${where}: authors no null branch`];
       // Filtered to the cursor itself. `droppedNullableBranches` reports every
       // collapsed property on the schema, and a tool that takes a cursor
       // usually also takes flat-nullable ids and filters that are still
@@ -198,71 +202,6 @@ describe("tool schema sanitization", () => {
     expect(weakened).toEqual([]);
   });
 });
-
-/** Every registered connector tool that takes a pagination cursor, with the cursor's name. */
-function everyConnectorCursor(): Array<{ connector: string; tool: ToolDefinition; cursor: string }> {
-  const registry = createTestConnectorRegistry();
-  return registry.list().flatMap((manifest) =>
-    manifest.tools.flatMap((tool) => {
-      const properties = (tool.inputSchema as { properties?: Record<string, unknown> }).properties ?? {};
-      return CURSOR_PARAMETERS
-        .filter((cursor) => admitsString(properties[cursor]))
-        .map((cursor) => ({ connector: manifest.type, tool, cursor }));
-    }));
-}
-
-/**
- * Whether a declaration authors a `null` alternative, in either spelling.
- *
- * Deliberately not `admitsNull` from `tool-schema-safety.ts`: that one is read
- * by the sanitizer report, and importing it here would make this assertion and
- * the thing it checks share a definition of the property they disagree about.
- */
-function authorsNull(declaration: unknown): boolean {
-  return admitsBranch(declaration, "null");
-}
-
-/**
- * Whether a declaration is a string one, in either spelling.
- *
- * The name alone is not enough: `after` is also Slack's name for two numeric
- * timestamp filters on `search_messages`, and reading those as cursors puts a
- * parameter this change never touched into the assertion above. The sibling
- * check in `tool-argument-empty-strings.test.ts` matches on the declared type
- * for the same reason.
- */
-function admitsString(declaration: unknown): boolean {
-  return admitsBranch(declaration, "string");
-}
-
-/**
- * Whether a declaration admits `type` directly or through a composition branch.
- *
- * Depth-bounded, and a schema deeper than the bound reads as "does not admit".
- * That direction is safe only because both callers are filters that decide
- * whether a property is a cursor at all: an unreadable declaration drops out of
- * the sweep rather than passing it. `stringBranch` in
- * `tool-argument-empty-strings.test.ts` raises instead, because there the same
- * answer would silently uncover a cursor the sweep had been covering. Neither
- * shape occurs today; the bound is here so a future one cannot recurse forever.
- */
-function admitsBranch(declaration: unknown, type: "string" | "null", depth = 0): boolean {
-  if (depth > 4) return false;
-  if (!declaration || typeof declaration !== "object" || Array.isArray(declaration)) return false;
-  const schema = declaration as Record<string, unknown>;
-  const declared = Array.isArray(schema.type) ? schema.type : [schema.type];
-  if (declared.includes(type)) return true;
-  const branches = Array.isArray(schema.anyOf) ? schema.anyOf : Array.isArray(schema.oneOf) ? schema.oneOf : [];
-  return branches.some((branch) => admitsBranch(branch, type, depth + 1));
-}
-
-/**
- * Kept in step with the set of the same name in
- * `tool-argument-empty-strings.test.ts`, which guards the other half of the
- * cursor contract. Two short lists beat one shared export that would tie a
- * blank-argument suite to a sanitization one.
- */
-const CURSOR_PARAMETERS = ["after", "cursor", "startCursor", "pageToken"] as const;
 
 /**
  * The schemas Avalon does not author, and the only ones a build-time guard can

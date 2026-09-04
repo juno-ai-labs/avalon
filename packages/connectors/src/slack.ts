@@ -200,15 +200,21 @@ const boundedLimit = { type: "integer", minimum: 1, maximum: 100 };
  * Two constants rather than one because the two searches bound the string at
  * 2,000 characters and the conversation reads never did. Preserving that is not
  * an endorsement of either; it keeps this change to the spelling and the prose,
- * and leaves an absent bound to whoever decides the number.
+ * and leaves an absent bound to whoever decides the number. The split is over
+ * that bound alone, so the prose is one constant both share: two copies of it
+ * are one edit away from a Slack cursor that says different things on
+ * `read_channel` and on `search`, which is the defect this change exists to fix
+ * reintroduced inside the fix.
  */
+const SLACK_CURSOR_DESCRIPTION =
+  "Send `null` for the first page. To continue an earlier call, pass back the exact `next_cursor` string a previous call to this tool returned, with that call's other arguments unchanged. It is an opaque cursor: a long provider-generated string, not a page number, an offset, or an index. Never construct, guess, shorten, or increment this token; when you have no token from a previous call, the value is `null`. A result with no `next_cursor` is the last page: stop there rather than calling again.";
 const optionalCursor = {
   anyOf: [{ type: "string", minLength: 1 }, { type: "null" }],
-  description: "Send `null` for the first page. To continue an earlier call, pass back the exact `next_cursor` string a previous call to this tool returned, with that call's other arguments unchanged. It is an opaque cursor: a long provider-generated string, not a page number, an offset, or an index. Never construct, guess, shorten, or increment this token; when you have no token from a previous call, the value is `null`. A result with no `next_cursor` is the last page: stop there rather than calling again.",
+  description: SLACK_CURSOR_DESCRIPTION,
 } as const;
 const boundedCursor = {
   anyOf: [{ type: "string", minLength: 1, maxLength: 2_000 }, { type: "null" }],
-  description: "Send `null` for the first page. To continue an earlier call, pass back the exact `next_cursor` string a previous call to this tool returned, with that call's other arguments unchanged. It is an opaque cursor: a long provider-generated string, not a page number, an offset, or an index. Never construct, guess, shorten, or increment this token; when you have no token from a previous call, the value is `null`. A result with no `next_cursor` is the last page: stop there rather than calling again.",
+  description: SLACK_CURSOR_DESCRIPTION,
 } as const;
 
 export const slackTools: ToolDefinition[] = [
