@@ -4,7 +4,7 @@ import { z } from "zod";
 import { RepositoryError } from "@rally/db";
 import { ConnectorError } from "@rally/connectors";
 import type { HonoAppEnv } from "../env";
-import { ApiError } from "../lib/api-error";
+import { asApiError } from "../lib/api-error";
 import { logEvent } from "../observability/logger";
 import { RequestValidationError } from "./validation";
 
@@ -27,8 +27,9 @@ export const errorHandler: ErrorHandler<HonoAppEnv> = (error, c) => {
   let details: Record<string, unknown> | undefined;
   let malformedJson = false;
 
-  if (error instanceof ApiError) {
-    ({ status, code, message, details } = error);
+  const apiError = asApiError(error);
+  if (apiError) {
+    ({ status, code, message, details } = apiError);
   } else if (error instanceof HTTPException && error.status === 400) {
     // Hono raises this before Zod runs when a JSON body cannot be parsed. Keep
     // parser details behind the same public boundary as schema failures.

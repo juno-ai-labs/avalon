@@ -660,7 +660,8 @@ describe("revalidation between model turns", () => {
       } as never,
       {
         workspaceId: FROZEN.workspaceId,
-        workstreamId: "2e9f476e-8502-4b18-81ac-b89a75a0708e",
+        parentKind: "workstream",
+        parentId: "2e9f476e-8502-4b18-81ac-b89a75a0708e",
         harnessRunId: "11c13ad0-a0c5-48ce-8479-061edb98e886",
         executionPrincipal: { type: "user", userId: OWNER },
       } as never,
@@ -684,9 +685,6 @@ describe("continuation revalidation respects its deadline", () => {
           bind() { return this; },
           async first() {
             if (sql.includes("FROM workspace_members")) return { status: "active" };
-            if (sql.includes("FROM workstreams")) {
-              return { archived_at: null, automation_subscription_id: null, automation_run_id: null };
-            }
             if (sql.includes("FROM connector_connections")) {
               // Every authority check passes, and the deadline lands while the
               // last of them is being answered — after the branch's own first
@@ -713,11 +711,27 @@ describe("continuation revalidation respects its deadline", () => {
       },
     });
 
+    // The work stream's archive gate is its object's, so the run has to reach a
+    // live one: without it this branch would answer `indeterminate` because the
+    // authority read failed, and the deadline it exists to prove would go
+    // unexercised.
+    const objectStore = testWorkstreamObjectStore();
+    openStores.push(objectStore);
+    seedWorkstreamObjectRoot(objectStore, {
+      workstreamId: "2e9f476e-8502-4b18-81ac-b89a75a0708e",
+      workspaceId: FROZEN.workspaceId,
+    });
+
     await expect(__integrationTesting.reauthorizeFrozenPlugin(
-      { DB: database } as never,
+      {
+        DB: database,
+        SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore),
+        AVALON_REGION: "global",
+      } as never,
       {
         workspaceId: FROZEN.workspaceId,
-        workstreamId: "2e9f476e-8502-4b18-81ac-b89a75a0708e",
+        parentKind: "workstream",
+        parentId: "2e9f476e-8502-4b18-81ac-b89a75a0708e",
         harnessRunId: "11c13ad0-a0c5-48ce-8479-061edb98e886",
         executionPrincipal: { type: "user", userId: OWNER },
       } as never,
@@ -733,7 +747,8 @@ describe("continuation revalidation respects its deadline", () => {
       { DB: { prepare() { throw new Error("D1 must not be read after the deadline"); } } } as never,
       {
         workspaceId: FROZEN.workspaceId,
-        workstreamId: "2e9f476e-8502-4b18-81ac-b89a75a0708e",
+        parentKind: "workstream",
+        parentId: "2e9f476e-8502-4b18-81ac-b89a75a0708e",
         harnessRunId: "11c13ad0-a0c5-48ce-8479-061edb98e886",
         executionPrincipal: { type: "user", userId: OWNER },
       } as never,
