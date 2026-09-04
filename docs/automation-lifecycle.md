@@ -154,22 +154,33 @@ Everything read from outside the object happens first, in `prepareApplication`:
 - The **email address** is reserved in the Global registry
   (`reserveAutomation`, idempotent per automation).
 
+Apply refuses a paused automation (`automation_not_active`: resume first) and
+one whose owning room is archived (`automation_room_archived`, the code
+`resume` answers with); a pause is lifted only by `resume`, never as a side
+effect of applying an edit.
+
 Then one transaction replaces `schedules`, writes the bindings, plugin ids,
 evaluator projection, and address onto the row, sets `lifecycle = 'active'`,
 clears `paused_by`, records the accepted revision, and enqueues the sidebar
-row. After it, the object cancels the previous schedules' alarm entries and
-arms one `automation_schedule` entry per new schedule, then replaces the
-workspace's registrations for this destination
+row. After it comes the tail: the object cancels the previous schedules' alarm
+entries and arms one `automation_schedule` entry per new schedule, replaces
+the workspace's registrations for this destination
 (`WorkspaceDO.applyExternalEventRegistrations`, a complete replacement with no
 coordinate or hash) and stores the `effectiveAfterEventSequence` it answers
-with. A failure anywhere throws to the caller as an `ApiError` (the class
-survives the RPC hop) and the caller applies again; the registration replacement
-is idempotent, so a repeat converges.
+with, creates the tables the definition declares (below), and only then
+records `applied_effects_revision`. A failure anywhere throws to the caller
+as an `ApiError` (the class survives the RPC hop) and the caller applies
+again: the replay guard reads that marker, not the accepted revision, so a
+repeat re-runs the tail, every step of which is idempotent, and converges.
 
-The definition's `memoryTables` travel to each run in `readRunDefinition` and
-nothing materializes them at apply time. A run creates the table it needs with
-the memory tables plugin's `create` tool, under the automation's memory scope,
-the first time it needs one; the next run finds it there.
+The definition's `memoryTables` are created in the automation's memory scope
+at apply (`materializeAutomationMemoryTables`), through the same object path
+and with the same deterministic table id the memory tables plugin's `create`
+tool uses, so a table a run already created under that name is reopened when
+its shape matches and refused (`automation_memory_table_conflict`) when it
+does not. Nothing drops a table: a revision that stops declaring one leaves
+it and its rows behind. Each run is told about every live table in the scope,
+declared or run-made, as `durableTables` in its prompt context.
 
 ### Triggers and occurrences
 
@@ -538,6 +549,38 @@ was paused or deleted after admission. [`runbook.md`](runbook.md) has the
 production inspection paths.
 
 ## Changelog
+
+### 2026-09-04: Apply reconciles on replay, refuses a pause, and creates the declared tables; a retried admission arms its run
+
+**What changed:** `AutomationDO.apply` records `applied_effects_revision`
+(migration v2) only after its tail has run, and its replay guard reads that
+marker rather than the accepted revision, so an apply whose alarms,
+registrations, or tables never landed is repaired by applying again. Apply
+refuses a paused automation (`automation_not_active`) and one whose owning
+room is archived (`automation_room_archived`). `admitOccurrence` arms the
+run alarm on its reused branch when the run is still pending. The
+definition's `memoryTables` are created in the automation's memory scope at
+apply, and a run's prompt lists every live table in that scope.
+
+**Why:** Pull request review. The accepted revision was written inside the
+transaction and the tail ran after it, so a failure in the tail left an
+"active" automation with nothing armed and nothing registered, and a repeat
+apply returned at once because the revisions matched; the desktop disabled
+Apply for the same reason, so nothing could repair it. Apply also set
+`lifecycle = 'active'` without asking why the automation was paused, which
+resumed a room-archived automation past the refusal `resume` gives. A run
+row committed on its own before its alarm was armed, and a retry found the
+row and returned `reused` with nothing armed, so the occurrence was lost
+while the caller was told it had been replayed. And a definition's
+`memoryTables` were collected, stored, and carried to every run without
+anything creating them; the team chose to materialize them at apply rather
+than drop the declaration.
+
+**Consequences:** An apply while paused is a refusal the desktop should not
+offer; resume first. A declared table is never dropped by a later revision.
+A table a run created under a declared name with a different shape refuses
+the apply, which is the conflict the earlier design deferred; it surfaces at
+apply, where a person can rename the declaration.
 
 ### 2026-09-04: A run reads the event that woke it, and an array field has operators it can use
 

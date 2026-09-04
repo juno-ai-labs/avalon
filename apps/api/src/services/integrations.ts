@@ -243,7 +243,7 @@ import {
   createMemoryTools,
   freezeRunMemoryContext,
 } from "./memory-service";
-import { createMemoryTableTools } from "./memory-table-service";
+import { automationScopeMemoryTables, createMemoryTableTools } from "./memory-table-service";
 import type { MaterializedMemoryTable } from "./memory-table-service";
 import { workstreamRunLimits } from "./workstream-run-policy";
 import { TERMINAL_PLUGIN_ID } from "./terminal/contract";
@@ -5198,7 +5198,11 @@ async function loadRunPromptContext(
       resultDelivery,
       defaultBehavior: definition.definition.defaultBehavior,
       overrides: {},
-      durableTables: [],
+      // What lives in the automation's memory scope: the tables its
+      // definition declared, created at apply, and any a previous run made.
+      // Hard-coded empty before, so a run was never told about tables that
+      // existed for it.
+      durableTables: await automationScopeMemoryTables(env, input.workspaceId, input.automationRun.automationId),
     };
   }
   const additionalMessages: ModelMessage[] = [];
