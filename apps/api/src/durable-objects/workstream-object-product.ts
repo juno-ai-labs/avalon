@@ -4812,9 +4812,14 @@ export class WorkstreamObjectProductService {
       model: string | null;
       execution_context_json: string | null;
     }>(
+      // `created_at` is milliseconds and not a total order, so this read and the
+      // one that revalidates it inside the commit below must break a tie the
+      // same way or the transaction refuses a retryable run. Which row wins
+      // matters far less than the two agreeing.
       `SELECT run_id, status, trigger_part_id, model, execution_context_json FROM runs
         WHERE substream_id = '0' AND parent_tool_call_id IS NULL
-        ORDER BY created_at DESC LIMIT 1`,
+        -- Must match the stillLatest re-read in the commit below.
+        ORDER BY created_at DESC, run_id DESC LIMIT 1`,
     ));
     if (!latest || !["failed", "cancelled"].includes(latest.status)) {
       throw new ApiError(409, "harness_not_retryable", "The latest run is not retryable");
@@ -4885,6 +4890,7 @@ export class WorkstreamObjectProductService {
         const stillLatest = first(sql.exec<{ run_id: string; status: string }>(
           `SELECT run_id, status FROM runs
             WHERE substream_id = '0' AND parent_tool_call_id IS NULL
+            -- Must match the latest read above.
             ORDER BY created_at DESC, run_id DESC LIMIT 1`,
         ));
         if (!stillLatest || stillLatest.run_id !== latest.run_id
