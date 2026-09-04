@@ -306,6 +306,12 @@ describe("automation_post_result", () => {
     const [roomRun] = await settledRun(roomConversation());
     expect(roomRun).toMatchObject({ status: "completed", error_json: null });
     expect(await activationTurns()).toEqual([{ client_message_id: `automation-activation:${started.runId}` }]);
+    // The activation is admitted as a system-actor pending input. It has to
+    // leave that queue: a pending input the drain refuses stays first in line
+    // and the room processes nothing after it.
+    expect(await runInDurableObject(roomConversation(), (_instance, state) =>
+      state.storage.sql.exec<{ count: number }>(`SELECT COUNT(*) AS count FROM pending_loop_inputs`).one().count,
+    )).toBe(0);
     const acknowledged = provider.calls.filter((call) => !call.toolNames.some((name) => name.endsWith("automation_post_result")));
     expect(acknowledged.length).toBeGreaterThanOrEqual(1);
     // What the room's model was asked carries the posted result, labelled as

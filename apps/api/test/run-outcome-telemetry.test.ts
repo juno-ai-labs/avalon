@@ -1,4 +1,4 @@
-import { asHarnessRunId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import { asAutomationId, asHarnessRunId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import { describe, expect, it, vi } from 'vitest';
 import type { IdentityAuthContext } from '../src/env';
 import { apiTelemetryEnvelope, emitAuthenticatedApiTelemetry } from '../src/telemetry/api-emitter';
@@ -18,7 +18,7 @@ const workspaceId = asWorkspaceId('018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d2');
 const workstreamId = asWorkstreamId('018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d3');
 const runId = asHarnessRunId('018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d4');
 const operationId = '018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d5';
-const automationId = '018f3f4e-7b5a-7cc1-9a6f-2aa0324b7903';
+const automationId = asAutomationId('018f3f4e-7b5a-7cc1-9a6f-2aa0324b7903');
 const automationRunId = '018f3f4e-7b5a-7cc1-9a6f-2aa0324b7904';
 
 describe('authoritative run outcome telemetry', () => {

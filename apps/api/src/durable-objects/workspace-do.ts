@@ -47,6 +47,7 @@ import { truncateUtf16Safe } from "@rally/contracts/text";
 import { z } from "zod";
 
 import type { AuthContext, Env } from "../env";
+import { ApiError } from "../lib/api-error";
 import { restrictedActivityUserIds } from "../lib/activity-visibility";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import {
@@ -4057,7 +4058,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = z.strictObject({ workspaceId: WorkspaceIdSchema, userId: UserIdSchema }).parse(input);
     this.assertWorkspace(request.workspaceId);
     if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
-      throw new Error("automation_directory_access_denied");
+      throw new ApiError(403, "automation_directory_access_denied", "You cannot list this workspace's automations");
     }
     return { items: this.listSidebarAutomations(request.workspaceId, request.userId, 250) };
   }
@@ -4081,10 +4082,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }).parse(input);
     this.assertWorkspace(request.workspaceId);
     if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
-      throw new Error("automation_directory_access_denied");
+      throw new ApiError(403, "automation_directory_access_denied", "You cannot list this room's automations");
     }
-    if (!this.isWorkstreamParticipant(request.workstreamId, request.userId)) {
-      throw new Error("automation_directory_access_denied");
+    // An archived room's rail still renders, and its automations are paused
+    // rather than gone, so a participant of the archived room may list them.
+    if (!this.isWorkstreamParticipant(request.workstreamId, request.userId, { includeArchived: true })) {
+      throw new ApiError(403, "automation_directory_access_denied", "You cannot list this room's automations");
     }
     const rows = this.state.storage.sql.exec<AutomationDirectoryRow>(
       `SELECT automation_id, lifecycle, scope, owning_workstream_id, title, description,
@@ -4118,7 +4121,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * The one predicate every "does the room let you" decision here is built on,
    * so the answer cannot drift between the list, the details, and acceptance.
    */
-  private isWorkstreamParticipant(workstreamId: string, userId: string): boolean {
+  private isWorkstreamParticipant(
+    workstreamId: string,
+    userId: string,
+    options: { includeArchived?: boolean } = {},
+  ): boolean {
     return this.state.storage.sql.exec<{ is_participant: number }>(
       `SELECT viewer.is_participant
          FROM workspace_workstream_viewers viewer
@@ -4126,9 +4133,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
            ON directory.workstream_id = viewer.workstream_id
           AND directory.authority_generation = viewer.authority_generation
         WHERE viewer.workstream_id = ? AND viewer.user_id = ?
-          AND directory.archived_at IS NULL`,
+          AND (? = 1 OR directory.archived_at IS NULL)`,
       workstreamId,
       userId,
+      options.includeArchived ? 1 : 0,
     ).toArray()[0]?.is_participant === 1;
   }
 
