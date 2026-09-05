@@ -29,6 +29,7 @@ import type { SocketState } from '../lib/use-workstream-socket';
 import type { WorkstreamDetail } from '../lib/types';
 import { AvatarStack, Badge, IconButton, InlineError, SocketStatusIndicator, StatusDot, TitleSkeleton } from '../components/primitives';
 import { WorkstreamGlyph } from '../components/workstream-glyph';
+import { WorkstreamSidebar } from '../components/workstream-sidebar';
 import { ConversationSurface } from './conversation-surface';
 
 // The feed, composer and rail live in `conversation-surface.tsx`, shared with
@@ -405,6 +406,15 @@ export function WorkstreamScreen(): React.JSX.Element {
     <ConversationSurface
       parentId={id}
       parentKind="workstream"
+      renderSidebar={(context) => (
+        <WorkstreamSidebar
+          workstream={context.detail}
+          presentUserIds={context.presentUserIds}
+          onOpenArtifact={context.openArtifact}
+          onParticipants={context.openParticipantDialog}
+          onFocusTranscript={context.focusTranscript}
+        />
+      )}
       renderHeader={(context) => (
         <WorkstreamHeader
           currentUserId={session?.user.id ?? null}

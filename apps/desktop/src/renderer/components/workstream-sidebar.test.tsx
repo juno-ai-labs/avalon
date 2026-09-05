@@ -1,0 +1,159 @@
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import * as Tooltip from '@radix-ui/react-tooltip';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { WorkstreamResource } from '../lib/types';
+import { WorkstreamSidebar } from './workstream-sidebar';
+
+const artifact: WorkstreamResource = {
+  id: '00000000-0000-7000-8000-000000000031', title: 'Launch draft.md',
+  resourceType: 'document', currentVersion: 2, direction: 'artifact',
+  relationshipType: 'generated', refreshSupported: false, watchEnabled: false, watchStatus: 'unsupported',
+};
+const person = { id: '00000000-0000-7000-8000-000000000011', name: 'Ada Lovelace', email: 'ada@example.test', timezone: 'UTC' };
+const workstream = { id: '00000000-0000-7000-8000-000000000021', title: 'Launch preparation', participants: [person], resources: [artifact, { ...artifact, id: 'source', title: 'Source ticket', direction: 'source' as const }] };
+let width: number;
+let resized: () => void;
+
+function setup(detail = workstream) {
+  const onOpenArtifact = vi.fn();
+  const onParticipants = vi.fn();
+  const onFocusTranscript = vi.fn();
+  const view = render(<Tooltip.Provider><div><WorkstreamSidebar workstream={detail} presentUserIds={[person.id]} onOpenArtifact={onOpenArtifact} onParticipants={onParticipants} onFocusTranscript={onFocusTranscript} /></div></Tooltip.Provider>);
+  return { ...view, onOpenArtifact, onParticipants, onFocusTranscript };
+}
+
+beforeEach(() => {
+  localStorage.clear();
+  width = 900;
+  vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(() => width);
+  vi.stubGlobal('PointerEvent', class extends MouseEvent {
+    readonly pointerId: number;
+    constructor(type: string, init: PointerEventInit = {}) { super(type, init); this.pointerId = init.pointerId ?? 1; }
+  });
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({ x: 280, y: 0, left: 280, right: 560, top: 0, bottom: 900, width: 280, height: 900, toJSON: () => ({}) });
+  vi.stubGlobal('ResizeObserver', class {
+    constructor(callback: () => void) { resized = callback; }
+    observe() {}
+    disconnect() {}
+  });
+});
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
+
+describe('WorkstreamSidebar', () => {
+  it('shows the work stream, generated artifacts, then participants, excluding sources and substreams', () => {
+    setup();
+    const sidebar = screen.getByRole('complementary', { name: 'Work-stream sidebar' });
+    const buttons = within(sidebar).getAllByRole('button');
+    expect(buttons.map((button) => button.getAttribute('aria-label'))).toEqual([
+      'Collapse work-stream sidebar', 'Go to conversation: Launch preparation', 'Open Launch draft.md', 'Manage participants: Ada Lovelace, viewing now', 'Manage work-stream participants',
+    ]);
+    expect(screen.queryByText('Source ticket')).not.toBeInTheDocument();
+    expect(screen.queryByText('Substreams')).not.toBeInTheDocument();
+    expect(screen.getByText('document · v2')).toBeInTheDocument();
+  });
+
+  it('opens artifacts only on click with the clicked button as the preview focus return target', () => {
+    const { onOpenArtifact } = setup();
+    expect(onOpenArtifact).not.toHaveBeenCalled();
+    const button = screen.getByRole('button', { name: 'Open Launch draft.md' });
+    fireEvent.click(button);
+    expect(onOpenArtifact).toHaveBeenCalledWith(artifact.id, button);
+  });
+
+  it('focuses the conversation and offers participant management', () => {
+    const { onParticipants, onFocusTranscript } = setup();
+    fireEvent.click(screen.getByRole('button', { name: 'Go to conversation: Launch preparation' }));
+    expect(onFocusTranscript).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole('button', { name: 'Manage participants: Ada Lovelace, viewing now' }));
+    expect(onParticipants).toHaveBeenCalledTimes(1);
+  });
+
+  it('persists an independent icon-mode preference and restores expanded mode', () => {
+    const view = setup();
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse work-stream sidebar' }));
+    expect(screen.getByRole('complementary')).toHaveClass('is-compact');
+    expect(localStorage.getItem('rally.sidebar-collapsed')).toBeNull();
+    view.unmount();
+    setup();
+    expect(screen.getByRole('button', { name: 'Expand work-stream sidebar' })).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getByRole('button', { name: 'Open Launch draft.md' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Expand work-stream sidebar' }));
+    expect(screen.getByRole('complementary')).not.toHaveClass('is-compact');
+  });
+
+  it('collapses for available pane width without overwriting the manual preference', () => {
+    setup();
+    act(() => { width = 703; resized(); });
+    expect(screen.getByRole('complementary')).toHaveClass('is-compact');
+    expect(screen.getByRole('button', { name: 'Expand work-stream sidebar' })).toBeDisabled();
+    act(() => { width = 900; resized(); });
+    expect(screen.getByRole('complementary')).not.toHaveClass('is-compact');
+    expect(localStorage.getItem('rally.workstream-sidebar-collapsed')).toBeNull();
+  });
+
+  it('shows an honest empty artifact state', () => {
+    setup({ ...workstream, resources: [], participants: [] });
+    expect(screen.getByText('No generated artifacts yet')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Manage work-stream participants' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Open Launch draft.md' })).not.toBeInTheDocument();
+  });
+
+  it('drags relative to the second sidebar, persists its width, and stops after release', () => {
+    const view = setup();
+    const handle = screen.getByRole('separator', { name: 'Resize work-stream sidebar' });
+    handle.setPointerCapture = vi.fn();
+    handle.releasePointerCapture = vi.fn();
+    fireEvent.pointerDown(handle, { clientX: 563, pointerId: 1, button: 0 });
+    fireEvent.pointerMove(handle, { clientX: 643, pointerId: 1 });
+    expect(handle).toHaveAttribute('aria-valuenow', '360');
+    expect(localStorage.getItem('rally.workstream-sidebar-width')).toBe('360');
+    expect(localStorage.getItem('rally.sidebar-width')).toBeNull();
+    fireEvent.pointerUp(handle, { pointerId: 1 });
+    fireEvent.pointerMove(handle, { clientX: 683, pointerId: 1 });
+    expect(handle).toHaveAttribute('aria-valuenow', '360');
+    expect(screen.getByRole('complementary')).not.toHaveClass('is-resizing');
+    view.unmount();
+    setup();
+    expect(screen.getByRole('separator')).toHaveAttribute('aria-valuenow', '360');
+  });
+
+  it('uses drag hysteresis for collapse and expansion and cleans up cancellation', () => {
+    setup();
+    const handle = screen.getByRole('separator');
+    handle.setPointerCapture = vi.fn();
+    fireEvent.pointerDown(handle, { clientX: 560, pointerId: 1, button: 0 });
+    fireEvent.pointerMove(handle, { clientX: 489, pointerId: 1 });
+    expect(handle).toHaveAttribute('aria-valuenow', '88');
+    fireEvent.pointerMove(handle, { clientX: 499, pointerId: 1 });
+    expect(handle).toHaveAttribute('aria-valuenow', '88');
+    fireEvent.pointerMove(handle, { clientX: 520, pointerId: 1 });
+    expect(handle).toHaveAttribute('aria-valuenow', '240');
+    fireEvent.pointerCancel(handle, { pointerId: 1 });
+    fireEvent.pointerMove(handle, { clientX: 650, pointerId: 1 });
+    expect(handle).toHaveAttribute('aria-valuenow', '240');
+    expect(screen.getByRole('complementary')).not.toHaveClass('is-resizing');
+  });
+
+  it('supports keyboard resizing and keeps room for the conversation', () => {
+    setup();
+    const handle = screen.getByRole('separator');
+    fireEvent.keyDown(handle, { key: 'ArrowRight' });
+    expect(handle).toHaveAttribute('aria-valuenow', '296');
+    for (let index = 0; index < 20; index++) fireEvent.keyDown(handle, { key: 'ArrowRight' });
+    expect(handle).toHaveAttribute('aria-valuenow', '400');
+    act(() => { width = 700; resized(); });
+    expect(handle).toHaveAttribute('aria-valuenow', '88');
+    fireEvent.keyDown(handle, { key: 'ArrowRight' });
+    expect(handle).toHaveAttribute('aria-valuenow', '240');
+    for (let index = 0; index < 20; index++) fireEvent.keyDown(handle, { key: 'ArrowRight' });
+    expect(handle).toHaveAttribute('aria-valuenow', '276');
+  });
+
+  it('replaces resources and participants when the selected work stream changes', () => {
+    const { rerender, onOpenArtifact, onParticipants } = setup();
+    rerender(<Tooltip.Provider><div><WorkstreamSidebar workstream={{ ...workstream, id: '00000000-0000-7000-8000-000000000022', title: 'Another work stream', resources: [], participants: [] }} presentUserIds={[]} onOpenArtifact={onOpenArtifact} onParticipants={onParticipants} onFocusTranscript={vi.fn()} /></div></Tooltip.Provider>);
+    expect(screen.getByRole('button', { name: 'Go to conversation: Another work stream' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.queryByRole('button', { name: 'Open Launch draft.md' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Ada Lovelace/ })).not.toBeInTheDocument();
+  });
+});
