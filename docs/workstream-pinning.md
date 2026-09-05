@@ -86,27 +86,10 @@ in the socket pool; pin order does not sequence their handshakes. WorkspaceDO
 supplements the first 250-row recent page with every visible running row, so an
 older active run is not omitted from that pool by pagination.
 
-Holding Command overlays `⌘1` through `⌘9` on one continuous row order: pinned
-work streams first in their manual order, followed by recent work streams and
-notes in the recency order already rendered below them. Pressing one of those
-physical number-row keys while Command remains down opens the row at that
-visible position. Reading the physical key keeps the mapping true on
-symbol-first layouts such as AZERTY. Automations and primary actions are not
-numbered, and any pinned-or-recent destination after the ninth is left without
-a shortcut. An auto-repeated keydown is ignored so one press creates one history
-entry, and shortcuts pause while a modal dialog is open rather than changing
-the route underneath it. The hint is absolutely positioned over the row, with
-a short gradient into the row's current normal, hover, or selected background;
-long copy disappears underneath it instead of shrinking the row or touching the
-pill. Each numbered link also declares its `Meta+<number>` shortcut to assistive
-technology when the visual hint is hidden.
-
-The first non-repeated Command keydown in one hold emits
-`command_shortcuts_revealed` with the bounded number of available targets.
-A valid Command+1–9 activation emits `command_shortcut_used` with the number and
-only the destination class (`pinned_workstream`, `recent_workstream`, or
-`recent_note`). Repeats, missing targets, and shortcuts blocked by a dialog emit
-nothing; no destination identifier or title enters telemetry.
+Command-number navigation and its hint overlay are retired. Pinning, pointer
+reordering, and Alt+Arrow keyboard reordering remain unchanged. Historical
+shortcut telemetry schemas remain for older clients; this client emits neither
+shortcut-discovery nor shortcut-use events.
 
 A drag is committed only when something accepted the drop. `dragend` fires
 whatever ended the drag, so the handler reads `dataTransfer.dropEffect`: `none`
@@ -236,18 +219,13 @@ It deliberately does not:
   quick succession overlap; the local order is cleared only if it is still the
   one that call set, so the first response cannot snap the list back to an order
   the reader has already moved past.
-- **Only the first nine pinned-then-recent rows have Command shortcuts.**
-  Numbering begins at one and never wraps to zero; after the pinned rows consume
-  their numbers, recent work streams and notes use the remainder in displayed
-  order. A later row remains reachable by the list, search, and ordinary
-  navigation but has no numbered shortcut.
 
 ## Testing
 
 | Suite | What it covers |
 | --- | --- |
 | `apps/api/test-workers/durable-object-runtime.test.ts` | Real SQLite-backed WorkspaceDO append/idempotency, per-person isolation, dense unpin, tolerant reorder, pinned-first listing, and hibernating page delivery. |
-| `apps/desktop/src/renderer/components/sidebar.test.tsx` (`pinned work streams`) | The section appearing only when something is pinned, rows leaving the recent list, stored order beating activity order, held-Command hints and continuous number navigation from pins into recent work streams and notes for the first nine rows, the menu toggle, live reorder during a drag, the keyboard move, and both error dialogs. |
+| `apps/desktop/src/renderer/components/sidebar.test.tsx` (`pinned work streams`) | The section appearing only when something is pinned, rows leaving the recent list, stored order beating activity order, absence of retired Command-number hints and navigation, the menu toggle, live reorder during a drag, the keyboard move, and both error dialogs. |
 | `apps/desktop/src/renderer/components/app-shell.test.tsx` (`applyPinnedWorkstreams`) | That a pin response rewrites every row's position, including the ones it does not name. |
 
 Two traps in the desktop tests. jsdom implements no `DataTransfer`, so a drag
@@ -275,6 +253,12 @@ collides with itself. Positions are therefore kept unique by how they are
 allocated — `MAX(position) + 1` inside the insert — rather than by the schema.
 
 ## Changelog
+
+### 2026-09-04 — Retire numbered navigation, retain pin ordering
+
+Command-number hints and activation were removed to simplify navigation. Pin
+ordering and its keyboard controls remain; do not restore number handlers when
+changing pins. Historical entries below describe the retired feature.
 
 ### 2026-09-04 — Search reorders only visible pin slots
 

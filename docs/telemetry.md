@@ -84,8 +84,8 @@ documents, or session replay.
 
 The macOS status surface emits `menu_bar_opened` once per visible open and
 `menu_bar_action_selected` for enabled rows using closed structural properties
-only. The sidebar emits one `command_shortcuts_revealed` per Command hold and
-`command_shortcut_used` only for a valid Command+1–9 navigation. Suggested-work
+only. `command_shortcuts_revealed` and `command_shortcut_used` are historical
+schemas retained for older clients; the current sidebar emits neither. Suggested-work
 clicks pass a bounded surface to the regional API; only a successful creation
 emits the authoritative `suggested_work_started_v2` with exposure position,
 version, audience, connector types, and prior-impression bucket. Impression and
@@ -686,6 +686,12 @@ the dry-run evidence; change batching or sampling only after measuring those
 signals, never by weakening policy or deadline tests.
 
 ## Changelog
+
+### 2026-09-04 — Stop emitting retired navigation-shortcut events
+
+The simplified sidebar no longer has Command-number navigation. Its emitters
+were removed, while ingestion schemas remain compatible with released clients.
+Do not interpret historical events as proof the current UI still offers it.
 
 ### 2026-09-03: Automation telemetry follows the run reference and one detail surface
 

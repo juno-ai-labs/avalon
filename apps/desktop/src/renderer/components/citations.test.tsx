@@ -452,7 +452,7 @@ describe('footnote citations', () => {
     const popover = await screen.findByRole('tooltip');
     expect(popover).toHaveTextContent('Q3 board deck');
     expect(popover).toHaveTextContent('slide 4');
-    expect(popover).toHaveTextContent('Opens in Details');
+    expect(popover).toHaveTextContent('Opens in preview');
     expect(popover.closest('.transcript-scroll')).toBeNull();
   });
 

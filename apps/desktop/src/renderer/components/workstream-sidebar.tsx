@@ -1,4 +1,4 @@
-import { FileBox, GripVertical, PanelLeftClose, PanelLeftOpen, UserPlus } from 'lucide-react';
+import { FileBox, FolderCog, GripVertical, PanelLeftClose, PanelLeftOpen, UserPlus } from 'lucide-react';
 import { useLayoutEffect, useRef, useState } from 'react';
 import clsx from 'clsx';
 import type { WorkstreamDetail } from '../lib/types';
@@ -11,10 +11,11 @@ const WIDTH_KEY = 'rally.workstream-sidebar-width';
 const clampWidth = (width: number): number => Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, width));
 
 /** Work-stream navigation only: no second resource query or substream model. */
-export function WorkstreamSidebar({ workstream, presentUserIds, onOpenArtifact, onParticipants, onFocusTranscript }: {
+export function WorkstreamSidebar({ workstream, presentUserIds, onOpenArtifact, onResources, onParticipants, onFocusTranscript }: {
   workstream: Pick<WorkstreamDetail, 'id' | 'title' | 'resources' | 'participants'>;
   presentUserIds: readonly string[];
   onOpenArtifact: (id: string, returnFocus: HTMLElement) => void;
+  onResources?: (returnFocus: HTMLElement) => void;
   onParticipants: () => void;
   onFocusTranscript: () => void;
 }): React.JSX.Element {
@@ -45,6 +46,11 @@ export function WorkstreamSidebar({ workstream, presentUserIds, onOpenArtifact, 
   const narrow = paneWidth < width + SIDEBAR_CONTENT_MIN_WIDTH;
   const compact = collapsed || narrow;
   const effectiveWidth = compact ? COLLAPSED_SIDEBAR_WIDTH : width;
+  useLayoutEffect(() => {
+    const shell = sidebar.current?.closest<HTMLElement>('.workspace-shell');
+    shell?.style.setProperty('--workstream-sidebar-width', `${effectiveWidth}px`);
+    return () => { shell?.style.removeProperty('--workstream-sidebar-width'); };
+  }, [effectiveWidth]);
   const saveCollapsed = (next: boolean): void => {
     setCollapsed(next);
     try { localStorage.setItem(COLLAPSED_KEY, String(next)); } catch { /* Best-effort device preference. */ }
@@ -91,6 +97,7 @@ export function WorkstreamSidebar({ workstream, presentUserIds, onOpenArtifact, 
         </button>}
         <section aria-label="Generated artifacts" className="workstream-context-section">
           <h2>Generated artifacts</h2>
+          {onResources && <button className="workstream-context-row" aria-label="Manage resources" title="Manage resources" type="button" onClick={(event) => onResources(event.currentTarget)}><span className="workstream-context-resource-icon"><FolderCog size={18} /></span><span className="workstream-context-copy">Manage resources</span></button>}
           {artifacts.length === 0 ? (
             <div className="workstream-context-empty" title="No generated artifacts yet"><FileBox size={20} /><span>No generated artifacts yet</span></div>
           ) : artifacts.map((resource) => (

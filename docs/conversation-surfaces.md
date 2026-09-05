@@ -63,7 +63,13 @@ current work stream, resources whose direction is `artifact`, then participants
 from the same live detail/presence state as the conversation. Artifact selection
 uses `useCitations.openPreview` to open the artifact lightbox, including an
 explicit unavailable-preview state rather than an inspector fallback; arrival
-of an artifact never opens a panel. Participant rows open the
+of an artifact never opens a panel. Generated sites open the existing isolated
+native viewer inside a resource lightbox, not the file conversion endpoint.
+**Manage resources** below Generated artifacts opens the complete resource list,
+including incoming sources. File previews offer **Resource details**; the same
+lightbox retains refresh, watch, archive, version history, and Add resource.
+Changing conversations closes both lightboxes and pending resource dialogs.
+Participant rows open the
 existing management dialog. This sidebar does not add substream navigation.
 
 Its device-local collapse preference is independent of the global sidebar.
@@ -100,6 +106,23 @@ prove layout, focus, scroll position, or overlap.
 
 ## Changelog
 
+### 2026-09-04 — Preserve resource capabilities without a right sidebar
+
+**What changed:** Reused the inspector's resource content in a controlled
+lightbox. Generated sites retain their dedicated native viewer; unavailable
+files have no download action, and failed downloads report an error. Preview
+state closes on route changes. The dormant resize handle now reads the same CSS
+limit as the frame, including the actual middle sidebar width.
+
+**Why:** Parking the rail removed the only route to resource management and
+incorrectly sent site manifests through file conversion. Restoring shell entry
+points would violate the requested navigation; duplicating management would
+create two implementations to maintain.
+
+**Consequences:** Keep shell rail state inert. Native artifact content must hide
+behind nested dialogs/menus and remain clipped to the lightbox viewport. Share
+resource actions across hosts rather than rebuilding their authority or APIs.
+
 ### 2026-09-04 — Keep navigation quiet and park the right sidebar
 
 The middle sidebar's conversation row is text-only: the work-stream glyph is
@@ -112,8 +135,8 @@ stacks. Only unread rows add a last-change timestamp. Command-number navigation
 and its hint overlay are removed. Participants remain available in the dedicated
 work-stream sidebar, rather than repeated on every global navigation row.
 
-The right inspector architecture is retained for a future artifact-lightbox
-detail migration, but `RIGHT_SIDEBAR_ENABLED` disables its host, header controls,
+The right inspector architecture is retained, but `RIGHT_SIDEBAR_ENABLED`
+disables its shell host, header controls,
 space reservation, and native window expansion. Artifact selection from both
 the transcript and the middle sidebar opens the same lightbox; missing previews
 show an explicit error there, never a hidden inspector or an endless spinner.
@@ -127,9 +150,8 @@ surface, with no floating border radius or shadow. Its preferred width defaults
 to 320px with a 280px minimum; the visible width preserves 424px for conversation
 rather than using the former fixed 560px ceiling. The divider is a full-height
 0.5px neutral line in a 10px drag target, with a 120ms hover-color transition.
-Preserve those mechanics
-when moving the detail contents into the lightbox; do not re-enable shell
-entry points as part of that migration.
+Preserve those mechanics in the retained frame; its resource contents now also
+serve the lightbox. Do not re-enable shell entry points for resource actions.
 
 ### 2026-09-04 — Coordinate the two sidebar breakpoints
 

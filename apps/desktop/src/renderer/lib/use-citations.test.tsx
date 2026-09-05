@@ -3,8 +3,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from './api';
 import type { WorkstreamResource } from './types';
 import { useUiStore } from './ui-store';
-import { useCitations } from './use-citations';
+import { useCitations as useProductionCitations } from './use-citations';
 import type { AttachmentPreview } from '../components/attachments';
+
+const openResourceDetails = vi.fn();
+const defaultOpenPreview = vi.fn();
+function useCitations(options: Omit<Parameters<typeof useProductionCitations>[0], 'onOpenPreview' | 'onOpenResourceDetails'> & { onOpenPreview?: (preview: AttachmentPreview) => void }) {
+  return useProductionCitations({ onOpenPreview: defaultOpenPreview, onOpenResourceDetails: openResourceDetails, ...options });
+}
 
 const openExternal = vi.hoisted(() => vi.fn(async () => undefined));
 vi.mock('./platform', () => ({ desktopBridge: () => ({ openExternal }) }));
@@ -115,9 +121,20 @@ describe('useCitations', () => {
     act(() => { result.current.open({ scheme: 'resource', resourceId: 'board-deck' }); });
 
     expect(onOpenPreview).toHaveBeenCalledWith(expect.objectContaining({ name: DECK.title }));
-    await expect(onOpenPreview.mock.calls[0]![0].loadContent!(new AbortController().signal)).rejects.toThrow('no preview available');
+    expect(onOpenPreview.mock.calls[0]![0].loadContent).toBeUndefined();
     expect(useUiStore.getState().railOpen).toBe(false);
     expect(useUiStore.getState().inspector).toBeNull();
+  });
+
+  it('opens a generated site through its live detail, never through document conversion', () => {
+    const loadResourceContent = vi.fn();
+    const onOpenPreview = vi.fn();
+    const site = { ...DECK, resourceType: 'generated_site', mimeType: 'application/vnd.rally.site+json', slug: 'live-site', contentAvailable: true };
+    const { result } = renderHook(() => useCitations({ resources: [site], loadResourceContent, onOpenPreview }));
+    act(() => result.current.openPreview('live-site', document.body));
+    expect(openResourceDetails).toHaveBeenCalledWith(DECK.id, document.body);
+    expect(loadResourceContent).not.toHaveBeenCalled();
+    expect(onOpenPreview).not.toHaveBeenCalled();
   });
 
   it('sends an external source to the system browser and never to the rail', () => {

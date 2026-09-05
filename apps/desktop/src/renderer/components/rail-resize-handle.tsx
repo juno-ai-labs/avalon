@@ -1,11 +1,9 @@
 import clsx from 'clsx';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
-import { COLLAPSED_SIDEBAR_WIDTH, MIN_RAIL_WIDTH, SIDEBAR_CONTENT_MIN_WIDTH, useUiStore } from '../lib/ui-store';
+import { MIN_RAIL_WIDTH } from '../lib/ui-store';
 
-// The right sidebar is pinned this far from the window's right edge, so the
-// width under the pointer is what is left of the window once that gap and the
-// pointer's own distance from the edge are taken off.
+// The Grok-style retained frame is flush with the window's right edge.
 const RAIL_EDGE_GAP = 0;
 const KEYBOARD_STEP = 16;
 
@@ -31,13 +29,18 @@ export function RailResizeHandle({
   onResize: (width: number) => void;
 }): React.JSX.Element {
   const [resizing, setResizing] = useState(false);
-  const [viewportWidth, setViewportWidth] = useState(window.innerWidth);
-  const sidebarWidth = useUiStore((state) => state.sidebarCollapsed ? COLLAPSED_SIDEBAR_WIDTH : state.sidebarWidth);
-  const maxWidth = Math.max(MIN_RAIL_WIDTH, viewportWidth - sidebarWidth - SIDEBAR_CONTENT_MIN_WIDTH);
-  useEffect(() => {
-    const resized = (): void => setViewportWidth(window.innerWidth);
-    window.addEventListener('resize', resized);
-    return () => window.removeEventListener('resize', resized);
+  const limitRef = useRef<HTMLSpanElement>(null);
+  const [maxWidth, setMaxWidth] = useState(MIN_RAIL_WIDTH);
+  // CSS owns responsive/overlay sizing. Measure the same maximum instead of
+  // independently reimplementing breakpoints and collapsed-sidebar math.
+  useLayoutEffect(() => {
+    const probe = limitRef.current;
+    if (!probe) return;
+    const update = (): void => setMaxWidth(Math.max(MIN_RAIL_WIDTH, probe.getBoundingClientRect().width));
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(probe);
+    return () => observer.disconnect();
   }, []);
   const pointerRef = useRef<number | null>(null);
   // The handle stands beside the sidebar rather than on its edge, so the width
@@ -77,7 +80,7 @@ export function RailResizeHandle({
         event.preventDefault();
         finishDrag(event.currentTarget);
         pointerRef.current = event.pointerId;
-        grabOffsetRef.current = widthUnderPointer(event.clientX) - width;
+        grabOffsetRef.current = widthUnderPointer(event.clientX) - Math.min(width, maxWidth);
         event.currentTarget.setPointerCapture?.(event.pointerId);
         setResizing(true);
         document.body.classList.add('is-resizing-rail');
@@ -93,6 +96,7 @@ export function RailResizeHandle({
       tabIndex={0}
     >
       <span />
+      <span aria-hidden="true" className="rail-resizer-limit" ref={limitRef} />
     </div>
   );
 }
