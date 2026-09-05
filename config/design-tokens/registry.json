@@ -10,7 +10,7 @@
     "sys.color.text": "Text tones, strongest to faintest.",
     "sys.color.border": "The three borders the stylesheet names directly; each resolves to a step on the line ramp.",
     "sys.color.brand": "Rally's own colour. `ink` is the brand drawn as a mark or a label on an ordinary surface, which is a different question from `base`: the chartreuse is a fine fill on white and an illegible label on it.",
-    "sys.color.accent": "The hue for links, focus and selection.",
+    "sys.color.accent": "The hue for links and selection; keyboard focus has its own role.",
     "sys.color.success": "Positive state. `fill` and `fill-edge` are a filled control — a switch that is on, a selected preset — which is neither the vivid hue nor the wash.",
     "sys.color.warning": "Attention short of failure.",
     "sys.color.danger": "Failure and destructive action.",
@@ -52,9 +52,20 @@
     "cmp.tooltip": "A surface that deliberately opposes the theme: light on a dark theme and dark on a light one, so it cannot be a ramp step in either.",
     "cmp.toggle": "A switch. The knob is white on a grey track in a light theme, which is about two to one; the lift from `sys.elevation.shadow.sm` is what makes the off state read as a control.",
     "cmp.connector": "Connector faces. Each keeps enough of the provider's own colour to be recognised at 20px, on a block the theme can still sit behind.",
-    "cmp.button": "Neutral primary actions, separate from brand identity and semantic danger or success states."
+    "cmp.button": "Neutral primary actions, separate from brand identity and semantic danger or success states.",
+    "cmp.control": "Shared secondary controls, independent of message and sidebar geometry.",
+    "cmp.surface": "Shared secondary cards, dialogs and menus, independent of message bubbles."
   },
   "tokens": {
+    "cmp.control.radius": {
+      "$type": "dimension"
+    },
+    "cmp.control.font-size": {
+      "$type": "dimension"
+    },
+    "cmp.surface.radius": {
+      "$type": "dimension"
+    },
     "ref.color.neutral.1": {
       "$type": "color"
     },
@@ -212,12 +223,6 @@
       "$type": "color"
     },
     "sys.color.brand.tint": {
-      "$type": "color"
-    },
-    "sys.color.brand.tint-strong": {
-      "$type": "color"
-    },
-    "sys.color.brand.glow": {
       "$type": "color"
     },
     "sys.color.brand.hover": {
@@ -464,9 +469,6 @@
       "$type": "shadow"
     },
     "sys.focus.ring.quiet": {
-      "$type": "shadow"
-    },
-    "sys.focus.ring.brand": {
       "$type": "shadow"
     },
     "sys.size.radius.xs": {
