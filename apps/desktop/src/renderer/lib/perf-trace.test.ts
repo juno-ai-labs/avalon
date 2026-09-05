@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { newRequestId, startPerfTrace } from './perf-trace';
+import { completeCreationTraceAfterPaint, holdCreationTraceUntilSendReady, newRequestId, startPerfTrace } from './perf-trace';
 
 const reportTelemetryProductIntent = vi.hoisted(() => vi.fn());
 vi.mock('./telemetry', async (importOriginal) => ({
@@ -195,5 +195,24 @@ describe('renderer performance tracing', () => {
     // The Worker rejects anything outside this alphabet and mints its own
     // instead, which would leave the client's printed id matching nothing.
     expect(newRequestId()).toMatch(/^[A-Za-z0-9._:-]{1,100}$/u);
+  });
+
+  it('carries creation across navigation and adds prior preparation wait at send-ready paint', () => {
+    reportTelemetryProductIntent.mockClear();
+    vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+    const clock = vi.spyOn(performance, 'now');
+    clock.mockReturnValue(100);
+    const trace = startPerfTrace('substream_create', { operationId: '018f22f2-4c22-7abc-8def-0123456789ab' });
+    clock.mockReturnValue(300);
+    holdCreationTraceUntilSendReady(trace, 'parent', 'child', 450);
+    clock.mockReturnValue(550);
+    completeCreationTraceAfterPaint('parent', 'child');
+
+    expect(reportTelemetryProductIntent).toHaveBeenCalledWith(expect.objectContaining({
+      flow: 'substream_create',
+      durationMs: 450,
+      systemWaitMs: 700,
+      workstreamId: 'parent',
+    }));
   });
 });

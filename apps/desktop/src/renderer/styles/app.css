@@ -2580,6 +2580,15 @@ pre {
 .workstream-context-row { align-items: center; background: transparent; border: 0; border-radius: 10px; color: var(--av-sys-color-text-default); display: flex; font: inherit; gap: 8px; height: 54px; padding: 8px; position: relative; text-align: left; width: 100%; }
 .workstream-context-row:hover { background: var(--av-cmp-row-background-hover); }
 .workstream-context-row.is-current { background: var(--av-cmp-row-background-selected); }
+.workstream-conversation-row { border: 1px solid var(--av-cmp-sidebar-border); }
+.workstream-substream-list { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.workstream-substream-list:empty { display: none; }
+.workstream-substream-branch { align-items: center; display: flex; gap: 8px; min-width: 0; }
+.workstream-substream-connector { color: var(--av-cmp-sidebar-border); flex: 0 0 24px; transform: scaleY(-1); }
+.workstream-substream-branch > .workstream-context-row { flex: 1; min-width: 0; width: auto; }
+.workstream-substream-avatar { align-items: center; display: flex; flex: 0 0 28px; height: 28px; justify-content: center; }
+.workstream-substream-avatar > .avatar { height: 28px; width: 28px; }
+.workstream-new-substream { border: 1px dashed var(--av-cmp-sidebar-border); color: var(--av-sys-color-text-muted); }
 .workstream-context-row:focus-visible { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: -2px; }
 .workstream-context-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; }
 .workstream-context-copy > span,
@@ -2593,6 +2602,8 @@ pre {
 .workstream-context-empty svg { flex-shrink: 0; }
 .workstream-context-presence { background: var(--av-sys-color-success-base); border-radius: 50%; flex: 0 0 6px; height: 6px; }
 .workstream-context-sidebar.is-compact .workstream-context-toolbar { justify-content: center; }
+.workstream-context-sidebar.is-compact .workstream-substream-connector { display: none; }
+.workstream-context-sidebar.is-compact .workstream-substream-branch { gap: 0; }
 .workstream-context-sidebar.is-compact .workstream-context-label,
 .workstream-context-sidebar.is-compact .workstream-context-copy,
 .workstream-context-sidebar.is-compact .workstream-context-section h2,
@@ -3087,6 +3098,10 @@ pre {
 .agent-message-actions.is-speaking { opacity: 1; }
 .agent-message-actions button { align-items: center; background: transparent; color: var(--av-sys-color-text-muted); display: flex; font-size: 10px; gap: 4px; padding: 2px; }
 .agent-message-actions button:hover { color: var(--av-sys-color-text-default); }
+.message-start-substream { background: transparent; color: var(--av-sys-color-text-muted); font: inherit; font-size: 11px; margin-left: 8px; opacity: 0; padding: 2px 4px; transition: opacity 120ms; }
+.message-block:hover .message-start-substream, .message-block:focus-within .message-start-substream { opacity: 1; }
+.message-start-substream:hover { color: var(--av-sys-color-text-default); }
+@media (prefers-reduced-motion: reduce) { .message-start-substream { transition: none; } }
 /* A save in flight keeps the row visible and stops a second one starting; the
    two export buttons are the only actions here that take longer than a click. */
 .agent-message-actions button:disabled { color: var(--av-sys-color-text-disabled); cursor: default; }

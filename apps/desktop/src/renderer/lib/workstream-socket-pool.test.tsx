@@ -63,9 +63,6 @@ function socketApi(): WorkstreamSocketApi & {
   getSocketTicket: ReturnType<typeof vi.fn>;
   getWorkstreamControlSocketTicket: ReturnType<typeof vi.fn>;
 } {
-  const unexpected = async (): Promise<never> => {
-    throw new Error('Unexpected socket API call.');
-  };
   return {
     viewerUserId: 'user-adam',
     getSocketTicket: vi.fn(async (workstreamId: string) => ({
@@ -78,7 +75,6 @@ function socketApi(): WorkstreamSocketApi & {
       ticket: `control-ticket-${workstreamId}`,
       protocols: socketTicketProtocols(`control-ticket-${workstreamId}`),
     })),
-    getConversation: vi.fn(unexpected),
     messageMentionPayload: vi.fn(async () => []),
   };
 }

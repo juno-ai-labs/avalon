@@ -48,6 +48,7 @@ export function evictCachedWorkstream(
 ): void {
   const queryPrefixes = [
     ['workstream', workstreamId],
+    ['workstream-children', workstreamId],
     ['ordered-transcript', workstreamId],
     ['transcript-overlays', workstreamId],
     ['workstream-feed-source', workstreamId],
@@ -55,6 +56,7 @@ export function evictCachedWorkstream(
     ['workstream-context', workstreamId],
     ['terminal-workstream', workstreamId],
     ['substream-workstream', workstreamId],
+    ['substream-initial-context', workstreamId],
     ['substream-ordered-transcript', workstreamId],
     ['substream-transcript-overlays', workstreamId],
     ['substream-workstream-feed-source', workstreamId],
@@ -79,6 +81,7 @@ export function evictCachedSubstream(
   }
   const queryKeys = [
     ['substream-workstream', workstreamId, substreamId],
+    ['substream-initial-context', workstreamId, substreamId],
     ['substream-ordered-transcript', workstreamId, substreamId],
     ['substream-transcript-overlays', workstreamId, substreamId],
     ['substream-workstream-feed-source', workstreamId, substreamId],

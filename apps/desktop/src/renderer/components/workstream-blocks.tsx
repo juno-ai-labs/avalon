@@ -2448,6 +2448,7 @@ export function ElicitationPanel({
 }
 
 interface MessageBlockProps {
+  onStartSubstream?: (throughTurnId: string) => void;
   /** The main work-stream feed presents an agent's h2 document as a card deck. */
   agentDocumentCards?: boolean;
   /**
@@ -2481,6 +2482,7 @@ interface MessageBlockProps {
 }
 
 export function MessageBlock({
+  onStartSubstream,
   agentDocumentCards = false,
   citations,
   collapseHeadings = false,
@@ -2627,6 +2629,16 @@ export function MessageBlock({
         <time dateTime={message.createdAt}>{formatRelative(message.createdAt)}</time>
         {message.workSummary && <span className="message-work-summary">{workSummaryLabel(message.workSummary)}</span>}
         {!human && collapseHeadings && !agentDocumentCards && <MarkdownCollapseAllButton />}
+        {onStartSubstream && message.transcriptTurnId && message.messageType === 'text'
+          && !message.streaming && !message.deliveryState && (
+          <button
+            className="message-start-substream"
+            title="Start substream from this message"
+            aria-label="Start substream from this message"
+            onClick={() => onStartSubstream(message.transcriptTurnId!)}
+            type="button"
+          >↳ New substream</button>
+        )}
       </header>
       {human ? (
         <div className="human-message-content">

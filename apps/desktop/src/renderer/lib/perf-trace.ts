@@ -28,7 +28,7 @@ import { reportTelemetryProductIntent, telemetryCountBucket, uuidV7 } from './te
  * ids required to join the matching backend work.
  */
 
-export type PerfFlow = 'workstream_create' | 'workstream_open' | 'workstream_message_send';
+export type PerfFlow = 'workstream_create' | 'substream_create' | 'workstream_open' | 'workstream_message_send';
 
 export interface PerfTrace {
   readonly traceId: string;
@@ -117,6 +117,8 @@ function blockingWithin(from: number, to: number): { blockedMs: number; longTask
 
 const telemetryPhaseNames = {
   create_request: 'createRequestMs',
+  prepare_request: 'prepareRequestMs',
+  confirm_request: 'confirmRequestMs',
   cache_seed: 'cacheSeedMs',
   socket_ticket: 'socketTicketMs',
   dial: 'dialMs',
@@ -181,6 +183,7 @@ export function rendererPerfFlowIntent(
   const edgeUpgradeMs = telemetryNumber(fields['edgeUpgradeMs']);
   const proxyHandshakeMs = telemetryNumber(fields['proxyHandshakeMs']);
   const failedRouteCount = countBucketOrUndefined(fields['failedRouteCount']);
+  const systemWaitMs = telemetryNumber(fields['systemWaitMs']);
   return {
     kind: 'renderer_perf_flow',
     operationId,
@@ -207,7 +210,43 @@ export function rendererPerfFlowIntent(
     ...(edgeUpgradeMs !== undefined ? { edgeUpgradeMs } : {}),
     ...(proxyHandshakeMs !== undefined ? { proxyHandshakeMs } : {}),
     ...(failedRouteCount ? { failedRouteCount } : {}),
+    ...(systemWaitMs !== undefined ? { systemWaitMs } : {}),
   };
+}
+
+interface PendingCreationReady {
+  address: string;
+  trace: PerfTrace;
+  startedAt: number;
+  systemWaitBeforeReady: number;
+}
+let pendingCreationReady: PendingCreationReady | null = null;
+
+/** Carries a creation clock across navigation to the painted send-ready boundary. */
+export function holdCreationTraceUntilSendReady(
+  trace: PerfTrace,
+  workstreamId: string,
+  substreamId = '0',
+  systemWaitBeforeReady = 0,
+): void {
+  pendingCreationReady?.trace.end({ outcome: 'superseded' });
+  pendingCreationReady = {
+    address: `${workstreamId}:${substreamId}`,
+    trace,
+    startedAt: now(),
+    systemWaitBeforeReady,
+  };
+}
+
+export function completeCreationTraceAfterPaint(workstreamId: string, substreamId = '0'): void {
+  const pending = pendingCreationReady;
+  if (!pending || pending.address !== `${workstreamId}:${substreamId}`) return;
+  pendingCreationReady = null;
+  pending.trace.end({
+    outcome: 'completed',
+    workstreamId,
+    systemWaitMs: round(pending.systemWaitBeforeReady + now() - pending.startedAt),
+  });
 }
 
 export interface PerfTraceOptions {

@@ -1,5 +1,12 @@
 import { z } from "zod";
 import { IdSchema, SubstreamIdSchema, UserIdSchema, WorkspaceIdSchema } from "./identifiers";
+import {
+  ContextPluginRefSchema,
+  ContextConfigSchema,
+  PreparedSubstreamContextSchema,
+  SubstreamContextCaptureSchema,
+  SubstreamContextRecipeSchema,
+} from "./substream-creation";
 
 /**
  * The two kinds of thing a conversation can belong to.
@@ -29,10 +36,13 @@ const ParentAddressed = {
 export const ConversationParentAuthorizeViewerRequestSchema = z.strictObject({
   ...ParentAddressed,
   userId: UserIdSchema,
+  substreamId: SubstreamIdSchema.optional(),
 });
 export const ConversationParentAuthorizeViewerResultSchema = z.strictObject({
   authorized: z.boolean(),
   archived: z.boolean(),
+  childStatus: z.enum(["reserved", "ready", "failed"]).nullable().optional(),
+  membershipVersion: z.number().int().nonnegative().optional(),
 });
 
 /** Whether the parent exists, and the generation and archive state its children inherit. */
@@ -86,6 +96,100 @@ export const ConversationParentListChildrenResultSchema = z.strictObject({
   })),
 });
 
+const PrivateChildOperationAddress = {
+  ...ParentAddressed,
+  operationId: z.string().min(1).max(180),
+} as const;
+
+export const PrivateChildPreparationStatusSchema = z.enum([
+  "preparing", "prepared", "confirming", "ready", "failed",
+]);
+
+export const PrivateChildPreparationOperationSchema = z.strictObject({
+  operationId: z.string().min(1).max(180),
+  substreamId: SubstreamIdSchema,
+  creatorUserId: UserIdSchema,
+  title: z.string().min(1).max(500),
+  sourceSubstreamId: z.literal("0"),
+  sourceThroughTurnId: z.string().min(1).nullable(),
+  recipe: SubstreamContextRecipeSchema,
+  status: PrivateChildPreparationStatusSchema,
+  capture: SubstreamContextCaptureSchema.nullable(),
+  completedParts: PreparedSubstreamContextSchema.shape.parts,
+  preparedContext: PreparedSubstreamContextSchema.nullable(),
+  errorCode: z.string().min(1).max(180).nullable(),
+  membershipVersion: z.number().int().positive(),
+  membershipInitializer: z.strictObject({
+    plugin: ContextPluginRefSchema,
+    config: ContextConfigSchema,
+    memberUserIds: z.array(UserIdSchema).min(1),
+  }),
+  createdAt: z.number().int().nonnegative(),
+  updatedAt: z.number().int().nonnegative(),
+});
+
+export const BeginPrivateChildPreparationRequestSchema = z.strictObject({
+  ...PrivateChildOperationAddress,
+  creatorUserId: UserIdSchema,
+  title: z.string().min(1).max(500),
+  sourceSubstreamId: z.literal("0"),
+  sourceThroughTurnId: z.string().min(1).nullable(),
+  recipe: SubstreamContextRecipeSchema,
+  membershipInitializer: z.strictObject({
+    plugin: ContextPluginRefSchema,
+    config: ContextConfigSchema,
+    memberUserIds: z.array(UserIdSchema).min(1),
+  }),
+});
+export const ReadPrivateChildPreparationRequestSchema = z.strictObject(PrivateChildOperationAddress);
+export const ClaimPrivateChildConfirmationRequestSchema = z.strictObject({
+  ...PrivateChildOperationAddress,
+  actorUserId: UserIdSchema,
+});
+export const SavePrivateChildCaptureRequestSchema = z.strictObject({
+  ...PrivateChildOperationAddress,
+  capture: SubstreamContextCaptureSchema,
+});
+export const SavePrivateChildPartRequestSchema = z.strictObject({
+  ...PrivateChildOperationAddress,
+  part: PreparedSubstreamContextSchema.shape.parts.element,
+});
+export const SavePreparedPrivateChildContextRequestSchema = z.strictObject({
+  ...PrivateChildOperationAddress,
+  preparedContext: PreparedSubstreamContextSchema,
+});
+export const SetPrivateChildTerminalStatusRequestSchema = z.strictObject({
+  ...PrivateChildOperationAddress,
+  status: z.enum(["ready", "failed"]),
+  errorCode: z.string().min(1).max(180).nullable().default(null),
+});
+
+export const ListVisiblePrivateChildrenRequestSchema = z.strictObject({
+  ...ParentAddressed,
+  userId: UserIdSchema,
+});
+export const ListVisiblePrivateChildrenResultSchema = z.strictObject({
+  children: z.array(z.strictObject({
+    substreamId: SubstreamIdSchema,
+    title: z.string().min(1).max(500),
+    createdByUserId: UserIdSchema,
+    createdAt: z.number().int().nonnegative(),
+    updatedAt: z.number().int().nonnegative(),
+  })),
+});
+
+export const MutatePrivateChildParticipantRequestSchema = z.strictObject({
+  ...ParentAddressed,
+  substreamId: SubstreamIdSchema.refine((value) => value !== "0", "A private child must be nonzero"),
+  actorUserId: UserIdSchema,
+  userId: UserIdSchema,
+  operationId: z.string().min(1).max(180),
+});
+export const MutatePrivateChildParticipantResultSchema = z.strictObject({
+  outcome: z.enum(["added", "removed", "unchanged", "not_found"]),
+  membershipVersion: z.number().int().positive(),
+});
+
 export type ConversationParentAuthorizeViewerRequest =
   z.infer<typeof ConversationParentAuthorizeViewerRequestSchema>;
 export type ConversationParentAuthorizeViewerResult =
@@ -102,3 +206,15 @@ export type ConversationParentListChildrenRequest =
   z.infer<typeof ConversationParentListChildrenRequestSchema>;
 export type ConversationParentListChildrenResult =
   z.infer<typeof ConversationParentListChildrenResultSchema>;
+export type PrivateChildPreparationOperation = z.infer<typeof PrivateChildPreparationOperationSchema>;
+export type BeginPrivateChildPreparationRequest = z.infer<typeof BeginPrivateChildPreparationRequestSchema>;
+export type ReadPrivateChildPreparationRequest = z.infer<typeof ReadPrivateChildPreparationRequestSchema>;
+export type ClaimPrivateChildConfirmationRequest = z.infer<typeof ClaimPrivateChildConfirmationRequestSchema>;
+export type SavePrivateChildCaptureRequest = z.infer<typeof SavePrivateChildCaptureRequestSchema>;
+export type SavePrivateChildPartRequest = z.infer<typeof SavePrivateChildPartRequestSchema>;
+export type SavePreparedPrivateChildContextRequest = z.infer<typeof SavePreparedPrivateChildContextRequestSchema>;
+export type SetPrivateChildTerminalStatusRequest = z.infer<typeof SetPrivateChildTerminalStatusRequestSchema>;
+export type ListVisiblePrivateChildrenRequest = z.infer<typeof ListVisiblePrivateChildrenRequestSchema>;
+export type ListVisiblePrivateChildrenResult = z.infer<typeof ListVisiblePrivateChildrenResultSchema>;
+export type MutatePrivateChildParticipantRequest = z.infer<typeof MutatePrivateChildParticipantRequestSchema>;
+export type MutatePrivateChildParticipantResult = z.infer<typeof MutatePrivateChildParticipantResultSchema>;

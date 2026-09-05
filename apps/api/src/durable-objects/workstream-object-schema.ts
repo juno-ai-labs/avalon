@@ -18,7 +18,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 39;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 41;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -2821,6 +2821,37 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
       // a work stream, which is what the default records.
       `ALTER TABLE workstream ADD COLUMN parent_kind TEXT NOT NULL DEFAULT 'workstream'
          CHECK (parent_kind IN ('workstream', 'automation'))`,
+    ],
+  },
+  {
+    version: 40,
+    description: "freeze substream source captures and immutable idle context seeds",
+    statements: [
+      `CREATE TABLE substream_context_captures (
+         operation_id TEXT PRIMARY KEY,
+         request_json TEXT NOT NULL,
+         capture_json TEXT NOT NULL,
+         created_at INTEGER NOT NULL
+       ) STRICT`,
+      `CREATE TABLE substream_initial_context (
+         id INTEGER PRIMARY KEY CHECK (id = 1),
+         operation_id TEXT NOT NULL UNIQUE,
+         context_json TEXT NOT NULL,
+         created_at INTEGER NOT NULL
+       ) STRICT`,
+    ],
+  },
+  {
+    version: 41,
+    description: "mirror parent-owned private-child membership with per-person versions",
+    statements: [
+      `CREATE TABLE private_child_membership_authority (
+         user_id TEXT PRIMARY KEY,
+         version INTEGER NOT NULL CHECK (version > 0),
+         active INTEGER NOT NULL CHECK (active IN (0, 1)),
+         actor_user_id TEXT NOT NULL,
+         updated_at INTEGER NOT NULL
+       ) STRICT`,
     ],
   },
 ];

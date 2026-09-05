@@ -106,6 +106,25 @@ prove layout, focus, scroll position, or overlap.
 
 ## Changelog
 
+### 2026-09-04 — Address private substreams throughout the desktop surface
+
+**What changed:** The work-stream sidebar now lists viewer-visible private
+children from the parent control socket, keeps Main as an explicit destination,
+and opens a two-step prepare/preview/confirm dialog. Child selection stays under
+the parent route while socket caches, initial context, attachments, text drafts,
+and participant mutations use the full parent/child identity. Resource
+management is withheld in a child until it has a child-addressed mutation path.
+
+**Why:** A private child is a distinct conversation, not a filter over the main
+feed. Reusing parent-only draft or mutation identities could leak an unsent
+message or modify main while the child looked selected. The preparation preview
+also makes the context boundary visible before the irreversible confirmation.
+
+**Consequences:** Parent chrome and the control socket remain stable while the
+feed switches. Main retains its released draft key for continuity; child keys
+append the substream identity. Do not reintroduce parent REST mutations as a
+fallback for child controls.
+
 ### 2026-09-04 — Preserve resource capabilities without a right sidebar
 
 **What changed:** Reused the inspector's resource content in a controlled
