@@ -456,7 +456,7 @@ function CitationPill({ citation, number, onOpen }: {
   number: React.ReactNode;
   onOpen?: () => void;
 }): React.JSX.Element {
-  const opens = citation.target.scheme === 'external' ? 'Opens in your browser' : 'Opens in Details';
+  const opens = citation.target.scheme === 'external' ? 'Opens in your browser' : 'Opens in preview';
   const label = typeof number === 'string' || typeof number === 'number'
     ? `Source ${String(number)}: ${citation.label}`
     : `Source: ${citation.label}`;

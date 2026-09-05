@@ -76,7 +76,7 @@ import { useWorkstreamFeedOpenTelemetry } from '../lib/use-workstream-feed-open-
 import { useWorkstreamSendReadyTelemetry } from '../lib/use-workstream-send-ready-telemetry';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { JumpToLatestButton, RunStoppedNotice } from '../components/conversation-follow';
-import { type RailVariant, useUiStore } from '../lib/ui-store';
+import { RIGHT_SIDEBAR_ENABLED, type RailVariant, useUiStore } from '../lib/ui-store';
 import {
   orderedTranscriptQueryKey,
   type SocketState,
@@ -575,6 +575,7 @@ export interface ConversationSurfaceProps {
   renderSidebar?: (context: ConversationHeaderContext & {
     focusTranscript: () => void;
     openArtifact: (id: string, returnFocus: HTMLElement) => void;
+    openResources: (returnFocus: HTMLElement) => void;
   }) => React.ReactNode;
 }
 
@@ -633,6 +634,11 @@ export function ConversationSurface({
   const activeWorkstreamIdRef = useRef(id);
   const pendingSendCount = useRef(0);
   const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreview | null>(null);
+  const [resourcePreview, setResourcePreview] = useState<{ resourceId: string | null; returnFocus: HTMLElement } | null>(null);
+  const openResourceDetails = useCallback((resourceId: string | null, returnFocus: HTMLElement): void => {
+    setAttachmentPreview(null);
+    setResourcePreview({ resourceId, returnFocus });
+  }, []);
   const workspaceId = session?.workspace?.id ?? 'unbound';
   const workspaceRegion = session?.workspace?.region ?? 'global';
   const attachmentDraft = useFileAttachments(api, workstreamDraftKey(workspaceRegion, workspaceId, id));
@@ -662,6 +668,9 @@ export function ConversationSurface({
   // move together, or the render that changes the route reads an open rail that
   // belongs to the stream it just left.
   useLayoutEffect(() => {
+    setAttachmentPreview(null);
+    setResourcePreview(null);
+    setResourceDialogOpen(false);
     setRailScope(id);
     return () => {
       closeRail();
@@ -864,6 +873,7 @@ export function ConversationSurface({
   const citations = useCitations({
     loadResourceContent,
     onOpenPreview: setAttachmentPreview,
+    onOpenResourceDetails: openResourceDetails,
     resources: routedDetail?.resources ?? NO_RESOURCES,
   });
   // The store holds the rail's open state, but on the render that changes the
@@ -872,7 +882,7 @@ export function ConversationSurface({
   // from laying out, or starting a fade for, a panel belonging to the stream
   // just left; every path that opens the rail writes the store, and each is
   // honoured from the moment the scope names this stream.
-  const railOpen = storeRailOpen && railScope === id;
+  const railOpen = RIGHT_SIDEBAR_ENABLED && storeRailOpen && railScope === id;
   // A route switch is not a sidebar hand-off: scope the fade to the work stream
   // so the previous stream's inspector never dissolves over the arriving feed.
   const railLeaving = useRailExitFade(railOpen, id);
@@ -1303,7 +1313,7 @@ export function ConversationSurface({
 
   // The rail's detail shows one resource at a time, so its history is fetched
   // for that one rather than for every attachment the work stream carries.
-  const inspectedResourceId = inspector?.type === 'resource' ? inspector.id : null;
+  const inspectedResourceId = resourcePreview ? resourcePreview.resourceId : inspector?.type === 'resource' ? inspector.id : null;
   const inspectedResourceVersion = workstream.data?.resources
     .find((resource) => resource.id === inspectedResourceId)?.currentVersion ?? null;
   const resourceVersions = useQuery({
@@ -1312,7 +1322,7 @@ export function ConversationSurface({
     // `closeRail` deliberately keeps the inspector's selection, so without the
     // rail's own state here the query keeps refetching for a panel nobody can
     // see.
-    enabled: Boolean(api && inspectedResourceId && railOpen),
+    enabled: Boolean(api && inspectedResourceId && (railOpen || resourcePreview)),
   });
 
   // Creating the automation a proposal card names. Invalidates the rail so a
@@ -1749,6 +1759,7 @@ export function ConversationSurface({
         openRail,
         rename: (title) => renameWorkstream.mutateAsync(title).then(() => undefined),
         openArtifact: citations.openPreview,
+        openResources: (returnFocus) => openResourceDetails(null, returnFocus),
         focusTranscript: () => transcriptRef.current?.focus({ preventScroll: true }),
       })}
     <div className={clsx('workstream-screen', parentKind === 'automation' && 'automation-screen')}>
@@ -1919,7 +1930,12 @@ export function ConversationSurface({
         </div>
       </div>
 
-      <InspectorRail
+      {(RIGHT_SIDEBAR_ENABLED || resourcePreview) && <InspectorRail
+        {...(resourcePreview ? { lightbox: {
+          ...resourcePreview,
+          onClose: () => setResourcePreview(null),
+          onSelect: (resourceId: string | null) => setResourcePreview((current) => current ? { ...current, resourceId } : null),
+        } } : {})}
         dropTarget={railDrop}
         {...(api ? { loadResourceContent: loadResourceContent } : {})}
         automationsSection={parentKind === 'workstream'}
@@ -1942,7 +1958,7 @@ export function ConversationSurface({
         workstream={displayedDetail}
         workstreamAutomations={workstreamAutomations.data}
         workstreamAutomationsError={workstreamAutomations.error?.message}
-      />
+      />}
 
       <AddParticipantDialog
         current={displayedDetail.participants}

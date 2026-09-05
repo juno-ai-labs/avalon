@@ -234,6 +234,8 @@ describe('token references', () => {
   // Properties the stylesheet defines for its own use rather than taking from a
   // theme. Each is set by a rule in this same file.
   const RULE_LOCAL = ['--sidebar-row-background', '--pill-overhang', '--rail-slot',
+    // Runtime layout geometry, not theme-selectable design tokens.
+    '--rail-max-slot',
     '--composer-line-height', '--composer-text-padding', '--system-message-lines',
     '--tw-fade-scrollbar-thumb', '--tw-fade-scrollbar-width', '--av-cmp-sidebar-width',
     // Deliberately outside the `--av-` namespace, unlike its neighbour above:
@@ -248,6 +250,7 @@ describe('token references', () => {
   // three by libraries on their own elements. They cannot be checked from this
   // file, so they are listed to say they were considered.
   const RUNTIME = ['--rail-width', '--person-accent', '--markdown-table-columns', '--arrival-index',
+    '--workstream-sidebar-width', '--conversation-min-width',
     '--citation-card-played',
     '--radix-dropdown-menu-content-available-height',
     '--radix-select-content-available-height', '--radix-select-trigger-width'];

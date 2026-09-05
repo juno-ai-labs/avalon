@@ -69,6 +69,21 @@ function setup(overrides: Partial<SiteResourceDetailProps> = {}) {
 }
 
 describe('showing a live artifact in the rail', () => {
+  it('keeps the native preview below nested dialogs and restores it when they close', async () => {
+    const geometry = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(
+      DOMRect.fromRect({ x: 20, y: 40, width: 500, height: 320 }),
+    );
+    const { props } = setup();
+    await waitFor(() => expect(props.surface.setBounds).toHaveBeenCalledWith({ x: 20, y: 40, width: 500, height: 320 }));
+    const overlay = document.createElement('div');
+    overlay.setAttribute('role', 'dialog');
+    document.body.append(overlay);
+    await waitFor(() => expect(props.surface.setBounds).toHaveBeenLastCalledWith({ x: 0, y: 0, width: 0, height: 0 }));
+    overlay.remove();
+    await waitFor(() => expect(props.surface.setBounds).toHaveBeenLastCalledWith({ x: 20, y: 40, width: 500, height: 320 }));
+    geometry.mockRestore();
+  });
+
   it('hands the pane to the main process rather than embedding anything', async () => {
     // The renderer measures a rectangle and gets out of the way; it never
     // embeds artifact content itself.

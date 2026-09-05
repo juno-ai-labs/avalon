@@ -2,7 +2,7 @@
 
 A work stream's description is the WorkstreamDO's `workstream.description` (the
 desktop directory model still exposes that value through its `objective` field):
-the one line the sidebar shows under the title, the text the routing classifier reads when it decides
+searchable directory context, the text the routing classifier reads when it decides
 whether a connector activity belongs here, and the standing context every run
 starts from. It is the shortest answer to "what is this work stream for".
 
@@ -21,7 +21,7 @@ stream forever.
 | `apps/api/src/durable-objects/substream-agent.ts` — run settlement | Where an evaluation is triggered from. |
 | `apps/api/src/durable-objects/workstream-object-product.ts` — `update` | The authored-edit path that marks a person's description `authored`. |
 | `apps/desktop/src/renderer/lib/use-workstream-control-socket.ts` | Maps both workspace-feed and direct work-stream snapshots onto the directory model's `objective` alias. |
-| `apps/desktop/src/renderer/components/sidebar.tsx` | Preserves the last non-empty description while newer directory metadata catches up, and renders it under the title. |
+| `apps/desktop/src/renderer/components/sidebar.tsx` | Preserves the last non-empty description while directory metadata catches up, and uses it for search. Navigation rows and hover cards do not display descriptions. |
 | `packages/db/migrations/0058_workstream_description_refresh.sql` | The refresh table and the one-time `description_source` backfill. |
 | `apps/api/test/workstream-description-refresh.test.ts` | Asserts against the exported constants. |
 
@@ -332,6 +332,12 @@ Four log events are emitted:
 | `workstream_description_outcome_superseded` | An evaluation finished after a person had edited the description, so its decision was discarded. Carries the decision it would have written. |
 
 ## Changelog
+
+### 2026-09-04 — Keep descriptions as context, not navigation copy
+
+Global navigation now shows titles only, with a timestamp only when unread.
+Descriptions remain searchable and retain their routing/context role. Removing
+their display is not permission to delete the authoritative description loop.
 
 ### 2026-08-26 — Socket hand-offs do not erase the sidebar description
 
