@@ -449,7 +449,11 @@ describe("work-stream naming", () => {
     // surrogate pair would leave a half that renders as a replacement
     // character in the sidebar.
     expect(normalizeGeneratedTitle("n".repeat(200))).toHaveLength(30);
-    expect(normalizeGeneratedTitle(`${"n".repeat(29)}\u{1D400}`)).toBe(`N${"n".repeat(28)}`);
+    expect(normalizeGeneratedTitle(`${"n".repeat(29)}\u{1D41A}`)).toBe(`N${"n".repeat(28)}`);
+    // Capitalizing can lengthen: `ß` uppercases to `SS`. The cap therefore has
+    // to be applied after the capital, or a 30-character name leaves here 31
+    // characters long.
+    expect(normalizeGeneratedTitle(`ß${"a".repeat(29)}`)).toBe(`SS${"a".repeat(28)}`);
   });
 
   it("derives the provisional title from the first line that has anything in it", () => {

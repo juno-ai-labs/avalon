@@ -361,9 +361,16 @@ export function normalizeGeneratedTitle(value: string): string | null {
   // behind after it.
   const cleaned = trimTrailing(unquoted.trim());
   if (cleaned.length === 0) return null;
-  const shortened = trimTrailing(truncateToWholeWords(cleaned, GENERATED_TITLE_MAX_LENGTH));
+  // Cased before the cut, so the cut is what bounds the result. An uppercase
+  // mapping can be longer than what it replaces — `ß` becomes `SS`, `ﬁ` becomes
+  // `FI` — so capitalizing afterwards could hand back 31 characters from a cap
+  // of 30. Casing first also judges the whole word the model wrote rather than
+  // whatever prefix of it survived.
+  const shortened = trimTrailing(
+    truncateToWholeWords(sentenceCased(cleaned), GENERATED_TITLE_MAX_LENGTH),
+  );
   if (shortened.length === 0) return null;
-  return sentenceCased(shortened);
+  return shortened;
 }
 
 function trimTrailing(value: string): string {
