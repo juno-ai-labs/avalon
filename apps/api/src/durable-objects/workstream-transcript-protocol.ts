@@ -32,6 +32,7 @@ type LocalOnlyTranscriptOperation =
   | "participantTurnForTool"
   | "transcriptActivity"
   | "transcriptThrough"
+  | "transcriptProjectedThrough"
   // The in-memory Bind projection uses an immutable suffix chain. It is a
   // same-isolate harness input, never an RPC/JSON response.
   | "readBindProjection"
