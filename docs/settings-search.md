@@ -11,7 +11,9 @@ without maintaining a second list of section keywords.
 | `apps/desktop/src/renderer/settings/registry.ts` | Definitions, availability contract, provider collection and matching. |
 | `apps/desktop/src/renderer/settings/setting-label.tsx` | Shared labels, descriptions and inert focus targets. |
 | `apps/desktop/src/renderer/settings/setting-toggle.tsx` | Registry-backed switch presentation with existing state and mutation bindings. |
-| `apps/desktop/src/renderer/settings/choices.ts` | Digest option labels shared by controls and search. |
+| `apps/desktop/src/renderer/settings/choices.ts` | Digest choices and value-keyed permission labels shared by controls and search. |
+| `apps/desktop/src/renderer/styles/app.css` | Settings layout and reveal treatment; appearance ownership is in [theming](theming.md). |
+| `apps/desktop/src/common/settings.ts` | Section identities shared with the desktop window. |
 | `apps/desktop/src/renderer/settings/digest-provider.ts` | Connection-backed digest destination definitions. |
 | `apps/desktop/src/renderer/settings/search-results.tsx` | Result navigation and lazy target revelation. |
 | `apps/desktop/src/renderer/screens/workspace-settings.tsx` | Existing settings bindings, authorized connection providers, section selection and availability. |
@@ -42,7 +44,7 @@ typing does not change the active page.
 Selecting a result sets its section and, when applicable, connection selection.
 The existing pane performs its normal read. An observer waits for the inert
 target, then scrolls it into view, focuses it and highlights it. Replacing the
-request or leaving its section disconnects the observer. Arrow keys navigate
+request, leaving its section, a failed destination read, or further user interaction disconnects the observer. Action labels inside buttons are scrolled and highlighted without focusing their activatable ancestor. Arrow keys navigate
 results; Enter activates a result; Escape clears search before closing a window.
 
 Setup fields such as MCP authorization or webhook signing secrets point to their
@@ -50,7 +52,7 @@ provider's setup entry point. The reader must choose personal/workspace scope
 and start setup themselves. Search never creates a connection merely to show a
 field whose value only exists after creation. A visible explanation describes
 this handoff. Conditional network-domain and repository-default controls show
-why they are inapplicable rather than leaving a search destination missing.
+why they are inapplicable when searched, rather than leaving a search destination missing.
 
 ## Invariants
 
@@ -58,8 +60,8 @@ why they are inapplicable rather than leaving a search destination missing.
   catalogue would make a newly added setting silently unsearchable again.
 - Search availability uses the same section, role, platform and developer
   availability as presentation. Disabled controls remain discoverable.
-- Keys are unique across providers. Duplicate keys throw instead of silently
-  opening an unrelated setting.
+- Keys are unique across providers. Static uniqueness is tested; repeated provider
+  metadata is deduplicated so a replay cannot crash the settings window.
 - Search targets are inert. Focus must not click a checkbox, submit a form,
   authorize a connection, sign out or bypass an existing confirmation.
 - Connection instances retain identity through selection and lazy loading.
@@ -87,7 +89,9 @@ Search is a local linear scan of the available definitions and provider entries.
 ## Testing
 
 `registry.test.ts` proves definition-driven discovery, shared option labels,
-ranking, availability, instance identity and duplicate rejection.
+ranking, availability, instance identity and replay deduplication.
+`search-results.test.tsx` exercises multi-instance reveal, delayed rendering,
+navigation and interaction cancellation, and action-button focus exclusion.
 `workspace-settings.test.tsx` searches every core definition, waits for its real
 rendered destination, and asserts that navigation does not execute consequential
 actions. The existing settings, digest, theme and icon behavior tests continue
@@ -97,6 +101,16 @@ authorization. Real Electron checks cover positioning, keyboard navigation,
 scrolling and both appearances.
 
 ## Changelog
+
+### 2026-09-05 — Verify review findings before merging (#557)
+
+**What changed:** Restored discovery aliases, indexed MCP setup policy, aligned provider actions with scope, keyed permission option labels, and made reveal cancel on navigation, interaction and failed reads. Replayed metadata no longer throws during render.
+
+**Why:** Review exposed real discovery regressions and late-focus hazards not exercised by the original happy-path tests.
+
+**Considered and rejected:** Arbitrary observer timeouts would race slow legitimate reads. Removing setup discovery contradicts the requirement that all settings be searchable. A general plugin or form engine remains unnecessary.
+
+**Consequences:** Search remains read-only; cancellation and instance identity now have direct regression coverage. Action labels do not receive keyboard activation focus.
 
 ### 2026-09-05 — Define settings once for presentation and discovery
 

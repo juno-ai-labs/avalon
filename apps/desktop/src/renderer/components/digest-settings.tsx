@@ -12,7 +12,7 @@ import type {
   DigestSchedule,
   WorkstreamConnection,
 } from '../lib/types';
-import { RallyMark, Button, InlineError, LoadingState } from './primitives';
+import { Button, InlineError, LoadingState } from './primitives';
 
 const MAX_TIMES = 12;
 
@@ -318,7 +318,6 @@ export function DigestSettings({
         })}
         {deliveryConnections.length === 0 && (
           <div className="settings-preference-row">
-            <span className="settings-row-icon"><RallyMark /></span>
             <span className="settings-row-copy">
               <strong>Somewhere else</strong>
               <small>Connect a tool that can message you — like Slack — and it will appear here.</small>
