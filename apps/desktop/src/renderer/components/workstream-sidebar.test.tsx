@@ -25,6 +25,11 @@ beforeEach(() => {
   localStorage.clear();
   width = 900;
   vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(() => width);
+  vi.stubGlobal('PointerEvent', class extends MouseEvent {
+    readonly pointerId: number;
+    constructor(type: string, init: PointerEventInit = {}) { super(type, init); this.pointerId = init.pointerId ?? 1; }
+  });
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({ x: 280, y: 0, left: 280, right: 560, top: 0, bottom: 900, width: 280, height: 900, toJSON: () => ({}) });
   vi.stubGlobal('ResizeObserver', class {
     constructor(callback: () => void) { resized = callback; }
     observe() {}
@@ -90,6 +95,57 @@ describe('WorkstreamSidebar', () => {
     expect(screen.getByText('No generated artifacts yet')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Manage work-stream participants' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Open Launch draft.md' })).not.toBeInTheDocument();
+  });
+
+  it('drags relative to the second sidebar, persists its width, and stops after release', () => {
+    const view = setup();
+    const handle = screen.getByRole('separator', { name: 'Resize work-stream sidebar' });
+    handle.setPointerCapture = vi.fn();
+    handle.releasePointerCapture = vi.fn();
+    fireEvent.pointerDown(handle, { clientX: 563, pointerId: 1, button: 0 });
+    fireEvent.pointerMove(handle, { clientX: 643, pointerId: 1 });
+    expect(handle).toHaveAttribute('aria-valuenow', '360');
+    expect(localStorage.getItem('rally.workstream-sidebar-width')).toBe('360');
+    expect(localStorage.getItem('rally.sidebar-width')).toBeNull();
+    fireEvent.pointerUp(handle, { pointerId: 1 });
+    fireEvent.pointerMove(handle, { clientX: 683, pointerId: 1 });
+    expect(handle).toHaveAttribute('aria-valuenow', '360');
+    expect(screen.getByRole('complementary')).not.toHaveClass('is-resizing');
+    view.unmount();
+    setup();
+    expect(screen.getByRole('separator')).toHaveAttribute('aria-valuenow', '360');
+  });
+
+  it('uses drag hysteresis for collapse and expansion and cleans up cancellation', () => {
+    setup();
+    const handle = screen.getByRole('separator');
+    handle.setPointerCapture = vi.fn();
+    fireEvent.pointerDown(handle, { clientX: 560, pointerId: 1, button: 0 });
+    fireEvent.pointerMove(handle, { clientX: 489, pointerId: 1 });
+    expect(handle).toHaveAttribute('aria-valuenow', '88');
+    fireEvent.pointerMove(handle, { clientX: 499, pointerId: 1 });
+    expect(handle).toHaveAttribute('aria-valuenow', '88');
+    fireEvent.pointerMove(handle, { clientX: 520, pointerId: 1 });
+    expect(handle).toHaveAttribute('aria-valuenow', '240');
+    fireEvent.pointerCancel(handle, { pointerId: 1 });
+    fireEvent.pointerMove(handle, { clientX: 650, pointerId: 1 });
+    expect(handle).toHaveAttribute('aria-valuenow', '240');
+    expect(screen.getByRole('complementary')).not.toHaveClass('is-resizing');
+  });
+
+  it('supports keyboard resizing and keeps room for the conversation', () => {
+    setup();
+    const handle = screen.getByRole('separator');
+    fireEvent.keyDown(handle, { key: 'ArrowRight' });
+    expect(handle).toHaveAttribute('aria-valuenow', '296');
+    for (let index = 0; index < 20; index++) fireEvent.keyDown(handle, { key: 'ArrowRight' });
+    expect(handle).toHaveAttribute('aria-valuenow', '400');
+    act(() => { width = 700; resized(); });
+    expect(handle).toHaveAttribute('aria-valuenow', '88');
+    fireEvent.keyDown(handle, { key: 'ArrowRight' });
+    expect(handle).toHaveAttribute('aria-valuenow', '240');
+    for (let index = 0; index < 20; index++) fireEvent.keyDown(handle, { key: 'ArrowRight' });
+    expect(handle).toHaveAttribute('aria-valuenow', '276');
   });
 
   it('replaces resources and participants when the selected work stream changes', () => {
