@@ -166,16 +166,16 @@ describe('the right sidebar does not follow a work-stream switch', () => {
 
   it('closes the inspector rail, and drops the document it was showing', async () => {
     renderScreen();
-    await screen.findByRole('button', { name: 'First work stream', current: 'page' });
+    await screen.findByRole('button', { name: 'Go to conversation: First work stream', current: 'page' });
     expect(screen.getByRole('complementary', { name: 'Work-stream sidebar' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'First work stream', current: 'page' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Go to conversation: First work stream', current: 'page' }));
     expect(screen.getByRole('log')).toHaveFocus();
 
     useUiStore.setState({ railOpen: true, inspector: { type: 'resource', id: 'resource-in-the-first-stream' } });
 
     switchWorkstream();
 
-    await screen.findByRole('button', { name: 'Second work stream', current: 'page' });
+    await screen.findByRole('button', { name: 'Go to conversation: Second work stream', current: 'page' });
     expect(useUiStore.getState().railOpen).toBe(false);
     expect(useUiStore.getState().inspector).toBeNull();
   });
@@ -185,13 +185,13 @@ describe('the right sidebar does not follow a work-stream switch', () => {
   // as long as it lasted.
   it('leaves no panel fading over the work stream switched to', async () => {
     renderScreen();
-    await screen.findByRole('button', { name: 'First work stream', current: 'page' });
+    await screen.findByRole('button', { name: 'Go to conversation: First work stream', current: 'page' });
     useUiStore.setState({ railOpen: true, inspector: null });
     await waitFor(() => expect(document.querySelector('.rail-surface')).not.toBeNull());
 
     switchWorkstream();
 
-    await screen.findByRole('button', { name: 'Second work stream', current: 'page' });
+    await screen.findByRole('button', { name: 'Go to conversation: Second work stream', current: 'page' });
     expect(document.querySelector('.rail-surface')).toBeNull();
     // What AppShell lays the feed out against, so a leaking value here reserves
     // the sidebar's width over a work stream that has no sidebar.
