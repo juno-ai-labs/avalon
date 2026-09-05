@@ -108,8 +108,17 @@ only what the page warns about, not what runs. Where one does exist, the page
 names it and its workspace ID and states that it becomes unavailable once the
 replacement is ready. The new display name is always `CompanyName-demo`; a
 successor may share that name but never its workspace or object IDs. The
-operation binds to exact IDs, not a lookup by name. The template and ordinary
-workspaces cannot be retirement targets through this surface.
+operation binds to exact IDs, not a lookup by name.
+
+**Only a workspace this feature created can be retired through this surface.**
+Preparation records each demo it publishes, and retirement accepts a target only
+if it appears in that record; an operator-supplied ID that does not is refused,
+whatever it names. This is the enforcement, and it is deliberately not a name
+check — a workspace called `Acme-demo` is an ordinary customer workspace unless
+this feature made it, and a demo renamed by hand is still a demo. `demo-template`
+is never in the record, because it is built by hand rather than published, so the
+same rule excludes it without a second mechanism. There is no operator control
+anywhere in Rally that retires an arbitrary workspace.
 
 The operator initiates one durable operation. Repeated submission of that
 operation returns its existing progress and result. Competing replacement
@@ -477,6 +486,10 @@ them here is the point; the choice belongs to the implementation.
 - **Operation record and per-step receipts.** One durable operation per
   requested demo, addressed by an identity the operator can resubmit against,
   holding phase, completed steps, failure reason, and the successor's identity.
+- **The register of published demos.** Which workspaces this feature created, and
+  which is current. It is what makes a workspace eligible for retirement, so it
+  is the authorization input for an irreversible operation rather than a
+  convenience index, and it is written before a candidate is published.
 - **The recorded object graph.** The enumeration retirement walks, captured
   before the walk so that a resumed retirement visits the same descendants.
 - **Source-to-destination connection mapping.** Written as connections are
@@ -666,7 +679,10 @@ unimplemented behavior.
    reconnect and retry the same operation. It creates no duplicate messages,
    connections, workspaces, or replacement operations. A failed required run or
    clone never becomes Ready. Abandoning a candidate retires it before a fresh
-   attempt. Hidden-template and ordinary-workspace retirement attempts fail.
+   attempt. Retirement is refused for `demo-template`, for an ordinary customer
+   workspace, for one an operator renames to end in `-demo`, and for a plausible
+   but unknown workspace ID — each because it is absent from the record of demos
+   this feature published, not because of anything in its name.
 
 Runtime checks use real workerd, Durable Objects, and Queues; credential and
 query checks use the real schema and encryption helpers. Follow
