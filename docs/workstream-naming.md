@@ -96,6 +96,11 @@ For Oslo Coffee*. Casing cannot be repaired afterwards: lowercasing every word
 but the first would spell *Rally*, *Slack*, *IBM* and *INV-2291* wrong, so
 `sentenceCased` only capitalizes a first word that is already all lowercase.
 
+It capitalizes *before* the cut, which is what makes the cap a real bound. An
+uppercase mapping can be longer than the letter it replaces — `ß` becomes `SS`,
+`ﬁ` becomes `FI` — so a capital added after the cut can hand back 31 characters
+from a cap of 30.
+
 Two titles are deliberately longer, because neither was generated: the
 provisional title, which is the person's own first line, and a title a person
 typed. So a sidebar holds both kinds, and nothing downstream may assume a title
