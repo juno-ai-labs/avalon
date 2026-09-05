@@ -84,6 +84,8 @@ const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000005a1");
 let WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-0000000005a2");
 let workstreamOrdinal = 0;
 const USER_ID = asUserId("00000000-0000-7000-8000-0000000005a3");
+/** A second member, so a plain remark reads as conversation rather than a solo prompt. */
+const OTHER_USER_ID = asUserId("00000000-0000-7000-8000-0000000005a9");
 const SESSION_ID = "00000000-0000-7000-8000-0000000005a4";
 const SCHEDULED_ACTIVATION_MODEL = "deepseek/deepseek-v4-flash-0731";
 const STREAM_FAILURE_PRIMARY_MODEL = "pipeline-b06/primary";
@@ -91,6 +93,7 @@ const STREAM_FAILURE_FALLBACK_MODEL = "pipeline-b06/fallback";
 const INTERLEAVED_TOOLS_MODEL = "pipeline-b12/primary";
 const QUEUED_FOLLOW_UP_MODEL = "pipeline-queued/primary";
 const RETRY_AFTER_ASSISTANT_TURN_MODEL = "pipeline-retry-fence/primary";
+const ASIDE_MODEL = "pipeline-aside/primary";
 
 /**
  * What the polls below wait for is alarm delivery and the drain finishing under
@@ -182,6 +185,8 @@ beforeEach(async () => {
     )`),
     env.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
       VALUES (?, ?, 'active', 'member', '2026-08-18T20:00:00.000Z')`).bind(WORKSPACE_ID, USER_ID),
+    env.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
+      VALUES (?, ?, 'active', 'member', '2026-08-18T20:00:00.000Z')`).bind(WORKSPACE_ID, OTHER_USER_ID),
     env.DB.prepare(`CREATE TABLE sessions (
       id TEXT PRIMARY KEY, user_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
       region TEXT NOT NULL, revoked_at TEXT, expires_at TEXT NOT NULL
@@ -195,6 +200,9 @@ beforeEach(async () => {
     env.DB.prepare(`INSERT INTO users(id, email, name, avatar_url, timezone, created_at)
       VALUES (?, 'member@example.com', 'Member', NULL, 'UTC', '2026-01-01T00:00:00.000Z')`)
       .bind(USER_ID),
+    env.DB.prepare(`INSERT INTO users(id, email, name, avatar_url, timezone, created_at)
+      VALUES (?, 'other@example.com', 'Other Member', NULL, 'UTC', '2026-01-01T00:00:00.000Z')`)
+      .bind(OTHER_USER_ID),
   ]);
   // The product's workspace reads route to the WorkspaceDO, which refuses
   // requests until it knows who it is — exactly as production bootstraps it.
@@ -243,6 +251,7 @@ async function initializeWorkstream(
   stub: DurableObjectStub,
   openingMessage: string,
   modelOverride: string | null = null,
+  participantUserIds: readonly string[] = [],
 ): Promise<{
   status: number;
   body: Record<string, unknown>;
@@ -262,7 +271,7 @@ async function initializeWorkstream(
       creatorUserId: USER_ID,
       openingMessage,
       clientMessageId: "pipeline-open-1",
-      participantUserIds: [],
+      participantUserIds: [...participantUserIds],
       attachmentIds: [],
       modelOverride,
       executionPrincipal: { type: "user", userId: USER_ID },
@@ -1803,6 +1812,101 @@ describe("a member's message travels the whole pipeline", () => {
       // installed, because an `installScriptedProvider` that itself threw
       // reaches here too.
       await openProviderGate(stub).catch(() => undefined);
+      await restoreProviderFetch(stub);
+    }
+  });
+
+  it("carries a message that started no run to the model on the next run", async () => {
+    const stub = agentStub();
+    try {
+      await installScriptedProvider(
+        stub,
+        [
+          [{ choices: [{ delta: { content: "looked into it" }, finish_reason: "stop" }] }],
+          [{ choices: [{ delta: { content: "here is the summary" }, finish_reason: "stop" }] }],
+        ],
+        { primaryModel: ASIDE_MODEL, fallbackModels: [] },
+      );
+      // Two people in the room. With one, every message is aimed at the agent
+      // by construction and nothing here could be an aside.
+      const opened = await initializeWorkstream(stub, "please look into this", ASIDE_MODEL, [OTHER_USER_ID]);
+      expect(opened.status).toBe(200);
+      await settledRun(stub, opened.body.harnessRunId as string);
+      await waitForLoopRelease(stub);
+      const runsBefore = await runInDurableObject(stub, (_instance, state) =>
+        state.storage.sql.exec<{ count: number }>(`SELECT COUNT(*) AS count FROM runs`).one().count);
+
+      // A remark to the other person. The heuristic classifier settles this
+      // deterministically as human conversation, so no model is asked and no
+      // run starts — which is the whole condition under test: the turn is
+      // canonical, visible to every member, and until now never entered the
+      // projection the model reads.
+      const aside = await product(stub, {
+        operation: "create_message",
+        auth: AUTH,
+        input: {
+          text: "sounds good",
+          clientMessageId: "pipeline-aside-1",
+          mentions: [],
+          confirmedParticipantUserIds: [],
+          attachmentIds: [],
+        },
+      });
+      expect(aside.status).toBe(200);
+      const asideTurnId = (aside.body.turn as { turnId: string }).turnId;
+      expect(await runInDurableObject(stub, (_instance, state) => ({
+        pending: state.storage.sql.exec<{ count: number }>(
+          `SELECT COUNT(*) AS count FROM pending_loop_inputs`,
+        ).one().count,
+        runs: state.storage.sql.exec<{ count: number }>(`SELECT COUNT(*) AS count FROM runs`).one().count,
+        canonical: state.storage.sql.exec<{ count: number }>(
+          `SELECT COUNT(*) AS count FROM participant_transcript_turns WHERE turn_id = ?`,
+          asideTurnId,
+        ).one().count,
+      }))).toEqual({ pending: 0, runs: runsBefore, canonical: 1 });
+
+      // Then a message that does start a run. Its admission is what carries the
+      // aside across: everything the projection has not looked at, in
+      // transcript order, ahead of the message that follows it.
+      const question = await product(stub, {
+        operation: "create_message",
+        auth: AUTH,
+        input: {
+          text: "please summarize what we agreed",
+          clientMessageId: "pipeline-aside-2",
+          mentions: [],
+          confirmedParticipantUserIds: [],
+          attachmentIds: [],
+        },
+      });
+      expect(question.status).toBe(200);
+      const questionTurnId = (question.body.turn as { turnId: string }).turnId;
+      await settledRunForTrigger(stub, questionTurnId);
+
+      const requests = await capturedProviderRequests(stub);
+      const last = requests.at(-1);
+      expect(last).toBeDefined();
+      const userTexts = (last!.body.messages as Array<{ role?: unknown; content?: unknown }>)
+        .filter((message) => message.role === "user")
+        .map((message) => JSON.stringify(message.content));
+      const asideIndex = userTexts.findIndex((text) => text.includes("sounds good"));
+      const questionIndex = userTexts.findIndex((text) => text.includes("please summarize what we agreed"));
+      expect(asideIndex, "the aside never reached the model").toBeGreaterThanOrEqual(0);
+      expect(questionIndex).toBeGreaterThan(asideIndex);
+
+      // And the loop knows it has looked this far, so the next admission
+      // starts after the question rather than re-scanning from the start.
+      const mark = await runInDurableObject(stub, (_instance, state) => ({
+        projectedThrough: state.storage.sql.exec<{ transcript_projected_through: number }>(
+          `SELECT transcript_projected_through FROM substream_loops WHERE id = 1`,
+        ).one().transcript_projected_through,
+        questionSequence: state.storage.sql.exec<{ transcript_sequence: number }>(
+          `SELECT transcript_sequence FROM participant_transcript_turns WHERE turn_id = ?`,
+          questionTurnId,
+        ).one().transcript_sequence,
+      }));
+      expect(mark.projectedThrough).toBe(mark.questionSequence);
+    } finally {
       await restoreProviderFetch(stub);
     }
   });

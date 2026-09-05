@@ -37,6 +37,7 @@ import {
   type HarnessActivationInput,
 } from "@rally/agent-harness";
 import { uuidV7 } from "../lib/uuid-v7";
+import { projectParticipantTextMessage } from "../services/workstream-participant-model-message";
 import { boundParameterChunks } from "./bound-parameters";
 import {
   SubstreamLoopStorage,
@@ -418,6 +419,19 @@ export class WorkstreamTranscriptStorage {
 
   private get sql(): SqlStorage {
     return this.storage.sql;
+  }
+
+  /**
+   * The highest transcript sequence the model's conversation has considered.
+   *
+   * Distinct from {@link transcriptThrough}, and the distinction is the point:
+   * a human turn can land in the transcript without ever entering the
+   * projection, and this is the mark that says which ones have. Read by the
+   * run to record what a compaction checkpoint actually covers — the
+   * high-water mark would claim turns the model never saw.
+   */
+  transcriptProjectedThrough(): number {
+    return new SubstreamLoopStorage(this.storage).loop()?.transcript_projected_through ?? 0;
   }
 
   /** Highest canonical sequence currently owned by this transcript. */
@@ -1352,6 +1366,7 @@ export class WorkstreamTranscriptStorage {
 
       const turns: TranscriptTurn[] = [];
       const deliveryEffects: PendingInputDeliveryEffectInput[] = [];
+      let projectedThrough = 0;
       for (let index = 0; index < committedPrepared.length; index += 1) {
         const append = committedPrepared[index]!;
         const delivered = this.promotePendingInputInTransaction(
@@ -1359,6 +1374,7 @@ export class WorkstreamTranscriptStorage {
           append.material,
           now,
         );
+        projectedThrough = Math.max(projectedThrough, delivered.transcriptSequence);
         for (const step of append.steps) {
           this.assertExpectedHead(step.previous, step.transition);
           for (const fact of step.facts.materials) this.insertFact(fact, now);
@@ -1388,6 +1404,7 @@ export class WorkstreamTranscriptStorage {
         } & Record<string, SqlStorageValue>>(
           `UPDATE substream_loops
               SET step_ordinal = step_ordinal + 1, bind_state_revision = ?,
+                  transcript_projected_through = MAX(transcript_projected_through, ?),
                   revision = revision + 1, updated_at = ?
             WHERE id = 1 AND revision = ? AND status = 'executing'
               AND active_execution_id = ? AND active_execution_epoch = ?
@@ -1395,6 +1412,7 @@ export class WorkstreamTranscriptStorage {
               AND bind_state_revision = ?
             RETURNING loop_id, revision`,
           nextBindStateRevision,
+          projectedThrough,
           now,
           loop.revision,
           input.executionId,
@@ -1561,6 +1579,7 @@ export class WorkstreamTranscriptStorage {
                 bind_state_revision = ?, active_execution_id = ?,
                 active_execution_epoch = ?, lease_owner = ?, lease_expires_at = ?,
                 next_execution_sequence = next_execution_sequence + 1,
+                transcript_projected_through = MAX(transcript_projected_through, ?),
                 revision = revision + 1, updated_at = ?
           WHERE id = 1 AND revision = ? AND status = 'idle'
             AND bind_state_revision = ?
@@ -1571,6 +1590,10 @@ export class WorkstreamTranscriptStorage {
         input.receipt.executionEpoch,
         input.receipt.leaseOwner,
         input.receipt.leaseExpiresAt,
+        // The activated input's own turn is the newest thing the projection
+        // has looked at. On a bootstrap the run reads the whole transcript up
+        // to this same turn, so the mark is right in both cases.
+        delivered.transcriptSequence,
         now,
         input.expectedLoopRevision,
         input.expectedBindStateRevision,
@@ -3461,6 +3484,12 @@ export class WorkstreamTranscriptStorage {
   ): Promise<PreparedPendingBindAppend[]> {
     const prepared: PreparedPendingBindAppend[] = [];
     let projection = previous;
+    // Where the projection has looked so far. Every text input below first
+    // appends the conversation turns between this mark and its own admission,
+    // then itself, so the model reads the room in the order the room happened.
+    let projectedThrough = new SubstreamLoopStorage(this.storage).loop()
+      ?.transcript_projected_through ?? 0;
+    const appendedInThisPass = new Set<string>();
     for (const pending of pendingInputs) {
       const material = parsePendingInputMaterial(pending);
       // The transition below appends `bindPayload`, which is always the user
@@ -3490,6 +3519,21 @@ export class WorkstreamTranscriptStorage {
         prepared.push({ pending, material, steps, next: projection });
         continue;
       }
+      // The turns nobody admitted. A message that started no run is a
+      // canonical turn and nothing else, and until now it stayed that way:
+      // visible to every member, invisible to the model. Appended here, in
+      // transcript order, ahead of the input that follows them — an aside
+      // between two questions reads as an aside, not as an afterthought.
+      for (const gap of await this.unprojectedConversationTurnSteps(
+        projection,
+        projectedThrough,
+        pending.admitted_after_transcript_sequence,
+        appendedInThisPass,
+      )) {
+        steps.push(gap);
+        projection = gap.next;
+      }
+      projectedThrough = Math.max(projectedThrough, pending.admitted_after_transcript_sequence);
       const transition: ProtocolUserTransition = {
         kind: "protocol_user_appended",
         loopId: previous.loopId,
@@ -3516,6 +3560,92 @@ export class WorkstreamTranscriptStorage {
       projection = next;
     }
     return prepared;
+  }
+
+  /**
+   * The conversation turns in `(fromExclusive, toInclusive]` the projection has
+   * never seen, each as the transition that appends it.
+   *
+   * Only human and external text turns qualify. Assistant turns are produced
+   * by the projection itself; status rows are not conversation; an elicitation
+   * answer is a pending input by construction. A turn that *was* a pending
+   * input is already here under exactly the provenance built below, which is
+   * why that provenance is copied from the admission path rather than invented
+   * — the same key is what lets `currentBindProvenanceKeys` say "already
+   * projected" and skip it.
+   *
+   * Turns with no text — an attachment-only message, say — cannot appear:
+   * anything carrying an attachment starts a run, so it arrives as a pending
+   * input with its payload already built. The projection here is the text
+   * shape only, and it is the same function the admission path uses for it.
+   */
+  private async unprojectedConversationTurnSteps(
+    previous: BindLoopProjectionState,
+    fromExclusive: number,
+    toInclusive: number,
+    appendedInThisPass: Set<string>,
+  ): Promise<PreparedPendingBindStep[]> {
+    if (toInclusive <= fromExclusive) return [];
+    const steps: PreparedPendingBindStep[] = [];
+    let projection = previous;
+    for (const turn of this.turnsInRange(fromExclusive + 1, toInclusive + 1)) {
+      if (turn.entryKind !== "conversation") continue;
+      if (turn.actor !== "human" && turn.actor !== "external") continue;
+      const text = turn.blocks.find((block) => block.type === "text");
+      if (!text || text.type !== "text") continue;
+      const provenance: BindLoopMessageOrigin = {
+        originKind: "derived",
+        sourceKind: "participant_turn",
+        sourceId: turn.turnId,
+        sourceRevision: 1,
+      };
+      const key = bindProvenanceKey(provenance);
+      if (appendedInThisPass.has(key)) continue;
+      if (this.currentBindProvenanceKeys(previous.loopId, [provenance]).length > 0) continue;
+      const message = projectParticipantTextMessage({
+        author: turn.actor === "external" && turn.externalActor
+          ? {
+              type: "external",
+              actor: {
+                provider: turn.externalActor.provider,
+                displayName: turn.externalActor.displayName,
+                providerUserId: turn.externalActor.providerUserId,
+              },
+            }
+          : { type: "human" },
+        text: text.text,
+        mentions: (text.mentions ?? []).map((mention) => ({
+          type: mention.type,
+          userId: mention.userId,
+          displayName: mention.type === "person" && mention.userId
+            ? turn.authorSnapshot?.userId === mention.userId
+              ? turn.authorSnapshot.displayName
+              : null
+            : null,
+        })),
+      });
+      if (!message) continue;
+      const transition: ProtocolUserTransition = {
+        kind: "protocol_user_appended",
+        loopId: previous.loopId,
+        generation: projection.generation,
+        stateRevision: projection.stateRevision + 1,
+        message: modelMessageWithoutProvenance(message),
+        provenance,
+        activationInputId: null,
+      };
+      const next = applyBindLoopTransition(projection, transition);
+      const facts = await this.materializeProjectionFacts(transition, projection, next);
+      const appended = facts.messageFacts[0];
+      if (!appended
+        || appended.position !== bindLoopNonSystemMessageCount(projection) + 1) {
+        throw new Error("bind_loop_projection_delta_invalid");
+      }
+      steps.push({ previous: projection, transition, next, facts });
+      appendedInThisPass.add(key);
+      projection = next;
+    }
+    return steps;
   }
 
   private async prepareElicitationAnswerToolResult(

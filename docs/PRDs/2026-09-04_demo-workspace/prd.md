@@ -414,7 +414,13 @@ for a model to fabricate tool receipts.
 
 ## Decision log
 
-None yet.
+- **September 5: side conversation reaches the model, in the product.** The
+  spike found that a human message admitted without starting a run never
+  entered the agent's context, and asked whether it should. It should: the
+  loop now records how far into the transcript its projection has looked and
+  appends the unseen turns at the next admission. Fixed in the conversation
+  object rather than in the pack, because it was wrong in every room with more
+  than one person in it, and the pack format assumes it.
 
 ## Key design decisions
 
