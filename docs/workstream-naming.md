@@ -65,6 +65,23 @@ title and a `settled` one render identically — and the next run tries again. T
 one exception is a row still in `naming`: that is a first pass that never
 finished, and its promise is the one that has to be kept.
 
+### The shape of a generated name
+
+A generated name is written the way a Slack channel is: lowercase words joined
+by single hyphens, forty characters or less. The prompt asks for that shape and
+`normalizeGeneratedTitle` guarantees it — it lowercases the answer, turns
+everything a channel name cannot hold into the separator (the spaces between
+words, but also the quotes or `#` a model wraps an answer in, and the `@` and
+dots inside an address), and cuts a name that still runs long back to its last
+whole word. Repairing the answer here rather than adding prohibitions to the
+prompt keeps the rules a small model has to follow short, and makes the shape
+something the sidebar can rely on rather than something the model got right.
+
+Two titles are deliberately *not* in that shape, because neither was generated:
+the provisional title, which is the person's own first line and reads as prose,
+and a title a person typed, which is theirs. So a sidebar holds both kinds, and
+nothing downstream may assume a title is hyphenated.
+
 ### Advancing the title is a compare-and-set
 
 `advanceTitle` writes `title = COALESCE(<generated>, title)` and the new status
@@ -167,9 +184,10 @@ ordinary work-stream update and belongs to the object's product service.
   produced. The first pass settles the provisional title as `automatic`; the
   second leaves an `automatic` row for the next run.
 - **The model answers with something unusable** — a quoted phrase, a Markdown
-  heading, a trailing period, TeX. `normalizeGeneratedTitle` repairs it rather
-  than the prompt prohibiting it, and reduces an answer with nothing left to
-  `null`, which is treated as no name.
+  heading, a capitalized sentence, a trailing period, TeX. `normalizeGeneratedTitle`
+  repairs it rather than the prompt prohibiting it, and reduces an answer with
+  nothing left — a bare emoji, punctuation alone — to `null`, which is treated as
+  no name.
 - **The isolate goes away mid-call.** The row stays `naming`. Every *read* past
   the grace reports `automatic`, and every cached row stops shimmering at the
   same instant; the second pass repairs the row itself at the end of the next
@@ -178,8 +196,9 @@ ordinary work-stream update and belongs to the object's product service.
   the grace, which is exactly what a fresh read would have said. The generated
   name arrives at the next event that touches the row, or the next reconnect that
   finds the row's version advanced.
-- **Limits.** A generated title is capped at 80 characters — `title` holds 180,
-  but a name that long is a sentence, and the sidebar truncates it anyway. The
+- **Limits.** A generated title is capped at 40 characters, cut back to the last
+  whole word — `title` holds 180, but a generated name is a channel-style label
+  rather than a sentence, and the tail of a word cut mid-way reads as a typo. The
   provisional title is capped at the column's 180. The second pass reads at most
   12 messages of 600 characters and runs at most once. The grace is 60 seconds.
 
@@ -207,6 +226,35 @@ ordinary work-stream update and belongs to the object's product service.
   file's hard-coded date asserts nothing.
 
 ## Changelog
+
+### 2026-09-05 — Generated names are channel-style, and forty characters
+
+**What changed:** The naming prompt asks for a name written the way a Slack
+channel is — two to four lowercase words joined by hyphens, forty characters or
+less — and `normalizeGeneratedTitle` enforces that shape rather than
+sentence-casing the answer. The generated cap dropped from 80 characters to 40,
+and a name past it is cut back to its last whole word instead of mid-word.
+
+**Why:** A product decision about how a list of work streams should read: a
+column of hyphenated labels is scannable in a way a column of sentence
+fragments is not, and it is the shape people already read lists of rooms in.
+Forty characters is the team's number for it.
+
+**Considered and rejected:** Changing the prompt alone. The model does this
+correctly most of the time and not all of the time, and the surface that would
+show the difference is the sidebar, where one prose title among hyphenated ones
+is the thing a person notices. The normalizer was already where an unusable
+answer is repaired, so the shape is guaranteed there and the prompt keeps one
+rule rather than a list of prohibitions. Also rejected: rejecting an over-long
+name at `WorkstreamNameResultSchema`, whose ceiling stays at 80 — a name eight
+characters long is a name, and failing the parse would leave the work stream
+with its provisional title instead.
+
+**Consequences:** `sentenceCased` is gone; anything that wants a generated title
+capitalized has to do it at the surface. Nothing downstream may assume a title
+is hyphenated: the provisional title and a title a person typed are still prose,
+and both sit in the same list. Changing the length again is one constant in the
+naming service and one sentence in the prompt, and they have to move together.
 
 ### 2026-08-24 — Both server read sites import the grace they were spelling out
 

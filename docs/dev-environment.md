@@ -161,8 +161,23 @@ in the main config and across the multi-config session. Observed on
 the time of writing — check which version you have before assuming the note
 still applies, and delete it once a newer one honours the flag.
 
-Until then, the local workaround is to delete the `containers` array from
-`wrangler.global.jsonc` and `wrangler.eu.jsonc` for the session; the
+Until then, and where one region is enough — anything that does not cross into
+EU, and does not call the document-processing or Terminal Workers over their
+service bindings — run Global on its own config, where the flag is honoured and
+nothing on disk changes:
+
+```bash
+pnpm --filter @rally/api exec wrangler dev --local \
+  --config wrangler.global.jsonc --env-file .dev.vars.global \
+  --persist-to .wrangler/state/global --port 8787 --inspector-port 9230 \
+  --enable-containers=false
+```
+
+`pnpm db:open-authority` then seeds Global and says to re-run for EU, which is
+the same "start the Workers and re-run" message it gives for any region that is
+down. Where both regions are needed, the local workaround is to delete the
+`containers` array from `wrangler.global.jsonc` and `wrangler.eu.jsonc` for the
+session; the
 `CRASH_SYMBOLICATOR` Durable Object binding can stay, and both regions come up
 normally. **That edit must not be committed, and while it is in place
 `pnpm test` is red** — `apps/api/test/crash-symbolicator-config.test.ts` asserts

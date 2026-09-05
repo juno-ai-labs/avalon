@@ -64,13 +64,15 @@ describe("work-stream naming", () => {
       userId,
     });
 
+    // The model answered in prose; what is written and published is the
+    // channel-style name the sidebar shows.
     expect(workstreamRow(database)).toMatchObject({
-      title: "Avalon download link email to Danny",
+      title: "avalon-download-link-email-to-danny",
       title_status: "automatic",
     });
     expect(published).toEqual([{
       type: "workstream_renamed",
-      title: "Avalon download link email to Danny",
+      title: "avalon-download-link-email-to-danny",
       titleStatus: "automatic",
     }]);
   });
@@ -78,7 +80,7 @@ describe("work-stream naming", () => {
   it("asks the naming agent's own model for a name, with reasoning switched off", async () => {
     const database = seededDatabase();
     const requests: Array<Record<string, unknown>> = [];
-    stubOpenRouter(requests, "Recurring Tuesday call invitations");
+    stubOpenRouter(requests, "recurring-tuesday-call");
     const env = environment(database, []);
 
     await nameWorkstream(env, {
@@ -189,12 +191,12 @@ describe("work-stream naming", () => {
     const database = seededDatabase();
     applyWorkstreamObjectRootFields(
       objectStoreOf(database),
-      { title: "Draft email to Danny", titleStatus: "automatic" },
+      { title: "draft-email-to-danny", titleStatus: "automatic" },
     );
     seedMessages(database, 5);
     const requests: Array<Record<string, unknown>> = [];
     const published: Array<Record<string, unknown>> = [];
-    stubOpenRouter(requests, "Mucker download link for danny@mucker.com");
+    stubOpenRouter(requests, "mucker-download-link-for-danny");
     const env = environment(database, published);
 
     await refreshWorkstreamName(env, { workspaceId, workstreamId, userId });
@@ -211,12 +213,12 @@ describe("work-stream naming", () => {
     expect(payload.conversation).toHaveLength(5);
     expect(payload.conversation[1]).toMatchObject({ author: "avalon" });
     expect(workstreamRow(database)).toMatchObject({
-      title: "Mucker download link for danny@mucker.com",
+      title: "mucker-download-link-for-danny",
       title_status: "settled",
     });
     expect(published).toEqual([{
       type: "workstream_renamed",
-      title: "Mucker download link for danny@mucker.com",
+      title: "mucker-download-link-for-danny",
       titleStatus: "settled",
     }]);
   });
@@ -228,13 +230,13 @@ describe("work-stream naming", () => {
     const database = seededDatabase();
     seedMessages(database, 6);
     const published: Array<Record<string, unknown>> = [];
-    stubOpenRouter([], "Mucker download link for danny@mucker.com");
+    stubOpenRouter([], "mucker-download-link-for-danny");
     const env = environment(database, published);
 
     await refreshWorkstreamName(env, { workspaceId, workstreamId });
 
     expect(workstreamRow(database)).toMatchObject({
-      title: "Mucker download link for danny@mucker.com",
+      title: "mucker-download-link-for-danny",
       title_status: "settled",
     });
     expect(published).toHaveLength(1);
@@ -244,7 +246,7 @@ describe("work-stream naming", () => {
     const database = seededDatabase();
     applyWorkstreamObjectRootFields(
       objectStoreOf(database),
-      { title: "Invoice export totals", titleStatus: "automatic" },
+      { title: "invoice-export-totals", titleStatus: "automatic" },
     );
     seedMessages(database, 5);
     const published: Array<Record<string, unknown>> = [];
@@ -257,17 +259,17 @@ describe("work-stream naming", () => {
     // same — so a model that happened to be unreachable must not spend the one
     // second look this work stream gets, or publish a rename of nothing.
     expect(workstreamRow(database)).toMatchObject({
-      title: "Invoice export totals",
+      title: "invoice-export-totals",
       title_status: "automatic",
     });
     expect(published).toEqual([]);
 
     const requests: Array<Record<string, unknown>> = [];
-    stubOpenRouter(requests, "Invoice INV-2291 VAT totals");
+    stubOpenRouter(requests, "invoice-inv-2291-vat-totals");
     await refreshWorkstreamName(env, { workspaceId, workstreamId });
 
     expect(workstreamRow(database)).toMatchObject({
-      title: "Invoice INV-2291 VAT totals",
+      title: "invoice-inv-2291-vat-totals",
       title_status: "settled",
     });
   });
@@ -333,7 +335,7 @@ describe("work-stream naming", () => {
     applyWorkstreamObjectRootFields(objectStoreOf(database), { titleStatus: "automatic" });
     seedMessages(database, 9);
     const requests: Array<Record<string, unknown>> = [];
-    stubOpenRouter(requests, "Mucker download link for danny@mucker.com");
+    stubOpenRouter(requests, "mucker-download-link-for-danny");
     const env = environment(database, []);
 
     await refreshWorkstreamName(env, { workspaceId, workstreamId });
@@ -423,26 +425,35 @@ describe("work-stream naming", () => {
     expect(counted.filter((sql) => /workstreams/u.test(sql))).toEqual([]);
   });
 
-  it("writes a name a person would read rather than whatever the model returned", () => {
+  it("writes a channel-style name rather than whatever the model returned", () => {
     expect(normalizeGeneratedTitle('"Avalon download link email to Danny."'))
-      .toBe("Avalon download link email to Danny");
-    expect(normalizeGeneratedTitle("## Mucker\n  intro  thread")).toBe("Mucker intro thread");
+      .toBe("avalon-download-link-email-to-danny");
+    expect(normalizeGeneratedTitle("## Mucker\n  intro  thread")).toBe("mucker-intro-thread");
     // The title is stored, so a model's TeX is repaired here — once, at the
     // write — rather than by every surface that shows the sidebar row.
     expect(normalizeGeneratedTitle("Migrate billing $\\rightarrow$ Stripe"))
-      .toBe("Migrate billing → Stripe");
-    expect(normalizeGeneratedTitle("Renew the $50 plan")).toBe("Renew the $50 plan");
+      .toBe("migrate-billing-stripe");
+    expect(normalizeGeneratedTitle("Renew the $50 plan")).toBe("renew-the-50-plan");
     expect(normalizeGeneratedTitle("   ")).toBeNull();
-    // A name that starts mid-sentence is capitalized; one that starts on
-    // something that spells itself is not.
-    expect(normalizeGeneratedTitle("invoice INV-2291 VAT totals")).toBe("Invoice INV-2291 VAT totals");
-    expect(normalizeGeneratedTitle("iPhone build failures")).toBe("iPhone build failures");
-    expect(normalizeGeneratedTitle("danny@mucker.com bounce")).toBe("danny@mucker.com bounce");
-    expect(normalizeGeneratedTitle("n".repeat(200))).toHaveLength(80);
-    // A cut that lands inside a surrogate pair would leave a lone half that
-    // renders as a replacement character in the sidebar.
-    const emojiName = `${"n".repeat(79)}\u{1F600}`;
-    expect(normalizeGeneratedTitle(emojiName)).toBe("n".repeat(79));
+    expect(normalizeGeneratedTitle("#\u{1F600}")).toBeNull();
+    // An identifier keeps its characters and loses only its case, and the
+    // punctuation inside an address separates words rather than running them
+    // together.
+    expect(normalizeGeneratedTitle("invoice INV-2291 VAT totals")).toBe("invoice-inv-2291-vat-totals");
+    expect(normalizeGeneratedTitle("iPhone build failures")).toBe("iphone-build-failures");
+    expect(normalizeGeneratedTitle("danny@mucker.com bounce")).toBe("danny-mucker-com-bounce");
+    // A decomposed accent belongs to the letter before it, not to the space
+    // between words.
+    expect(normalizeGeneratedTitle("Budget re\u0301vise\u0301")).toBe("budget-re\u0301vise\u0301");
+    // A name that runs long ends at a whole word: the tail of a cut word reads
+    // as a typo rather than as a name that ran out of room.
+    expect(normalizeGeneratedTitle("Mucker download link for danny@mucker.com"))
+      .toBe("mucker-download-link-for-danny-mucker");
+    // A single word past the cap has no boundary to cut at, and a cut inside a
+    // surrogate pair would leave a half that renders as a replacement
+    // character in the sidebar.
+    expect(normalizeGeneratedTitle("n".repeat(200))).toHaveLength(40);
+    expect(normalizeGeneratedTitle(`${"n".repeat(39)}\u{1D400}`)).toBe("n".repeat(39));
   });
 
   it("derives the provisional title from the first line that has anything in it", () => {

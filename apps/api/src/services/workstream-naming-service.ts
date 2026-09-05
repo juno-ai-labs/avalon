@@ -15,10 +15,12 @@ import { createIdentityObjectPort } from "../runtime/identity-port";
 
 /**
  * The longest generated name that is written to a work stream. `title` holds
- * 180 characters, but a name that long is a sentence rather than a label, and
- * the sidebar truncates it anyway.
+ * 180 characters, but a generated name is a channel-style label a person scans
+ * in the sidebar rather than a sentence, and forty is the length the team set
+ * for it. The prompt asks for the same number, so this is the backstop for a
+ * model that ignored it.
  */
-const GENERATED_TITLE_MAX_LENGTH = 80;
+const GENERATED_TITLE_MAX_LENGTH = 40;
 
 /** The provisional title's ceiling, matching what `title` accepts. */
 const PROVISIONAL_TITLE_MAX_LENGTH = 180;
@@ -337,35 +339,51 @@ async function advanceTitle(env: Env, input: {
 }
 
 /**
- * Reduce one model answer to a title, or `null` when nothing is left.
+ * Reduce one model answer to a channel-style title, or `null` when nothing is
+ * left.
  *
  * A small model asked for a label still occasionally returns a quoted phrase, a
- * Markdown heading, or a trailing period, and every one of those would be
- * visible in the sidebar. Repairing them here rather than adding more
- * prohibitions to the prompt keeps the rules the model has to follow short.
+ * Markdown heading, a capitalized sentence, or a trailing period, and every one
+ * of those would sit in the sidebar looking unlike every other name there.
+ * Repairing them here rather than adding more prohibitions to the prompt keeps
+ * the rules the model has to follow short, and makes the shape of a name
+ * something every surface can rely on instead of something the model got right.
  */
 export function normalizeGeneratedTitle(value: string): string | null {
   // A title is shown as plain text everywhere it appears — the sidebar, the
   // window, the menu bar, a Slack card — so TeX in one is repaired here rather
   // than by each of those, and the plain-text form is the right one: a Markdown
   // escape would be a backslash a reader sees.
-  const collapsed = normalizeModelText(value).replace(/\s+/gu, " ").trim().replace(/^#+\s*/u, "");
-  const unquoted = /^(["'“‘])(.+)(["'”’])$/u.exec(collapsed)?.[2] ?? collapsed;
-  const trimmed = sentenceCased(unquoted.trim().replace(/[.,;:\s]+$/u, ""));
-  if (trimmed.length === 0) return null;
-  return truncateUtf16Safe(trimmed, GENERATED_TITLE_MAX_LENGTH);
+  const lowered = normalizeModelText(value).toLowerCase();
+  // Everything a Slack channel name cannot hold becomes the separator rather
+  // than disappearing: the spaces between words, but also the quotes and the
+  // heading's `#` a model wraps an answer in, and the `@` and dots of an
+  // address, which read as word boundaries and not as a run-on word. Combining
+  // marks stay, or a decomposed accent would split the word carrying it.
+  const hyphenated = lowered.replace(/[^\p{L}\p{N}\p{M}_]+/gu, "-").replace(/^-+|-+$/gu, "");
+  if (hyphenated.length === 0) return null;
+  return truncateToWholeWords(hyphenated, GENERATED_TITLE_MAX_LENGTH);
 }
 
 /**
- * Capitalize a name that starts mid-sentence, and only then.
+ * Cut a hyphenated name to `maximum` characters at a word boundary.
  *
- * A small model occasionally answers "invoice INV-2291 VAT totals", which reads
- * as a fragment beside the sentence-cased titles around it. The first word has
- * to be plain lowercase letters for this to fire, so a name opening on an
- * address, a version, or a brand that spells itself `iPhone` is left alone.
+ * A sentence survives being cut mid-word; a channel name does not — the tail of
+ * a word reads as a typo rather than as a name that ran long. The last whole
+ * word that fits therefore wins. A single word longer than the cap has no
+ * boundary to cut at and is cut where it must be, short of splitting a
+ * surrogate pair, which would leave a half that renders as a replacement
+ * character in the sidebar.
  */
-function sentenceCased(value: string): string {
-  const firstWord = value.split(" ", 1)[0] ?? "";
-  if (!/^\p{Ll}+$/u.test(firstWord)) return value;
-  return value.slice(0, 1).toUpperCase() + value.slice(1);
+function truncateToWholeWords(value: string, maximum: number): string {
+  if (value.length <= maximum) return value;
+  const kept: string[] = [];
+  let length = 0;
+  for (const word of value.split("-")) {
+    const next = length === 0 ? word.length : length + 1 + word.length;
+    if (next > maximum) break;
+    kept.push(word);
+    length = next;
+  }
+  return kept.length > 0 ? kept.join("-") : truncateUtf16Safe(value, maximum);
 }
