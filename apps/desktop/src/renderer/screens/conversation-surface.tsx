@@ -573,6 +573,7 @@ export interface ConversationSurfaceProps {
   substreamId: string;
   renderHeader?: (context: ConversationHeaderContext) => React.ReactNode;
   renderSidebar?: (context: ConversationHeaderContext & {
+    focusTranscript: () => void;
     openArtifact: (id: string, returnFocus: HTMLElement) => void;
   }) => React.ReactNode;
 }
@@ -1739,7 +1740,7 @@ export function ConversationSurface({
 
   return (
     <ConnectorConnectionsProvider connections={connections.data}>
-    <div className={clsx('conversation-layout', renderSidebar && 'has-workstream-sidebar')}>
+    <div className="conversation-layout">
       {renderSidebar?.({
         detail: displayedDetail,
         socketState,
@@ -1747,7 +1748,8 @@ export function ConversationSurface({
         openParticipantDialog: () => setParticipantDialogOpen(true),
         openRail,
         rename: (title) => renameWorkstream.mutateAsync(title).then(() => undefined),
-        openArtifact: (resourceId, returnFocus) => citations.openPreview?.(resourceId, returnFocus),
+        openArtifact: citations.openPreview,
+        focusTranscript: () => transcriptRef.current?.focus({ preventScroll: true }),
       })}
     <div className={clsx('workstream-screen', parentKind === 'automation' && 'automation-screen')}>
       {renderHeader?.({

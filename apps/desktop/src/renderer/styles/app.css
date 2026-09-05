@@ -2612,7 +2612,7 @@ pre {
 .resource-picker-list > button > svg { color: var(--av-sys-color-text-muted); flex: 0 0 auto; }
 .resource-upload-button { margin-right: auto; }
 
-/* Work-stream header and transcript */
+/* Work-stream sidebar, header, and transcript */
 
 .conversation-layout { display: flex; height: 100%; min-width: 0; }
 .conversation-layout > .workstream-screen { flex: 1; }
