@@ -57,6 +57,26 @@ pause, resume, delete, run now, the run list) beside the feed rather than
 inside it. Neither host may smuggle those controls through an optional common
 prop.
 
+The work-stream host supplies `WorkstreamSidebar` through the surface's
+`renderSidebar` slot, between global navigation and the feed. It displays the
+current work stream, resources whose direction is `artifact`, then participants
+from the same live detail/presence state as the conversation. Artifact selection
+uses `useCitations.openPreview`, including its existing explicit inspector
+fallback; arrival of an artifact never opens a panel. Participant rows open the
+existing management dialog. This sidebar does not add substream navigation.
+
+Its device-local collapse preference is independent of the global sidebar.
+Expanded width defaults to 280px and is draggable between 240px and 400px;
+the icon rail is 88px, matching the existing Grok navigation. Its trailing-edge
+handle also accepts Left/Right keys. Width is persisted separately from global
+navigation. Dragging below 210px collapses it; expanding requires crossing
+220px, retaining the existing ten-pixel hysteresis. It temporarily collapses
+when its enclosing pane cannot fit the preferred width
+plus the existing 424px conversation reservation. Only that pane is observed,
+so collapse cannot change its own measurement and cause oscillation. All paint
+uses the existing light/dark sidebar, row, text, and focus tokens; selectors are
+scoped to the new component and do not change global navigation rows.
+
 The route host, not the feed, owns identity transitions. A new work stream
 begins with local composer keys; after durable admission its adapter rekeys
 text/files and adopts the server identity without remounting the conversation
@@ -78,6 +98,45 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-04 — Coordinate the two sidebar breakpoints
+
+**What changed:** The shell reserves the compact context rail in addition to
+the conversation minimum on existing work-stream routes. Route-switch tests
+target the current sidebar button rather than the now-repeated title.
+
+**Why:** With a 400px navigation sidebar, an 860px window previously left only
+372px for the transcript after the context rail. Independent breakpoint checks
+were insufficient; the outer shell must account for both rails without changing
+automation or new-work-stream layouts. The citation hook also exposes its
+always-present preview handler in its return type instead of a silent optional call.
+Transcript focus now passes through the surface's own ref-backed callback instead
+of searching the sidebar's parent DOM; a real screen test covers the connection.
+
+**Consequences:** Keep the compact context width in the outer reservation when
+changing rail geometry, and preserve the existing route-switch cleanup assertions.
+
+### 2026-09-04 — The work-stream sidebar supports direct resizing
+
+The sidebar's icon toggle alone did not provide the requested direct width
+control. Its trailing divider now reuses the navigation grip and width/drag
+thresholds, with pointer capture, cancellation cleanup, keyboard resizing, and
+an independent persisted width. Pointer coordinates are relative to this
+sidebar's leading edge, not the window, so dragging never includes the first
+sidebar's width. The enclosing pane remains the measurement authority and the
+424px conversation reservation still bounds expansion.
+
+### 2026-09-04 — Work streams gain a collapsible context sidebar
+
+The layout exploration calls for work-stream identity, generated artifacts,
+and participants to remain available beside the feed, without adopting its
+different visual styling or implementing substreams yet. A host-owned sidebar
+now presents those three sections using the current Grok navigation dimensions
+and paint. Reusing the live detail and citation preview path avoids a second
+resource query and preserves the explicit-open rule. The automation host does
+not opt in, and global navigation keeps its own layout and collapse preference.
+Observing the enclosing pane instead of the resized child prevents a feedback
+loop when space requires icon mode.
 
 ### 2026-09-04 — Elicitation prompts join the conversation design
 

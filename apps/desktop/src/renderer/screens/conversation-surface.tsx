@@ -572,6 +572,10 @@ export interface ConversationSurfaceProps {
   parentId: string;
   substreamId: string;
   renderHeader?: (context: ConversationHeaderContext) => React.ReactNode;
+  renderSidebar?: (context: ConversationHeaderContext & {
+    focusTranscript: () => void;
+    openArtifact: (id: string, returnFocus: HTMLElement) => void;
+  }) => React.ReactNode;
 }
 
 /**
@@ -589,6 +593,7 @@ export function ConversationSurface({
   parentId: id,
   substreamId,
   renderHeader,
+  renderSidebar,
 }: ConversationSurfaceProps): React.JSX.Element {
   const detailQueryKey = useMemo(() => workstreamDetailQueryKey(id, substreamId), [id, substreamId]);
   const transcriptQueryKey = useMemo(() => orderedTranscriptQueryKey(id, substreamId), [id, substreamId]);
@@ -1735,6 +1740,17 @@ export function ConversationSurface({
 
   return (
     <ConnectorConnectionsProvider connections={connections.data}>
+    <div className="conversation-layout">
+      {renderSidebar?.({
+        detail: displayedDetail,
+        socketState,
+        presentUserIds: presenceUserIdsByWorkstream[id] ?? [],
+        openParticipantDialog: () => setParticipantDialogOpen(true),
+        openRail,
+        rename: (title) => renameWorkstream.mutateAsync(title).then(() => undefined),
+        openArtifact: citations.openPreview,
+        focusTranscript: () => transcriptRef.current?.focus({ preventScroll: true }),
+      })}
     <div className={clsx('workstream-screen', parentKind === 'automation' && 'automation-screen')}>
       {renderHeader?.({
         detail: displayedDetail,
@@ -1976,6 +1992,7 @@ export function ConversationSurface({
         search={resourceSearch}
       />
       <AttachmentLightbox onClose={() => setAttachmentPreview(null)} preview={attachmentPreview} />
+    </div>
     </div>
     </ConnectorConnectionsProvider>
   );

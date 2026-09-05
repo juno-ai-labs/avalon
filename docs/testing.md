@@ -172,6 +172,13 @@ parks both `views.open` calls on one barrier until each has arrived, so both
 modals provably exist before either click retires anything; a sleep would have
 asserted the same thing only on a machine that was fast enough.
 
+Loop-storage tests that admit another input while settling a step must read a
+fresh loop fence before the next assistant reservation, just as `SubstreamAgent`
+does. The settlement result is a snapshot, not a live revision: a late admission
+can commit after it. `workstream-transcript-storage.test.ts` exercises both a
+concurrent arrival and an arrival explicitly sequenced after settlement so the
+stale-snapshot failure does not depend on which payload hash finishes first.
+
 ### 4. `vi.mock` on a module
 
 The last resort, and rare on purpose — seventeen of the API suite's 183 files
