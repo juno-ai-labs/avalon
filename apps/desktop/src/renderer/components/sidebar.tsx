@@ -33,9 +33,8 @@ import {
   Trash2,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { NavLink, useLocation, useNavigate } from 'react-router-dom';
+import { NavLink, useLocation } from 'react-router-dom';
 import { workstreamCanonicalUrl } from '@rally/contracts/workstream-links';
-import { WORKSTREAM_SIDEBAR_FACEPILE_LIMIT } from '@rally/contracts';
 import type { CreateProjectRequest, ProjectSummary, WorkstreamBatchFilter, WorkstreamBatchUpdate } from '@rally/contracts';
 import {
   formatDateTime,
@@ -57,7 +56,7 @@ import {
   reportTelemetryProductIntent,
   telemetryVisibility,
 } from '../lib/telemetry';
-import type { AutomationSummary, NoteSummary, Workspace, WorkspaceMember, WorkstreamSummary } from '../lib/types';
+import type { AutomationSummary, NoteSummary, Workspace, WorkstreamSummary } from '../lib/types';
 import {
   COLLAPSED_SIDEBAR_WIDTH,
   MAX_SIDEBAR_WIDTH,
@@ -69,7 +68,7 @@ import {
 } from '../lib/ui-store';
 import { useDebugEnabled } from '../lib/use-debug-enabled';
 import { DeleteAutomationDialog } from './delete-automation-dialog';
-import { Avatar, AvatarStack, Badge, Button, IconButton, InlineError, Modal, StatusDot, TitleSkeleton } from './primitives';
+import { Avatar, Badge, Button, IconButton, InlineError, Modal, StatusDot, TitleSkeleton } from './primitives';
 import { ProjectIcon, ProjectSidebarSection } from './project-sidebar-section';
 import { SidebarSkeletonGroup, SidebarSkeletonRows } from './sidebar-skeleton';
 import { ContextNestedMenu } from './nested-menu';
@@ -81,7 +80,6 @@ interface SidebarProps {
   /** The responsive or manually selected GrokBot icon rail. */
   compact?: boolean;
   workspace: Workspace;
-  members?: WorkspaceMember[];
   automations: AutomationSummary[];
   notes?: NoteSummary[];
   projects?: ProjectSummary[];
@@ -239,8 +237,6 @@ const LOAD_MORE_DISTANCE = 400;
 /** The one element carrying the keyboard-reorder instruction for the section. */
 const PINNED_DRAG_HINT_ID = 'pinned-drag-hint';
 
-/** The number row gives us nine visible shortcuts without borrowing `0`. */
-const COMMAND_SHORTCUT_LIMIT = 9;
 
 /**
  * How long the sidebar will wait for the list to carry a pin before it stops
@@ -494,24 +490,6 @@ interface PinnedRowDrag {
   position: string;
 }
 
-function CommandShortcutHint({
-  shortcut,
-  visible,
-}: {
-  shortcut?: number;
-  visible?: boolean;
-}): React.JSX.Element | null {
-  if (!visible || shortcut === undefined) return null;
-  return (
-    <span aria-hidden="true" className="command-shortcut-scrim">
-      {/* GrokBot renders the platform glyph and slot as one compact run rather
-          than placing a command icon beside the number. */}
-      <Badge className="scope-badge command-shortcut-pill">
-        {`⌘${shortcut}`}
-      </Badge>
-    </span>
-  );
-}
 
 /**
  * The row itself gets deliberately terse when the sidebar becomes an icon
@@ -519,10 +497,8 @@ function CommandShortcutHint({
  * both sidebar forms, so resizing never changes what hovering a person means.
  */
 function WorkstreamHoverPreview({
-  description,
   workstream,
 }: {
-  description: string | undefined;
   workstream: WorkstreamSummary;
 }): React.JSX.Element {
   return (
@@ -532,23 +508,17 @@ function WorkstreamHoverPreview({
           <WorkstreamGlyph id={workstream.id} size={16} />
           <span className="sidebar-workstream-preview-name">{workstream.title}</span>
         </span>
-        <time dateTime={workstream.lastActivityAt}>
+        {workstream.hasUnread && <time dateTime={workstream.lastActivityAt}>
           {formatSidebarActivityTime(workstream.lastActivityAt)}
-        </time>
+        </time>}
       </div>
-      <span className={clsx('sidebar-workstream-preview-copy', !description && 'is-empty')}>
-        {description || 'No messages yet'}
-      </span>
     </div>
   );
 }
 
 function WorkstreamRow({
-  commandShortcut,
-  commandShortcutsVisible,
   debugEnabled,
   drag,
-  members,
   workspace,
   workstream,
   pinPending,
@@ -561,11 +531,8 @@ function WorkstreamRow({
   projects,
   onAddToProject,
 }: {
-  commandShortcut?: number;
-  commandShortcutsVisible?: boolean;
   debugEnabled: boolean;
   drag?: PinnedRowDrag;
-  members: WorkspaceMember[];
   workspace: Pick<Workspace, 'id' | 'region'>;
   workstream: WorkstreamSummary;
   pinPending: boolean;
@@ -627,10 +594,6 @@ function WorkstreamRow({
   const nextWakeupTime = workstream.nextPendingWakeup
     ? formatDateTime(workstream.nextPendingWakeup.dueAt)
     : null;
-  // Both socket paths carry the standing description as `objective`. Keep the
-  // direct value first for compatibility with resident cache rows, but never
-  // let an empty legacy preview hide an otherwise valid description.
-  const description = workstream.preview || workstream.objective;
   // A subsystem's own work stream takes its audience from the subsystem, so
   // offering the toggle on it would describe a change that does not happen.
   // The API refuses it; the menu simply does not raise the question.
@@ -715,7 +678,6 @@ function WorkstreamRow({
                 <NavLink
             aria-describedby={previewOpen ? `workstream-preview-${workstream.id}` : undefined}
             aria-label={[naming ? 'Rally is naming this work stream' : workstream.title, drag?.position].filter(Boolean).join(', ')}
-            aria-keyshortcuts={commandShortcut === undefined ? undefined : `Meta+${commandShortcut}`}
             className={({ isActive }) => clsx(
               'sidebar-row workstream-row',
               isActive && 'is-active',
@@ -763,15 +725,8 @@ function WorkstreamRow({
                   {workstream.systemKind && <Cog aria-label="System work stream" size={11} />}
                   {naming ? <TitleSkeleton /> : workstream.title}
                 </span>
-                <time aria-hidden="true" dateTime={workstream.lastActivityAt}>{formatSidebarActivityTime(workstream.lastActivityAt)}</time>
               </span>
-              {description && (
-                <span className="sidebar-row-hint">
-                  <span className="sidebar-row-hint-text">
-                    {description}
-                  </span>
-                </span>
-              )}
+              {workstream.hasUnread && <time className="sidebar-row-activity" dateTime={workstream.lastActivityAt}>{formatSidebarActivityTime(workstream.lastActivityAt)}</time>}
             </span>
             {/* The manual order is the whole point of the section, and a
                 pointer-only affordance leaves it unreadable to anyone not
@@ -804,15 +759,7 @@ function WorkstreamRow({
                 </Tooltip.Portal>
               </Tooltip.Root>
             )}
-            <span className="workstream-row-people">
-              <SidebarWorkstreamFacepile
-                extraCount={workstream.participantExtraCount}
-                memberIds={workstream.participantUserIds}
-                roster={members}
-              />
-              {workstream.scope === 'workspace' && <PublicMarker />}
-            </span>
-            <CommandShortcutHint shortcut={commandShortcut} visible={commandShortcutsVisible} />
+            {workstream.scope === 'workspace' && <PublicMarker />}
                 </NavLink>
               </div>
             </Tooltip.Trigger>
@@ -825,7 +772,7 @@ function WorkstreamRow({
                 side="right"
                 sideOffset={8}
               >
-                <WorkstreamHoverPreview description={description} workstream={workstream} />
+                <WorkstreamHoverPreview workstream={workstream} />
               </Tooltip.Content>
             </Tooltip.Portal>
           </Tooltip.Root>
@@ -932,43 +879,8 @@ function PublicMarker(): React.JSX.Element {
   );
 }
 
-function resolveSidebarFacepileMembers(
-  userIds: readonly string[],
-  members: readonly WorkspaceMember[],
-): WorkspaceMember[] {
-  const byId = new Map(members.map((member) => [member.id, member]));
-  return userIds.flatMap((id) => {
-    const member = byId.get(id);
-    return member ? [member] : [];
-  });
-}
-
-function SidebarWorkstreamFacepile({
-  extraCount,
-  memberIds,
-  roster,
-}: {
-  extraCount: number;
-  memberIds: readonly string[];
-  roster: readonly WorkspaceMember[];
-}): React.JSX.Element | null {
-  const members = resolveSidebarFacepileMembers(memberIds, roster);
-  if (members.length === 0) return null;
-  return (
-    <span aria-hidden="true" className="sidebar-workstream-facepile">
-      <AvatarStack
-        extraCount={extraCount + (memberIds.length - members.length)}
-        layout="grok-cluster"
-        limit={WORKSTREAM_SIDEBAR_FACEPILE_LIMIT}
-        members={members}
-      />
-    </span>
-  );
-}
 
 function NoteRow({
-  commandShortcut,
-  commandShortcutsVisible,
   debugEnabled,
   note,
   ownedByViewer,
@@ -976,8 +888,6 @@ function NoteRow({
   onArchive,
   onChangeScope,
 }: {
-  commandShortcut?: number;
-  commandShortcutsVisible?: boolean;
   debugEnabled: boolean;
   note: NoteSummary;
   ownedByViewer: boolean;
@@ -991,7 +901,6 @@ function NoteRow({
       <ContextMenu.Trigger asChild>
         <div className="sidebar-context-target">
           <NavLink
-            aria-keyshortcuts={commandShortcut === undefined ? undefined : `Meta+${commandShortcut}`}
             className={({ isActive }) => clsx('sidebar-row note-row', isActive && 'is-active')}
             onClick={() => markSurfaceEntrypoint('sidebar_note')}
             to={`/notes/${note.id}`}
@@ -1005,7 +914,6 @@ function NoteRow({
               <span className="sidebar-row-title">{note.title}</span>
             </span>
             {note.scope === 'personal' && <PrivacyMarker label="Private note" />}
-            <CommandShortcutHint shortcut={commandShortcut} visible={commandShortcutsVisible} />
           </NavLink>
         </div>
       </ContextMenu.Trigger>
@@ -1085,7 +993,6 @@ export function Sidebar({
   conversationOnly = false,
   compact = false,
   workspace,
-  members = [],
   automations,
   notes = [],
   projects = [],
@@ -1124,7 +1031,6 @@ export function Sidebar({
   const debugEnabled = useDebugEnabled();
   const [searchQuery, setSearchQuery] = useState('');
   const location = useLocation();
-  const navigate = useNavigate();
   const sidebarOpen = useUiStore((state) => state.sidebarOpen);
   const sidebarCollapsed = useUiStore((state) => state.sidebarCollapsed);
   const sidebarWidth = useUiStore((state) => state.sidebarWidth);
@@ -1137,11 +1043,6 @@ export function Sidebar({
     const { webBaseUrl } = await bridge.getRuntimeConfig();
     await bridge.openExternal(new URL(path, `${webBaseUrl.replace(/\/$/u, '')}/`).toString());
   }, []);
-  const roster = useMemo(() => {
-    const byId = new Map(members.map((member) => [member.id, member]));
-    byId.set(workspace.currentUser.id, workspace.currentUser);
-    return [...byId.values()];
-  }, [members, workspace.currentUser]);
   const [resizing, setResizing] = useState(false);
   // The handle stands in the strip beside the sidebar rather than on its edge,
   // so the pointer's own position is not the sidebar's width. Holding the
@@ -1160,8 +1061,6 @@ export function Sidebar({
   const [scopePendingNoteId, setScopePendingNoteId] = useState<string | null>(null);
   const [scopePendingWorkstreamId, setScopePendingWorkstreamId] = useState<string | null>(null);
   const [pinPendingWorkstreamId, setPinPendingWorkstreamId] = useState<string | null>(null);
-  const [commandShortcutsVisible, setCommandShortcutsVisible] = useState(false);
-  const commandHeld = useRef(false);
   // The work stream a pin or unpin has just moved, and which side of the
   // sidebar it was moved to, held until the list re-renders carrying that
   // change. Cleared the moment it is honoured, so a later render for any other
@@ -1294,99 +1193,6 @@ export function Sidebar({
       })),
     ], groupedAt);
   }, [groupedAtMs, unpinnedWorkstreams, visibleNotes]);
-
-  // The visible destination order is one run: the reader's manually arranged
-  // pins first, then recent work streams and notes in exactly the order the
-  // recency groups render below. Automations and primary actions are outside
-  // this run, so changing either section cannot shift a familiar destination.
-  const recentItems = useMemo(() => groups.flatMap((group) => group.streams), [groups]);
-  const commandShortcutTargets = useMemo(() => [
-    ...pinnedWorkstreams.map((workstream) => ({
-      id: `workstream:${workstream.id}`,
-      path: `/workstreams/${workstream.id}`,
-      destinationType: 'pinned_workstream' as const,
-    })),
-    ...recentItems.map((item) => ({
-      id: item.id,
-      path: item.type === 'note'
-        ? `/notes/${item.note.id}`
-        : `/workstreams/${item.workstream.id}`,
-      destinationType: item.type === 'note' ? 'recent_note' as const : 'recent_workstream' as const,
-    })),
-  ].slice(0, COMMAND_SHORTCUT_LIMIT), [pinnedWorkstreams, recentItems]);
-  const commandShortcutById = useMemo(
-    () => new Map(commandShortcutTargets.map((target, index) => [target.id, index + 1])),
-    [commandShortcutTargets],
-  );
-
-  // Command is both the reveal and the modifier: its keydown paints the first
-  // nine hints, and a number pressed before it is released opens that row in
-  // the pinned-then-recent run. Window blur clears the reveal because
-  // Command+Tab takes focus away before this window can observe Command being
-  // released.
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Meta') {
-        setCommandShortcutsVisible(true);
-        if (!commandHeld.current) {
-          commandHeld.current = true;
-          reportTelemetryProductIntent({
-            kind: 'command_shortcuts_revealed',
-            availableCount: commandShortcutTargets.length,
-          });
-        }
-        return;
-      }
-      const digit = /^Digit([1-9])$/u.exec(event.code)?.[1];
-      // `code` follows the physical number row even on layouts where `key`
-      // is a symbol, which is the row the visible 1–9 mapping describes.
-      // A held digit repeats keydown, and reopening the same route on every
-      // repeat would strand Back behind duplicate history entries. A modal is
-      // likewise a boundary: its focused controls must not navigate the page
-      // underneath it.
-      if (
-        !event.metaKey
-        || event.repeat
-        || digit === undefined
-        || document.querySelector('[role="dialog"]')
-      ) return;
-      const target = commandShortcutTargets[Number(digit) - 1];
-      if (!target) return;
-      event.preventDefault();
-      reportTelemetryProductIntent({
-        kind: 'command_shortcut_used',
-        shortcutNumber: Number(digit),
-        destinationType: target.destinationType,
-      });
-      markSurfaceEntrypoint('command_shortcut');
-      if (target.destinationType === 'pinned_workstream' || target.destinationType === 'recent_workstream') {
-        markWorkstreamNavigation(
-          target.id.slice('workstream:'.length),
-          /^\/workstreams\/[^/]+$/u.test(location.pathname) && location.pathname !== target.path,
-        );
-      }
-      navigate(target.path);
-      setSidebarOpen(false);
-    };
-    const onKeyUp = (event: KeyboardEvent): void => {
-      if (event.key === 'Meta') {
-        commandHeld.current = false;
-        setCommandShortcutsVisible(false);
-      }
-    };
-    const hide = (): void => {
-      commandHeld.current = false;
-      setCommandShortcutsVisible(false);
-    };
-    window.addEventListener('keydown', onKeyDown);
-    window.addEventListener('keyup', onKeyUp);
-    window.addEventListener('blur', hide);
-    return () => {
-      window.removeEventListener('keydown', onKeyDown);
-      window.removeEventListener('keyup', onKeyUp);
-      window.removeEventListener('blur', hide);
-    };
-  }, [commandShortcutTargets, location.pathname, navigate, setSidebarOpen]);
 
   const openRename = (workstream: WorkstreamSummary): void => {
     setRenameTarget(workstream);
@@ -1696,7 +1502,6 @@ export function Sidebar({
   const renderWorkstream = (workstream: WorkstreamSummary): React.JSX.Element => (
     <WorkstreamRow
       debugEnabled={debugEnabled}
-      members={roster}
       workspace={workspace}
       onArchive={setArchiveWorkstreamTarget}
       onChangeScope={(target, scope) => void changeWorkstreamScope(target, scope)}
@@ -2009,8 +1814,6 @@ export function Sidebar({
               <div className="sidebar-list">
                 {pinnedWorkstreams.map((pinned, index) => (
                   <WorkstreamRow
-                    commandShortcut={commandShortcutById.get(`workstream:${pinned.id}`)}
-                    commandShortcutsVisible={commandShortcutsVisible}
                     debugEnabled={debugEnabled}
                     drag={pinnedRowDrag(pinned, index)}
                     key={pinned.id}
@@ -2022,7 +1825,6 @@ export function Sidebar({
                     onTogglePin={(target, pin) => void togglePin(target, pin)}
                     pinPending={pinPendingWorkstreamId === pinned.id}
                     projects={projects}
-                    members={roster}
                     workspace={workspace}
                     scopePending={scopePendingWorkstreamId === pinned.id}
                     workstream={pinned}
@@ -2109,8 +1911,6 @@ export function Sidebar({
                   <div className="sidebar-list">
                     {group.streams.map((item) => item.type === 'note' ? (
                       <NoteRow
-                        commandShortcut={commandShortcutById.get(item.id)}
-                        commandShortcutsVisible={commandShortcutsVisible}
                         debugEnabled={debugEnabled}
                         key={item.id}
                         note={item.note}
@@ -2121,8 +1921,6 @@ export function Sidebar({
                       />
                     ) : (
                       <WorkstreamRow
-                        commandShortcut={commandShortcutById.get(item.id)}
-                        commandShortcutsVisible={commandShortcutsVisible}
                         debugEnabled={debugEnabled}
                         key={item.id}
                         onArchive={setArchiveWorkstreamTarget}
@@ -2133,7 +1931,6 @@ export function Sidebar({
                         onTogglePin={(target, pin) => void togglePin(target, pin)}
                         pinPending={pinPendingWorkstreamId === item.workstream.id}
                         projects={projects}
-                        members={roster}
                         workspace={workspace}
                         scopePending={scopePendingWorkstreamId === item.workstream.id}
                         workstream={item.workstream}

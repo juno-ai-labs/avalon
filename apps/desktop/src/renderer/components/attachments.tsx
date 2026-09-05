@@ -11,6 +11,8 @@ export interface AttachmentPreview {
   src?: string;
   loadContent?: (signal?: AbortSignal) => Promise<Blob>;
   returnFocus?: HTMLElement;
+  /** Resource management remains available without reopening the shell rail. */
+  onDetails?: () => void;
   gallery?: AttachmentPreview[];
   galleryIndex?: number;
   /**

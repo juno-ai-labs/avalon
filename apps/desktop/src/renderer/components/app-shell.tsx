@@ -17,6 +17,7 @@ import {
   COLLAPSED_SIDEBAR_WIDTH,
   SIDEBAR_CONTENT_MIN_WIDTH,
   useUiStore,
+  RIGHT_SIDEBAR_ENABLED,
 } from '../lib/ui-store';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { useProjectDirectories } from '../lib/use-project-directories';
@@ -29,7 +30,7 @@ import {
   invalidateCachedWorkstreamDetails,
   setCachedWorkstreams,
 } from '../lib/workstreams-cache';
-import type { AutomationSummary, NoteDetail, NoteSummary, Workspace, WorkspaceMember, WorkstreamDetail, WorkstreamSummary } from '../lib/types';
+import type { AutomationSummary, NoteDetail, NoteSummary, Workspace, WorkstreamDetail, WorkstreamSummary } from '../lib/types';
 import { Sidebar } from './sidebar';
 import { WorkspaceAccountMenu } from './workspace-account-menu';
 
@@ -264,8 +265,8 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   };
 
   // The main pane keeps room for an inspector that is still fading out.
-  const showShellRail = (railOpen || railLeaving) && !location.pathname.startsWith('/notes/');
-  const expandForShellRail = railOpen && !location.pathname.startsWith('/notes/');
+  const showShellRail = RIGHT_SIDEBAR_ENABLED && (railOpen || railLeaving) && !location.pathname.startsWith('/notes/');
+  const expandForShellRail = RIGHT_SIDEBAR_ENABLED && railOpen && !location.pathname.startsWith('/notes/');
   useEffect(() => {
     void desktopBridge().setConversationDetailsOpen({
       // A leaving rail remains laid out for its short cross-fade, but no longer
@@ -283,12 +284,6 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   // it changes a row. This query exists for what a person asks for afterwards:
   // scrolling past page one, or widening the list with Debug enabled.
   const workstreams = useWorkstreamsQuery();
-  const members = useQuery<WorkspaceMember[]>({
-    queryKey: ['workspace-members'],
-    queryFn: ({ signal }) => api!.getWorkspaceMembers(signal),
-    enabled: Boolean(api),
-    staleTime: Number.POSITIVE_INFINITY,
-  });
   const automations = useSocketOwnedList<AutomationSummary>(['automations']);
   // One counter across all three pin mutations, because they all rewrite the
   // same list and a response can only be judged stale against the others.
@@ -455,6 +450,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   // rather than resizing to a width nothing is about to show.
   const shellStyle = {
     '--rail-width': `${railWidth}px`,
+    '--conversation-min-width': `${SIDEBAR_CONTENT_MIN_WIDTH}px`,
     '--av-cmp-sidebar-width': `${effectiveSidebarWidth}px`,
   } as CSSProperties;
 
@@ -553,7 +549,6 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         automations={automations.data ?? []}
         compact={sidebarCompact}
         conversationOnly
-        members={members.data ?? []}
         // Not `isLoading`: the first page is not fetched, so there is no
         // in-flight request to report. The sidebar is waiting exactly while it
         // has no list yet — which also keeps the skeletons up rather than

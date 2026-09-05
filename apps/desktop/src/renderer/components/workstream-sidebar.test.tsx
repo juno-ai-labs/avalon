@@ -50,6 +50,7 @@ describe('WorkstreamSidebar', () => {
     expect(screen.queryByText('Source ticket')).not.toBeInTheDocument();
     expect(screen.queryByText('Substreams')).not.toBeInTheDocument();
     expect(screen.getByText('document · v2')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Go to conversation: Launch preparation' }).querySelector('svg, img')).toBeNull();
   });
 
   it('opens artifacts only on click with the clicked button as the preview focus return target', () => {
@@ -72,6 +73,7 @@ describe('WorkstreamSidebar', () => {
     const view = setup();
     fireEvent.click(screen.getByRole('button', { name: 'Collapse work-stream sidebar' }));
     expect(screen.getByRole('complementary')).toHaveClass('is-compact');
+    expect(screen.queryByRole('button', { name: 'Go to conversation: Launch preparation' })).not.toBeInTheDocument();
     expect(localStorage.getItem('rally.sidebar-collapsed')).toBeNull();
     view.unmount();
     setup();

@@ -1,5 +1,8 @@
 import { create } from 'zustand';
 
+/** Retained for the artifact-lightbox detail migration, not a live shell surface. */
+export const RIGHT_SIDEBAR_ENABLED = false;
+
 export type RailVariant = 'context';
 /** The panel occupying the right sidebar slot. */
 export interface RailInspector {
@@ -34,9 +37,8 @@ interface UiState {
   setRailScope: (scope: string | null) => void;
 }
 
-export const MIN_RAIL_WIDTH = 320;
-export const MAX_RAIL_WIDTH = 560;
-export const DEFAULT_RAIL_WIDTH = 360;
+export const MIN_RAIL_WIDTH = 280;
+export const DEFAULT_RAIL_WIDTH = 320;
 /** GrokBot's compact rail and expanded-sidebar geometry. */
 export const COLLAPSED_SIDEBAR_WIDTH = 88;
 export const MIN_SIDEBAR_WIDTH = 240;
@@ -56,7 +58,9 @@ function clampSidebarWidth(width: number): number {
 }
 
 function clampRailWidth(width: number): number {
-  return Math.max(MIN_RAIL_WIDTH, Math.min(MAX_RAIL_WIDTH, width));
+  // Grok preserves the preferred width; the host caps its visible width to
+  // the space left after navigation and the conversation minimum.
+  return Number.isFinite(width) ? Math.max(MIN_RAIL_WIDTH, width) : DEFAULT_RAIL_WIDTH;
 }
 
 function railWidthKey(prefix: string, scope: string | null): string {
