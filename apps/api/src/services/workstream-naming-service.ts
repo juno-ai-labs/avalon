@@ -412,15 +412,27 @@ function trimTrailing(value: string): string {
  */
 function truncateToWholeWords(value: string, maximum: number): string {
   if (value.length <= maximum) return value;
+  const words = value.split(" ");
   const kept: string[] = [];
   let length = 0;
-  for (const word of value.split(" ")) {
+  for (const word of words) {
     const next = length === 0 ? word.length : length + 1 + word.length;
     if (next > maximum) break;
     kept.push(word);
     length = next;
   }
-  return kept.length > 0 ? kept.join(" ") : truncateUtf16Safe(value, maximum);
+  // Two ways there is no whole-word cut worth taking, and both end in the
+  // mid-word one. The first word may not fit at all. Or it may fit and the
+  // second may not, which leaves the name as its own opening word — `Fix`,
+  // `Debug`, `Rename` — which is the framing word the prompt tells the model to
+  // drop, and which every work stream whose second word is long is then called.
+  // One long token does it: a URL, an address, a compound identifier. Cutting
+  // mid-word keeps the characters that tell two such names apart, and an ugly
+  // name that is distinct beats a tidy one that is not.
+  if (kept.length === 0 || (kept.length === 1 && words.length > 1)) {
+    return truncateUtf16Safe(value, maximum);
+  }
+  return kept.join(" ");
 }
 
 /**
@@ -433,7 +445,10 @@ function truncateToWholeWords(value: string, maximum: number): string {
  */
 function sentenceCased(value: string): string {
   const firstWord = value.split(" ", 1)[0] ?? "";
-  if (!/^\p{Ll}+$/u.test(firstWord)) return value;
+  // An apostrophe inside the first word does not make it a spelling to leave
+  // alone: `danny's invoice` opens mid-sentence exactly as `danny invoice`
+  // does. A capital anywhere in it still does.
+  if (!/^\p{Ll}+(?:['’]\p{Ll}+)*$/u.test(firstWord)) return value;
   // By code point rather than by code unit. The test above accepts a letter
   // outside the Basic Multilingual Plane — `\p{Ll}` under `u` does — and
   // `slice(0, 1)` on one of those is half a surrogate pair, which uppercases to

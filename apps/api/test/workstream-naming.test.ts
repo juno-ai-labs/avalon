@@ -176,6 +176,30 @@ describe("work-stream naming", () => {
     }]);
   });
 
+  it("leaves the provisional title standing when the answer is past the parse ceiling", async () => {
+    const database = seededDatabase();
+    const published: Array<Record<string, unknown>> = [];
+    // Past `WORKSTREAM_NAME_RESULT_MAX_LENGTH`, which is a model that answered
+    // the request instead of naming it. That fails the parse rather than being
+    // trimmed, and the work stream keeps the title it had — the reason the
+    // ceiling sits far above the target rather than tracking it.
+    stubOpenRouter([], "x".repeat(81));
+    const env = environment(database, published);
+
+    await nameWorkstream(env, {
+      workspaceId,
+      workstreamId,
+      objective,
+      openingMessage: objective,
+      provisionalTitle,
+    });
+
+    expect(workstreamRow(database)).toMatchObject({
+      title: provisionalTitle,
+      title_status: "automatic",
+    });
+  });
+
   it("never names a work stream without an OpenRouter key", async () => {
     const database = seededDatabase();
     const fetcher = vi.fn();
@@ -452,6 +476,9 @@ describe("work-stream naming", () => {
     expect(normalizeGeneratedTitle("\u{10428}eseret opening")).toBe("\u{10400}eseret opening");
     expect(normalizeGeneratedTitle("iPhone build fails")).toBe("iPhone build fails");
     expect(normalizeGeneratedTitle("founder@example.com")).toBe("founder@example.com");
+    // An apostrophe inside the opening word does not make it a spelling to
+    // leave alone the way a capital does.
+    expect(normalizeGeneratedTitle("danny's invoice")).toBe("Danny's invoice");
     // Thirty characters is short enough that the cut is ordinary rather than
     // rare, so where it lands matters: the last whole word that fits, and not
     // the comma a cut between two listed things leaves behind.
@@ -459,6 +486,17 @@ describe("work-stream naming", () => {
       .toBe("Rust, OCaml, C++ comparison");
     expect(normalizeGeneratedTitle("Pumpkin pie, Slack, Gmail, Drive"))
       .toBe("Pumpkin pie, Slack, Gmail");
+    // A cut that would leave only the opening word takes the mid-word cut
+    // instead. `Fix` is the framing word the prompt tells the model to drop,
+    // and every name whose second token is long would be called it.
+    expect(normalizeGeneratedTitle("Fix supercalifragilisticexpialidocious build"))
+      .toBe("Fix supercalifragilisticexpial");
+    expect(normalizeGeneratedTitle("Debug https://rally.example.com/onboarding page"))
+      .toBe("Debug https://rally.example.co");
+    // The boundary itself: the last word that fits ends exactly on the cap, and
+    // the one after it is dropped rather than the one before.
+    expect(normalizeGeneratedTitle("Slack and Gmail pumpkin search extra"))
+      .toBe("Slack and Gmail pumpkin search");
     // A single word past the cap has no boundary to cut at, and a cut inside a
     // surrogate pair would leave a half that renders as a replacement
     // character in the sidebar.
