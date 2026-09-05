@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { useState } from 'react';
+import { coreSettingsProvider } from '../settings/registry';
 import type { PendingConnectorOAuth } from '../lib/app-session';
 import type { DesktopApplicationSettings } from '../../common/desktop';
 import { ApiError } from '../lib/api';
@@ -344,6 +345,62 @@ describe('Workspace settings', () => {
       supported: true,
     }));
     resetApplicationIcon.mockResolvedValue({ activeIcon: 'dark', isAutomatic: true, supported: true });
+  });
+
+  it('indexes provider actions only for their available scopes and preserves IME Escape', async () => {
+    renderSettings();
+    await screen.findByRole('navigation', { name: 'Settings sections' });
+    const search = screen.getByRole('searchbox', { name: 'Search settings' });
+    fireEvent.change(search, { target: { value: 'Connect workspace' } });
+    expect(document.querySelector('[data-setting-result="provider:google-mail-calendar"]')).toBeNull();
+    fireEvent.change(search, { target: { value: 'Connect for me' } });
+    expect(document.querySelector('[data-setting-result="provider:x"]')).toBeNull();
+    fireEvent.keyDown(search, { key: 'Escape', isComposing: true });
+    expect(search).toHaveValue('Connect for me');
+    fireEvent.keyDown(search, { key: 'Escape' });
+    expect(search).toHaveValue('');
+  });
+
+  it.each(coreSettingsProvider.entries)('reveals registered setting $key without executing it', async ({ definition }) => {
+    api.getConnections.mockResolvedValue([
+      { id: 'github-one', connectorType: 'github', scope: 'workspace', displayName: 'GitHub One',
+        capabilities: [], status: 'healthy', settingsKind: 'github_repository_access' },
+      { id: 'mcp-one', connectorType: 'custom_mcp', scope: 'workspace', displayName: 'MCP One',
+        capabilities: [], status: 'healthy', settingsKind: 'custom_mcp_tools' },
+    ]);
+    api.getCustomMcpSettings.mockResolvedValue({
+      connectionId: 'mcp-one', connectionName: 'MCP One', scope: 'workspace',
+      serverUrl: 'https://mcp.example.test', authMode: 'oauth', toolPolicy: 'all_tools',
+      toolPolicyEditable: true, tools: [], toolsUnavailable: null,
+    });
+    api.getDigestSchedule.mockResolvedValue({
+      id: 'digest', enabled: true, days: [1], times: [540], timezone: 'Europe/London',
+      deliveryTargets: [{ type: 'email', connectionId: null, displayName: 'Adam', status: 'active', lastDeliveredAt: null }],
+      nextRunAt: null, lastDeliveredAt: null,
+    });
+    renderSettings();
+    // Wait for the shared availability and connection metadata, not for the destination pane.
+    await screen.findByRole('button', { name: 'GitHub' });
+    const search = screen.getByRole('searchbox', { name: 'Search settings' });
+    fireEvent.change(search, { target: { value: definition.label } });
+    const results = screen.getByRole('navigation', { name: 'Settings search results' });
+    const result = within(results).getAllByRole('button').find((button) =>
+      button.dataset.settingResult === definition.id
+        || button.dataset.settingResult?.startsWith(definition.id + ':'));
+    expect(result, definition.id).toBeDefined();
+    fireEvent.click(result!);
+    if (definition.id === 'inviteSend' || definition.id === 'digestSave') {
+      await waitFor(() => expect(document.querySelector(`[data-setting-id="${definition.id}"]`)).toHaveClass('settings-search-highlight'));
+      expect(document.activeElement?.closest('button[type="submit"]')).toBeNull();
+    } else {
+      await waitFor(() => expect(document.activeElement).toHaveAttribute('data-setting-id', definition.entryPoint ?? definition.id));
+    }
+    expect(signOut).not.toHaveBeenCalled();
+    expect(leaveWorkspace).not.toHaveBeenCalled();
+    expect(api.createWorkspaceInvitation).not.toHaveBeenCalled();
+    expect(api.startProviderConnection).not.toHaveBeenCalled();
+    expect(api.applyTerminalNetworkPolicy).not.toHaveBeenCalled();
+    expect(api.rotateWebhookSecret).not.toHaveBeenCalled();
   });
 
   it('previews and confirms full Terminal internet access before applying it', async () => {
@@ -1674,30 +1731,17 @@ describe('Workspace settings', () => {
     await waitFor(() => expect(leaveWorkspace).toHaveBeenCalledWith(workspace.id, 'abandoned'));
   });
 
-  it('uses searchable section navigation and keeps one active settings pane', async () => {
+  it('searches individual settings without switching panes until a result is selected', async () => {
     renderSettings();
-
-    const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
-    expect(within(navigation).queryByRole('button', { name: 'General' })).not.toBeInTheDocument();
-    expect(within(navigation).getByRole('button', { name: 'Account' })).toHaveAttribute('aria-current', 'page');
-    expect(screen.getByRole('heading', { level: 1, name: 'Account' })).toBeVisible();
-
-    expect(screen.getByText('adam@example.com')).toBeVisible();
-
     const search = screen.getByRole('searchbox', { name: 'Search settings' });
     fireEvent.change(search, { target: { value: 'region' } });
-    expect(within(navigation).getByRole('button', { name: 'Workspace' })).toBeVisible();
-    expect(within(navigation).queryByRole('button', { name: 'Account' })).not.toBeInTheDocument();
-    await waitFor(() => expect(screen.getByRole('heading', { level: 1, name: 'Workspace' })).toBeVisible());
-    expect(screen.getByText('Data region')).toBeVisible();
-
-    fireEvent.change(search, { target: { value: 'connector' } });
-    expect(within(navigation).getByRole('button', { name: 'Connections' })).toBeVisible();
-    expect(within(navigation).queryByRole('button', { name: 'Account' })).not.toBeInTheDocument();
-    await waitFor(() => expect(screen.getByRole('heading', { level: 1, name: 'Connections' })).toBeVisible());
-
+    expect(screen.getByRole('heading', { level: 1, name: 'Account' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Data region Workspace' }));
+    await waitFor(() => expect(document.activeElement).toHaveAttribute('data-setting-id', 'workspaceRegion'));
+    expect(screen.getByRole('heading', { level: 1, name: 'Workspace' })).toBeVisible();
     fireEvent.change(search, { target: { value: 'does not exist' } });
     expect(screen.getByText('No settings found')).toBeVisible();
+    expect(screen.getByRole('heading', { level: 1, name: 'Workspace' })).toBeVisible();
   });
 
   it('selects a macOS app icon with an immediate jump state', async () => {
@@ -1869,7 +1913,7 @@ describe('Workspace settings', () => {
     fireEvent.change(screen.getByRole('searchbox', { name: 'Search settings' }), {
       target: { value: 'crash' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Application' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Product analytics Application' }));
     expect(await screen.findByRole('heading', { name: 'Privacy & diagnostics' })).toBeVisible();
   });
 
@@ -2037,7 +2081,6 @@ describe('Workspace settings', () => {
     });
     renderSettings();
     await screen.findByRole('navigation', { name: 'Settings sections' });
-    const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
     const search = screen.getByRole('searchbox', { name: 'Search settings' });
 
     fireEvent.change(search, { target: { value: 'debug' } });
@@ -2054,7 +2097,7 @@ describe('Workspace settings', () => {
         });
       }
     });
-    expect(within(navigation).getByRole('button', { name: 'Application' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Debug enabled Application' })).toBeVisible();
   });
 
   it('offers no Developer section when the service has not enabled the flag', async () => {
