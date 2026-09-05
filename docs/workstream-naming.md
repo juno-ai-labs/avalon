@@ -67,20 +67,30 @@ finished, and its promise is the one that has to be kept.
 
 ### The shape of a generated name
 
-A generated name is written the way a Slack channel is: lowercase words joined
-by single hyphens, forty characters or less. The prompt asks for that shape and
-`normalizeGeneratedTitle` guarantees it — it lowercases the answer, turns
-everything a channel name cannot hold into the separator (the spaces between
-words, but also the quotes or `#` a model wraps an answer in, and the `@` and
-dots inside an address), and cuts a name that still runs long back to its last
-whole word. Repairing the answer here rather than adding prohibitions to the
-prompt keeps the rules a small model has to follow short, and makes the shape
-something the sidebar can rely on rather than something the model got right.
+Two or three words in sentence case, twenty characters or less. The prompt asks
+for it and `normalizeGeneratedTitle` repairs what comes back: a quoted phrase, a
+Markdown heading, TeX, a trailing full stop, an answer that starts mid-sentence.
 
-Two titles are deliberately *not* in that shape, because neither was generated:
-the provisional title, which is the person's own first line and reads as prose,
-and a title a person typed, which is theirs. So a sidebar holds both kinds, and
-nothing downstream may assume a title is hyphenated.
+**Twenty is short enough that the cut is part of the design rather than a
+backstop.** Replaying 89 named work streams through the prompt, the model
+answered past twenty in 37 of them, so two names in five are the last whole word
+that fit rather than the name the model wrote. That is why the cut lands on a
+word boundary and takes any comma it exposes with it, and it is also the cost of
+the length: a name cut at a preposition reads as unfinished — *Podcast from*,
+*Essay on rust and* — and work streams that differ only past the cut collide.
+Six of the QA work streams in that replay all came back *PRODUCTION HARNESS*.
+The number is the team's; what the code owes it is to cut in the least bad place.
+
+Asking for the character count is also what the prompt is worst at. "Count the
+characters before you answer" cut the overshoot from 56 in 89 to 37, and naming
+the failure exactly — *never capitalize every word* — is what stopped the model
+title-casing at this length, which "capitalized as a sentence" alone did not.
+Both are in the prompt because a model that writes a name to fit beats a cut.
+
+Two titles are deliberately longer, because neither was generated: the
+provisional title, which is the person's own first line, and a title a person
+typed. So a sidebar holds both kinds, and nothing downstream may assume a title
+is short.
 
 ### Advancing the title is a compare-and-set
 
@@ -196,9 +206,10 @@ ordinary work-stream update and belongs to the object's product service.
   the grace, which is exactly what a fresh read would have said. The generated
   name arrives at the next event that touches the row, or the next reconnect that
   finds the row's version advanced.
-- **Limits.** A generated title is capped at 40 characters, cut back to the last
-  whole word — `title` holds 180, but a generated name is a channel-style label
-  rather than a sentence, and the tail of a word cut mid-way reads as a typo. The
+- **Limits.** A generated title is capped at 20 characters, cut back to the last
+  whole word — `title` holds 180, but a generated name is a label rather than a
+  sentence, and the tail of a word cut mid-way reads as a typo. At this length
+  the cut is ordinary rather than rare: it fires on about two names in five. The
   provisional title is capped at the column's 180. The second pass reads at most
   12 messages of 600 characters and runs at most once. The grace is 60 seconds.
 
@@ -226,6 +237,38 @@ ordinary work-stream update and belongs to the object's product service.
   file's hard-coded date asserts nothing.
 
 ## Changelog
+
+### 2026-09-05 — Sentence case, two or three words, twenty characters
+
+**What changed:** The channel styling is gone. A generated name is two or three
+words in sentence case, twenty characters or less; `normalizeGeneratedTitle` is
+back to repairing an answer rather than reshaping it — no lowercasing, no
+hyphenating, and the apostrophe rule the hyphenating needed is gone with it. It
+keeps the whole-word cut, which now also strips a comma the cut exposes, and
+`sentenceCased` is back.
+
+**Why:** The team's call after reading the replay of 89 named work streams, at
+both lengths and in both shapes. Two things the replay decided rather than the
+prompt author: the model title-cases at this length unless told *never
+capitalize every word* in as many words — "capitalized as a sentence" alone
+produced *Logo For Oslo Coffee* — and it answers past twenty characters unless
+told to count them, which took the overshoot from 56 in 89 to 37.
+
+**Considered and rejected:** Enforcing sentence case in the normalizer, by
+lowercasing every word after the first. It cannot tell a proper noun from an
+ordinary one, so it would spell *Rally*, *Slack*, *IBM* and *INV-2291* wrong;
+casing has to come from the prompt, and the normalizer only capitalizes a first
+word that is already all lowercase. Also considered and not built: asking the
+model again when its answer is too long, rather than cutting. It would fix the
+fragments the cut leaves on two names in five, at a second model call on those,
+and a rewrite is not obviously better than a truncation while nobody has looked
+at the two side by side.
+
+**Consequences:** At twenty characters a name has room for the distinguishing
+detail and almost nothing else, and the section above records what that costs:
+fragments ending on a preposition, and work streams that differ only past the
+cut sharing a name. Changing the length is one constant in the naming service
+and two sentences in the prompt, and they have to move together.
 
 ### 2026-09-05 — An apostrophe is elided rather than separating a word
 
