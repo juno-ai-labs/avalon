@@ -3028,14 +3028,28 @@ export const AddressingClassificationSchema = z.object({
 export const WORKSTREAM_NAMING_GRACE_MS = 60_000;
 
 /**
- * One generated work-stream name. Bounded well under the 180 characters a
- * title may hold: the prompt asks for thirty or less, and the ceiling is here to
- * stop a model that answers the request instead of naming it, not to be aimed
- * at — an answer between the two is trimmed to a whole word by the naming
- * service rather than rejected here, which would leave the work stream unnamed.
+ * The ceiling a generated work-stream name has to parse under — deliberately
+ * far above the length the prompt asks for. It exists to stop a model that
+ * answered the request instead of naming it, not to be aimed at: an answer
+ * between the target and this is trimmed to a whole word by the naming service,
+ * where rejecting it would leave the work stream unnamed.
+ *
+ * It is also the `maxLength` the naming request advertises, and that is the
+ * load-bearing reason it must stay above the target rather than tracking it.
+ * The request goes out `strict: true`, so a provider that enforces `maxLength`
+ * stops generating at exactly that character — mid-word, at a length the naming
+ * service cannot tell apart from a name that simply fit. The target belongs in
+ * the prompt, which can ask for a whole name of that length; a hard decoding
+ * bound at the same number can only chop one.
+ */
+export const WORKSTREAM_NAME_RESULT_MAX_LENGTH = 80;
+
+/**
+ * One generated work-stream name, bounded well under the 180 characters a title
+ * may hold.
  */
 export const WorkstreamNameResultSchema = z.object({
-  title: z.string().trim().min(1).max(80)
+  title: z.string().trim().min(1).max(WORKSTREAM_NAME_RESULT_MAX_LENGTH)
 });
 
 export const ToolDefinitionSchema = z.object({

@@ -162,9 +162,9 @@ the time of writing — check which version you have before assuming the note
 still applies, and delete it once a newer one honours the flag.
 
 Until then, and where one region is enough — anything that does not cross into
-EU, and does not call the document-processing or Terminal Workers over their
-service bindings — run Global on its own config, where the flag is honoured and
-nothing on disk changes:
+EU, and does not call the document-processing, Terminal, or telemetry-delivery
+Workers over their service bindings — run Global on its own config, where the
+flag is honoured and nothing on disk changes:
 
 ```bash
 pnpm --filter @rally/api exec wrangler dev --local \
