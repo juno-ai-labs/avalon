@@ -64,15 +64,15 @@ describe("work-stream naming", () => {
       userId,
     });
 
-    // The model answered in prose; what is written and published is the
-    // channel-style name the sidebar shows.
+    // The model answered past the cap; what is written and published is the
+    // name cut back to the last whole word that fits.
     expect(workstreamRow(database)).toMatchObject({
-      title: "avalon-download-link-email-to-danny",
+      title: "Avalon download link",
       title_status: "automatic",
     });
     expect(published).toEqual([{
       type: "workstream_renamed",
-      title: "avalon-download-link-email-to-danny",
+      title: "Avalon download link",
       titleStatus: "automatic",
     }]);
   });
@@ -80,7 +80,7 @@ describe("work-stream naming", () => {
   it("asks the naming agent's own model for a name, with reasoning switched off", async () => {
     const database = seededDatabase();
     const requests: Array<Record<string, unknown>> = [];
-    stubOpenRouter(requests, "recurring-tuesday-call");
+    stubOpenRouter(requests, "Tuesday call invites");
     const env = environment(database, []);
 
     await nameWorkstream(env, {
@@ -191,12 +191,12 @@ describe("work-stream naming", () => {
     const database = seededDatabase();
     applyWorkstreamObjectRootFields(
       objectStoreOf(database),
-      { title: "draft-email-to-danny", titleStatus: "automatic" },
+      { title: "Draft email to Danny", titleStatus: "automatic" },
     );
     seedMessages(database, 5);
     const requests: Array<Record<string, unknown>> = [];
     const published: Array<Record<string, unknown>> = [];
-    stubOpenRouter(requests, "mucker-download-link-for-danny");
+    stubOpenRouter(requests, "Mucker link Danny");
     const env = environment(database, published);
 
     await refreshWorkstreamName(env, { workspaceId, workstreamId, userId });
@@ -213,12 +213,12 @@ describe("work-stream naming", () => {
     expect(payload.conversation).toHaveLength(5);
     expect(payload.conversation[1]).toMatchObject({ author: "avalon" });
     expect(workstreamRow(database)).toMatchObject({
-      title: "mucker-download-link-for-danny",
+      title: "Mucker link Danny",
       title_status: "settled",
     });
     expect(published).toEqual([{
       type: "workstream_renamed",
-      title: "mucker-download-link-for-danny",
+      title: "Mucker link Danny",
       titleStatus: "settled",
     }]);
   });
@@ -230,13 +230,13 @@ describe("work-stream naming", () => {
     const database = seededDatabase();
     seedMessages(database, 6);
     const published: Array<Record<string, unknown>> = [];
-    stubOpenRouter([], "mucker-download-link-for-danny");
+    stubOpenRouter([], "Mucker link Danny");
     const env = environment(database, published);
 
     await refreshWorkstreamName(env, { workspaceId, workstreamId });
 
     expect(workstreamRow(database)).toMatchObject({
-      title: "mucker-download-link-for-danny",
+      title: "Mucker link Danny",
       title_status: "settled",
     });
     expect(published).toHaveLength(1);
@@ -246,7 +246,7 @@ describe("work-stream naming", () => {
     const database = seededDatabase();
     applyWorkstreamObjectRootFields(
       objectStoreOf(database),
-      { title: "invoice-export-totals", titleStatus: "automatic" },
+      { title: "Invoice export totals", titleStatus: "automatic" },
     );
     seedMessages(database, 5);
     const published: Array<Record<string, unknown>> = [];
@@ -259,17 +259,17 @@ describe("work-stream naming", () => {
     // same — so a model that happened to be unreachable must not spend the one
     // second look this work stream gets, or publish a rename of nothing.
     expect(workstreamRow(database)).toMatchObject({
-      title: "invoice-export-totals",
+      title: "Invoice export totals",
       title_status: "automatic",
     });
     expect(published).toEqual([]);
 
     const requests: Array<Record<string, unknown>> = [];
-    stubOpenRouter(requests, "invoice-inv-2291-vat-totals");
+    stubOpenRouter(requests, "Invoice INV-2291 VAT");
     await refreshWorkstreamName(env, { workspaceId, workstreamId });
 
     expect(workstreamRow(database)).toMatchObject({
-      title: "invoice-inv-2291-vat-totals",
+      title: "Invoice INV-2291 VAT",
       title_status: "settled",
     });
   });
@@ -335,7 +335,7 @@ describe("work-stream naming", () => {
     applyWorkstreamObjectRootFields(objectStoreOf(database), { titleStatus: "automatic" });
     seedMessages(database, 9);
     const requests: Array<Record<string, unknown>> = [];
-    stubOpenRouter(requests, "mucker-download-link-for-danny");
+    stubOpenRouter(requests, "Mucker link Danny");
     const env = environment(database, []);
 
     await refreshWorkstreamName(env, { workspaceId, workstreamId });
@@ -425,39 +425,29 @@ describe("work-stream naming", () => {
     expect(counted.filter((sql) => /workstreams/u.test(sql))).toEqual([]);
   });
 
-  it("writes a channel-style name rather than whatever the model returned", () => {
-    expect(normalizeGeneratedTitle('"Avalon download link email to Danny."'))
-      .toBe("avalon-download-link-email-to-danny");
-    expect(normalizeGeneratedTitle("## Mucker\n  intro  thread")).toBe("mucker-intro-thread");
+  it("writes a name a person would read rather than whatever the model returned", () => {
+    expect(normalizeGeneratedTitle('"Danny download email."')).toBe("Danny download email");
+    expect(normalizeGeneratedTitle("## Mucker\n  intro  thread")).toBe("Mucker intro thread");
     // The title is stored, so a model's TeX is repaired here — once, at the
     // write — rather than by every surface that shows the sidebar row.
-    expect(normalizeGeneratedTitle("Migrate billing $\\rightarrow$ Stripe"))
-      .toBe("migrate-billing-stripe");
-    expect(normalizeGeneratedTitle("Renew the $50 plan")).toBe("renew-the-50-plan");
+    expect(normalizeGeneratedTitle("Billing $\\rightarrow$ Stripe")).toBe("Billing → Stripe");
+    expect(normalizeGeneratedTitle("Renew the $50 plan")).toBe("Renew the $50 plan");
     expect(normalizeGeneratedTitle("   ")).toBeNull();
-    expect(normalizeGeneratedTitle("#\u{1F600}")).toBeNull();
-    // An identifier keeps its characters and loses only its case, and the
-    // punctuation inside an address separates words rather than running them
-    // together.
-    expect(normalizeGeneratedTitle("invoice INV-2291 VAT totals")).toBe("invoice-inv-2291-vat-totals");
-    expect(normalizeGeneratedTitle("iPhone build failures")).toBe("iphone-build-failures");
-    expect(normalizeGeneratedTitle("danny@mucker.com bounce")).toBe("danny-mucker-com-bounce");
-    // An apostrophe is inside a word, not between two, and a possessive is the
-    // commonest thing a name leads with — `what-s-rally` reads as a typo.
-    expect(normalizeGeneratedTitle("what's rally")).toBe("whats-rally");
-    expect(normalizeGeneratedTitle("Alicia Shen’s fit")).toBe("alicia-shens-fit");
-    // A decomposed accent belongs to the letter before it, not to the space
-    // between words.
-    expect(normalizeGeneratedTitle("Budget re\u0301vise\u0301")).toBe("budget-re\u0301vise\u0301");
-    // A name that runs long ends at a whole word: the tail of a cut word reads
-    // as a typo rather than as a name that ran out of room.
-    expect(normalizeGeneratedTitle("Mucker download link for danny@mucker.com"))
-      .toBe("mucker-download-link-for-danny-mucker");
+    // A name that starts mid-sentence is capitalized; one that starts on
+    // something that spells itself is not, and an identifier keeps its case.
+    expect(normalizeGeneratedTitle("invoice INV-2291")).toBe("Invoice INV-2291");
+    expect(normalizeGeneratedTitle("iPhone build fails")).toBe("iPhone build fails");
+    expect(normalizeGeneratedTitle("danny@mucker.com")).toBe("danny@mucker.com");
+    // Twenty characters is short enough that the cut is ordinary rather than
+    // rare, so where it lands matters: the last whole word that fits, and not
+    // the comma a cut between two listed things leaves behind.
+    expect(normalizeGeneratedTitle("Rust, OCaml, C++ essay")).toBe("Rust, OCaml, C++");
+    expect(normalizeGeneratedTitle("Pumpkin pie, Slack, Gmail")).toBe("Pumpkin pie, Slack");
     // A single word past the cap has no boundary to cut at, and a cut inside a
     // surrogate pair would leave a half that renders as a replacement
     // character in the sidebar.
-    expect(normalizeGeneratedTitle("n".repeat(200))).toHaveLength(40);
-    expect(normalizeGeneratedTitle(`${"n".repeat(39)}\u{1D400}`)).toBe("n".repeat(39));
+    expect(normalizeGeneratedTitle("n".repeat(200))).toHaveLength(20);
+    expect(normalizeGeneratedTitle(`${"n".repeat(19)}\u{1D400}`)).toBe(`N${"n".repeat(18)}`);
   });
 
   it("derives the provisional title from the first line that has anything in it", () => {
