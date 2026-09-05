@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { renderWorkstreamNameMessages } from "@rally/agent-harness";
 
 import type { Env } from "../src/env";
 import {
@@ -479,9 +480,9 @@ describe("work-stream naming", () => {
     // An apostrophe inside the opening word does not make it a spelling to
     // leave alone the way a capital does.
     expect(normalizeGeneratedTitle("danny's invoice")).toBe("Danny's invoice");
-    // Thirty characters is short enough that the cut is ordinary rather than
-    // rare, so where it lands matters: the last whole word that fits, and not
-    // the comma a cut between two listed things leaves behind.
+    // The cut is a backstop at thirty — four answers in the 89 replayed — but
+    // where it lands still matters for those four: the last whole word that
+    // fits, and not the comma a cut between two listed things leaves behind.
     expect(normalizeGeneratedTitle("Rust, OCaml, C++ comparison essay"))
       .toBe("Rust, OCaml, C++ comparison");
     expect(normalizeGeneratedTitle("Pumpkin pie, Slack, Gmail, Drive"))
@@ -506,6 +507,19 @@ describe("work-stream naming", () => {
     // to be applied after the capital, or a 30-character name leaves here 31
     // characters long.
     expect(normalizeGeneratedTitle(`ß${"a".repeat(29)}`)).toBe(`SS${"a".repeat(28)}`);
+  });
+
+  it("asks the model for the same cap the normalizer enforces", () => {
+    // The number lives twice and in two packages: spelled as a word in the
+    // prompt, and as `GENERATED_TITLE_MAX_LENGTH` here. Nothing links them, and
+    // the pair before this change had already drifted — the prompt said sixty
+    // while the service cut at eighty. This is the tripwire: move one without
+    // the other and it fails here rather than in a sidebar.
+    const enforced = normalizeGeneratedTitle("n".repeat(200));
+    const policy = renderWorkstreamNameMessages({ objective: "o" })[0]!.content;
+
+    expect(enforced).toHaveLength(30);
+    expect(policy).toContain("thirty characters or less");
   });
 
   it("derives the provisional title from the first line that has anything in it", () => {
