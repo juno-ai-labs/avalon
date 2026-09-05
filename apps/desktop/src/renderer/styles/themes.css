@@ -273,7 +273,7 @@
   /* System sans-serif for application UI, including secondary windows and
    * portals. Bundled Geist Mono remains available for code and technical
    * content. */
-  --av-sys-font-family-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --av-sys-font-family-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   --av-sys-font-family-display: var(--av-sys-font-family-ui);
   --av-sys-font-family-mono: "Geist Mono", ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
 
@@ -654,7 +654,7 @@
 
   --av-sys-space-prose-gap: 22px;
 
-  --av-sys-font-family-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --av-sys-font-family-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   --av-sys-font-family-display: var(--av-sys-font-family-ui);
   --av-sys-font-family-mono: "Geist Mono", ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
 

@@ -168,7 +168,7 @@
     "sys.space.group.gap": "60px",
     "sys.space.block.gap": "28px",
     "sys.space.prose.gap": "22px",
-    "sys.font.family.ui": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+    "sys.font.family.ui": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", system-ui, sans-serif",
     "sys.font.family.display": "{sys.font.family.ui}",
     "sys.font.family.mono": "\"Geist Mono\", ui-monospace, SFMono-Regular, Consolas, \"Liberation Mono\", monospace",
     "sys.font.size.base": "14px",

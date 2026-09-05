@@ -133,6 +133,11 @@ This deliberately supersedes the **2026-08-20 — A theme may bring fonts and a
 document that moves** decision below: the application now follows the native
 system UI family to match the reference, rather than bundling a sans replacement.
 Token tests cover scaling, focus contrast and the narrow platform-font exception.
+The UI stack retains `system-ui` as a Linux fallback after the platform-specific
+families, and the account menu consumes that same token. Unused template
+subscription/list styles are removed after confirming there are no consumers.
+Dialog descriptions no longer reserve a second close-button gutter inside the
+header's already separate text column.
 
 ### 2026-09-05 — Shared secondary surfaces use the application visual language
 

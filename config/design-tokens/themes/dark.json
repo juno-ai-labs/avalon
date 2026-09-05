@@ -253,7 +253,7 @@
     "cmp.connector.search.foreground": "#8fb0c6",
     "cmp.connector.plug.background": "#191509",
     "cmp.connector.plug.foreground": "#c4b478",
-    "sys.font.family.ui": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+    "sys.font.family.ui": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", system-ui, sans-serif",
     "sys.font.family.mono": "\"Geist Mono\", ui-monospace, SFMono-Regular, Consolas, \"Liberation Mono\", monospace",
     "cmp.button.primary-background": "#fcfcfc",
     "cmp.button.primary-color": "#070707",
