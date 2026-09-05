@@ -1,3 +1,7 @@
+export const githubAvailabilityLabels = { all_repositories: 'All repositories', selected_repositories: 'Selected repositories' } as const;
+export const githubRemoteLabels = { read_only: 'Read-only remote', full_access: 'Full remote access' } as const;
+export const mcpAuthLabels = { oauth: 'Sign in through the server (OAuth)', headers: 'Send request headers I provide' } as const;
+
 /** Sunday first, matching `Date#getDay` and every calendar in the product. */
 export const WEEKDAYS = [
   { day: 0, initial: 'S', name: 'Sunday' },
@@ -14,5 +18,4 @@ export const DAY_PRESETS = [
   { id: 'weekdays', label: 'Weekdays', days: [1, 2, 3, 4, 5] },
   { id: 'weekends', label: 'Weekends', days: [0, 6] },
 ] as const;
-
 

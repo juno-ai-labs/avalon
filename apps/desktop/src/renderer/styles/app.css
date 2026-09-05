@@ -1625,20 +1625,8 @@ pre {
   position: absolute;
   right: 14px;
 }
-.settings-preference-row > .settings-row-icon { display: none; }
 .settings-preference-row .settings-row-copy strong { font-size: 13px; font-weight: 400; }
 .settings-preference-row .settings-row-copy small { font-size: 12px; }
-.settings-row-icon {
-  align-items: center;
-  background: var(--av-sys-color-surface-raised-hover);
-  border: 1px solid var(--av-ref-color-line-3);
-  border-radius: var(--av-sys-size-radius-md);
-  color: var(--av-sys-color-brand-ink);
-  display: flex;
-  height: 36px;
-  justify-content: center;
-  width: 36px;
-}
 
 .settings-row-copy,
 .settings-profile-card > span,

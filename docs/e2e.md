@@ -106,6 +106,17 @@ Run the Electron desktop with `pnpm dev:desktop` and exercise these flows agains
 
 ## Desktop signup, invitations, and settings
 
+Settings search acceptance: in light and dark appearances, search `startup`,
+`data residency`, and an exact control label. Enter must reveal the result
+without changing its value; Arrow Down/Up navigates results and Escape clears
+search (not an IME composition). Search `Tools Rally may use` before installing
+MCP and confirm the provider setup card is revealed without authorization.
+With two installed servers, search each name and verify the corresponding
+instance. Navigate away or focus another field while a read is pending: a late
+result must not steal focus. Search Send invitation/Save digest with a populated
+form and verify search does not submit it. These are renderer checks, not proof
+of backend authorization; [settings search](settings-search.md) owns the contract.
+
 1. Start from an empty desktop profile. Enter a workspace name and verify the region choices use the descriptions **US-Jurisdiction storage** and **EU-jurisdiction storage**, with no routing or sign-in copy, and that both selectors change the target API. Select European Union and confirm there is no secondary notice listing unavailable capabilities — Terminal is enabled in both regions. Select Global again and confirm the same. Type the workspace name through an IME and confirm the `Enter` that commits the composition does not create the workspace, while a second `Enter` does. Create a development workspace or complete Google sign-in in a provider test account.
 2. During Google sign-in, confirm the system browser visits `/auth/desktop/`, its address bar is stripped of the fragment, and the **Open Rally** fallback returns the app to the correct regional session. Confirm the renderer never receives a Google code, token, or native PKCE verifier; relaunching the app before ticket redemption must require starting sign-in again.
 3. Open an invitation while signed out and confirm its workspace, email, role, and region preview through the issuing regional API. Complete sign-in and accept it once; reuse must fail.
