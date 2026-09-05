@@ -7,10 +7,9 @@ than fetch. See [`docs/theming.md`](../../../../../docs/theming.md).
 
 | File | Family | Axes | Upstream |
 | --- | --- | --- | --- |
-| `geist-latin-variable.woff2` | Geist | weight 100–900 | [vercel/geist-font](https://github.com/vercel/geist-font) |
 | `geist-mono-latin-variable.woff2` | Geist Mono | weight 100–900 | [vercel/geist-font](https://github.com/vercel/geist-font) |
 
-Both are licensed under the SIL Open Font License 1.1; the licence is in
+The font is licensed under the SIL Open Font License 1.1; the licence is in
 [`OFL.txt`](OFL.txt) and must stay beside the files it covers. Adding a font
 here means adding its licence and its row above — a binary in a repository with
 no provenance is the thing this file exists to prevent.

@@ -5,17 +5,17 @@
     "cmp.elicitation": "The inset choice list within an agent question, distinct from its surrounding message surface.",
     "ref.color.neutral": "The neutral ramp, ordered by contrast against the surface rather than by lightness, so a step means the same thing whichever way round a theme runs. Fills at the faint end, text at the strong end.",
     "ref.color.line": "The line ramp. Borders are not faint fills: a theme that draws with space needs to flatten its lines without erasing the fills that share a contrast level with them.",
-    "sys.backdrop": "The window's backdrop: one painted layer behind every pane, so a theme's light runs unbroken beneath a translucent sidebar and the feed beside it rather than being repainted per pane and showing a seam at the join. Each token is a CSS `background-*` longhand under its own name, so a theme declares a backdrop the way a stylesheet would and the browser's own sizing, centring and tiling rules apply unchanged. `image` also accepts `{\"svg\": \"<svg \u2026>\"}` for artwork drawn in the theme file and `{\"url\": \"https://\u2026\"}` for one fetched over the network, and an array for layers.",
-    "sys.color.surface": "The named surfaces. Declared outright by each theme because their relationship inverts between light and dark \u2014 a dark theme makes a control recede by darkening it, a light theme by greying it.",
+    "sys.backdrop": "The window's backdrop: one painted layer behind every pane, so a theme's light runs unbroken beneath a translucent sidebar and the feed beside it rather than being repainted per pane and showing a seam at the join. Each token is a CSS `background-*` longhand under its own name, so a theme declares a backdrop the way a stylesheet would and the browser's own sizing, centring and tiling rules apply unchanged. `image` also accepts `{\"svg\": \"<svg …>\"}` for artwork drawn in the theme file and `{\"url\": \"https://…\"}` for one fetched over the network, and an array for layers.",
+    "sys.color.surface": "The named surfaces. Declared outright by each theme because their relationship inverts between light and dark — a dark theme makes a control recede by darkening it, a light theme by greying it.",
     "sys.color.text": "Text tones, strongest to faintest.",
     "sys.color.border": "The three borders the stylesheet names directly; each resolves to a step on the line ramp.",
     "sys.color.brand": "Rally's own colour. `ink` is the brand drawn as a mark or a label on an ordinary surface, which is a different question from `base`: the chartreuse is a fine fill on white and an illegible label on it.",
-    "sys.color.accent": "The hue for links, focus and selection.",
-    "sys.color.success": "Positive state. `fill` and `fill-edge` are a filled control \u2014 a switch that is on, a selected preset \u2014 which is neither the vivid hue nor the wash.",
+    "sys.color.accent": "The hue for links and selection; keyboard focus has its own role.",
+    "sys.color.success": "Positive state. `fill` and `fill-edge` are a filled control — a switch that is on, a selected preset — which is neither the vivid hue nor the wash.",
     "sys.color.warning": "Attention short of failure.",
     "sys.color.danger": "Failure and destructive action.",
     "sys.color.project": "The fixed project icon palette. These fills are identity choices rather than theme accents, so a project keeps the same colour in every theme.",
-    "sys.color.workstream": "One colour per state a work stream can show a person in the sidebar and on the home screen. Every marker in the product draws from this group and nowhere else, so a state has one colour wherever it appears; which state wins when several are true at once is the client\u2019s ordering, not the palette\u2019s. Five of them are the run\u2019s (`running`, `needs-input`, `completed`, `failed`, `stopped`) and three are the reader\u2019s own (`unread`, `mentioned`, `unseen`), which is why they are one vocabulary: they compete for one dot.",
+    "sys.color.workstream": "One colour per state a work stream can show a person in the sidebar and on the home screen. Every marker in the product draws from this group and nowhere else, so a state has one colour wherever it appears; which state wins when several are true at once is the client’s ordering, not the palette’s. Five of them are the run’s (`running`, `needs-input`, `completed`, `failed`, `stopped`) and three are the reader’s own (`unread`, `mentioned`, `unseen`), which is why they are one vocabulary: they compete for one dot.",
     "sys.color.scrim": "What sits between a layer and what it covers.",
     "sys.color.focus": "The colour of a focus indicator.",
     "sys.color.selection": "Selected text.",
@@ -34,26 +34,38 @@
     "sys.space.group": "Between one group of rows and the next.",
     "sys.space.block": "Between events in the feed.",
     "sys.space.prose": "Between paragraphs.",
-    "sys.font.family": "The families. `ui` and `mono` are Geist, which ships inside the application as a `bundled` font source \u2014 a family the app only names is a family the platform substitutes, and weight then resolves against whatever it picked.",
+    "sys.font.family": "System sans-serif for application UI, including secondary windows and portals. Bundled Geist Mono remains available for code and technical content.",
     "sys.font.size": "The sizes the interface sets, as against the document size a theme inherits.",
     "sys.font.leading": "Line height.",
     "sys.font.weight": "Weights. Only meaningful to the degree the resolved family supports them.",
     "sys.label": "The four properties that decide whether a label is sentence case or letterspaced small capitals. They apply to the label over a turn in the feed as well as the one over a group of navigation rows.",
     "cmp.pane": "The content pane. `background` is the fill drawn over the backdrop, so a theme that wants its backdrop to show through the feed sets it to `transparent` rather than to a colour that happens to match.",
     "cmp.sidebar": "The navigation. `background` is a translucent tint, so `background-solid` exists for the narrow-width drawer, which sits over the content and cannot be see-through.",
-    "cmp.marker": "The mark at a row's leading edge. It is one element whose *shape* is a theme's decision and whose *colour* stays the row's state, so a theme can trade a dot for a line without the navigation losing what the dot was saying. It stretches between `inset-block` and the row, which is what lets one pair of values describe both a centred dot \u2014 `calc(50% - 3px)` \u2014 and a line that runs the height of the row.",
+    "cmp.marker": "The mark at a row's leading edge. It is one element whose *shape* is a theme's decision and whose *colour* stays the row's state, so a theme can trade a dot for a line without the navigation losing what the dot was saying. It stretches between `inset-block` and the row, which is what lets one pair of values describe both a centred dot — `calc(50% - 3px)` — and a line that runs the height of the row.",
     "cmp.row": "Inside a navigation row. `height-dense` is the floor under the rows whose height comes from their content; `height` is the floor for a single-line row. `background-hover` and `background-selected` are the fills; a theme that marks selection with the marker alone sets the latter to `transparent`.",
     "cmp.group-label": "The band a group's label sits in.",
     "cmp.bubble": "The fill behind a person's turn. A theme with one continuous ground can set all three to nothing and let the message sit on the page as plain text.",
     "cmp.composer": "The message composer's frame. A theme builds either shape out of the same five values: a card sets a background, a border and a radius; a rule sets them to nothing and gives `rule-color` a hairline instead, so the composer reads as a line the page rests on rather than as a box floating over it. `rule-color-focus` is what that line does when the field has focus, which is the only feedback left once the border is gone. `send-background` and `send-radius` are the send control's own frame, which follows the composer: a flat composer with a raised button on it reads as two different surfaces.",
     "cmp.turn": "Where a person's own turn sits. The three move together: a turn left-aligned but still capped reads as text that wraps early for no reason.",
     "cmp.feed": "The reading column, and the label over a turn in it.",
-    "cmp.markdown": "Rendered markdown. Its colours were already tokens; its *measurements* were not, which is why Air's headings were smaller than the prose beneath them \u2014 `.markdown-body` scaled with `sys.font.size.prose` and the headings it contained stayed at a fixed 18/16/14.5/14. A theme that moves its prose size has to be able to move the scale above it, and the rhythm with it. The `article-*` values are the note detail's own scale: a note is read as a document rather than as a turn in a transcript, so its headings run larger than the feed's.",
+    "cmp.markdown": "Rendered markdown. Its colours were already tokens; its *measurements* were not, which is why Air's headings were smaller than the prose beneath them — `.markdown-body` scaled with `sys.font.size.prose` and the headings it contained stayed at a fixed 18/16/14.5/14. A theme that moves its prose size has to be able to move the scale above it, and the rhythm with it. The `article-*` values are the note detail's own scale: a note is read as a document rather than as a turn in a transcript, so its headings run larger than the feed's.",
     "cmp.tooltip": "A surface that deliberately opposes the theme: light on a dark theme and dark on a light one, so it cannot be a ramp step in either.",
     "cmp.toggle": "A switch. The knob is white on a grey track in a light theme, which is about two to one; the lift from `sys.elevation.shadow.sm` is what makes the off state read as a control.",
-    "cmp.connector": "Connector faces. Each keeps enough of the provider's own colour to be recognised at 20px, on a block the theme can still sit behind."
+    "cmp.connector": "Connector faces. Each keeps enough of the provider's own colour to be recognised at 20px, on a block the theme can still sit behind.",
+    "cmp.button": "Neutral primary actions, separate from brand identity and semantic danger or success states.",
+    "cmp.control": "Shared secondary controls, independent of message and sidebar geometry.",
+    "cmp.surface": "Shared secondary cards, dialogs and menus, independent of message bubbles."
   },
   "tokens": {
+    "cmp.control.radius": {
+      "$type": "dimension"
+    },
+    "cmp.control.font-size": {
+      "$type": "dimension"
+    },
+    "cmp.surface.radius": {
+      "$type": "dimension"
+    },
     "ref.color.neutral.1": {
       "$type": "color"
     },
@@ -211,12 +223,6 @@
       "$type": "color"
     },
     "sys.color.brand.tint": {
-      "$type": "color"
-    },
-    "sys.color.brand.tint-strong": {
-      "$type": "color"
-    },
-    "sys.color.brand.glow": {
       "$type": "color"
     },
     "sys.color.brand.hover": {
@@ -463,9 +469,6 @@
       "$type": "shadow"
     },
     "sys.focus.ring.quiet": {
-      "$type": "shadow"
-    },
-    "sys.focus.ring.brand": {
       "$type": "shadow"
     },
     "sys.size.radius.xs": {
@@ -820,6 +823,15 @@
       "$type": "color"
     },
     "cmp.connector.plug.foreground": {
+      "$type": "color"
+    },
+    "cmp.button.primary-background": {
+      "$type": "color"
+    },
+    "cmp.button.primary-color": {
+      "$type": "color"
+    },
+    "cmp.button.primary-hover": {
       "$type": "color"
     }
   }
