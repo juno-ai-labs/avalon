@@ -587,6 +587,50 @@ update lag before changing the default.
 
 ## Changelog
 
+### 2026-09-03 — The Git CA probe stops requiring what Daytona only sometimes gives
+
+**What changed:** The `git-ca` manifest probe now verifies the advertised CA
+bundle only when `CURL_CA_BUNDLE` is set, instead of requiring it. Provider
+failures also name the capabilities that failed, and `clearReadSecrets` no longer
+aborts a sandbox deletion when the credential cannot list secrets.
+
+**Why:** Daytona advertises its proxy CA only to sandboxes created with a domain
+allow list. A full-internet sandbox is not intercepted and needs no extra trust,
+so the unconditional requirement failed every such sandbox — on **every**
+snapshot, the managed `daytona-small` included. Two consequences followed. No
+snapshot could pass the acceptance gate, which is what made a custom snapshot
+look broken for two days; and, more seriously, any workspace on full-internet
+Terminal networking could not create a sandbox at all, because `acquire` passes
+an empty allow list in that mode, the probe rejected the result, and the
+coordinator discarded it.
+
+The probe was stricter than the code it protects:
+`terminalGitCaSetupCommands({ required: false })`, which the repository bootstrap
+actually runs, already wires Git to the bundle when one is advertised and accepts
+its absence otherwise. The probe now matches that contract.
+
+The two provider changes came out of the same investigation. The verification
+failure discarded stdout, so a snapshot that failed reported only that
+initialization failed while the probe had already named every missing capability
+— that diagnostic is what finally identified `git-ca`. And `deleteSandbox` called
+`clearReadSecrets` first, whose unguarded `list` answered 403 for a credential
+without the Secrets scope, so the sandbox was never deleted: a live filesystem
+left accruing cost because tidying its secrets failed.
+
+**Considered and rejected:** Creating the probe sandboxes with a Trusted-only
+allow list so the CA is always present. That would make the gate prove something
+narrower than what runs — full-internet sandboxes are a supported mode, and a
+gate that never exercises them is how this reached production. Removing `git-ca`
+from the manifest entirely: an advertised-but-broken bundle is a real failure and
+still fails closed.
+
+**Consequences:** The manifest now encodes that the CA is conditional on network
+mode, so anything added here must hold for both modes. A full-internet workspace
+can create Terminal sandboxes again. The `required: true` form of
+`terminalGitCaSetupCommands`, used by the trusted publisher, is untouched and
+still demands the bundle — whether publication can succeed from a full-internet
+workspace is a separate question this change does not answer.
+
 ### 2026-08-30 — Terminal activation starts the sandbox without holding the model
 
 **What changed:** `onActivate` no longer awaits `runtime.prepare`. It starts the

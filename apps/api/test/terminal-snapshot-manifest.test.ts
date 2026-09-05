@@ -1,3 +1,8 @@
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -99,6 +104,39 @@ describe("Terminal snapshot manifest", () => {
     expect(command).toContain("AVALON_PROBE_MISSING=");
     expect(command).toContain("exit 1");
     expect(command).toContain("trap 'rm -rf -- \"$probe_results\"' EXIT");
+  });
+
+  it("accepts an absent Git CA and still rejects a broken one", () => {
+    // Daytona advertises its proxy CA only for sandboxes created with a domain
+    // allow list, so a full-internet sandbox legitimately has none. Requiring it
+    // failed those sandboxes on every snapshot, the managed one included, and
+    // blocked Terminal entirely for any workspace on full-internet networking.
+    const probe = TERMINAL_SNAPSHOT_PROBES.find((entry) => entry.id === "git-ca")!;
+    const run = (env: NodeJS.ProcessEnv): number => {
+      try {
+        execFileSync("bash", ["-c", `set -euo pipefail\n${probe.command}`], { env, stdio: "ignore" });
+        return 0;
+      } catch {
+        return 1;
+      }
+    };
+    const directory = mkdtempSync(join(tmpdir(), "avalon-git-ca-"));
+    try {
+      const populated = join(directory, "bundle.pem");
+      const empty = join(directory, "empty.pem");
+      writeFileSync(populated, "test certificate bundle");
+      writeFileSync(empty, "");
+
+      // Not advertised: nothing to verify, nothing to fail.
+      expect(run({ PATH: process.env.PATH })).toBe(0);
+      // Advertised and usable.
+      expect(run({ PATH: process.env.PATH, CURL_CA_BUNDLE: populated })).toBe(0);
+      // Advertised but a lie — still fails closed, which is the point of the probe.
+      expect(run({ PATH: process.env.PATH, CURL_CA_BUNDLE: empty })).toBe(1);
+      expect(run({ PATH: process.env.PATH, CURL_CA_BUNDLE: join(directory, "absent.pem") })).toBe(1);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it("bakes the bootstrap into one Dockerfile-safe line", () => {
