@@ -442,6 +442,10 @@ describe("work-stream naming", () => {
     expect(normalizeGeneratedTitle("invoice INV-2291 VAT totals")).toBe("invoice-inv-2291-vat-totals");
     expect(normalizeGeneratedTitle("iPhone build failures")).toBe("iphone-build-failures");
     expect(normalizeGeneratedTitle("founder@example.com bounce")).toBe("danny-mucker-com-bounce");
+    // An apostrophe is inside a word, not between two, and a possessive is the
+    // commonest thing a name leads with — `what-s-rally` reads as a typo.
+    expect(normalizeGeneratedTitle("what's rally")).toBe("whats-rally");
+    expect(normalizeGeneratedTitle("Alicia Shen’s fit")).toBe("alicia-shens-fit");
     // A decomposed accent belongs to the letter before it, not to the space
     // between words.
     expect(normalizeGeneratedTitle("Budget re\u0301vise\u0301")).toBe("budget-re\u0301vise\u0301");

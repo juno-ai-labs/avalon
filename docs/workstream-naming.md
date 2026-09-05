@@ -227,6 +227,31 @@ ordinary work-stream update and belongs to the object's product service.
 
 ## Changelog
 
+### 2026-09-05 — An apostrophe is elided rather than separating a word
+
+**What changed:** `normalizeGeneratedTitle` removes `'` and `’` before turning
+everything else a channel name cannot hold into the separator, so `what's rally`
+becomes `whats-rally`. The prompt also now says which half of a name to drop when
+it will not fit: the words that frame the work, never the detail that identifies
+it.
+
+**Why:** 89 model-named work streams from the Global directory were replayed
+through this prompt and the one it replaced, against the same model production
+uses. The apostrophe was the only defect the normalizer itself introduced —
+`what-s-rally` reads as a typo, and a possessive is among the commonest things a
+name leads with. The prompt change answers the one regression the replay showed
+against the old prompt: asked to search two places for one subject, the model
+kept the two places and dropped the subject, which is the opposite of the rule
+about the distinguishing detail. Forty characters is not what squeezes it — one
+name in 89 was long enough for the cut to fire at all.
+
+**Consequences:** An apostrophe is the single exception to "everything else
+becomes the separator", and it is in the normalizer rather than the prompt
+because it is a repair, not a rule a model has to follow. The replay is
+reproducible: it lifts each prompt from the tree and from git rather than
+carrying a copy, and asserts both normalizer ports against this file's own test
+vectors before it calls anything.
+
 ### 2026-09-05 — Generated names are channel-style, and forty characters
 
 **What changed:** The naming prompt asks for a name written the way a Slack
