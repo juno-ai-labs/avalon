@@ -576,7 +576,6 @@ export interface ConversationSurfaceProps {
   renderSidebar?: (context: ConversationHeaderContext & {
     focusTranscript: () => void;
     openArtifact: (id: string, returnFocus: HTMLElement) => void;
-    openResources?: (returnFocus: HTMLElement) => void;
   }) => React.ReactNode;
 }
 
@@ -640,12 +639,12 @@ export function ConversationSurface({
   const activeConversationAddressRef = useRef(conversationAddress);
   const pendingSendCount = useRef(0);
   const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreview | null>(null);
-  const [resourcePreview, setResourcePreview] = useState<{ resourceId: string | null; returnFocus: HTMLElement; workstreamScoped?: boolean } | null>(null);
-  const openResourceDetails = useCallback((resourceId: string | null, returnFocus: HTMLElement): void => {
+  const [resourcePreview, setResourcePreview] = useState<{ resourceId: string; returnFocus: HTMLElement; workstreamScoped?: boolean } | null>(null);
+  const openResourceDetails = useCallback((resourceId: string, returnFocus: HTMLElement): void => {
     setAttachmentPreview(null);
     setResourcePreview({ resourceId, returnFocus });
   }, []);
-  const openWorkstreamResourceDetails = useCallback((resourceId: string | null, returnFocus: HTMLElement): void => {
+  const openWorkstreamResourceDetails = useCallback((resourceId: string, returnFocus: HTMLElement): void => {
     setAttachmentPreview(null);
     setResourcePreview({ resourceId, returnFocus, workstreamScoped: true });
   }, []);
@@ -1757,7 +1756,6 @@ export function ConversationSurface({
         openRail,
         rename: (title) => renameWorkstream.mutateAsync(title).then(() => undefined),
         openArtifact: sidebarCitations.openPreview,
-        openResources: (returnFocus) => openWorkstreamResourceDetails(null, returnFocus),
         focusTranscript: () => transcriptRef.current?.focus({ preventScroll: true }),
       })}
     <div className={clsx('workstream-screen', parentKind === 'automation' && 'automation-screen')}>
@@ -1938,7 +1936,6 @@ export function ConversationSurface({
         {...(resourcePreview ? { lightbox: {
           ...resourcePreview,
           onClose: () => setResourcePreview(null),
-          onSelect: (resourceId: string | null) => setResourcePreview((current) => current ? { ...current, resourceId } : null),
         } } : {})}
         dropTarget={railDrop}
         {...(api ? { loadResourceContent: loadResourceContent } : {})}
