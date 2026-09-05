@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WorkstreamResource } from '../lib/types';
+import { asSubstreamId, asUserId } from '@rally/contracts';
 import { WorkstreamSidebar } from './workstream-sidebar';
 
 const artifact: WorkstreamResource = {
@@ -88,11 +89,11 @@ describe('WorkstreamSidebar', () => {
     const onNewSubstream = vi.fn();
     render(<Tooltip.Provider><WorkstreamSidebar
       workstream={{ ...workstream, privateChildren: [{
-        substreamId: 'child-one', title: 'Launch risks', createdByUserId: person.id,
+        substreamId: asSubstreamId('00000000-0000-7000-8000-000000000099'), title: 'Launch risks', createdByUserId: asUserId(person.id),
         createdAt: '2026-09-04T00:00:00.000Z', updatedAt: '2026-09-04T00:00:00.000Z',
       }] }}
       presentUserIds={[]}
-      selectedSubstreamId="child-one"
+      selectedSubstreamId="00000000-0000-7000-8000-000000000099"
       onSelectSubstream={onSelectSubstream}
       onNewSubstream={onNewSubstream}
       onOpenArtifact={vi.fn()}
@@ -110,13 +111,13 @@ describe('WorkstreamSidebar', () => {
     expect(sidebar.querySelectorAll('.tabler-icon-border-corner-pill')).toHaveLength(2);
     expect(screen.getByRole('button', { name: 'New substream' }).querySelector('.tabler-icon-plus')).not.toBeNull();
     fireEvent.click(screen.getByRole('button', { name: /Launch risks/ }));
-    expect(onSelectSubstream).toHaveBeenCalledWith('child-one');
+    expect(onSelectSubstream).toHaveBeenCalledWith('00000000-0000-7000-8000-000000000099');
     fireEvent.click(screen.getByRole('button', { name: 'New substream' }));
     expect(onNewSubstream).toHaveBeenCalledOnce();
     fireEvent.click(screen.getByRole('button', { name: 'Collapse work-stream sidebar' }));
     expect(sidebar).toHaveClass('is-compact');
     fireEvent.click(child);
-    expect(onSelectSubstream).toHaveBeenLastCalledWith('child-one');
+    expect(onSelectSubstream).toHaveBeenLastCalledWith('00000000-0000-7000-8000-000000000099');
     fireEvent.click(screen.getByRole('button', { name: 'Go to conversation: Launch preparation' }));
     expect(onSelectSubstream).toHaveBeenLastCalledWith('0');
   });

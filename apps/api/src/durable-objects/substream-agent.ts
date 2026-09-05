@@ -1250,7 +1250,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       `SELECT version, active FROM private_child_membership_authority WHERE user_id = ?`,
       userId,
     ).toArray()[0];
-    return row?.active === 1 && row.version >= requiredVersion;
+    return row?.active === 1 && row.version === requiredVersion;
   }
 
   /**

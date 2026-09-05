@@ -189,14 +189,6 @@ export interface WorkstreamSummary {
    * same work stream is pinned for one member and not for another.
    */
   pinPosition: number | null;
-  /** Private child conversations visible to this viewer, from the parent control socket. */
-  privateChildren?: Array<{
-    substreamId: string;
-    title: string;
-    createdByUserId: string;
-    createdAt: string;
-    updatedAt: string;
-  }>;
 }
 
 export interface Participant extends WorkspaceMember {

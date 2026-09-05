@@ -9,6 +9,8 @@ const api = vi.hoisted(() => ({
   clientFeatureFlags: vi.fn(),
   getWorkspaceMembers: vi.fn(),
   removeParticipant: vi.fn(),
+  prepareSubstream: vi.fn(),
+  cancelSubstream: vi.fn(),
 }));
 const retainedSocket = vi.hoisted(() => vi.fn());
 const scrollTranscriptToEnd = vi.hoisted(() => vi.fn());
@@ -134,6 +136,29 @@ describe('socket-first work-stream open', () => {
       state: 'connecting',
       workspaceSocketState: 'connecting',
     });
+  });
+
+  it('keeps preparation inputs stable while pending and cancels a failed attempt only once on edit', async () => {
+    let rejectPreparation!: (error: Error) => void;
+    api.prepareSubstream.mockImplementation(() => new Promise((_resolve, reject) => { rejectPreparation = reject; }));
+    api.cancelSubstream.mockResolvedValue(undefined);
+    const boot = recoveryBoot();
+    renderScreen((cache) => {
+      cache.setQueryData(['workstream', workstreamId], boot);
+      cache.setQueryData(['ordered-transcript', workstreamId], boot.transcript);
+    });
+    fireEvent.click(await screen.findByRole('button', { name: 'New substream' }));
+    const title = screen.getByRole('textbox', { name: 'Title' });
+    fireEvent.click(screen.getByRole('button', { name: 'Review context' }));
+    expect(title).toBeDisabled();
+    await act(async () => { rejectPreparation(new Error('Preparation failed')); });
+    expect(title).toBeEnabled();
+    expect(screen.getByText('Preparation failed')).toBeInTheDocument();
+    fireEvent.change(title, { target: { value: 'Revised title' } });
+    expect(screen.queryByText('Preparation failed')).not.toBeInTheDocument();
+    fireEvent.change(title, { target: { value: 'Revised title again' } });
+    expect(api.cancelSubstream).toHaveBeenCalledTimes(1);
+    expect(api.cancelSubstream).toHaveBeenCalledWith(workstreamId, api.prepareSubstream.mock.calls[0]![1].operationId);
   });
 
   it('keeps sidebar membership and management at the parent while a child is selected', async () => {

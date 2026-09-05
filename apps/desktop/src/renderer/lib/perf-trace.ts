@@ -28,7 +28,7 @@ import { reportTelemetryProductIntent, telemetryCountBucket, uuidV7 } from './te
  * ids required to join the matching backend work.
  */
 
-export type PerfFlow = 'workstream_create' | 'substream_create' | 'workstream_open' | 'workstream_message_send';
+export type PerfFlow = 'workstream_create' | 'substream_prepare' | 'substream_create' | 'workstream_open' | 'workstream_message_send';
 
 export interface PerfTrace {
   readonly traceId: string;

@@ -40,7 +40,7 @@ import {
   bootstrapWorkstreamRuntimeEnvironment,
   provisionWorkstreamObject,
 } from "../src/services/workstream-runtime-database";
-import { deliverEffectsToWorkspace, deliverParentEffects } from "./helpers/conversation-effects";
+import { deliverChildEffects, deliverEffectsToWorkspace, deliverParentEffects } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
 import { post, seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 
@@ -313,8 +313,13 @@ describe("conversation parent contract", () => {
         `SELECT waterline FROM workstream_state_changes WHERE state_key = ? ORDER BY waterline DESC LIMIT 1`,
         `user:${AUTHOR_ID}`,
       ).one().waterline);
-    expect(viewerWaterlineAfterReady).toBeGreaterThan(viewerWaterlineBeforeReady);
-    await deliverParentEffects(TEST_ENV, conversation(PERSONAL_ROOM_ID, reserved.substreamId));
+    expect(viewerWaterlineAfterReady).toBe(viewerWaterlineBeforeReady);
+    expect(await runInDurableObject(parent, (_instance, state) =>
+      state.storage.sql.exec<{ waterline: number }>(
+        `SELECT waterline FROM workstream_state_changes WHERE state_key = ? ORDER BY waterline DESC LIMIT 1`,
+        `children:${AUTHOR_ID}`,
+      ).one().waterline)).toBeGreaterThan(0);
+    await deliverChildEffects(TEST_ENV, conversation(PERSONAL_ROOM_ID, reserved.substreamId));
     const parentTitle = await runInDurableObject(parent, (_instance, state) =>
       state.storage.sql.exec<{ title: string }>(`SELECT title FROM workstream_metadata WHERE id = 1`).one().title);
     expect(parentTitle).toBe("Private room");
@@ -345,6 +350,8 @@ describe("conversation parent contract", () => {
 
     const staleAuthorTicket = await new ConversationService(socketEnv, AUTH)
       .socketTicket(PERSONAL_ROOM_ID, reserved.substreamId);
+    const preRemovalTicket = await new ConversationService(socketEnv, AUTH)
+      .socketTicket(PERSONAL_ROOM_ID, reserved.substreamId);
     expect((await verifySocketTicket(socketEnv, staleAuthorTicket.ticket)).admission)
       .toMatchObject({ membershipVersion: 1 });
     await parent.removePrivateChildParticipant({
@@ -362,6 +369,22 @@ describe("conversation parent contract", () => {
       workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID, substreamId: reserved.substreamId,
       actorUserId: PARTICIPANT_ID, userId: AUTHOR_ID, operationId: "private-child-readd-author",
     });
+    const readdedUpgrade = await new SocketService(socketEnv).upgrade(
+      PERSONAL_ROOM_ID, reserved.substreamId, preRemovalTicket.ticket,
+      new Request(`https://api.test/socket/conversations/${PERSONAL_ROOM_ID}/${reserved.substreamId}`, {
+        headers: { Upgrade: "websocket", Origin: "app://avalon" },
+      }),
+    );
+    expect(readdedUpgrade.status).toBe(403);
+
+    const removedFromParent = await post(conversation(PERSONAL_ROOM_ID), "/internal/product", {
+      operation: "remove_participant", auth: AUTH, userId: PARTICIPANT_ID,
+    });
+    expect(removedFromParent.status).toBe(200);
+    await deliverChildEffects(TEST_ENV, conversation(PERSONAL_ROOM_ID));
+    expect(await parent.authorizeViewer({
+      ...viewer(PERSONAL_ROOM_ID, PARTICIPANT_ID), substreamId: reserved.substreamId,
+    })).toMatchObject({ authorized: false });
     await parent.removePrivateChildParticipant({
       workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID, substreamId: reserved.substreamId,
       actorUserId: AUTHOR_ID, userId: PARTICIPANT_ID, operationId: "private-child-remove-participant",

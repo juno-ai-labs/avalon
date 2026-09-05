@@ -260,6 +260,12 @@ export abstract class ConversationParentDurableObject extends ScheduledDurableOb
   /** Which of a child's effects this parent carries on to the workspace. */
   protected abstract forwardsChildEffect(substreamId: string, effect: ConversationEffect): boolean;
 
+  /** Automations aggregate local child runs even when they do not forward them. */
+  protected aggregatesChildProjection(substreamId: string): boolean {
+    void substreamId;
+    return true;
+  }
+
   /** Log fields naming this object, for the outbox drain's records. */
   protected abstract parentLogFields(): Record<string, unknown>;
 
@@ -386,14 +392,18 @@ export abstract class ConversationParentDurableObject extends ScheduledDurableOb
       const forwards = this.forwardsChildEffect(substreamId, envelope.effect);
       if (envelope.effect.kind === "directory_common") {
         this.upsertChildProjection("common", substreamId, null, envelope, now);
-        const aggregate = this.aggregateCommon();
-        this.onChildCommonAggregate(substreamId, aggregate, envelope, now);
-        if (forwards) this.enqueueProjection("common", aggregate, now);
+        if (this.aggregatesChildProjection(substreamId)) {
+          const aggregate = this.aggregateCommon();
+          this.onChildCommonAggregate(substreamId, aggregate, envelope, now);
+          if (forwards) this.enqueueProjection("common", aggregate, now);
+        }
       } else if (envelope.effect.kind === "directory_user") {
         this.upsertChildProjection("user", substreamId, envelope.effect.userId, envelope, now);
-        const aggregate = this.aggregateUser(envelope.effect.userId);
-        this.onChildUserAggregate(substreamId, envelope.effect.userId, aggregate, envelope, now);
-        if (forwards) this.enqueueProjection(`user:${envelope.effect.userId}`, aggregate, now);
+        if (this.aggregatesChildProjection(substreamId)) {
+          const aggregate = this.aggregateUser(envelope.effect.userId);
+          this.onChildUserAggregate(substreamId, envelope.effect.userId, aggregate, envelope, now);
+          if (forwards) this.enqueueProjection(`user:${envelope.effect.userId}`, aggregate, now);
+        }
       } else if (forwards) {
         this.enqueueImmutable(substreamId, envelope, now);
       }
@@ -654,7 +664,7 @@ export abstract class ConversationParentDurableObject extends ScheduledDurableOb
   private recordStateChange(
     stateKey: string,
     waterline: number,
-    effect: unknown,
+    effect: ParentEffect | { localViewerState: true },
     payloadHash: string,
     now: number,
   ): string {

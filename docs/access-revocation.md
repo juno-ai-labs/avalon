@@ -339,6 +339,15 @@ would be a way into somebody else's workspace.
 
 ## Changelog
 
+### 2026-09-05 — Parent access and membership incarnation both fence child admission
+
+The child authorization branch now checks Main-derived parent visibility as well
+as ready status and active child membership. Signed membership versions must
+equal the local mirror, not merely be older than it: removal followed by re-add
+must not revive a previously issued ticket. Workerd regressions cover both
+parent removal while child membership remains active and old-ticket replay
+after re-addition.
+
 ### 2026-09-04 — Private-child removal has a durable local revocation leg
 
 **What changed:** WorkstreamDO participant add/remove operations persist a

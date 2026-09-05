@@ -13,10 +13,10 @@ import {
   bootstrapWorkstreamRuntimeEnvironment,
   provisionWorkstreamObject,
 } from "../src/services/workstream-runtime-database";
-import { deliverEffectsToWorkspace } from "./helpers/conversation-effects";
+import { deliverEffectsToWorkspace, deliverChildEffects } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
 import { useOpenRouterDouble } from "./helpers/openrouter-double";
-import { seedParticipantMessage, seedWorkspaceControlPlane } from "./helpers/substream-fixture";
+import { post, seedParticipantMessage, seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 
 let WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-00000000ce10");
 const CREATOR_ID = asUserId("00000000-0000-7000-8000-00000000ce11");
@@ -33,7 +33,7 @@ const creatorAuth: AuthContext = {
   region: "global",
   role: "member",
 };
-const otherAuth: AuthContext = { ...creatorAuth, userId: OTHER_ID };
+const otherAuth: AuthContext = { ...creatorAuth, userId: OTHER_ID, sessionId: "other-session" };
 
 useHeldEffectQueue();
 const provider = useOpenRouterDouble((call) => ({ say: call.stream
@@ -68,6 +68,9 @@ beforeEach(async () => {
     sessionId: SESSION_ID,
   });
   await env.DB.batch([
+    env.DB.prepare(`INSERT INTO sessions (id, user_id, workspace_id, region, revoked_at, expires_at)
+      VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`)
+      .bind(otherAuth.sessionId, OTHER_ID, WORKSPACE_ID),
     env.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
       VALUES (?, ?, 'active', 'member', '2026-09-04T00:00:00.000Z')`).bind(WORKSPACE_ID, OTHER_ID),
     env.DB.prepare(`INSERT INTO users(id, email, name, avatar_url, timezone, created_at)
@@ -98,7 +101,7 @@ beforeEach(async () => {
   await bootstrapWorkstreamRuntimeEnvironment(TEST_ENV, WORKSPACE_ID, WORKSTREAM_ID, "workstream");
   await provisionWorkstreamObject(TEST_ENV, {
     workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID, title: "Source", objective: "",
-    scope: "workspace", createdByUserId: CREATOR_ID, participantUserIds: [CREATOR_ID, OTHER_ID],
+    scope: "workspace", createdByUserId: CREATOR_ID, participantUserIds: [CREATOR_ID],
     harnessStatus: "idle", titleStatus: "settled", emailAddress: null, emailRouteStatus: null,
     systemKind: null, modelOverride: null, now: Date.now(),
   });
@@ -110,6 +113,50 @@ beforeEach(async () => {
 }, 30_000);
 
 describe("substream preparation on workerd", () => {
+  it("receipts private-child directory effects for a member absent from Main", async () => {
+    const service = new SubstreamCreationService(TEST_ENV, creatorAuth);
+    const operationId = "00000000-0000-7000-8000-00000000ce22";
+    await service.prepare(WORKSTREAM_ID, { operationId, title: "Private branch", throughTurnId: "source-turn-1" });
+    const { substreamId } = await service.confirm(WORKSTREAM_ID, operationId);
+    await service.changeParticipant(WORKSTREAM_ID, substreamId, { userId: OTHER_ID, operationId: "add-other" }, true);
+    const result = await post(conversation(substreamId), "/internal/product", {
+      operation: "update", auth: otherAuth, input: { title: "Private update" },
+    });
+    expect(result.status).toBe(200);
+    await deliverChildEffects(TEST_ENV, conversation(substreamId));
+    await runInDurableObject(parent(), (_instance, state) => {
+      expect(state.storage.sql.exec(`SELECT 1 FROM substream_user_directory WHERE substream_id = '0' AND user_id = ?`, OTHER_ID).toArray()).toEqual([]);
+      expect(state.storage.sql.exec(`SELECT 1 FROM substream_user_directory WHERE substream_id = ? AND user_id = ?`, substreamId, OTHER_ID).toArray()).toHaveLength(1);
+      expect(state.storage.sql.exec(`SELECT 1 FROM child_effect_receipts WHERE substream_id = ?`, substreamId).toArray().length).toBeGreaterThan(0);
+      expect(state.storage.sql.exec<{ title: string }>(`SELECT title FROM workstream_metadata WHERE id = 1`).one().title).toBe("Source");
+    });
+  });
+
+  it("does not publish readiness while a membership delivery is deferred", async () => {
+    const service = new SubstreamCreationService(TEST_ENV, creatorAuth);
+    const operationId = "00000000-0000-7000-8000-00000000ce23";
+    await service.prepare(WORKSTREAM_ID, { operationId, title: "Pending membership", throughTurnId: "source-turn-1" });
+    await runInDurableObject(parent(), (_instance, state) => {
+      state.storage.sql.exec(`UPDATE private_child_membership_effects SET not_before = ?`, Date.now() + 60_000);
+    });
+    await expect(service.confirm(WORKSTREAM_ID, operationId)).rejects.toThrow("private_child_membership_delivery_pending");
+    expect((await parent().listVisiblePrivateChildren({ workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, userId: CREATOR_ID })).children).toEqual([]);
+    await runInDurableObject(parent(), (_instance, state) => { state.storage.sql.exec(`UPDATE private_child_membership_effects SET not_before = 0`); });
+    await expect(service.confirm(WORKSTREAM_ID, operationId)).resolves.toHaveProperty("substreamId");
+  });
+
+  it("rechecks parent authority at the prepared-context commit", async () => {
+    const service = new SubstreamCreationService(TEST_ENV, creatorAuth);
+    const operationId = "00000000-0000-7000-8000-00000000ce24";
+    const prepared = await service.prepare(WORKSTREAM_ID, { operationId, title: "Revoked preparation", throughTurnId: "source-turn-1" });
+    const result = await post(conversation(), "/internal/product", { operation: "update", auth: creatorAuth, input: { archived: true } });
+    expect(result.status).toBe(200);
+    await deliverChildEffects(TEST_ENV, conversation());
+    await expect(Promise.resolve(parent().savePreparedPrivateChildContext({
+      workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, operationId, preparedContext: prepared.preparedContext!,
+    }))).rejects.toThrow("private_child_preparation_forbidden");
+  });
+
   it("executes the first child instruction against its frozen seed without reading later Main messages", async () => {
     const service = new SubstreamCreationService(TEST_ENV, creatorAuth);
     const operationId = "00000000-0000-7000-8000-00000000ce22";
