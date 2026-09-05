@@ -116,6 +116,71 @@ serves only generated IDs and enforces the cache's size and integrity checks.
 
 ## Changelog
 
+### 2026-09-05 — Review fixes preserve scaling and keyboard visibility
+
+The base leading is a unitless 20/14 ratio, not an inherited 20px height: larger
+wrapped headings must scale their line boxes. Dark focus uses a lighter blue
+(`#3d91ef`) because the light reference blue disappears on raised dark controls.
+Both appearances use opaque focus rings; quiet rings are thinner, not less
+contrasting. Terminal selection uses the neutral text tone and its domain editor
+retains a visible focus ring and readable 13px monospace type.
+
+Control and surface corner roles now own 8px and 12px respectively; secondary
+control typography owns its 13px size through the same registry. Changing the
+global radius scale was rejected because it would also move feed/sidebar geometry.
+Unused Geist sans declarations and its binary are removed; Geist Mono remains.
+This deliberately supersedes the **2026-08-20 — A theme may bring fonts and a
+document that moves** decision below: the application now follows the native
+system UI family to match the reference, rather than bundling a sans replacement.
+Token tests cover scaling, focus contrast and the narrow platform-font exception.
+The UI stack retains `system-ui` as a Linux fallback after the platform-specific
+families, and the account menu consumes that same token. Unused template
+subscription/list styles are removed after confirming there are no consumers.
+Dialog descriptions no longer reserve a second close-button gutter inside the
+header's already separate text column.
+
+### 2026-09-05 — Shared secondary surfaces use the application visual language
+
+**What changed:** System sans-serif and 14px/20px UI type now apply at the
+document root, including settings windows and portalled dialogs. Shared primary
+actions have dedicated neutral appearance tokens instead of borrowing the brand
+color. Dialogs use 12px corners, a 480px preferred width, and a shrinking scroll
+body rather than an overflowing minimum width. Advanced connection and terminal
+settings use readable secondary labels and neutral selection treatments. Menus,
+member pickers, resource inspectors, project forms, onboarding/recovery, and
+note/meeting controls use the same role-specific treatment. Narrow GitHub/MCP
+preference rows stack instead of squeezing descriptions beside their selects.
+Keyboard focus uses the reference's blue `#0c64c1`, independently of brand color.
+Unused automation-builder, template-browser and automation-plugin-defaults rules
+were removed after checking for renderer consumers.
+
+Conditional-state QA also gave one-time webhook secrets their own padded layout,
+separated telemetry metadata and empty states, and spaced the connected MCP tools
+heading. Description-only dialogs retain a gap before their actions, even without
+a body. Sign-in and invitation errors no longer inherit muted help-text styling.
+Project icon/color choices use the same 8px control corners.
+
+**Why:** The shell-only typography override left secondary surfaces in the old
+design. Brand orange on ordinary actions and success green on unconfigured
+terminal settings gave those surfaces inconsistent visual and semantic meaning.
+Rare states exposed gaps hidden by the ordinary settings rows: a generic list-card
+class provided no internal secret/empty-state padding, and description-only
+dialogs had relied on the absent body to separate their footer.
+
+**Considered and rejected:** Replacing every accent or radius token would also
+change existing message bubbles, sidebar geometry, provider identity, and real
+warning states. Those remain owned by their components. Code retains its
+monospace family and documents retain their separate reading scale.
+
+**Consequences:** New portals inherit UI typography without requiring a shell
+ancestor. Primary actions must use the button tokens, not brand or status tokens.
+The recovered Grok Bot 0.39 button rules specify 8px corners, 6px vertical and
+10px horizontal padding; its light primary fill/hover/text are
+`#070707`/`#2f2f2f`/`#fcfcfc`. The dark primary inversion is an adaptation to
+Rally's dark surfaces, not a claim of recovered dark runtime values. Shared
+dialogs use the reference's 12px large-surface radius. Existing feed, sidebar,
+lightbox layout and reduced-motion behavior remain independently owned.
+
 ### 2026-09-05 — Settings adopts the reference's quieter grouped layout
 
 **What changed:** The settings navigation uses the 198px rail, 13px regular labels and rounded

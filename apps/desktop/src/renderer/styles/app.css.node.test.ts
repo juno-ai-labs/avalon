@@ -14,6 +14,22 @@ function rule(selector: string): string | null {
   return ruleWithin(stylesheet, selector);
 }
 
+describe('secondary surface focus and layout', () => {
+  it('keeps Terminal selection and keyboard focus distinguishable from resting borders', () => {
+    expect(rule('.terminal-network-modes > label:has(input:checked)')).toContain('var(--av-sys-color-text-default)');
+    expect(rule('.terminal-network-domains textarea:focus')).toContain('var(--av-sys-focus-ring-default)');
+    expect(rule('.terminal-network-domains textarea:focus')).not.toContain('outline: none');
+    expect(rule('.terminal-network-domains textarea')).toContain('var(--av-cmp-control-font-size)/1.5');
+  });
+
+  it('keeps dialog bodies scrollable without losing description-only footer spacing', () => {
+    expect(rule('.dialog-content')).toContain('flex-direction: column');
+    expect(rule('.dialog-body')).toContain('min-height: 0');
+    expect(rule('.dialog-body')).toContain('overflow: auto');
+    expect(rule('.dialog-header + .dialog-footer')).toContain('padding-top: 16px');
+  });
+});
+
 describe('work-stream context sidebar layout', () => {
   it('keeps the transcript flexible and anchors the drag target to its panel', () => {
     expect(rule('.conversation-layout')).toContain('display: flex');
@@ -200,7 +216,7 @@ describe('citation card image preview', () => {
  * into classic space-consuming scrollbars, so the moment their content
  * crosses one viewport the scrollbar pops in and shifts whatever is centered
  * inside them — the transcript column, the sidebar's row width, the settings
- * pane, the automation builder's 996px column, a note's 760px article. Each of
+ * pane and a note's 760px article. Each of
  * these is tall enough, on an ordinary screen, to reach that point in normal
  * use, so each reserves its gutter up front rather than having it appear
  * mid-session.
