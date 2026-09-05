@@ -57,6 +57,22 @@ pause, resume, delete, run now, the run list) beside the feed rather than
 inside it. Neither host may smuggle those controls through an optional common
 prop.
 
+The work-stream host supplies `WorkstreamSidebar` through the surface's
+`renderSidebar` slot, between global navigation and the feed. It displays the
+current work stream, resources whose direction is `artifact`, then participants
+from the same live detail/presence state as the conversation. Artifact selection
+uses `useCitations.openPreview`, including its existing explicit inspector
+fallback; arrival of an artifact never opens a panel. Participant rows open the
+existing management dialog. This sidebar does not add substream navigation.
+
+Its device-local collapse preference is independent of the global sidebar.
+Expanded width is 280px and the icon rail is 88px, matching the existing Grok
+navigation. It temporarily collapses when its enclosing pane cannot fit 280px
+plus the existing 424px conversation reservation. Only that pane is observed,
+so collapse cannot change its own measurement and cause oscillation. All paint
+uses the existing light/dark sidebar, row, text, and focus tokens; selectors are
+scoped to the new component and do not change global navigation rows.
+
 The route host, not the feed, owns identity transitions. A new work stream
 begins with local composer keys; after durable admission its adapter rekeys
 text/files and adopts the server identity without remounting the conversation
@@ -78,6 +94,18 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-04 — Work streams gain a collapsible context sidebar
+
+The layout exploration calls for work-stream identity, generated artifacts,
+and participants to remain available beside the feed, without adopting its
+different visual styling or implementing substreams yet. A host-owned sidebar
+now presents those three sections using the current Grok navigation dimensions
+and paint. Reusing the live detail and citation preview path avoids a second
+resource query and preserves the explicit-open rule. The automation host does
+not opt in, and global navigation keeps its own layout and collapse preference.
+Observing the enclosing pane instead of the resized child prevents a feedback
+loop when space requires icon mode.
 
 ### 2026-09-04 — Elicitation prompts join the conversation design
 
