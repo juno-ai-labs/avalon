@@ -67,12 +67,12 @@ describe("work-stream naming", () => {
     // The model answered past the cap; what is written and published is the
     // name cut back to the last whole word that fits.
     expect(workstreamRow(database)).toMatchObject({
-      title: "Avalon download link",
+      title: "Avalon download link email to",
       title_status: "automatic",
     });
     expect(published).toEqual([{
       type: "workstream_renamed",
-      title: "Avalon download link",
+      title: "Avalon download link email to",
       titleStatus: "automatic",
     }]);
   });
@@ -438,16 +438,18 @@ describe("work-stream naming", () => {
     expect(normalizeGeneratedTitle("invoice INV-2291")).toBe("Invoice INV-2291");
     expect(normalizeGeneratedTitle("iPhone build fails")).toBe("iPhone build fails");
     expect(normalizeGeneratedTitle("danny@mucker.com")).toBe("danny@mucker.com");
-    // Twenty characters is short enough that the cut is ordinary rather than
+    // Thirty characters is short enough that the cut is ordinary rather than
     // rare, so where it lands matters: the last whole word that fits, and not
     // the comma a cut between two listed things leaves behind.
-    expect(normalizeGeneratedTitle("Rust, OCaml, C++ essay")).toBe("Rust, OCaml, C++");
-    expect(normalizeGeneratedTitle("Pumpkin pie, Slack, Gmail")).toBe("Pumpkin pie, Slack");
+    expect(normalizeGeneratedTitle("Rust, OCaml, C++ comparison essay"))
+      .toBe("Rust, OCaml, C++ comparison");
+    expect(normalizeGeneratedTitle("Pumpkin pie, Slack, Gmail, Drive"))
+      .toBe("Pumpkin pie, Slack, Gmail");
     // A single word past the cap has no boundary to cut at, and a cut inside a
     // surrogate pair would leave a half that renders as a replacement
     // character in the sidebar.
-    expect(normalizeGeneratedTitle("n".repeat(200))).toHaveLength(20);
-    expect(normalizeGeneratedTitle(`${"n".repeat(19)}\u{1D400}`)).toBe(`N${"n".repeat(18)}`);
+    expect(normalizeGeneratedTitle("n".repeat(200))).toHaveLength(30);
+    expect(normalizeGeneratedTitle(`${"n".repeat(29)}\u{1D400}`)).toBe(`N${"n".repeat(28)}`);
   });
 
   it("derives the provisional title from the first line that has anything in it", () => {
