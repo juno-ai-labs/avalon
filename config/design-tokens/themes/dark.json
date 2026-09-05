@@ -6,15 +6,6 @@
   "description": "The dark GrokBot-inspired Rally appearance.",
   "fonts": [
     {
-      "family": "Geist",
-      "style": "normal",
-      "weight": "100 900",
-      "display": "block",
-      "src": {
-        "bundled": "geist-latin-variable.woff2"
-      }
-    },
-    {
       "family": "Geist Mono",
       "style": "normal",
       "weight": "100 900",
@@ -25,6 +16,9 @@
     }
   ],
   "tokens": {
+    "cmp.control.radius": "8px",
+    "cmp.control.font-size": "13px",
+    "cmp.surface.radius": "12px",
     "ref.color.neutral.1": "#070707",
     "ref.color.neutral.2": "#111111",
     "ref.color.neutral.3": "#1b1b1b",
@@ -64,8 +58,6 @@
     "sys.color.brand.edge": "#3a2812",
     "sys.color.brand.on": "#140c04",
     "sys.color.brand.tint": "rgba(224, 140, 58, 0.34)",
-    "sys.color.brand.tint-strong": "rgba(224, 140, 58, 0.5)",
-    "sys.color.brand.glow": "radial-gradient(circle, rgba(224, 140, 58, 0.08), transparent 62%)",
     "sys.color.accent.base": "#7fa8c8",
     "sys.color.accent.strong": "#9dc0da",
     "sys.color.accent.soft": "#8fb3ce",
@@ -118,8 +110,8 @@
     "sys.color.scrim.default": "rgba(6, 4, 2, 0.72)",
     "sys.color.scrim.subtle": "rgba(6, 4, 2, 0.5)",
     "sys.color.scrim.solid": "rgba(7, 5, 3, 0.98)",
-    "sys.color.focus.default": "#0c64c1",
-    "sys.color.focus.quiet": "#0c64c1",
+    "sys.color.focus.default": "#3d91ef",
+    "sys.color.focus.quiet": "#3d91ef",
     "sys.color.selection.background": "rgba(224, 140, 58, 0.24)",
     "sys.color.scrollbar.thumb": "#2f2f2f",
     "sys.color.shimmer.default": "rgba(252, 252, 252, 0.05)",
@@ -145,9 +137,8 @@
     "sys.elevation.shadow.rail": "-10px 0 44px rgba(0, 0, 0, 0.5)",
     "sys.elevation.shadow.rail-strong": "-16px 0 60px rgba(0, 0, 0, 0.66)",
     "sys.elevation.shadow.drawer": "16px 0 56px rgba(0, 0, 0, 0.6)",
-    "sys.focus.ring.default": "0 0 0 2px rgba(12, 100, 193, 0.32)",
-    "sys.focus.ring.quiet": "0 0 0 2px rgba(12, 100, 193, 0.14)",
-    "sys.focus.ring.brand": "0 0 0 2px rgba(224, 140, 58, 0.26)",
+    "sys.focus.ring.default": "0 0 0 2px {sys.color.focus.default}",
+    "sys.focus.ring.quiet": "0 0 0 1px {sys.color.focus.quiet}",
     "sys.size.radius.xs": "2px",
     "sys.size.radius.sm": "3px",
     "sys.size.radius.md": "4px",
@@ -170,7 +161,7 @@
     "sys.font.size.author": "12.5px",
     "sys.font.size.title": "15px",
     "sys.font.leading.prose": "1.85",
-    "sys.font.leading.base": "20px",
+    "sys.font.leading.base": "1.4285714286",
     "sys.font.weight.strong": "450",
     "sys.font.weight.heading": "480",
     "sys.font.weight.emphasis": "500",

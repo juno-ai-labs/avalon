@@ -275,6 +275,61 @@ test('every theme block declares every token, so data-theme works on any element
  * bundling a replacement would undo the native typography used by portals and
  * secondary windows. Keep the exception narrow, not a pass for any unknown font.
  */
+function hasLeadingFontSource(value, declared) {
+  const first = String(value).split(',')[0].trim();
+  return declared.has(first.replace(/^["']|["']$/gu, ''))
+    || ['-apple-system', 'system-ui', 'ui-sans-serif', 'ui-monospace'].includes(first);
+}
+
+test('platform font exceptions do not admit missing or quoted custom families', () => {
+  const declared = new Set(['Geist Mono']);
+  assert.ok(hasLeadingFontSource('-apple-system, sans-serif', declared));
+  assert.ok(hasLeadingFontSource('system-ui, sans-serif', declared));
+  assert.ok(hasLeadingFontSource('"Geist Mono", monospace', declared));
+  assert.ok(!hasLeadingFontSource('Missing Font, system-ui', declared));
+  assert.ok(!hasLeadingFontSource('"system-ui", sans-serif', declared));
+});
+
+test('UI leading scales with inherited font size rather than fixing all headings at 20px', () => {
+  for (const theme of themes) {
+    const tokens = resolvedTokens(theme, themes);
+    const leading = Number(tokens['sys.font.leading.base']);
+    assert.ok(Number.isFinite(leading) && leading > 1, theme.id);
+    assert.ok(Math.abs(leading * parseFloat(tokens['sys.font.size.base']) - 20) < 0.001);
+    assert.ok(leading * 26 > 26, 'a wrapped 26px title must not overlap itself');
+  }
+});
+
+function colorChannels(color, backdrop = '#fcfcfc') {
+  if (color.startsWith('#')) return color.slice(1).match(/../gu).map((channel) => parseInt(channel, 16) / 255);
+  const rgba = color.match(/^rgba\(([^)]+)\)$/u);
+  assert.ok(rgba, `unsupported contrast-test color: ${color}`);
+  const [r, g, b, alpha] = rgba[1].split(',').map(Number);
+  const background = colorChannels(backdrop);
+  return [r, g, b].map((value, index) => value / 255 * alpha + background[index] * (1 - alpha));
+}
+
+function luminance(color, backdrop) {
+  const channels = colorChannels(color, backdrop)
+    .map((value) => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);
+  return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+}
+
+test('keyboard focus contrasts against adjacent surfaces in both appearances', () => {
+  for (const theme of themes) {
+    const tokens = resolvedTokens(theme, themes);
+    for (const role of ['default', 'quiet']) {
+      const focus = luminance(tokens[`sys.color.focus.${role}`]);
+      for (const surface of ['canvas', 'default', 'subtle', 'raised', 'raised-hover', 'elevated', 'elevated-hover']) {
+        const background = luminance(tokens[`sys.color.surface.${surface}`], tokens['sys.color.surface.canvas']);
+        const contrast = (Math.max(focus, background) + 0.05) / (Math.min(focus, background) + 0.05);
+        assert.ok(contrast >= 3, `${theme.id} ${role} on ${surface}: ${contrast}`);
+      }
+      assert.ok(!tokens[`sys.focus.ring.${role}`].includes('rgba'), 'ring-only inputs need an opaque indicator');
+    }
+  }
+});
+
 test('every custom family a theme names is a face the build emits', () => {
   const css = generate({ registry, themes });
   const declared = new Set(fontFaces(themes).map((font) => font.family));
@@ -284,10 +339,9 @@ test('every custom family a theme names is a face the build emits', () => {
     for (const path of ['sys.font.family.ui', 'sys.font.family.mono']) {
       const value = resolvedTokens(theme, themes)[path];
       if (String(value).startsWith('{')) continue;
-      const first = String(value).split(',')[0].replace(/["']/gu, '').trim();
       assert.ok(
-        declared.has(first) || ['-apple-system', 'system-ui', 'ui-sans-serif', 'ui-monospace'].includes(first),
-        `${theme.id}: ${path} leads with ${first}, which no font source provides`,
+        hasLeadingFontSource(value, declared),
+        `${theme.id}: ${path} has no source for its leading family: ${value}`,
       );
     }
   }
@@ -298,17 +352,17 @@ test('every custom family a theme names is a face the build emits', () => {
 });
 
 test('a bundled face points at the file that ships, and a remote one never does', () => {
-  const bundled = { family: 'Geist', src: { bundled: 'geist-latin-variable.woff2' } };
+  const bundled = { family: 'Geist Mono', src: { bundled: 'geist-mono-latin-variable.woff2' } };
   const remote = { family: 'Far', src: { url: 'https://fonts.example/far.woff2' } };
   const css = generate({
     registry: { groups: { 'sys.font': 'x' }, tokens: { 'sys.font.family.ui': { $type: 'fontFamily' } } },
     themes: [{
       id: 'base', name: 'D', description: 'd', appearance: 'dark', default: true,
-      fonts: [bundled, remote], tokens: { 'sys.font.family.ui': 'Geist' },
+      fonts: [bundled, remote], tokens: { 'sys.font.family.ui': 'Geist Mono' },
     }],
   });
 
-  assert.match(css, /src: url\('\.\.\/fonts\/geist-latin-variable\.woff2'\) format\('woff2'\);/u);
+  assert.match(css, /src: url\('\.\.\/fonts\/geist-mono-latin-variable\.woff2'\) format\('woff2'\);/u);
   // The renderer asking the remote host directly would announce the reader to
   // whoever runs it, on every cold start, for as long as the theme is in use.
   assert.ok(!css.includes('https://fonts.example'), 'a remote URL reached the stylesheet');

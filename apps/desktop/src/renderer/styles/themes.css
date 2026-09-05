@@ -9,13 +9,6 @@
  */
 
 @font-face {
-  font-family: 'Geist';
-  font-style: normal;
-  font-weight: 100 900;
-  font-display: block;
-  src: url('../fonts/geist-latin-variable.woff2') format('woff2');
-}
-@font-face {
   font-family: 'Geist Mono';
   font-style: normal;
   font-weight: 100 900;
@@ -27,6 +20,13 @@
 :root,
 [data-theme='light'] {
   color-scheme: light;
+
+  /* Shared secondary controls, independent of message and sidebar geometry. */
+  --av-cmp-control-radius: 8px;
+  --av-cmp-control-font-size: 13px;
+
+  /* Shared secondary cards, dialogs and menus, independent of message bubbles. */
+  --av-cmp-surface-radius: 12px;
 
   /* The neutral ramp, ordered by contrast against the surface rather than by
    * lightness, so a step means the same thing whichever way round a theme
@@ -110,11 +110,9 @@
   --av-sys-color-brand-edge: #eccfa8;
   --av-sys-color-brand-on: #ffffff;
   --av-sys-color-brand-tint: rgba(210, 130, 44, 0.34);
-  --av-sys-color-brand-tint-strong: rgba(210, 130, 44, 0.5);
-  --av-sys-color-brand-glow: radial-gradient(circle, rgba(210, 130, 44, 0.12), transparent 62%);
   --av-sys-color-brand-hover: var(--av-sys-color-brand-strong);
 
-  /* The hue for links, focus and selection. */
+  /* The hue for links and selection; keyboard focus has its own role. */
   --av-sys-color-accent-base: #6a80b8;
   --av-sys-color-accent-strong: #55689b;
   --av-sys-color-accent-soft: #7b8fc2;
@@ -237,9 +235,8 @@
 
   /* Whole box-shadow values for a focus ring, so a theme controls its spread
    * as well as its colour. */
-  --av-sys-focus-ring-default: 0 0 0 2px rgba(12, 100, 193, 0.32);
-  --av-sys-focus-ring-quiet: 0 0 0 2px rgba(12, 100, 193, 0.14);
-  --av-sys-focus-ring-brand: 0 0 0 2px rgba(210, 130, 44, 0.3);
+  --av-sys-focus-ring-default: 0 0 0 2px var(--av-sys-color-focus-default);
+  --av-sys-focus-ring-quiet: 0 0 0 1px var(--av-sys-color-focus-quiet);
 
   /* The corner scale. */
   --av-sys-size-radius-xs: 2px;
@@ -293,7 +290,7 @@
 
   /* Line height. */
   --av-sys-font-leading-prose: 1.85;
-  --av-sys-font-leading-base: 20px;
+  --av-sys-font-leading-base: 1.4285714286;
 
   /* Weights. Only meaningful to the degree the resolved family supports them. */
   --av-sys-font-weight-strong: 450;
@@ -471,6 +468,11 @@
 [data-theme='dark'] {
   color-scheme: dark;
 
+  --av-cmp-control-radius: 8px;
+  --av-cmp-control-font-size: 13px;
+
+  --av-cmp-surface-radius: 12px;
+
   --av-ref-color-neutral-1: #070707;
   --av-ref-color-neutral-2: #111111;
   --av-ref-color-neutral-3: #1b1b1b;
@@ -530,8 +532,6 @@
   --av-sys-color-brand-edge: #3a2812;
   --av-sys-color-brand-on: #140c04;
   --av-sys-color-brand-tint: rgba(224, 140, 58, 0.34);
-  --av-sys-color-brand-tint-strong: rgba(224, 140, 58, 0.5);
-  --av-sys-color-brand-glow: radial-gradient(circle, rgba(224, 140, 58, 0.08), transparent 62%);
   --av-sys-color-brand-hover: var(--av-sys-color-brand-strong);
 
   --av-sys-color-accent-base: #7fa8c8;
@@ -594,8 +594,8 @@
   --av-sys-color-scrim-subtle: rgba(6, 4, 2, 0.5);
   --av-sys-color-scrim-solid: rgba(7, 5, 3, 0.98);
 
-  --av-sys-color-focus-default: #0c64c1;
-  --av-sys-color-focus-quiet: #0c64c1;
+  --av-sys-color-focus-default: #3d91ef;
+  --av-sys-color-focus-quiet: #3d91ef;
 
   --av-sys-color-selection-background: rgba(224, 140, 58, 0.24);
 
@@ -628,9 +628,8 @@
   --av-sys-elevation-shadow-rail-strong: -16px 0 60px rgba(0, 0, 0, 0.66);
   --av-sys-elevation-shadow-drawer: 16px 0 56px rgba(0, 0, 0, 0.6);
 
-  --av-sys-focus-ring-default: 0 0 0 2px rgba(12, 100, 193, 0.32);
-  --av-sys-focus-ring-quiet: 0 0 0 2px rgba(12, 100, 193, 0.14);
-  --av-sys-focus-ring-brand: 0 0 0 2px rgba(224, 140, 58, 0.26);
+  --av-sys-focus-ring-default: 0 0 0 2px var(--av-sys-color-focus-default);
+  --av-sys-focus-ring-quiet: 0 0 0 1px var(--av-sys-color-focus-quiet);
 
   --av-sys-size-radius-xs: 2px;
   --av-sys-size-radius-sm: 3px;
@@ -669,7 +668,7 @@
   --av-sys-font-size-title: 15px;
 
   --av-sys-font-leading-prose: 1.85;
-  --av-sys-font-leading-base: 20px;
+  --av-sys-font-leading-base: 1.4285714286;
 
   --av-sys-font-weight-strong: 450;
   --av-sys-font-weight-heading: 480;

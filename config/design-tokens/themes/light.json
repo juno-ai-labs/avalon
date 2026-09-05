@@ -6,15 +6,6 @@
   "description": "The light GrokBot-inspired Rally appearance.",
   "fonts": [
     {
-      "family": "Geist",
-      "style": "normal",
-      "weight": "100 900",
-      "display": "block",
-      "src": {
-        "bundled": "geist-latin-variable.woff2"
-      }
-    },
-    {
       "family": "Geist Mono",
       "style": "normal",
       "weight": "100 900",
@@ -25,6 +16,9 @@
     }
   ],
   "tokens": {
+    "cmp.control.radius": "8px",
+    "cmp.control.font-size": "13px",
+    "cmp.surface.radius": "12px",
     "ref.color.neutral.1": "#fcfcfc",
     "ref.color.neutral.2": "#f7f7f7",
     "ref.color.neutral.3": "#f3f3f3",
@@ -79,8 +73,6 @@
     "sys.color.brand.edge": "#eccfa8",
     "sys.color.brand.on": "#ffffff",
     "sys.color.brand.tint": "rgba(210, 130, 44, 0.34)",
-    "sys.color.brand.tint-strong": "rgba(210, 130, 44, 0.5)",
-    "sys.color.brand.glow": "radial-gradient(circle, rgba(210, 130, 44, 0.12), transparent 62%)",
     "sys.color.accent.base": "#6a80b8",
     "sys.color.accent.strong": "#55689b",
     "sys.color.accent.soft": "#7b8fc2",
@@ -160,9 +152,8 @@
     "sys.elevation.shadow.rail": "-8px 0 28px rgba(30, 28, 22, 0.08)",
     "sys.elevation.shadow.rail-strong": "-14px 0 42px rgba(30, 28, 22, 0.14)",
     "sys.elevation.shadow.drawer": "12px 0 40px rgba(30, 28, 22, 0.16)",
-    "sys.focus.ring.default": "0 0 0 2px rgba(12, 100, 193, 0.32)",
-    "sys.focus.ring.quiet": "0 0 0 2px rgba(12, 100, 193, 0.14)",
-    "sys.focus.ring.brand": "0 0 0 2px rgba(210, 130, 44, 0.3)",
+    "sys.focus.ring.default": "0 0 0 2px {sys.color.focus.default}",
+    "sys.focus.ring.quiet": "0 0 0 1px {sys.color.focus.quiet}",
     "sys.size.radius.xs": "2px",
     "sys.size.radius.sm": "3px",
     "sys.size.radius.md": "4px",
@@ -189,7 +180,7 @@
     "sys.font.size.author": "12.5px",
     "sys.font.size.title": "15px",
     "sys.font.leading.prose": "1.85",
-    "sys.font.leading.base": "20px",
+    "sys.font.leading.base": "1.4285714286",
     "sys.font.weight.strong": "450",
     "sys.font.weight.heading": "480",
     "sys.font.weight.emphasis": "500",
