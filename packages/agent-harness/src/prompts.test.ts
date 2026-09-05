@@ -113,7 +113,7 @@ describe("prompt renderers", () => {
           objective: "Draft an email to Danny sharing the Rally download link.",
           openingMessage: "Draft an email to Danny sharing the Rally download link, and ask him to add Alex to the Tuesday call.",
         }),
-        hash: "bfd7e483221ba845b5020ac71a0df4cbfef9c7ee534b09eea0b9d5c4ae8bb6fe",
+        hash: "a4074bd3448c3c58521eac12f17b7789945532c4911643a93039c49647ed0fef",
       },
       workstreamNameFromConversation: {
         actual: renderWorkstreamNameMessages({
@@ -124,7 +124,7 @@ describe("prompt renderers", () => {
             { author: "person", text: "Use founder@example.com and mention the Tuesday call." },
           ],
         }),
-        hash: "48a2a9c6766dee69f3c6d4a352d96f9abfcc18ce23d321fd17054d3503f496cd",
+        hash: "58b6afda34fa3522a233d83b8e606d8074957a6b76c9916fda51c7fc25ff3210",
       },
       workstreamDescription: {
         actual: renderWorkstreamDescriptionMessages({
@@ -530,7 +530,7 @@ describe("prompt renderers", () => {
     // Twenty characters fits the distinguishing detail and almost nothing
     // else, so the rule that says which half to drop is the one carrying the
     // quality of every name that does not fit.
-    expect(policy).toContain("two or three words, twenty characters or less");
+    expect(policy).toContain("two to four words, thirty characters or less");
     // The model title-cases at this length unless told not to in as many
     // words: "capitalized as a sentence" alone produced "Logo For Oslo Coffee".
     expect(policy).toContain("Use sentence case");

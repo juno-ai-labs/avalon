@@ -67,25 +67,34 @@ finished, and its promise is the one that has to be kept.
 
 ### The shape of a generated name
 
-Two or three words in sentence case, twenty characters or less. The prompt asks
+Two to four words in sentence case, thirty characters or less. The prompt asks
 for it and `normalizeGeneratedTitle` repairs what comes back: a quoted phrase, a
 Markdown heading, TeX, a trailing full stop, an answer that starts mid-sentence.
 
-**Twenty is short enough that the cut is part of the design rather than a
-backstop.** Replaying 89 named work streams through the prompt, the model
-answered past twenty in 37 of them, so two names in five are the last whole word
-that fit rather than the name the model wrote. That is why the cut lands on a
-word boundary and takes any comma it exposes with it, and it is also the cost of
-the length: a name cut at a preposition reads as unfinished — *Podcast from*,
-*Essay on rust and* — and work streams that differ only past the cut collide.
-Six of the QA work streams in that replay all came back *PRODUCTION HARNESS*.
-The number is the team's; what the code owes it is to cut in the least bad place.
+**Thirty is where the cut stops doing the naming.** The length was chosen by
+replaying 89 named work streams from the Global directory through the prompt at
+each candidate, and counting how often the model answered past it:
 
-Asking for the character count is also what the prompt is worst at. "Count the
-characters before you answer" cut the overshoot from 56 in 89 to 37, and naming
-the failure exactly — *never capitalize every word* — is what stopped the model
-title-casing at this length, which "capitalized as a sentence" alone did not.
-Both are in the prompt because a model that writes a name to fit beats a cut.
+| Cap | Model answered over it | What that looked like |
+| --- | --- | --- |
+| 40 | 1 in 89 | Names sit well inside; the cap is a pure backstop. |
+| 30 | 4 in 89 | Names sit inside; the cap is a backstop. |
+| 20 | 37 in 89 | Two names in five are a truncation, not a name. |
+
+At twenty the truncation was naming the work stream: names ended on the word the
+model meant to continue — *Podcast from*, *Essay on rust and*, *Work on* — and
+work streams differing only past the cut collided, with six QA work streams all
+arriving as *PRODUCTION HARNESS*. Thirty keeps almost all of the brevity and
+almost none of that. The cut still lands on a word boundary and still takes any
+comma it exposes, because the four that reach it deserve the least bad cut.
+
+Two lines of the prompt exist because the replay showed the model ignoring the
+rule without them. *Count the characters before you answer* took the overshoot at
+twenty from 56 in 89 to 37. And *never capitalize every word* is what stopped it
+title-casing — at these lengths "capitalized as a sentence" alone returned *Logo
+For Oslo Coffee*. Casing cannot be repaired afterwards: lowercasing every word
+but the first would spell *Rally*, *Slack*, *IBM* and *INV-2291* wrong, so
+`sentenceCased` only capitalizes a first word that is already all lowercase.
 
 Two titles are deliberately longer, because neither was generated: the
 provisional title, which is the person's own first line, and a title a person
@@ -206,10 +215,10 @@ ordinary work-stream update and belongs to the object's product service.
   the grace, which is exactly what a fresh read would have said. The generated
   name arrives at the next event that touches the row, or the next reconnect that
   finds the row's version advanced.
-- **Limits.** A generated title is capped at 20 characters, cut back to the last
+- **Limits.** A generated title is capped at 30 characters, cut back to the last
   whole word — `title` holds 180, but a generated name is a label rather than a
   sentence, and the tail of a word cut mid-way reads as a typo. At this length
-  the cut is ordinary rather than rare: it fires on about two names in five. The
+  the cut is a backstop: it fired on 4 of the 89 replayed work streams. The
   provisional title is capped at the column's 180. The second pass reads at most
   12 messages of 600 characters and runs at most once. The grace is 60 seconds.
 
@@ -238,37 +247,43 @@ ordinary work-stream update and belongs to the object's product service.
 
 ## Changelog
 
-### 2026-09-05 — Sentence case, two or three words, twenty characters
+### 2026-09-05 — Sentence case, two to four words, thirty characters
 
-**What changed:** The channel styling is gone. A generated name is two or three
-words in sentence case, twenty characters or less; `normalizeGeneratedTitle` is
+**What changed:** The channel styling is gone. A generated name is two to four
+words in sentence case, thirty characters or less; `normalizeGeneratedTitle` is
 back to repairing an answer rather than reshaping it — no lowercasing, no
 hyphenating, and the apostrophe rule the hyphenating needed is gone with it. It
 keeps the whole-word cut, which now also strips a comma the cut exposes, and
 `sentenceCased` is back.
 
-**Why:** The team's call after reading the replay of 89 named work streams, at
-both lengths and in both shapes. Two things the replay decided rather than the
-prompt author: the model title-cases at this length unless told *never
-capitalize every word* in as many words — "capitalized as a sentence" alone
-produced *Logo For Oslo Coffee* — and it answers past twenty characters unless
-told to count them, which took the overshoot from 56 in 89 to 37.
+**Why:** Chosen by replaying 89 named work streams from the Global directory
+through the prompt at 40, 30 and 20 characters against the model production
+uses. Twenty was tried first and rejected on that evidence: the model answered
+past it 37 times in 89, so two names in five were a truncation rather than a
+name. Thirty costs 4 in 89. The table in the section above is that measurement.
+
+Two lines of the prompt are the replay's findings rather than the author's
+judgement. The model title-cases at these lengths unless told *never capitalize
+every word* in as many words — "capitalized as a sentence" alone produced *Logo
+For Oslo Coffee*. And it answers over the cap unless told to count the
+characters, which at twenty took the overshoot from 56 in 89 to 37.
 
 **Considered and rejected:** Enforcing sentence case in the normalizer, by
 lowercasing every word after the first. It cannot tell a proper noun from an
 ordinary one, so it would spell *Rally*, *Slack*, *IBM* and *INV-2291* wrong;
-casing has to come from the prompt, and the normalizer only capitalizes a first
-word that is already all lowercase. Also considered and not built: asking the
-model again when its answer is too long, rather than cutting. It would fix the
-fragments the cut leaves on two names in five, at a second model call on those,
-and a rewrite is not obviously better than a truncation while nobody has looked
-at the two side by side.
+casing has to come from the prompt. Also considered and not built: asking the
+model again when its answer is too long, rather than cutting. At twenty that
+would have mattered — it would have rewritten two names in five — but at thirty
+it would buy four names in 89 at the price of a second model call on each, and a
+rewrite is not obviously better than a truncation while nobody has compared them.
 
-**Consequences:** At twenty characters a name has room for the distinguishing
-detail and almost nothing else, and the section above records what that costs:
-fragments ending on a preposition, and work streams that differ only past the
-cut sharing a name. Changing the length is one constant in the naming service
-and two sentences in the prompt, and they have to move together.
+**Consequences:** Changing the length is one constant in the naming service and
+two sentences in the prompt, and they have to move together — the constant feeds
+the JSON Schema the model is handed as well as the cut. The replay that chose
+the number is reproducible: it lifts the prompt from the tree rather than
+carrying a copy, and asserts its normalizer port against this module's own test
+vectors before it calls anything, which is what caught the vectors going stale
+when the cap moved.
 
 ### 2026-09-05 — An apostrophe is elided rather than separating a word
 
