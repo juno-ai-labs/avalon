@@ -39,11 +39,25 @@ describe('settings registry', () => {
     expect(searchSettings(entries, 'time zone').some((entry) => entry.definition.id === 'personalTimezone')).toBe(true);
     expect(searchSettings(entries, '')).toEqual([]);
   });
-  it('keeps provider instances distinct and rejects duplicate keys', () => {
+  it('keeps provider instances distinct and ignores replayed metadata', () => {
     const entries = ['first', 'second'].map((instanceId) => ({
       key: 'github:' + instanceId, definition: settings.githubAccess, instanceId, instanceLabel: instanceId,
     }));
     expect(searchSettings(collectSettings([{ id: 'github', entries }], context), 'second')[0]?.instanceId).toBe('second');
-    expect(() => collectSettings([{ id: 'bad', entries: [entries[0]!, entries[0]!] }], context)).toThrow('Duplicate setting');
+    expect(collectSettings([{ id: 'replay', entries: [entries[0]!, entries[0]!] }], context)).toEqual([entries[0]]);
+  });
+  it('preserves legacy vocabulary and English casing independent of host locale', () => {
+    const entries = collectSettings([coreSettingsProvider], context);
+    for (const query of ['startup', 'data residency', 'keychain', 'integrations', 'organization', 'roles', 'notifications', 'diagnostics', 'summary', 'security', 'privacy', 'developer', 'status item', 'meetings', "Mac's keystore", 'invitations']) {
+      expect(searchSettings(entries, query).length, query).toBeGreaterThan(0);
+    }
+    expect(new Set(coreSettingsProvider.entries.map((entry) => entry.key)).size).toBe(coreSettingsProvider.entries.length);
+  });
+  it('ranks competing labels before metadata and non-actions before tied actions', () => {
+    const entries = collectSettings([coreSettingsProvider], context);
+    expect(searchSettings(entries, 'email')[0]?.definition.id).toBe('digestEmail');
+    expect(searchSettings(entries, 'digest')[0]?.definition.id).toBe('digestEnabled');
+    const withoutInstalledMcp = collectSettings([coreSettingsProvider], { ...context, sections: new Set(['connections']) });
+    expect(searchSettings(withoutInstalledMcp, 'Tools Rally may use')[0]?.definition.entryPoint).toBe('provider:custom-mcp');
   });
 });

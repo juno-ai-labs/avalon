@@ -1,3 +1,4 @@
+import { githubAvailabilityLabels, githubRemoteLabels, mcpAuthLabels } from '../settings/choices';
 import { SettingToggle } from '../settings/setting-toggle';
 import { settings, collectSettings, coreSettingsProvider, defineSetting, isSettingAvailable, searchSettings, type SettingSearchResult, type SettingsSearchContext } from '../settings/registry';
 import { SettingCopy, SettingLabel } from '../settings/setting-label';
@@ -6,15 +7,11 @@ import { digestDeliverySetting } from '../settings/digest-provider';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import {
-  Building2,
   Check,
-  Clock3,
   Copy,
   GitBranch,
-  Globe2,
   LockKeyhole,
   LoaderCircle,
-  LogOut,
   MailPlus,
   MonitorCog,
   Newspaper,
@@ -225,11 +222,15 @@ const settingsNavigation: Array<{ label: string; items: SettingsNavItem[] }> = [
 ];
 
 const linearNativeAgentEnabled = import.meta.env.VITE_LINEAR_NATIVE_AGENT_ENABLED === 'true';
-function providerSetting(provider: { id: string; name: string; description: string }) {
+function providerSetting(provider: { id: string; name: string; description: string; scopes: readonly string[] }, admin: boolean) {
   return defineSetting({
     id: 'provider:' + provider.id, section: 'connections', kind: 'custom',
     label: provider.name, description: provider.description,
-    options: ['Connect for me', 'Connect workspace', 'Setup', 'Authorization'],
+    options: [
+      ...(provider.scopes.includes('you') ? ['Connect for me'] : []),
+      ...(admin && provider.scopes.includes('workspace') ? ['Connect workspace'] : []),
+      'Setup', 'Authorization',
+    ],
   });
 }
 function connectionSetting(connection: WorkstreamConnection, admin: boolean) {
@@ -1021,15 +1022,15 @@ export function WorkspaceSettingsScreen({
     () => new Set(settingsNavigationWithConnectors.flatMap((group) => group.items.map((item) => item.id))),
     [settingsNavigationWithConnectors],
   );
-  const settingsContext: SettingsSearchContext = {
+  const settingsContext = useMemo<SettingsSearchContext>(() => ({
     sections: availableSections,
     admin: isAdmin,
     developer: developerSettingsAvailable,
     menuBar: applicationSettings?.menuBarAvailable !== false,
     login: applicationSettings?.launchAtLoginAvailable !== false,
-  };
+  }), [availableSections, isAdmin, developerSettingsAvailable, applicationSettings?.menuBarAvailable, applicationSettings?.launchAtLoginAvailable]);
   const [searchTarget, setSearchTarget] = useState<SettingSearchResult | null>(null);
-  const searchEntries = collectSettings([
+  const searchEntries = useMemo(() => collectSettings([
     {
       id: 'digest-destinations',
       entries: (connections.data ?? []).filter((connection) => connection.userDelivery)
@@ -1053,7 +1054,7 @@ export function WorkspaceSettingsScreen({
     {
       id: 'connector-catalog',
       entries: connectorProviders.map((provider) => ({
-        key: 'provider:' + provider.id, definition: providerSetting(provider),
+        key: 'provider:' + provider.id, definition: providerSetting(provider, isAdmin),
       })),
     },
     {
@@ -1063,8 +1064,8 @@ export function WorkspaceSettingsScreen({
           key: 'connection:' + connection.id, definition: connectionSetting(connection, isAdmin),
         })),
     },
-  ], settingsContext);
-  const searchResults = searchSettings(searchEntries, navigationQuery);
+  ], settingsContext), [connections.data, githubSettingsConnections, customMcpSettingsConnections, isAdmin, settingsContext]);
+  const searchResults = useMemo(() => searchSettings(searchEntries, navigationQuery), [searchEntries, navigationQuery]);
   const selectSearchResult = (result: SettingSearchResult): void => {
     if (!searchEntries.some((entry) => entry.key === result.key)) return;
     if (result.definition.section === 'github' && result.instanceId) {
@@ -1079,7 +1080,7 @@ export function WorkspaceSettingsScreen({
     setNavigationQuery('');
     setSearchTarget({ ...result });
   };
-  useRevealSetting(contentRef, searchTarget && searchEntries.some((entry) => entry.key === searchTarget.key)
+  useRevealSetting(contentRef, searchTarget && activeSection === searchTarget.definition.section && searchEntries.some((entry) => entry.key === searchTarget.key)
     ? searchTarget : null);
   const installedConnections = (connections.data ?? []).filter((connection) =>
     installedConnectorTypes.has(connection.connectorType),
@@ -1300,6 +1301,7 @@ export function WorkspaceSettingsScreen({
       <div className="screen-drag-strip window-drag" />
       <div className="settings-window">
         <aside className="settings-sidebar" onKeyDown={(event) => {
+          if (event.nativeEvent.isComposing) return;
           if (event.key === 'Escape' && navigationQuery) {
             event.preventDefault();
             event.stopPropagation();
@@ -1377,7 +1379,6 @@ export function WorkspaceSettingsScreen({
                 <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Preferences</h2></div>
                 <div className="settings-list-card">
                   <label className="settings-preference-row">
-                    <span className="settings-row-icon"><Clock3 aria-hidden="true" size={18} /></span>
                     <SettingCopy setting={settings.personalTimezone} />
                     <DropdownSelect
                       ariaLabel="Personal default timezone"
@@ -1396,7 +1397,6 @@ export function WorkspaceSettingsScreen({
                 <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Session</h2></div>
                 <div className="settings-list-card">
                   <div className="settings-preference-row">
-                    <span className="settings-row-icon"><LogOut aria-hidden="true" size={18} /></span>
                     <SettingCopy setting={settings.signOut} />
                     <Button onClick={() => void signOut()}>Sign out</Button>
                   </div>
@@ -1417,9 +1417,6 @@ export function WorkspaceSettingsScreen({
                 <div className="settings-pane-heading"><h2>Workspace preferences</h2><p>Review workspace details and defaults shared by workspace automations.</p></div>
                 <div className="settings-list-card">
                   <div className="settings-preference-row">
-                    <span className="settings-row-icon">
-                      {workspace.region === 'eu' ? <ShieldCheck aria-hidden="true" size={18} /> : <Globe2 aria-hidden="true" size={18} />}
-                    </span>
                     <SettingCopy setting={settings.workspaceRegion} />
                     <span className="settings-row-value">
                       <strong>{workspace.region === 'eu' ? 'European Union' : 'United States'}</strong>
@@ -1427,12 +1424,10 @@ export function WorkspaceSettingsScreen({
                     </span>
                   </div>
                   <div className="settings-preference-row">
-                    <span className="settings-row-icon"><Building2 aria-hidden="true" size={18} /></span>
                     <SettingCopy setting={settings.workspaceIdentity} />
                     <span className="settings-row-value"><strong>{workspace.name}</strong></span>
                   </div>
                   <label className="settings-preference-row">
-                    <span className="settings-row-icon"><Clock3 aria-hidden="true" size={18} /></span>
                     <SettingCopy setting={settings.workspaceTimezone} />
                     <DropdownSelect
                       ariaLabel="Workspace default timezone"
@@ -1475,7 +1470,7 @@ export function WorkspaceSettingsScreen({
                         <span><strong><SettingLabel setting={settings.fullNetwork} /></strong><small>{settings.fullNetwork.description}</small></span>
                       </label>
                     </fieldset>
-                    {terminalMode === 'full_internet' && (
+                    {terminalMode === 'full_internet' && searchTarget?.definition.id === 'terminalDomains' && (
                       <div className="terminal-network-domains">
                         <SettingCopy setting={settings.terminalDomains}
                           description="Workspace-approved domains apply only to Trusted only mode." />
@@ -1650,7 +1645,6 @@ export function WorkspaceSettingsScreen({
                 </div>
                 <div className="settings-list-card">
                   <div className="settings-preference-row">
-                    <span className="settings-row-icon"><LogOut aria-hidden="true" size={18} /></span>
                     <span className="settings-row-copy">
                       <strong>{leavingClosesWorkspace ? 'Leave and close this workspace' : 'Leave this workspace'}</strong>
                       <small>{leavingClosesWorkspace
@@ -1831,7 +1825,7 @@ export function WorkspaceSettingsScreen({
                                 ? <ConnectorMark mark={mark} />
                                 : Icon && <Icon aria-hidden="true" size={18} />}
                             </div>
-                            <div><strong><SettingLabel setting={providerSetting(provider)} /></strong><span>{awaitingProvider ? 'Waiting for authorization' : connected ? 'Connected' : connectorCatalog.isLoading ? 'Checking availability' : providerAvailable ? 'Available' : 'Unavailable'}</span></div>
+                            <div><strong><SettingLabel setting={providerSetting(provider, isAdmin)} /></strong><span>{awaitingProvider ? 'Waiting for authorization' : connected ? 'Connected' : connectorCatalog.isLoading ? 'Checking availability' : providerAvailable ? 'Available' : 'Unavailable'}</span></div>
                           </div>
                           <p>{provider.description}</p>
                           {searchTarget?.definition.entryPoint === 'provider:' + provider.id && (
@@ -1941,7 +1935,6 @@ export function WorkspaceSettingsScreen({
                     )}
                     <div className="settings-list-card settings-github-policy">
                       <label className="settings-preference-row">
-                        <span className="settings-row-icon"><GitBranch aria-hidden="true" size={18} /></span>
                         <SettingCopy setting={settings.githubAvailability} instanceId={githubSettingsConnectionId ?? undefined} />
                         <select
                           aria-label="Repository availability"
@@ -1953,11 +1946,11 @@ export function WorkspaceSettingsScreen({
                           })}
                           value={githubSettings.mode}
                         >
-                          <option value="all_repositories">{settings.githubAvailability.options[0]}</option>
-                          <option value="selected_repositories">{settings.githubAvailability.options[1]}</option>
+                          <option value="all_repositories">{githubAvailabilityLabels.all_repositories}</option>
+                          <option value="selected_repositories">{githubAvailabilityLabels.selected_repositories}</option>
                         </select>
                       </label>
-                      {githubSettings.mode !== 'all_repositories' && (
+                      {githubSettings.mode !== 'all_repositories' && searchTarget?.definition.id === 'githubRemote' && (
                         <div className="settings-preference-row">
                           <SettingCopy setting={settings.githubRemote} instanceId={githubSettingsConnectionId ?? undefined}
                             description="A default applies only to All repositories. Configure individual access under Repositories below." />
@@ -1965,7 +1958,6 @@ export function WorkspaceSettingsScreen({
                       )}
                       {githubSettings.mode === 'all_repositories' && (
                         <label className="settings-preference-row">
-                          <span className="settings-row-icon"><LockKeyhole aria-hidden="true" size={18} /></span>
                           <SettingCopy setting={settings.githubRemote} instanceId={githubSettingsConnectionId ?? undefined} />
                           <select
                             aria-label="Default remote access"
@@ -1977,8 +1969,8 @@ export function WorkspaceSettingsScreen({
                             })}
                             value={githubSettings.defaultRemoteAccess}
                           >
-                            <option value="read_only">{settings.githubRemote.options[0]}</option>
-                            <option value="full_access">{settings.githubRemote.options[1]}</option>
+                            <option value="read_only">{githubRemoteLabels.read_only}</option>
+                            <option value="full_access">{githubRemoteLabels.full_access}</option>
                           </select>
                         </label>
                       )}
@@ -2025,8 +2017,8 @@ export function WorkspaceSettingsScreen({
                                   )}
                                   value={effectiveAccess}
                                 >
-                                  <option value="read_only">{settings.githubRemote.options[0]}</option>
-                                  <option value="full_access">{settings.githubRemote.options[1]}</option>
+                                  <option value="read_only">{githubRemoteLabels.read_only}</option>
+                                  <option value="full_access">{githubRemoteLabels.full_access}</option>
                                 </select>
                                 {githubSettings.mode === 'selected_repositories' && (
                                   <Button
@@ -2087,7 +2079,6 @@ export function WorkspaceSettingsScreen({
                   <>
                     <div className="settings-list-card">
                       <div className="settings-preference-row">
-                        <span className="settings-row-icon"><ServerCog aria-hidden="true" size={18} /></span>
                         <span className="settings-row-copy">
                           <strong><SettingLabel setting={settings.mcpServer} instanceId={customMcpSettingsConnectionId ?? undefined} /></strong>
                           <span>{customMcpSettings.data.serverUrl}</span>
@@ -2113,7 +2104,6 @@ export function WorkspaceSettingsScreen({
                         )}
                       </div>
                       <label className="settings-preference-row">
-                        <span className="settings-row-icon"><ShieldCheck aria-hidden="true" size={18} /></span>
                         <SettingCopy setting={settings.mcpPolicy} instanceId={customMcpSettingsConnectionId ?? undefined} description={<> {customMcpSettings.data.toolPolicyEditable
                               ? 'Read-only exposes just the tools this server marks as read-only. Every remaining tool still asks before it runs — the marking is the server’s own claim, not something Rally can verify.'
                               : 'A personal connection is only ever yours and acts with your own identity on that server, so it exposes everything the server offers you.'} </>} />
@@ -2228,6 +2218,7 @@ export function WorkspaceSettingsScreen({
                 {isSettingAvailable(settings.menuBar, settingsContext) && (
                   <>
                     <div className="settings-list-card">
+                      {/* The preference file is shared with Lockdown. Keep one write in flight while it re-encrypts the session. */}
                       <SettingToggle
                         setting={settings.menuBar}
                         aria-label="Show Rally in the menu bar"
@@ -2261,6 +2252,7 @@ export function WorkspaceSettingsScreen({
                   <>
                     <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Startup</h2><p>Decide whether this Mac starts Rally for you.</p></div>
                     <div className="settings-list-card">
+                      {/* macOS owns this registration. Display the state the system returns after the write, including pending approval. */}
                       <SettingToggle
                         setting={settings.login}
                         aria-label="Open Rally at login"
@@ -2286,6 +2278,7 @@ export function WorkspaceSettingsScreen({
                   <>
                     <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Developer</h2><p>Extra tooling for reporting and diagnosing problems.</p></div>
                     <div className="settings-list-card">
+                      {/* Debug shares the preference file with Lockdown, so writes wait for session re-encryption. */}
                       <SettingToggle
                         setting={settings.debug}
                         aria-label="Debug enabled"
@@ -2502,8 +2495,8 @@ export function WorkspaceSettingsScreen({
               onChange={(event) => setCustomMcpAuthMode(event.currentTarget.value as 'oauth' | 'headers')}
               value={customMcpAuthMode}
             >
-              <option value="oauth">{settings.mcpAuth.options[0]}</option>
-              <option value="headers">{settings.mcpAuth.options[1]}</option>
+              <option value="oauth">{mcpAuthLabels.oauth}</option>
+              <option value="headers">{mcpAuthLabels.headers}</option>
             </select>
             <small>
               {customMcpAuthMode === 'oauth'
@@ -2574,7 +2567,7 @@ export function WorkspaceSettingsScreen({
           )}
           {customMcpModalScope === 'workspace' && (
             <label className="form-field" htmlFor="custom-mcp-tool-policy">
-              <span>Tools Rally may use</span>
+              <span><SettingLabel setting={settings.mcpSetupPolicy} /></span>
               <select
                 id="custom-mcp-tool-policy"
                 onChange={(event) => setCustomMcpToolPolicy(event.currentTarget.value as CustomMcpToolPolicy)}
