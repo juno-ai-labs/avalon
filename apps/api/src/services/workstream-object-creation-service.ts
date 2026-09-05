@@ -31,7 +31,7 @@ import {
 } from "./workstream-runtime-database";
 import { WorkstreamEmailRoutingService } from "./workstream-email-routing-service";
 import { WorkstreamObjectClient } from "./workstream-object-client";
-import { readWorkstreamAuthorityControl } from "./workstream-authority";
+import { readWorkstreamAuthorityControl, type WorkstreamAuthorityControl } from "./workstream-authority";
 
 type ParsedCreateInput = z.infer<typeof CreateWorkstreamRequestSchema>;
 type CreateInput = Omit<ParsedCreateInput, "mentions"> & {
@@ -60,6 +60,8 @@ interface ReceiptRow {
 }
 
 interface CreateOptions {
+  /** Authority snapshot already resolved by the owning HTTP route in this request. */
+  authorityControl?: WorkstreamAuthorityControl;
   openingStructuredContent?: unknown;
   opportunitySnapshot?: {
     opportunityId: string;
@@ -219,7 +221,7 @@ export class WorkstreamObjectCreationService {
     // authority control row before choosing this service, and a span of its own
     // is where that duplicated round trip becomes visible instead of hiding
     // inside one aggregate number.
-    const control = await span.step("workstream.create.authority.read_recheck", () =>
+    const control = options.authorityControl ?? await span.step("workstream.create.authority.read_recheck", () =>
       readWorkstreamAuthorityControl(this.env));
     if (control.phase !== "durable_object_open") {
       throw new ApiError(503, "workstream_maintenance", "Work-stream maintenance is in progress");

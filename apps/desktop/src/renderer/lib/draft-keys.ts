@@ -2,8 +2,9 @@
  * Every composer that caches a draft names it here, so a text draft and its
  * attachments always agree on one key and no two surfaces can collide.
  */
-export function workstreamDraftKey(region: RallyRegion, workspaceId: string, workstreamId: string): string {
-  return `${workspaceDraftPrefix(region, workspaceId)}workstream:${workstreamId}`;
+export function workstreamDraftKey(region: RallyRegion, workspaceId: string, workstreamId: string, substreamId = '0'): string {
+  const parentKey = `${workspaceDraftPrefix(region, workspaceId)}workstream:${workstreamId}`;
+  return substreamId === '0' ? parentKey : `${parentKey}:substream:${substreamId}`;
 }
 
 /** Scoped by workspace: the launcher is one composer per workspace, not per device. */

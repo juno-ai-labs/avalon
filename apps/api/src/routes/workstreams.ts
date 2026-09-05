@@ -150,7 +150,7 @@ workstreamRoutes.post("/", requireSendableMessageLength("openingMessage"),
     // The authority read is a step rather than an untimed await: it is a D1
     // round trip on the front of the create, and an unstepped one would be
     // charged to whichever step closed next.
-    await span.step("authority.read", () => requireOpenWorkstreamAuthority(c.env));
+    const authorityControl = await span.step("authority.read", () => requireOpenWorkstreamAuthority(c.env));
     span.setAttributes({
       "rally.workstream.attachment_count": body.attachmentIds?.length ?? 0,
       "rally.workstream.participant_count": body.participantUserIds?.length ?? 0,
@@ -162,7 +162,7 @@ workstreamRoutes.post("/", requireSendableMessageLength("openingMessage"),
           descriptionSource: body.objective ? "authored" : "derived",
           // The one caller whose `participantUserIds` is people somebody picked
           // by hand, which is what makes telling them the right thing to do.
-        }, { span, notifyParticipants: true }));
+        }, { span, notifyParticipants: true, authorityControl }));
     const created = CreatedWorkstreamSchema.parse(result);
     span.setAttributes({
       "rally.workstream.id": created.workstream.id,

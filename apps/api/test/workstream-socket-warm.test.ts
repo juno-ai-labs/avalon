@@ -36,10 +36,10 @@ const auth: AuthContext = {
  * the real `WorkstreamDO`'s in `test-workers/conversation-parent-contract`;
  * here they are the seam, so the Worker-side sequence is what is under test.
  */
-function parentDecisions(authorized = true, archived = false) {
+function parentDecisions(authorized = true, archived = false, membershipVersion = 0) {
   return {
     authority: vi.fn(async () => ({ exists: true, authorityGeneration: 7, archived })),
-    authorizeViewer: vi.fn(async () => ({ authorized, archived })),
+    authorizeViewer: vi.fn(async () => ({ authorized, archived, membershipVersion })),
   };
 }
 
@@ -107,7 +107,9 @@ describe("conversation socket ticket preparation", () => {
     });
     // The parent decided before anything was issued, and it was asked about
     // this person, not merely whether the work stream exists.
-    expect(parent.authorizeViewer).toHaveBeenCalledWith({ workspaceId, parentId: workstreamId, userId });
+    expect(parent.authorizeViewer).toHaveBeenCalledWith({
+      workspaceId, parentId: workstreamId, substreamId: "0", userId,
+    });
     expect(deferred).toHaveLength(1);
     await expect(deferred[0]).resolves.toBeUndefined();
     expect(substreamObjectName).toHaveBeenCalledWith(
@@ -169,13 +171,15 @@ describe("conversation socket ticket preparation", () => {
     }));
   });
 
-  it("does not materialize an unrecorded non-main substream from a ticket request", async () => {
+  it("carries exact child membership without warming a non-main substream", async () => {
     const prepareSocketAdmission = vi.fn(async () => ({ outcome: "snapshot_prepared" as const }));
     const substreamObjectName = vi.fn(() => createTestDurableObjectId("substream"));
     const getSubstream = vi.fn(() => ({ prepareSocketAdmission }));
     const deferred: Promise<unknown>[] = [];
+    const parent = parentDecisions(true, false, 3);
+    const ticketEnv = environment(prepareSocketAdmission, substreamObjectName, getSubstream, parent);
     const service = new ConversationService(
-      environment(prepareSocketAdmission, substreamObjectName, getSubstream),
+      ticketEnv,
       auth,
       (promise) => deferred.push(promise),
     );
@@ -183,6 +187,13 @@ describe("conversation socket ticket preparation", () => {
     const ticket = await service.socketTicket(workstreamId, substreamId);
 
     expect(ticket.url).toContain(`/socket/conversations/${workstreamId}/${substreamId}`);
+    await expect(verifySocketTicket(ticketEnv, ticket.ticket)).resolves.toMatchObject({
+      substreamId,
+      admission: { membershipVersion: 3 },
+    });
+    expect(parent.authorizeViewer).toHaveBeenCalledWith({
+      workspaceId, parentId: workstreamId, substreamId, userId,
+    });
     expect(deferred).toEqual([]);
     expect(substreamObjectName).not.toHaveBeenCalled();
     expect(getSubstream).not.toHaveBeenCalled();
@@ -207,7 +218,9 @@ describe("conversation socket ticket preparation", () => {
       status: 404,
       code: "conversation_not_found",
     });
-    expect(parent.authorizeViewer).toHaveBeenCalledWith({ workspaceId, parentId: workstreamId, userId });
+    expect(parent.authorizeViewer).toHaveBeenCalledWith({
+      workspaceId, parentId: workstreamId, substreamId: "0", userId,
+    });
     expect(deferred).toEqual([]);
     expect(getSubstream).not.toHaveBeenCalled();
     expect(prepareSocketAdmission).not.toHaveBeenCalled();

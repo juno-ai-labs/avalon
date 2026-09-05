@@ -304,12 +304,11 @@ from a cold open. The trim loop re-serializes the whole frame per dropped
 message, and that count is the only place its cost appears. Normal navigation
 issues neither detail nor transcript REST reads. Canonical history recovery
 uses snapshot-fenced `load_transcript_range` requests on the admitted
-SubstreamAgent socket; `GET /:id` remains only for explicit metadata recovery
-after an unavailable state or a person choosing Retry. Ordinary lost replay
-history is repaired by the subscription snapshot itself. A first ticket or
-handshake failure exposes that Retry action as soon
-as the socket enters
-`reconnecting`; no guessed fallback timeout is part of the measurement.
+SubstreamAgent socket. When replay is unavailable or the client cursor is
+ahead, main and child conversations both abandon that connection, reset the
+addressed cursor, and reconnect from zero for a new authoritative socket
+snapshot. Retry restarts the same bounded socket opening sequence; it does not
+race a metadata REST read.
 Current feed tickets carry the signed resume cursor, so socket acceptance and
 the first subscription normally share one Durable Object invocation. Older
 client/server combinations retain the explicit subscribe frame as a rolling
@@ -375,6 +374,17 @@ messages, attachment names, and arbitrary annotations. Product analytics
 opt-out suppresses the event, Global follows the existing PostHog/lakehouse
 route, and EU remains on the regional internal route. The HTTP perf line remains
 local because its request duration is already present in backend request traces.
+
+Creation flows use that same projection but finish at the existing two-frame
+painted send-ready boundary. An ordinary `workstream_create` carries its
+operation ID from the POST across navigation instead of ending at
+`navigation_requested`. `substream_prepare` emits preparation-to-preview and
+`substream_create` emits confirmation-to-ready under one operation ID. The ready sample's
+`systemWaitMs` adds those two measured intervals and excludes the person's
+unbounded review time between them. It includes summary preparation and every
+post-confirm socket/context wait. The acceptance targets remain P50 below one
+second and P90 below two seconds; instrumentation does not establish that they
+are met.
 
 On macOS, main also writes that same closed projection to Unified Logging under
 subsystem `ai.rallywith.desktop` and category `performance`. The local write
@@ -582,6 +592,18 @@ log show --style compact \
   --predicate 'subsystem == "ai.rallywith.desktop" AND category == "performance"'
 ```
 
+A reproducible no-production-write acceptance lane is: run the local API and
+Electron app using `dev-environment.md`, create representative empty, sliced,
+and summary-backed substreams, then export the closed native records with
+`log show --style json --predicate 'subsystem == "ai.rallywith.desktop" AND category == "performance"'`.
+Select `renderer_perf_flow` records whose `flow` is `workstream_create` or
+`substream_create` with outcome `send_ready`, group the latter by `operationId`, and compute percentiles
+from `systemWaitMs`. Record sample count, build SHA, cold/warm status, payload
+shape, and whether summary inference used the configured real local-development
+provider. Do not mix failures, cancelled attempts, or replayed receipts into
+the successful distribution, and do not describe a small local sample as a
+production percentile.
+
 For a cold Durable Object tail, find the automatic binding span and inspect its
 `durable_object.initialize` child, then the
 `durable_object.schema_migrate` child. Workers Logs can aggregate the matching
@@ -656,6 +678,32 @@ a new recorded decision. But what enforces it is the absence of a line in
 both signals rather than trusting the comment there to survive.
 
 ## Changelog
+
+### 2026-09-05 — Keep preview timings out of creation percentiles
+
+Preparation uses `substream_prepare`, leaving one successful `substream_create`
+sample at send readiness. Sharing the flow name counted preview completion as
+another creation and biased latency distributions downward. Correlation still
+uses one operation ID, and the ready sample includes preparation system wait.
+
+### 2026-09-04 — Creation clocks reach authoritative painted send readiness
+
+**What changed:** Ordinary creation now retains its renderer trace across
+navigation. Private-child preparation and confirmation publish separate
+intervals under one durable operation ID, with their sum reported as system
+wait after the child context and send handler cross the existing paint fence.
+The desktop POST passes its already-validated authority snapshot into creation,
+removing the service's duplicate D1 read only for that route.
+
+**Why:** Navigation request and preview response are intermediate milestones;
+neither proves the created conversation can accept a send. The duplicate
+authority read repeated the same request-scoped fact and had no distinct
+failure semantics, while non-route callers still need their own check.
+
+**Consequences:** User review time is excluded, summary preparation is not.
+Keep P50 below one second and P90 below two seconds as unverified acceptance
+targets until a representative trace set exists. Do not merge replay or failure
+cohorts into those percentiles.
 
 ### 2026-09-02 — Prepared admission separates hidden work from upgrade fallback
 
