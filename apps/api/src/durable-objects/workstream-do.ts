@@ -7,6 +7,7 @@ import {
   WorkstreamIdSchema,
   asWorkspaceId,
   asWorkstreamId,
+  asSubstreamId,
   WorkstreamControlMetadataSchema,
   WorkstreamControlSocketClientEventSchema,
   WorkstreamControlSocketEventSchema,
@@ -19,18 +20,46 @@ import type {
   ParentEffectEnvelope,
 } from "@rally/contracts/conversation-effects";
 import {
+  WorkstreamDirectoryCommonEffectSchema,
+  WorkstreamDirectoryUserEffectSchema,
+} from "@rally/contracts/conversation-effects";
+import {
   ConversationParentAuthorityRequestSchema,
   ConversationParentAuthorityResultSchema,
   ConversationParentAuthorizeViewerRequestSchema,
   ConversationParentAuthorizeViewerResultSchema,
   ConversationParentReserveChildRequestSchema,
   ConversationParentReserveChildResultSchema,
+  BeginPrivateChildPreparationRequestSchema,
+  ClaimPrivateChildConfirmationRequestSchema,
+  ListVisiblePrivateChildrenRequestSchema,
+  ListVisiblePrivateChildrenResultSchema,
+  MutatePrivateChildParticipantRequestSchema,
+  MutatePrivateChildParticipantResultSchema,
+  PrivateChildPreparationOperationSchema,
+  ReadPrivateChildPreparationRequestSchema,
+  SavePreparedPrivateChildContextRequestSchema,
+  SavePrivateChildCaptureRequestSchema,
+  SavePrivateChildPartRequestSchema,
+  SetPrivateChildTerminalStatusRequestSchema,
   type ConversationParentAuthorityRequest,
   type ConversationParentAuthorityResult,
   type ConversationParentAuthorizeViewerRequest,
   type ConversationParentAuthorizeViewerResult,
   type ConversationParentReserveChildRequest,
   type ConversationParentReserveChildResult,
+  type BeginPrivateChildPreparationRequest,
+  type ClaimPrivateChildConfirmationRequest,
+  type ListVisiblePrivateChildrenRequest,
+  type ListVisiblePrivateChildrenResult,
+  type MutatePrivateChildParticipantRequest,
+  type MutatePrivateChildParticipantResult,
+  type PrivateChildPreparationOperation,
+  type ReadPrivateChildPreparationRequest,
+  type SavePreparedPrivateChildContextRequest,
+  type SavePrivateChildCaptureRequest,
+  type SavePrivateChildPartRequest,
+  type SetPrivateChildTerminalStatusRequest,
 } from "@rally/contracts/conversation-parent";
 import { truncateUtf16Safe } from "@rally/contracts/text";
 import { z } from "zod";
@@ -41,6 +70,7 @@ import { withDurableObjectSelf } from "../lib/durable-object-self";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { uuidV7 } from "../lib/uuid-v7";
 import { reportScheduledAlarmAttempt } from "./scheduled-alarm-report";
+import { logWarn } from "../observability/logger";
 import {
   applyDurableObjectSqliteMigrations,
   type DurableObjectSqliteMigration,
@@ -69,6 +99,7 @@ import {
 } from "../services/access-revocation";
 
 const realtimeTextEncoder = new TextEncoder();
+const PRIVATE_CHILD_EFFECT_RETRY_MS = 5_000;
 
 function workstreamControlPayload(event: WorkstreamControlSocketEvent): string {
   const payload = JSON.stringify(WorkstreamControlSocketEventSchema.parse(event));
@@ -120,6 +151,31 @@ interface WorkstreamMetadataRow extends Record<string, SqlStorageValue> {
   next_terminal_action_at: number | null;
   source_created_at: number;
   source_updated_at: number;
+}
+
+interface PrivateChildPreparationRow extends Record<string, SqlStorageValue> {
+  operation_id: string;
+  substream_id: string;
+  creator_user_id: string;
+  request_json: string;
+  capture_json: string | null;
+  completed_parts_json: string;
+  prepared_context_json: string | null;
+  status: "preparing" | "prepared" | "confirming" | "ready" | "failed";
+  error_code: string | null;
+  created_at: number;
+  updated_at: number;
+  title: string;
+  membership_version: number;
+}
+
+interface PrivateChildMembershipEffectRow extends Record<string, SqlStorageValue> {
+  operation_id: string;
+  substream_id: string;
+  user_id: string;
+  actor_user_id: string;
+  active: number;
+  membership_version: number;
 }
 
 export const WORKSTREAM_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigration[] = [{
@@ -418,6 +474,55 @@ export const WORKSTREAM_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
     // the registry beside them.
     ...CONVERSATION_CHILDREN_SCHEMA_STATEMENTS,
   ],
+}, {
+  version: 7,
+  description: "make private work-stream children parent-owned and retryable",
+  statements: [
+    `ALTER TABLE conversation_children ADD COLUMN status TEXT NOT NULL DEFAULT 'ready'
+      CHECK (status IN ('reserved', 'ready', 'failed'))`,
+    `ALTER TABLE conversation_children ADD COLUMN title TEXT`,
+    `ALTER TABLE conversation_children ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0`,
+    `CREATE TABLE private_child_preparations (
+      operation_id TEXT PRIMARY KEY,
+      substream_id TEXT NOT NULL UNIQUE REFERENCES conversation_children(substream_id) ON DELETE CASCADE,
+      creator_user_id TEXT NOT NULL,
+      request_json TEXT NOT NULL CHECK (json_valid(request_json)),
+      capture_json TEXT CHECK (capture_json IS NULL OR json_valid(capture_json)),
+      completed_parts_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(completed_parts_json)),
+      prepared_context_json TEXT CHECK (prepared_context_json IS NULL OR json_valid(prepared_context_json)),
+      status TEXT NOT NULL CHECK (status IN ('preparing', 'prepared', 'confirming', 'ready', 'failed')),
+      error_code TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    ) STRICT`,
+    `CREATE TABLE private_child_memberships (
+      substream_id TEXT NOT NULL REFERENCES conversation_children(substream_id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL,
+      active INTEGER NOT NULL CHECK (active IN (0, 1)),
+      version INTEGER NOT NULL CHECK (version > 0),
+      added_by_user_id TEXT NOT NULL,
+      added_at INTEGER NOT NULL,
+      removed_at INTEGER,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (substream_id, user_id)
+    ) STRICT`,
+    `CREATE INDEX private_child_memberships_user_idx
+      ON private_child_memberships(user_id, active, substream_id)`,
+    `CREATE TABLE private_child_membership_effects (
+      operation_id TEXT PRIMARY KEY,
+      substream_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      actor_user_id TEXT NOT NULL,
+      active INTEGER NOT NULL CHECK (active IN (0, 1)),
+      membership_version INTEGER NOT NULL CHECK (membership_version > 0),
+      state TEXT NOT NULL CHECK (state IN ('pending', 'inflight', 'delivered')),
+      attempts INTEGER NOT NULL CHECK (attempts >= 0),
+      not_before INTEGER NOT NULL,
+      created_at INTEGER NOT NULL
+    ) STRICT`,
+    `CREATE INDEX private_child_membership_effects_due_idx
+      ON private_child_membership_effects(state, not_before, created_at, operation_id)`,
+  ],
 }];
 
 function first<T extends Record<string, SqlStorageValue>>(cursor: SqlStorageCursor<T>): T | null {
@@ -687,6 +792,23 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     const row = this.metadataRow();
     if (!row) return ConversationParentAuthorizeViewerResultSchema.parse({ authorized: false, archived: false });
     this.assertParent(request.workspaceId, request.parentId);
+    const substreamId = request.substreamId ?? "0";
+    if (substreamId !== "0") {
+      const child = first(this.parentSql.exec<{ status: "reserved" | "ready" | "failed"; version: number | null }>(
+        `SELECT child.status, member.version
+           FROM conversation_children child
+           LEFT JOIN private_child_memberships member
+             ON member.substream_id = child.substream_id AND member.user_id = ? AND member.active = 1
+          WHERE child.substream_id = ? AND child.kind = 'child'`,
+        request.userId, substreamId,
+      ));
+      return ConversationParentAuthorizeViewerResultSchema.parse({
+        authorized: child?.status === "ready" && child.version !== null,
+        archived: row.archived_at !== null,
+        childStatus: child?.status ?? null,
+        membershipVersion: child?.version ?? 0,
+      });
+    }
     // Archive is reported, not folded into the answer: an archived work stream
     // is still readable by the people who could read it, only not writable.
     const authorized = row.scope === "workspace" || this.isParticipant(request.userId);
@@ -780,6 +902,472 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       reserved: true,
       authorityGeneration: reserved.authorityGeneration,
     });
+  }
+
+  /** Reserve one creator-only nonzero child and its immutable preparation receipt. */
+  async beginPrivateChildPreparation(
+    input: BeginPrivateChildPreparationRequest,
+  ): Promise<PrivateChildPreparationOperation> {
+    await this.initialized;
+    const request = BeginPrivateChildPreparationRequestSchema.parse(input);
+    this.assertParent(request.workspaceId, request.parentId);
+    if (!this.canRead(request.creatorUserId)) throw new Error("private_child_creator_not_admitted_to_parent");
+    const initialMembers = [...new Set(request.membershipInitializer.memberUserIds)];
+    if (initialMembers.length !== request.membershipInitializer.memberUserIds.length
+      || !initialMembers.includes(request.creatorUserId)) {
+      throw new Error("private_child_membership_initializer_invalid");
+    }
+    for (const userId of initialMembers) {
+      if (!this.canRead(userId)) throw new Error("private_child_initial_member_not_admitted_to_parent");
+    }
+    const canonicalRequest = JSON.stringify(request);
+    const existing = this.privateChildPreparation(request.operationId);
+    if (existing) {
+      const stored = first(this.parentSql.exec<{ request_json: string }>(
+        `SELECT request_json FROM private_child_preparations WHERE operation_id = ?`,
+        request.operationId,
+      ));
+      if (stored?.request_json !== canonicalRequest) throw new Error("private_child_preparation_conflict");
+      return existing;
+    }
+    const now = Date.now();
+    const substreamId = uuidV7(now);
+    this.state.storage.transactionSync(() => {
+      this.registerChild(substreamId, "child", request.creatorUserId, now);
+      this.parentSql.exec(
+        `UPDATE conversation_children SET status = 'reserved', title = ?, updated_at = ?
+          WHERE substream_id = ?`,
+        request.title, now, substreamId,
+      );
+      for (const userId of initialMembers) {
+        this.parentSql.exec(
+          `INSERT INTO private_child_memberships
+             (substream_id, user_id, active, version, added_by_user_id, added_at, removed_at, updated_at)
+           VALUES (?, ?, 1, 1, ?, ?, NULL, ?)`,
+          substreamId, userId, request.creatorUserId, now, now,
+        );
+      }
+      this.parentSql.exec(
+        `INSERT INTO private_child_preparations
+           (operation_id, substream_id, creator_user_id, request_json, capture_json,
+            completed_parts_json, prepared_context_json, status, error_code, created_at, updated_at)
+         VALUES (?, ?, ?, ?, NULL, '[]', NULL, 'preparing', NULL, ?, ?)`,
+        request.operationId, substreamId, request.creatorUserId, canonicalRequest, now, now,
+      );
+      for (const userId of initialMembers) {
+        this.insertPrivateChildMembershipEffect({
+          operationId: `prepare:${request.operationId}:${userId}`,
+          substreamId,
+          userId,
+          actorUserId: request.creatorUserId,
+          active: true,
+          membershipVersion: 1,
+          now,
+        });
+      }
+    });
+    await this.armNextAlarm();
+    return this.requirePrivateChildPreparation(request.operationId);
+  }
+
+  async readPrivateChildPreparation(
+    input: ReadPrivateChildPreparationRequest,
+  ): Promise<PrivateChildPreparationOperation | null> {
+    await this.initialized;
+    const request = ReadPrivateChildPreparationRequestSchema.parse(input);
+    this.assertParent(request.workspaceId, request.parentId);
+    return this.privateChildPreparation(request.operationId);
+  }
+
+  async claimPrivateChildConfirmation(
+    input: ClaimPrivateChildConfirmationRequest,
+  ): Promise<PrivateChildPreparationOperation> {
+    await this.initialized;
+    const request = ClaimPrivateChildConfirmationRequestSchema.parse(input);
+    this.assertParent(request.workspaceId, request.parentId);
+    this.state.storage.transactionSync(() => {
+      const operation = this.requirePrivateChildPreparation(request.operationId);
+      if (operation.creatorUserId !== request.actorUserId) throw new Error("private_child_confirmation_forbidden");
+      if (operation.status === "failed") throw new Error("private_child_preparation_failed");
+      if (operation.status === "preparing") throw new Error("private_child_context_not_prepared");
+      if (operation.status === "prepared") {
+        this.parentSql.exec(
+          `UPDATE private_child_preparations SET status = 'confirming', updated_at = ? WHERE operation_id = ?`,
+          Date.now(), request.operationId,
+        );
+      }
+    });
+    return this.requirePrivateChildPreparation(request.operationId);
+  }
+
+  async savePrivateChildCapture(input: SavePrivateChildCaptureRequest): Promise<PrivateChildPreparationOperation> {
+    await this.initialized;
+    const request = SavePrivateChildCaptureRequestSchema.parse(input);
+    this.assertParent(request.workspaceId, request.parentId);
+    this.storePreparationJson(request.operationId, "capture_json", JSON.stringify(request.capture), ["preparing"]);
+    return this.requirePrivateChildPreparation(request.operationId);
+  }
+
+  async savePrivateChildPart(input: SavePrivateChildPartRequest): Promise<PrivateChildPreparationOperation> {
+    await this.initialized;
+    const request = SavePrivateChildPartRequestSchema.parse(input);
+    this.assertParent(request.workspaceId, request.parentId);
+    const operation = this.requirePrivateChildPreparation(request.operationId);
+    if (operation.status !== "preparing") throw new Error("private_child_preparation_not_writable");
+    const existing = operation.completedParts.find((part) => part.recipe.id === request.part.recipe.id);
+    if (existing && JSON.stringify(existing) !== JSON.stringify(request.part)) {
+      throw new Error("private_child_part_conflict");
+    }
+    if (!existing) {
+      this.parentSql.exec(
+        `UPDATE private_child_preparations SET completed_parts_json = ?, updated_at = ?
+          WHERE operation_id = ? AND status = 'preparing'`,
+        JSON.stringify([...operation.completedParts, request.part]), Date.now(), request.operationId,
+      );
+    }
+    return this.requirePrivateChildPreparation(request.operationId);
+  }
+
+  async savePreparedPrivateChildContext(
+    input: SavePreparedPrivateChildContextRequest,
+  ): Promise<PrivateChildPreparationOperation> {
+    await this.initialized;
+    const request = SavePreparedPrivateChildContextRequestSchema.parse(input);
+    this.assertParent(request.workspaceId, request.parentId);
+    const json = JSON.stringify(request.preparedContext);
+    const operation = this.requirePrivateChildPreparation(request.operationId);
+    if (operation.preparedContext && JSON.stringify(operation.preparedContext) !== json) {
+      throw new Error("private_child_context_conflict");
+    }
+    if (!operation.preparedContext) {
+      this.state.storage.transactionSync(() => {
+        const current = this.requirePrivateChildPreparation(request.operationId);
+        if (current.status !== "preparing") throw new Error("private_child_preparation_not_writable");
+        this.parentSql.exec(
+          `UPDATE private_child_preparations
+              SET prepared_context_json = ?, completed_parts_json = ?, status = 'prepared', updated_at = ?
+            WHERE operation_id = ?`,
+          json, JSON.stringify(request.preparedContext.parts), Date.now(), request.operationId,
+        );
+      });
+    }
+    return this.requirePrivateChildPreparation(request.operationId);
+  }
+
+  async setPrivateChildTerminalStatus(
+    input: SetPrivateChildTerminalStatusRequest,
+  ): Promise<PrivateChildPreparationOperation> {
+    await this.initialized;
+    const request = SetPrivateChildTerminalStatusRequestSchema.parse(input);
+    this.assertParent(request.workspaceId, request.parentId);
+    const selectedOperation = this.requirePrivateChildPreparation(request.operationId);
+    if (request.status === "ready" && selectedOperation.status === "confirming") {
+      await this.drainPrivateChildMembershipEffects(selectedOperation.substreamId);
+    }
+    this.state.storage.transactionSync(() => {
+      const operation = this.requirePrivateChildPreparation(request.operationId);
+      if (operation.status === request.status) return;
+      if (operation.status === "ready" || operation.status === "failed") {
+        throw new Error("private_child_terminal_status_conflict");
+      }
+      if (request.status === "failed" && operation.status === "confirming") {
+        throw new Error("private_child_confirmation_in_progress");
+      }
+      if (request.status === "ready" && operation.status !== "confirming") {
+        throw new Error("private_child_context_not_prepared");
+      }
+      const now = Date.now();
+      this.parentSql.exec(
+        `UPDATE private_child_preparations SET status = ?, error_code = ?, updated_at = ?
+          WHERE operation_id = ?`,
+        request.status, request.status === "failed" ? request.errorCode : null, now, request.operationId,
+      );
+      this.parentSql.exec(
+        `UPDATE conversation_children SET status = ?, updated_at = ? WHERE substream_id = ?`,
+        request.status, now, operation.substreamId,
+      );
+    });
+    if (request.status === "ready") {
+      const now = Date.now();
+      for (const member of this.parentSql.exec<{ user_id: string }>(
+        `SELECT user_id FROM private_child_memberships WHERE substream_id = ? AND active = 1`,
+        selectedOperation.substreamId,
+      ).toArray()) {
+        this.advancePrivateChildrenVersion(member.user_id, now);
+      }
+    }
+    await this.broadcastMetadata();
+    return this.requirePrivateChildPreparation(request.operationId);
+  }
+
+  async listVisiblePrivateChildren(
+    input: ListVisiblePrivateChildrenRequest,
+  ): Promise<ListVisiblePrivateChildrenResult> {
+    await this.initialized;
+    const request = ListVisiblePrivateChildrenRequestSchema.parse(input);
+    this.assertParent(request.workspaceId, request.parentId);
+    return ListVisiblePrivateChildrenResultSchema.parse({
+      children: this.visiblePrivateChildrenForUser(request.userId),
+    });
+  }
+
+  async addPrivateChildParticipant(
+    input: MutatePrivateChildParticipantRequest,
+  ): Promise<MutatePrivateChildParticipantResult> {
+    return this.mutatePrivateChildParticipant(input, true);
+  }
+
+  async removePrivateChildParticipant(
+    input: MutatePrivateChildParticipantRequest,
+  ): Promise<MutatePrivateChildParticipantResult> {
+    return this.mutatePrivateChildParticipant(input, false);
+  }
+
+  private privateChildPreparation(operationId: string): PrivateChildPreparationOperation | null {
+    const row = first(this.parentSql.exec<PrivateChildPreparationRow>(
+      `SELECT preparation.*, child.title,
+              COALESCE(member.version, 1) AS membership_version
+         FROM private_child_preparations preparation
+         JOIN conversation_children child ON child.substream_id = preparation.substream_id
+         LEFT JOIN private_child_memberships member
+           ON member.substream_id = preparation.substream_id
+          AND member.user_id = preparation.creator_user_id
+        WHERE preparation.operation_id = ?`,
+      operationId,
+    ));
+    if (!row) return null;
+    const request = BeginPrivateChildPreparationRequestSchema.parse(JSON.parse(row.request_json));
+    return PrivateChildPreparationOperationSchema.parse({
+      operationId: row.operation_id,
+      substreamId: row.substream_id,
+      creatorUserId: row.creator_user_id,
+      title: row.title,
+      sourceSubstreamId: request.sourceSubstreamId,
+      sourceThroughTurnId: request.sourceThroughTurnId,
+      recipe: request.recipe,
+      status: row.status,
+      capture: row.capture_json ? JSON.parse(row.capture_json) : null,
+      completedParts: JSON.parse(row.completed_parts_json),
+      preparedContext: row.prepared_context_json ? JSON.parse(row.prepared_context_json) : null,
+      errorCode: row.error_code,
+      membershipVersion: row.membership_version,
+      membershipInitializer: request.membershipInitializer,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    });
+  }
+
+  private requirePrivateChildPreparation(operationId: string): PrivateChildPreparationOperation {
+    const operation = this.privateChildPreparation(operationId);
+    if (!operation) throw new Error("private_child_preparation_not_found");
+    return operation;
+  }
+
+  private storePreparationJson(
+    operationId: string,
+    column: "capture_json",
+    value: string,
+    writableStatuses: readonly ("preparing" | "prepared")[],
+  ): void {
+    this.state.storage.transactionSync(() => {
+      const row = first(this.parentSql.exec<{ status: "preparing" | "prepared" | "confirming" | "ready" | "failed"; value: string | null }>(
+        `SELECT status, ${column} AS value FROM private_child_preparations WHERE operation_id = ?`,
+        operationId,
+      ));
+      if (!row) throw new Error("private_child_preparation_not_found");
+      if (row.value !== null) {
+        if (row.value !== value) throw new Error("private_child_preparation_conflict");
+        return;
+      }
+      if (!writableStatuses.includes(row.status as "preparing" | "prepared")) {
+        throw new Error("private_child_preparation_not_writable");
+      }
+      this.parentSql.exec(
+        `UPDATE private_child_preparations SET ${column} = ?, updated_at = ? WHERE operation_id = ?`,
+        value, Date.now(), operationId,
+      );
+    });
+  }
+
+  private async mutatePrivateChildParticipant(
+    input: MutatePrivateChildParticipantRequest,
+    active: boolean,
+  ): Promise<MutatePrivateChildParticipantResult> {
+    await this.initialized;
+    const request = MutatePrivateChildParticipantRequestSchema.parse(input);
+    this.assertParent(request.workspaceId, request.parentId);
+    if (active && !this.canRead(request.userId)) {
+      throw new Error("private_child_member_not_admitted_to_parent");
+    }
+    const now = Date.now();
+    const result = this.state.storage.transactionSync(() => {
+      const child = first(this.parentSql.exec<{ status: string }>(
+        `SELECT status FROM conversation_children WHERE substream_id = ? AND kind = 'child'`,
+        request.substreamId,
+      ));
+      if (!child || child.status !== "ready") throw new Error("private_child_not_ready");
+      const actor = first(this.parentSql.exec<{ active: number }>(
+        `SELECT active FROM private_child_memberships WHERE substream_id = ? AND user_id = ?`,
+        request.substreamId, request.actorUserId,
+      ));
+      if (actor?.active !== 1) throw new Error("private_child_participant_required");
+      const replay = first(this.parentSql.exec<PrivateChildMembershipEffectRow>(
+        `SELECT operation_id, substream_id, user_id, actor_user_id, active, membership_version
+           FROM private_child_membership_effects WHERE operation_id = ?`,
+        request.operationId,
+      ));
+      if (replay) {
+        if (replay.substream_id !== request.substreamId || replay.user_id !== request.userId
+          || replay.actor_user_id !== request.actorUserId || replay.active !== Number(active)) {
+          throw new Error("private_child_membership_operation_conflict");
+        }
+        return { outcome: "unchanged" as const, membershipVersion: replay.membership_version };
+      }
+      const current = first(this.parentSql.exec<{ active: number; version: number }>(
+        `SELECT active, version FROM private_child_memberships WHERE substream_id = ? AND user_id = ?`,
+        request.substreamId, request.userId,
+      ));
+      if (!active && !current) {
+        this.insertPrivateChildMembershipEffect({
+          operationId: request.operationId, substreamId: request.substreamId,
+          userId: request.userId, actorUserId: request.actorUserId,
+          active, membershipVersion: 1, now, state: "delivered",
+        });
+        return { outcome: "not_found" as const, membershipVersion: 1 };
+      }
+      if (current?.active === Number(active)) {
+        this.insertPrivateChildMembershipEffect({
+          operationId: request.operationId, substreamId: request.substreamId,
+          userId: request.userId, actorUserId: request.actorUserId,
+          active, membershipVersion: current.version, now, state: "delivered",
+        });
+        return { outcome: "unchanged" as const, membershipVersion: current.version };
+      }
+      if (!active) {
+        const remaining = first(this.parentSql.exec<{ count: number }>(
+          `SELECT COUNT(*) AS count FROM private_child_memberships
+            WHERE substream_id = ? AND active = 1`,
+          request.substreamId,
+        ))?.count ?? 0;
+        if (remaining <= 1) throw new Error("private_child_participant_required");
+      }
+      const version = (current?.version ?? 0) + 1;
+      this.parentSql.exec(
+        `INSERT INTO private_child_memberships
+           (substream_id, user_id, active, version, added_by_user_id, added_at, removed_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(substream_id, user_id) DO UPDATE SET
+           active = excluded.active, version = excluded.version,
+           added_by_user_id = CASE WHEN excluded.active = 1 THEN excluded.added_by_user_id
+                                   ELSE private_child_memberships.added_by_user_id END,
+           added_at = CASE WHEN excluded.active = 1 THEN excluded.added_at
+                           ELSE private_child_memberships.added_at END,
+           removed_at = excluded.removed_at, updated_at = excluded.updated_at`,
+        request.substreamId, request.userId, Number(active), version, request.actorUserId,
+        now, active ? null : now, now,
+      );
+      this.insertPrivateChildMembershipEffect({
+        operationId: request.operationId,
+        substreamId: request.substreamId,
+        userId: request.userId,
+        actorUserId: request.actorUserId,
+        active,
+        membershipVersion: version,
+        now,
+      });
+      return { outcome: active ? "added" as const : "removed" as const, membershipVersion: version };
+    });
+    await this.armNextAlarm();
+    await this.drainPrivateChildMembershipEffects(request.substreamId);
+    this.advancePrivateChildrenVersion(request.userId, Date.now());
+    await this.broadcastMetadata();
+    return MutatePrivateChildParticipantResultSchema.parse(result);
+  }
+
+  private insertPrivateChildMembershipEffect(input: {
+    operationId: string; substreamId: string; userId: string; actorUserId: string;
+    active: boolean; membershipVersion: number; now: number;
+    state?: "pending" | "delivered";
+  }): void {
+    this.parentSql.exec(
+      `INSERT INTO private_child_membership_effects
+         (operation_id, substream_id, user_id, actor_user_id, active,
+          membership_version, state, attempts, not_before, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
+      input.operationId, input.substreamId, input.userId, input.actorUserId,
+      Number(input.active), input.membershipVersion, input.state ?? "pending", input.now, input.now,
+    );
+  }
+
+  private privateChildMembershipEffectsDueAt(): number | null {
+    return first(this.parentSql.exec<{ due_at: number | null }>(
+      `SELECT MIN(effect.not_before) AS due_at
+         FROM private_child_membership_effects effect
+         JOIN conversation_children child ON child.substream_id = effect.substream_id
+        WHERE effect.state IN ('pending', 'inflight') AND child.status = 'ready'`,
+    ))?.due_at ?? null;
+  }
+
+  private async drainPrivateChildMembershipEffects(substreamId?: string): Promise<void> {
+    const rows = this.parentSql.exec<PrivateChildMembershipEffectRow>(
+      `SELECT effect.operation_id, effect.substream_id, effect.user_id, effect.actor_user_id,
+              effect.active, effect.membership_version
+         FROM private_child_membership_effects effect
+         JOIN conversation_children child ON child.substream_id = effect.substream_id
+        WHERE effect.state IN ('pending', 'inflight') AND effect.not_before <= ?
+          AND (${substreamId ? "effect.substream_id = ?" : "child.status = 'ready'"})
+        ORDER BY effect.created_at, effect.operation_id LIMIT 25`,
+      ...(substreamId ? [Date.now(), substreamId] : [Date.now()]),
+    ).toArray();
+    for (const row of rows) {
+      try {
+        const identity = this.parentIdentity();
+        if (!identity) throw new Error("conversation_parent_missing");
+        const stub = await durableObjectStubForWorkspace(
+          this.env,
+          this.env.SUBSTREAM_AGENTS,
+          identity.workspaceId,
+          conversationObjectName(
+            this.env.AVALON_REGION,
+            identity.workspaceId,
+            identity.parentId,
+            asSubstreamId(row.substream_id),
+          ),
+        );
+        await stub.applyPrivateChildMembership({
+          workspaceId: identity.workspaceId,
+          parentId: identity.parentId,
+          substreamId: row.substream_id,
+          userId: row.user_id,
+          actorUserId: row.actor_user_id,
+          active: row.active === 1,
+          membershipVersion: row.membership_version,
+        });
+        this.parentSql.exec(
+          `UPDATE private_child_membership_effects SET state = 'delivered'
+            WHERE operation_id = ? AND membership_version = ?`,
+          row.operation_id, row.membership_version,
+        );
+      } catch (error) {
+        const retryAt = Date.now() + PRIVATE_CHILD_EFFECT_RETRY_MS;
+        this.parentSql.exec(
+          `UPDATE private_child_membership_effects
+              SET state = 'pending', attempts = attempts + 1, not_before = ?
+            WHERE operation_id = ? AND membership_version = ?`,
+          retryAt, row.operation_id, row.membership_version,
+        );
+        logWarn(this.env, "private_child_membership_effect_failed", {
+          ...this.parentLogFields(),
+          operation_id: row.operation_id,
+          substream_id: row.substream_id,
+          user_id: row.user_id,
+          membership_version: row.membership_version,
+          retry_at: new Date(retryAt).toISOString(),
+          reason: error instanceof Error ? error.message : "unknown",
+        });
+        throw error;
+      }
+    }
   }
 
   private insertProvisionalMetadata(
@@ -879,9 +1467,36 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     if (!metadata) this.ensureMetadata(envelope, now);
   }
 
-  /** A work stream forwards everything its children say. */
-  protected override forwardsChildEffect(): boolean {
-    return true;
+  /** Private child effects stay at their parent; only the main room reaches workspace-wide surfaces. */
+  protected override forwardsChildEffect(substreamId: string): boolean {
+    return substreamId === "0";
+  }
+
+  protected override childCommonProjections(): DirectoryCommonEffect[] {
+    return this.parentSql.exec<{ effect_json: string }>(
+      `SELECT effect_json FROM substream_directory WHERE substream_id = '0'`,
+    ).toArray().map((row) => WorkstreamDirectoryCommonEffectSchema.parse(JSON.parse(row.effect_json)));
+  }
+
+  protected override userProjection(userId: string): z.infer<typeof WorkstreamDirectoryUserEffectSchema> | null {
+    const row = first(this.parentSql.exec<{ effect_json: string }>(
+      `SELECT effect_json FROM substream_user_directory WHERE substream_id = '0' AND user_id = ?`,
+      userId,
+    ));
+    return row ? WorkstreamDirectoryUserEffectSchema.parse(JSON.parse(row.effect_json)) : null;
+  }
+
+  /** Parent/main participation is never inferred from membership in a private child. */
+  protected override isParticipant(userId: string): boolean {
+    const row = first(this.parentSql.exec<{ effect_json: string }>(
+      `SELECT effect_json FROM substream_user_directory WHERE substream_id = '0' AND user_id = ?`,
+      userId,
+    ));
+    if (row) return WorkstreamDirectoryUserEffectSchema.parse(JSON.parse(row.effect_json)).isParticipant;
+    const mainReported = first(this.parentSql.exec<{ one: number }>(
+      `SELECT 1 AS one FROM substream_directory WHERE substream_id = '0'`,
+    ));
+    return mainReported === null && this.mainChildCreatedBy() === userId;
   }
 
   protected override parentLogFields(): Record<string, unknown> {
@@ -894,15 +1509,17 @@ export class WorkstreamDO extends ConversationParentDurableObject {
   }
 
   protected override onChildCommonAggregate(
-    _substreamId: string,
+    substreamId: string,
     aggregate: DirectoryCommonEffect,
     envelope: ConversationEffectEnvelope,
     now: number,
   ): void {
+    if (substreamId !== "0") return;
     this.upsertMetadata(envelope, aggregate, now);
   }
 
-  protected override onChildUserAggregate(): void {
+  protected override onChildUserAggregate(substreamId: string): void {
+    if (substreamId !== "0") return;
     this.state.storage.sql.exec(
       `UPDATE workstream_metadata SET revision = revision + 1, updated_at = ? WHERE id = 1`,
       Date.now(),
@@ -967,7 +1584,10 @@ export class WorkstreamDO extends ConversationParentDurableObject {
    * network; a throw costs nothing but the attempt counters the outbox keeps.
    */
   protected override runDueAlarmWork(): Promise<void> {
-    return this.drainParentOutbox();
+    return Promise.all([
+      this.drainParentOutbox(),
+      this.drainPrivateChildMembershipEffects(),
+    ]).then(() => undefined);
   }
 
   private async acceptSocket(request: Request): Promise<Response> {
@@ -1238,6 +1858,13 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       systemKind: row.system_kind,
       nextPendingWakeup,
       nextTerminalActionAt: iso(row.next_terminal_action_at),
+      privateChildren: this.visiblePrivateChildrenForUser(userId).map((child) => ({
+        substreamId: child.substreamId,
+        title: child.title,
+        createdByUserId: child.createdByUserId,
+        createdAt: iso(child.createdAt),
+        updatedAt: iso(child.updatedAt),
+      })),
       viewer: {
         isParticipant: viewer?.isParticipant ?? false,
         listable: row.archived_at === null
@@ -1252,6 +1879,30 @@ export class WorkstreamDO extends ConversationParentDurableObject {
         latestMentionSequenceNumber: viewer?.latestMentionAttentionOrdinal ?? 0,
       },
     });
+  }
+
+  private visiblePrivateChildrenForUser(userId: string): ListVisiblePrivateChildrenResult["children"] {
+    return this.parentSql.exec<{
+      substream_id: string; title: string; created_by_user_id: string; created_at: number; updated_at: number;
+    }>(
+      `SELECT child.substream_id, child.title, child.created_by_user_id, child.created_at, child.updated_at
+         FROM conversation_children child
+         JOIN private_child_memberships member ON member.substream_id = child.substream_id
+        WHERE child.kind = 'child' AND child.status = 'ready'
+          AND member.user_id = ? AND member.active = 1
+        ORDER BY child.created_at, child.substream_id`,
+      userId,
+    ).toArray().map((child) => ({
+      substreamId: asSubstreamId(child.substream_id),
+      title: child.title,
+      createdByUserId: UserIdSchema.parse(child.created_by_user_id),
+      createdAt: child.created_at,
+      updatedAt: child.updated_at,
+    }));
+  }
+
+  private advancePrivateChildrenVersion(userId: string, now: number): void {
+    this.advanceLocalStateVersion(`user:${userId}`, this.visiblePrivateChildrenForUser(userId), now);
   }
 
   /**
@@ -1332,7 +1983,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
   }
 
   protected override nextDerivedAlarmCandidates(): readonly number[] {
-    const due = this.nextParentOutboxDueAt();
-    return due === null ? [] : [due];
+    return [this.nextParentOutboxDueAt(), this.privateChildMembershipEffectsDueAt()]
+      .filter((due): due is number => due !== null);
   }
 }

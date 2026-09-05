@@ -8,7 +8,6 @@ const api = vi.hoisted(() => ({
   addParticipant: vi.fn(),
   clientFeatureFlags: vi.fn(),
   getWorkspaceMembers: vi.fn(),
-  getConversation: vi.fn(),
   removeParticipant: vi.fn(),
 }));
 const retainedSocket = vi.hoisted(() => vi.fn());
@@ -57,7 +56,6 @@ vi.mock('../lib/use-transcript-follow', () => ({
 }));
 
 import { WorkstreamScreen } from './workstream';
-import { workstreamFeedSourceQueryKey, workstreamSocketSnapshotGenerationQueryKey } from '../lib/telemetry';
 import type { WorkstreamBoot, WorkstreamDetail } from '../lib/types';
 
 const workstreamId = '00000000-0000-7000-8000-000000000650';
@@ -104,14 +102,6 @@ function recoveryBoot(overrides: Partial<WorkstreamBoot> = {}): WorkstreamBoot {
   } as WorkstreamBoot;
 }
 
-function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
-  let resolve!: (value: T) => void;
-  return {
-    promise: new Promise<T>((next) => { resolve = next; }),
-    resolve,
-  };
-}
-
 function renderScreen(seed?: (queryClient: QueryClient) => void): QueryClient {
   const queryClient = new QueryClient({
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
@@ -151,7 +141,6 @@ describe('socket-first work-stream open', () => {
 
     expect(screen.getByText('Opening work stream…')).toBeInTheDocument();
     await waitFor(() => expect(retainedSocket).toHaveBeenCalledWith(api, workstreamId, true, 'workstream', '0'));
-    expect(api.getConversation).not.toHaveBeenCalled();
   });
 
   it('requests a replacement snapshot when a retained socket outlives its base caches', async () => {
@@ -169,7 +158,6 @@ describe('socket-first work-stream open', () => {
     renderScreen();
 
     await waitFor(() => expect(requestSnapshot).toHaveBeenCalledTimes(1));
-    expect(api.getConversation).not.toHaveBeenCalled();
   });
 
   it('does not run payload effects until detail and transcript both belong to the route', async () => {
@@ -253,7 +241,7 @@ describe('socket-first work-stream open', () => {
     expect(screen.queryByText('Adam cannot add Jordan')).not.toBeInTheDocument();
   });
 
-  it('offers REST recovery after the first socket attempt fails', async () => {
+  it('retries the authoritative socket after the first attempt fails', async () => {
     const retryOpening = vi.fn();
     retainedSocket.mockReturnValue({
       activeCompaction: null,
@@ -264,16 +252,13 @@ describe('socket-first work-stream open', () => {
       state: 'reconnecting',
       workspaceSocketState: 'connecting',
     });
-    api.getConversation.mockRejectedValue(new Error('recovery unavailable'));
     renderScreen();
 
     expect(await screen.findByText('Work stream could not be opened')).toBeInTheDocument();
-    expect(api.getConversation).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
 
     expect(retryOpening).toHaveBeenCalledTimes(1);
-    await waitFor(() => expect(api.getConversation).toHaveBeenCalledTimes(1));
   });
 
   it('shows the terminal error after all three timed opening attempts expire', async () => {
@@ -294,39 +279,4 @@ describe('socket-first work-stream open', () => {
     expect(screen.getByText('The live connection timed out after 3 attempts.')).toBeInTheDocument();
   });
 
-  it('keeps a newer socket snapshot when REST recovery resolves late', async () => {
-    retainedSocket.mockReturnValue({
-      activeCompaction: null,
-      createMessage: vi.fn(),
-      requestSnapshot: vi.fn(),
-      retryOpening: vi.fn(),
-      sendReady: true,
-      state: 'reconnecting',
-      workspaceSocketState: 'connecting',
-    });
-    const recovery = deferred<WorkstreamBoot>();
-    api.getConversation.mockReturnValue(recovery.promise);
-    const queryClient = renderScreen();
-
-    fireEvent.click(await screen.findByRole('button', { name: 'Try again' }));
-    await waitFor(() => expect(api.getConversation).toHaveBeenCalledTimes(1));
-
-    const socketDetail = recoveryBoot({ title: 'Canonical socket title' });
-    const { transcript: socketTranscript, ...detail } = socketDetail;
-    act(() => {
-      queryClient.setQueryData(workstreamSocketSnapshotGenerationQueryKey(workstreamId), 1);
-      queryClient.setQueryData(workstreamFeedSourceQueryKey(workstreamId), 'socket_snapshot');
-      queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], detail);
-      queryClient.setQueryData(['ordered-transcript', workstreamId], socketTranscript);
-    });
-    await act(async () => {
-      recovery.resolve(recoveryBoot({ title: 'Stale REST title' }));
-      await recovery.promise;
-    });
-
-    await waitFor(() => expect(queryClient.getQueryData<WorkstreamDetail>(['workstream', workstreamId])?.title)
-      .toBe('Canonical socket title'));
-    expect(queryClient.getQueryData(['ordered-transcript', workstreamId])).toEqual(socketTranscript);
-    expect(queryClient.getQueryData(workstreamFeedSourceQueryKey(workstreamId))).toBe('socket_snapshot');
-  });
 });

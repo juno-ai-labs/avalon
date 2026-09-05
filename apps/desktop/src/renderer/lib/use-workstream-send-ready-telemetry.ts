@@ -3,6 +3,7 @@ import {
   reportWorkstreamSendReadyAfterPaint,
   type WorkstreamSendReadyWorkspaceSocketState,
 } from './telemetry';
+import { completeCreationTraceAfterPaint } from './perf-trace';
 
 /**
  * Measures the first painted composer whose work-stream-specific send handler
@@ -13,13 +14,17 @@ export function useWorkstreamSendReadyTelemetry({
   isReady,
   workspaceSocketState,
   workstreamId,
+  substreamId = '0',
 }: {
   isReady: boolean;
   workspaceSocketState: WorkstreamSendReadyWorkspaceSocketState | 'unavailable';
   workstreamId: string;
+  substreamId?: string;
 }): void {
   useLayoutEffect(() => {
     if (!isReady || workspaceSocketState === 'unavailable') return;
-    return reportWorkstreamSendReadyAfterPaint(workstreamId, workspaceSocketState);
-  }, [isReady, workspaceSocketState, workstreamId]);
+    return reportWorkstreamSendReadyAfterPaint(workstreamId, workspaceSocketState, () => {
+        completeCreationTraceAfterPaint(workstreamId, substreamId);
+    });
+  }, [isReady, substreamId, workspaceSocketState, workstreamId]);
 }

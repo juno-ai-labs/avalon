@@ -204,6 +204,7 @@ import { createToolReceiptObjectPort } from "../runtime/tool-receipt-port";
 import { createSchedulingObjectPort } from "../runtime/scheduling-port";
 import { createMessageObjectPort } from "../runtime/message-port";
 import { createTranscriptObjectPort } from "../runtime/transcript-port";
+import { renderSubstreamInitialContext } from "./substream-initial-context";
 import type { TranscriptObjectPort } from "../durable-objects/workstream-transcript-protocol";
 import type { HarnessRunObjectPort } from "../durable-objects/workstream-harness-run-protocol";
 import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
@@ -1081,7 +1082,7 @@ async function loadWorkstreamContextCompaction(
  */
 async function loadTriggerFencedTranscriptMessages(
   transcript: MessageObjectPort,
-  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "parentId" | "triggerMessageId">
+  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "parentId" | "triggerMessageId" | "substreamId">
     & Partial<Pick<WorkstreamWorkflowInput, "transcriptFenceMessageId">>,
   listMessages: TranscriptMessageLister,
   afterSequence = -1,
@@ -1175,7 +1176,7 @@ function automationActivationName(structuredContent: unknown): string {
 
 async function projectModelProtocolTranscript(
   env: Env,
-  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "parentId" | "triggerMessageId">
+  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "parentId" | "triggerMessageId" | "substreamId">
     & Partial<Pick<WorkstreamWorkflowInput, "executionPrincipal">>,
   storedMessages: Message[],
 ): Promise<{ messages: ModelMessage[]; issues: ModelTranscriptProjectionIssue[] }> {
@@ -1194,7 +1195,7 @@ async function projectModelProtocolTranscript(
     // messages. The workspace and work-stream predicates were the object's own
     // identity, which the port now enforces. So this is a receipt lookup by id
     // and nothing more.
-    const receipts = createToolReceiptObjectPort(env, input.workspaceId, input.parentId);
+    const receipts = createToolReceiptObjectPort(env, input.workspaceId, input.parentId, undefined, input.substreamId ?? "0");
     const toolRows: ToolReceiptRecord[] = [];
     // The batch bound is kept: the request envelope caps its arguments, and one
     // work stream's transcript can carry more tool messages than that.
@@ -1713,7 +1714,7 @@ function createAvalonAutomationsPlugin(
         "rally.automation.resources.search",
         "rally.automation.evaluators.set",
       ];
-      const receiptPort = createToolReceiptObjectPort(env, input.workspaceId, input.parentId);
+      const receiptPort = createToolReceiptObjectPort(env, input.workspaceId, input.parentId, undefined, input.substreamId ?? "0");
       // An automation's own conversation drafts across turns, so what it
       // inspected or looked up in an earlier turn still counts; a room's
       // drafting is one turn's work and replays that run alone.
@@ -2430,23 +2431,24 @@ export async function runWorkstreamHarness(
   // database supplied by the owning agent. Each statement then resolves to its
   // actual authority without copying connector/resource state into the agent.
   env = withWorkspaceRuntimeDatabase(env, input.workspaceId);
+  const conversationSubstreamId = input.substreamId ?? "0";
   const runStartedAtMs = Date.now();
   // The archive gate was a `WHERE` clause because the read was a statement;
   // it is a test on the row here, and the row carries the object's own column
   // names — `description` is what the retired view called `objective`.
-  const identity = await createIdentityObjectPort(env, input.workspaceId, input.parentId)
+  const identity = await createIdentityObjectPort(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId)
     .identity();
   const workstream = identity && identity.archived_at === null
     ? { title: identity.title, objective: identity.description }
     : null;
   if (!workstream) return { status: "failed", error: { code: "workstream_not_found", message: "Work stream not found" } };
-  const initialRun = await createHarnessRunObjectPort(env, input.workspaceId, input.parentId)
+  const initialRun = await createHarnessRunObjectPort(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId)
     .run({ runId: input.harnessRunId });
   if (!initialRun) return { status: "failed", error: { code: "harness_run_not_found", message: "Harness run not found" } };
   if (initialRun.status === "cancelled") return { status: "stopped" };
   const streamId = input.harnessRunId;
   const persistedHostOutcome = await loadPersistedHarnessHostOutcome(
-    createHarnessRunObjectPort(env, input.workspaceId, input.parentId),
+    createHarnessRunObjectPort(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId),
     input,
   );
   if (persistedHostOutcome) {
@@ -2463,7 +2465,7 @@ export async function runWorkstreamHarness(
     code: "run_ownership_lost",
   });
   const attemptLease = runtime.lease;
-  const runs = createHarnessRunObjectPort(env, input.workspaceId, input.parentId);
+  const runs = createHarnessRunObjectPort(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId);
   const liveness = new CoalescedRunLiveness(runs, input.harnessRunId, attemptLease, {
     leaseSeconds: 300,
     minimumIntervalMs: 5_000,
@@ -2474,18 +2476,37 @@ export async function runWorkstreamHarness(
   await liveness.pulse("run_start", true);
   const requiresCanonicalBootstrap = !runtime.persistentLoop
     || runtime.persistentLoop.projection === null;
+  const orderedTranscript = createTranscriptObjectPort(
+    env,
+    input.workspaceId,
+    input.parentId,
+    undefined,
+    input.substreamId ?? "0",
+  );
   const priorCompaction = requiresCanonicalBootstrap
     ? await loadWorkstreamContextCompaction(
         env.DB,
-        createTranscriptObjectPort(env, input.workspaceId, input.parentId),
-        createResourceObjectPort(env, input.workspaceId, input.parentId),
+        orderedTranscript,
+        createResourceObjectPort(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId),
         input.workspaceId,
         input.parentId,
         input.executionPrincipal,
         undefined,
       )
     : null;
-  const transcript = createMessageObjectPort(env, input.workspaceId, input.parentId);
+  // A seed belongs only beneath a fresh canonical projection. Once Bind has a
+  // projection, or a compaction checkpoint replaces its prefix, replaying the
+  // seed here would duplicate inherited instructions and history.
+  const initialContext = requiresCanonicalBootstrap && priorCompaction === null
+    ? await orderedTranscript.initialContext()
+    : null;
+  const transcript = createMessageObjectPort(
+    env,
+    input.workspaceId,
+    input.parentId,
+    undefined,
+    input.substreamId ?? "0",
+  );
   const storedMessages = requiresCanonicalBootstrap
     ? await loadTriggerFencedTranscriptMessages(
       transcript,
@@ -2505,6 +2526,7 @@ export async function runWorkstreamHarness(
     ? await projectModelProtocolTranscript(env, input, storedMessages)
     : { messages: [], issues: [] };
   const rawModelMessages = [
+    ...renderSubstreamInitialContext(initialContext),
     ...(priorCompaction?.messages ?? []),
     ...transcriptProjection.messages,
   ];
@@ -2620,6 +2642,8 @@ export async function runWorkstreamHarness(
     env,
     input.workspaceId,
     input.parentId,
+    undefined,
+    conversationSubstreamId,
   ).receiptsForRun({
     runId: input.harnessRunId,
     capabilities: ATTACHMENT_CONTENT_CAPABILITIES,
@@ -2668,7 +2692,7 @@ export async function runWorkstreamHarness(
     limits: runScopeLimits,
   });
   const priorHints = await loadAuthorizedActivationHints(
-    createSchedulingObjectPort(env, input.workspaceId, input.parentId),
+    createSchedulingObjectPort(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId),
     new Set(harnessTools.plugins.map((plugin) => plugin.canonicalId)),
   );
   const requestedActivations = [
@@ -2791,7 +2815,6 @@ export async function runWorkstreamHarness(
     workstreamId: input.parentId,
     substreamId: input.substreamId ?? "0",
   });
-  const orderedTranscript = createTranscriptObjectPort(env, input.workspaceId, input.parentId);
   const ensureTranscriptToolParents = async (event: {
     toolCallId: string;
     pluginId: string;
@@ -2989,7 +3012,7 @@ export async function runWorkstreamHarness(
             await liveness.pulse("compaction_prepare", true);
             await assertRunAuthorityStillValid(env, input, runAuthoritySnapshot);
             preparedCompactionVisibilityFingerprint = await loadWorkstreamResourceInventoryFingerprint(
-              createResourceObjectPort(env, input.workspaceId, input.parentId),
+              createResourceObjectPort(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId),
             );
           },
           renderAppendix: async () => {
@@ -3002,7 +3025,7 @@ export async function runWorkstreamHarness(
             try {
               current = await loadVisibleWorkstreamResourceInventory(
                 env.DB,
-                createResourceObjectPort(env, input.workspaceId, input.parentId),
+                createResourceObjectPort(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId),
                 {
                   workspaceId: input.workspaceId,
                   workstreamId: input.parentId,
@@ -3248,6 +3271,8 @@ export async function runWorkstreamHarness(
         env,
         input.workspaceId,
         input.parentId,
+        undefined,
+        conversationSubstreamId,
       ).receiptForCall({ runId: input.harnessRunId, toolCallId });
       if (!row) return null;
       const policyMatches = storedToolPolicyMatches(row.executionPlanJson, expectedPolicy);
@@ -3365,7 +3390,7 @@ export async function runWorkstreamHarness(
         // still flips — a write may have reached the provider before failing.
         if (row.status !== "ambiguous" && row.status !== "completed") {
           await finalizeToolInvocationFailure(
-            createToolReceiptObjectPort(env, input.workspaceId, input.parentId),
+            createToolReceiptObjectPort(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId),
             liveness.lease, {
             harnessRunId: input.harnessRunId,
             invocationId: row.effectIntentId,
@@ -3558,7 +3583,7 @@ export async function runWorkstreamHarness(
             toolSurfaceHash: receiptPolicy.toolSurfaceHash,
           };
           const receipt = await persistToolExecutionPlan(
-            createToolReceiptObjectPort(env, input.workspaceId, input.parentId),
+            createToolReceiptObjectPort(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId),
             liveness.lease, {
             harnessRunId: input.harnessRunId,
             workspaceId: input.workspaceId,
@@ -3787,7 +3812,7 @@ export async function runWorkstreamHarness(
                   toolSurfaceHash: receiptPolicy.toolSurfaceHash,
                 };
                 return persistToolExecutionPlan(
-                  createToolReceiptObjectPort(env, input.workspaceId, input.parentId),
+                  createToolReceiptObjectPort(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId),
                   liveness.lease,
                   {
                     harnessRunId: input.harnessRunId,
@@ -3813,7 +3838,7 @@ export async function runWorkstreamHarness(
           }
           if (!planAlreadyAmbiguous) {
             await settleRootHarnessToolFailure(
-              createToolReceiptObjectPort(env, input.workspaceId, input.parentId),
+              createToolReceiptObjectPort(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId),
               liveness.lease,
               {
                 harnessRunId: input.harnessRunId,
@@ -4101,12 +4126,12 @@ function inlineChildOutcomeAsToolResult(
 
 async function waitForInlineChildResult(
   env: Env,
-  parentInput: HarnessRunCoordinates,
+  parentInput: HarnessRunCoordinates & Pick<WorkstreamWorkflowInput, "substreamId">,
   parentLease: AttemptLease,
   parentToolCallId: string,
   signal: AbortSignal,
 ): Promise<InlineChildResult | null> {
-  const runs = createHarnessRunObjectPort(env, parentInput.workspaceId, parentInput.parentId);
+  const runs = createHarnessRunObjectPort(env, parentInput.workspaceId, parentInput.parentId, undefined, parentInput.substreamId ?? "0");
   while (!signal.aborted) {
     await assertHarnessAttemptOwned(runs, parentInput.harnessRunId, parentLease);
     const lookup = await loadInlineChildResult(runs, parentInput, parentToolCallId);
@@ -4344,15 +4369,18 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
     },
     execute: async (raw, context) => {
       const args = InlineChildToolInputSchema.parse(raw);
-      const parentInput: HarnessRunCoordinates = {
+      const parentInput: HarnessRunCoordinates & Pick<WorkstreamWorkflowInput, "substreamId"> = {
         workspaceId: options.input.workspaceId,
         parentId: options.input.parentId,
         harnessRunId: options.input.harnessRunId,
+        substreamId: options.input.substreamId,
       };
       const runs = createHarnessRunObjectPort(
         options.env,
         parentInput.workspaceId,
         parentInput.parentId,
+        undefined,
+        parentInput.substreamId ?? "0",
       );
       const canonicalByModelId = new Map(
         options.harnessTools.plugins.map((plugin) => [plugin.modelId, plugin.canonicalId]),
@@ -4675,6 +4703,8 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
               options.env,
               childInput.workspaceId,
               childInput.parentId,
+              undefined,
+              childInput.substreamId ?? "0",
             ).receiptForCall({ runId: childInput.harnessRunId, toolCallId });
             if (!row) return null;
             if (row.requestHash !== inputHash) throw new Error("tool_receipt_input_mismatch");
@@ -4785,6 +4815,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
                 const receipt = await persistToolExecutionPlan(
                   createToolReceiptObjectPort(
                     options.env, childInput.workspaceId, childInput.parentId,
+                    undefined, childInput.substreamId ?? "0",
                   ),
                   childLiveness.lease, {
                   harnessRunId: childInput.harnessRunId,
@@ -4905,6 +4936,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
                       return persistToolExecutionPlan(
                         createToolReceiptObjectPort(
                           options.env, childInput.workspaceId, childInput.parentId,
+                          undefined, childInput.substreamId ?? "0",
                         ),
                         childLiveness.lease,
                         {
@@ -4940,6 +4972,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
                 await finalizeToolInvocationFailure(
                   createToolReceiptObjectPort(
                     options.env, childInput.workspaceId, childInput.parentId,
+                    undefined, childInput.substreamId ?? "0",
                   ),
                   childLiveness.lease, {
                   harnessRunId: childInput.harnessRunId,
@@ -5034,7 +5067,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
 
 async function recordOpenRouterInferenceAttempt(
   env: Env,
-  input: HarnessRunCoordinates,
+  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "parentId" | "harnessRunId" | "substreamId">,
   lease: AttemptLease,
   routingPolicyVersion: string,
   attempt: InferenceAttemptEvent,
@@ -5050,7 +5083,7 @@ async function recordOpenRouterInferenceAttempt(
         ? "defect" as const
         : "failed" as const);
   await recordInferenceAttempt(
-    createHarnessRunObjectPort(env, input.workspaceId, input.parentId),
+    createHarnessRunObjectPort(env, input.workspaceId, input.parentId, undefined, input.substreamId ?? "0"),
     {
       harnessRunId: input.harnessRunId,
       workspaceId: input.workspaceId,
@@ -5232,7 +5265,13 @@ async function loadRunPromptContext(
     memoryQueryParts.push(JSON.stringify(recallable));
   }
   if (input.triggerMessageId && recallsMemoryAtAdmission) {
-    const triggerMessage = await createMessageObjectPort(env, input.workspaceId, input.parentId)
+    const triggerMessage = await createMessageObjectPort(
+      env,
+      input.workspaceId,
+      input.parentId,
+      undefined,
+      input.substreamId ?? "0",
+    )
       .message({ messageId: input.triggerMessageId });
     if (triggerMessage?.text_content.trim()) memoryQueryParts.push(triggerMessage.text_content);
   }
@@ -5259,7 +5298,7 @@ async function loadRunPromptContext(
   }
   if (input.scheduledWakeupId) {
     const wakeup = await loadWorkstreamWakeup(
-      createSchedulingObjectPort(env, input.workspaceId, input.parentId),
+      createSchedulingObjectPort(env, input.workspaceId, input.parentId, undefined, input.substreamId ?? "0"),
       input.workspaceId,
       input.parentId,
       input.scheduledWakeupId,
@@ -5377,7 +5416,7 @@ function truncateUtf8(value: string, maxBytes: number): string {
 
 function toolReplayOutputKey(
   env: Env,
-  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "parentId" | "harnessRunId">,
+  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "parentId" | "harnessRunId" | "substreamId">,
   attemptId: string,
   stableToolCallId: string,
   contentHash: string,
@@ -5409,7 +5448,7 @@ function durableToolReplayOutput(capability: string, output: unknown, summary: s
 
 async function persistSuccessfulToolResult(
   env: Env,
-  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "parentId" | "harnessRunId">,
+  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "parentId" | "harnessRunId" | "substreamId">,
   lease: AttemptLease,
   result: {
     invocationId: string;
@@ -5428,10 +5467,10 @@ async function persistSuccessfulToolResult(
    * seam the Terminal port takes, and for the same reason.
    */
   receipts: ToolReceiptObjectPort
-    = createToolReceiptObjectPort(env, input.workspaceId, input.parentId),
+    = createToolReceiptObjectPort(env, input.workspaceId, input.parentId, undefined, input.substreamId ?? "0"),
   /** The harness-run authority, injectable through the same seam and for the same reason. */
   runs: HarnessRunObjectPort
-    = createHarnessRunObjectPort(env, input.workspaceId, input.parentId),
+    = createHarnessRunObjectPort(env, input.workspaceId, input.parentId, undefined, input.substreamId ?? "0"),
 ): Promise<string> {
   const replayPayload = serializeToolReplayOutput(result.output);
   const contentHash = await sha256(replayPayload);
@@ -5492,7 +5531,7 @@ async function persistSuccessfulToolResult(
 
 async function settleRootHarnessToolCompletion(
   env: Env,
-  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "parentId" | "harnessRunId">,
+  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "parentId" | "harnessRunId" | "substreamId">,
   lease: AttemptLease,
   result: {
     invocationId: string;
@@ -5506,9 +5545,9 @@ async function settleRootHarnessToolCompletion(
   },
   /** Injectable for the same reason `persistSuccessfulToolResult`'s is. */
   receipts: ToolReceiptObjectPort
-    = createToolReceiptObjectPort(env, input.workspaceId, input.parentId),
+    = createToolReceiptObjectPort(env, input.workspaceId, input.parentId, undefined, input.substreamId ?? "0"),
   runs: HarnessRunObjectPort
-    = createHarnessRunObjectPort(env, input.workspaceId, input.parentId),
+    = createHarnessRunObjectPort(env, input.workspaceId, input.parentId, undefined, input.substreamId ?? "0"),
 ): Promise<string> {
   const outputRef = await persistSuccessfulToolResult(env, input, lease, {
     invocationId: result.invocationId,
@@ -5694,7 +5733,7 @@ async function loadHarnessTools(
   modeByTool: Map<string, "read" | "write">;
 }> {
   const [attachedLinks, connectionRows] = await Promise.all([
-    createResourceObjectPort(env, input.workspaceId, input.parentId).attachedResourceIds(),
+    createResourceObjectPort(env, input.workspaceId, input.parentId, undefined, input.substreamId ?? "0").attachedResourceIds(),
     env.DB.prepare(
       `SELECT * FROM connector_connections WHERE workspace_id = ? AND status <> 'disabled'
        ORDER BY created_at ASC`,
@@ -6584,7 +6623,7 @@ async function assertRunAuthorityStillValid(
 ): Promise<RunAuthoritySnapshot> {
   const db: D1Database = env.DB;
   await assertExecutionPrincipalAuthorized(db, input.workspaceId, input.executionPrincipal);
-  const workstream = await createIdentityObjectPort(env, input.workspaceId, input.parentId)
+  const workstream = await createIdentityObjectPort(env, input.workspaceId, input.parentId, undefined, input.substreamId ?? "0")
     .identity();
   if (!workstream || workstream.archived_at != null) {
     throw new ConnectorError("unauthorized", "Work stream is no longer active");
@@ -6793,12 +6832,12 @@ async function persistWorkstreamPluginActivation(
     throw new ConnectorError("unauthorized", "Plugin is outside this immutable run scope");
   }
   await persistRunPluginActivation(
-    createHarnessRunObjectPort(env, input.workspaceId, input.parentId),
+    createHarnessRunObjectPort(env, input.workspaceId, input.parentId, undefined, input.substreamId ?? "0"),
     input,
     lease,
     { pluginId, toolSurfaceHash: surfaceHash },
   );
-  await createSchedulingObjectPort(env, input.workspaceId, input.parentId)
+  await createSchedulingObjectPort(env, input.workspaceId, input.parentId, undefined, input.substreamId ?? "0")
     .recordPluginActivation({ pluginId, now: Date.now() });
 }
 
@@ -7546,7 +7585,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
         // A replay resolves to the wake-up the first attempt persisted. Check it
         // before the cap, so a retry cannot be refused by a limit its own first
         // attempt filled.
-        const scheduling = createSchedulingObjectPort(env, input.workspaceId, input.parentId);
+        const scheduling = createSchedulingObjectPort(env, input.workspaceId, input.parentId, undefined, input.substreamId ?? "0");
         const replayed = await findWorkstreamWakeupByIdempotencyKey(
           scheduling,
           providerIdempotencyKey,
@@ -7639,7 +7678,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
       },
       execute: async () => {
         const pending = await listPendingWorkstreamWakeups(
-          createSchedulingObjectPort(env, input.workspaceId, input.parentId),
+          createSchedulingObjectPort(env, input.workspaceId, input.parentId, undefined, input.substreamId ?? "0"),
         );
         const zones = await runLocalTimezones(env, input);
         return {
@@ -7678,7 +7717,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
       },
       execute: async (raw) => {
         const args = z.strictObject({ wakeupId: z.string().uuid() }).parse(raw);
-        const scheduling = createSchedulingObjectPort(env, input.workspaceId, input.parentId);
+        const scheduling = createSchedulingObjectPort(env, input.workspaceId, input.parentId, undefined, input.substreamId ?? "0");
         const outcome = await cancelWorkstreamWakeup(scheduling, { wakeupId: args.wakeupId });
         if (outcome === "not_found") {
           const pending = await listPendingWorkstreamWakeups(scheduling);
@@ -7741,7 +7780,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
         // that would have collided rather than by a read that might have raced
         // it. The question is durable either way; only the event and the
         // telemetry are skipped, because the first attempt already sent them.
-        const opened = await createSchedulingObjectPort(env, input.workspaceId, input.parentId)
+        const opened = await createSchedulingObjectPort(env, input.workspaceId, input.parentId, undefined, input.substreamId ?? "0")
           .openElicitation({
             elicitationId: id,
             runId: input.harnessRunId,
@@ -8312,7 +8351,7 @@ function automationRunProvenance(
 
 async function loadToolInvocation(
   env: Env,
-  target: { workspaceId: string; parentId: string; harnessRunId: string },
+  target: { workspaceId: string; parentId: string; harnessRunId: string; substreamId?: string | undefined },
   toolCallId: string,
   // The smallest capability this needs, rather than the whole port: it reads one
   // receipt and never settles anything, and saying so is what lets a caller —
@@ -8321,6 +8360,8 @@ async function loadToolInvocation(
     env,
     target.workspaceId,
     target.parentId,
+    undefined,
+    target.substreamId ?? "0",
   ),
 ): Promise<ToolInvocation | null> {
   const receipt = await receipts.receiptForCall({

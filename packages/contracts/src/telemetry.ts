@@ -768,7 +768,7 @@ export const TELEMETRY_EVENTS = {
     category: "diagnostic",
     identityScopes: ["workspace-user"],
     properties: deferredZodSchema(() => z.strictObject({
-      flow: z.enum(["workstream_create", "workstream_open", "workstream_message_send"]),
+      flow: z.enum(["workstream_create", "substream_create", "workstream_open", "workstream_message_send"]),
       workstreamId: resourceId.optional(),
       outcome: z.enum([
         "completed", "navigation_requested", "snapshot", "replay_event", "resync_required",
@@ -778,6 +778,9 @@ export const TELEMETRY_EVENTS = {
       blockedMs: z.number().nonnegative(),
       longTaskCount: countBucket,
       createRequestMs: z.number().nonnegative().optional(),
+      prepareRequestMs: z.number().nonnegative().optional(),
+      confirmRequestMs: z.number().nonnegative().optional(),
+      systemWaitMs: z.number().nonnegative().optional(),
       cacheSeedMs: z.number().nonnegative().optional(),
       socketTicketMs: z.number().nonnegative().optional(),
       dialMs: z.number().nonnegative().optional(),
@@ -810,6 +813,9 @@ export const TELEMETRY_EVENTS = {
       blockedMs: "diagnostic",
       longTaskCount: "diagnostic",
       createRequestMs: "diagnostic",
+      prepareRequestMs: "diagnostic",
+      confirmRequestMs: "diagnostic",
+      systemWaitMs: "diagnostic",
       cacheSeedMs: "diagnostic",
       socketTicketMs: "diagnostic",
       dialMs: "diagnostic",
