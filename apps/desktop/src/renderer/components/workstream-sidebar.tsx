@@ -1,4 +1,4 @@
-import { FileBox, FolderCog, GripVertical, MessageSquare, PanelLeftClose, PanelLeftOpen, UserPlus } from 'lucide-react';
+import { FileBox, GripVertical, MessageSquare, PanelLeftClose, PanelLeftOpen, UserPlus } from 'lucide-react';
 import { IconBorderCornerPill, IconPlus } from '@tabler/icons-react';
 import { useLayoutEffect, useRef, useState } from 'react';
 import clsx from 'clsx';
@@ -12,14 +12,13 @@ const WIDTH_KEY = 'rally.workstream-sidebar-width';
 const clampWidth = (width: number): number => Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, width));
 
 /** Work-stream navigation only: no second resource query or substream model. */
-export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstreamId = '0', onSelectSubstream, onNewSubstream, onOpenArtifact, onResources, onParticipants, onFocusTranscript }: {
+export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstreamId = '0', onSelectSubstream, onNewSubstream, onOpenArtifact, onParticipants, onFocusTranscript }: {
   workstream: Pick<WorkstreamDetail, 'id' | 'title' | 'resources' | 'participants' | 'privateChildren'>;
   presentUserIds: readonly string[];
   selectedSubstreamId?: string;
   onSelectSubstream?: (substreamId: string) => void;
   onNewSubstream?: () => void;
   onOpenArtifact: (id: string, returnFocus: HTMLElement) => void;
-  onResources?: (returnFocus: HTMLElement) => void;
   onParticipants: () => void;
   onFocusTranscript: () => void;
 }): React.JSX.Element {
@@ -129,7 +128,6 @@ export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstrea
         </div>
         <section aria-label="Generated artifacts" className="workstream-context-section">
           <h2>Generated artifacts</h2>
-          {onResources && <button className="workstream-context-row" aria-label="Manage resources" title="Manage resources" type="button" onClick={(event) => onResources(event.currentTarget)}><span className="workstream-context-resource-icon"><FolderCog size={18} /></span><span className="workstream-context-copy">Manage resources</span></button>}
           {artifacts.length === 0 ? (
             <div className="workstream-context-empty" title="No generated artifacts yet"><FileBox size={20} /><span>No generated artifacts yet</span></div>
           ) : artifacts.map((resource) => (

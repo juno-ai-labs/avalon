@@ -2584,7 +2584,8 @@ pre {
 .workstream-substream-list { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
 .workstream-substream-list:empty { display: none; }
 .workstream-substream-branch { align-items: center; display: flex; gap: 8px; min-width: 0; }
-.workstream-substream-connector { color: var(--av-cmp-sidebar-border); flex: 0 0 24px; transform: scaleY(-1); }
+/* Tabler's right endpoint is y=4: after flipping the 24px icon it sits 8px below center. */
+.workstream-substream-connector { color: var(--av-cmp-sidebar-border); flex: 0 0 24px; transform: translateY(-8px) scaleY(-1); }
 .workstream-substream-branch > .workstream-context-row { flex: 1; min-width: 0; width: auto; }
 .workstream-substream-avatar { align-items: center; display: flex; flex: 0 0 28px; height: 28px; justify-content: center; }
 .workstream-substream-avatar > .avatar { height: 28px; width: 28px; }
