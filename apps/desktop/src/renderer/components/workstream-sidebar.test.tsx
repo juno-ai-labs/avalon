@@ -45,7 +45,7 @@ describe('WorkstreamSidebar', () => {
     const sidebar = screen.getByRole('complementary', { name: 'Work-stream sidebar' });
     const buttons = within(sidebar).getAllByRole('button');
     expect(buttons.map((button) => button.getAttribute('aria-label'))).toEqual([
-      'Collapse work-stream sidebar', 'Launch preparation', 'Open Launch draft.md', 'Ada Lovelace, viewing now', 'Manage work-stream participants',
+      'Collapse work-stream sidebar', 'Go to conversation: Launch preparation', 'Open Launch draft.md', 'Manage participants: Ada Lovelace, viewing now', 'Manage work-stream participants',
     ]);
     expect(screen.queryByText('Source ticket')).not.toBeInTheDocument();
     expect(screen.queryByText('Substreams')).not.toBeInTheDocument();
@@ -62,9 +62,9 @@ describe('WorkstreamSidebar', () => {
 
   it('focuses the conversation and offers participant management', () => {
     const { onParticipants, onFocusTranscript } = setup();
-    fireEvent.click(screen.getByRole('button', { name: 'Launch preparation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Go to conversation: Launch preparation' }));
     expect(onFocusTranscript).toHaveBeenCalledOnce();
-    fireEvent.click(screen.getByRole('button', { name: 'Ada Lovelace, viewing now' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Manage participants: Ada Lovelace, viewing now' }));
     expect(onParticipants).toHaveBeenCalledTimes(1);
   });
 
@@ -152,7 +152,7 @@ describe('WorkstreamSidebar', () => {
   it('replaces resources and participants when the selected work stream changes', () => {
     const { rerender, onOpenArtifact, onParticipants } = setup();
     rerender(<Tooltip.Provider><div><WorkstreamSidebar workstream={{ ...workstream, id: '00000000-0000-7000-8000-000000000022', title: 'Another work stream', resources: [], participants: [] }} presentUserIds={[]} onOpenArtifact={onOpenArtifact} onParticipants={onParticipants} onFocusTranscript={vi.fn()} /></div></Tooltip.Provider>);
-    expect(screen.getByRole('button', { name: 'Another work stream' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('button', { name: 'Go to conversation: Another work stream' })).toHaveAttribute('aria-current', 'page');
     expect(screen.queryByRole('button', { name: 'Open Launch draft.md' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Ada Lovelace/ })).not.toBeInTheDocument();
   });

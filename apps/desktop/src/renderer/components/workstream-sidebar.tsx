@@ -83,7 +83,7 @@ export function WorkstreamSidebar({ workstream, presentUserIds, onOpenArtifact, 
         <button
           className="workstream-context-row is-current"
           aria-current="page"
-          aria-label={workstream.title}
+          aria-label={`Go to conversation: ${workstream.title}`}
           title={workstream.title}
           type="button"
           onClick={onFocusTranscript}
@@ -105,7 +105,7 @@ export function WorkstreamSidebar({ workstream, presentUserIds, onOpenArtifact, 
         <section aria-label="Work-stream participants" className="workstream-context-section">
           <h2>Participants</h2>
           {workstream.participants.map((person) => (
-            <button className="workstream-context-row" key={person.id} aria-label={`${person.name}${presentUserIds.includes(person.id) ? ', viewing now' : ''}`} title={person.name} type="button" onClick={onParticipants}>
+            <button className="workstream-context-row" key={person.id} aria-label={`Manage participants: ${person.name}${presentUserIds.includes(person.id) ? ', viewing now' : ''}`} title={person.name} type="button" onClick={onParticipants}>
               <span className="workstream-context-resource-icon"><Avatar member={person} title={null} /></span>
               <span className="workstream-context-copy"><span>{person.name}</span></span>
               {presentUserIds.includes(person.id) && <span className="workstream-context-presence" aria-hidden="true" />}
