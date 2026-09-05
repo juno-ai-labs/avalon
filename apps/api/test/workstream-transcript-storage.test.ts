@@ -1505,7 +1505,7 @@ describe("canonical ordered work-stream transcript", () => {
     ]);
   });
 
-  it("activates one idle input and delivers every later steer in one ordered step commit", async () => {
+  it.each(["during", "after"] as const)("activates one idle input and delivers every later steer in one ordered step commit (late input %s settlement)", async (lateInputTiming) => {
     const { transcript, sql, storage } = open();
     seedPendingInputRoot(sql);
     const first = await admitPendingInput({ storage });
@@ -1630,6 +1630,10 @@ describe("canonical ordered work-stream transcript", () => {
       },
       now: NOW + 9,
     });
+    // Exercise both arrival orders without assuming which async preparation
+    // wins. In the after case, admission necessarily advances the revision
+    // beyond the snapshot returned by settlement.
+    if (lateInputTiming === "after") await settledPromise;
     const lateDuringSettlement = await admitPendingInput({
       storage,
       inputId: "00000000-0000-7000-8000-000000000141",
@@ -1669,7 +1673,9 @@ describe("canonical ordered work-stream transcript", () => {
       executionId: activated.receiptRunId,
       executionEpoch: 1,
       leaseOwner: "lease-1",
-      expectedLoopRevision: settled.loop.revision,
+      // Match SubstreamAgent's fresh fence read. The late input may commit
+      // after settlement and legitimately advance the loop revision.
+      expectedLoopRevision: first.loop.loop()!.revision,
       receiptRunId: activated.receiptRunId,
       turnId: secondAssistantTurnId,
       modelTurnIndex: 2,

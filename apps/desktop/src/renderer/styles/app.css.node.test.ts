@@ -14,6 +14,18 @@ function rule(selector: string): string | null {
   return ruleWithin(stylesheet, selector);
 }
 
+describe('work-stream context sidebar layout', () => {
+  it('keeps the transcript flexible and anchors the drag target to its panel', () => {
+    expect(rule('.conversation-layout')).toContain('display: flex');
+    expect(rule('.conversation-layout > .workstream-screen')).toContain('flex: 1');
+    expect(rule('.workstream-context-sidebar')).toContain('position: relative');
+    expect(rule('.workstream-context-sidebar')).toContain('min-width: 0');
+    expect(rule('.workstream-context-sidebar.is-compact')).toContain('flex-basis: 88px');
+    expect(rule('.workstream-context-scroll')).toContain('overflow-y: auto');
+    expect(rule('.workstream-context-row:focus-visible')).toContain('var(--av-sys-color-focus-default)');
+  });
+});
+
 /** The declarations inside one rule within an already bounded stylesheet fragment. */
 function ruleWithin(source: string, selector: string): string | null {
   const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
