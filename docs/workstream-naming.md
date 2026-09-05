@@ -208,10 +208,13 @@ ordinary work-stream update and belongs to the object's product service.
   produced. The first pass settles the provisional title as `automatic`; the
   second leaves an `automatic` row for the next run.
 - **The model answers with something unusable** — a quoted phrase, a Markdown
-  heading, a capitalized sentence, a trailing period, TeX. `normalizeGeneratedTitle`
-  repairs it rather than the prompt prohibiting it, and reduces an answer with
-  nothing left — a bare emoji, punctuation alone — to `null`, which is treated as
-  no name.
+  heading, TeX, a trailing full stop, an answer that starts mid-sentence, one
+  that runs past the cap. `normalizeGeneratedTitle` repairs each of those rather
+  than the prompt prohibiting it, and reduces an answer with nothing left —
+  whitespace or trailing punctuation alone — to `null`, which is treated as no
+  name. It repairs *form* only. Title case is prevented by the prompt instead,
+  because the normalizer cannot tell a proper noun from an ordinary word, and an
+  answer that is a bare emoji is written through as it stands.
 - **The isolate goes away mid-call.** The row stays `naming`. Every *read* past
   the grace reports `automatic`, and every cached row stops shimmering at the
   same instant; the second pass repairs the row itself at the end of the next
@@ -334,9 +337,9 @@ show the difference is the sidebar, where one prose title among hyphenated ones
 is the thing a person notices. The normalizer was already where an unusable
 answer is repaired, so the shape is guaranteed there and the prompt keeps one
 rule rather than a list of prohibitions. Also rejected: rejecting an over-long
-name at `WorkstreamNameResultSchema`, whose ceiling stays at 80 — a name eight
-characters long is a name, and failing the parse would leave the work stream
-with its provisional title instead.
+name at `WorkstreamNameResultSchema`, whose ceiling stays at 80 — a name a few
+characters over the cap is still a name, and failing the parse would leave the
+work stream with its provisional title instead.
 
 **Consequences:** `sentenceCased` is gone; anything that wants a generated title
 capitalized has to do it at the surface. Nothing downstream may assume a title
