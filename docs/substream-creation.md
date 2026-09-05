@@ -35,6 +35,12 @@ rather than invented identity. A completed
 main-feed message also offers **New substream** with that message as the cutoff.
 Both enter the same creation flow; there is no context-strategy picker.
 
+Every section of the center sidebar belongs to the parent work stream. Switching
+substreams changes the conversation, not the sidebar's artifact inventory,
+participant roster or management target. The parent socket remains retained on
+direct child links. This shared chrome does not publish private child resources
+or replace the child's creator-only conversation membership.
+
 1. The renderer assigns one operation ID and freezes its title and optional
    message cutoff. Retrying the same attempt keeps that ID.
 2. WorkstreamDO reserves one child ID and pins the resolved context recipe and
@@ -177,6 +183,13 @@ Run the focused suites with the package-local Vitest paths per
 substitute for real-provider latency or window-level acceptance.
 
 ## Changelog
+
+### 2026-09-05 — Separate parent sidebar context from child conversation context
+
+Sidebar data, previews and management now use the retained parent snapshot. The
+previous selected-feed wiring made shared chrome change when a child was selected
+and could apply parent API responses to a child cache. Keep the two contexts
+explicit; selecting a child must not change the scope of sidebar actions.
 
 ### 2026-09-05 — Show the relationship between Main and its substreams
 
