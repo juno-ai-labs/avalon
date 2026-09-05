@@ -3,7 +3,10 @@ import {
   renderWorkstreamNameMessages,
   type WorkstreamNameContextMessage,
 } from "@rally/agent-harness";
-import { WorkstreamNameResultSchema } from "@rally/contracts";
+import {
+  WORKSTREAM_NAME_RESULT_MAX_LENGTH,
+  WorkstreamNameResultSchema,
+} from "@rally/contracts";
 
 import type { Env } from "../env";
 import { firstNonEmptyLine, truncateUtf16Safe } from "../lib/text";
@@ -15,10 +18,15 @@ import { createIdentityObjectPort } from "../runtime/identity-port";
 
 /**
  * The longest generated name that is written to a work stream. `title` holds
- * 180 characters, but a name that long is a sentence rather than a label, and
- * the sidebar truncates it anyway.
+ * 180 characters, but a generated name is a label a person scans in the sidebar
+ * rather than a sentence, and thirty is the length the team set for it. The
+ * prompt asks for the same number, so this is a backstop rather than the usual
+ * path: replaying 89 named work streams through the prompt, the model overshot
+ * in 4 of them. Twenty was tried and rejected — the same replay overshot in 37
+ * of 89 there, which is the truncation naming the work stream rather than the
+ * model.
  */
-const GENERATED_TITLE_MAX_LENGTH = 80;
+const GENERATED_TITLE_MAX_LENGTH = 30;
 
 /** The provisional title's ceiling, matching what `title` accepts. */
 const PROVISIONAL_TITLE_MAX_LENGTH = 180;
@@ -38,11 +46,24 @@ const RENAME_AFTER_MESSAGE_COUNT = 5;
 const RENAME_CONTEXT_MESSAGE_LIMIT = 12;
 const RENAME_CONTEXT_MESSAGE_CHARACTERS = 600;
 
+/**
+ * The schema the request advertises, bounded by the parse ceiling rather than by
+ * {@link GENERATED_TITLE_MAX_LENGTH}.
+ *
+ * The two are deliberately different numbers. This schema goes to the provider
+ * under `strict: true` and is rendered into the conversation beside it, so
+ * `maxLength` is a decoding bound and not only a hint: a provider that honours
+ * it stops generating at exactly that character, mid-word. A name cut that way
+ * arrives here already inside the target, so `truncateToWholeWords` returns it
+ * untouched and the half word ships — the one truncation the whole-word cut
+ * cannot see. The target is the prompt's job, which can ask for a whole name of
+ * that length; only the ceiling belongs in a bound that chops.
+ */
 const nameJsonSchema = {
   type: "object",
   additionalProperties: false,
   properties: {
-    title: { type: "string", minLength: 1, maxLength: GENERATED_TITLE_MAX_LENGTH },
+    title: { type: "string", minLength: 1, maxLength: WORKSTREAM_NAME_RESULT_MAX_LENGTH },
   },
   required: ["title"],
 };
@@ -351,21 +372,87 @@ export function normalizeGeneratedTitle(value: string): string | null {
   // escape would be a backslash a reader sees.
   const collapsed = normalizeModelText(value).replace(/\s+/gu, " ").trim().replace(/^#+\s*/u, "");
   const unquoted = /^(["'“‘])(.+)(["'”’])$/u.exec(collapsed)?.[2] ?? collapsed;
-  const trimmed = sentenceCased(unquoted.trim().replace(/[.,;:\s]+$/u, ""));
-  if (trimmed.length === 0) return null;
-  return truncateUtf16Safe(trimmed, GENERATED_TITLE_MAX_LENGTH);
+  // Trailing punctuation is stripped on both sides of the cut: a model's own
+  // full stop before it, and the comma a cut between two listed things leaves
+  // behind after it.
+  const cleaned = trimTrailing(unquoted.trim());
+  if (cleaned.length === 0) return null;
+  // Cased before the cut, so the cut is what bounds the result. An uppercase
+  // mapping can be longer than what it replaces — `ß` becomes `SS`, `ﬁ` becomes
+  // `FI` — so capitalizing afterwards could hand back 31 characters from a cap
+  // of 30. Casing first also judges the whole word the model wrote rather than
+  // whatever prefix of it survived.
+  const shortened = trimTrailing(
+    truncateToWholeWords(sentenceCased(cleaned), GENERATED_TITLE_MAX_LENGTH),
+  );
+  if (shortened.length === 0) return null;
+  return shortened;
+}
+
+function trimTrailing(value: string): string {
+  return value.replace(/[.,;:\s]+$/u, "");
+}
+
+/**
+ * Cut a name to `maximum` characters at a word boundary.
+ *
+ * The last whole word that fits wins, because the tail of a cut word reads as a
+ * typo. That is the whole of what this buys: no half words. It does *not* stop
+ * a name ending mid-thought — a cut landing after `to`, `from`, `and` or `the`
+ * gives `Podcast episode from the`, and the cut cannot tell a word the model
+ * meant to continue from one it meant to end on. Ruling that out would need a
+ * closed set of function words per language, and the prompt writes names in the
+ * language of the request; at thirty characters the cut fires on about one name
+ * in twenty, which is what makes living with it reasonable, and at twenty it
+ * was two in five, which is what ruled twenty out.
+ *
+ * A single word longer than the cap has no boundary to cut at and is cut where
+ * it must be, short of splitting a surrogate pair, which would leave a half that
+ * renders as a replacement character.
+ */
+function truncateToWholeWords(value: string, maximum: number): string {
+  if (value.length <= maximum) return value;
+  const words = value.split(" ");
+  const kept: string[] = [];
+  let length = 0;
+  for (const word of words) {
+    const next = length === 0 ? word.length : length + 1 + word.length;
+    if (next > maximum) break;
+    kept.push(word);
+    length = next;
+  }
+  // Two ways there is no whole-word cut worth taking, and both end in the
+  // mid-word one. The first word may not fit at all. Or it may fit and the
+  // second may not, which leaves the name as its own opening word — `Fix`,
+  // `Debug`, `Rename` — which is the framing word the prompt tells the model to
+  // drop, and which every work stream whose second word is long is then called.
+  // One long token does it: a URL, an address, a compound identifier. Cutting
+  // mid-word keeps the characters that tell two such names apart, and an ugly
+  // name that is distinct beats a tidy one that is not.
+  if (kept.length === 0 || (kept.length === 1 && words.length > 1)) {
+    return truncateUtf16Safe(value, maximum);
+  }
+  return kept.join(" ");
 }
 
 /**
  * Capitalize a name that starts mid-sentence, and only then.
  *
- * A small model occasionally answers "invoice INV-2291 VAT totals", which reads
- * as a fragment beside the sentence-cased titles around it. The first word has
- * to be plain lowercase letters for this to fire, so a name opening on an
- * address, a version, or a brand that spells itself `iPhone` is left alone.
+ * A small model occasionally answers "invoice INV-2291 totals", which reads as
+ * a fragment beside the sentence-cased titles around it. The first word has to
+ * be plain lowercase letters for this to fire, so a name opening on an address,
+ * a version, or a brand that spells itself `iPhone` is left alone.
  */
 function sentenceCased(value: string): string {
   const firstWord = value.split(" ", 1)[0] ?? "";
-  if (!/^\p{Ll}+$/u.test(firstWord)) return value;
-  return value.slice(0, 1).toUpperCase() + value.slice(1);
+  // An apostrophe inside the first word does not make it a spelling to leave
+  // alone: `danny's invoice` opens mid-sentence exactly as `danny invoice`
+  // does. A capital anywhere in it still does.
+  if (!/^\p{Ll}+(?:['’]\p{Ll}+)*$/u.test(firstWord)) return value;
+  // By code point rather than by code unit. The test above accepts a letter
+  // outside the Basic Multilingual Plane — `\p{Ll}` under `u` does — and
+  // `slice(0, 1)` on one of those is half a surrogate pair, which uppercases to
+  // itself and leaves the name lowercase with the guard having passed.
+  const first = String.fromCodePoint(value.codePointAt(0) ?? 0);
+  return first.toUpperCase() + value.slice(first.length);
 }

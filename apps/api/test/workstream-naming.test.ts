@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { renderWorkstreamNameMessages } from "@rally/agent-harness";
 
 import type { Env } from "../src/env";
 import {
@@ -64,13 +65,16 @@ describe("work-stream naming", () => {
       userId,
     });
 
+    // The model answered past the cap; what is written and published is the
+    // name cut back to the last whole word that fits — which is a whole word
+    // and not a whole thought, as this one ending on `to` shows.
     expect(workstreamRow(database)).toMatchObject({
-      title: "Avalon download link email to Danny",
+      title: "Avalon download link email to",
       title_status: "automatic",
     });
     expect(published).toEqual([{
       type: "workstream_renamed",
-      title: "Avalon download link email to Danny",
+      title: "Avalon download link email to",
       titleStatus: "automatic",
     }]);
   });
@@ -78,7 +82,7 @@ describe("work-stream naming", () => {
   it("asks the naming agent's own model for a name, with reasoning switched off", async () => {
     const database = seededDatabase();
     const requests: Array<Record<string, unknown>> = [];
-    stubOpenRouter(requests, "Recurring Tuesday call invitations");
+    stubOpenRouter(requests, "Tuesday call invites");
     const env = environment(database, []);
 
     await nameWorkstream(env, {
@@ -99,6 +103,15 @@ describe("work-stream naming", () => {
       reasoning: { effort: "none" },
       response_format: { json_schema: { name: "workstream_name", strict: true } },
     });
+    // The advertised bound is the parse ceiling, not the thirty the prompt asks
+    // for, and the two must not be tidied into one number. This schema goes out
+    // `strict: true`, so a provider that enforces `maxLength` stops generating
+    // at exactly that character — a name cut there arrives inside the target and
+    // the whole-word cut cannot tell it was ever truncated.
+    const schema = (request?.response_format as {
+      json_schema: { schema: { properties: { title: { maxLength: number } } } };
+    }).json_schema.schema;
+    expect(schema.properties.title.maxLength).toBe(80);
     // The request is what is being named, and it is data: it reaches the model
     // as user-role content and never as part of the naming policy.
     const messages = request?.messages as Array<{ role: string; content: string }>;
@@ -164,6 +177,30 @@ describe("work-stream naming", () => {
     }]);
   });
 
+  it("leaves the provisional title standing when the answer is past the parse ceiling", async () => {
+    const database = seededDatabase();
+    const published: Array<Record<string, unknown>> = [];
+    // Past `WORKSTREAM_NAME_RESULT_MAX_LENGTH`, which is a model that answered
+    // the request instead of naming it. That fails the parse rather than being
+    // trimmed, and the work stream keeps the title it had — the reason the
+    // ceiling sits far above the target rather than tracking it.
+    stubOpenRouter([], "x".repeat(81));
+    const env = environment(database, published);
+
+    await nameWorkstream(env, {
+      workspaceId,
+      workstreamId,
+      objective,
+      openingMessage: objective,
+      provisionalTitle,
+    });
+
+    expect(workstreamRow(database)).toMatchObject({
+      title: provisionalTitle,
+      title_status: "automatic",
+    });
+  });
+
   it("never names a work stream without an OpenRouter key", async () => {
     const database = seededDatabase();
     const fetcher = vi.fn();
@@ -194,7 +231,7 @@ describe("work-stream naming", () => {
     seedMessages(database, 5);
     const requests: Array<Record<string, unknown>> = [];
     const published: Array<Record<string, unknown>> = [];
-    stubOpenRouter(requests, "Mucker download link for danny@mucker.com");
+    stubOpenRouter(requests, "Mucker link Danny");
     const env = environment(database, published);
 
     await refreshWorkstreamName(env, { workspaceId, workstreamId, userId });
@@ -211,12 +248,12 @@ describe("work-stream naming", () => {
     expect(payload.conversation).toHaveLength(5);
     expect(payload.conversation[1]).toMatchObject({ author: "avalon" });
     expect(workstreamRow(database)).toMatchObject({
-      title: "Mucker download link for danny@mucker.com",
+      title: "Mucker link Danny",
       title_status: "settled",
     });
     expect(published).toEqual([{
       type: "workstream_renamed",
-      title: "Mucker download link for danny@mucker.com",
+      title: "Mucker link Danny",
       titleStatus: "settled",
     }]);
   });
@@ -228,13 +265,13 @@ describe("work-stream naming", () => {
     const database = seededDatabase();
     seedMessages(database, 6);
     const published: Array<Record<string, unknown>> = [];
-    stubOpenRouter([], "Mucker download link for danny@mucker.com");
+    stubOpenRouter([], "Mucker link Danny");
     const env = environment(database, published);
 
     await refreshWorkstreamName(env, { workspaceId, workstreamId });
 
     expect(workstreamRow(database)).toMatchObject({
-      title: "Mucker download link for danny@mucker.com",
+      title: "Mucker link Danny",
       title_status: "settled",
     });
     expect(published).toHaveLength(1);
@@ -263,11 +300,11 @@ describe("work-stream naming", () => {
     expect(published).toEqual([]);
 
     const requests: Array<Record<string, unknown>> = [];
-    stubOpenRouter(requests, "Invoice INV-2291 VAT totals");
+    stubOpenRouter(requests, "Invoice INV-2291 VAT");
     await refreshWorkstreamName(env, { workspaceId, workstreamId });
 
     expect(workstreamRow(database)).toMatchObject({
-      title: "Invoice INV-2291 VAT totals",
+      title: "Invoice INV-2291 VAT",
       title_status: "settled",
     });
   });
@@ -333,7 +370,7 @@ describe("work-stream naming", () => {
     applyWorkstreamObjectRootFields(objectStoreOf(database), { titleStatus: "automatic" });
     seedMessages(database, 9);
     const requests: Array<Record<string, unknown>> = [];
-    stubOpenRouter(requests, "Mucker download link for danny@mucker.com");
+    stubOpenRouter(requests, "Mucker link Danny");
     const env = environment(database, []);
 
     await refreshWorkstreamName(env, { workspaceId, workstreamId });
@@ -424,25 +461,65 @@ describe("work-stream naming", () => {
   });
 
   it("writes a name a person would read rather than whatever the model returned", () => {
-    expect(normalizeGeneratedTitle('"Avalon download link email to Danny."'))
-      .toBe("Avalon download link email to Danny");
+    expect(normalizeGeneratedTitle('"Danny download email."')).toBe("Danny download email");
     expect(normalizeGeneratedTitle("## Mucker\n  intro  thread")).toBe("Mucker intro thread");
     // The title is stored, so a model's TeX is repaired here — once, at the
     // write — rather than by every surface that shows the sidebar row.
-    expect(normalizeGeneratedTitle("Migrate billing $\\rightarrow$ Stripe"))
-      .toBe("Migrate billing → Stripe");
+    expect(normalizeGeneratedTitle("Billing $\\rightarrow$ Stripe")).toBe("Billing → Stripe");
     expect(normalizeGeneratedTitle("Renew the $50 plan")).toBe("Renew the $50 plan");
     expect(normalizeGeneratedTitle("   ")).toBeNull();
     // A name that starts mid-sentence is capitalized; one that starts on
-    // something that spells itself is not.
-    expect(normalizeGeneratedTitle("invoice INV-2291 VAT totals")).toBe("Invoice INV-2291 VAT totals");
-    expect(normalizeGeneratedTitle("iPhone build failures")).toBe("iPhone build failures");
-    expect(normalizeGeneratedTitle("danny@mucker.com bounce")).toBe("danny@mucker.com bounce");
-    expect(normalizeGeneratedTitle("n".repeat(200))).toHaveLength(80);
-    // A cut that lands inside a surrogate pair would leave a lone half that
-    // renders as a replacement character in the sidebar.
-    const emojiName = `${"n".repeat(79)}\u{1F600}`;
-    expect(normalizeGeneratedTitle(emojiName)).toBe("n".repeat(79));
+    // something that spells itself is not, and an identifier keeps its case.
+    expect(normalizeGeneratedTitle("invoice INV-2291 totals")).toBe("Invoice INV-2291 totals");
+    // The capital is taken by code point: `slice(0, 1)` on a letter outside the
+    // Basic Multilingual Plane is half a surrogate pair and uppercases to
+    // itself, leaving a name the guard just accepted as lowercase.
+    expect(normalizeGeneratedTitle("\u{10428}eseret opening")).toBe("\u{10400}eseret opening");
+    expect(normalizeGeneratedTitle("iPhone build fails")).toBe("iPhone build fails");
+    expect(normalizeGeneratedTitle("danny@mucker.com")).toBe("danny@mucker.com");
+    // An apostrophe inside the opening word does not make it a spelling to
+    // leave alone the way a capital does.
+    expect(normalizeGeneratedTitle("danny's invoice")).toBe("Danny's invoice");
+    // The cut is a backstop at thirty — four answers in the 89 replayed — but
+    // where it lands still matters for those four: the last whole word that
+    // fits, and not the comma a cut between two listed things leaves behind.
+    expect(normalizeGeneratedTitle("Rust, OCaml, C++ comparison essay"))
+      .toBe("Rust, OCaml, C++ comparison");
+    expect(normalizeGeneratedTitle("Pumpkin pie, Slack, Gmail, Drive"))
+      .toBe("Pumpkin pie, Slack, Gmail");
+    // A cut that would leave only the opening word takes the mid-word cut
+    // instead. `Fix` is the framing word the prompt tells the model to drop,
+    // and every name whose second token is long would be called it.
+    expect(normalizeGeneratedTitle("Fix supercalifragilisticexpialidocious build"))
+      .toBe("Fix supercalifragilisticexpial");
+    expect(normalizeGeneratedTitle("Debug https://rally.example.com/onboarding page"))
+      .toBe("Debug https://rally.example.co");
+    // The boundary itself: the last word that fits ends exactly on the cap, and
+    // the one after it is dropped rather than the one before.
+    expect(normalizeGeneratedTitle("Slack and Gmail pumpkin search extra"))
+      .toBe("Slack and Gmail pumpkin search");
+    // A single word past the cap has no boundary to cut at, and a cut inside a
+    // surrogate pair would leave a half that renders as a replacement
+    // character in the sidebar.
+    expect(normalizeGeneratedTitle("n".repeat(200))).toHaveLength(30);
+    expect(normalizeGeneratedTitle(`${"n".repeat(29)}\u{1D41A}`)).toBe(`N${"n".repeat(28)}`);
+    // Capitalizing can lengthen: `ß` uppercases to `SS`. The cap therefore has
+    // to be applied after the capital, or a 30-character name leaves here 31
+    // characters long.
+    expect(normalizeGeneratedTitle(`ß${"a".repeat(29)}`)).toBe(`SS${"a".repeat(28)}`);
+  });
+
+  it("asks the model for the same cap the normalizer enforces", () => {
+    // The number lives twice and in two packages: spelled as a word in the
+    // prompt, and as `GENERATED_TITLE_MAX_LENGTH` here. Nothing links them, and
+    // the pair before this change had already drifted — the prompt said sixty
+    // while the service cut at eighty. This is the tripwire: move one without
+    // the other and it fails here rather than in a sidebar.
+    const enforced = normalizeGeneratedTitle("n".repeat(200));
+    const policy = renderWorkstreamNameMessages({ objective: "o" })[0]!.content;
+
+    expect(enforced).toHaveLength(30);
+    expect(policy).toContain("thirty characters or less");
   });
 
   it("derives the provisional title from the first line that has anything in it", () => {
