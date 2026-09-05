@@ -99,6 +99,23 @@ prove layout, focus, scroll position, or overlap.
 
 ## Changelog
 
+### 2026-09-04 — Coordinate the two sidebar breakpoints
+
+**What changed:** The shell reserves the compact context rail in addition to
+the conversation minimum on existing work-stream routes. Route-switch tests
+target the current sidebar button rather than the now-repeated title.
+
+**Why:** With a 400px navigation sidebar, an 860px window previously left only
+372px for the transcript after the context rail. Independent breakpoint checks
+were insufficient; the outer shell must account for both rails without changing
+automation or new-work-stream layouts. The citation hook also exposes its
+always-present preview handler in its return type instead of a silent optional call.
+Transcript focus now passes through the surface's own ref-backed callback instead
+of searching the sidebar's parent DOM; a real screen test covers the connection.
+
+**Consequences:** Keep the compact context width in the outer reservation when
+changing rail geometry, and preserve the existing route-switch cleanup assertions.
+
 ### 2026-09-04 — The work-stream sidebar supports direct resizing
 
 The sidebar's icon toggle alone did not provide the requested direct width
