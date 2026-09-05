@@ -16,12 +16,14 @@ import { createIdentityObjectPort } from "../runtime/identity-port";
 /**
  * The longest generated name that is written to a work stream. `title` holds
  * 180 characters, but a generated name is a label a person scans in the sidebar
- * rather than a sentence, and twenty is the length the team set for it. The
- * prompt asks for the same number, so this is the backstop for a model that
- * ignored it — and at twenty it is not a rare backstop: replaying 89 named work
- * streams through the prompt, the cut fired on 40% of them.
+ * rather than a sentence, and thirty is the length the team set for it. The
+ * prompt asks for the same number, so this is a backstop rather than the usual
+ * path: replaying 89 named work streams through the prompt, the model answered
+ * past thirty four times. Twenty was tried and rejected — the same replay cut 37
+ * of 89 there, which is the truncation naming the work stream rather than the
+ * model.
  */
-const GENERATED_TITLE_MAX_LENGTH = 20;
+const GENERATED_TITLE_MAX_LENGTH = 30;
 
 /** The provisional title's ceiling, matching what `title` accepts. */
 const PROVISIONAL_TITLE_MAX_LENGTH = 180;
@@ -371,12 +373,13 @@ function trimTrailing(value: string): string {
 /**
  * Cut a name to `maximum` characters at a word boundary.
  *
- * Twenty characters is short enough that the cut is ordinary rather than rare —
- * two names in five reach it — so where it lands matters. The last whole word
- * that fits wins, because the tail of a cut word reads as a typo rather than as
- * a name that ran long. A single word longer than the cap has no boundary to
- * cut at and is cut where it must be, short of splitting a surrogate pair,
- * which would leave a half that renders as a replacement character.
+ * The last whole word that fits wins, because the tail of a cut word reads as a
+ * typo rather than as a name that ran long, and a cut that lands on a word the
+ * model meant to continue — `Podcast from` — reads as unfinished. At thirty
+ * characters that is rare; at twenty it was two names in five, which is what
+ * ruled twenty out. A single word longer than the cap has no boundary to cut at
+ * and is cut where it must be, short of splitting a surrogate pair, which would
+ * leave a half that renders as a replacement character.
  */
 function truncateToWholeWords(value: string, maximum: number): string {
   if (value.length <= maximum) return value;

@@ -33,9 +33,9 @@ A name is a label a person scans in a list of work streams, not an answer to the
 
 Where the conversation shows the work is about something more specific than the request implied — a named system, an identifier, the actual problem behind the question — name that instead. Where it has wandered into unrelated follow-ups, keep naming the work the request opened.
 
-Write two or three words, twenty characters or less, in the language of the request. Count the characters before you answer: a name over twenty is cut at its last whole word, which loses the end of it. Use sentence case — a capital on the first word, and on a name that already carries one, and lower case on everything else. Never capitalize every word. No trailing punctuation, no surrounding quotes, and no Markdown.
+Write two to four words, thirty characters or less, in the language of the request. Count the characters before you answer: a name over thirty is cut at its last whole word, which loses the end of it. Use sentence case — a capital on the first word, and on a name that already carries one, and lower case on everything else. Never capitalize every word. No trailing punctuation, no surrounding quotes, and no Markdown.
 
-Twenty characters leaves room for the distinguishing detail and almost nothing else, so when the name will not fit, drop the words that frame the work before the detail that identifies it: a request to search two places for one subject is named after the subject, and a request to write something about a thing is named after the thing.
+Thirty characters leaves room for the distinguishing detail and little else, so when the name will not fit, drop the words that frame the work before the detail that identifies it: a request to search two places for one subject is named after the subject, and a request to write something about a thing is named after the thing.
 
 Spell people, products, files, and identifiers exactly as the request spells them, and never add a specific the request does not contain — when it is vague, name what it does contain and stop there.
 
