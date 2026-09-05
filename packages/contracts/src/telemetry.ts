@@ -768,7 +768,7 @@ export const TELEMETRY_EVENTS = {
     category: "diagnostic",
     identityScopes: ["workspace-user"],
     properties: deferredZodSchema(() => z.strictObject({
-      flow: z.enum(["workstream_create", "substream_create", "workstream_open", "workstream_message_send"]),
+      flow: z.enum(["workstream_create", "substream_prepare", "substream_create", "workstream_open", "workstream_message_send"]),
       workstreamId: resourceId.optional(),
       outcome: z.enum([
         "completed", "navigation_requested", "snapshot", "replay_event", "resync_required",

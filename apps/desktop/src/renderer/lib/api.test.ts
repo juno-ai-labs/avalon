@@ -391,6 +391,21 @@ describe('Rally API wire adapter', () => {
     await expect(api.getWorkspace()).rejects.toMatchObject(expected);
   });
 
+  it('accepts the empty success response from substream cancellation', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 204 })));
+    const api = new RallyApi('https://api.rally.test', session);
+    await expect(api.cancelSubstream(workstreamId, 'cancel-operation')).resolves.toBeUndefined();
+  });
+
+  it.each(['addSubstreamParticipant', 'removeSubstreamParticipant'] as const)('validates %s membership receipts', async (method) => {
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(Response.json({ outcome: 'unchanged', membershipVersion: 1 }))
+      .mockResolvedValueOnce(Response.json({ outcome: 'unchanged' })));
+    const api = new RallyApi('https://api.rally.test', session);
+    await expect(api[method](workstreamId, runId, userId)).resolves.toBeUndefined();
+    await expect(api[method](workstreamId, runId, userId)).rejects.toThrow();
+  });
+
   it('accepts successful 204 responses for note archive endpoints', async () => {
     const fetchMock = vi.fn(async () => new Response(null, { status: 204 }));
     vi.stubGlobal('fetch', fetchMock);

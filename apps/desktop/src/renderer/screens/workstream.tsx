@@ -441,8 +441,9 @@ export function WorkstreamScreen(): React.JSX.Element {
   };
   const updateCreationTitle = (nextTitle: string): void => {
     const active = creationRef.current;
-    if (!active) return;
+    if (!active || creationPending) return;
     if (api && creationError) void api.cancelSubstream(active.parentId, active.operationId).catch(() => undefined);
+    setCreationError(null);
     setCreation({ ...active, operationId: uuidV7(), title: nextTitle, preparationWaitMs: 0 });
   };
   useEffect(() => {
@@ -456,7 +457,7 @@ export function WorkstreamScreen(): React.JSX.Element {
     const attempt = creationRef.current;
     if (!api || !attempt?.title.trim() || creationPending) return;
     const startedAt = performance.now();
-    const trace = startPerfTrace('substream_create', { operationId: attempt.operationId });
+    const trace = startPerfTrace('substream_prepare', { operationId: attempt.operationId });
     setCreationPending('prepare'); setCreationError(null);
     try {
       const prepared = await trace.step('prepare_request', () => api.prepareSubstream(attempt.parentId, {
@@ -554,7 +555,7 @@ export function WorkstreamScreen(): React.JSX.Element {
       title="New substream"
     >
       {creationError && <InlineError>{creationError}</InlineError>}
-      {!preview ? <label className="field-label">Title<input autoFocus className="text-input" onChange={(event) => updateCreationTitle(event.target.value)} value={creation?.title ?? ''} /></label> : <div className="substream-context-preview">
+      {!preview ? <label className="form-field"><span>Title</span><input autoFocus disabled={creationPending !== null} onChange={(event) => updateCreationTitle(event.target.value)} value={creation?.title ?? ''} /></label> : <div className="substream-context-preview">
         <strong>{preview.title}</strong>
         <p>Context from the main conversation</p>
         <SubstreamContext context={preview.context} />

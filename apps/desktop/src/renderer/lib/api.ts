@@ -1,4 +1,5 @@
 import { RALLY_HEADERS } from '@rally/contracts/http-headers';
+import { MutatePrivateChildParticipantResultSchema } from '@rally/contracts/conversation-parent';
 import { SubstreamPreparationPreviewSchema, type SubstreamPreparationPreview } from '@rally/contracts/substream-creation';
 import {
   AutomationDetailSchema as WireAutomationDetailSchema,
@@ -1636,8 +1637,8 @@ export class RallyApi {
   }
 
   async cancelSubstream(parentId: string, operationId: string): Promise<void> {
-    await this.request(`/conversations/${encodeURIComponent(parentId)}/substreams/cancel`, {
-      method: 'POST', headers: { [RALLY_HEADERS.OPERATION_ID]: operationId }, body: { operationId }, schema: z.unknown(),
+    await this.requestVoid(`/conversations/${encodeURIComponent(parentId)}/substreams/cancel`, {
+      method: 'POST', headers: { [RALLY_HEADERS.OPERATION_ID]: operationId }, body: { operationId },
     });
   }
 
@@ -1645,7 +1646,7 @@ export class RallyApi {
     await this.request(`/conversations/${encodeURIComponent(parentId)}/substreams/${encodeURIComponent(substreamId)}/participants`, {
       method: 'POST',
       body: { userId, operationId: uuidV7() },
-      schema: z.unknown(),
+      schema: MutatePrivateChildParticipantResultSchema,
     });
   }
 
@@ -1653,7 +1654,7 @@ export class RallyApi {
     await this.request(`/conversations/${encodeURIComponent(parentId)}/substreams/${encodeURIComponent(substreamId)}/participants/remove`, {
       method: 'POST',
       body: { userId, operationId: uuidV7() },
-      schema: z.unknown(),
+      schema: MutatePrivateChildParticipantResultSchema,
     });
   }
 

@@ -378,8 +378,8 @@ local because its request duration is already present in backend request traces.
 Creation flows use that same projection but finish at the existing two-frame
 painted send-ready boundary. An ordinary `workstream_create` carries its
 operation ID from the POST across navigation instead of ending at
-`navigation_requested`. A `substream_create` emits preparation-to-preview and
-confirmation-to-ready samples under one operation ID. The ready sample's
+`navigation_requested`. `substream_prepare` emits preparation-to-preview and
+`substream_create` emits confirmation-to-ready under one operation ID. The ready sample's
 `systemWaitMs` adds those two measured intervals and excludes the person's
 unbounded review time between them. It includes summary preparation and every
 post-confirm socket/context wait. The acceptance targets remain P50 below one
@@ -597,7 +597,7 @@ Electron app using `dev-environment.md`, create representative empty, sliced,
 and summary-backed substreams, then export the closed native records with
 `log show --style json --predicate 'subsystem == "ai.rallywith.desktop" AND category == "performance"'`.
 Select `renderer_perf_flow` records whose `flow` is `workstream_create` or
-`substream_create`, group the latter by `operationId`, and compute percentiles
+`substream_create` with outcome `send_ready`, group the latter by `operationId`, and compute percentiles
 from `systemWaitMs`. Record sample count, build SHA, cold/warm status, payload
 shape, and whether summary inference used the configured real local-development
 provider. Do not mix failures, cancelled attempts, or replayed receipts into
@@ -678,6 +678,13 @@ a new recorded decision. But what enforces it is the absence of a line in
 both signals rather than trusting the comment there to survive.
 
 ## Changelog
+
+### 2026-09-05 — Keep preview timings out of creation percentiles
+
+Preparation uses `substream_prepare`, leaving one successful `substream_create`
+sample at send readiness. Sharing the flow name counted preview completion as
+another creation and biased latency distributions downward. Correlation still
+uses one operation ID, and the ready sample includes preparation system wait.
 
 ### 2026-09-04 — Creation clocks reach authoritative painted send readiness
 
