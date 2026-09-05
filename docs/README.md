@@ -41,6 +41,7 @@ update it in the same change.
 
 | Document | Scope — read and update when changing… |
 | --- | --- |
+| [`settings-search.md`](settings-search.md) | Desktop settings definitions, local search providers, shared availability, and setting-level reveal targets. Read before adding settings or changing their discovery and navigation. |
 | [`prds.md`](prds.md) | How a product requirement document under `docs/PRDs/` is named, which sections it must contain, how its `state.md` records progress, and when it freezes. Read before writing one. The PRD folders themselves are not listed in this index; this row is the tree's entry, and [the Rally implementation brief](PRDs/2026-08-05_avalon-implementation-brief/prd.md) is the standing product contract it defers to. |
 | [`module-documents.md`](module-documents.md) | When an architecture or large module needs its own document here, the sections that document must contain, and how its **changelog** is kept — the running record of what changed in a module and, above all, *why*. Read before creating a document for a subsystem or making a substantial change to one that has one. |
 | [`coding-practices-and-style.md`](coding-practices-and-style.md) | Repository-wide coding rules: static imports, typed process and deployment boundaries, and the expectation that mechanically identifiable rules receive enforcement. Read before introducing a dependency-loading pattern or cross-service contract. |

@@ -116,6 +116,28 @@ serves only generated IDs and enforces the cache's size and integrity checks.
 
 ## Changelog
 
+### 2026-09-05 — Settings adopts the reference's quieter grouped layout
+
+**What changed:** The settings navigation uses the 198px rail, 13px regular labels and rounded
+selection from Grok Bot 0.39's packaged settings surface. Preference groups use
+12px corners, compact rows and inset hairline dividers instead of boxed icons.
+Switches use the appearance's monochrome foreground, scoped to settings so other
+surfaces are unaffected. Digest selection and time controls also use neutral
+tokens rather than the former orange brand and green success states; selecting
+a schedule is not a success notification. Rally keeps its native settings window, searchable
+navigation and all existing settings behavior: the reference informs presentation,
+not which product capabilities or security controls are available.
+
+**Why:** Settings still used the old card and accent treatment after the main
+feed adopted the reference design.
+
+**Considered and rejected:** Global token changes would alter unrelated surfaces;
+the reference-specific dimensions remain scoped to settings.
+
+**Consequences:** [Settings search](settings-search.md) owns discovery and reveal;
+this document owns appearance. Search must not change the control's behavior.
+PR: #557.
+
 ### 2026-09-04 — Rally has one design with light and dark appearances
 
 **What changed:** The former named palettes, family axis, design swatches,

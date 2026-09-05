@@ -1,3 +1,5 @@
+import { settings } from '../settings/registry';
+import { SettingLabel } from '../settings/setting-label';
 import {
   appearanceModeDescriptions,
 } from '../../common/themes';
@@ -15,8 +17,8 @@ export function ThemePicker(): React.JSX.Element {
     <div className="settings-theme-card">
       <div className="settings-theme-heading">
         <span>
-          <strong>Appearance</strong>
-          <small>Follow this Mac or keep Rally light or dark.</small>
+          <strong><SettingLabel setting={settings.appearance} /></strong>
+          <small>{settings.appearance.description}</small>
         </span>
       </div>
 
