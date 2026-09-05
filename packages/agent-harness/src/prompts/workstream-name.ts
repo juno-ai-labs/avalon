@@ -33,7 +33,7 @@ A name is a label a person scans in a list of work streams, not an answer to the
 
 Where the conversation shows the work is about something more specific than the request implied — a named system, an identifier, the actual problem behind the question — name that instead. Where it has wandered into unrelated follow-ups, keep naming the work the request opened.
 
-Write it the way a Slack channel is written: two to four lowercase words joined by single hyphens, in the language of the request, with no spaces, no leading "#", and no other punctuation, quotes, or Markdown. Forty characters or less, and shorter wherever the distinguishing detail survives the cut.
+Write it the way a Slack channel is written: two to four lowercase words joined by single hyphens, in the language of the request, with no spaces, no leading "#", and no other punctuation, quotes, or Markdown. Forty characters or less, and shorter wherever the distinguishing detail survives the cut. When it will not all fit, drop the words that frame the work before the detail that identifies it: a request to search two places for one subject is named after the subject.
 
 Keep the letters and digits of a person, product, file, or identifier as the request spells them and change only their case, so INV-2291 becomes inv-2291. Where the format has no room for a character — an @, a dot, a slash — put a hyphen there rather than spelling the character out. Never add a specific the request does not contain: when it is vague, name what it does contain and stop there.
 

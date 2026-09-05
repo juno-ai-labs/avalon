@@ -355,12 +355,17 @@ export function normalizeGeneratedTitle(value: string): string | null {
   // than by each of those, and the plain-text form is the right one: a Markdown
   // escape would be a backslash a reader sees.
   const lowered = normalizeModelText(value).toLowerCase();
-  // Everything a Slack channel name cannot hold becomes the separator rather
-  // than disappearing: the spaces between words, but also the quotes and the
-  // heading's `#` a model wraps an answer in, and the `@` and dots of an
+  // An apostrophe is inside a word rather than between two, so it is the one
+  // character that goes rather than becoming the separator: `what's rally`
+  // reads as `whats-rally` and not as `what-s-rally`, and a possessive is the
+  // commonest thing a name leads with — `rally's`, `alicia shen's`.
+  const contracted = lowered.replace(/['’]/gu, "");
+  // Everything else a Slack channel name cannot hold becomes the separator
+  // rather than disappearing: the spaces between words, but also the quotes and
+  // the heading's `#` a model wraps an answer in, and the `@` and dots of an
   // address, which read as word boundaries and not as a run-on word. Combining
   // marks stay, or a decomposed accent would split the word carrying it.
-  const hyphenated = lowered.replace(/[^\p{L}\p{N}\p{M}_]+/gu, "-").replace(/^-+|-+$/gu, "");
+  const hyphenated = contracted.replace(/[^\p{L}\p{N}\p{M}_]+/gu, "-").replace(/^-+|-+$/gu, "");
   if (hyphenated.length === 0) return null;
   return truncateToWholeWords(hyphenated, GENERATED_TITLE_MAX_LENGTH);
 }
