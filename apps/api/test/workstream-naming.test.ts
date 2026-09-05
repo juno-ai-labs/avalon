@@ -65,7 +65,8 @@ describe("work-stream naming", () => {
     });
 
     // The model answered past the cap; what is written and published is the
-    // name cut back to the last whole word that fits.
+    // name cut back to the last whole word that fits — which is a whole word
+    // and not a whole thought, as this one ending on `to` shows.
     expect(workstreamRow(database)).toMatchObject({
       title: "Avalon download link email to",
       title_status: "automatic",
@@ -101,6 +102,15 @@ describe("work-stream naming", () => {
       reasoning: { effort: "none" },
       response_format: { json_schema: { name: "workstream_name", strict: true } },
     });
+    // The advertised bound is the parse ceiling, not the thirty the prompt asks
+    // for, and the two must not be tidied into one number. This schema goes out
+    // `strict: true`, so a provider that enforces `maxLength` stops generating
+    // at exactly that character — a name cut there arrives inside the target and
+    // the whole-word cut cannot tell it was ever truncated.
+    const schema = (request?.response_format as {
+      json_schema: { schema: { properties: { title: { maxLength: number } } } };
+    }).json_schema.schema;
+    expect(schema.properties.title.maxLength).toBe(80);
     // The request is what is being named, and it is data: it reaches the model
     // as user-role content and never as part of the naming policy.
     const messages = request?.messages as Array<{ role: string; content: string }>;
