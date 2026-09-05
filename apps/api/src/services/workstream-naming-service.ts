@@ -18,8 +18,8 @@ import { createIdentityObjectPort } from "../runtime/identity-port";
  * 180 characters, but a generated name is a label a person scans in the sidebar
  * rather than a sentence, and thirty is the length the team set for it. The
  * prompt asks for the same number, so this is a backstop rather than the usual
- * path: replaying 89 named work streams through the prompt, the model answered
- * past thirty four times. Twenty was tried and rejected — the same replay cut 37
+ * path: replaying 89 named work streams through the prompt, the model overshot
+ * in 4 of them. Twenty was tried and rejected — the same replay overshot in 37
  * of 89 there, which is the truncation naming the work stream rather than the
  * model.
  */
