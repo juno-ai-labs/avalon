@@ -435,7 +435,11 @@ describe("work-stream naming", () => {
     expect(normalizeGeneratedTitle("   ")).toBeNull();
     // A name that starts mid-sentence is capitalized; one that starts on
     // something that spells itself is not, and an identifier keeps its case.
-    expect(normalizeGeneratedTitle("invoice INV-2291")).toBe("Invoice INV-2291");
+    expect(normalizeGeneratedTitle("invoice INV-2291 totals")).toBe("Invoice INV-2291 totals");
+    // The capital is taken by code point: `slice(0, 1)` on a letter outside the
+    // Basic Multilingual Plane is half a surrogate pair and uppercases to
+    // itself, leaving a name the guard just accepted as lowercase.
+    expect(normalizeGeneratedTitle("\u{10428}eseret opening")).toBe("\u{10400}eseret opening");
     expect(normalizeGeneratedTitle("iPhone build fails")).toBe("iPhone build fails");
     expect(normalizeGeneratedTitle("founder@example.com")).toBe("founder@example.com");
     // Thirty characters is short enough that the cut is ordinary rather than

@@ -412,5 +412,10 @@ function truncateToWholeWords(value: string, maximum: number): string {
 function sentenceCased(value: string): string {
   const firstWord = value.split(" ", 1)[0] ?? "";
   if (!/^\p{Ll}+$/u.test(firstWord)) return value;
-  return value.slice(0, 1).toUpperCase() + value.slice(1);
+  // By code point rather than by code unit. The test above accepts a letter
+  // outside the Basic Multilingual Plane — `\p{Ll}` under `u` does — and
+  // `slice(0, 1)` on one of those is half a surrogate pair, which uppercases to
+  // itself and leaves the name lowercase with the guard having passed.
+  const first = String.fromCodePoint(value.codePointAt(0) ?? 0);
+  return first.toUpperCase() + value.slice(first.length);
 }
