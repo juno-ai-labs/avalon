@@ -176,7 +176,10 @@ archive/system marker, or schedule rather than accidentally retain it.
 `SubstreamAgent` continues to own ordered parts, active output, and replay; token
 frames are never database joins or metadata patches.
 
-Each `SubstreamAgent` owns one stable `substream_loops` row,
+Each `SubstreamAgent` owns one stable `substream_loops` row (which, since v43,
+carries `transcript_projected_through` — the highest transcript sequence the
+model's conversation has considered, so a turn that started no run is appended
+at the next admission rather than lost),
 not-yet-canonical `pending_loop_inputs` whose prepared content is immutable
 and whose `input_sequence` is the live promotion order, minimal immutable
 `delivered_loop_inputs` replay receipts, exact `assistant_turn_reservations`,
@@ -942,6 +945,18 @@ work uses ordinary workstream creation and the existing durable agent loop.
 **Considered and rejected:** Physical deletion without a retained watermark cannot reject old writes.
 
 **Consequences:** Canonical stores remain authority; index revisions are projection concurrency controls.
+
+### 2026-09-05 — The loop remembers how far it has read
+
+**What changed:** Conversation-object schema v43 adds
+`substream_loops.transcript_projected_through`, backfilled to the transcript's
+high-water mark.
+
+**Why:** The Bind projection is appended one admission at a time and never
+re-read from the transcript, so a human turn that started no run was invisible
+to the model forever. The column is the record of which turns the projection has
+considered; the next admission appends the ones above it. Owned by
+[`workstream-durable-object.md`](workstream-durable-object.md).
 
 ### 2026-09-04: Private work-stream children gain parent and local authority tables
 

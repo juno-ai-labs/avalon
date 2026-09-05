@@ -57,16 +57,24 @@ export function participantModelMessageContent(
     : `${text}\n\n<rally_mentions>${JSON.stringify(people)}</rally_mentions>`;
 }
 
-export async function projectParticipantModelMessage(
-  env: Pick<Env, "PAYLOADS" | "DB" | "IMAGES" | "DOCUMENT_PROCESSOR">,
-  input: ParticipantModelProjectionInput,
-): Promise<ModelMessage | null> {
-  if (input.messageType === "elicitation") {
-    return projectElicitationResponseMessage(input.structuredContent);
-  }
-  if (input.messageType !== "text") return null;
+/**
+ * The model's view of a participant's text turn, with nothing attached.
+ *
+ * Split out of {@link projectParticipantModelMessage} because the conversation
+ * object needs it too: a human turn that started no run is projected into the
+ * loop at the next activation, from the canonical turn alone, and the object
+ * has neither the attachment sources nor the bindings the full projection
+ * takes. It cannot need them — a message carrying an attachment always starts
+ * a run, so it reaches the loop as a pending input with its payload already
+ * built. Keeping one function for the text shape is what guarantees the two
+ * paths render the same author and the same mentions the same way.
+ */
+export function projectParticipantTextMessage(input: Pick<
+  ParticipantModelProjectionInput,
+  "author" | "text" | "mentions"
+>): ModelMessage | null {
   const content = participantModelMessageContent(input.text, input.mentions);
-  if (content.trim().length === 0 && input.attachments.length === 0) return null;
+  if (content.trim().length === 0) return null;
   if (input.author.type === "external") {
     const actor = input.author.actor;
     return {
@@ -79,7 +87,22 @@ export async function projectParticipantModelMessage(
       ].join("\n"),
     };
   }
-  if (input.attachments.length === 0) return { role: "user", content };
+  return { role: "user", content };
+}
+
+export async function projectParticipantModelMessage(
+  env: Pick<Env, "PAYLOADS" | "DB" | "IMAGES" | "DOCUMENT_PROCESSOR">,
+  input: ParticipantModelProjectionInput,
+): Promise<ModelMessage | null> {
+  if (input.messageType === "elicitation") {
+    return projectElicitationResponseMessage(input.structuredContent);
+  }
+  if (input.messageType !== "text") return null;
+  const content = participantModelMessageContent(input.text, input.mentions);
+  if (content.trim().length === 0 && input.attachments.length === 0) return null;
+  if (input.author.type === "external" || input.attachments.length === 0) {
+    return projectParticipantTextMessage(input);
+  }
   const sources = [...input.attachments];
   const parts = input.includeAttachmentContents
     ? await buildAttachmentModelParts(env.PAYLOADS, sources, {

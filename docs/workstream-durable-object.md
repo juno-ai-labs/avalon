@@ -518,7 +518,11 @@ the recovery authority for all of those durations.
 
 `substream_loops` is the child-local execution coordinator. Its executing row
 names the activation, epoch, lease owner, lease deadline, cycle, step, and Bind
-state revision. Recovery keeps the activation and cycle, increments only the
+state revision. It also carries `transcript_projected_through`: the highest
+transcript sequence the Bind projection has considered, advanced to each
+admitted input's own sequence as it is appended. Every conversation turn at or
+below it is in the projection or was deliberately left out; every one above it
+has not been looked at, and the next admission appends those first. Recovery keeps the activation and cycle, increments only the
 execution epoch after the old lease expires, and resumes from persisted Bind
 state. Compaction generation is a separate Bind projection value and never
 changes the loop cycle or makes a pending steer stale.
@@ -1700,6 +1704,40 @@ Main. A separate aggregation hook preserves automation lifecycle callbacks even
 when forwarding is disabled. Parent access is checked at prepared-content and
 confirmation commits, and readiness checks all undelivered membership rows,
 including deferred retries rather than only the currently due batch.
+
+### 2026-09-05 — The loop records how far into the transcript it has looked
+
+**What changed:** Schema v43 adds `substream_loops.transcript_projected_through`,
+backfilled to the transcript's high-water mark for every existing room. When a
+pending input is appended to the Bind projection — at activation or at a safe
+step — the object first appends every human or external text turn with a
+sequence in `(mark, input.admitted_after_transcript_sequence]` that the
+projection does not already hold, then the input, and advances the mark to the
+input's own sequence in the same transaction. The runtime reports the mark, not
+`transcriptThrough()`, as the sequence a compaction checkpoint covers.
+
+**Why:** A message that started no run was a canonical turn and nothing else,
+and the projection is never re-read from the transcript after bootstrap. The
+turn rendered for everyone and the model never saw it. The pending-input drain
+already knew how to append a participant turn without an activation input; what
+was missing was a record of which turns it had never been asked to append.
+
+**Considered and rejected:** Deriving the mark from the facts already in the
+projection — bootstrap groups consecutive tool turns into one fact, so there is
+no one-fact-per-turn to read a sequence back from. Starting the backfill at
+zero — that surfaces every side conversation a room has ever had into the
+model's context on its first activation after deploy. Gap-filling around an
+elicitation answer — the answer is a tool result that must directly follow its
+tool call, so those inputs neither gap-fill nor advance the mark; the turns fall
+to the next text input.
+
+**Consequences:** The provenance the gap-fill writes is byte-identical to the
+drain's (`participant_turn`, the turn id, revision 1), and that identity is what
+deduplicates a turn that was itself a pending input. A turn with no text block
+is skipped, which is safe because anything with an attachment starts a run.
+Anything that changes how a pending input's Bind payload is built has to change
+`projectParticipantTextMessage` too, or the same person's turn will render two
+ways.
 
 ### 2026-09-04 — WorkstreamDO owns private child preparation and membership
 

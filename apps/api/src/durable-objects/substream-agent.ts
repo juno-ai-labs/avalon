@@ -4001,7 +4001,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       },
       projection: this.transcript.readBindProjection(input.loopId),
       modelIterationsUsed: this.loop.assistantTurnCountForExecution(execution.runId),
-      transcriptThrough: this.transcript.transcriptThrough(),
+      // What the projection has considered, not the transcript's high-water
+      // mark. A compaction checkpoint records this as the sequence it covers,
+      // and a later bootstrap replays everything after it; the high-water mark
+      // would have claimed turns the model never saw and lost them for good.
+      transcriptThrough: this.transcript.transcriptProjectedThrough(),
       commitActivationInputs: async (boundary) => {
         if (boundary.loopId !== input.loopId
           || boundary.executionId !== execution.runId) {
