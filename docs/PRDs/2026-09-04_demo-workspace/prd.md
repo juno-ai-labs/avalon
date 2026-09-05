@@ -156,11 +156,10 @@ workspace; it does not sign the presenter out of every workspace.
 
 `demo-template` is built by hand with **three real demo Google accounts** and
 the agreed connector configuration. It exists, in Global, as
-`01a06d5d-4624-751e-8269-e7950b51a835`; that hardcoded UUID identifies it and
-filters it out of user-facing workspace discovery, cached switcher entries,
-and activation offers. Confirm the value against the regional directory before
-the filter ships — it is a literal in client code, and a wrong one hides the
-wrong workspace. Renaming it does not defeat the filter. This is a
+`01a06d5d-4624-751e-8269-e7950b51a835`, confirmed against the workspace itself;
+that hardcoded UUID identifies it and filters it out of user-facing workspace
+discovery, cached switcher entries, and activation offers. Renaming it does not
+defeat the filter. This is a
 specific exclusion, not a general hidden-workspace product feature; authorized
 operators can still maintain the template. The filter is not its security gate.
 
@@ -638,8 +637,15 @@ Test deadlines are not product readiness guarantees.
   identities, the included connection list, the final third scenario, and the
   role/presenter mapping. The spike's six personas and improvised middle room do
   not fill these gaps by default. The template UUID is settled and recorded under
-  Template and connection copying; confirm it against the regional directory
-  before the client filter ships.
+  Template and connection copying.
+
+  These block the *released* pack, not the build. The pack is versioned data
+  behind a schema, so the seeder, the readiness barrier, retirement, connection
+  copying, and the Ace surface are all built and proved against a placeholder
+  pack carrying the two settled scenarios — the decision memo and the multiplayer
+  renewal — and the real one is swapped in when its inputs arrive. The one risk
+  in that order is a third scenario needing a shape the schema cannot express;
+  the two settled scenarios are the schema's proving ground against it.
 - **Granola's connection mode — blocks the connection list, not the design.**
   Granola's workspace mode takes an administrator-created Workspace API key
   rather than the personal OAuth flow, so including it in the template is a
