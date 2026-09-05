@@ -132,17 +132,13 @@ describe('InspectorRail details', () => {
     fireEvent.pointerUp(handle, { pointerId: 1 });
   });
 
-  it('opens resource management in a lightbox without opening the shell rail', () => {
+  it('opens individual resource details without offering the resource-management popup', () => {
     useUiStore.setState({ railOpen: false });
-    const onSelect = vi.fn();
-    const onAddResource = vi.fn();
-    render(<Tooltip.Provider><InspectorRail workstream={{ ...workstream, resources: [watched] }} onAddResource={onAddResource} lightbox={{ resourceId: null, returnFocus: document.body, onSelect, onClose: vi.fn() }} /></Tooltip.Provider>);
-    expect(screen.getByRole('dialog', { name: 'Resources' })).toBeVisible();
+    render(<Tooltip.Provider><InspectorRail workstream={{ ...workstream, resources: [watched] }} lightbox={{ resourceId: watched.id, returnFocus: document.body, onClose: vi.fn() }} /></Tooltip.Provider>);
+    expect(screen.getByRole('dialog', { name: watched.title })).toBeVisible();
     expect(document.querySelector('.rail-surface')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Add resource' }));
-    expect(onAddResource).toHaveBeenCalledOnce();
-    fireEvent.click(screen.getByRole('button', { name: new RegExp(watched.title, 'u') }));
-    expect(onSelect).toHaveBeenCalledWith(watched.id);
+    expect(screen.queryByRole('button', { name: 'Back to resources' })).toBeNull();
+    expect(screen.queryByRole('dialog', { name: 'Resources' })).toBeNull();
     expect(useUiStore.getState().railOpen).toBe(false);
   });
 

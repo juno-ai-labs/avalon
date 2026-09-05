@@ -155,7 +155,7 @@ describe('socket-first work-stream open', () => {
     }, childId);
 
     expect(await screen.findByRole('button', { name: 'Manage participants: Parent member' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Manage resources' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Manage resources' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Open Parent artifact' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Open Child artifact' })).not.toBeInTheDocument();
     expect(retainedSocket).toHaveBeenCalledWith(api, workstreamId, true, 'workstream', '0');

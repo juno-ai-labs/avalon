@@ -65,9 +65,9 @@ uses `useCitations.openPreview` to open the artifact lightbox, including an
 explicit unavailable-preview state rather than an inspector fallback; arrival
 of an artifact never opens a panel. Generated sites open the existing isolated
 native viewer inside a resource lightbox, not the file conversion endpoint.
-**Manage resources** below Generated artifacts opens the complete resource list,
-including incoming sources. File previews offer **Resource details**; the same
-lightbox retains refresh, watch, archive, version history, and Add resource.
+Generated artifacts has no **Manage resources** button or resource-list popup.
+File previews still offer individual **Resource details**; their lightbox retains
+refresh, watch, archive and version history, but no navigation to a resource list.
 Changing conversations closes both lightboxes and pending resource dialogs.
 Participant rows open the
 existing management dialog. This sidebar does not add substream navigation.
@@ -105,6 +105,19 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-05 — Optically align substream connectors
+
+Shift the flipped Tabler connector up eight pixels so its right-hand endpoint,
+not its SVG box, meets the button's vertical center. This applies equally to
+existing substreams and New substream, without changing row spacing or color.
+
+### 2026-09-05 — Remove the resource-management entry point and popup
+
+Removed the center-sidebar management button, its host callback, and the resource
+list mode of the lightbox at product request. Individual artifact previews and
+details remain; the parked right-sidebar architecture is unchanged. A detail
+lightbox cannot navigate back into the removed management list.
 
 ### 2026-09-05 — Keep the center sidebar at work-stream scope
 

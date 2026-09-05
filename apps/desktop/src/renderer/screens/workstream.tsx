@@ -519,7 +519,6 @@ export function WorkstreamScreen(): React.JSX.Element {
           onSelectSubstream={selectSubstream}
           onNewSubstream={() => startCreation(null)}
           onOpenArtifact={context.openArtifact}
-          onResources={context.openResources}
           onParticipants={context.openParticipantDialog}
           onFocusTranscript={context.focusTranscript}
         />
