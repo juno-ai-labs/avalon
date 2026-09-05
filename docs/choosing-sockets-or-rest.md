@@ -211,7 +211,8 @@ Connecting a workspace socket should deliver, without being asked:
 - **Sidebar metadata** — the first page of the work-stream directory with each
   row's common and viewer state, including a bounded participant preview on
   personal rows (at most three ids, most recently added first, plus an overflow
-  count) so the sidebar can paint a facepile without a second fetch, plus the
+  count), retained for wire compatibility even though current navigation no
+  longer renders participant facepiles, plus the
   pinned section, and the automation and note sections the sidebar renders. A
   cursor for the rest.
 - **The initial suggested actions** — the current suggestion set for this viewer.

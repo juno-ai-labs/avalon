@@ -274,18 +274,16 @@ describe('WorkstreamHeader presence', () => {
 });
 
 describe('WorkstreamHeader GrokBot shell', () => {
-  it('uses the centered conversation title as the only details control', () => {
+  it('keeps the centered conversation title without a right-sidebar entry point', () => {
     renderWorkstreamHeader(headerWorkstream, { grokBotMode: true });
 
-    const title = screen.getByRole('button', { name: 'Daily product brief' });
     expect(screen.getByRole('heading', { name: 'Daily product brief' })).toBeInTheDocument();
-    expect(title).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.queryByRole('button', { name: 'Daily product brief' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Show HyperSight' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'More work-stream actions' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Add participant' })).not.toBeInTheDocument();
 
-    fireEvent.click(title);
-    expect(title).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.queryByRole('button', { name: 'Work-stream context' })).not.toBeInTheDocument();
   });
 });
 
@@ -325,22 +323,11 @@ describe('WorkstreamHeader origin affordances', () => {
     expect(copyText).not.toHaveBeenCalledWith(expect.stringContaining('rallywithai://'));
   });
 
-  it('marks the panel holding the right sidebar as open and closes it from there', () => {
+  it('does not offer the retained right sidebar in the standard header either', () => {
     renderWorkstreamHeader();
 
-    const context = screen.getByRole('button', { name: 'Work-stream context' });
-    expect(context).toHaveAttribute('aria-pressed', 'false');
-    expect(context).not.toHaveClass('is-active');
-
-    fireEvent.click(context);
-    expect(useUiStore.getState()).toMatchObject({ railOpen: true, railVariant: 'context' });
-    const openContext = screen.getByRole('button', { name: 'Hide work-stream context' });
-    expect(openContext).toHaveAttribute('aria-pressed', 'true');
-    expect(openContext).toHaveClass('is-active');
-
-    fireEvent.click(openContext);
-    expect(useUiStore.getState().railOpen).toBe(false);
-    expect(screen.getByRole('button', { name: 'Work-stream context' })).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.queryByRole('button', { name: 'Work-stream context' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Hide work-stream context' })).not.toBeInTheDocument();
   });
 
 });

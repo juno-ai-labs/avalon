@@ -1,6 +1,6 @@
 import { classifyAttachmentKind } from '@rally/contracts';
 import * as Dialog from '@radix-ui/react-dialog';
-import { ChevronLeft, ChevronRight, Download, History, LoaderCircle, Maximize2, Minimize2, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Download, History, Info, LoaderCircle, Maximize2, Minimize2, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { AttachmentPreview } from './attachments';
 import { MarkdownBody } from './workstream-blocks';
@@ -69,11 +69,13 @@ export function AttachmentLightbox({ preview, onClose }: {
   const active = gallery[activeIndex] ?? preview;
   const [loaded, setLoaded] = useState<LoadedPreview | null>(null);
   const [expanded, setExpanded] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
   const mode = active ? previewMode(active) : null;
 
   useEffect(() => {
     setLoaded(null);
     setExpanded(false);
+    setDownloadError(null);
   }, [active]);
 
   useEffect(() => {
@@ -117,7 +119,8 @@ export function AttachmentLightbox({ preview, onClose }: {
   if (!preview || !active || !mode) return null;
   const current = loaded?.preview === active ? loaded : null;
   const src = active.src ?? current?.src;
-  const loading = !src && current?.text === undefined && current?.error === undefined;
+  const error = current?.error ?? (!src && !active.loadContent ? 'This resource has no preview available.' : undefined);
+  const loading = !src && current?.text === undefined && !error;
   const isMedia = mode === 'image' || mode === 'video';
 
   return (
@@ -128,7 +131,7 @@ export function AttachmentLightbox({ preview, onClose }: {
           aria-busy={loading || undefined}
           className={`attachment-lightbox ${isMedia ? 'is-media-viewer' : 'is-document-viewer'}`}
           onCloseAutoFocus={(event) => {
-            if (!preview.returnFocus) return;
+            if (!preview.returnFocus?.isConnected) return;
             event.preventDefault();
             preview.returnFocus.focus();
           }}
@@ -145,7 +148,11 @@ export function AttachmentLightbox({ preview, onClose }: {
                   <button onClick={preview.superseded.onReturnToCurrent} type="button">Return to current</button>
                 </span>
               )}
-              <button aria-label={`Download ${active.name}`} className="attachment-lightbox-action" onClick={() => void downloadPreview(active, src)} type="button"><Download size={18} /></button>
+              {active.onDetails && <button aria-label="Resource details" className="attachment-lightbox-action" onClick={active.onDetails} type="button"><Info size={18} /></button>}
+              {!error && (src || active.loadContent) && <button aria-label={`Download ${active.name}`} className="attachment-lightbox-action" onClick={() => {
+                setDownloadError(null);
+                void downloadPreview(active, src).catch(() => setDownloadError('Download failed. Please try again.'));
+              }} type="button"><Download size={18} /></button>}
               <Dialog.Close asChild>
                 <button aria-label="Close preview" className="attachment-lightbox-close" type="button"><X size={20} /></button>
               </Dialog.Close>
@@ -153,6 +160,7 @@ export function AttachmentLightbox({ preview, onClose }: {
           )}
           {isMedia && (
             <>
+              {active.onDetails && <button aria-label="Resource details" className="attachment-media-details attachment-lightbox-action" onClick={active.onDetails} type="button"><Info size={18} /></button>}
               <button
                 aria-label={expanded ? 'Fit preview to window' : 'Show preview at full size'}
                 className="attachment-media-expand"
@@ -174,7 +182,7 @@ export function AttachmentLightbox({ preview, onClose }: {
             onMouseDown={(event) => event.target === event.currentTarget && onClose()}
           >
             {loading && <div className="attachment-lightbox-status" role="status"><LoaderCircle aria-hidden="true" className="spin" size={20} /> Preparing preview…</div>}
-            {current?.error && <div className="attachment-lightbox-status is-error" role="alert">{current.error}</div>}
+            {(error || downloadError) && <div className="attachment-lightbox-status is-error" role="alert">{error ?? downloadError}</div>}
             {mode === 'image' && src && <img alt={active.name} draggable={false} src={src} />}
             {mode === 'video' && src && <video aria-label={`Video: ${active.name}`} controls src={src} />}
             {mode === 'audio' && src && <audio aria-label={`Audio: ${active.name}`} controls src={src} />}

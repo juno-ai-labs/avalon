@@ -94,6 +94,11 @@ describe('InspectorRail details', () => {
   });
 
   it('steps the stored width from the handle standing beside the rail', () => {
+    // jsdom has no CSS layout; supply the geometry of the shared CSS probe,
+    // not a second implementation of the responsive-width formula.
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      return DOMRect.fromRect({ width: this.classList.contains('rail-resizer-limit') ? 560 : 0 });
+    });
     const { container } = render(
       <Tooltip.Provider>
         <InspectorRail workstream={workstream} />
@@ -106,12 +111,39 @@ describe('InspectorRail details', () => {
     expect(container.querySelector('.rail-scroll')).not.toBeNull();
     const handle = screen.getByRole('separator', { name: 'Resize inspector' });
 
+    expect(handle).toHaveAttribute('aria-valuemax', '560');
     expect(handle).toHaveAttribute('aria-valuenow', '360');
-    fireEvent.keyDown(handle, { key: 'ArrowLeft' });
-    expect(useUiStore.getState().railWidth).toBe(376);
-
     fireEvent.keyDown(handle, { key: 'ArrowRight' });
+    expect(useUiStore.getState().railWidth).toBe(344);
+    fireEvent.keyDown(handle, { key: 'ArrowLeft' });
     expect(useUiStore.getState().railWidth).toBe(360);
+  });
+
+  it('starts a pointer drag from the visible width rather than a larger saved width', () => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      return DOMRect.fromRect({ width: this.classList.contains('rail-resizer-limit') ? 560 : 0 });
+    });
+    useUiStore.setState({ railWidth: 900 });
+    render(<Tooltip.Provider><InspectorRail workstream={workstream} /></Tooltip.Provider>);
+    const handle = screen.getByRole('separator', { name: 'Resize inspector' });
+    fireEvent.pointerDown(handle, { pointerId: 1, clientX: 464 });
+    fireEvent.pointerMove(handle, { pointerId: 1, clientX: 480 });
+    expect(useUiStore.getState().railWidth).toBe(544);
+    fireEvent.pointerUp(handle, { pointerId: 1 });
+  });
+
+  it('opens resource management in a lightbox without opening the shell rail', () => {
+    useUiStore.setState({ railOpen: false });
+    const onSelect = vi.fn();
+    const onAddResource = vi.fn();
+    render(<Tooltip.Provider><InspectorRail workstream={{ ...workstream, resources: [watched] }} onAddResource={onAddResource} lightbox={{ resourceId: null, returnFocus: document.body, onSelect, onClose: vi.fn() }} /></Tooltip.Provider>);
+    expect(screen.getByRole('dialog', { name: 'Resources' })).toBeVisible();
+    expect(document.querySelector('.rail-surface')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Add resource' }));
+    expect(onAddResource).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(watched.title, 'u') }));
+    expect(onSelect).toHaveBeenCalledWith(watched.id);
+    expect(useUiStore.getState().railOpen).toBe(false);
   });
 
   it('shows bounded harness-run metadata while debugging is on', async () => {

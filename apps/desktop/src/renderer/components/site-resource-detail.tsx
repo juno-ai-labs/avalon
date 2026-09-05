@@ -129,14 +129,24 @@ export function SiteResourceDetail({
   const measure = React.useCallback((): { x: number; y: number; width: number; height: number } | null => {
     const pane = paneRef.current;
     if (!pane) return null;
+    // The owning lightbox is allowed; menus and dialogs above it must win
+    // over Electron's native view, which otherwise paints above the DOM.
+    const occluded = [...document.querySelectorAll('[role="dialog"], [role="alertdialog"], [role="menu"]')]
+      .some((overlay) => !overlay.contains(pane) && overlay.getAttribute('data-state') !== 'closed');
+    if (occluded) return { x: 0, y: 0, width: 0, height: 0 };
     const rect = pane.getBoundingClientRect();
+    const viewport = pane.closest('.rail-scroll')?.getBoundingClientRect();
+    const left = Math.max(rect.left, viewport?.left ?? 0, 0);
+    const top = Math.max(rect.top, viewport?.top ?? 0, 0);
+    const right = Math.min(rect.right, viewport?.right ?? window.innerWidth, window.innerWidth);
+    const bottom = Math.min(rect.bottom, viewport?.bottom ?? window.innerHeight, window.innerHeight);
     // Window-relative, because the main process composites over the window
     // rather than over this component's own coordinate space.
     return {
-      x: Math.round(rect.left),
-      y: Math.round(rect.top),
-      width: Math.round(rect.width),
-      height: Math.round(rect.height),
+      x: Math.round(left),
+      y: Math.round(top),
+      width: Math.max(0, Math.round(right - left)),
+      height: Math.max(0, Math.round(bottom - top)),
     };
   }, []);
 
@@ -156,7 +166,7 @@ export function SiteResourceDetail({
         return await surface.present({
           artifactId: navigation.artifactId,
           url: navigation.openUrl,
-          bounds,
+          bounds: measure() ?? bounds,
         });
       })
       .then((shown) => { if (!cancelled) setPreviewShown(shown); })
@@ -170,9 +180,8 @@ export function SiteResourceDetail({
     };
   }, [access, measure, mintAccess, panel, surface]);
 
-  // Layout changes only. A composited view that chases a scrolling rectangle
-  // jitters, so the pane is a fixed region of the detail rather than content
-  // that scrolls beneath other rail content — and this listens to resize.
+  // Native content must remain clipped to its owning scroll viewport and
+  // disappear behind nested DOM dialogs; Electron cannot infer either.
   React.useEffect(() => {
     if (previewShown !== true) return undefined;
     const update = (): void => {
@@ -180,11 +189,17 @@ export function SiteResourceDetail({
       if (bounds) void surface.setBounds(bounds);
     };
     window.addEventListener('resize', update);
+    window.addEventListener('scroll', update, true);
     const observer = new ResizeObserver(update);
     if (paneRef.current) observer.observe(paneRef.current);
+    const overlays = new MutationObserver(update);
+    overlays.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-state', 'role'] });
+    update();
     return () => {
       window.removeEventListener('resize', update);
+      window.removeEventListener('scroll', update, true);
       observer.disconnect();
+      overlays.disconnect();
     };
   }, [measure, previewShown, surface]);
 

@@ -480,6 +480,18 @@ rather than workspace authority.
 
 ## Changelog
 
+### 2026-09-04 — Host site details in the resource lightbox
+
+**What changed and why:** Parking the right sidebar must not send generated-site
+manifests through file conversion. Citation and artifact clicks now open the
+same dedicated SiteResourceDetail in a lightbox, preserving the native isolated
+viewer, fresh access codes, data, logs, and pop-out behavior. File conversion is
+not a fallback for a site. Nested dialogs/menus hide the native preview; closing
+them restores its clipped viewport. Route changes tear it down.
+
+**Consequences:** The viewer still owns no shell rail. Earlier references below
+to the rail describe its original host, not a current navigation entry point.
+
 ### 2026-09-02 — Preview teardown asks whether its surfaces still exist
 
 **What changed:** `ArtifactViewHandle` and `ArtifactHostWindow` gained a

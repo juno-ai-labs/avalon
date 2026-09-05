@@ -1,8 +1,8 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const api = vi.hoisted(() => ({
   clientFeatureFlags: vi.fn(),
@@ -143,13 +143,17 @@ function renderScreen(): QueryClient {
 }
 
 function switchWorkstream(): void {
-  fireEvent.click(screen.getByRole('button', { name: 'Switch work stream' }));
+  // Route changes can arrive outside the modal (e.g. a native deep link).
+  fireEvent.click(screen.getByRole('button', { name: 'Switch work stream', hidden: true }));
 }
 
 
 describe('the right sidebar does not follow a work-stream switch', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // jsdom has no layout; exercise the expanded sidebar's conversation link.
+    // Compact mode deliberately omits that redundant navigation row.
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1000);
     useUiStore.setState({ railOpen: false, railVariant: 'context', inspector: null });
     api.getWorkspaceMembers.mockResolvedValue([]);
     api.getConnections.mockResolvedValue([]);
@@ -164,6 +168,8 @@ describe('the right sidebar does not follow a work-stream switch', () => {
     });
   });
 
+  afterEach(() => { vi.restoreAllMocks(); });
+
   it('closes the inspector rail, and drops the document it was showing', async () => {
     renderScreen();
     await screen.findByRole('button', { name: 'Go to conversation: First work stream', current: 'page' });
@@ -171,7 +177,7 @@ describe('the right sidebar does not follow a work-stream switch', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Go to conversation: First work stream', current: 'page' }));
     expect(screen.getByRole('log')).toHaveFocus();
 
-    useUiStore.setState({ railOpen: true, inspector: { type: 'resource', id: 'resource-in-the-first-stream' } });
+    act(() => { useUiStore.setState({ railOpen: true, inspector: { type: 'resource', id: 'resource-in-the-first-stream' } }); });
 
     switchWorkstream();
 
@@ -180,14 +186,24 @@ describe('the right sidebar does not follow a work-stream switch', () => {
     expect(useUiStore.getState().inspector).toBeNull();
   });
 
+  it('closes resource lightboxes when switching work streams', async () => {
+    renderScreen();
+    await screen.findByRole('button', { name: 'Go to conversation: First work stream', current: 'page' });
+    fireEvent.click(screen.getByRole('button', { name: 'Manage resources' }));
+    expect(screen.getByRole('dialog', { name: 'Resources' })).toBeVisible();
+    act(() => switchWorkstream());
+    await screen.findByRole('button', { name: 'Go to conversation: Second work stream', current: 'page' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
   // A route switch must not run the rail's close animation over another work
   // stream's transcript, with the shell holding that stream's feed narrow for
   // as long as it lasted.
-  it('leaves no panel fading over the work stream switched to', async () => {
+  it('keeps the retained inspector dormant even with stale open state and across a route switch', async () => {
     renderScreen();
     await screen.findByRole('button', { name: 'Go to conversation: First work stream', current: 'page' });
-    useUiStore.setState({ railOpen: true, inspector: null });
-    await waitFor(() => expect(document.querySelector('.rail-surface')).not.toBeNull());
+    act(() => { useUiStore.setState({ railOpen: true, inspector: null }); });
+    expect(document.querySelector('.rail-surface')).toBeNull();
 
     switchWorkstream();
 

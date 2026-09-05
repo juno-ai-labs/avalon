@@ -6,6 +6,21 @@ import { AttachmentLightbox } from './attachment-lightbox';
 import { type AttachmentPreview, MessageAttachments, PendingAttachmentTile } from './attachments';
 
 describe('attachment presentation', () => {
+  it('shows unavailable content without a spinner or a dead download action', () => {
+    render(<AttachmentLightbox preview={{ name: 'Unavailable.pdf' }} onClose={vi.fn()} />);
+    expect(screen.getByRole('alert')).toHaveTextContent('no preview available');
+    expect(screen.queryByRole('button', { name: 'Download Unavailable.pdf' })).toBeNull();
+    expect(screen.queryByText('Preparing preview…')).toBeNull();
+  });
+
+  it('reports download failures instead of leaving an unhandled rejection', async () => {
+    const loadContent = vi.fn().mockResolvedValueOnce(new Blob(['preview'])).mockRejectedValueOnce(new Error('offline'));
+    render(<AttachmentLightbox preview={{ name: 'note.txt', mimeType: 'text/plain', loadContent }} onClose={vi.fn()} />);
+    await screen.findByText('preview');
+    fireEvent.click(screen.getByRole('button', { name: 'Download note.txt' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Download failed');
+  });
+
   beforeEach(() => {
     vi.stubGlobal('URL', {
       ...URL,
