@@ -19,11 +19,14 @@ clears or rewinds the old workspace. The one control says **New demo**, not
 **Reset**, and the predecessor is retired only once its successor is ready.
 
 A hand-built `demo-template` workspace holds three demo Google accounts and the
-workspace-scoped connector configuration each demo copies. A small, checked-in conversation pack
-supplies the content. Human messages and scripted assistant prose pass through
-Rally's production writers. All timestamps use the real clock, and assistant
-prose describes connector work without fabricating tool calls. Preparation ends
-only when each intended viewer's sidebar and attention state reflect the pack.
+workspace-scoped connections each demo copies, credentials included, so a
+presenter who continues the conversation can query Drive and the other connected
+providers for real. A small, checked-in conversation pack supplies the seeded
+content. Human messages and scripted assistant prose pass through Rally's
+production writers. All timestamps use the real clock, and the seeded assistant
+prose describes connector work rather than carrying fabricated tool calls.
+Preparation ends only when each intended viewer's sidebar and attention state
+reflect the pack.
 
 ## Motivation
 
@@ -57,9 +60,9 @@ old objects quiet and prove that an already-queued delivery cannot revive them.
    continued turn can use without replaying obsolete connector tool names.
 3. Replacing a demo permanently closes the old workspace to product work,
    prevents background reactivation, and leaves the new workspace isolated.
-4. Each demo owns separate connection records that present the template
-   accounts and their granted scopes, carry no credential material, and reach
-   no provider.
+4. Each demo owns separate, working connection records: a presenter who asks a
+   question mid-demo gets a real answer from the demo accounts' Drive, mail, or
+   other connected providers, without any per-demo OAuth.
 5. An authorized internal operator can start, inspect, and recover preparation
    without database surgery or mistaking partial work for a ready demo.
 
@@ -73,22 +76,19 @@ old objects quiet and prove that an already-queued delivery cannot revive them.
 2. **In-place clearing or reset — rejected for this feature.** A new workspace
    identity avoids undoing transcripts, receipts, loop state, and delayed effects
    beneath an identity that is still receiving work.
-3. **Live connector calls during a demo — excluded.** Seeded prose and local
-   artifacts carry the story. No demo performs polling, refresh, tool execution,
-   provider writes, or webhook-driven activity. A live-integration demo requires
-   a separate decision.
-4. **Copying credential material — rejected for this version.** A demo copies a
-   connection's configuration, never its tokens. Because nothing in a demo may
-   reach a provider, cloned tokens would be secrets moved between workspaces for
-   no visible effect, and moving them means a decrypt/re-encrypt path, key-version
-   failure modes, and their tests. Settings shows the connected account and its
-   granted scopes, which is what a presenter sees either way. Adding token copying
-   later is a contained change; every demo is a fresh workspace, so the next one
-   created picks up the new behavior with nothing to migrate.
-5. **Fake tool history — rejected.** No synthetic connector plugins, recorded
+3. **Background connector activity during a demo — excluded.** A demo answers
+   a question when the presenter asks one; it does not poll, run watches, accept
+   webhook ingress, hydrate resources on a schedule, send outbound notifications,
+   or start work of its own. The demo accounts' providers are a source the
+   presenter can query, not an event stream that can interrupt a presentation
+   with mail arriving or a document changing. Nothing here restricts a tool call
+   the presenter's own turn makes, or the token refresh that call needs.
+4. **Fake tool history — rejected.** No synthetic connector plugins, recorded
    tool results, manufactured plugin activity rows, or simulated durations are
-   retained from the spike. Stale tool names in history confuse continued turns.
-6. **A template editor, arbitrary workspace copier, and automated reaper —
+   retained from the spike. Stale tool names in a *seeded* transcript become
+   misleading context on continuation; a live turn's own tool calls carry the
+   current names and are not affected by this.
+5. **A template editor, arbitrary workspace copier, and automated reaper —
    deferred.** One manually maintained template and one versioned pack suffice.
    Retirement preserves old data; it is not deletion or a retention promise.
 
@@ -187,30 +187,47 @@ anyone. Creating one requires the workspace `owner` or `admin` role
 (`connection-service.ts`, `assertScopeAllowed`), which the operator who built
 the template already holds.
 
-The backend copies the selected template connection configuration into new
-destination connection IDs. It copies the connector type, scope, display name,
-provider account identifier, granted capabilities, and connection configuration.
-Granted capabilities are preserved, never expanded. An explicit
+The backend copies the selected template connections into new destination
+connection IDs: connector type, scope, display name, provider account
+identifier, granted capabilities, connection configuration, and credential
+material. Granted capabilities are preserved, never expanded. An explicit
 source-to-destination mapping rewrites workspace and connection references.
 Sessions, invitations, watches, schedules, delivery cursors, leases, provider
-ingress registrations, error state, and historical effects are not cloned.
+ingress registrations, error state, and historical effects are not cloned — a
+copy starts with no history and no scheduled work of its own.
 
-**Credential material is not copied.** Destination rows carry no ciphertext, IV,
-or key version, and preparation never decrypts a template envelope. This removes
-the decrypt/re-encrypt step the AES-GCM envelope would otherwise force — its
-additional authenticated data is the **connection ID**, not the workspace ID, so
-ciphertext is not portable between rows — along with its key-rotation failure
-modes and the plaintext-handling surface they carry. It also removes a specific
-trap: the existing version-aware helper writes a re-keyed envelope back to the
-row it read, so decrypting a template connection under a stale key version would
-modify the template.
+**Credential material is copied, and copying it requires re-encryption.** The
+envelope is AES-GCM with the **connection ID as additional authenticated data**,
+not the workspace ID, so ciphertext is not portable between rows. For each copy,
+the regional backend:
 
-A destination connection therefore presents the connected account and its
-granted scopes and cannot reach a provider. That is the whole of what a demo
-needs, because non-goal 3 forbids provider traffic regardless. Template reads do
-not refresh or revoke provider grants; template maintenance remains separate
-from copying. Retiring a demo never revokes the shared upstream grant, which
-would also break the template and other demos.
+1. Decrypts the source envelope using its stored key version and the source
+   connection ID, through the **non-writing** helper
+   (`decryptVersionedCredentialValue`), never `decryptVersionedConnectorCredentials`.
+2. Encrypts that plaintext under the active regional key, a fresh IV, and the
+   **new destination connection ID** as additional authenticated data.
+3. Persists destination ciphertext, IV, and key version with the new row, and
+   records the completed mapping without retaining plaintext.
+
+**Step 1's choice of helper is the requirement, not a detail.**
+`decryptVersionedConnectorCredentials` opportunistically re-encrypts under the
+active key and writes the result back to the row it read whenever the stored key
+version is stale. Called on a template connection, it would rewrite the
+template's ciphertext, IV, key version, and `updated_at` — silently, as a side
+effect of preparing a demo. The non-writing variant takes the same arguments and
+returns the same plaintext.
+
+Copying ciphertext unchanged is invalid. Missing keys or an undecryptable
+envelope fail preparation with a connection identifier and a repair instruction,
+never token contents; both the source and active regional keys must be available
+when their versions differ. Template reads do not refresh or revoke provider
+grants; template maintenance remains separate from copying. Retiring a demo
+never revokes the shared upstream grant, which would also break the template and
+every other demo — clones hold independent Rally records against one provider
+grant, not independent grants. Google's refresh flow keeps an unrotated refresh
+token, so concurrent copies of one grant refresh independently without
+invalidating each other; a connector whose provider rotates refresh tokens on
+use cannot be shared this way and is not included until that is settled.
 
 ### Writing the conversation pack
 
@@ -380,9 +397,11 @@ drop path requires separate evidence.
 The work-stream, participation, and regional contracts remain unchanged.
 Prepared conversations use the same durable multiplayer objects; viewing does
 not add a participant, and connections retain their normal owner and scope.
-The exception is an explicitly internal demo execution mode with scripted prose
-and disabled live connector access. It adds no customer reset capability, global
-inbox, general replay clock, or permission for a model to fabricate tool receipts.
+The exception is an explicitly internal demo execution mode: seeded turns come
+from a script rather than a provider, and background connector activity is
+suppressed. Connector tools themselves behave normally for a live turn. It adds
+no customer reset capability, global inbox, general replay clock, or permission
+for a model to fabricate tool receipts.
 
 ## Decision log
 
@@ -411,26 +430,35 @@ None yet.
 7. **Internal operation with durable progress.** Ace supplies an existing
    operator surface. Per-step receipts cover partial failure without adding a
    general workflow builder, priority queue, or separate administration site.
-8. **Connections are copied, credentials are not.** Nothing in a demo may reach
-   a provider, so cloned tokens would be secrets moved between workspaces to no
-   visible end, bought with a decrypt/re-encrypt path and its failure modes.
-   Copying configuration alone gives the presenter the same connection settings.
-   The rejected alternative — copy the tokens now to keep a live-connector demo
-   cheap later — was declined because that demo is not a decision anyone has
-   made, and adding token copying afterwards costs one contained change.
-9. **Connections are workspace-scoped.** The presenter opens a demo as
+8. **Connections are copied with their credentials, and they work.** The
+   September 4 meeting put the live case directly — a presenter continuing a
+   demo conversation and asking something the seeded prose does not answer —
+   and answered it with "copy all the users and all the connectors and all the
+   tokens… you may have to decrypt them and re-encrypt them on the other side."
+   An earlier draft of this PRD generalized the separate decision against fake
+   tool calls in *seeded history* into a ban on live connector calls, and then
+   dropped credential copying as pointless given that ban. Both were wrong: a
+   demo that cannot answer a follow-up is a worse demo, and the two questions
+   are unrelated. Seeded history still carries no tool calls, because stale tool
+   names mislead a continued turn; a live turn's own calls use current names.
+9. **Background connector activity stays suppressed.** Live answers are worth
+   having; a demo that polls, accepts webhooks, or fires notifications can
+   interrupt a presentation with mail arriving or a document changing, and can
+   start work in a workspace nobody is watching. The line is drawn between work
+   a demo starts by itself and work a presenter asks for.
+10. **Connections are workspace-scoped.** The presenter opens a demo as
    themselves and owns none of the cast's connections; a personal connection is
    usable only by its owner, so personal copies would leave the presenter with
    no connectors at all. Rally's connection scope is unrelated to Google's
    sharing model, so this costs nothing.
-10. **The successor is prepared before the predecessor is retired.** Retirement
+11. **The successor is prepared before the predecessor is retired.** Retirement
    is irreversible, so retiring first turns any preparation failure into having
    no demo. The rejected alternative — retire first, so only one demo exists at
    a time — bought tidiness at the price of the failure that actually hurts.
-11. **One elicitation contract.** A question is addressed to the room. Making
+12. **One elicitation contract.** A question is addressed to the room. Making
    elicitations targetable at one participant is a product change with its own
    audience and semantics, and this feature does not need it.
-12. **No flag.** The Ace Access policy already limits this surface to internal
+13. **No flag.** The Ace Access policy already limits this surface to internal
    operators; a flag would be a second lock on the same door. Rally's managed
    flags are also presentation-only by definition, so a flag that actually
    stopped creation would first require extending what that table means.
@@ -463,8 +491,9 @@ The template and every clone stay in that region; identities and memberships
 use the existing onboarding/discovery control plane. Credentials, conversation
 content, artifacts, operation receipts, and object state stay in the owning
 region. Ace displays authorized operation metadata and progress, not tokens or
-conversation bodies. No credential material leaves the template's own row at
-all, and no demo content crosses the Global/EU boundary.
+conversation bodies. Credential material is decrypted and re-encrypted only
+within the owning region, and no template credentials or demo content cross the
+Global/EU boundary.
 
 EU demo creation is deferred until the region's template, keys, and the same
 acceptance flows are exercised. General lifecycle code must preserve existing
@@ -481,24 +510,27 @@ impersonated users, source workspace IDs, or credential bytes through a public
 route. Pack schema and authorization checks are real controls, never open
 placeholders. The dev-only spike routes do not become production endpoints.
 
-No operation in this feature decrypts a connector credential. Copying carries
-configuration only, so there is no plaintext to keep out of Ace responses, the
-renderer, pack files, operation receipts, or logs, and no dependence on the
-envelope and key-rotation rules in
-[security](../../security.md#connector-credentials). The credential a demo's
-connections point at stays where the template's operator created it, governed by
-the existing rules in [connectors](../../connectors.md#authorization-model).
+Plaintext credentials exist only inside the backend copying operation. They
+never enter Ace responses, the renderer, pack files, operation receipts, or
+logs. Use the existing envelope and key-rotation rules in
+[security](../../security.md#connector-credentials) and
+[connectors](../../connectors.md#authorization-model). Preparation reads a
+template envelope through the non-writing helper, so copying a demo never
+modifies the template it read.
 
-Demo mode prevents connector egress before credential refresh as well as before
-tool execution. It covers background polling, watches, hydration, connection
-tests/repair, outbound notifications, and scheduled work; ingress cannot start
-demo work either. A prompt telling the model not to use connectors is not this
-boundary. Local seeding, projection delivery, and in-product interaction remain
-available. Failure to establish this mode blocks Ready.
+Demo mode suppresses **background** connector activity: polling, watches,
+scheduled hydration, connection tests and repair, outbound notifications, and
+scheduled work, and ingress cannot start demo work. It does not restrict a tool
+call the presenter's own turn makes, or the token refresh that call needs — that
+traffic is the point of copying credentials at all. The distinction is between
+work a demo starts by itself and work a person asks for while presenting: the
+first can interrupt a demo, the second is the demo. A prompt telling the model
+which to do is not this boundary. Failure to establish this mode blocks Ready.
 
-Demo mode is the boundary, but it is not the only one: because no credential
-material is copied, a demo workspace holds nothing a provider would accept. The
-two are independent, and neither is asked to stand alone.
+A demo therefore holds working credentials to the demo Google accounts and to
+nothing else. That containment rests on the template holding only those
+accounts' connections, which is why the template is built by hand and why an
+operator's own account is never connected to it.
 
 ## Agent behavior
 
@@ -508,12 +540,14 @@ ordinary acceptance, persistence, and settlement path described in
 is added. A real core elicitation, if included, uses its current production
 contract rather than a saved wire-name fixture masquerading as execution.
 
-After preparation, ordinary continued turns use the current harness and its
-current authorized core surface; the seed adapter does not remain installed to
-repeat canned responses. Connector tools remain unavailable in demo mode, and
-Rally explains that live connector access is unavailable if the next request
-needs it. The connection settings may show cloned accounts and scopes but do
-not imply that a live test or refresh has run.
+After preparation, ordinary continued turns use the current harness, its
+current authorized core surface, **and the demo workspace's connector tools**;
+the seed adapter does not remain installed to repeat canned responses. A
+presenter who asks a question the seeded prose does not answer gets a real tool
+call against the demo accounts' providers, with the current tool names — which
+is why the seeded transcript carries no tool calls of its own, and why that
+restriction does not extend to a live turn. The connection settings show the
+cloned accounts and their scopes, which are live.
 
 The spike found human-only messages visible in the transcript but absent from
 the resumed Bind history. Do not call that fixed by seeding. The pack's final
@@ -532,10 +566,11 @@ subject, and the spike's non-sign-in personas are not the account model here.
 Google sign-in alone does not grant Drive, Gmail, or Calendar access. The
 template's connections are created at **workspace** scope by an operator holding
 its `owner` or `admin` role. No OAuth redirect, webhook registration, or
-provider installation is repeated per demo, and no credential key is needed
-during preparation, because preparation decrypts nothing. The template UUID is
-recorded above; the accounts and included connections remain release
-prerequisites. Secrets are never checked into the PRD or pack.
+provider installation is repeated per demo. The source and active regional
+credential keys must both be available when their versions differ, because
+preparation decrypts each template envelope to re-encrypt it against its copy.
+The template UUID is recorded above; the accounts and included connections
+remain release prerequisites. Secrets are never checked into the PRD or pack.
 
 The template's connections must authenticate as the demo Google accounts, never
 as an operator's own account. A connection created while signed in as a real
@@ -562,7 +597,8 @@ existing demos. A bad pack stops new creation until corrected. Published demos
 are retired and replaced rather than patched in place.
 
 The implementing changes update the owning documents for the harness, connector
-copying, multi-workspace admission, access revocation, and object lifecycle.
+credentials and copying, multi-workspace admission, access revocation, and
+object lifecycle.
 [`ace.md`](../../ace.md) is among them: its boundary section requires a new Ace
 page's route, environment type, credential, and component reuse to be reviewed
 as a new boundary, and the Demos page needs a credential to reach the regional
@@ -577,25 +613,33 @@ unimplemented behavior.
 1. **Create and view.** Create a fresh demo from the template. As each intended
    viewer, the directory and attention state match the pack. Open Rally in a
    real window and inspect the home screen, sidebar, transcript, participant
-   previews, connector settings, and local document. Timestamps age normally;
-   no fake connector activity or tool receipts appear.
+   previews, connector settings, and local document. Timestamps age normally,
+   and the seeded transcript carries no tool receipts or plugin activity rows.
 2. **Delayed projection.** Withhold viewer effects while allowing provisional
    rows to exist. Preparation stays waiting and early activation cannot reveal
    a partial sidebar. Deliver the effects through the real Queue pipeline;
    Ready appears only after the missing per-viewer content and attention match.
    Verification preserves the presenter's unopened state.
-3. **Continue the story.** Answer any real elicitation and post a follow-up that
-   depends on the seeded discussion. Verify the actual model input contains the
-   required facts and no synthetic connector calls/results. No live connector
-   request, including token refresh, occurs during this or background activity.
+3. **Continue the story, including live.** Answer any real elicitation and post
+   a follow-up that depends on the seeded discussion; verify the actual model
+   input contains the required facts and no synthetic connector calls or
+   results. Then ask something the seeded prose does not answer and requires a
+   provider — a document only in the demo account's Drive. The turn executes a
+   real tool call, with current tool names, refreshing the copied credential if
+   needed, and answers from what it found. Meanwhile no polling, watch,
+   scheduled hydration, connection test, outbound notification, or webhook
+   ingress runs in that workspace, before or after the turn.
 4. **Copy connections.** Destination connections are distinct rows at workspace
-   scope, carrying the template's connector type, account identifier, display
-   name, and granted capabilities, and no ciphertext, IV, or key version.
-   Capabilities are preserved, never expanded. The presenter — a member who owns
-   none of the cast's connections — sees them in the destination workspace's
-   settings. Template rows, sessions, cursors, and provider registrations are
-   byte-identical before and after a copy and after a demo retirement, including
-   when the template's stored key version is older than the active one.
+   scope, with different IDs and IVs from their sources, carrying the template's
+   connector type, account identifier, display name, and granted capabilities.
+   Capabilities are preserved, never expanded. Decryption succeeds with the
+   destination ID and stored key version and fails with the wrong associated ID.
+   Exercise an old source key version and a missing-key failure. The presenter —
+   a member who owns none of the cast's connections — sees and can use them.
+   **Template rows are byte-identical before and after a copy** — ciphertext, IV,
+   key version, and `updated_at` — including in the stale-key case, which is the
+   case that catches a copy routed through the writing helper. Sessions, cursors,
+   and provider registrations are likewise unchanged by a copy or a retirement.
 5. **Replace and isolate.** Prepare W2 to Ready, retire W1, and verify their
    distinct object graphs. Old sessions fail; direct object product writes
    bypassing the edge are refused at the conversation objects, not only at
@@ -624,8 +668,8 @@ unimplemented behavior.
    clone never becomes Ready. Abandoning a candidate retires it before a fresh
    attempt. Hidden-template and ordinary-workspace retirement attempts fail.
 
-Runtime checks use real workerd, Durable Objects, and Queues; connection and
-query checks use the real schema. Follow
+Runtime checks use real workerd, Durable Objects, and Queues; credential and
+query checks use the real schema and encryption helpers. Follow
 [testing](../../testing.md): prove each integration behavior can fail with a
 production mutation, then revert it. Visual acceptance follows
 [the real-window procedure](../../dev-environment.md#driving-and-screenshotting-it).
