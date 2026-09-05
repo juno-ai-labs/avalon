@@ -24,7 +24,7 @@ import { useNamingSkeleton } from '../lib/naming-skeleton';
 import { desktopBridge } from '../lib/platform';
 import { reportTelemetryProductIntent } from '../lib/telemetry';
 import { useTextClipped } from '../lib/use-text-clipped';
-import { type RailVariant, useUiStore } from '../lib/ui-store';
+import { RIGHT_SIDEBAR_ENABLED, type RailVariant, useUiStore } from '../lib/ui-store';
 import type { SocketState } from '../lib/use-workstream-socket';
 import type { WorkstreamDetail } from '../lib/types';
 import { AvatarStack, Badge, IconButton, InlineError, SocketStatusIndicator, StatusDot, TitleSkeleton } from '../components/primitives';
@@ -213,25 +213,20 @@ export function WorkstreamHeader({
           <h1><TitleSkeleton className="title-skeleton-header" /></h1>
         ) : (
           <h1>
-            <button
-              aria-pressed={showing('context')}
-              className="grokbot-conversation-title window-no-drag"
-              onClick={() => toggleRail('context')}
-              type="button"
-            >
+            <span className="grokbot-conversation-title">
               <WorkstreamGlyph id={workstream.id} size={20} />
               <span>{workstream.title}</span>
-            </button>
+            </span>
           </h1>
         )}
-        <IconButton
+        {RIGHT_SIDEBAR_ENABLED && <IconButton
           aria-pressed={showing('context')}
           className="grokbot-computer-button window-no-drag"
           label={showing('context') ? 'Hide work-stream context' : 'Work-stream context'}
           onClick={() => toggleRail('context')}
         >
           <Monitor size={16} strokeWidth={1.8} />
-        </IconButton>
+        </IconButton>}
       </header>
     );
   }
@@ -372,14 +367,14 @@ export function WorkstreamHeader({
           <UserPlus aria-hidden="true" size={13} />
           <span className="sr-only">Add participant</span>
         </button>
-        <IconButton
+        {RIGHT_SIDEBAR_ENABLED && <IconButton
           aria-pressed={showing('context')}
           className={clsx('panel-toggle', showing('context') && 'is-active')}
           label={showing('context') ? 'Hide work-stream context' : 'Work-stream context'}
           onClick={() => toggleRail('context')}
         >
           <PanelRight size={15} />
-        </IconButton>
+        </IconButton>}
         <DropdownMenu.Root>
           <DropdownMenu.Trigger asChild><IconButton label="More work-stream actions"><Ellipsis size={16} /></IconButton></DropdownMenu.Trigger>
           <DropdownMenu.Portal>

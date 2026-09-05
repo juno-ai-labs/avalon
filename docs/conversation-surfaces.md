@@ -61,8 +61,9 @@ The work-stream host supplies `WorkstreamSidebar` through the surface's
 `renderSidebar` slot, between global navigation and the feed. It displays the
 current work stream, resources whose direction is `artifact`, then participants
 from the same live detail/presence state as the conversation. Artifact selection
-uses `useCitations.openPreview`, including its existing explicit inspector
-fallback; arrival of an artifact never opens a panel. Participant rows open the
+uses `useCitations.openPreview` to open the artifact lightbox, including an
+explicit unavailable-preview state rather than an inspector fallback; arrival
+of an artifact never opens a panel. Participant rows open the
 existing management dialog. This sidebar does not add substream navigation.
 
 Its device-local collapse preference is independent of the global sidebar.
@@ -98,6 +99,37 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-04 — Keep navigation quiet and park the right sidebar
+
+The middle sidebar's conversation row is text-only: the work-stream glyph is
+already present in the main sidebar and feed header. Compact mode omits that
+redundant row instead of leaving an empty icon button; artifact and participant
+navigation remain available.
+
+The global work-stream list now shows titles without descriptions or participant
+stacks. Only unread rows add a last-change timestamp. Command-number navigation
+and its hint overlay are removed. Participants remain available in the dedicated
+work-stream sidebar, rather than repeated on every global navigation row.
+
+The right inspector architecture is retained for a future artifact-lightbox
+detail migration, but `RIGHT_SIDEBAR_ENABLED` disables its host, header controls,
+space reservation, and native window expansion. Artifact selection from both
+the transcript and the middle sidebar opens the same lightbox; missing previews
+show an explicit error there, never a hidden inspector or an endless spinner.
+This reverses the previous explicit-inspector fallback at the user's request.
+
+The dormant frame was compared with the running Grok Bot window and the installed
+0.39.0 renderer (the relevant rules also agree with the earlier 0.35.0 extraction):
+`sand-info-pane` uses a 240ms width transition with cubic-bezier(.22, 1, .36, 1),
+and its inner content fades over 160ms with ease. Its background is the editor
+surface, with no floating border radius or shadow. Its preferred width defaults
+to 320px with a 280px minimum; the visible width preserves 424px for conversation
+rather than using the former fixed 560px ceiling. The divider is a full-height
+0.5px neutral line in a 10px drag target, with a 120ms hover-color transition.
+Preserve those mechanics
+when moving the detail contents into the lightbox; do not re-enable shell
+entry points as part of that migration.
 
 ### 2026-09-04 — Coordinate the two sidebar breakpoints
 

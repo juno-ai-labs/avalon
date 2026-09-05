@@ -17,13 +17,13 @@ describe('context rail state', () => {
 
   it('keeps a separate remembered width per work stream', () => {
     useUiStore.getState().setRailScope('workstream-one');
-    expect(useUiStore.getState()).toMatchObject({ railWidth: 360 });
+    expect(useUiStore.getState()).toMatchObject({ railWidth: 320 });
 
     useUiStore.getState().setRailWidth(420);
 
     // A work stream that has never opened the panel starts at the default.
     useUiStore.getState().setRailScope('workstream-two');
-    expect(useUiStore.getState()).toMatchObject({ railWidth: 360 });
+    expect(useUiStore.getState()).toMatchObject({ railWidth: 320 });
     useUiStore.getState().setRailWidth(330);
 
     useUiStore.getState().setRailScope('workstream-one');
@@ -56,10 +56,10 @@ describe('context rail state', () => {
 
   it('clamps resizing and clears inspector state when closed', () => {
     useUiStore.getState().setRailWidth(120);
-    expect(useUiStore.getState().railWidth).toBe(320);
+    expect(useUiStore.getState().railWidth).toBe(280);
 
     useUiStore.getState().setRailWidth(900);
-    expect(useUiStore.getState().railWidth).toBe(560);
+    expect(useUiStore.getState().railWidth).toBe(900);
 
     // Closing leaves the detail on screen for the panel's fade-out; the next
     // open is what puts the rail back at its list.

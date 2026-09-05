@@ -682,43 +682,6 @@ describe('company mark sizing', () => {
   });
 });
 
-/**
- * Command-number hints share `.badge` + `.scope-badge` with an automation's
- * You chip, so they stay the same size and colour. Overlay extras have to
- * out-specify `.scope-badge` (both are one class, and `.scope-badge` sits
- * later in the file) and must not restate chrome, or the two pills drift
- * the next time either rule moves.
- */
-describe('command shortcut overlay chrome', () => {
-  it('out-specifies .scope-badge so overlay extras cannot lose on source order', () => {
-    expect(rule('.scope-badge.command-shortcut-pill')).not.toBeNull();
-    // A one-class rule ties `.scope-badge` at (0,1,0) and loses because that
-    // rule is later in the file. Absence is the property; the extras live on
-    // the two-class selector above.
-    expect(rule('.command-shortcut-pill')).toBeNull();
-  });
-
-  it('states no badge chrome of its own', () => {
-    const declarations = rule('.scope-badge.command-shortcut-pill');
-    expect(declarations).not.toBeNull();
-    for (const property of [
-      'background',
-      'border',
-      'box-shadow',
-      'height',
-      'min-width',
-      'font-size',
-      'font-weight',
-      'line-height',
-      'padding',
-      'color',
-    ]) {
-      // Word-bounded so `height` does not fire on `line-height`.
-      expect(declarations, `overlay restated ${property}`)
-        .not.toMatch(new RegExp(`(?:^|;|\\s)${property}\\s*:`, 'u'));
-    }
-  });
-});
 
 /**
  * A message header shows the author, the time, and — once a response settles —

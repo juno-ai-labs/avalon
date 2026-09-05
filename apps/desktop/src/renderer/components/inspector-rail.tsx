@@ -5,6 +5,7 @@ import {
   Bot,
   Check,
   ChevronRight,
+  ChevronsRight,
   CircleAlert,
   Copy,
   ExternalLink,
@@ -14,7 +15,6 @@ import {
   Plus,
   RefreshCcw,
   UserPlus,
-  X,
 } from 'lucide-react';
 import { classifyAttachmentKind } from '@rally/contracts';
 import { useEffect, useRef, useState, type RefObject } from 'react';
@@ -858,7 +858,7 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
               )}
             </>
           )}
-          <IconButton label="Close inspector" onClick={closeRail} ref={closeInspectorRef}><X size={15} /></IconButton>
+          <IconButton label="Close inspector" onClick={closeRail} ref={closeInspectorRef}><ChevronsRight size={16} /></IconButton>
         </div>
       </header>
       <div className="rail-scroll">

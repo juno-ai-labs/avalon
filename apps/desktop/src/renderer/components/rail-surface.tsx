@@ -7,7 +7,7 @@ import { RailResizeHandle } from './rail-resize-handle';
  * How long a panel that has just lost the right sidebar stays on screen fading
  * out. The stylesheet animates over the same span, so the two have to agree.
  */
-export const RAIL_EXIT_FADE_MS = 190;
+export const RAIL_EXIT_FADE_MS = 240;
 
 /**
  * Whether the right sidebar is still fading after it was dismissed. Opening
@@ -125,7 +125,7 @@ export function RailSurface({
         ref={surfaceRef}
         tabIndex={-1}
       >
-        {children}
+        <div className="rail-surface-content">{children}</div>
       </aside>
     </>
   );

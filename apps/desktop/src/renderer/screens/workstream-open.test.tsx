@@ -239,8 +239,7 @@ describe('socket-first work-stream open', () => {
       queryClient.setQueryData(['ordered-transcript', workstreamId], detail.transcript);
     });
 
-    fireEvent.click(await screen.findByRole('button', { name: detail.title, pressed: false }));
-    fireEvent.click(await screen.findByRole('button', { name: /Add participant/u }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Manage work-stream participants' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Add Jordan to work stream' }));
     expect(await screen.findByText('Adam cannot add Jordan')).toBeInTheDocument();
 
