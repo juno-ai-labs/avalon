@@ -56,7 +56,7 @@ vi.mock('../lib/use-transcript-follow', () => ({
 }));
 
 import { WorkstreamScreen } from './workstream';
-import type { WorkstreamBoot, WorkstreamDetail } from '../lib/types';
+import type { WorkstreamBoot, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 
 const workstreamId = '00000000-0000-7000-8000-000000000650';
 
@@ -102,7 +102,7 @@ function recoveryBoot(overrides: Partial<WorkstreamBoot> = {}): WorkstreamBoot {
   } as WorkstreamBoot;
 }
 
-function renderScreen(seed?: (queryClient: QueryClient) => void): QueryClient {
+function renderScreen(seed?: (queryClient: QueryClient) => void, substreamId?: string): QueryClient {
   const queryClient = new QueryClient({
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
   });
@@ -110,7 +110,7 @@ function renderScreen(seed?: (queryClient: QueryClient) => void): QueryClient {
   render(
     <Tooltip.Provider>
       <QueryClientProvider client={queryClient}>
-        <MemoryRouter initialEntries={[`/workstreams/${workstreamId}`]}>
+        <MemoryRouter initialEntries={[`/workstreams/${workstreamId}${substreamId ? `?substream=${substreamId}` : ''}`]}>
           <Routes>
             <Route element={<WorkstreamScreen />} path="/workstreams/:id" />
           </Routes>
@@ -134,6 +134,36 @@ describe('socket-first work-stream open', () => {
       state: 'connecting',
       workspaceSocketState: 'connecting',
     });
+  });
+
+  it('keeps sidebar membership and management at the parent while a child is selected', async () => {
+    const childId = '00000000-0000-7000-8000-000000000660';
+    const member = { id: '00000000-0000-7000-8000-000000000661', name: 'Parent member', email: 'parent@example.test', timezone: 'UTC' };
+    const newcomer = { ...member, id: '00000000-0000-7000-8000-000000000662', name: 'New member' };
+    const artifact: WorkstreamResource = {
+      id: '00000000-0000-7000-8000-000000000663', title: 'Parent artifact', resourceType: 'document', currentVersion: 1,
+      direction: 'artifact', relationshipType: 'generated', refreshSupported: false, watchEnabled: false, watchStatus: 'unsupported',
+    };
+    const parent = recoveryBoot({ participants: [member], resources: [artifact] });
+    const child = recoveryBoot({ title: 'Private child', participants: [], resources: [{ ...artifact, id: 'child-artifact', title: 'Child artifact' }] });
+    api.getWorkspaceMembers.mockResolvedValue([member, newcomer]);
+    api.addParticipant.mockResolvedValue({ ...parent, participants: [member, newcomer] });
+    const client = renderScreen((cache) => {
+      cache.setQueryData(['workstream', workstreamId], parent);
+      cache.setQueryData(['substream-workstream', workstreamId, childId], child);
+      cache.setQueryData(['substream-ordered-transcript', workstreamId, childId], child.transcript);
+    }, childId);
+
+    expect(await screen.findByRole('button', { name: 'Manage participants: Parent member' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Manage resources' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Open Parent artifact' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Open Child artifact' })).not.toBeInTheDocument();
+    expect(retainedSocket).toHaveBeenCalledWith(api, workstreamId, true, 'workstream', '0');
+    fireEvent.click(screen.getByRole('button', { name: 'Manage work-stream participants' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Add New member to work stream' }));
+    await waitFor(() => expect(api.addParticipant).toHaveBeenCalledWith(workstreamId, newcomer.id));
+    expect(await screen.findByRole('button', { name: 'Manage participants: New member' })).toBeInTheDocument();
+    expect(client.getQueryData<WorkstreamDetail>(['substream-workstream', workstreamId, childId])?.participants).toEqual([]);
   });
 
   it('admits the feed while the snapshot is pending without starting REST boot readers', async () => {

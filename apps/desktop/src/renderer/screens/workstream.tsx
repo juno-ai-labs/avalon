@@ -31,6 +31,7 @@ import { RIGHT_SIDEBAR_ENABLED, type RailVariant, useUiStore } from '../lib/ui-s
 import type { SocketState } from '../lib/use-workstream-socket';
 import type { WorkstreamChildDirectory } from '../lib/use-workstream-control-socket';
 import type { WorkstreamDetail } from '../lib/types';
+import { useRetainedWorkstreamSocket } from '../lib/workstream-socket-pool';
 import { AvatarStack, Badge, Button, IconButton, InlineError, Modal, SocketStatusIndicator, StatusDot, TitleSkeleton } from '../components/primitives';
 import { WorkstreamGlyph } from '../components/workstream-glyph';
 import { WorkstreamSidebar } from '../components/workstream-sidebar';
@@ -404,6 +405,9 @@ export function WorkstreamScreen(): React.JSX.Element {
   const [searchParams, setSearchParams] = useSearchParams();
   const { api, session } = useAppSession();
   const selectedSubstreamId = searchParams.get('substream') || '0';
+  // Parent chrome remains live even on a direct link into a child. Reuse the
+  // retained Main connection rather than deriving its inventory from the child.
+  useRetainedWorkstreamSocket(api, id, Boolean(api && id && selectedSubstreamId !== '0'), 'workstream', '0');
   const parent = useQuery<WorkstreamDetail | undefined>({
     queryKey: ['workstream', id], queryFn: async () => undefined, enabled: false,
   });
@@ -505,6 +509,7 @@ export function WorkstreamScreen(): React.JSX.Element {
     <ConversationSurface
       parentId={id}
       parentKind="workstream"
+      workstreamContext={parent.data}
       onStartSubstream={startCreation}
       renderSidebar={(context) => (
         <WorkstreamSidebar

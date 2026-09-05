@@ -106,6 +106,17 @@ prove layout, focus, scroll position, or overlap.
 
 ## Changelog
 
+### 2026-09-05 — Keep the center sidebar at work-stream scope
+
+The work-stream host supplies its live parent detail separately from the selected
+conversation. Sidebar artifacts, participant rows, previews and management actions
+use that parent detail and update the parent cache, even on a direct child link.
+This avoids replacing shared navigation with a private child's inventory or roster.
+The feed, its citations, composer and private membership remain child-addressed;
+the sidebar does not aggregate or publish private child resources. Parent-resource
+uploads from a child return to Main log, where the work-stream attachment draft
+lives, rather than silently placing a shared upload in the private composer.
+
 ### 2026-09-04 — Address private substreams throughout the desktop surface
 
 **What changed:** The work-stream sidebar now lists viewer-visible private
