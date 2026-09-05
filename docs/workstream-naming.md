@@ -85,8 +85,19 @@ At twenty the truncation was naming the work stream: names ended on the word the
 model meant to continue — *Podcast from*, *Essay on rust and*, *Work on* — and
 work streams differing only past the cut collided, with six QA work streams all
 arriving as *PRODUCTION HARNESS*. Thirty keeps almost all of the brevity and
-almost none of that. The cut still lands on a word boundary and still takes any
-comma it exposes, because the four that reach it deserve the least bad cut.
+almost none of that, because the cut fires on a twentieth of the names rather
+than two fifths.
+
+**What the whole-word cut buys is narrower than that, and worth stating
+exactly: no half words.** It cuts on a space, so `Avalon download link email to`
+is what it produces rather than `Avalon download link email t`. It does not
+prevent a name ending mid-thought, because a cut that lands after *to*, *from*
+or *and* is a whole-word cut. Nothing here can tell a word the model meant to
+continue from one it meant to end on; ruling it out would take a closed set of
+function words in every language the prompt writes names in. What makes that
+acceptable at thirty and not at twenty is only the rate. The cut also takes any
+comma it exposes, so a name cut between two listed things does not keep the
+separator to nothing.
 
 Two lines of the prompt exist because the replay showed the model ignoring the
 rule without them. *Count the characters before you answer* took the overshoot at

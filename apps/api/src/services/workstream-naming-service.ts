@@ -3,7 +3,10 @@ import {
   renderWorkstreamNameMessages,
   type WorkstreamNameContextMessage,
 } from "@rally/agent-harness";
-import { WorkstreamNameResultSchema } from "@rally/contracts";
+import {
+  WORKSTREAM_NAME_RESULT_MAX_LENGTH,
+  WorkstreamNameResultSchema,
+} from "@rally/contracts";
 
 import type { Env } from "../env";
 import { firstNonEmptyLine, truncateUtf16Safe } from "../lib/text";
@@ -43,11 +46,24 @@ const RENAME_AFTER_MESSAGE_COUNT = 5;
 const RENAME_CONTEXT_MESSAGE_LIMIT = 12;
 const RENAME_CONTEXT_MESSAGE_CHARACTERS = 600;
 
+/**
+ * The schema the request advertises, bounded by the parse ceiling rather than by
+ * {@link GENERATED_TITLE_MAX_LENGTH}.
+ *
+ * The two are deliberately different numbers. This schema goes to the provider
+ * under `strict: true` and is rendered into the conversation beside it, so
+ * `maxLength` is a decoding bound and not only a hint: a provider that honours
+ * it stops generating at exactly that character, mid-word. A name cut that way
+ * arrives here already inside the target, so `truncateToWholeWords` returns it
+ * untouched and the half word ships — the one truncation the whole-word cut
+ * cannot see. The target is the prompt's job, which can ask for a whole name of
+ * that length; only the ceiling belongs in a bound that chops.
+ */
 const nameJsonSchema = {
   type: "object",
   additionalProperties: false,
   properties: {
-    title: { type: "string", minLength: 1, maxLength: GENERATED_TITLE_MAX_LENGTH },
+    title: { type: "string", minLength: 1, maxLength: WORKSTREAM_NAME_RESULT_MAX_LENGTH },
   },
   required: ["title"],
 };
@@ -381,12 +397,18 @@ function trimTrailing(value: string): string {
  * Cut a name to `maximum` characters at a word boundary.
  *
  * The last whole word that fits wins, because the tail of a cut word reads as a
- * typo rather than as a name that ran long, and a cut that lands on a word the
- * model meant to continue — `Podcast from` — reads as unfinished. At thirty
- * characters that is rare; at twenty it was two names in five, which is what
- * ruled twenty out. A single word longer than the cap has no boundary to cut at
- * and is cut where it must be, short of splitting a surrogate pair, which would
- * leave a half that renders as a replacement character.
+ * typo. That is the whole of what this buys: no half words. It does *not* stop
+ * a name ending mid-thought — a cut landing after `to`, `from`, `and` or `the`
+ * gives `Podcast episode from the`, and the cut cannot tell a word the model
+ * meant to continue from one it meant to end on. Ruling that out would need a
+ * closed set of function words per language, and the prompt writes names in the
+ * language of the request; at thirty characters the cut fires on about one name
+ * in twenty, which is what makes living with it reasonable, and at twenty it
+ * was two in five, which is what ruled twenty out.
+ *
+ * A single word longer than the cap has no boundary to cut at and is cut where
+ * it must be, short of splitting a surrogate pair, which would leave a half that
+ * renders as a replacement character.
  */
 function truncateToWholeWords(value: string, maximum: number): string {
   if (value.length <= maximum) return value;
