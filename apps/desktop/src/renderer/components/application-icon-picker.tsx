@@ -1,3 +1,5 @@
+import { settings } from '../settings/registry';
+import { SettingLabel } from '../settings/setting-label';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   applicationIconChoices,
@@ -98,8 +100,8 @@ export function ApplicationIconPicker(): React.JSX.Element {
       <div className="settings-app-icon-heading">
         <img alt="" aria-hidden="true" src={applicationIconArtwork[selectedIcon]} />
         <span>
-          <strong>App icon</strong>
-          <small>Choose how Rally appears in the Dock, Finder, Launchpad, and Spotlight.</small>
+          <strong><SettingLabel setting={settings.appIcon} /></strong>
+          <small>{settings.appIcon.description}</small>
         </span>
       </div>
       <div

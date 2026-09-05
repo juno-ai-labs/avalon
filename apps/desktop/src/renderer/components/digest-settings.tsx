@@ -1,5 +1,10 @@
+import { SettingToggle } from '../settings/setting-toggle';
+import { DAY_PRESETS, WEEKDAYS } from '../settings/choices';
+import { digestDeliverySetting } from '../settings/digest-provider';
+import { settings } from '../settings/registry';
+import { SettingLabel } from '../settings/setting-label';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CalendarDays, Clock3, Mail, MessageSquare, Plus, X } from 'lucide-react';
+import { Clock3, Plus, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import type { RallyApi } from '../lib/api';
 import type {
@@ -8,23 +13,6 @@ import type {
   WorkstreamConnection,
 } from '../lib/types';
 import { RallyMark, Button, InlineError, LoadingState } from './primitives';
-
-/** Sunday first, matching `Date#getDay` and every calendar in the product. */
-const WEEKDAYS = [
-  { day: 0, initial: 'S', name: 'Sunday' },
-  { day: 1, initial: 'M', name: 'Monday' },
-  { day: 2, initial: 'T', name: 'Tuesday' },
-  { day: 3, initial: 'W', name: 'Wednesday' },
-  { day: 4, initial: 'T', name: 'Thursday' },
-  { day: 5, initial: 'F', name: 'Friday' },
-  { day: 6, initial: 'S', name: 'Saturday' },
-] as const;
-
-const DAY_PRESETS = [
-  { id: 'every-day', label: 'Every day', days: [0, 1, 2, 3, 4, 5, 6] },
-  { id: 'weekdays', label: 'Weekdays', days: [1, 2, 3, 4, 5] },
-  { id: 'weekends', label: 'Weekends', days: [0, 6] },
-] as const;
 
 const MAX_TIMES = 12;
 
@@ -216,28 +204,17 @@ export function DigestSettings({
       </div>
 
       <div className="settings-list-card">
-        <label className="settings-preference-row">
-          <span className="settings-row-icon"><CalendarDays aria-hidden="true" size={18} /></span>
-          <span className="settings-row-copy">
-            <strong>Send me a digest</strong>
-            <small>
-              {draft.enabled && saved.nextRunAt
-                ? `Next one ${instantInTimezone(saved.nextRunAt, saved.timezone)}.`
-                : 'Rally writes it at the times you choose and sends it where you choose.'}
-            </small>
-          </span>
-          <span className="settings-toggle">
-            <input
-              checked={draft.enabled}
-              onChange={(event) => update({ enabled: event.target.checked })}
-              type="checkbox"
-            />
-            <span />
-          </span>
-        </label>
+        <SettingToggle
+          setting={settings.digestEnabled}
+          description={draft.enabled && saved.nextRunAt
+          ? `Next one ${instantInTimezone(saved.nextRunAt, saved.timezone)}.`
+          : 'Rally writes it at the times you choose and sends it where you choose.'}
+          checked={draft.enabled}
+          onChange={(event) => update({ enabled: event.target.checked })}
+        />
       </div>
 
-      <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Days</h2></div>
+      <div className="settings-pane-heading settings-pane-heading-spaced"><h2><SettingLabel setting={settings.digestDays} /></h2></div>
       <div className="settings-list-card digest-card">
         <div className="digest-day-presets" role="group" aria-label="Day presets">
           {DAY_PRESETS.map((preset) => (
@@ -268,7 +245,7 @@ export function DigestSettings({
         </div>
       </div>
 
-      <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Times</h2></div>
+      <div className="settings-pane-heading settings-pane-heading-spaced"><h2><SettingLabel setting={settings.digestTimes} /></h2></div>
       <div className="settings-list-card digest-card">
         {draft.times.length === 0
           ? <p className="digest-empty">No times yet. Add the first one below.</p>
@@ -321,41 +298,22 @@ export function DigestSettings({
         </p>
       </div>
 
-      <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Deliver to</h2></div>
+      <div className="settings-pane-heading settings-pane-heading-spaced"><h2><SettingLabel setting={settings.digestDelivery} /></h2></div>
       <div className="settings-list-card">
-        <label className="settings-preference-row">
-          <span className="settings-row-icon"><Mail aria-hidden="true" size={18} /></span>
-          <span className="settings-row-copy">
-            <strong>Email</strong>
-            <small>Sent to your Rally account address.</small>
-          </span>
-          <span className="settings-toggle">
-            <input
-              checked={draft.targetKeys.includes('email')}
-              onChange={() => toggleTarget('email')}
-              type="checkbox"
-            />
-            <span />
-          </span>
-        </label>
+        <SettingToggle
+          setting={settings.digestEmail}
+          checked={draft.targetKeys.includes('email')}
+          onChange={() => toggleTarget('email')}
+        />
         {deliveryConnections.map((connection) => {
           const key = targetKey(connection.userDelivery!.targetType, connection.id);
           return (
-            <label className="settings-preference-row" key={connection.id}>
-              <span className="settings-row-icon"><MessageSquare aria-hidden="true" size={18} /></span>
-              <span className="settings-row-copy">
-                <strong>{connection.userDelivery!.label} · {connection.displayName}</strong>
-                <small>{connection.userDelivery!.description}</small>
-              </span>
-              <span className="settings-toggle">
-                <input
-                  checked={draft.targetKeys.includes(key)}
-                  onChange={() => toggleTarget(key)}
-                  type="checkbox"
-                />
-                <span />
-              </span>
-            </label>
+            <SettingToggle
+              setting={digestDeliverySetting(connection)}
+              key={connection.id}
+              checked={draft.targetKeys.includes(key)}
+              onChange={() => toggleTarget(key)}
+            />
           );
         })}
         {deliveryConnections.length === 0 && (
@@ -382,7 +340,7 @@ export function DigestSettings({
           disabled={!dirty || incomplete || save.isPending}
           onClick={() => save.mutate(draft)}
         >
-          {save.isPending ? 'Saving…' : 'Save digest'}
+          {save.isPending ? 'Saving…' : <SettingLabel setting={settings.digestSave} />}
         </Button>
       </div>
       {save.error && <InlineError>{save.error.message}</InlineError>}

@@ -1,3 +1,8 @@
+import { SettingToggle } from '../settings/setting-toggle';
+import { settings, collectSettings, coreSettingsProvider, defineSetting, isSettingAvailable, searchSettings, type SettingSearchResult, type SettingsSearchContext } from '../settings/registry';
+import { SettingCopy, SettingLabel } from '../settings/setting-label';
+import { SettingsSearchResults, useRevealSetting } from '../settings/search-results';
+import { digestDeliverySetting } from '../settings/digest-provider';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import {
@@ -13,9 +18,7 @@ import {
   MailPlus,
   MonitorCog,
   Newspaper,
-  PanelTop,
   Plug,
-  Power,
   RefreshCcw,
   Search,
   ServerCog,
@@ -25,7 +28,6 @@ import {
   Users,
   Wifi,
   Webhook,
-  Wrench,
   X,
   type LucideIcon,
 } from 'lucide-react';
@@ -198,7 +200,6 @@ function ConnectionIconAction({
 interface SettingsNavItem {
   id: SettingsSection;
   label: string;
-  searchTerms: string;
   icon: LucideIcon;
   child?: boolean;
 }
@@ -207,34 +208,42 @@ const settingsNavigation: Array<{ label: string; items: SettingsNavItem[] }> = [
   {
     label: 'Settings',
     items: [
-      { id: 'account', label: 'Account', searchTerms: 'profile identity email sign out', icon: UserRound },
+      { id: 'account', label: 'Account', icon: UserRound },
       // Directly under Account, because a digest is a personal preference like
       // the timezone it borrows — not a workspace-level setting.
-      { id: 'digest', label: 'Digest', searchTerms: 'digest summary email schedule times days notifications updates slack deliver', icon: Newspaper },
-      { id: 'workspace', label: 'Workspace', searchTerms: 'region data residency organization members invitations invite roles', icon: Users },
-      { id: 'connections', label: 'Connections', searchTerms: 'connectors google github granola meetings notes linear notion slack x integrations', icon: Plug },
+      { id: 'digest', label: 'Digest', icon: Newspaper },
+      { id: 'workspace', label: 'Workspace', icon: Users },
+      { id: 'connections', label: 'Connections', icon: Plug },
     ],
   },
   {
     label: 'Desktop app',
     items: [
-      { id: 'application', label: 'Application', searchTerms: 'app security privacy analytics telemetry crash diagnostics lockdown encryption keychain session icon appearance menu bar status item startup login dock customize version platform api realtime', icon: MonitorCog },
+      { id: 'application', label: 'Application', icon: MonitorCog },
     ],
   },
 ];
 
-/** Words that only lead somewhere while the Developer section is on offer. They
- * are appended to Application rather than written into it, so searching "debug"
- * cannot send someone the flag excludes to a pane that has no such section. */
-const developerSectionSearchTerms = 'developer debug identifiers';
-
-function navigationSearchTerms(item: SettingsNavItem, developerSettingsAvailable: boolean): string {
-  return item.id === 'application' && developerSettingsAvailable
-    ? `${item.searchTerms} ${developerSectionSearchTerms}`
-    : item.searchTerms;
-}
-
 const linearNativeAgentEnabled = import.meta.env.VITE_LINEAR_NATIVE_AGENT_ENABLED === 'true';
+function providerSetting(provider: { id: string; name: string; description: string }) {
+  return defineSetting({
+    id: 'provider:' + provider.id, section: 'connections', kind: 'custom',
+    label: provider.name, description: provider.description,
+    options: ['Connect for me', 'Connect workspace', 'Setup', 'Authorization'],
+  });
+}
+function connectionSetting(connection: WorkstreamConnection, admin: boolean) {
+  return defineSetting({
+    id: 'connection:' + connection.id, section: 'connections', kind: 'custom',
+    label: connection.displayName, description: 'Manage this installed connection.',
+    options: [
+      ...(admin && reconnectableConnectorTypes.has(connection.connectorType)
+        && !(connection.connectorType === 'granola' && connection.scope === 'workspace') ? ['Refresh', 'Reconnect'] : []),
+      ...(connection.scope === 'you' || admin ? ['Delete', 'Disconnect'] : []),
+      ...(admin && connection.connectorType === 'generic_webhook' ? ['Refresh', 'Webhook signing secret'] : []),
+    ],
+  });
+}
 const supportedTimezones = typeof Intl.supportedValuesOf === 'function'
   ? Intl.supportedValuesOf('timeZone')
   : ['America/Los_Angeles', 'Europe/London', 'UTC'];
@@ -978,7 +987,6 @@ export function WorkspaceSettingsScreen({
             ? [item, {
                 id: 'github' as const,
                 label: 'GitHub',
-                searchTerms: 'github repositories remote read only full access push pull request',
                 icon: GitBranch,
                 child: true,
               }]
@@ -995,7 +1003,6 @@ export function WorkspaceSettingsScreen({
             ? [item, {
                 id: 'custom-mcp' as const,
                 label: 'MCP tools',
-                searchTerms: 'mcp model context protocol server tools read only write custom',
                 icon: ServerCog,
                 child: true,
               }]
@@ -1010,23 +1017,70 @@ export function WorkspaceSettingsScreen({
       ? withCustomMcp
       : { ...withCustomMcp, items: withCustomMcp.items.filter((item) => item.id !== 'digest') };
   }), [githubSettingsConnections.length, customMcpSettingsConnections.length, digestSettingsAvailable]);
-  const filteredNavigation = useMemo(() => {
-    const query = navigationQuery.trim().toLowerCase();
-    if (!query) return settingsNavigationWithConnectors;
-    return settingsNavigationWithConnectors
-      .map((group) => ({
-        ...group,
-        items: group.items.filter((item) =>
-          `${item.label} ${navigationSearchTerms(item, developerSettingsAvailable)}`
-            .toLowerCase()
-            .includes(query)),
-      }))
-      .filter((group) => group.items.length > 0);
-  }, [navigationQuery, developerSettingsAvailable, settingsNavigationWithConnectors]);
   const availableSections = useMemo(
-    () => new Set(filteredNavigation.flatMap((group) => group.items.map((item) => item.id))),
-    [filteredNavigation],
+    () => new Set(settingsNavigationWithConnectors.flatMap((group) => group.items.map((item) => item.id))),
+    [settingsNavigationWithConnectors],
   );
+  const settingsContext: SettingsSearchContext = {
+    sections: availableSections,
+    admin: isAdmin,
+    developer: developerSettingsAvailable,
+    menuBar: applicationSettings?.menuBarAvailable !== false,
+    login: applicationSettings?.launchAtLoginAvailable !== false,
+  };
+  const [searchTarget, setSearchTarget] = useState<SettingSearchResult | null>(null);
+  const searchEntries = collectSettings([
+    {
+      id: 'digest-destinations',
+      entries: (connections.data ?? []).filter((connection) => connection.userDelivery)
+        .map((connection) => {
+          const definition = digestDeliverySetting(connection);
+          return { key: definition.id, definition };
+        }),
+    },
+    { ...coreSettingsProvider, entries: coreSettingsProvider.entries.filter((entry) =>
+      entry.definition.section !== 'github' && entry.definition.section !== 'custom-mcp')
+      .map((entry) => ({ ...entry, instanceLabel: connectorProviders.find((provider) =>
+        'provider:' + provider.id === entry.definition.entryPoint)?.name })) },
+    {
+      id: 'connected-settings',
+      entries: [...githubSettingsConnections, ...customMcpSettingsConnections].flatMap((connection) =>
+        coreSettingsProvider.entries.filter((entry) => entry.definition.section ===
+          (connection.settingsKind === 'github_repository_access' ? 'github' : 'custom-mcp'))
+          .map((entry) => ({ ...entry, key: entry.key + ':' + connection.id,
+            instanceId: connection.id, instanceLabel: connection.displayName }))),
+    },
+    {
+      id: 'connector-catalog',
+      entries: connectorProviders.map((provider) => ({
+        key: 'provider:' + provider.id, definition: providerSetting(provider),
+      })),
+    },
+    {
+      id: 'installed-connections',
+      entries: (connections.data ?? []).filter((connection) => installedConnectorTypes.has(connection.connectorType))
+        .map((connection) => ({
+          key: 'connection:' + connection.id, definition: connectionSetting(connection, isAdmin),
+        })),
+    },
+  ], settingsContext);
+  const searchResults = searchSettings(searchEntries, navigationQuery);
+  const selectSearchResult = (result: SettingSearchResult): void => {
+    if (!searchEntries.some((entry) => entry.key === result.key)) return;
+    if (result.definition.section === 'github' && result.instanceId) {
+      setGitHubSettingsConnectionId(result.instanceId);
+      setGitHubRepositorySearch('');
+    }
+    if (result.definition.section === 'custom-mcp' && result.instanceId) {
+      setCustomMcpSettingsConnectionId(result.instanceId);
+    }
+    if (result.definition.section === 'connections') setConnectionFilter('all');
+    setActiveSection(result.definition.section);
+    setNavigationQuery('');
+    setSearchTarget({ ...result });
+  };
+  useRevealSetting(contentRef, searchTarget && searchEntries.some((entry) => entry.key === searchTarget.key)
+    ? searchTarget : null);
   const installedConnections = (connections.data ?? []).filter((connection) =>
     installedConnectorTypes.has(connection.connectorType),
   );
@@ -1043,9 +1097,9 @@ export function WorkspaceSettingsScreen({
   });
   useEffect(() => {
     if (availableSections.has(activeSection)) return;
-    const first = filteredNavigation[0]?.items[0]?.id;
+    const first = settingsNavigationWithConnectors[0]?.items[0]?.id;
     if (first) setActiveSection(first);
-  }, [activeSection, availableSections, filteredNavigation]);
+  }, [activeSection, availableSections, settingsNavigationWithConnectors]);
 
   // Only the Settings window closes on Escape. The same screen is also a route
   // inside the main window on surfaces with no separate window to open, and
@@ -1063,6 +1117,7 @@ export function WorkspaceSettingsScreen({
     const nextSection = parseDesktopSettingsSection(section);
     if (!nextSection) return;
     setNavigationQuery('');
+    setSearchTarget(null);
     setActiveSection(nextSection);
   }), [bridge]);
 
@@ -1244,19 +1299,43 @@ export function WorkspaceSettingsScreen({
     <div className="workspace-settings-screen screen-with-titlebar">
       <div className="screen-drag-strip window-drag" />
       <div className="settings-window">
-        <aside className="settings-sidebar">
+        <aside className="settings-sidebar" onKeyDown={(event) => {
+          if (event.key === 'Escape' && navigationQuery) {
+            event.preventDefault();
+            event.stopPropagation();
+            setNavigationQuery('');
+            event.currentTarget.querySelector('input')?.focus();
+          }
+        }}>
           <label className="settings-search">
             <Search aria-hidden="true" size={15} />
             <span className="sr-only">Search settings</span>
             <input
-              onChange={(event) => setNavigationQuery(event.target.value)}
+              onChange={(event) => {
+                setSearchTarget(null);
+                setNavigationQuery(event.target.value);
+              }}
+              onKeyDown={(event) => {
+                if (event.nativeEvent.isComposing) return;
+                if (event.key === 'Escape' && navigationQuery) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setNavigationQuery('');
+                } else if (event.key === 'ArrowDown' && navigationQuery.trim()) {
+                  event.preventDefault();
+                  event.currentTarget.closest('aside')?.querySelector<HTMLButtonElement>('.settings-search-results button')?.focus();
+                } else if (event.key === 'Enter' && searchResults[0]) {
+                  event.preventDefault();
+                  selectSearchResult(searchResults[0]);
+                }
+              }}
               placeholder="Search"
               type="search"
               value={navigationQuery}
             />
           </label>
-          <nav aria-label="Settings sections" className="settings-navigation">
-            {filteredNavigation.map((group) => (
+          {navigationQuery.trim() ? <SettingsSearchResults results={searchResults} onSelect={selectSearchResult} /> : <nav aria-label="Settings sections" className="settings-navigation">
+            {settingsNavigationWithConnectors.map((group) => (
               <div className="settings-navigation-group" key={group.label}>
                 <span>{group.label}</span>
                 {group.items.map((item) => {
@@ -1266,7 +1345,7 @@ export function WorkspaceSettingsScreen({
                       aria-current={activeSection === item.id ? 'page' : undefined}
                       className={item.child ? 'settings-navigation-child' : undefined}
                       key={item.id}
-                      onClick={() => setActiveSection(item.id)}
+                      onClick={() => { setSearchTarget(null); setActiveSection(item.id); }}
                       type="button"
                     >
                       <Icon aria-hidden="true" size={16} />
@@ -1276,8 +1355,7 @@ export function WorkspaceSettingsScreen({
                 })}
               </div>
             ))}
-            {filteredNavigation.length === 0 && <p className="settings-search-empty">No settings found</p>}
-          </nav>
+          </nav>}
         </aside>
 
         <main className="settings-content" ref={contentRef}>
@@ -1290,7 +1368,7 @@ export function WorkspaceSettingsScreen({
           <div className="settings-content-scroll">
             {activeSection === 'account' && (
               <section aria-labelledby="settings-title" className="settings-pane">
-                <div className="settings-pane-heading"><h2>Profile</h2><p>Your Rally identity and access in this workspace.</p></div>
+                <div className="settings-pane-heading"><h2><SettingLabel setting={settings.profile} /></h2><p>Your Rally identity and access in this workspace.</p></div>
                 <div className="settings-profile-card">
                   <Avatar member={workspace.currentUser} size="large" />
                   <span><strong>{workspace.currentUser.name}</strong><small>{workspace.currentUser.email}</small></span>
@@ -1300,7 +1378,7 @@ export function WorkspaceSettingsScreen({
                 <div className="settings-list-card">
                   <label className="settings-preference-row">
                     <span className="settings-row-icon"><Clock3 aria-hidden="true" size={18} /></span>
-                    <span className="settings-row-copy"><strong>Default timezone</strong><small>Used for your personal automations when no timezone is specified.</small></span>
+                    <SettingCopy setting={settings.personalTimezone} />
                     <DropdownSelect
                       ariaLabel="Personal default timezone"
                       disabled={updateUserTimezone.isPending}
@@ -1319,7 +1397,7 @@ export function WorkspaceSettingsScreen({
                 <div className="settings-list-card">
                   <div className="settings-preference-row">
                     <span className="settings-row-icon"><LogOut aria-hidden="true" size={18} /></span>
-                    <span className="settings-row-copy"><strong>Sign out of Rally</strong><small>Remove the local session from this Mac.</small></span>
+                    <SettingCopy setting={settings.signOut} />
                     <Button onClick={() => void signOut()}>Sign out</Button>
                   </div>
                 </div>
@@ -1342,10 +1420,7 @@ export function WorkspaceSettingsScreen({
                     <span className="settings-row-icon">
                       {workspace.region === 'eu' ? <ShieldCheck aria-hidden="true" size={18} /> : <Globe2 aria-hidden="true" size={18} />}
                     </span>
-                    <span className="settings-row-copy">
-                      <strong>Data region</strong>
-                      <small>All workspace data, sessions, and requests remain pinned to this regional service.</small>
-                    </span>
+                    <SettingCopy setting={settings.workspaceRegion} />
                     <span className="settings-row-value">
                       <strong>{workspace.region === 'eu' ? 'European Union' : 'United States'}</strong>
                       <Badge>Locked</Badge>
@@ -1353,15 +1428,12 @@ export function WorkspaceSettingsScreen({
                   </div>
                   <div className="settings-preference-row">
                     <span className="settings-row-icon"><Building2 aria-hidden="true" size={18} /></span>
-                    <span className="settings-row-copy">
-                      <strong>Workspace</strong>
-                      <small>The shared Rally workspace active in this desktop app.</small>
-                    </span>
+                    <SettingCopy setting={settings.workspaceIdentity} />
                     <span className="settings-row-value"><strong>{workspace.name}</strong></span>
                   </div>
                   <label className="settings-preference-row">
                     <span className="settings-row-icon"><Clock3 aria-hidden="true" size={18} /></span>
-                    <span className="settings-row-copy"><strong>Default timezone</strong><small>Used when a workspace automation does not specify a timezone.</small></span>
+                    <SettingCopy setting={settings.workspaceTimezone} />
                     <DropdownSelect
                       ariaLabel="Workspace default timezone"
                       disabled={!isAdmin || updateWorkspaceTimezone.isPending}
@@ -1377,7 +1449,7 @@ export function WorkspaceSettingsScreen({
                 </div>
                 {updateWorkspaceTimezone.error && <InlineError>{updateWorkspaceTimezone.error.message}</InlineError>}
                 <div className="settings-pane-heading settings-pane-heading-spaced">
-                  <h2>Terminal network access</h2>
+                  <h2><SettingLabel setting={settings.terminal} /></h2>
                   <p>Choose where code running in Daytona may connect. Rally-managed platform access is applied automatically.</p>
                 </div>
                 {terminalSettings.isLoading ? (
@@ -1396,17 +1468,23 @@ export function WorkspaceSettingsScreen({
                       <legend>Outbound access</legend>
                       <label>
                         <input checked={terminalMode === 'trusted_only'} name="terminal-network-mode" onChange={() => { terminalPolicyDirty.current = true; setTerminalMode('trusted_only'); setTerminalPreview(null); }} type="radio" />
-                        <span><strong>Trusted only</strong><small>Rally-managed platform access plus domains your workspace approves.</small></span>
+                        <span><strong><SettingLabel setting={settings.trustedNetwork} /></strong><small>{settings.trustedNetwork.description}</small></span>
                       </label>
                       <label>
                         <input checked={terminalMode === 'full_internet'} name="terminal-network-mode" onChange={() => { terminalPolicyDirty.current = true; setTerminalMode('full_internet'); setTerminalPreview(null); }} type="radio" />
-                        <span><strong>Full internet</strong><small>Allow arbitrary public destinations. Private network access remains blocked by Daytona.</small></span>
+                        <span><strong><SettingLabel setting={settings.fullNetwork} /></strong><small>{settings.fullNetwork.description}</small></span>
                       </label>
                     </fieldset>
+                    {terminalMode === 'full_internet' && (
+                      <div className="terminal-network-domains">
+                        <SettingCopy setting={settings.terminalDomains}
+                          description="Workspace-approved domains apply only to Trusted only mode." />
+                      </div>
+                    )}
                     {terminalMode === 'trusted_only' && (
                       <div className="terminal-network-domains">
                         <label>
-                          <span>Workspace-approved domains</span>
+                          <span><SettingLabel setting={settings.terminalDomains} /></span>
                           <textarea
                             aria-label="Additional Terminal domains"
                             data-saved-value={terminalSettings.data.customDomains.join('\n')}
@@ -1484,7 +1562,7 @@ export function WorkspaceSettingsScreen({
                   </div>
                 )}
                 <div className="settings-pane-heading settings-pane-heading-count">
-                  <div><h2>Members</h2><p>People with access to {workspace.name}.</p></div>
+                  <div><h2><SettingLabel setting={settings.members} /></h2><p>People with access to {workspace.name}.</p></div>
                   <span>{members.data?.length ?? 0}</span>
                 </div>
                 {members.error && <InlineError>{members.error.message}</InlineError>}
@@ -1498,10 +1576,10 @@ export function WorkspaceSettingsScreen({
                   ))}
                 </div>
 
-                {isAdmin && (
+                {isSettingAvailable(settings.invitations, settingsContext) && (
                   <div className="settings-subsection">
                     <div className="settings-pane-heading settings-pane-heading-count">
-                      <div><h2>Invitations</h2><p>Invite teammates by email. Links expire after seven days.</p></div>
+                      <div><h2><SettingLabel setting={settings.invitations} /></h2><p>Invite teammates by email. Links expire after seven days.</p></div>
                       <span>{pendingInvitations.length} pending</span>
                     </div>
                     <form
@@ -1512,11 +1590,11 @@ export function WorkspaceSettingsScreen({
                       }}
                     >
                       <label>
-                        <span>Email address</span>
+                        <span><SettingLabel setting={settings.inviteEmail} /></span>
                         <input autoComplete="email" onChange={(event) => setEmail(event.target.value)} placeholder="teammate@company.com" type="email" value={email} />
                       </label>
                       <label>
-                        <span>Role</span>
+                        <span><SettingLabel setting={settings.inviteRole} /></span>
                         <select onChange={(event) => setRole(event.target.value as 'admin' | 'member')} value={role}>
                           <option value="member">Member</option>
                           {workspace.currentUser.role === 'owner' && <option value="admin">Administrator</option>}
@@ -1524,7 +1602,7 @@ export function WorkspaceSettingsScreen({
                       </label>
                       <Button className="button-primary" disabled={!email.trim() || createInvitation.isPending} type="submit">
                         {createInvitation.isPending ? <LoaderCircle aria-hidden="true" className="spin" size={15} /> : <MailPlus aria-hidden="true" size={15} />}
-                        Send invitation
+                        <SettingLabel setting={settings.inviteSend} />
                       </Button>
                     </form>
                     {createInvitation.error && <InlineError>{createInvitation.error.message}</InlineError>}
@@ -1567,7 +1645,7 @@ export function WorkspaceSettingsScreen({
                   </div>
                 )}
                 <div className="settings-pane-heading settings-pane-heading-spaced">
-                  <h2>Workspace access</h2>
+                  <h2><SettingLabel setting={settings.workspaceAccess} /></h2>
                   <p>Leaving removes this workspace from your Rally account on every device.</p>
                 </div>
                 <div className="settings-list-card">
@@ -1595,7 +1673,7 @@ export function WorkspaceSettingsScreen({
             {activeSection === 'connections' && (
               <section aria-labelledby="settings-title" className="settings-pane settings-connections-pane">
                 <div className="settings-pane-heading settings-pane-heading-count">
-                  <div><h2>Your connections</h2><p>Credentials currently available to you or this workspace.</p></div>
+                  <div><h2><SettingLabel setting={settings.connections} /></h2><p>Credentials currently available to you or this workspace.</p></div>
                   <span>{installedConnections.length}</span>
                 </div>
                 <div className="settings-connection-tables">
@@ -1637,7 +1715,7 @@ export function WorkspaceSettingsScreen({
                                   <span className="settings-connection-name">
                                     <span className={`connection-provider-dot ${connection.status}`} aria-hidden="true" />
                                     <InstalledConnectionMark connection={connection} />
-                                    <span className="settings-connection-copy"><strong>{connection.displayName}</strong></span>
+                                    <span className="settings-connection-copy"><strong><SettingLabel setting={connectionSetting(connection, isAdmin)} /></strong></span>
                                   </span>
                                 </td>
                                 <td><Badge>{connection.status === 'reconnect_required' ? 'Reconnect required' : connection.status}</Badge></td>
@@ -1753,9 +1831,14 @@ export function WorkspaceSettingsScreen({
                                 ? <ConnectorMark mark={mark} />
                                 : Icon && <Icon aria-hidden="true" size={18} />}
                             </div>
-                            <div><strong>{provider.name}</strong><span>{awaitingProvider ? 'Waiting for authorization' : connected ? 'Connected' : connectorCatalog.isLoading ? 'Checking availability' : providerAvailable ? 'Available' : 'Unavailable'}</span></div>
+                            <div><strong><SettingLabel setting={providerSetting(provider)} /></strong><span>{awaitingProvider ? 'Waiting for authorization' : connected ? 'Connected' : connectorCatalog.isLoading ? 'Checking availability' : providerAvailable ? 'Available' : 'Unavailable'}</span></div>
                           </div>
                           <p>{provider.description}</p>
+                          {searchTarget?.definition.entryPoint === 'provider:' + provider.id && (
+                            <p className="settings-search-guidance" role="status">
+                              {searchTarget.definition.label} is part of setup. Choose the appropriate connection scope below.
+                            </p>
+                          )}
                             <div className="provider-actions">
                               {provider.scopes.includes('you' as never) && (
                                 <ConnectorButton
@@ -1828,7 +1911,7 @@ export function WorkspaceSettingsScreen({
             {activeSection === 'github' && (
               <section aria-labelledby="settings-title" className="settings-pane settings-github-pane">
                 <div className="settings-pane-heading">
-                  <h2>Repository access</h2>
+                  <h2><SettingLabel setting={settings.githubAccess} instanceId={githubSettingsConnectionId ?? undefined} /></h2>
                   <p>Choose which GitHub repositories Rally may use and whether it may change the remote repository.</p>
                 </div>
                 {githubSettingsConnections.length > 1 && (
@@ -1859,10 +1942,7 @@ export function WorkspaceSettingsScreen({
                     <div className="settings-list-card settings-github-policy">
                       <label className="settings-preference-row">
                         <span className="settings-row-icon"><GitBranch aria-hidden="true" size={18} /></span>
-                        <span className="settings-row-copy">
-                          <strong>Repository availability</strong>
-                          <small>All repositories follows the GitHub App installation. Selected repositories exposes only the entries you add below.</small>
-                        </span>
+                        <SettingCopy setting={settings.githubAvailability} instanceId={githubSettingsConnectionId ?? undefined} />
                         <select
                           aria-label="Repository availability"
                           disabled={!canEditGitHubSettings || updateGitHubRepositorySettings.isPending}
@@ -1873,17 +1953,20 @@ export function WorkspaceSettingsScreen({
                           })}
                           value={githubSettings.mode}
                         >
-                          <option value="all_repositories">All repositories</option>
-                          <option value="selected_repositories">Selected repositories</option>
+                          <option value="all_repositories">{settings.githubAvailability.options[0]}</option>
+                          <option value="selected_repositories">{settings.githubAvailability.options[1]}</option>
                         </select>
                       </label>
+                      {githubSettings.mode !== 'all_repositories' && (
+                        <div className="settings-preference-row">
+                          <SettingCopy setting={settings.githubRemote} instanceId={githubSettingsConnectionId ?? undefined}
+                            description="A default applies only to All repositories. Configure individual access under Repositories below." />
+                        </div>
+                      )}
                       {githubSettings.mode === 'all_repositories' && (
                         <label className="settings-preference-row">
                           <span className="settings-row-icon"><LockKeyhole aria-hidden="true" size={18} /></span>
-                          <span className="settings-row-copy">
-                            <strong>Default remote access</strong>
-                            <small>Read-only still allows Rally to edit and commit locally. It blocks push, pull requests, issues, reviews, and other remote mutations.</small>
-                          </span>
+                          <SettingCopy setting={settings.githubRemote} instanceId={githubSettingsConnectionId ?? undefined} />
                           <select
                             aria-label="Default remote access"
                             disabled={!canEditGitHubSettings || updateGitHubRepositorySettings.isPending}
@@ -1894,15 +1977,15 @@ export function WorkspaceSettingsScreen({
                             })}
                             value={githubSettings.defaultRemoteAccess}
                           >
-                            <option value="read_only">Read-only remote</option>
-                            <option value="full_access">Full remote access</option>
+                            <option value="read_only">{settings.githubRemote.options[0]}</option>
+                            <option value="full_access">{settings.githubRemote.options[1]}</option>
                           </select>
                         </label>
                       )}
                     </div>
                     <div className="settings-github-repository-heading">
                       <div>
-                        <strong>Repositories</strong>
+                        <strong><SettingLabel setting={settings.githubRepositories} instanceId={githubSettingsConnectionId ?? undefined} /></strong>
                         <small>{githubSettings.availableRepositories.length} available through {githubSettings.connectionName}</small>
                       </div>
                       <label className="settings-search settings-github-search">
@@ -1942,8 +2025,8 @@ export function WorkspaceSettingsScreen({
                                   )}
                                   value={effectiveAccess}
                                 >
-                                  <option value="read_only">Read-only remote</option>
-                                  <option value="full_access">Full remote access</option>
+                                  <option value="read_only">{settings.githubRemote.options[0]}</option>
+                                  <option value="full_access">{settings.githubRemote.options[1]}</option>
                                 </select>
                                 {githubSettings.mode === 'selected_repositories' && (
                                   <Button
@@ -1979,7 +2062,7 @@ export function WorkspaceSettingsScreen({
             {activeSection === 'custom-mcp' && (
               <section aria-labelledby="settings-title" className="settings-pane settings-custom-mcp-pane">
                 <div className="settings-pane-heading">
-                  <h2>MCP tools</h2>
+                  <h2><SettingLabel setting={settings.mcpTools} instanceId={customMcpSettingsConnectionId ?? undefined} /></h2>
                   <p>What each connected MCP server currently offers, and how much of it Rally may use.</p>
                 </div>
                 {customMcpSettingsConnections.length > 1 && (
@@ -2006,7 +2089,8 @@ export function WorkspaceSettingsScreen({
                       <div className="settings-preference-row">
                         <span className="settings-row-icon"><ServerCog aria-hidden="true" size={18} /></span>
                         <span className="settings-row-copy">
-                          <strong>{customMcpSettings.data.serverUrl}</strong>
+                          <strong><SettingLabel setting={settings.mcpServer} instanceId={customMcpSettingsConnectionId ?? undefined} /></strong>
+                          <span>{customMcpSettings.data.serverUrl}</span>
                           <small>
                             {customMcpSettings.data.authMode === 'oauth'
                               ? 'Authorized through the server’s own OAuth. Rally registered itself as a client and holds a token for this connection.'
@@ -2030,14 +2114,9 @@ export function WorkspaceSettingsScreen({
                       </div>
                       <label className="settings-preference-row">
                         <span className="settings-row-icon"><ShieldCheck aria-hidden="true" size={18} /></span>
-                        <span className="settings-row-copy">
-                          <strong>Tools Rally may use</strong>
-                          <small>
-                            {customMcpSettings.data.toolPolicyEditable
+                        <SettingCopy setting={settings.mcpPolicy} instanceId={customMcpSettingsConnectionId ?? undefined} description={<> {customMcpSettings.data.toolPolicyEditable
                               ? 'Read-only exposes just the tools this server marks as read-only. Every remaining tool still asks before it runs — the marking is the server’s own claim, not something Rally can verify.'
-                              : 'A personal connection is only ever yours and acts with your own identity on that server, so it exposes everything the server offers you.'}
-                          </small>
-                        </span>
+                              : 'A personal connection is only ever yours and acts with your own identity on that server, so it exposes everything the server offers you.'} </>} />
                         <select
                           aria-label="Tools Rally may use"
                           disabled={!customMcpSettings.data.toolPolicyEditable || updateCustomMcpToolPolicy.isPending}
@@ -2053,7 +2132,7 @@ export function WorkspaceSettingsScreen({
                     </div>
                     <div className="settings-custom-mcp-tool-heading">
                       <div>
-                        <strong>Tools</strong>
+                        <strong><SettingLabel setting={settings.mcpCatalog} instanceId={customMcpSettingsConnectionId ?? undefined} /></strong>
                         <small>
                           {customMcpSettings.data.toolsUnavailable
                             ? 'Read live from the server each time this screen opens.'
@@ -2098,64 +2177,41 @@ export function WorkspaceSettingsScreen({
               <section aria-labelledby="settings-title" className="settings-pane">
                 <div className="settings-pane-heading"><h2>Security</h2><p>Choose how Rally protects the saved authentication session on this Mac.</p></div>
                 <div className="settings-list-card">
-                  <label className="settings-preference-row">
-                    <span className="settings-row-icon"><LockKeyhole aria-hidden="true" size={18} /></span>
-                    <span className="settings-row-copy">
-                      <strong>Lockdown mode</strong>
-                      <small>
-                        {applicationSettings && !applicationSettings.lockdownAvailable
-                          ? applicationSettings.lockdownMode
-                            ? 'This Mac’s keystore is unavailable. Turn off Lockdown mode to keep using the loaded session.'
-                            : 'Lockdown mode is off because this Mac’s keystore is unavailable.'
-                          : 'Protect the saved session with this Mac’s keystore instead of Rally’s shared encryption key.'}
-                      </small>
-                    </span>
-                    <span className="settings-toggle">
-                      <input
-                        aria-label="Lockdown mode"
-                        checked={applicationSettings?.lockdownMode ?? false}
-                        disabled={
-                          applicationSettings === null
-                          || updateLockdownMode.isPending
-                          || (!applicationSettings.lockdownAvailable && !applicationSettings.lockdownMode)
-                        }
-                        onChange={(event) => updateLockdownMode.mutate(event.currentTarget.checked)}
-                        role="switch"
-                        type="checkbox"
-                      />
-                      <span aria-hidden="true" />
-                    </span>
-                  </label>
+                  <SettingToggle
+                    setting={settings.lockdown}
+                    description={applicationSettings && !applicationSettings.lockdownAvailable
+                    ? applicationSettings.lockdownMode
+                    ? 'This Mac’s keystore is unavailable. Turn off Lockdown mode to keep using the loaded session.'
+                    : 'Lockdown mode is off because this Mac’s keystore is unavailable.'
+                    : 'Protect the saved session with this Mac’s keystore instead of Rally’s shared encryption key.'}
+                    aria-label="Lockdown mode"
+                    checked={applicationSettings?.lockdownMode ?? false}
+                    disabled={
+                    applicationSettings === null
+                    || updateLockdownMode.isPending
+                    || (!applicationSettings.lockdownAvailable && !applicationSettings.lockdownMode)
+                    }
+                    onChange={(event) => updateLockdownMode.mutate(event.currentTarget.checked)}
+                    role="switch"
+                  />
                 </div>
                 {(applicationSettingsLoadError || updateLockdownMode.error) && (
                   <InlineError>{applicationSettingsLoadError ?? updateLockdownMode.error?.message}</InlineError>
                 )}
                 <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Privacy & diagnostics</h2><p>Control product analytics and detailed crash reporting for your account.</p></div>
                 <div className="settings-list-card">
-                  <label className="settings-preference-row">
-                    <span className="settings-row-icon"><ShieldCheck aria-hidden="true" size={18} /></span>
-                    <span className="settings-row-copy">
-                      <strong>Product analytics</strong>
-                      <small>
-                        Share semantic product usage, sanitized errors and breadcrumbs, and native crash reports. Global telemetry can include your verified name and email so Rally can contact you; EU telemetry stays in Rally’s EU platform. Essential content-free reliability signals continue when this is off.
-                      </small>
-                    </span>
-                    <span className="settings-toggle">
-                      <input
-                        aria-label="Product analytics"
-                        checked={applicationSettings?.productAnalyticsEnabled ?? true}
-                        disabled={
-                          applicationSettings?.productAnalyticsAvailable === false
-                          || applicationSettings === null
-                          || updateProductAnalytics.isPending
-                        }
-                        onChange={(event) => updateProductAnalytics.mutate(event.currentTarget.checked)}
-                        role="switch"
-                        type="checkbox"
-                      />
-                      <span aria-hidden="true" />
-                    </span>
-                  </label>
+                  <SettingToggle
+                    setting={settings.analytics}
+                    aria-label="Product analytics"
+                    checked={applicationSettings?.productAnalyticsEnabled ?? true}
+                    disabled={
+                    applicationSettings?.productAnalyticsAvailable === false
+                    || applicationSettings === null
+                    || updateProductAnalytics.isPending
+                    }
+                    onChange={(event) => updateProductAnalytics.mutate(event.currentTarget.checked)}
+                    role="switch"
+                  />
                 </div>
                 {applicationSettings?.productAnalyticsAvailable === false && (
                   <p className="settings-oauth-status">Product analytics is managed in the Rally desktop app.</p>
@@ -2169,35 +2225,21 @@ export function WorkspaceSettingsScreen({
                 {updateProductAnalytics.error && <InlineError>{updateProductAnalytics.error.message}</InlineError>}
                 <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Appearance</h2><p>Make Rally feel at home on this Mac.</p></div>
                 <ThemePicker />
-                {applicationSettings?.menuBarAvailable !== false && (
+                {isSettingAvailable(settings.menuBar, settingsContext) && (
                   <>
                     <div className="settings-list-card">
-                      <label className="settings-preference-row">
-                        <span className="settings-row-icon"><PanelTop aria-hidden="true" size={18} /></span>
-                        <span className="settings-row-copy">
-                          <strong>Show Rally in the menu bar</strong>
-                          <small>Keep the Rally mark in the menu bar for a new meeting or note, a new automation, what Rally suggests next, and your recent work streams.</small>
-                        </span>
-                        <span className="settings-toggle">
-                          <input
-                            aria-label="Show Rally in the menu bar"
-                            checked={applicationSettings?.menuBarEnabled ?? true}
-                            /* One preference file behind all three toggles, and
-                             * a Lockdown transition holds it for as long as it
-                             * takes to re-encrypt the session. Keep one write in
-                             * flight. */
-                            disabled={
-                              applicationSettings === null
-                              || updateMenuBarEnabled.isPending
-                              || updateLockdownMode.isPending
-                            }
-                            onChange={(event) => updateMenuBarEnabled.mutate(event.currentTarget.checked)}
-                            role="switch"
-                            type="checkbox"
-                          />
-                          <span aria-hidden="true" />
-                        </span>
-                      </label>
+                      <SettingToggle
+                        setting={settings.menuBar}
+                        aria-label="Show Rally in the menu bar"
+                        checked={applicationSettings?.menuBarEnabled ?? true}
+                        disabled={
+                        applicationSettings === null
+                        || updateMenuBarEnabled.isPending
+                        || updateLockdownMode.isPending
+                        }
+                        onChange={(event) => updateMenuBarEnabled.mutate(event.currentTarget.checked)}
+                        role="switch"
+                      />
                     </div>
                     {updateMenuBarEnabled.error && <InlineError>{updateMenuBarEnabled.error.message}</InlineError>}
                     {/* The write succeeded and the item still is not there —
@@ -2215,36 +2257,22 @@ export function WorkspaceSettingsScreen({
                   </>
                 )}
                 <ApplicationIconPicker />
-                {applicationSettings?.launchAtLoginAvailable !== false && (
+                {isSettingAvailable(settings.login, settingsContext) && (
                   <>
                     <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Startup</h2><p>Decide whether this Mac starts Rally for you.</p></div>
                     <div className="settings-list-card">
-                      <label className="settings-preference-row">
-                        <span className="settings-row-icon"><Power aria-hidden="true" size={18} /></span>
-                        <span className="settings-row-copy">
-                          <strong>Open Rally at login</strong>
-                          <small>Start Rally when you log in. With Rally in the menu bar it starts there quietly, with no window; without it, a window opens as usual.</small>
-                        </span>
-                        <span className="settings-toggle">
-                          <input
-                            aria-label="Open Rally at login"
-                            /* macOS owns this, not Rally's preference file, so
-                             * the checked state is what the system reports back
-                             * after the write — which is how a registration it
-                             * is still waiting to have approved shows honestly. */
-                            checked={applicationSettings?.launchAtLogin ?? false}
-                            disabled={
-                              applicationSettings === null
-                              || updateLaunchAtLogin.isPending
-                              || updateLockdownMode.isPending
-                            }
-                            onChange={(event) => updateLaunchAtLogin.mutate(event.currentTarget.checked)}
-                            role="switch"
-                            type="checkbox"
-                          />
-                          <span aria-hidden="true" />
-                        </span>
-                      </label>
+                      <SettingToggle
+                        setting={settings.login}
+                        aria-label="Open Rally at login"
+                        checked={applicationSettings?.launchAtLogin ?? false}
+                        disabled={
+                        applicationSettings === null
+                        || updateLaunchAtLogin.isPending
+                        || updateLockdownMode.isPending
+                        }
+                        onChange={(event) => updateLaunchAtLogin.mutate(event.currentTarget.checked)}
+                        role="switch"
+                      />
                     </div>
                     {updateLaunchAtLogin.error && <InlineError>{updateLaunchAtLogin.error.message}</InlineError>}
                   </>
@@ -2254,35 +2282,22 @@ export function WorkspaceSettingsScreen({
                   * window reloading. It is absent rather than disabled: a
                   * section nobody outside Juno can turn on is not a control
                   * that happens to be unavailable. */}
-                {applicationSettings?.developerSettingsAvailable && (
+                {applicationSettings && isSettingAvailable(settings.debug, settingsContext) && (
                   <>
                     <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Developer</h2><p>Extra tooling for reporting and diagnosing problems.</p></div>
                     <div className="settings-list-card">
-                      <label className="settings-preference-row">
-                        <span className="settings-row-icon"><Wrench aria-hidden="true" size={18} /></span>
-                        <span className="settings-row-copy">
-                          <strong>Debug enabled</strong>
-                          <small>Show debugging actions such as copying a work stream or automation identifier from its right-click menu, and the rows describing how a work stream is wired in its Details.</small>
-                        </span>
-                        <span className="settings-toggle">
-                          <input
-                            aria-label="Debug enabled"
-                            checked={applicationSettings.debugEnabled}
-                            /* A Lockdown transition re-encrypts every durable session
-                             * component, so it stays pending long enough to click this.
-                             * Both preferences write one file; keep one in flight. */
-                            disabled={updateDebugEnabled.isPending || updateLockdownMode.isPending}
-                            onChange={(event) => updateDebugEnabled.mutate(event.currentTarget.checked)}
-                            role="switch"
-                            type="checkbox"
-                          />
-                          <span aria-hidden="true" />
-                        </span>
-                      </label>
+                      <SettingToggle
+                        setting={settings.debug}
+                        aria-label="Debug enabled"
+                        checked={applicationSettings.debugEnabled}
+                        disabled={updateDebugEnabled.isPending || updateLockdownMode.isPending}
+                        onChange={(event) => updateDebugEnabled.mutate(event.currentTarget.checked)}
+                        role="switch"
+                      />
                     </div>
                     {updateDebugEnabled.error && <InlineError>{updateDebugEnabled.error.message}</InlineError>}
                     <div className="settings-pane-heading settings-pane-heading-spaced">
-                      <div><h3>Telemetry inspector</h3><p>Recent contract decisions only. Values and identifiers are always redacted.</p></div>
+                      <div><h3><SettingLabel setting={settings.telemetry} /></h3><p>Recent contract decisions only. Values and identifiers are always redacted.</p></div>
                       <Button
                         aria-label="Refresh telemetry inspector"
                         disabled={telemetryInspectorLoading}
@@ -2312,13 +2327,13 @@ export function WorkspaceSettingsScreen({
                     )}
                   </>
                 )}
-                <div className="settings-pane-heading settings-pane-heading-spaced"><h2>About</h2><p>Build and service details for this Rally installation.</p></div>
+                <div className="settings-pane-heading settings-pane-heading-spaced"><h2><SettingLabel setting={settings.about} /></h2><p>Build and service details for this Rally installation.</p></div>
                 <dl className="settings-diagnostics settings-list-card">
-                  <div><dt>Version</dt><dd>{runtime?.appVersion ?? 'Unknown'}</dd></div>
-                  <div><dt>Build</dt><dd>{runtime?.isPackaged ? 'Installed app' : 'Development'}</dd></div>
-                  <div><dt>Platform</dt><dd>{runtime?.platform ?? 'Unknown'}</dd></div>
-                  <div><dt>Regional API</dt><dd className="mono">{session?.apiBaseUrl ?? api?.baseUrl ?? 'Unavailable'}</dd></div>
-                  <div><dt><Wifi aria-hidden="true" size={14} /> Realtime</dt><dd>Automatic reconnect · hibernating socket</dd></div>
+                  <div><dt><SettingLabel setting={settings.version} /></dt><dd>{runtime?.appVersion ?? 'Unknown'}</dd></div>
+                  <div><dt><SettingLabel setting={settings.build} /></dt><dd>{runtime?.isPackaged ? 'Installed app' : 'Development'}</dd></div>
+                  <div><dt><SettingLabel setting={settings.platform} /></dt><dd>{runtime?.platform ?? 'Unknown'}</dd></div>
+                  <div><dt><SettingLabel setting={settings.api} /></dt><dd className="mono">{session?.apiBaseUrl ?? api?.baseUrl ?? 'Unavailable'}</dd></div>
+                  <div><dt><Wifi aria-hidden="true" size={14} /> <SettingLabel setting={settings.realtime} /></dt><dd>Automatic reconnect · hibernating socket</dd></div>
                 </dl>
               </section>
             )}
@@ -2375,7 +2390,7 @@ export function WorkspaceSettingsScreen({
             <div className="settings-list-card">
               <p>Copy the endpoint and secret now. Rally will not show this secret again.</p>
               <label className="form-field">
-                <span>Endpoint</span>
+                <span><SettingLabel setting={settings.webhookEndpoint} /></span>
                 <input aria-label="Webhook endpoint" readOnly spellCheck={false} value={webhookSecretResult.endpoint} />
               </label>
               <Button onClick={() => {
@@ -2386,7 +2401,7 @@ export function WorkspaceSettingsScreen({
                 {webhookCopied === 'endpoint' ? 'Endpoint copied' : 'Copy endpoint'}
               </Button>
               <label className="form-field">
-                <span>Signing secret</span>
+                <span><SettingLabel setting={settings.webhookSecret} /></span>
                 <input aria-label="Webhook signing secret" readOnly spellCheck={false} type="password" value={webhookSecretResult.signingSecret} />
               </label>
               <Button onClick={() => {
@@ -2403,7 +2418,7 @@ export function WorkspaceSettingsScreen({
           ) : (
             <>
               <label className="form-field" htmlFor="webhook-display-name">
-                <span>Name</span>
+                <span><SettingLabel setting={settings.webhookName} /></span>
                 <input
                   autoFocus
                   id="webhook-display-name"
@@ -2413,7 +2428,7 @@ export function WorkspaceSettingsScreen({
                 />
               </label>
               <label className="form-field" htmlFor="webhook-event-types">
-                <span>Allowed event types <small>(optional)</small></span>
+                <span><SettingLabel setting={settings.webhookEvents} /> <small>(optional)</small></span>
                 <input
                   id="webhook-event-types"
                   onChange={(event) => setWebhookEventTypes(event.currentTarget.value)}
@@ -2458,7 +2473,7 @@ export function WorkspaceSettingsScreen({
           title="Connect an MCP server"
         >
           <label className="form-field" htmlFor="custom-mcp-name">
-            <span>Name</span>
+            <span><SettingLabel setting={settings.mcpName} /></span>
             <input
               autoFocus
               id="custom-mcp-name"
@@ -2470,7 +2485,7 @@ export function WorkspaceSettingsScreen({
             <small>How this connection is listed in Rally. The server is never asked what it is called.</small>
           </label>
           <label className="form-field" htmlFor="custom-mcp-url">
-            <span>Server URL</span>
+            <span><SettingLabel setting={settings.mcpUrl} /></span>
             <input
               id="custom-mcp-url"
               onChange={(event) => setCustomMcpServerUrl(event.currentTarget.value)}
@@ -2481,14 +2496,14 @@ export function WorkspaceSettingsScreen({
             <small>The Streamable HTTP endpoint, over HTTPS. Rally checks it responds before saving anything.</small>
           </label>
           <label className="form-field" htmlFor="custom-mcp-auth-mode">
-            <span>Authorization</span>
+            <span><SettingLabel setting={settings.mcpAuth} /></span>
             <select
               id="custom-mcp-auth-mode"
               onChange={(event) => setCustomMcpAuthMode(event.currentTarget.value as 'oauth' | 'headers')}
               value={customMcpAuthMode}
             >
-              <option value="oauth">Sign in through the server (OAuth)</option>
-              <option value="headers">Send request headers I provide</option>
+              <option value="oauth">{settings.mcpAuth.options[0]}</option>
+              <option value="headers">{settings.mcpAuth.options[1]}</option>
             </select>
             <small>
               {customMcpAuthMode === 'oauth'
@@ -2503,7 +2518,7 @@ export function WorkspaceSettingsScreen({
               {customMcpHeaders.map((header, index) => (
                 <div className="settings-custom-mcp-header-row" key={index}>
                   <label className="form-field">
-                    <span className="sr-only">Header name</span>
+                    <span className="sr-only"><SettingLabel setting={settings.mcpHeaders} /></span>
                     <input
                       aria-label={`Header ${index + 1} name`}
                       onChange={(event) => {
@@ -2521,7 +2536,7 @@ export function WorkspaceSettingsScreen({
                     />
                   </label>
                   <label className="form-field">
-                    <span className="sr-only">Header value</span>
+                    <span className="sr-only"><SettingLabel setting={settings.mcpHeaderValue} /></span>
                     <input
                       aria-label={`Header ${index + 1} value`}
                       autoComplete="off"
@@ -2613,7 +2628,7 @@ export function WorkspaceSettingsScreen({
             </button>
           </section>
           <label className="form-field" htmlFor="granola-workspace-api-key">
-            <span>Workspace API key</span>
+            <span><SettingLabel setting={settings.granolaKey} /></span>
             <input
               aria-label="Workspace API key"
               autoComplete="off"
