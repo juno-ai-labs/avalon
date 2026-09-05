@@ -2616,7 +2616,9 @@ pre {
 
 .conversation-layout { display: flex; height: 100%; min-width: 0; }
 .conversation-layout > .workstream-screen { flex: 1; }
-.workstream-context-sidebar { background: var(--av-cmp-sidebar-background); border-right: 1px solid var(--av-cmp-sidebar-border); display: flex; flex: 0 0 280px; flex-direction: column; min-height: 0; min-width: 0; }
+.workstream-context-sidebar { background: var(--av-cmp-sidebar-background); border-right: 1px solid var(--av-cmp-sidebar-border); display: flex; flex: 0 0 280px; flex-direction: column; min-height: 0; min-width: 0; position: relative; }
+.workstream-context-resizer:hover > .sidebar-resizer-handle { opacity: 1; }
+.conversation-layout:has(> .workstream-context-sidebar.is-resizing) { cursor: col-resize; user-select: none; }
 .workstream-context-sidebar.is-compact { flex-basis: 88px; }
 .workstream-context-toolbar { align-items: center; display: flex; flex: 0 0 44px; justify-content: space-between; padding: 0 12px; }
 .workstream-context-label,

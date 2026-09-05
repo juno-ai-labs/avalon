@@ -66,8 +66,12 @@ fallback; arrival of an artifact never opens a panel. Participant rows open the
 existing management dialog. This sidebar does not add substream navigation.
 
 Its device-local collapse preference is independent of the global sidebar.
-Expanded width is 280px and the icon rail is 88px, matching the existing Grok
-navigation. It temporarily collapses when its enclosing pane cannot fit 280px
+Expanded width defaults to 280px and is draggable between 240px and 400px;
+the icon rail is 88px, matching the existing Grok navigation. Its trailing-edge
+handle also accepts Left/Right keys. Width is persisted separately from global
+navigation. Dragging below 210px collapses it; expanding requires crossing
+220px, retaining the existing ten-pixel hysteresis. It temporarily collapses
+when its enclosing pane cannot fit the preferred width
 plus the existing 424px conversation reservation. Only that pane is observed,
 so collapse cannot change its own measurement and cause oscillation. All paint
 uses the existing light/dark sidebar, row, text, and focus tokens; selectors are
@@ -94,6 +98,16 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-04 — The work-stream sidebar supports direct resizing
+
+The sidebar's icon toggle alone did not provide the requested direct width
+control. Its trailing divider now reuses the navigation grip and width/drag
+thresholds, with pointer capture, cancellation cleanup, keyboard resizing, and
+an independent persisted width. Pointer coordinates are relative to this
+sidebar's leading edge, not the window, so dragging never includes the first
+sidebar's width. The enclosing pane remains the measurement authority and the
+424px conversation reservation still bounds expansion.
 
 ### 2026-09-04 — Work streams gain a collapsible context sidebar
 
