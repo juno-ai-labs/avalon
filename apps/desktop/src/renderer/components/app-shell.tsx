@@ -450,6 +450,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   // rather than resizing to a width nothing is about to show.
   const shellStyle = {
     '--rail-width': `${railWidth}px`,
+    '--conversation-min-width': `${SIDEBAR_CONTENT_MIN_WIDTH}px`,
     '--av-cmp-sidebar-width': `${effectiveSidebarWidth}px`,
   } as CSSProperties;
 

@@ -1,4 +1,5 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
+import * as Dialog from '@radix-ui/react-dialog';
 import {
   Archive,
   ArrowLeft,
@@ -15,6 +16,7 @@ import {
   Plus,
   RefreshCcw,
   UserPlus,
+  X,
 } from 'lucide-react';
 import { classifyAttachmentKind } from '@rally/contracts';
 import { useEffect, useRef, useState, type RefObject } from 'react';
@@ -37,6 +39,13 @@ import { MarkdownBody } from './workstream-blocks';
 import { RailSurface } from './rail-surface';
 
 interface InspectorRailProps {
+  /** Explicit modal host; never reads or opens the parked shell rail. */
+  lightbox?: {
+    resourceId: string | null;
+    returnFocus: HTMLElement;
+    onSelect: (resourceId: string | null) => void;
+    onClose: () => void;
+  };
   error?: string;
   /**
    * Reads a resource's readable preview, so the detail can show what the thing
@@ -188,9 +197,11 @@ function automationStatusLine(automation: WorkstreamAutomationSummary): string {
 function ResourceCards({
   resources,
   onToggleWatch,
+  onSelect,
 }: {
   resources: WorkstreamResource[];
   onToggleWatch?: (resource: WorkstreamResource, enabled: boolean) => void;
+  onSelect?: (resourceId: string) => void;
 }): React.JSX.Element {
   const inspect = useUiStore((state) => state.inspect);
   return (
@@ -199,7 +210,7 @@ function ResourceCards({
         const watch = watchLabel(resource);
         return (
           <li className="rail-card resource-row" key={resource.id}>
-            <button className="rail-card-main" onClick={() => inspect({ type: 'resource', id: resource.id })} type="button">
+            <button className="rail-card-main" onClick={() => onSelect ? onSelect(resource.id) : inspect({ type: 'resource', id: resource.id })} type="button">
               <span className="rail-card-icon"><ResourceIcon type={resource.resourceType} /></span>
               <span><strong>{resource.title}</strong><small>{resource.provider ?? resource.resourceType}</small></span>
             </button>
@@ -670,6 +681,7 @@ function ResourceVersionsMenu({
 }
 
 function InspectorDetail({
+  inspector,
   loadResourceContent,
   workstream,
   onRefreshResource,
@@ -679,8 +691,7 @@ function InspectorDetail({
   InspectorRailProps,
   'loadResourceContent' | 'workstream' | 'onRefreshResource' | 'refreshingResourceId'
   | 'siteArtifacts'
->): React.JSX.Element | null {
-  const inspector = useUiStore((state) => state.inspector);
+> & { inspector: RailInspector | null }): React.JSX.Element | null {
   if (!inspector || !workstream) return null;
   const resource = inspector.type === 'resource' ? workstream.resources.find((item) => item.id === inspector.id) : undefined;
 
@@ -756,10 +767,18 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
   const railOpen = useUiStore((state) => state.railOpen);
   const railVariant = useUiStore((state) => state.railVariant);
   const railWidth = useUiStore((state) => state.railWidth);
-  const inspector = useUiStore((state) => state.inspector);
-  const closeRail = useUiStore((state) => state.closeRail);
+  const storeInspector = useUiStore((state) => state.inspector);
+  const storeCloseRail = useUiStore((state) => state.closeRail);
   const setRailWidth = useUiStore((state) => state.setRailWidth);
-  const inspect = useUiStore((state) => state.inspect);
+  const storeInspect = useUiStore((state) => state.inspect);
+  const inspector: RailInspector | null = props.lightbox
+    ? (props.lightbox.resourceId ? { type: 'resource', id: props.lightbox.resourceId } : null)
+    : storeInspector;
+  const closeRail = props.lightbox?.onClose ?? storeCloseRail;
+  const inspect = (selection: RailInspector | null): void => {
+    if (props.lightbox) props.lightbox.onSelect(selection?.id ?? null);
+    else storeInspect(selection);
+  };
   const resource = inspectedResource(inspector, props.workstream);
   const [archiveTarget, setArchiveTarget] = useState<WorkstreamResource | null>(null);
   const [archiving, setArchiving] = useState(false);
@@ -796,27 +815,17 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
   };
 
   // Keep a closed rail on screen for exactly as long as its fade lasts.
-  if (!railOpen && !props.leaving) return null;
+  if (!props.lightbox && !railOpen && !props.leaving) return null;
 
-  const headerTitle = resource?.title ?? (inspector ? 'Details' : railTitle[railVariant]);
+  const headerTitle = resource?.title ?? (inspector ? 'Details' : props.lightbox ? 'Resources' : railTitle[railVariant]);
 
-  return (
-    <RailSurface
-      className="inspector-rail"
-      dropTarget={props.dropTarget}
-      label={inspector ? 'Inspector detail' : railTitle[railVariant]}
-      leaving={props.leaving}
-      onClose={closeRail}
-      onResize={setRailWidth}
-      resizeLabel="Resize inspector"
-      scrimLabel="Close inspector"
-      width={railWidth}
-    >
+  const content = (
+    <>
       <header className="rail-header window-drag">
         <div className="rail-title window-no-drag">
           {inspector && (
             <IconButton
-              label="Back to context"
+              label={props.lightbox ? 'Back to resources' : 'Back to context'}
               onClick={() => inspect(null)}
             >
               <ArrowLeft size={15} />
@@ -858,19 +867,24 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
               )}
             </>
           )}
-          <IconButton label="Close inspector" onClick={closeRail} ref={closeInspectorRef}><ChevronsRight size={16} /></IconButton>
+          <IconButton label={props.lightbox ? 'Close resource preview' : 'Close inspector'} onClick={closeRail} ref={closeInspectorRef}>{props.lightbox ? <X size={20} /> : <ChevronsRight size={16} />}</IconButton>
         </div>
       </header>
       <div className="rail-scroll">
         {props.error && <div className="rail-inline-error"><InlineError>{props.error}</InlineError></div>}
         {inspector ? (
           <InspectorDetail
+            inspector={inspector}
             {...(props.loadResourceContent ? { loadResourceContent: props.loadResourceContent } : {})}
             onRefreshResource={props.onRefreshResource}
             refreshingResourceId={props.refreshingResourceId}
             {...(props.siteArtifacts ? { siteArtifacts: props.siteArtifacts } : {})}
             workstream={props.workstream}
           />
+        ) : props.lightbox ? (
+          <Section title="Resources" action={<IconButton label="Add resource" onClick={props.onAddResource}><Plus size={14} /></IconButton>}>
+            {props.workstream?.resources.length ? <ResourceCards resources={props.workstream.resources} onSelect={props.lightbox.onSelect} onToggleWatch={props.onToggleWatch} /> : <p className="rail-empty-line">No resources attached</p>}
+          </Section>
         ) : (
           <ContextContent {...props} />
         )}
@@ -897,6 +911,24 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
       >
         {archiveError ? <InlineError>{archiveError}</InlineError> : null}
       </Modal>
-    </RailSurface>
+    </>
   );
+  if (props.lightbox) {
+    const lightbox = props.lightbox;
+    return (
+      <Dialog.Root open onOpenChange={(open) => { if (!open) lightbox.onClose(); }}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="attachment-lightbox-overlay" />
+          <Dialog.Content aria-describedby={undefined} className="attachment-lightbox is-document-viewer resource-lightbox" onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            if (lightbox.returnFocus.isConnected) lightbox.returnFocus.focus();
+          }}>
+            <Dialog.Title className="attachment-lightbox-a11y-title">{headerTitle}</Dialog.Title>
+            {content}
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
+    );
+  }
+  return <RailSurface className="inspector-rail" dropTarget={props.dropTarget} label={inspector ? 'Inspector detail' : railTitle[railVariant]} leaving={props.leaving} onClose={closeRail} onResize={setRailWidth} resizeLabel="Resize inspector" scrimLabel="Close inspector" width={railWidth}>{content}</RailSurface>;
 }
