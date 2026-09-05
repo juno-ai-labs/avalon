@@ -15,7 +15,7 @@ import {
 } from '../lib/mention-draft';
 import { PERSON_MENTION_TYPE } from '../lib/mention-constants';
 import type { MentionIdentity } from '../lib/api';
-import { startPerfTrace, type PerfTrace } from '../lib/perf-trace';
+import { holdCreationTraceUntilSendReady, startPerfTrace, type PerfTrace } from '../lib/perf-trace';
 import { useDraftText } from '../lib/use-draft-text';
 import { draftWithMentionStarted, mentionOptionId, mentionQueryAtCaret, useMentionNavigation } from '../lib/use-mention-navigation';
 import { useFileAttachments } from '../lib/use-file-attachments';
@@ -358,6 +358,7 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
   // already on screen — so what this spans is the round trip behind it. Held in
   // a ref because the mutation's callbacks each run in their own commit.
   const createTrace = useRef<PerfTrace | null>(null);
+  const createStartedAt = useRef<number | null>(null);
   const create = useMutation({
     mutationFn: (input: CreateWorkstreamInput) => {
       // A second create starting while one is in flight would otherwise drop
@@ -365,6 +366,7 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
       createTrace.current?.end({ outcome: 'superseded' });
       const trace = startPerfTrace('workstream_create');
       createTrace.current = trace;
+      createStartedAt.current = performance.now();
       trace.annotate({
         participantCount: input.participantIds.length,
         attachmentCount: input.attachmentIds.length,
@@ -376,6 +378,7 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
         participantIds: input.participantIds,
         ...(input.mentions.length > 0 ? { mentions: input.mentions } : {}),
         requestId: trace.traceId,
+        operationId: trace.traceId,
         ...(input.attachmentIds.length > 0 ? { attachmentIds: input.attachmentIds } : {}),
         ...(input.modelOverride ? { modelOverride: input.modelOverride } : {}),
       }));
@@ -383,6 +386,7 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
     onError: (_error, input) => {
       createTrace.current?.end({ outcome: 'failed' });
       createTrace.current = null;
+      createStartedAt.current = null;
       // Back to the launcher with the words still in it. The optimistic turn
       // stood for a work stream that does not exist, so it cannot stay on
       // screen next to an error about why.
@@ -419,17 +423,18 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
       attachmentDraft.consume(input.attachmentLocalIds);
       createTrace.current?.mark('cache_seed');
       void navigate(`/workstreams/${created.workstream.id}`);
-      // `navigation_requested`, not `navigated`: the route update is scheduled
-      // here and this trace closes before React commits it. The distinction is
-      // small because the surface is optimistic — the person has been looking
-      // at the work stream since the keystroke, so what this measures is the
-      // round trip behind a screen they already have, not a wait for one.
-      createTrace.current?.end({
-        outcome: 'navigation_requested',
+      if (createTrace.current) holdCreationTraceUntilSendReady(
+        createTrace.current,
+        created.workstream.id,
+        '0',
+        createStartedAt.current === null ? 0 : Math.max(0, performance.now() - createStartedAt.current),
+      );
+      createTrace.current?.annotate({
         workstreamId: created.workstream.id,
         harnessRunId: created.harnessRunId,
       });
       createTrace.current = null;
+      createStartedAt.current = null;
     },
   });
 

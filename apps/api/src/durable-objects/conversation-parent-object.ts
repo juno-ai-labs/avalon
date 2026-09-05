@@ -258,7 +258,7 @@ export abstract class ConversationParentDurableObject extends ScheduledDurableOb
   protected abstract admitChildEnvelope(envelope: ConversationEffectEnvelope, now: number): void;
 
   /** Which of a child's effects this parent carries on to the workspace. */
-  protected abstract forwardsChildEffect(effect: ConversationEffect): boolean;
+  protected abstract forwardsChildEffect(substreamId: string, effect: ConversationEffect): boolean;
 
   /** Log fields naming this object, for the outbox drain's records. */
   protected abstract parentLogFields(): Record<string, unknown>;
@@ -383,7 +383,7 @@ export abstract class ConversationParentDurableObject extends ScheduledDurableOb
         return;
       }
 
-      const forwards = this.forwardsChildEffect(envelope.effect);
+      const forwards = this.forwardsChildEffect(substreamId, envelope.effect);
       if (envelope.effect.kind === "directory_common") {
         this.upsertChildProjection("common", substreamId, null, envelope, now);
         const aggregate = this.aggregateCommon();
@@ -618,6 +618,32 @@ export abstract class ConversationParentDurableObject extends ScheduledDurableOb
     return envelope;
   }
 
+  /** Version object-local viewer state without publishing a workspace projection. */
+  protected advanceLocalStateVersion(stateKey: string, state: unknown, now: number): boolean {
+    const encoded = JSON.stringify(state);
+    let hash = 0xcbf29ce484222325n;
+    for (const byte of new TextEncoder().encode(encoded)) {
+      hash ^= BigInt(byte);
+      hash = BigInt.asUintN(64, hash * 0x100000001b3n);
+    }
+    const payloadHash = `fnv1a64:${hash.toString(16).padStart(16, "0")}`;
+    const previous = first(this.parentSql.exec<ProjectionKeyRow>(
+      `SELECT next_version, last_payload_hash FROM projection_keys WHERE projection_key = ?`,
+      stateKey,
+    ));
+    if (previous?.last_payload_hash === payloadHash) return false;
+    const waterline = previous?.next_version ?? 1;
+    this.recordStateChange(stateKey, waterline, { localViewerState: true }, payloadHash, now);
+    this.parentSql.exec(
+      `INSERT INTO projection_keys(projection_key, next_version, last_payload_hash, updated_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(projection_key) DO UPDATE SET next_version = excluded.next_version,
+         last_payload_hash = excluded.last_payload_hash, updated_at = excluded.updated_at`,
+      stateKey, waterline + 1, payloadHash, now,
+    );
+    return true;
+  }
+
   /**
    * Append one immutable state row before its Queue message can exist.
    *
@@ -628,7 +654,7 @@ export abstract class ConversationParentDurableObject extends ScheduledDurableOb
   private recordStateChange(
     stateKey: string,
     waterline: number,
-    effect: ParentEffect,
+    effect: unknown,
     payloadHash: string,
     now: number,
   ): string {

@@ -880,6 +880,25 @@ perform the regional audit/control write explicitly through
 
 ## Changelog
 
+### 2026-09-04: Private work-stream children gain parent and local authority tables
+
+**What changed:** WorkstreamDO migration 7 adds child readiness/title fields,
+retryable preparation receipts, the authoritative per-child roster, and its
+durable membership-effect outbox. SubstreamAgent migration 41 adds the
+per-user/version membership mirror used for socket and command admission.
+
+**Why:** A private non-main conversation needs an authority distinct from both
+the main work-stream participant projection and the child-local product rows.
+The parent decides visibility; the local mirror fences already-issued tickets
+and closes removals without asking the parent on every frame.
+
+**Considered and rejected:** A single global child membership counter. An
+unrelated change to user B would make user A's still-valid receipt appear stale.
+
+**Consequences:** Membership versions advance per `(child, user)`. Reserved and
+failed membership effects are durable but not alarm-eligible; the readiness RPC
+delivers them to the provisioned child before publishing it.
+
 ### 2026-09-03: Automations become conversation parents; the effect legs lose their acknowledgement
 
 **What changed:** `AutomationAgent`'s thirteen-migration database is gone with

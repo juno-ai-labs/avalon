@@ -355,6 +355,24 @@ decided retention policy, not a speculative cache or aggregation layer.
 
 ## Changelog
 
+### 2026-09-04 — Structured child inference carries its full address
+
+**What changed:** The shared structured-inference gateway now accepts explicit
+substream and request identity. Substream context-summary records carry the
+workspace, work stream, nonzero child, and stable preparation-part request ID
+through OpenRouter trace metadata, structured logs, and lakehouse capture.
+
+**Why:** Defaulting every structured work-stream call to substream `0` makes a
+child-summary request look like main-feed inference and breaks exact retry and
+incident correlation.
+
+**Considered and rejected:** Encoding the child only into the schema name or a
+free-form log message. Neither reaches every diagnostic surface or joins the
+request and terminal attempt by canonical conversation identity.
+
+**Consequences:** Callers operating on a child must supply its substream ID;
+existing main-only structured callers remain unchanged.
+
 ### 2026-09-03 — A failed attempt archives what the provider actually said
 
 **What changed:** nothing in this module, which is the point. The harness's

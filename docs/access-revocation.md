@@ -339,6 +339,26 @@ would be a way into somebody else's workspace.
 
 ## Changelog
 
+### 2026-09-04 — Private-child removal has a durable local revocation leg
+
+**What changed:** WorkstreamDO participant add/remove operations persist a
+versioned parent-to-child effect before delivery. SubstreamAgent applies it only
+to an already-provisioned exact child, updates the local participant mirror and
+closes removed readers. Effects for reserved or failed children are not alarm
+work; ready publication first delivers that child's pending initial roster.
+
+**Why:** Closing only on ticket expiry leaves an already-open private branch
+readable after removal, while an unrecorded RPC to the child can be lost between
+the parent write and delivery.
+
+**Considered and rejected:** A plain parent write followed by best-effort RPC,
+and reusing the workspace-wide Queue for this same-object-region relationship.
+The parent outbox is the smaller durable boundary and makes readiness depend on
+the mirror actually existing.
+
+**Consequences:** The per-user membership version, not a global child counter,
+fences tickets; changing user B never invalidates user A's unchanged receipt.
+
 ### 2026-09-04: The walk reaches every automation a person could read, and a lost room
 
 **What changed:** `WorkspaceDO.revokeSocketAccess` names every non-deleted

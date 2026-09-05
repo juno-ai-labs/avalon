@@ -13,6 +13,10 @@ import { getAuth } from "../middleware/auth";
 import { requestFlowSpan } from "../observability/tracing";
 import { ConversationService } from "../services/conversation-service";
 import { telemetryOperationId } from "../telemetry/api-emitter";
+import { SubstreamCreationService } from "../services/substream-creation-service";
+import { SubstreamPreparationPreviewSchema } from "@rally/contracts/substream-creation";
+import { asSubstreamId, asWorkstreamId } from "@rally/contracts";
+import { MutatePrivateChildParticipantResultSchema } from "@rally/contracts/conversation-parent";
 
 const parentParam = z.object({ parentId: IdSchema });
 const resourceParam = parentParam.extend({ resourceId: IdSchema });
@@ -34,6 +38,7 @@ const SocketTicketQuerySchema = z.object({
   afterSequence: z.coerce.number().int().nonnegative().optional(),
   speculative: z.literal("true").transform(() => true).optional(),
 });
+const SubstreamConfirmationSchema = z.strictObject({ substreamId: IdSchema });
 
 /**
  * One parent's conversations, whichever kind of parent it is.
@@ -43,6 +48,56 @@ const SocketTicketQuerySchema = z.object({
  * subscribed to through the same three routes.
  */
 export const conversationRoutes = new Hono<HonoAppEnv>();
+conversationRoutes.post("/:parentId/substreams/prepare", zValidator("param", parentParam), zValidator("json", z.strictObject({
+  operationId: IdSchema,
+  title: z.string().trim().min(1).max(500),
+  throughTurnId: z.string().min(1).nullable(),
+})), async (c) => {
+  const auth = getAuth(c);
+  const parentId = c.req.valid("param").parentId;
+  const operation = await new SubstreamCreationService(c.env, auth).prepare(parentId, c.req.valid("json"));
+  const prepared = operation.preparedContext;
+  if (!prepared) throw new Error("substream_preparation_missing_context");
+  return c.json(SubstreamPreparationPreviewSchema.parse({
+    operationId: operation.operationId, substreamId: operation.substreamId, title: operation.title,
+    context: {
+      source: { workspaceId: auth.workspaceId, workstreamId: asWorkstreamId(parentId), substreamId: asSubstreamId("0") },
+      throughTurnId: prepared.capture?.throughTurnId ?? null,
+      policyRevision: operation.recipe.policy.revision,
+      contentHash: prepared.contentHash,
+      parts: prepared.parts.map((part) => part.content),
+    },
+  }));
+});
+conversationRoutes.post("/:parentId/substreams/confirm", zValidator("param", parentParam), zValidator("json", z.strictObject({
+  operationId: IdSchema,
+})), async (c) => {
+  const result = await new SubstreamCreationService(c.env, getAuth(c)).confirm(
+    c.req.valid("param").parentId, c.req.valid("json").operationId,
+  );
+  return c.json(SubstreamConfirmationSchema.parse(result));
+});
+const childParticipantBody = z.strictObject({ userId: IdSchema, operationId: IdSchema });
+conversationRoutes.post("/:parentId/substreams/cancel", zValidator("param", parentParam), zValidator("json", z.strictObject({
+  operationId: IdSchema,
+})), async (c) => {
+  await new SubstreamCreationService(c.env, getAuth(c)).cancel(c.req.valid("param").parentId, c.req.valid("json").operationId);
+  return c.body(null, 204);
+});
+conversationRoutes.post("/:parentId/substreams/:substreamId/participants", zValidator("param", substreamSocketParam),
+  zValidator("json", childParticipantBody), async (c) => {
+    const param = c.req.valid("param");
+    return c.json(MutatePrivateChildParticipantResultSchema.parse(await new SubstreamCreationService(c.env, getAuth(c)).changeParticipant(
+      param.parentId, param.substreamId, c.req.valid("json"), true,
+    )));
+  });
+conversationRoutes.post("/:parentId/substreams/:substreamId/participants/remove", zValidator("param", substreamSocketParam),
+  zValidator("json", childParticipantBody), async (c) => {
+    const param = c.req.valid("param");
+    return c.json(MutatePrivateChildParticipantResultSchema.parse(await new SubstreamCreationService(c.env, getAuth(c)).changeParticipant(
+      param.parentId, param.substreamId, c.req.valid("json"), false,
+    )));
+  });
 conversationRoutes.get("/:parentId", zValidator("param", parentParam), async (c) => {
   const parentId = c.req.valid("param").parentId;
   const operationId = telemetryOperationId(readRallyHeader((name) => c.req.header(name), RALLY_HEADERS.OPERATION_ID));

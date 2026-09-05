@@ -93,6 +93,36 @@ describe('applyVersionedWorkstreamState', () => {
     expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.title).toBe('Current');
   });
 
+  it('applies a private-child directory push on a newer viewer waterline', () => {
+    const queryClient = new QueryClient();
+    const seed = summary({ privateChildren: [] });
+    applyVersionedWorkstreamState(queryClient, {
+      workstreamId: id,
+      stateVersion: version(5, 5),
+      common: seed,
+      viewer: { privateChildren: [] },
+      seed,
+      visible: true,
+    });
+    const child = {
+      substreamId: '00000000-0000-7000-8000-000000000099',
+      title: 'Ready child',
+      createdByUserId: '00000000-0000-7000-8000-000000000002',
+      createdAt: '2026-09-04T12:00:00.000Z',
+      updatedAt: '2026-09-04T12:00:00.000Z',
+    };
+    const applied = applyVersionedWorkstreamState(queryClient, {
+      workstreamId: id,
+      stateVersion: version(5, 6),
+      common: { privateChildren: [] },
+      viewer: { privateChildren: [child] },
+      visible: true,
+    });
+    expect(applied).toEqual({ commonApplied: false, viewerApplied: true });
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.privateChildren)
+      .toEqual([child]);
+  });
+
   it('resets both tables when an authority generation changes', () => {
     const queryClient = new QueryClient();
     const seed = summary();

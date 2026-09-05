@@ -1,4 +1,5 @@
-import { FileBox, FolderCog, GripVertical, PanelLeftClose, PanelLeftOpen, UserPlus } from 'lucide-react';
+import { FileBox, FolderCog, GripVertical, MessageSquare, PanelLeftClose, PanelLeftOpen, UserPlus } from 'lucide-react';
+import { IconBorderCornerPill, IconPlus } from '@tabler/icons-react';
 import { useLayoutEffect, useRef, useState } from 'react';
 import clsx from 'clsx';
 import type { WorkstreamDetail } from '../lib/types';
@@ -11,9 +12,12 @@ const WIDTH_KEY = 'rally.workstream-sidebar-width';
 const clampWidth = (width: number): number => Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, width));
 
 /** Work-stream navigation only: no second resource query or substream model. */
-export function WorkstreamSidebar({ workstream, presentUserIds, onOpenArtifact, onResources, onParticipants, onFocusTranscript }: {
-  workstream: Pick<WorkstreamDetail, 'id' | 'title' | 'resources' | 'participants'>;
+export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstreamId = '0', onSelectSubstream, onNewSubstream, onOpenArtifact, onResources, onParticipants, onFocusTranscript }: {
+  workstream: Pick<WorkstreamDetail, 'id' | 'title' | 'resources' | 'participants' | 'privateChildren'>;
   presentUserIds: readonly string[];
+  selectedSubstreamId?: string;
+  onSelectSubstream?: (substreamId: string) => void;
+  onNewSubstream?: () => void;
   onOpenArtifact: (id: string, returnFocus: HTMLElement) => void;
   onResources?: (returnFocus: HTMLElement) => void;
   onParticipants: () => void;
@@ -85,16 +89,44 @@ export function WorkstreamSidebar({ workstream, presentUserIds, onOpenArtifact, 
         >{compact ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}</IconButton>
       </div>
       <div className="workstream-context-scroll">
-        {!compact && <button
-          className="workstream-context-row is-current"
-          aria-current="page"
+        <button
+          className={clsx('workstream-context-row workstream-conversation-row', selectedSubstreamId === '0' && 'is-current')}
+          aria-current={selectedSubstreamId === '0' ? 'page' : undefined}
           aria-label={`Go to conversation: ${workstream.title}`}
           title={workstream.title}
           type="button"
-          onClick={onFocusTranscript}
+          onClick={() => { onSelectSubstream?.('0'); onFocusTranscript(); }}
         >
-          <span className="workstream-context-copy"><span>{workstream.title}</span><small>Main conversation</small></span>
-        </button>}
+          {compact && <MessageSquare aria-hidden="true" size={20} />}
+          <span className="workstream-context-copy"><span>Main log</span></span>
+        </button>
+        <div className="workstream-substream-list">
+          {workstream.privateChildren?.map((child) => {
+            const creator = workstream.participants.find((person) => person.id === child.createdByUserId);
+            return (
+              <div className="workstream-substream-branch" key={child.substreamId}>
+                <IconBorderCornerPill aria-hidden="true" className="workstream-substream-connector" size={24} stroke={1.5} />
+                <button
+                  aria-current={selectedSubstreamId === child.substreamId ? 'page' : undefined}
+                  aria-label={`Go to substream: ${child.title}`}
+                  className={clsx('workstream-context-row workstream-conversation-row', selectedSubstreamId === child.substreamId && 'is-current')}
+                  onClick={() => onSelectSubstream?.(child.substreamId)}
+                  title={child.title}
+                  type="button"
+                >
+                  <span className="workstream-substream-avatar" aria-hidden="true">{creator ? <Avatar member={creator} title={null} /> : <MessageSquare size={20} />}</span>
+                  <span className="workstream-context-copy"><span>{child.title}</span></span>
+                </button>
+              </div>
+            );
+          })}
+          {onNewSubstream && <div className="workstream-substream-branch">
+            <IconBorderCornerPill aria-hidden="true" className="workstream-substream-connector" size={24} stroke={1.5} />
+            <button className="workstream-context-row workstream-new-substream" onClick={onNewSubstream} title="New substream" aria-label="New substream" type="button">
+              <span className="workstream-substream-avatar"><IconPlus aria-hidden="true" size={20} stroke={1.5} /></span><span className="workstream-context-copy"><span>New substream</span></span>
+            </button>
+          </div>}
+        </div>
         <section aria-label="Generated artifacts" className="workstream-context-section">
           <h2>Generated artifacts</h2>
           {onResources && <button className="workstream-context-row" aria-label="Manage resources" title="Manage resources" type="button" onClick={(event) => onResources(event.currentTarget)}><span className="workstream-context-resource-icon"><FolderCog size={18} /></span><span className="workstream-context-copy">Manage resources</span></button>}

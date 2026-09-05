@@ -14,6 +14,7 @@ import {
   type TranscriptRangeResult,
 } from '@rally/contracts';
 import type { ConversationParentKind } from '@rally/contracts/conversation-parent';
+import { SubstreamInitialContextSchema, type SubstreamInitialContext } from '@rally/contracts/substream-creation';
 import { type QueryClient, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -82,7 +83,7 @@ export type WorkstreamMessageDeliveryMode = 'steer' | 'queue';
 /** The exact API capability the realtime cache reconciler is allowed to use. */
 export type WorkstreamSocketApi = Pick<
   RallyApi,
-  'getSocketTicket' | 'getWorkstreamControlSocketTicket' | 'getConversation' | 'messageMentionPayload'
+  'getSocketTicket' | 'getWorkstreamControlSocketTicket' | 'messageMentionPayload'
   // Read, not called: which arriving turns are the reader's own.
   | 'viewerUserId'
 >;
@@ -461,10 +462,6 @@ export function applyActiveStreamCheckpoints(
   return nextMessages;
 }
 
-function runMayStillEmitRealtime(status: WorkstreamDetail['harnessStatus']): boolean {
-  return status === 'running' || status === 'scheduled';
-}
-
 export function workstreamDetailQueryKey(
   workstreamId: string,
   substreamId = '0',
@@ -686,6 +683,9 @@ export function detailTranscriptOverlays(
   return elicitations;
 }
 
+export const substreamInitialContextQueryKey = (parentId: string, substreamId: string) =>
+  ['substream-initial-context', parentId, substreamId] as const;
+
 export function useWorkstreamSocket(
   api: WorkstreamSocketApi | null,
   parentId: string,
@@ -837,6 +837,7 @@ export function useWorkstreamSocket(
     }
     const detailQueryKey = workstreamDetailQueryKey(parentId, substreamId);
     const transcriptQueryKey = orderedTranscriptQueryKey(parentId, substreamId);
+    const contextQueryKey = substreamInitialContextQueryKey(parentId, substreamId);
     const overlaysQueryKey = transcriptOverlaysQueryKey(parentId, substreamId);
     let closedByEffect = false;
     const socketTelemetry = realtimeSocketTelemetry('substream_feed');
@@ -915,12 +916,12 @@ export function useWorkstreamSocket(
       queryClient.getQueryData<WorkstreamDetail>(detailQueryKey)?.id === parentId
       && queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
         transcriptQueryKey,
-      ) !== undefined;
+      ) !== undefined
+      && (substreamId === '0' || queryClient.getQueryData(contextQueryKey) !== undefined);
     let openingCompleted = canonicalCachesAvailable();
     let connectGeneration = 0;
     let activeTicketAbort: AbortController | null = null;
     let ticketRequestInFlight = false;
-    let canonicalResyncInFlight = false;
     let canonicalResyncTarget: number | null = null;
     let canonicalResyncActiveStreams: readonly ActiveStreamCheckpoint[] = [];
     /**
@@ -930,6 +931,12 @@ export function useWorkstreamSocket(
      * first will already carry.
      */
     let snapshotRequestInFlight = false;
+    let initialContextSnapshot: {
+      snapshotId: string;
+      sequence: number;
+      chunkCount: number;
+      chunks: Map<number, string>;
+    } | null = null;
     let pendingInputSnapshot: {
       snapshotId: string;
       sequence: number;
@@ -1085,7 +1092,7 @@ export function useWorkstreamSocket(
     // Readiness means the work-stream-specific handler is installed and can
     // hand a command to the room queue. The queue owns reconnecting
     // transport, so this intentionally does not wait for either socket to open.
-    setSendReady(true);
+    setSendReady(substreamId === '0' || queryClient.getQueryData(contextQueryKey) !== undefined);
 
     loadTranscriptRangeRef.current = (input): Promise<TranscriptRangeResult> => {
       if (closedByEffect || accessRevoked || socket?.readyState !== WebSocket.OPEN) {
@@ -1157,6 +1164,39 @@ export function useWorkstreamSocket(
     requestSnapshotRef.current = requestCanonicalSnapshot;
 
     const applyEvent = (event: ServerSocketEvent): void => {
+      if (event.type === 'initial_context_snapshot_chunk') {
+        const assembly = initialContextSnapshot;
+        if (!assembly || assembly.snapshotId !== event.snapshotId || assembly.sequence !== event.sequence) return;
+        if (assembly.chunkCount !== event.chunkCount || event.chunkIndex >= event.chunkCount
+          || assembly.chunks.has(event.chunkIndex)) {
+          initialContextSnapshot = null;
+          queryClient.removeQueries({ queryKey: contextQueryKey, exact: true });
+          setSendReady(false);
+          requestCanonicalSnapshot();
+          return;
+        }
+        assembly.chunks.set(event.chunkIndex, event.json);
+        if (assembly.chunks.size !== assembly.chunkCount) return;
+        try {
+          const json = Array.from(
+            { length: assembly.chunkCount },
+            (_, index) => assembly.chunks.get(index)!,
+          ).join('');
+          const context = SubstreamInitialContextSchema.parse(JSON.parse(json));
+          if (context.source.workstreamId !== parentId || context.source.substreamId !== '0') {
+            throw new Error('substream_initial_context_identity_mismatch');
+          }
+          queryClient.setQueryData<SubstreamInitialContext | null>(contextQueryKey, context);
+          initialContextSnapshot = null;
+          setSendReady(canonicalCachesAvailable());
+        } catch {
+          initialContextSnapshot = null;
+          queryClient.removeQueries({ queryKey: contextQueryKey, exact: true });
+          setSendReady(false);
+          requestCanonicalSnapshot();
+        }
+        return;
+      }
       if (event.type === 'pending_inputs_snapshot_chunk') {
         const assembly = pendingInputSnapshot;
         if (!assembly
@@ -1206,7 +1246,10 @@ export function useWorkstreamSocket(
         return;
       }
       if (event.type === 'resync_required') {
+        initialContextSnapshot = null;
+        queryClient.removeQueries({ queryKey: contextQueryKey, exact: true });
         pendingInputSnapshot = null;
+        setSendReady(false);
         // Range replies are correlated to this exact admitted socket and its
         // snapshot fence. A reconnect cannot answer them, so release callers
         // immediately into their existing retry-after-reconnect path.
@@ -1298,8 +1341,8 @@ export function useWorkstreamSocket(
         return;
       }
       // Once replay history is unavailable, subsequent frames cannot safely be
-      // applied on top of stale state. Reconnect only after the direct REST
-      // snapshot succeeds, retaining the old cursor across failed attempts.
+      // applied on top of stale state. Reconnect from cursor zero and let the
+      // admitted room install one new authoritative socket baseline.
       if (canonicalResyncTarget !== null) return;
       if (event.type === 'transcript_range') {
         const pending = pendingTranscriptRanges.get(event.requestId);
@@ -1368,12 +1411,20 @@ export function useWorkstreamSocket(
           chunkCount: event.pendingInputChunkCount,
           chunks: new Map(),
         };
+        const contextChunkCount = event.initialContextChunkCount ?? 0;
+        initialContextSnapshot = contextChunkCount === 0 ? null : {
+          snapshotId: event.transcript.snapshotId, sequence: event.sequence,
+          chunkCount: contextChunkCount, chunks: new Map(),
+        };
+        if (contextChunkCount === 0) queryClient.setQueryData(contextQueryKey, null);
+        else queryClient.removeQueries({ queryKey: contextQueryKey, exact: true });
         setActiveCompaction(event.activeCompaction);
         queryClient.setQueryData<number>(
           workstreamSocketSnapshotGenerationQueryKey(parentId, substreamId),
           (current) => (current ?? 0) + 1,
         );
         queryClient.setQueryData(workstreamFeedSourceQueryKey(parentId, substreamId), 'socket_snapshot');
+        setSendReady(contextChunkCount === 0);
         const detail = mapWorkstreamDetail(event.workstream);
         queryClient.setQueryData(detailQueryKey, detail);
         // Only a reconciliation requested on this still-contiguous socket can
@@ -1765,7 +1816,6 @@ export function useWorkstreamSocket(
         || accessRevoked
         || openingTerminal
         || ticketRequestInFlight
-        || canonicalResyncInFlight
         || socket?.readyState === REALTIME_SOCKET_CONNECTING
         || socket?.readyState === REALTIME_SOCKET_OPEN
       ) return;
@@ -1858,81 +1908,14 @@ export function useWorkstreamSocket(
       });
       try {
         if (canonicalResyncTarget !== null) {
-          if (substreamId !== '0') {
-            // A child has no parent-workstream REST boot. Reset only this
-            // child's cursor and reconnect from zero so its own object sends
-            // a complete authoritative snapshot.
-            resumeState.lastSequence = 0;
-            effectiveAfterSequence = 0;
-            streamCursors.clear();
-            canonicalResyncTarget = null;
-            canonicalResyncActiveStreams = [];
-          } else {
-            canonicalResyncInFlight = true;
-            try {
-              const targetSequence = canonicalResyncTarget;
-              const canonicalWorkstream = await api.getConversation(parentId, ticketAbort.signal);
-              if (closedByEffect || generation !== connectGeneration) return;
-              const { transcript: canonicalTranscript, ...detail } = canonicalWorkstream;
-              queryClient.setQueryData(detailQueryKey, detail);
-              queryClient.setQueryData(transcriptQueryKey, canonicalTranscript);
-              const mayStillEmitRealtime = runMayStillEmitRealtime(canonicalWorkstream.harnessStatus);
-              setActiveCompaction((current) => mayStillEmitRealtime
-                && current?.harnessRunId === canonicalWorkstream.latestHarnessRunId
-                ? current
-                : null);
-              const validatedActiveStreams = mayStillEmitRealtime
-                ? canonicalResyncActiveStreams.filter((checkpoint) =>
-                    checkpoint.harnessRunId === canonicalWorkstream.latestHarnessRunId)
-                : [];
-              const canonicalMessages = orderedTranscriptMessages(canonicalTranscript, parentId);
-              streamCursors.clear();
-              const authoritativeOverlays = [
-                ...canonicalTranscript.pendingInputs.map((input) => pendingTranscriptInputOverlay(
-                  input,
-                  parentId,
-                  { source: 'socket_snapshot', snapshotId: canonicalTranscript.snapshotId },
-                )),
-                ...activeStreamCheckpointOverlays(
-                  validatedActiveStreams,
-                  parentId,
-                  canonicalTranscript.snapshotId,
-                  canonicalTranscript.snapshotThrough,
-                  streamCursors,
-                ),
-                ...detailTranscriptOverlays(
-                  detail,
-                  canonicalTranscript.snapshotId,
-                  canonicalTranscript.snapshotThrough,
-                  canonicalTranscript.eventSequence,
-                ),
-              ];
-              queryClient.setQueryData<TranscriptOverlay[]>(
-                overlaysQueryKey,
-                (current) => reconcileAuthoritativeTranscriptOverlays(
-                  canonicalMessages,
-                  current,
-                  authoritativeOverlays,
-                ),
-              );
-              void queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
-              resumeState.lastSequence = Math.max(resumeState.lastSequence, targetSequence);
-              if (canonicalResyncTarget === targetSequence) {
-                canonicalResyncTarget = null;
-                canonicalResyncActiveStreams = [];
-              }
-              completeOpeningFromCanonicalCaches();
-              effectiveAfterSequence = resumeState.lastSequence;
-            } finally {
-              canonicalResyncInFlight = false;
-            }
-          }
-          // A newer resync target can arrive only from the socket being closed,
-          // but handle it defensively before issuing another one-time ticket.
-          if (canonicalResyncTarget !== null) {
-            scheduleReconnect();
-            return;
-          }
+          // Main and child conversations recover identically. Reset only the
+          // addressed conversation's retained cursor; the next admitted socket
+          // must answer from its own authority with a complete snapshot.
+          resumeState.lastSequence = 0;
+          effectiveAfterSequence = 0;
+          streamCursors.clear();
+          canonicalResyncTarget = null;
+          canonicalResyncActiveStreams = [];
         }
         const speculative = initialReasonRef.current === 'hover_warmup'
           && !openCommittedRef.current;
@@ -2070,7 +2053,7 @@ export function useWorkstreamSocket(
                 // The first server frame after `subscribe` is the one that
                 // made canonical state renderable. Replay-only events cannot
                 // complete a cacheless open; their deadline stays armed until
-                // a snapshot or bounded REST resync installs both base caches.
+                // a fresh authoritative socket snapshot installs both base caches.
                 trace.mark('first_frame');
                 trace.end({
                   outcome: event.data.type,
@@ -2103,6 +2086,14 @@ export function useWorkstreamSocket(
             'The work stream connection closed while loading transcript ranges.',
           );
           pendingInputSnapshot = null;
+          const contextAssemblyWasIncomplete = initialContextSnapshot !== null;
+          initialContextSnapshot = null;
+          if (contextAssemblyWasIncomplete) {
+            queryClient.removeQueries({ queryKey: contextQueryKey, exact: true });
+            resumeState.lastSequence = 0;
+            openingCompleted = false;
+            setSendReady(false);
+          }
           socket = null;
           if (closeEvent.code === WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE) {
             socketTelemetry.disconnected({

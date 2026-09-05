@@ -43,6 +43,7 @@ interface WorkstreamComposerProps {
   workstream: WorkstreamDetail;
   workspaceId?: string;
   workspaceRegion?: RallyRegion;
+  substreamId?: string;
   members: WorkspaceMember[];
   fileInputRef: RefObject<HTMLInputElement | null>;
   sending: boolean;
@@ -90,6 +91,7 @@ export function WorkstreamComposer({
   workstream,
   workspaceId = 'test-workspace',
   workspaceRegion = 'global',
+  substreamId = '0',
   members,
   fileInputRef,
   sending,
@@ -113,7 +115,7 @@ export function WorkstreamComposer({
     setText,
     mentions: selectedMentions,
     setMentions: setSelectedMentions,
-  } = useDraftText(workstreamDraftKey(workspaceRegion, workspaceId, workstream.id));
+  } = useDraftText(workstreamDraftKey(workspaceRegion, workspaceId, workstream.id, substreamId));
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [slashDismissed, setSlashDismissed] = useState(false);
   const [pendingConfirmation, setPendingConfirmation] = useState<PendingMentionConfirmation | null>(null);

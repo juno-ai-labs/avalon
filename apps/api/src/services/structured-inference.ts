@@ -5,6 +5,7 @@ import {
   type ModelMessage,
   type StructuredModelDiagnostic,
 } from "@rally/agent-harness";
+import { AgentModelRoutingSchema } from "@rally/contracts";
 import type { Env } from "../env";
 import { createDeadline } from "../lib/deadline";
 import { logStructuredEvent } from "../observability/logger";
@@ -28,6 +29,14 @@ type StructuredInferenceRole = Extract<
   | "workstream_description"
   | "workstream_naming"
 >;
+
+type StructuredInferenceSource = StructuredInferenceRole | "substream_context_summary";
+
+function structuredInferenceFeature(source: StructuredInferenceSource): string {
+  return source === "substream_context_summary"
+    ? "substream-context-summary-policy"
+    : AGENT_MODEL_FLAG_KEYS[source];
+}
 
 export async function runEmbeddingInference(
   env: Env,
@@ -134,8 +143,10 @@ export async function runEmbeddingInference(
 export async function runStructuredInference<T>(
   env: Env,
   input: {
-    role: StructuredInferenceRole;
-    context: AgentModelFlagContext;
+    context: AgentModelFlagContext & { substreamId?: string };
+    /** A persisted route bypasses current Flagship targeting and fallback defaults. */
+    routing?: { model: string; fallbackModels: string[] };
+    requestId?: string;
     messages: ModelMessage[];
     schemaName: string;
     jsonSchema: Record<string, unknown>;
@@ -148,10 +159,24 @@ export async function runStructuredInference<T>(
     reasoningEffort?: "none" | "low" | "medium" | "high";
     signal?: AbortSignal;
     onModelResolved?: (model: string) => void;
-  },
-): Promise<{ result: T; model: string }> {
-  const routing = await resolveAgentModelRouting(env, input.role, input.context);
+  } & ({ role: StructuredInferenceRole } | { role: "substream_context_summary"; routing: { model: string; fallbackModels: string[] } }),
+): Promise<{
+  result: T;
+  model: string;
+  requestedModel: string;
+  resolvedModel: string;
+  inputTokens: number | null;
+  outputTokens: number | null;
+}> {
+  const routing = input.routing
+    ? AgentModelRoutingSchema.parse(input.routing)
+    : await resolveAgentModelRouting(env, input.role as StructuredInferenceRole, input.context);
+  const feature = structuredInferenceFeature(input.role);
+  const substreamId = input.context.workstreamId
+    ? input.context.substreamId ?? "0"
+    : undefined;
   input.onModelResolved?.(routing.model);
+  const completion: { diagnostic?: StructuredModelDiagnostic } = {};
   const client = new OpenRouterClient({
     apiKey: env.OPENROUTER_API_KEY,
     primaryModel: routing.model,
@@ -159,13 +184,15 @@ export async function runStructuredInference<T>(
     appName: "Rally",
     traceContext: {
       source: input.role,
-      feature: AGENT_MODEL_FLAG_KEYS[input.role],
+      feature,
       region: env.AVALON_REGION,
       environment: env.APP_ENV,
       ...(env.BUILD_SHA ? { buildSha: env.BUILD_SHA } : {}),
       ...(input.context.workspaceId ? { workspaceId: input.context.workspaceId } : {}),
       ...(input.context.workstreamId ? { workstreamId: input.context.workstreamId } : {}),
+      ...(substreamId ? { substreamId } : {}),
       ...(input.context.userId ? { contextUserId: input.context.userId } : {}),
+      ...(input.requestId ? { requestId: input.requestId } : {}),
     },
   });
   // Most callers are queue consumers and Workflow steps, whose invocation ends
@@ -186,14 +213,14 @@ export async function runStructuredInference<T>(
         user_id: input.context.workspaceId,
         context_user_id: input.context.userId,
         workstream_id: input.context.workstreamId,
-        substream_id: input.context.workstreamId ? "0" : undefined,
+        substream_id: substreamId,
         session_id: input.context.workstreamId
-          ? `${input.context.workstreamId}-0`
+          ? `${input.context.workstreamId}-${substreamId}`
           : undefined,
         trace_id: diagnostic.traceId,
         inference_request_id: diagnostic.inferenceRequestId,
         role: input.role,
-        feature: AGENT_MODEL_FLAG_KEYS[input.role],
+        feature,
         stage: diagnostic.stage,
         schema_name: diagnostic.schemaName,
         provider: "openrouter",
@@ -219,8 +246,11 @@ export async function runStructuredInference<T>(
       ...(input.context.workspaceId ? { workspaceId: input.context.workspaceId } : {}),
       ...(input.context.userId ? { userId: input.context.userId } : {}),
       ...(input.context.workstreamId ? { workstreamId: input.context.workstreamId } : {}),
+      ...(substreamId ? { substreamId } : {}),
+      ...(input.requestId ? { requestId: input.requestId } : {}),
       ...(diagnostic.traceId ? { traceId: diagnostic.traceId } : {}),
     }, diagnostic);
+    if (diagnostic.stage === "complete" && diagnostic.success) completion.diagnostic = diagnostic;
   };
   try {
     const result = await client.structured({
@@ -232,7 +262,18 @@ export async function runStructuredInference<T>(
       signal,
       onDiagnostic,
     });
-    return { result, model: routing.model };
+    const diagnostic = completion.diagnostic;
+    const providerModel = diagnostic?.responsePayload?.model;
+    const requestedModel = diagnostic?.model ?? routing.model;
+    return {
+      result,
+      model: routing.model,
+      requestedModel,
+      resolvedModel: typeof providerModel === "string" && providerModel.length > 0
+        ? providerModel : requestedModel,
+      inputTokens: diagnostic?.inputTokens ?? null,
+      outputTokens: diagnostic?.outputTokens ?? null,
+    };
   } finally {
     deadline.dispose();
   }

@@ -1262,7 +1262,7 @@ describe("Durable Objects in the Workers runtime", () => {
     expect(await runDurableObjectAlarm(stub)).toBe(false);
   });
 
-  it("aggregates common and per-user child projections in the non-agent WorkstreamDO", async () => {
+  it("stores private child projections without changing Main's directory in WorkstreamDO", async () => {
     const stub = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
       workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
     ));
@@ -1308,7 +1308,7 @@ describe("Durable Objects in the Workers runtime", () => {
         last_activity_at: number;
         completed_at: number | null;
       }>(`SELECT exact_state, last_activity_at, completed_at FROM workstream_metadata WHERE id = 1`).one())
-        .toEqual({ exact_state: "running", last_activity_at: Date.parse(later), completed_at: null });
+        .toEqual({ exact_state: "completed", last_activity_at: Date.parse(at), completed_at: Date.parse(at) });
       const effects = state.storage.sql.exec<{ effect_json: string }>(
         `SELECT effect_json FROM substream_user_directory WHERE user_id = ? ORDER BY substream_id`,
         USER_ID,
@@ -1319,12 +1319,12 @@ describe("Durable Objects in the Workers runtime", () => {
       expect(state.storage.sql.exec<{ count: number }>(
         `SELECT COUNT(*) AS count FROM durable_outbox WHERE partition_key IN ('common', ?)`,
         `user:${USER_ID}`,
-      ).one().count).toBe(4);
+      ).one().count).toBe(2);
       expect(state.storage.sql.exec<{ count: number }>(
         `SELECT COUNT(*) AS count FROM workstream_state_changes
           WHERE state_key IN ('common', ?)`,
         `user:${USER_ID}`,
-      ).one().count).toBe(4);
+      ).one().count).toBe(2);
       state.storage.sql.exec(
         `UPDATE durable_outbox SET state = 'inflight' WHERE partition_key = 'common'`,
       );
@@ -1344,12 +1344,8 @@ describe("Durable Objects in the Workers runtime", () => {
         `SELECT source_version, state FROM durable_outbox WHERE partition_key = 'common'
           ORDER BY source_version`,
       ).toArray();
-      // Every aggregate state transition remains independently deliverable.
-      // Queue delivery may duplicate or reorder these rows, so WorkspaceDO
-      // accepts only the greatest waterline for the common state key.
-      expect(replacements).toHaveLength(3);
-      expect(replacements.map((row) => row.source_version)).toEqual([1, 2, 3]);
-      expect(replacements.slice(0, 2).every((row) => row.state === "inflight")).toBe(true);
+      // The later private update is retained locally, not emitted as Main.
+      expect(replacements).toEqual([{ source_version: 1, state: "inflight" }]);
       state.storage.sql.exec(`DELETE FROM durable_outbox`);
     });
   });

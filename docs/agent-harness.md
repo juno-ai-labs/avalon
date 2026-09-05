@@ -216,6 +216,18 @@ All base prompts are rendered by typed, dependency-free functions in `@rally/age
 
 Prompt authority is layered as platform policy, authorized work-stream and automation configuration, current human instructions, then explicitly untrusted provider/resource/tool data. Every run receives a compact, stable-ID-sorted catalog derived only from its already-authorized plugin registry and partitioned into `Currently active` and `Available to load`. Loading a plugin adds its static code-authored guidance under `Active Plugin Instructions` and exposes its exact typed tools on the next model turn. The catalog is stated as capability rather than as a suggestion, because the tools visible on any given turn are only the ones already loaded: an available plugin can answer a question, so consulting the catalog is part of searching, and asking a person for something a listed plugin could look up is a claim that it is unavailable rather than a request for missing input. An agent drafting an automation may use those real connector tools to inspect live provider context; it prefers reads and never performs a provider write merely to test a proposed automation. Remote account labels, resources, and provider content never become trusted plugin prose. User-authored automation draft state remains user-role context.
 
+A new child substream may also begin with an immutable inherited-context seed.
+On the first canonical Bind bootstrap only, the host renders its ordered summary
+and history parts before the child's own turns. Seed material is never a system
+message and never reconstructs tool calls or results, execution receipts, or
+pending inputs. A persisted Bind projection already contains the prefix, and a
+compaction checkpoint has replaced it, so neither path prepends the seed again.
+The `full-history` and `verbatim` recipe identifiers mean all eligible
+participant-authored text with its attribution, mentions, and attachment
+references. They deliberately do not promise tool-history fidelity: even
+participant-safe tool inputs and results are omitted rather than flattened into
+text that could look like a new instruction or reconstruct an action protocol.
+
 ### Behavior policy
 
 The agent acts on clear scoped requests, infers safe defaults, batches independent reads, prefers authorized connectors over public substitutes, and verifies material writes when a read-back path exists. It requests structured input only when a required identifier, permission, connection, timezone, or irreversible choice has no safe default. It never treats a proposed, failed, or ambiguous call as success and never retries an ambiguous write.
@@ -1175,6 +1187,25 @@ Nothing pins `breakerScope`, so deleting that one property from `routePlan` woul
 silently return every test to the shared key while each still passes alone.
 
 ## Changelog
+
+### 2026-09-04: Child seeds enter Bind once as inert context
+
+**What changed:** A fresh child Bind bootstrap reads its immutable initial
+context and prepends a pure model projection of its ordered summary/history
+parts. Historical authorship and attachment references remain visible, while
+no tool protocol or executable action is reconstructed.
+
+**Why:** The child feed and its inference must consume the same frozen seed.
+Treating inherited turns as newly admitted inputs would rerun old instructions;
+prepending after a projection or checkpoint would duplicate them.
+
+**Considered and rejected:** Copying the source Bind transcript, which carries
+live protocol and private state; and placing the summary in the system prompt,
+which would promote historical data into platform authority.
+
+**Consequences:** Only a missing canonical projection with no prior compaction
+reads the seed. Later runs and recovered/compacted loops use their durable Bind
+projection exactly as before.
 
 ### 2026-09-04: A run a tool ended is completed, not an empty answer
 
