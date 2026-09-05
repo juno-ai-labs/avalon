@@ -76,7 +76,7 @@ import { useWorkstreamFeedOpenTelemetry } from '../lib/use-workstream-feed-open-
 import { useWorkstreamSendReadyTelemetry } from '../lib/use-workstream-send-ready-telemetry';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { JumpToLatestButton, RunStoppedNotice } from '../components/conversation-follow';
-import { type RailVariant, useUiStore } from '../lib/ui-store';
+import { RIGHT_SIDEBAR_ENABLED, type RailVariant, useUiStore } from '../lib/ui-store';
 import {
   orderedTranscriptQueryKey,
   type SocketState,
@@ -872,7 +872,7 @@ export function ConversationSurface({
   // from laying out, or starting a fade for, a panel belonging to the stream
   // just left; every path that opens the rail writes the store, and each is
   // honoured from the moment the scope names this stream.
-  const railOpen = storeRailOpen && railScope === id;
+  const railOpen = RIGHT_SIDEBAR_ENABLED && storeRailOpen && railScope === id;
   // A route switch is not a sidebar hand-off: scope the fade to the work stream
   // so the previous stream's inspector never dissolves over the arriving feed.
   const railLeaving = useRailExitFade(railOpen, id);
@@ -1919,7 +1919,7 @@ export function ConversationSurface({
         </div>
       </div>
 
-      <InspectorRail
+      {RIGHT_SIDEBAR_ENABLED && <InspectorRail
         dropTarget={railDrop}
         {...(api ? { loadResourceContent: loadResourceContent } : {})}
         automationsSection={parentKind === 'workstream'}
@@ -1942,7 +1942,7 @@ export function ConversationSurface({
         workstream={displayedDetail}
         workstreamAutomations={workstreamAutomations.data}
         workstreamAutomationsError={workstreamAutomations.error?.message}
-      />
+      />}
 
       <AddParticipantDialog
         current={displayedDetail.participants}

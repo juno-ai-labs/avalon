@@ -5,7 +5,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ProjectSummarySchema, WORKSTREAM_NAMING_GRACE_MS } from '@rally/contracts';
 import type { DesktopApplicationSettings } from '../../common/desktop';
-import type { AutomationSummary, NoteSummary, Workspace, WorkspaceMember, WorkstreamSummary } from '../lib/types';
+import type { AutomationSummary, NoteSummary, Workspace, WorkstreamSummary } from '../lib/types';
 import { formatDateTime } from '../lib/format';
 import { useUiStore } from '../lib/ui-store';
 import { REVEAL_DEADLINE_MS, Sidebar } from './sidebar';
@@ -277,7 +277,27 @@ describe('Sidebar work-stream markers', () => {
     );
   });
 
-  it('keeps the description visible when a legacy preview is empty', () => {
+  it('shows a last-change timestamp only for unread rows and no participant stacks or Command hints', () => {
+    const read = { ...workstream('read-row', 'Read destination', 'completed'), participantUserIds: ['user-1'] };
+    const unread = { ...workstream('unread-row', 'Unread destination', 'completed'), hasUnread: true, preview: 'Do not display this preview' };
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[read, unread]} /></Tooltip.Provider></MemoryRouter>);
+    const readLink = screen.getByRole('link', { name: read.title });
+    const unreadLink = screen.getByRole('link', { name: new RegExp(unread.title, 'u') });
+    expect(readLink.querySelector('time')).toBeNull();
+    expect(unreadLink.querySelector('time')).toHaveAttribute('datetime', unread.lastActivityAt);
+    expect(screen.queryByText(unread.preview)).not.toBeInTheDocument();
+    expect(document.querySelector('.sidebar-workstream-facepile')).toBeNull();
+    fireEvent.keyDown(window, { key: 'Meta', metaKey: true });
+    expect(document.querySelector('.command-shortcut-pill')).toBeNull();
+    expect(readLink).not.toHaveAttribute('aria-keyshortcuts');
+    expect(unreadLink).not.toHaveAttribute('aria-keyshortcuts');
+    fireEvent.keyDown(window, { code: 'Digit2', key: '2', metaKey: true });
+    expect(readLink).not.toHaveClass('is-active');
+    expect(unreadLink).not.toHaveClass('is-active');
+    fireEvent.keyUp(window, { key: 'Meta' });
+  });
+
+  it('omits work-stream descriptions even when the objective is populated', () => {
     const described = {
       ...workstream('described-workstream', 'Daily competitor marketing', 'completed'),
       objective: 'Tracks competitor positioning and campaign changes.',
@@ -297,8 +317,8 @@ describe('Sidebar work-stream markers', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByText('Tracks competitor positioning and campaign changes.'))
-      .toBeVisible();
+    expect(screen.queryByText('Tracks competitor positioning and campaign changes.'))
+      .not.toBeInTheDocument();
   });
 
   it('given a project member, when the accordion opens, then the child is the same work-stream row as the recent list', () => {
@@ -343,7 +363,7 @@ describe('Sidebar work-stream markers', () => {
     for (const row of rows) {
       expect(row).toHaveClass('sidebar-row', 'workstream-row');
       expect(row.querySelector('.sidebar-row-title')).toHaveTextContent('Ship the launch');
-      expect(row.querySelector('.sidebar-row-hint')).toHaveTextContent('Draft the announcement');
+      expect(row.querySelector('.sidebar-row-hint')).toBeNull();
     }
   });
 
@@ -1747,19 +1767,6 @@ describe('Sidebar work-stream markers', () => {
 });
 
 describe('private work streams', () => {
-  const teammate = (id: string, name: string): WorkspaceMember => ({
-    id,
-    name,
-    email: `${id}@example.com`,
-    timezone: 'America/Los_Angeles',
-  });
-  const roster = [
-    teammate('user-1', 'Adam'),
-    teammate('user-2', 'Ari'),
-    teammate('user-3', 'Casey'),
-    teammate('user-4', 'Drew'),
-    teammate('user-5', 'Ellis'),
-  ];
 
   beforeEach(() => {
     window.localStorage.clear();
@@ -1778,7 +1785,6 @@ describe('private work streams', () => {
   function renderWith(
     streams: WorkstreamSummary[],
     onChangeWorkstreamScope?: (workstream: WorkstreamSummary, scope: 'personal' | 'workspace') => Promise<void>,
-    members: WorkspaceMember[] = roster,
   ): void {
     render(
       <MemoryRouter>
@@ -1786,7 +1792,6 @@ describe('private work streams', () => {
           <Sidebar
             {...defaultActions}
             automations={[]}
-            members={members}
             {...(onChangeWorkstreamScope ? { onChangeWorkstreamScope } : {})}
             onSignOut={vi.fn()}
             workspace={workspace}
@@ -1807,60 +1812,7 @@ describe('private work streams', () => {
 
     const row = screen.getByRole('link', { name: /Digest/u });
     expect(screen.queryByLabelText('Private work stream')).not.toBeInTheDocument();
-    expect(row.querySelector('.sidebar-workstream-facepile')).not.toBeNull();
-  });
-
-  it('shows the full participant roster when a personal row contains only the current user', () => {
-    renderWith([{
-      ...workstream('00000000-4000-4000-8000-00000000002c', 'Just me', 'completed'),
-      scope: 'personal',
-      participantUserIds: ['user-1'],
-    }]);
-
-    const row = screen.getByRole('link', { name: /Just me/u });
-    expect(row.querySelector('.avatar-stack')).toHaveAccessibleName('Adam');
-    expect(row.querySelector('.sidebar-workstream-public')).toBeNull();
-  });
-
-  it('paints the full participant roster in a personal row', () => {
-    renderWith([{
-      ...workstream('00000000-4000-4000-8000-00000000002d', 'Pairing', 'completed'),
-      scope: 'personal',
-      participantUserIds: ['user-1', 'user-2'],
-    }]);
-
-    const row = screen.getByRole('link', { name: /Pairing/u });
-    expect(row.querySelector('.avatar-stack')).toHaveAccessibleName('Adam; Ari');
-    expect(row.querySelectorAll('.avatar-stack-item')).toHaveLength(2);
-    expect(row.querySelector('.avatar-overflow')).toBeNull();
-  });
-
-  it('keeps overflow that is other people when the current user was already in the preview', () => {
-    renderWith([{
-      ...workstream('00000000-4000-4000-8000-000000000030', 'Staffing', 'completed'),
-      scope: 'personal',
-      participantUserIds: ['user-1', 'user-5', 'user-4'],
-      participantExtraCount: 2,
-    }]);
-
-    const row = screen.getByRole('link', { name: /Staffing/u });
-    expect(row.querySelector('.avatar-stack')).toHaveAccessibleName('Adam; Ellis; Drew; and 2 more');
-    expect(within(row).getByText('+2')).toBeInTheDocument();
-  });
-
-  it('names each remaining person on hover', async () => {
-    renderWith([{
-      ...workstream('00000000-4000-4000-8000-00000000002e', 'Pairing', 'completed'),
-      scope: 'personal',
-      participantUserIds: ['user-1', 'user-2'],
-    }]);
-
-    const row = screen.getByRole('link', { name: /Pairing/u });
-    const face = row.querySelectorAll('.avatar-stack-item')[1];
-    if (!face) throw new Error('the pairing row rendered no facepile avatar');
-    fireEvent.pointerMove(face, { pointerType: 'mouse' });
-
-    expect(await screen.findByRole('tooltip')).toHaveTextContent('Ari');
+    expect(row.querySelector('.sidebar-workstream-facepile')).toBeNull();
   });
 
   it('explains a public work stream on hover', async () => {
@@ -1885,63 +1837,7 @@ describe('private work streams', () => {
     const row = screen.getByRole('link', { name: /Launch/u });
     expect(row.querySelector('.sidebar-workstream-public')).not.toBeNull();
     expect(screen.queryByLabelText('Private work stream')).not.toBeInTheDocument();
-    expect(row.querySelector('.sidebar-workstream-facepile')).not.toBeNull();
-  });
-
-  it('paints the three newest faces and an overflow for everyone past that', () => {
-    renderWith([{
-      ...workstream('00000000-4000-4000-8000-000000000029', 'Comp review', 'completed'),
-      scope: 'personal',
-      participantUserIds: ['user-5', 'user-4', 'user-3'],
-      participantExtraCount: 2,
-    }]);
-
-    const row = screen.getByRole('link', { name: /Comp review/u });
-    // Five participants, three preview ids (Ellis, Drew, Casey), followed by
-    // the directory's exact overflow count.
-    const stack = row.querySelector('.avatar-stack');
-    expect(stack).toHaveAccessibleName('Ellis; Drew; Casey; and 2 more');
-    expect(stack).toHaveClass('is-grok-cluster');
-    expect(stack).toHaveAttribute('data-visible-count', '3');
-    expect(row.querySelectorAll('.avatar-stack-item')).toHaveLength(3);
-    expect([...row.querySelectorAll('.avatar-stack-item')].map((item) => item.getAttribute('data-grok-shape')))
-      .toEqual(['circle', 'wedge', 'pill']);
-    expect(within(row).getByText('+2')).toBeInTheDocument();
-    expect(within(row).queryByLabelText('Private work stream')).not.toBeInTheDocument();
-    expect(row.querySelector('.sidebar-workstream-public')).toBeNull();
-    expect(row).toHaveAccessibleName(/Comp review/u);
-    expect(row).not.toHaveAccessibleName(/Ellis|Drew|Casey/u);
-  });
-
-  it('counts unresolved preview ids toward the overflow rather than dropping them', () => {
-    renderWith([{
-      ...workstream('00000000-4000-4000-8000-00000000002b', 'Staffing overflow', 'completed'),
-      scope: 'personal',
-      participantUserIds: ['user-5', 'user-4', 'user-missing'],
-      participantExtraCount: 2,
-    }]);
-
-    const row = screen.getByRole('link', { name: /Staffing overflow/u });
-    expect(row.querySelector('.avatar-stack')).toHaveAccessibleName('Ellis; Drew; and 3 more');
-    expect(within(row).getByText('+3')).toBeInTheDocument();
-    expect(row).not.toHaveAccessibleName(/Ellis|Drew/u);
-  });
-
-  it('skips participant ids the roster has not resolved', () => {
-    renderWith(
-      [{
-        ...workstream('00000000-4000-4000-8000-00000000002a', 'Staffing', 'completed'),
-        scope: 'personal',
-        participantUserIds: ['user-missing', 'user-2'],
-      }],
-      undefined,
-      [teammate('user-2', 'Ari')],
-    );
-
-    const row = screen.getByRole('link', { name: /Staffing/u });
-    expect(row.querySelector('.avatar-stack')).toHaveAccessibleName('Ari; and 1 more');
-    expect(row.querySelectorAll('.avatar-stack-item')).toHaveLength(1);
-    expect(within(row).getByText('+1')).toBeInTheDocument();
+    expect(row.querySelector('.sidebar-workstream-facepile')).toBeNull();
   });
 
   it('closes a work stream to the people in it from the right-click menu', async () => {
@@ -2116,112 +2012,6 @@ describe('pinned work streams', () => {
     ]);
 
     expect(pinnedRowTitles()).toEqual([expect.stringContaining('Bravo'), expect.stringContaining('Alpha')]);
-  });
-
-  it('continues Command shortcuts from pinned rows through recent rows while Command is held', () => {
-    render(
-      <MemoryRouter>
-        <Tooltip.Provider>
-          <Sidebar
-            {...defaultActions}
-            automations={[]}
-            notes={[note('note-recent', 'Recent note', '2026-07-31T19:59:00.000Z')]}
-            onSignOut={vi.fn()}
-            workspace={workspace}
-            workstreams={[
-              pinned(workstream('ws-a', 'Pinned 1', 'completed'), 0),
-              pinned(workstream('ws-b', 'Pinned 2', 'completed'), 1),
-              pinned(workstream('ws-c', 'Pinned 3', 'completed'), 2),
-              ...Array.from({ length: 6 }, (_value, index) =>
-                workstream(
-                  `ws-recent-${index + 1}`,
-                  `Recent ${index + 1}`,
-                  'completed',
-                  `2026-07-31T19:${String(58 - index).padStart(2, '0')}:00.000Z`,
-                )),
-            ]}
-          />
-        </Tooltip.Provider>
-      </MemoryRouter>,
-    );
-
-    const section = screen.getByRole('region', { name: 'Pinned' });
-    const links = within(section).getAllByRole('link');
-    expect(document.querySelectorAll('.command-shortcut-pill')).toHaveLength(0);
-    expect(links.map((link) => link.getAttribute('aria-keyshortcuts')))
-      .toEqual(['Meta+1', 'Meta+2', 'Meta+3']);
-    expect(screen.getByRole('link', { name: /Recent note/u })).toHaveAttribute('aria-keyshortcuts', 'Meta+4');
-    expect(screen.getByRole('link', { name: /Recent 1$/u })).toHaveAttribute('aria-keyshortcuts', 'Meta+5');
-    expect(screen.getByRole('link', { name: /Recent 5$/u })).toHaveAttribute('aria-keyshortcuts', 'Meta+9');
-    expect(screen.getByRole('link', { name: /Recent 6$/u })).not.toHaveAttribute('aria-keyshortcuts');
-
-    fireEvent.keyDown(window, { key: 'Meta', metaKey: true });
-    fireEvent.keyDown(window, { key: 'Meta', metaKey: true, repeat: true });
-    const pills = [...document.querySelectorAll('.command-shortcut-pill')];
-    expect(pills.map((pill) => pill.textContent)).toEqual(['⌘1', '⌘2', '⌘3', '⌘4', '⌘5', '⌘6', '⌘7', '⌘8', '⌘9']);
-    // The overlay reuses the automation You / Workspace badge so the two chips
-    // cannot pick up different size or colour. Dropping either class is the
-    // failure this asserts; `toHaveClass` names the missing one.
-    for (const pill of pills) {
-      expect(pill).toHaveClass('badge', 'scope-badge');
-    }
-    expect(reportTelemetryProductIntent).toHaveBeenCalledTimes(1);
-    expect(reportTelemetryProductIntent).toHaveBeenCalledWith({
-      kind: 'command_shortcuts_revealed',
-      availableCount: 9,
-    });
-
-    fireEvent.keyUp(window, { key: 'Meta' });
-    expect(document.querySelectorAll('.command-shortcut-pill')).toHaveLength(0);
-  });
-
-  it('opens the correspondingly ordered pin from the physical number row', () => {
-    renderWith([
-      pinned(workstream('ws-a', 'Alpha', 'completed'), 0),
-      pinned(workstream('ws-b', 'Bravo', 'completed'), 1),
-      pinned(workstream('ws-c', 'Charlie', 'completed'), 2),
-    ]);
-
-    const bravo = screen.getByRole('link', { name: /Bravo/u });
-    expect(bravo).not.toHaveClass('is-active');
-
-    // Symbol-first layouts such as French AZERTY do not report `key: '2'` for
-    // this physical key, but it is still the second key in the advertised row.
-    fireEvent.keyDown(window, { code: 'Digit2', key: 'é', metaKey: true });
-
-    expect(bravo).toHaveClass('is-active');
-    expect(reportTelemetryProductIntent).toHaveBeenCalledWith({
-      kind: 'command_shortcut_used',
-      shortcutNumber: 2,
-      destinationType: 'pinned_workstream',
-    });
-
-    // Holding the key produces repeated keydowns. A repeat for any digit is
-    // ignored rather than pushing another route onto history.
-    fireEvent.keyDown(window, { code: 'Digit3', key: '"', metaKey: true, repeat: true });
-    expect(bravo).toHaveClass('is-active');
-    expect(screen.getByRole('link', { name: /Charlie/u })).not.toHaveClass('is-active');
-  });
-
-  it('opens the recent row immediately after the last pin', () => {
-    renderWith([
-      pinned(workstream('ws-a', 'Alpha', 'completed'), 0),
-      pinned(workstream('ws-b', 'Bravo', 'completed'), 1),
-      pinned(workstream('ws-c', 'Charlie', 'completed'), 2),
-      workstream('ws-digest', 'Digest · 12 Aug · 5:00 PM', 'completed'),
-    ]);
-
-    const digest = screen.getByRole('link', { name: /Digest/u });
-    expect(digest).toHaveAttribute('aria-keyshortcuts', 'Meta+4');
-
-    fireEvent.keyDown(window, { code: 'Digit4', key: '4', metaKey: true });
-
-    expect(digest).toHaveClass('is-active');
-    expect(reportTelemetryProductIntent).toHaveBeenCalledWith({
-      kind: 'command_shortcut_used',
-      shortcutNumber: 4,
-      destinationType: 'recent_workstream',
-    });
   });
 
   it('does not navigate behind an open modal dialog', async () => {

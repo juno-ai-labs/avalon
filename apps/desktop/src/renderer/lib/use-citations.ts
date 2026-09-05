@@ -7,7 +7,6 @@ import { ApiError } from './api';
 import { MAX_RESOURCE_PREVIEW_WAIT_MS, readResourcePreviewText } from './resource-preview';
 import { desktopBridge } from './platform';
 import type { WorkstreamResource } from './types';
-import { useUiStore } from './ui-store';
 
 /**
  * What a citation resolves to, and where clicking one goes.
@@ -65,8 +64,6 @@ export function useCitations({ loadResourceContent, onOpenPreview, resources }: 
   onOpenPreview?: (preview: AttachmentPreview) => void;
   resources: WorkstreamResource[];
 }): CitationContext & { openPreview: NonNullable<CitationContext['openPreview']> } {
-  const inspect = useUiStore((state) => state.inspect);
-  const openRail = useUiStore((state) => state.openRail);
 
   // Socket snapshots may replace the resource array even when none of the
   // citation-facing data changed. Letting that allocation rebuild `local`
@@ -217,6 +214,22 @@ export function useCitations({ loadResourceContent, onOpenPreview, resources }: 
     return read;
   }, [loadResourceContent, local]);
 
+  const openPreview = useCallback((resourceId: string, returnFocus: HTMLElement): void => {
+    const entry = local.get(resourceId);
+    if (!entry || !onOpenPreview) return;
+    onOpenPreview({
+      name: entry.citation.title,
+      ...(entry.citation.mimeType ? { mimeType: entry.citation.mimeType } : {}),
+      loadContent: async (signal) => {
+        if (!entry.contentAvailable || !loadResourceContent) {
+          throw new Error('This resource has no preview available.');
+        }
+        return loadResourceContent(entry.citation.id, signal);
+      },
+      returnFocus,
+    });
+  }, [loadResourceContent, local, onOpenPreview]);
+
   const open = useCallback((target: CitationTarget): void => {
     if (target.scheme === 'external') {
       void desktopBridge().openExternal(target.url);
@@ -225,37 +238,8 @@ export function useCitations({ loadResourceContent, onOpenPreview, resources }: 
     // An identity names somebody, not something openable, and an unknown target
     // names nothing — neither navigates, in any position.
     if (target.scheme !== 'resource') return;
-    // Through the resolver rather than straight from the citation: the rail's
-    // detail is keyed by the resource's own id, and a citation may name it by
-    // its alias instead. An unresolved target opens nothing — the renderer
-    // already leaves it as label text, and this is the same answer.
-    const entry = local.get(target.resourceId);
-    if (!entry) return;
-    // The order is the contract. `openRail` clears the inspector deliberately,
-    // so selecting the resource first would leave the rail showing its list.
-    openRail('context');
-    inspect({ type: 'resource', id: entry.citation.id });
-  }, [inspect, local, openRail]);
-
-  const openPreview = useCallback((resourceId: string, returnFocus: HTMLElement): void => {
-    const entry = local.get(resourceId);
-    if (
-      !entry
-      || !entry.contentAvailable
-      || !loadResourceContent
-      || !onOpenPreview
-      || entry.citation.resourceType === 'generated_site'
-    ) {
-      open({ scheme: 'resource', resourceId });
-      return;
-    }
-    onOpenPreview({
-      name: entry.citation.title,
-      ...(entry.citation.mimeType ? { mimeType: entry.citation.mimeType } : {}),
-      loadContent: (signal) => loadResourceContent(entry.citation.id, signal),
-      returnFocus,
-    });
-  }, [loadResourceContent, local, onOpenPreview, open]);
+    openPreview(target.resourceId, document.activeElement instanceof HTMLElement ? document.activeElement : document.body);
+  }, [openPreview]);
 
   return useMemo(() => ({ open, openPreview, preview, resolve }), [open, openPreview, preview, resolve]);
 }

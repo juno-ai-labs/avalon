@@ -4,6 +4,7 @@ import { ApiError } from './api';
 import type { WorkstreamResource } from './types';
 import { useUiStore } from './ui-store';
 import { useCitations } from './use-citations';
+import type { AttachmentPreview } from '../components/attachments';
 
 const openExternal = vi.hoisted(() => vi.fn(async () => undefined));
 vi.mock('./platform', () => ({ desktopBridge: () => ({ openExternal }) }));
@@ -38,13 +39,15 @@ describe('useCitations', () => {
     });
   });
 
-  it('resolves the alias the model actually reads, and opens the resource it names', () => {
+  it('resolves the alias the model actually reads, and opens the resource it names', async () => {
     // `list_resources` hands the model both the UUID and the short alias, and
     // the citation grammar accepts either spelling — so the alias is what a
     // model writes when it writes one. Resolving only the UUID would drop the
     // chip silently and leave bare label text where a citation was meant.
-    const aliased = { ...DECK, slug: 'amber-crisp-lucid-lantern' };
-    const { result } = renderHook(() => useCitations({ resources: [aliased] }));
+    const aliased = { ...DECK, slug: 'amber-crisp-lucid-lantern', contentAvailable: true };
+    const onOpenPreview = vi.fn<(preview: AttachmentPreview) => void>();
+    const loadResourceContent = vi.fn(async () => new Blob(['deck']));
+    const { result } = renderHook(() => useCitations({ resources: [aliased], onOpenPreview, loadResourceContent }));
 
     expect(result.current.resolve('amber-crisp-lucid-lantern')).toEqual({
       id: 'board-deck',
@@ -55,9 +58,10 @@ describe('useCitations', () => {
 
     act(() => { result.current.open({ scheme: 'resource', resourceId: 'amber-crisp-lucid-lantern' }); });
 
-    // The rail resolves its detail by the resource's own id, so a citation
-    // written with the alias has to arrive there as the id it stands for.
-    expect(useUiStore.getState().inspector).toEqual({ type: 'resource', id: 'board-deck' });
+    const preview = onOpenPreview.mock.calls[0]![0];
+    await preview.loadContent!(new AbortController().signal);
+    expect(loadResourceContent).toHaveBeenCalledWith('board-deck', expect.any(AbortSignal));
+    expect(useUiStore.getState().inspector).toBeNull();
   });
 
   it('resolves nothing for a resource outside the loaded work stream', () => {
@@ -104,16 +108,16 @@ describe('useCitations', () => {
     expect(result.current).toBe(first);
   });
 
-  it('opens the context rail first and selects the resource second', () => {
-    const { result } = renderHook(() => useCitations({ resources: [DECK] }));
+  it('opens unavailable resources in the lightbox without falling back to the rail', async () => {
+    const onOpenPreview = vi.fn<(preview: AttachmentPreview) => void>();
+    const { result } = renderHook(() => useCitations({ resources: [DECK], onOpenPreview }));
 
     act(() => { result.current.open({ scheme: 'resource', resourceId: 'board-deck' }); });
 
-    // The order is the contract: `openRail` deliberately clears the inspector,
-    // so selecting first would leave the rail on its list instead of the detail.
-    expect(useUiStore.getState().railOpen).toBe(true);
-    expect(useUiStore.getState().railVariant).toBe('context');
-    expect(useUiStore.getState().inspector).toEqual({ type: 'resource', id: 'board-deck' });
+    expect(onOpenPreview).toHaveBeenCalledWith(expect.objectContaining({ name: DECK.title }));
+    await expect(onOpenPreview.mock.calls[0]![0].loadContent!(new AbortController().signal)).rejects.toThrow('no preview available');
+    expect(useUiStore.getState().railOpen).toBe(false);
+    expect(useUiStore.getState().inspector).toBeNull();
   });
 
   it('sends an external source to the system browser and never to the rail', () => {
