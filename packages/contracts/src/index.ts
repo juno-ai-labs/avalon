@@ -3029,8 +3029,10 @@ export const WORKSTREAM_NAMING_GRACE_MS = 60_000;
 
 /**
  * One generated work-stream name. Bounded well under the 180 characters a
- * title may hold: the prompt asks for under 60, and the ceiling is here to stop
- * a model that answers the request instead of naming it, not to be aimed at.
+ * title may hold: the prompt asks for forty or less, and the ceiling is here to
+ * stop a model that answers the request instead of naming it, not to be aimed
+ * at — an answer between the two is trimmed to a whole word by the naming
+ * service rather than rejected here, which would leave the work stream unnamed.
  */
 export const WorkstreamNameResultSchema = z.object({
   title: z.string().trim().min(1).max(80)
