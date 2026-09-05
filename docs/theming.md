@@ -116,6 +116,24 @@ serves only generated IDs and enforces the cache's size and integrity checks.
 
 ## Changelog
 
+### 2026-09-05 — Review fixes preserve scaling and keyboard visibility
+
+The base leading is a unitless 20/14 ratio, not an inherited 20px height: larger
+wrapped headings must scale their line boxes. Dark focus uses a lighter blue
+(`#3d91ef`) because the light reference blue disappears on raised dark controls.
+Both appearances use opaque focus rings; quiet rings are thinner, not less
+contrasting. Terminal selection uses the neutral text tone and its domain editor
+retains a visible focus ring and readable 13px monospace type.
+
+Control and surface corner roles now own 8px and 12px respectively; secondary
+control typography owns its 13px size through the same registry. Changing the
+global radius scale was rejected because it would also move feed/sidebar geometry.
+Unused Geist sans declarations and its binary are removed; Geist Mono remains.
+This deliberately supersedes the **2026-08-20 — A theme may bring fonts and a
+document that moves** decision below: the application now follows the native
+system UI family to match the reference, rather than bundling a sans replacement.
+Token tests cover scaling, focus contrast and the narrow platform-font exception.
+
 ### 2026-09-05 — Shared secondary surfaces use the application visual language
 
 **What changed:** System sans-serif and 14px/20px UI type now apply at the
