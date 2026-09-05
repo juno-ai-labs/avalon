@@ -406,6 +406,7 @@ export function WorkstreamScreen(): React.JSX.Element {
           workstream={context.detail}
           presentUserIds={context.presentUserIds}
           onOpenArtifact={context.openArtifact}
+          onResources={context.openResources}
           onParticipants={context.openParticipantDialog}
           onFocusTranscript={context.focusTranscript}
         />

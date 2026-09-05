@@ -708,6 +708,16 @@ The traps, both of which have bitten:
 
 ## Changelog
 
+### 2026-09-04 — Explicit resource clicks use lightboxes
+
+The right shell rail is parked. Artifact and citation clicks open a preview;
+generated sites retain the dedicated native viewer in a resource lightbox.
+File previews expose Resource details there, preserving versions and management.
+Citation hints say "Opens in preview". Missing content shows an unavailable state
+without download, and failed downloads report an error. New embeds never open a
+panel automatically. Earlier rail-host history below does not describe current
+navigation; the retained inspector content is shared with the lightbox.
+
 ### 2026-09-04 — Compact embeds replace glances, inline players, and automatic inspector opening
 
 **What changed and why:** The requested GrokBot presentation replaces the old

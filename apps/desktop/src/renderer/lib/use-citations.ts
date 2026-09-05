@@ -53,7 +53,7 @@ function documentVerdict(error: unknown): boolean {
   return error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 429;
 }
 
-export function useCitations({ loadResourceContent, onOpenPreview, resources }: {
+export function useCitations({ loadResourceContent, onOpenPreview, onOpenResourceDetails, resources }: {
   /**
    * The preview route, or absent on a surface that has none. It is the same
    * read the rail's detail makes, deliberately: the embed card's excerpt and
@@ -61,7 +61,8 @@ export function useCitations({ loadResourceContent, onOpenPreview, resources }: 
    * a second answer about one document.
    */
   loadResourceContent?: (resourceId: string, signal?: AbortSignal) => Promise<Blob>;
-  onOpenPreview?: (preview: AttachmentPreview) => void;
+  onOpenPreview: (preview: AttachmentPreview) => void;
+  onOpenResourceDetails: (resourceId: string, returnFocus: HTMLElement) => void;
   resources: WorkstreamResource[];
 }): CitationContext & { openPreview: NonNullable<CitationContext['openPreview']> } {
 
@@ -216,19 +217,23 @@ export function useCitations({ loadResourceContent, onOpenPreview, resources }: 
 
   const openPreview = useCallback((resourceId: string, returnFocus: HTMLElement): void => {
     const entry = local.get(resourceId);
-    if (!entry || !onOpenPreview) return;
+    if (!entry) return;
+    // Site content is a manifest, not a document. Its dedicated detail mints
+    // access and presents an isolated native viewer; never request conversion.
+    if (entry.citation.resourceType === 'generated_site') {
+      onOpenResourceDetails(entry.citation.id, returnFocus);
+      return;
+    }
     onOpenPreview({
       name: entry.citation.title,
       ...(entry.citation.mimeType ? { mimeType: entry.citation.mimeType } : {}),
-      loadContent: async (signal) => {
-        if (!entry.contentAvailable || !loadResourceContent) {
-          throw new Error('This resource has no preview available.');
-        }
-        return loadResourceContent(entry.citation.id, signal);
-      },
+      ...(entry.contentAvailable && loadResourceContent ? {
+        loadContent: (signal?: AbortSignal) => loadResourceContent(entry.citation.id, signal),
+      } : {}),
+      onDetails: () => onOpenResourceDetails(entry.citation.id, returnFocus),
       returnFocus,
     });
-  }, [loadResourceContent, local, onOpenPreview]);
+  }, [loadResourceContent, local, onOpenPreview, onOpenResourceDetails]);
 
   const open = useCallback((target: CitationTarget): void => {
     if (target.scheme === 'external') {

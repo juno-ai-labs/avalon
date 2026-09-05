@@ -1194,11 +1194,6 @@ export function Sidebar({
     ], groupedAt);
   }, [groupedAtMs, unpinnedWorkstreams, visibleNotes]);
 
-  // The visible destination order is one run: the reader's manually arranged
-  // pins first, then recent work streams and notes in exactly the order the
-  // recency groups render below. Automations and primary actions are outside
-  // this run, so changing either section cannot shift a familiar destination.
-
   const openRename = (workstream: WorkstreamSummary): void => {
     setRenameTarget(workstream);
     setRenameTitle(workstream.title);

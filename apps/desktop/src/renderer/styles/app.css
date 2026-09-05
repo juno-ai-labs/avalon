@@ -925,19 +925,6 @@ pre {
   white-space: nowrap;
 }
 
-.sidebar-workstream-preview-copy {
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  color: var(--av-sys-color-text-subtle);
-  display: -webkit-box;
-  font-size: 13px;
-  font-weight: 420;
-  line-height: 18px;
-  overflow: hidden;
-}
-
-.sidebar-workstream-preview-copy.is-empty { color: var(--av-sys-color-text-muted); }
-
 @keyframes sidebar-workstream-preview-in {
   from { opacity: 0; transform: translateX(-2px); }
   to { opacity: 1; transform: translateX(0); }
@@ -3593,6 +3580,17 @@ pre {
 .attachment-lightbox.is-document-viewer { background: var(--av-sys-color-surface-default); border: .5px solid var(--av-ref-color-line-4); border-radius: 16px; box-shadow: var(--av-sys-elevation-shadow-lg); display: grid; grid-template-rows: 62px minmax(0, 1fr); inset: 6vh 7.5vw; overflow: hidden; }
 .attachment-lightbox-header { align-items: center; border-bottom: .5px solid var(--av-ref-color-line-3); display: grid; gap: 8px; grid-template-columns: minmax(0, 1fr) auto auto auto; padding: 0 14px 0 24px; }
 .attachment-lightbox-header h2 { color: var(--av-sys-color-text-default); font-size: 14px; font-weight: 560; margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attachment-lightbox-header { display: flex; }
+.attachment-lightbox-header h2 { flex: 1; }
+.attachment-media-details { position: absolute; right: 68px; top: 23px; z-index: 3; }
+.resource-lightbox .rail-header { -webkit-app-region: no-drag; padding: 0 14px 0 24px; }
+.resource-lightbox .rail-title h2 { color: var(--av-sys-color-text-default); font-size: 14px; font-weight: 560; }
+.resource-lightbox .rail-scroll { padding: 16px; }
+.resource-lightbox .site-detail-pane { min-height: 280px; }
+/* Menus and confirmation dialogs opened by the resource lightbox sit above it. */
+body:has(.resource-lightbox) .dialog-overlay { z-index: 1002; }
+body:has(.resource-lightbox) .dialog-content { z-index: 1003; }
+body:has(.resource-lightbox) .menu-content { z-index: 1004; }
 .attachment-lightbox-content { min-height: 0; overflow: auto; }
 .attachment-lightbox-content.is-image,
 .attachment-lightbox-content.is-video { align-items: center; display: flex; height: 100%; justify-content: center; overflow: hidden; padding: 52px 72px; }
@@ -3852,7 +3850,7 @@ pre {
    remembered width, so a handle or a header cannot part company with a panel the
    window has capped. Each breakpoint that changes the room available restates
    it. */
-.workspace-shell { --rail-slot: min(var(--rail-width), calc(100vw - var(--av-cmp-sidebar-width) - 24px)); transition: --rail-width 240ms cubic-bezier(.22, 1, .36, 1); }
+.workspace-shell { --rail-max-slot: max(280px, calc(100vw - var(--av-cmp-sidebar-width) - var(--workstream-sidebar-width, 0px) - var(--conversation-min-width))); --rail-slot: min(var(--rail-width), var(--rail-max-slot)); transition: --rail-width 240ms cubic-bezier(.22, 1, .36, 1); }
 /* The column is named `minmax(0, 1fr)` rather than left implicit. An `auto`
    column's minimum is the items' min-content, and a markdown document's
    min-content is its longest unwrapped line — so the panel grew with the file
@@ -4370,7 +4368,7 @@ pre {
 
 @media (max-width: 1180px) {
   .rail-scrim { background: var(--av-sys-color-scrim-subtle); display: block; inset: 0; position: fixed; z-index: 35; }
-  .workspace-shell { --rail-slot: min(var(--rail-width), 560px, calc(100vw - var(--av-cmp-sidebar-width) - 20px)); }
+  .workspace-shell { --rail-max-slot: max(280px, min(560px, calc(100vw - var(--av-cmp-sidebar-width) - 20px))); }
   .rail-surface { box-shadow: var(--av-sys-elevation-shadow-rail-strong); }
   .rail-open .automation-composer-wrap { transform: translateX(calc(-50% + var(--av-cmp-sidebar-width) / 2)); width: calc(100% - var(--av-cmp-sidebar-width) - 60px); }
   .automation-overview-layout { grid-template-columns: 220px minmax(0, 1fr); }
@@ -4396,7 +4394,7 @@ pre {
   .workspace-shell:not(.grokbot-shell) .header-menu-button { display: inline-flex; }
   .mobile-sidebar-trigger { display: none; }
   .workspace-shell:not(.grokbot-shell) .sidebar-resizer { display: none; }
-  .workspace-shell { --rail-slot: min(var(--rail-width), calc(100vw - 16px)); }
+  .workspace-shell { --rail-max-slot: calc(100vw - 16px); }
   .automation-composer-wrap,
   .rail-open .automation-composer-wrap { transform: translateX(-50%); width: calc(100% - 50px); }
   /* The sidebar has left the flow, and with it the 48px title bar that was
@@ -5234,8 +5232,6 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 .workstream-row .sidebar-row-main { align-self: stretch; justify-content: center; }
 .workstream-row .sidebar-row-title { align-items: baseline; color: var(--av-sys-color-text-default); display: flex; font-size: 12px; font-weight: 520; gap: 6px; justify-content: space-between; line-height: 15px; width: 100%; }
 .sidebar-row-title-copy { align-items: center; display: flex; gap: 4px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.workstream-row .sidebar-row-title time { color: var(--av-sys-color-text-muted); flex: 0 0 auto; font-size: 10px; font-weight: 450; }
-.workstream-row .sidebar-row-hint { color: var(--av-sys-color-text-muted); font-size: 10.5px; line-height: 13px; margin-top: 0; }
 .workstream-row.is-active { background: var(--av-sys-color-surface-raised-hover); }
 
 .workstream-header { min-height: 48px; padding: 5px 10px 5px 13px; }
@@ -5332,16 +5328,6 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   font-size: 14px;
   font-weight: 500;
   line-height: 20px;
-}
-.grokbot-shell .workstream-row .sidebar-row-title time {
-  font-size: 12px;
-  font-weight: 420;
-  line-height: 16px;
-}
-.grokbot-shell .workstream-row .sidebar-row-hint {
-  font-size: 13px;
-  font-weight: 420;
-  line-height: 18px;
 }
 .grokbot-shell .sidebar-group h3 {
   color: var(--av-sys-color-text-muted);
@@ -5481,8 +5467,9 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 .composer-send { height: 30px; width: 30px; }
 .rally-mention-icon { align-items: center; background: var(--av-sys-color-text-default); border-radius: var(--av-sys-size-radius-pill); color: var(--av-sys-color-text-on-inverse); display: flex; height: 24px; justify-content: center; width: 24px; }
 
-.workspace-shell.rail-open .main-pane { padding-right: var(--rail-slot); }
-.workspace-shell { --rail-slot: min(var(--rail-width), max(0px, calc(100vw - var(--av-cmp-sidebar-width) - 424px))); }
+@media (min-width: 1181px) {
+  .workspace-shell.rail-open .main-pane { padding-right: var(--rail-slot); }
+}
 .rail-surface {
   animation: rail-open 240ms cubic-bezier(.22, 1, .36, 1);
   min-width: 0;
@@ -5522,6 +5509,7 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   height: 100%;
 }
 @keyframes rail-open { from { width: 0; } to { width: var(--rail-slot); } }
+.rail-resizer > .rail-resizer-limit { height: 0; pointer-events: none; position: fixed; visibility: hidden; width: var(--rail-max-slot); }
 @keyframes rail-close { from { width: var(--rail-slot); } to { width: 0; } }
 @keyframes rail-content-open { from { opacity: 0; } to { opacity: 1; } }
 @keyframes rail-content-close { from { opacity: 1; } to { opacity: 0; } }
