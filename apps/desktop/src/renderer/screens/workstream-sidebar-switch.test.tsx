@@ -1,8 +1,8 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const api = vi.hoisted(() => ({
   clientFeatureFlags: vi.fn(),
@@ -150,6 +150,9 @@ function switchWorkstream(): void {
 describe('the right sidebar does not follow a work-stream switch', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // jsdom has no layout; exercise the expanded sidebar's conversation link.
+    // Compact mode deliberately omits that redundant navigation row.
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1000);
     useUiStore.setState({ railOpen: false, railVariant: 'context', inspector: null });
     api.getWorkspaceMembers.mockResolvedValue([]);
     api.getConnections.mockResolvedValue([]);
@@ -163,6 +166,8 @@ describe('the right sidebar does not follow a work-stream switch', () => {
       workspaceSocketState: 'connected',
     });
   });
+
+  afterEach(() => { vi.restoreAllMocks(); });
 
   it('closes the inspector rail, and drops the document it was showing', async () => {
     renderScreen();
@@ -183,11 +188,11 @@ describe('the right sidebar does not follow a work-stream switch', () => {
   // A route switch must not run the rail's close animation over another work
   // stream's transcript, with the shell holding that stream's feed narrow for
   // as long as it lasted.
-  it('leaves no panel fading over the work stream switched to', async () => {
+  it('keeps the retained inspector dormant even with stale open state and across a route switch', async () => {
     renderScreen();
     await screen.findByRole('button', { name: 'Go to conversation: First work stream', current: 'page' });
     useUiStore.setState({ railOpen: true, inspector: null });
-    await waitFor(() => expect(document.querySelector('.rail-surface')).not.toBeNull());
+    expect(document.querySelector('.rail-surface')).toBeNull();
 
     switchWorkstream();
 

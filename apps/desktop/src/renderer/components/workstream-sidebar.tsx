@@ -5,7 +5,6 @@ import type { WorkstreamDetail } from '../lib/types';
 import { COLLAPSED_SIDEBAR_WIDTH, DEFAULT_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, SIDEBAR_COLLAPSE_DRAG_THRESHOLD, SIDEBAR_CONTENT_MIN_WIDTH, SIDEBAR_EXPAND_DRAG_THRESHOLD } from '../lib/ui-store';
 import { Avatar, IconButton } from './primitives';
 import { ResourceIcon } from './markdown-citations';
-import { WorkstreamGlyph } from './workstream-glyph';
 
 const COLLAPSED_KEY = 'rally.workstream-sidebar-collapsed';
 const WIDTH_KEY = 'rally.workstream-sidebar-width';
@@ -80,7 +79,7 @@ export function WorkstreamSidebar({ workstream, presentUserIds, onOpenArtifact, 
         >{compact ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}</IconButton>
       </div>
       <div className="workstream-context-scroll">
-        <button
+        {!compact && <button
           className="workstream-context-row is-current"
           aria-current="page"
           aria-label={`Go to conversation: ${workstream.title}`}
@@ -88,9 +87,8 @@ export function WorkstreamSidebar({ workstream, presentUserIds, onOpenArtifact, 
           type="button"
           onClick={onFocusTranscript}
         >
-          <WorkstreamGlyph id={workstream.id} size={36} />
           <span className="workstream-context-copy"><span>{workstream.title}</span><small>Main conversation</small></span>
-        </button>
+        </button>}
         <section aria-label="Generated artifacts" className="workstream-context-section">
           <h2>Generated artifacts</h2>
           {artifacts.length === 0 ? (

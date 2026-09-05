@@ -106,12 +106,12 @@ describe('InspectorRail details', () => {
     expect(container.querySelector('.rail-scroll')).not.toBeNull();
     const handle = screen.getByRole('separator', { name: 'Resize inspector' });
 
-    expect(handle).toHaveAttribute('aria-valuenow', '360');
-    fireEvent.keyDown(handle, { key: 'ArrowLeft' });
-    expect(useUiStore.getState().railWidth).toBe(376);
-
+    // The 1024px fixture protects 280px navigation and 424px of conversation.
+    expect(handle).toHaveAttribute('aria-valuenow', '320');
     fireEvent.keyDown(handle, { key: 'ArrowRight' });
-    expect(useUiStore.getState().railWidth).toBe(360);
+    expect(useUiStore.getState().railWidth).toBe(304);
+    fireEvent.keyDown(handle, { key: 'ArrowLeft' });
+    expect(useUiStore.getState().railWidth).toBe(320);
   });
 
   it('shows bounded harness-run metadata while debugging is on', async () => {
