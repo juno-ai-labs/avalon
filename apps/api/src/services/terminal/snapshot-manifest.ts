@@ -20,7 +20,18 @@ export const TERMINAL_SNAPSHOT_PROBES: readonly TerminalSnapshotProbe[] = [
   { id: "npm", command: "npm --version" },
   { id: "pnpm", command: "pnpm --version" },
   { id: "git", command: "git --version" },
-  { id: "git-ca", command: "test -n \"${CURL_CA_BUNDLE:-}\" && test -f \"$CURL_CA_BUNDLE\" && test -s \"$CURL_CA_BUNDLE\" && test -r \"$CURL_CA_BUNDLE\"" },
+  // Daytona advertises its proxy CA only for sandboxes created with a domain
+  // allow list. A full-internet sandbox is not intercepted and needs no extra
+  // trust, so requiring the bundle unconditionally failed every such sandbox —
+  // including ones from the managed snapshot, which is how this was found. It
+  // also meant no workspace on full-internet networking could create a Terminal
+  // sandbox at all: the probe rejected it and the coordinator discarded it.
+  //
+  // The shape here matches `terminalGitCaSetupCommands({ required: false })`,
+  // which is what the repository bootstrap actually runs: wire Git to the bundle
+  // when one is advertised, and accept its absence otherwise. The probe was
+  // stricter than the code it exists to protect.
+  { id: "git-ca", command: "if [ -n \"${CURL_CA_BUNDLE:-}\" ]; then test -f \"$CURL_CA_BUNDLE\" && test -s \"$CURL_CA_BUNDLE\" && test -r \"$CURL_CA_BUNDLE\"; fi" },
   { id: "gh", command: "gh --version" },
   { id: "sudo", command: "sudo -n true" },
 ] as const;
