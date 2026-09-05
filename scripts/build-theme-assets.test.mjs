@@ -270,13 +270,12 @@ test('every theme block declares every token, so data-theme works on any element
 });
 
 /**
- * A family the application only names is a family the platform substitutes, and
- * weight then resolves against whatever it picked — which is why the interface
- * had two usable weights before the files were bundled. A `bundled` source is
- * the fix, and `font-display: block` is what stops the first paint showing the
- * substitute: the file is already local, so the block period never elapses.
+ * Named custom families must ship a face; otherwise weights resolve against an
+ * accidental substitute. Platform UI families are deliberately OS-provided:
+ * bundling a replacement would undo the native typography used by portals and
+ * secondary windows. Keep the exception narrow, not a pass for any unknown font.
  */
-test('every family a theme names is a face the build emits', () => {
+test('every custom family a theme names is a face the build emits', () => {
   const css = generate({ registry, themes });
   const declared = new Set(fontFaces(themes).map((font) => font.family));
 
@@ -287,7 +286,7 @@ test('every family a theme names is a face the build emits', () => {
       if (String(value).startsWith('{')) continue;
       const first = String(value).split(',')[0].replace(/["']/gu, '').trim();
       assert.ok(
-        declared.has(first),
+        declared.has(first) || ['-apple-system', 'system-ui', 'ui-sans-serif', 'ui-monospace'].includes(first),
         `${theme.id}: ${path} leads with ${first}, which no font source provides`,
       );
     }
