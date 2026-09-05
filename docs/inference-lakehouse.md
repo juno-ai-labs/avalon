@@ -355,11 +355,18 @@ decided retention policy, not a speculative cache or aggregation layer.
 
 ## Changelog
 
+### 2026-09-05 — Correct summary request correlation granularity
+
+The preparation request ID is operation-scoped, not part-scoped. The summary
+adapter deliberately receives the creation operation ID; the earlier wording
+incorrectly promised a separate lookup key for every part. No inference routing
+or stored payload format changed.
+
 ### 2026-09-04 — Structured child inference carries its full address
 
 **What changed:** The shared structured-inference gateway now accepts explicit
 substream and request identity. Substream context-summary records carry the
-workspace, work stream, nonzero child, and stable preparation-part request ID
+workspace, work stream, nonzero child, and stable preparation-operation request ID
 through OpenRouter trace metadata, structured logs, and lakehouse capture.
 
 **Why:** Defaulting every structured work-stream call to substream `0` makes a

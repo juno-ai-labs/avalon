@@ -2428,6 +2428,8 @@ export const WorkspaceWorkstreamStateEventSchema = z.strictObject({
  */
 export const WorkstreamControlMetadataSchema = z.strictObject({
   stateVersion: WorkstreamStateVersionSchema,
+  /** Independent of workspace viewer/notification projection ordering. */
+  privateChildrenWaterline: z.number().int().nonnegative().optional(),
   revision: z.number().int().nonnegative(),
   id: IdSchema,
   workspaceId: IdSchema,

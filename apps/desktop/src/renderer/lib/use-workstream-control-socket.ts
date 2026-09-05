@@ -27,7 +27,7 @@ type WorkstreamControlSocketApi = Pick<RallyApi, 'getWorkstreamControlSocketTick
 const HEARTBEAT_MS = 50_000;
 const PONG_TIMEOUT_MS = 15_000;
 
-export type WorkstreamChildDirectory = Pick<WorkstreamControlMetadata, 'privateChildren' | 'stateVersion'>;
+export type WorkstreamChildDirectory = Pick<WorkstreamControlMetadata, 'privateChildren' | 'privateChildrenWaterline' | 'stateVersion'>;
 
 function reconnectDelay(attempt: number): number {
   const ceiling = Math.min(30_000, 750 * 2 ** Math.min(Math.max(attempt, 0), 6));
@@ -180,7 +180,7 @@ export function useWorkstreamControlSocket(
         ...state,
         visible: metadata.viewer.listable,
       });
-      if (metadata.viewer.listable) {
+      if (metadata.viewer.listable || metadata.archivedAt !== null) {
         // This control-owned state may arrive before any feed snapshot. Keep
         // it independent of both the feed detail and paged directory caches.
         queryClient.setQueryData<WorkstreamChildDirectory>(['workstream-children', workstreamId], (current) => {
@@ -188,8 +188,9 @@ export function useWorkstreamControlSocket(
           const stored = current?.stateVersion;
           if (stored && (incoming.authorityGeneration < stored.authorityGeneration
             || (incoming.authorityGeneration === stored.authorityGeneration
-              && incoming.viewerWaterline < stored.viewerWaterline))) return current;
-          return { privateChildren: metadata.privateChildren, stateVersion: incoming };
+              && (metadata.privateChildrenWaterline ?? incoming.viewerWaterline)
+                < (current?.privateChildrenWaterline ?? stored.viewerWaterline)))) return current;
+          return { privateChildren: metadata.privateChildren, privateChildrenWaterline: metadata.privateChildrenWaterline, stateVersion: incoming };
         });
       }
       if (applied.commonApplied) {

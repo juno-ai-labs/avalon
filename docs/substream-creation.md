@@ -96,6 +96,7 @@ the first model context without becoming executable historical work.
   capture is preparation provenance, not a second hidden model-context source.
 - Child membership versions fence signed admission and live commands. Removing
   a participant must invalidate an existing socket as well as future tickets.
+  Re-adding them does not revive an old ticket: its version must match exactly.
 - Child events do not overwrite main-conversation title, activity or roster.
   Child navigation must retain the parent shell while addressing all draft,
   transcript and pending-input state by the selected conversation.
@@ -104,8 +105,10 @@ the first model context without becoming executable historical work.
   its saved workflow input retains the external address. Mixing those identities
   prevents the first instruction from activating.
 - Child discovery uses a dedicated control-owned cache, fenced by authority
-  generation and viewer waterline. Feed snapshots and list-page refreshes cannot
+  generation and `privateChildrenWaterline`. This local `children:<user>` clock
+  never advances the workspace notification `user:<user>` clock. Feed snapshots and list-page refreshes cannot
   erase it, even when control metadata arrives before the first feed snapshot.
+  Archived readable parents retain child navigation even though they are not listable.
 - A canonical reset is socket-only. Reintroducing REST boot recovery would
   create a second baseline authority and resurrect race-prone stale state.
 
@@ -133,7 +136,11 @@ Confirmation cannot be cancelled after its durable claim; it can be resumed.
 
 Source access is checked before capture and again after preparation. Reserved,
 failed or incompletely installed children never become readable. Membership
-mirroring must complete before readiness is published.
+mirroring must complete before readiness is published, including deliveries
+deferred for retry. The parent rechecks authority without an intervening await
+at the prepared-context commit and confirmation transitions. The title is locked
+while a request is pending; editing after failure clears the error and cancels
+the prior attempt once. Cancellation accepts the endpoint's empty 204 response.
 
 Context snapshot frames respect the existing realtime frame-byte limit, rather
 than imposing a new product history cap. Missing or partial baseline data is
@@ -183,6 +190,20 @@ Run the focused suites with the package-local Vitest paths per
 substitute for real-provider latency or window-level acceptance.
 
 ## Changelog
+
+### 2026-09-05 — Review closes authority, delivery and ordering gaps
+
+Child admission now requires current parent access as well as exact-version
+child membership. Preparation commits and confirmation transitions check the
+parent's current authority, and readiness refuses any undelivered membership
+effect. Earlier service-level checks alone left gaps across awaited RPCs.
+Child-only projections are receipted without aggregating a nonexistent Main
+viewer; automation parents keep their local aggregation callbacks. Discovery
+has its own control clock because consuming unpublished workspace viewer
+versions could strand notifications. The creation dialog locks pending inputs,
+clears failed-attempt state on edit and handles cancellation's empty response;
+inviters update the selected child's roster cache on successful admission.
+Regression tests deliberately remove each backend fix to prove these failures.
 
 ### 2026-09-05 — Separate parent sidebar context from child conversation context
 

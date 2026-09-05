@@ -3,6 +3,7 @@ import { IconBorderCornerPill, IconPlus } from '@tabler/icons-react';
 import { useLayoutEffect, useRef, useState } from 'react';
 import clsx from 'clsx';
 import type { WorkstreamDetail } from '../lib/types';
+import type { WorkstreamChildDirectory } from '../lib/use-workstream-control-socket';
 import { COLLAPSED_SIDEBAR_WIDTH, DEFAULT_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, SIDEBAR_COLLAPSE_DRAG_THRESHOLD, SIDEBAR_CONTENT_MIN_WIDTH, SIDEBAR_EXPAND_DRAG_THRESHOLD } from '../lib/ui-store';
 import { Avatar, IconButton } from './primitives';
 import { ResourceIcon } from './markdown-citations';
@@ -13,7 +14,7 @@ const clampWidth = (width: number): number => Math.max(MIN_SIDEBAR_WIDTH, Math.m
 
 /** Work-stream navigation only: no second resource query or substream model. */
 export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstreamId = '0', onSelectSubstream, onNewSubstream, onOpenArtifact, onParticipants, onFocusTranscript }: {
-  workstream: Pick<WorkstreamDetail, 'id' | 'title' | 'resources' | 'participants' | 'privateChildren'>;
+  workstream: Pick<WorkstreamDetail, 'id' | 'title' | 'resources' | 'participants'> & Pick<WorkstreamChildDirectory, 'privateChildren'>;
   presentUserIds: readonly string[];
   selectedSubstreamId?: string;
   onSelectSubstream?: (substreamId: string) => void;

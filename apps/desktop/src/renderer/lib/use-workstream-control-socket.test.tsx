@@ -174,15 +174,19 @@ describe('useWorkstreamControlSocket', () => {
     const privateChildren = [{ substreamId: asSubstreamId('00000000-0000-7000-8000-000000000021'),
       title: 'Private child', createdByUserId: asUserId('00000000-0000-7000-8000-000000000013'),
       createdAt: '2026-09-04T00:00:00.000Z', updatedAt: '2026-09-04T00:00:00.000Z' }];
-    act(() => { socket.open(); socket.message(metadata(4, { privateChildren })); });
+    act(() => { socket.open(); socket.message(metadata(4, { privateChildren, privateChildrenWaterline: 2 })); });
     expect(queryClient.getQueryData(['workstream', workstreamId])).toBeUndefined();
     setCachedWorkstreams(queryClient, [summary()]);
-    act(() => socket.message(metadata(3, { privateChildren: [] })));
+    act(() => socket.message(metadata(5, { privateChildren: [], privateChildrenWaterline: 1 })));
     expect(queryClient.getQueryData<WorkstreamChildDirectory>(['workstream-children', workstreamId])?.privateChildren)
       .toEqual(privateChildren);
-    act(() => socket.message(metadata(5, { privateChildren: [] })));
+    act(() => socket.message(metadata(4, { privateChildren: [], privateChildrenWaterline: 3 })));
     expect(queryClient.getQueryData<WorkstreamChildDirectory>(['workstream-children', workstreamId])?.privateChildren)
       .toEqual([]);
+    act(() => socket.message(metadata(5, { privateChildren, privateChildrenWaterline: 4,
+      archivedAt: '2026-09-05T00:00:00.000Z', viewer: { ...metadata(5).viewer, listable: false } })));
+    expect(queryClient.getQueryData<WorkstreamChildDirectory>(['workstream-children', workstreamId])?.privateChildren)
+      .toEqual(privateChildren);
     act(() => socket.close(1008));
     expect(queryClient.getQueryData(['workstream-children', workstreamId])).toBeUndefined();
   });

@@ -1612,6 +1612,18 @@ directory write at all.
 
 ## Changelog
 
+### 2026-09-05 — Private child projections have an independent local clock
+
+Child discovery uses `children:<user>` state keys and exposes
+`privateChildrenWaterline` on control metadata. Reusing `user:<user>` allocated
+versions that were never forwarded to WorkspaceDO, so later notifications could
+wait for an impossible viewer version. Child projections are still recorded and
+receipted but do not aggregate Main viewers, including child members absent from
+Main. A separate aggregation hook preserves automation lifecycle callbacks even
+when forwarding is disabled. Parent access is checked at prepared-content and
+confirmation commits, and readiness checks all undelivered membership rows,
+including deferred retries rather than only the currently due batch.
+
 ### 2026-09-04 — WorkstreamDO owns private child preparation and membership
 
 **What changed:** Non-main work-stream conversations now reserve a stable child

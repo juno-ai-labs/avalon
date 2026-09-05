@@ -1190,8 +1190,13 @@ export function ConversationSurface({
       await api!.addSubstreamParticipant(id, target, member.id);
       return undefined;
     },
-    onSuccess: (updated, { target }) => {
+    onSuccess: (updated, { target, member }) => {
       if (updated) queryClient.setQueryData(workstreamDetailQueryKey(id, target), updated);
+      else queryClient.setQueryData<WorkstreamDetail>(workstreamDetailQueryKey(id, target), (current) => current ? {
+        ...current,
+        participants: current.participants.some((person) => person.id === member.id)
+          ? current.participants : [...current.participants, member],
+      } : current);
       setParticipantDialogOpen(false);
     },
   });

@@ -803,7 +803,8 @@ export class WorkstreamDO extends ConversationParentDurableObject {
         request.userId, substreamId,
       ));
       return ConversationParentAuthorizeViewerResultSchema.parse({
-        authorized: child?.status === "ready" && child.version !== null,
+        authorized: (row.scope === "workspace" || this.isParticipant(request.userId))
+          && child?.status === "ready" && child.version !== null,
         archived: row.archived_at !== null,
         childStatus: child?.status ?? null,
         membershipVersion: child?.version ?? 0,
@@ -988,6 +989,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     this.state.storage.transactionSync(() => {
       const operation = this.requirePrivateChildPreparation(request.operationId);
       if (operation.creatorUserId !== request.actorUserId) throw new Error("private_child_confirmation_forbidden");
+      if (!this.canRead(request.actorUserId)) throw new Error("private_child_confirmation_forbidden");
       if (operation.status === "failed") throw new Error("private_child_preparation_failed");
       if (operation.status === "preparing") throw new Error("private_child_context_not_prepared");
       if (operation.status === "prepared") {
@@ -1036,6 +1038,8 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     this.assertParent(request.workspaceId, request.parentId);
     const json = JSON.stringify(request.preparedContext);
     const operation = this.requirePrivateChildPreparation(request.operationId);
+    // No await separates this authority check from the prepared-content commit/return.
+    if (!this.canRead(operation.creatorUserId)) throw new Error("private_child_preparation_forbidden");
     if (operation.preparedContext && JSON.stringify(operation.preparedContext) !== json) {
       throw new Error("private_child_context_conflict");
     }
@@ -1066,6 +1070,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     }
     this.state.storage.transactionSync(() => {
       const operation = this.requirePrivateChildPreparation(request.operationId);
+      if (!this.canRead(operation.creatorUserId)) throw new Error("private_child_preparation_forbidden");
       if (operation.status === request.status) return;
       if (operation.status === "ready" || operation.status === "failed") {
         throw new Error("private_child_terminal_status_conflict");
@@ -1076,6 +1081,11 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       if (request.status === "ready" && operation.status !== "confirming") {
         throw new Error("private_child_context_not_prepared");
       }
+      if (request.status === "ready" && first(this.parentSql.exec(
+        `SELECT operation_id FROM private_child_membership_effects
+          WHERE substream_id = ? AND state <> 'delivered' LIMIT 1`,
+        operation.substreamId,
+      ))) throw new Error("private_child_membership_delivery_pending");
       const now = Date.now();
       this.parentSql.exec(
         `UPDATE private_child_preparations SET status = ?, error_code = ?, updated_at = ?
@@ -1472,6 +1482,10 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     return substreamId === "0";
   }
 
+  protected override aggregatesChildProjection(substreamId: string): boolean {
+    return substreamId === "0";
+  }
+
   protected override childCommonProjections(): DirectoryCommonEffect[] {
     return this.parentSql.exec<{ effect_json: string }>(
       `SELECT effect_json FROM substream_directory WHERE substream_id = '0'`,
@@ -1836,6 +1850,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       : null;
     return WorkstreamControlMetadataSchema.parse({
       stateVersion: this.stateVersionForUser(row, userId),
+      privateChildrenWaterline: this.latestStateRow(`children:${userId}`)?.waterline ?? 0,
       revision: row.revision,
       id: row.workstream_id,
       workspaceId: row.workspace_id,
@@ -1902,7 +1917,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
   }
 
   private advancePrivateChildrenVersion(userId: string, now: number): void {
-    this.advanceLocalStateVersion(`user:${userId}`, this.visiblePrivateChildrenForUser(userId), now);
+    this.advanceLocalStateVersion(`children:${userId}`, this.visiblePrivateChildrenForUser(userId), now);
   }
 
   /**
