@@ -112,6 +112,16 @@ uppercase mapping can be longer than the letter it replaces — `ß` becomes `SS
 `ﬁ` becomes `FI` — so a capital added after the cut can hand back 31 characters
 from a cap of 30.
 
+**Thirty is longer than the sidebar row shows.** At the default sidebar width a
+row ellipsizes somewhere around fifteen to seventeen characters — in a captured
+window, `Invoice INV-2291` fits and `Essay on Rust and OCaml` renders as *Essay
+on Rust a…* — so the back half of a thirty-character name is only ever read in
+the work-stream header, the substream list, and the menu bar, which show it in
+full. That does not undercut the measurement behind the number, which was taken
+on stored names, but it does mean the sidebar cannot be the argument for a
+longer cap. It is recorded here because the arithmetic is not obvious from
+either the constant or the row.
+
 Two titles are deliberately longer, because neither was generated: the
 provisional title, which is the person's own first line, and a title a person
 typed. So a sidebar holds both kinds, and nothing downstream may assume a title
@@ -298,13 +308,25 @@ rewrite is not obviously better than a truncation while nobody has compared them
 
 **Consequences:** Changing the length is one constant in the naming service and
 two sentences in the prompt, and they have to move together — the constant feeds
-the JSON Schema the model is handed as well as the cut. The replay that chose
-the number is reproducible: it lifts the prompt from the tree rather than
-carrying a copy, and asserts its normalizer port against this module's own test
-vectors before it calls anything, which is what caught the vectors going stale
-when the cap moved.
+the cut. **The replay that chose the number is not in the repository** — it was a
+scratch script, so the table above is a record of a measurement rather than
+something a reader can re-run, and nobody should go looking for it under
+`scripts/`. What it did, if it is ever worth rebuilding as a fixture-driven
+eval: read the objective of each named work stream out of the Global workspace
+directory, render the prompt by lifting `SYSTEM_PROMPT` out of the tree rather
+than copying it, send the request `runStructuredInference` would send, and count
+how many answers came back over the cap. It held its port of this module's
+normalizer against the test vectors below before calling anything, which is what
+caught those vectors going stale when the cap moved.
 
 ### 2026-09-05 — An apostrophe is elided rather than separating a word
+
+**Superseded on the same branch by the entry above, and never on `main`.** It
+describes the channel-style normalizer, which hyphenated a name and therefore
+had to decide what an apostrophe did; nothing in the current file elides one.
+Kept because [`module-documents.md`](module-documents.md) counts an approach
+abandoned after it was tried as worth recording, and because the commit it
+describes is in this branch's history, which merges rather than squashes.
 
 **What changed:** `normalizeGeneratedTitle` removes `'` and `’` before turning
 everything else a channel name cannot hold into the separator, so `what's rally`
@@ -324,12 +346,19 @@ name in 89 was long enough for the cut to fire at all.
 
 **Consequences:** An apostrophe is the single exception to "everything else
 becomes the separator", and it is in the normalizer rather than the prompt
-because it is a repair, not a rule a model has to follow. The replay is
-reproducible: it lifts each prompt from the tree and from git rather than
-carrying a copy, and asserts both normalizer ports against this file's own test
-vectors before it calls anything.
+because it is a repair, not a rule a model has to follow. The replay behind this
+entry is the scratch script described in the entry above, and is not in the
+repository either.
 
 ### 2026-09-05 — Generated names are channel-style, and forty characters
+
+**Superseded on the same branch by the two entries above, and never on `main`.**
+Read it as the first of three candidates rather than as a state the product was
+ever in: its claim that `sentenceCased` is gone was true only of the intermediate
+commit it describes, and that function is alive today. What it records is why
+channel styling was tried — a column of hyphenated labels scans better than a
+column of sentence fragments — and the shape of the argument that replaced it,
+which is that the team preferred sentence case once both were on screen.
 
 **What changed:** The naming prompt asks for a name written the way a Slack
 channel is — two to four lowercase words joined by hyphens, forty characters or
