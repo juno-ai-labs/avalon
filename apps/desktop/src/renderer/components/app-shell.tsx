@@ -239,16 +239,19 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   const railLeaving = useUiStore((state) => state.railLeaving);
   const sidebarCollapsed = useUiStore((state) => state.sidebarCollapsed);
   const sidebarWidth = useUiStore((state) => state.sidebarWidth);
-  const [sidebarConstrained, setSidebarConstrained] = useState(() => window.innerWidth < sidebarWidth + SIDEBAR_CONTENT_MIN_WIDTH);
+  const contentMinWidth = SIDEBAR_CONTENT_MIN_WIDTH
+    + (openWorkstreamId(location.pathname) ? COLLAPSED_SIDEBAR_WIDTH : 0);
+  const [sidebarConstrained, setSidebarConstrained] = useState(() => window.innerWidth < sidebarWidth + contentMinWidth);
   useEffect(() => {
-    const measure = (): void => setSidebarConstrained(window.innerWidth < sidebarWidth + SIDEBAR_CONTENT_MIN_WIDTH);
+    const measure = (): void => setSidebarConstrained(window.innerWidth < sidebarWidth + contentMinWidth);
     measure();
     window.addEventListener('resize', measure);
     return () => window.removeEventListener('resize', measure);
-  }, [sidebarWidth]);
+  }, [sidebarWidth, contentMinWidth]);
   // GrokBot protects 424px for the conversation. Its saved expanded width is
   // the other half of the breakpoint, so resizing the sidebar also moves the
-  // point at which it becomes an icon rail.
+  // point at which it becomes an icon rail. Existing work streams also need
+  // room for their context rail; other routes keep the original reservation.
   const sidebarCompact = sidebarCollapsed || sidebarConstrained;
   const effectiveSidebarWidth = sidebarCompact ? COLLAPSED_SIDEBAR_WIDTH : sidebarWidth;
   // Replacing rather than pushing, so Back cannot return to an automation that

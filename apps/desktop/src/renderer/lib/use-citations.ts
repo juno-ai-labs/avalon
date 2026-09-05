@@ -64,7 +64,7 @@ export function useCitations({ loadResourceContent, onOpenPreview, resources }: 
   loadResourceContent?: (resourceId: string, signal?: AbortSignal) => Promise<Blob>;
   onOpenPreview?: (preview: AttachmentPreview) => void;
   resources: WorkstreamResource[];
-}): CitationContext {
+}): CitationContext & { openPreview: NonNullable<CitationContext['openPreview']> } {
   const inspect = useUiStore((state) => state.inspect);
   const openRail = useUiStore((state) => state.openRail);
 

@@ -17,8 +17,9 @@ let resized: () => void;
 function setup(detail = workstream) {
   const onOpenArtifact = vi.fn();
   const onParticipants = vi.fn();
-  const view = render(<Tooltip.Provider><div><WorkstreamSidebar workstream={detail} presentUserIds={[person.id]} onOpenArtifact={onOpenArtifact} onParticipants={onParticipants} /><div role="log" tabIndex={0} /></div></Tooltip.Provider>);
-  return { ...view, onOpenArtifact, onParticipants };
+  const onFocusTranscript = vi.fn();
+  const view = render(<Tooltip.Provider><div><WorkstreamSidebar workstream={detail} presentUserIds={[person.id]} onOpenArtifact={onOpenArtifact} onParticipants={onParticipants} onFocusTranscript={onFocusTranscript} /></div></Tooltip.Provider>);
+  return { ...view, onOpenArtifact, onParticipants, onFocusTranscript };
 }
 
 beforeEach(() => {
@@ -60,9 +61,9 @@ describe('WorkstreamSidebar', () => {
   });
 
   it('focuses the conversation and offers participant management', () => {
-    const { onParticipants } = setup();
+    const { onParticipants, onFocusTranscript } = setup();
     fireEvent.click(screen.getByRole('button', { name: 'Launch preparation' }));
-    expect(screen.getByRole('log')).toHaveFocus();
+    expect(onFocusTranscript).toHaveBeenCalledOnce();
     fireEvent.click(screen.getByRole('button', { name: 'Ada Lovelace, viewing now' }));
     expect(onParticipants).toHaveBeenCalledTimes(1);
   });
@@ -150,7 +151,7 @@ describe('WorkstreamSidebar', () => {
 
   it('replaces resources and participants when the selected work stream changes', () => {
     const { rerender, onOpenArtifact, onParticipants } = setup();
-    rerender(<Tooltip.Provider><div><WorkstreamSidebar workstream={{ ...workstream, id: '00000000-0000-7000-8000-000000000022', title: 'Another work stream', resources: [], participants: [] }} presentUserIds={[]} onOpenArtifact={onOpenArtifact} onParticipants={onParticipants} /></div></Tooltip.Provider>);
+    rerender(<Tooltip.Provider><div><WorkstreamSidebar workstream={{ ...workstream, id: '00000000-0000-7000-8000-000000000022', title: 'Another work stream', resources: [], participants: [] }} presentUserIds={[]} onOpenArtifact={onOpenArtifact} onParticipants={onParticipants} onFocusTranscript={vi.fn()} /></div></Tooltip.Provider>);
     expect(screen.getByRole('button', { name: 'Another work stream' })).toHaveAttribute('aria-current', 'page');
     expect(screen.queryByRole('button', { name: 'Open Launch draft.md' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Ada Lovelace/ })).not.toBeInTheDocument();

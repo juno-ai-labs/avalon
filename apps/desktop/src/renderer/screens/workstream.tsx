@@ -412,6 +412,7 @@ export function WorkstreamScreen(): React.JSX.Element {
           presentUserIds={context.presentUserIds}
           onOpenArtifact={context.openArtifact}
           onParticipants={context.openParticipantDialog}
+          onFocusTranscript={context.focusTranscript}
         />
       )}
       renderHeader={(context) => (

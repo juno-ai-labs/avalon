@@ -12,11 +12,12 @@ const WIDTH_KEY = 'rally.workstream-sidebar-width';
 const clampWidth = (width: number): number => Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, width));
 
 /** Work-stream navigation only: no second resource query or substream model. */
-export function WorkstreamSidebar({ workstream, presentUserIds, onOpenArtifact, onParticipants }: {
+export function WorkstreamSidebar({ workstream, presentUserIds, onOpenArtifact, onParticipants, onFocusTranscript }: {
   workstream: Pick<WorkstreamDetail, 'id' | 'title' | 'resources' | 'participants'>;
   presentUserIds: readonly string[];
   onOpenArtifact: (id: string, returnFocus: HTMLElement) => void;
   onParticipants: () => void;
+  onFocusTranscript: () => void;
 }): React.JSX.Element {
   const sidebar = useRef<HTMLElement>(null);
   const [collapsed, setCollapsed] = useState(() => {
@@ -85,7 +86,7 @@ export function WorkstreamSidebar({ workstream, presentUserIds, onOpenArtifact, 
           aria-label={workstream.title}
           title={workstream.title}
           type="button"
-          onClick={() => sidebar.current?.parentElement?.querySelector<HTMLElement>('[role="log"]')?.focus({ preventScroll: true })}
+          onClick={onFocusTranscript}
         >
           <WorkstreamGlyph id={workstream.id} size={36} />
           <span className="workstream-context-copy"><span>{workstream.title}</span><small>Main conversation</small></span>
