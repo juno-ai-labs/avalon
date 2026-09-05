@@ -41,9 +41,8 @@ import { RailSurface } from './rail-surface';
 interface InspectorRailProps {
   /** Explicit modal host; never reads or opens the parked shell rail. */
   lightbox?: {
-    resourceId: string | null;
+    resourceId: string;
     returnFocus: HTMLElement;
-    onSelect: (resourceId: string | null) => void;
     onClose: () => void;
   };
   error?: string;
@@ -776,7 +775,7 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
     : storeInspector;
   const closeRail = props.lightbox?.onClose ?? storeCloseRail;
   const inspect = (selection: RailInspector | null): void => {
-    if (props.lightbox) props.lightbox.onSelect(selection?.id ?? null);
+    if (props.lightbox) props.lightbox.onClose();
     else storeInspect(selection);
   };
   const resource = inspectedResource(inspector, props.workstream);
@@ -823,9 +822,9 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
     <>
       <header className="rail-header window-drag">
         <div className="rail-title window-no-drag">
-          {inspector && (
+          {inspector && !props.lightbox && (
             <IconButton
-              label={props.lightbox ? 'Back to resources' : 'Back to context'}
+              label="Back to context"
               onClick={() => inspect(null)}
             >
               <ArrowLeft size={15} />
@@ -881,10 +880,6 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
             {...(props.siteArtifacts ? { siteArtifacts: props.siteArtifacts } : {})}
             workstream={props.workstream}
           />
-        ) : props.lightbox ? (
-          <Section title="Resources" action={<IconButton label="Add resource" onClick={props.onAddResource}><Plus size={14} /></IconButton>}>
-            {props.workstream?.resources.length ? <ResourceCards resources={props.workstream.resources} onSelect={props.lightbox.onSelect} onToggleWatch={props.onToggleWatch} /> : <p className="rail-empty-line">No resources attached</p>}
-          </Section>
         ) : (
           <ContextContent {...props} />
         )}

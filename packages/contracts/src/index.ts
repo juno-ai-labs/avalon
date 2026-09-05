@@ -2428,6 +2428,8 @@ export const WorkspaceWorkstreamStateEventSchema = z.strictObject({
  */
 export const WorkstreamControlMetadataSchema = z.strictObject({
   stateVersion: WorkstreamStateVersionSchema,
+  /** Independent of workspace viewer/notification projection ordering. */
+  privateChildrenWaterline: z.number().int().nonnegative().optional(),
   revision: z.number().int().nonnegative(),
   id: IdSchema,
   workspaceId: IdSchema,
@@ -2453,6 +2455,14 @@ export const WorkstreamControlMetadataSchema = z.strictObject({
     promptPreview: z.string().min(1).max(WORKSTREAM_WAKEUP_PROMPT_PREVIEW_LENGTH + 1),
   }).nullable(),
   nextTerminalActionAt: TimestampSchema.nullable(),
+  /** Ready non-main conversations this authenticated viewer may open. */
+  privateChildren: z.array(z.strictObject({
+    substreamId: SubstreamIdSchema.refine((value) => value !== "0", "A private child must be nonzero"),
+    title: z.string().min(1).max(500),
+    createdByUserId: UserIdSchema,
+    createdAt: TimestampSchema,
+    updatedAt: TimestampSchema,
+  })).optional(),
   viewer: z.strictObject({
     isParticipant: z.boolean(),
     listable: z.boolean(),
@@ -2644,8 +2654,16 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
      * transcript snapshot already carries the complete set.
      */
     pendingInputChunkCount: z.number().int().nonnegative(),
+    initialContextChunkCount: z.number().int().nonnegative().optional(),
     activeStreams: ActiveStreamCheckpointsSchema.default([]),
     activeCompaction: AgentCompactionStateSchema.nullable().default(null),
+  }).strict(),
+  ServerEventBaseSchema.extend({
+    type: z.literal("initial_context_snapshot_chunk"),
+    snapshotId: z.string().min(1),
+    chunkIndex: z.number().int().nonnegative(),
+    chunkCount: z.number().int().positive(),
+    json: z.string(),
   }).strict(),
   ServerEventBaseSchema.extend({
     type: z.literal("pending_inputs_snapshot_chunk"),

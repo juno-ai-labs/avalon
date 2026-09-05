@@ -1,11 +1,11 @@
-import type { WorkstreamControlMetadata } from '@rally/contracts';
+import { asSubstreamId, asUserId, type WorkstreamControlMetadata } from '@rally/contracts';
 import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook } from '@testing-library/react';
 import type { PropsWithChildren } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { WorkstreamSummary } from './types';
-import { useWorkstreamControlSocket } from './use-workstream-control-socket';
+import { useWorkstreamControlSocket, type WorkstreamChildDirectory } from './use-workstream-control-socket';
 import { setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 
 import type * as TelemetryModule from './telemetry';
@@ -160,6 +160,37 @@ afterEach(() => {
 });
 
 describe('useWorkstreamControlSocket', () => {
+  it('retains child discovery before a feed exists, across list refresh, and rejects stale rosters', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const getWorkstreamControlSocketTicket = vi.fn(async () => ({
+      url: `wss://api.rally.test/socket/workstreams/${workstreamId}`, ticket: 'control-ticket',
+      protocols: socketTicketProtocols('control-ticket'),
+    }));
+    renderHook(() => useWorkstreamControlSocket({ getWorkstreamControlSocketTicket }, workstreamId, true),
+      { wrapper: wrapper(queryClient) });
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    const privateChildren = [{ substreamId: asSubstreamId('00000000-0000-7000-8000-000000000021'),
+      title: 'Private child', createdByUserId: asUserId('00000000-0000-7000-8000-000000000013'),
+      createdAt: '2026-09-04T00:00:00.000Z', updatedAt: '2026-09-04T00:00:00.000Z' }];
+    act(() => { socket.open(); socket.message(metadata(4, { privateChildren, privateChildrenWaterline: 2 })); });
+    expect(queryClient.getQueryData(['workstream', workstreamId])).toBeUndefined();
+    setCachedWorkstreams(queryClient, [summary()]);
+    act(() => socket.message(metadata(5, { privateChildren: [], privateChildrenWaterline: 1 })));
+    expect(queryClient.getQueryData<WorkstreamChildDirectory>(['workstream-children', workstreamId])?.privateChildren)
+      .toEqual(privateChildren);
+    act(() => socket.message(metadata(4, { privateChildren: [], privateChildrenWaterline: 3 })));
+    expect(queryClient.getQueryData<WorkstreamChildDirectory>(['workstream-children', workstreamId])?.privateChildren)
+      .toEqual([]);
+    act(() => socket.message(metadata(5, { privateChildren, privateChildrenWaterline: 4,
+      archivedAt: '2026-09-05T00:00:00.000Z', viewer: { ...metadata(5).viewer, listable: false } })));
+    expect(queryClient.getQueryData<WorkstreamChildDirectory>(['workstream-children', workstreamId])?.privateChildren)
+      .toEqual(privateChildren);
+    act(() => socket.close(1008));
+    expect(queryClient.getQueryData(['workstream-children', workstreamId])).toBeUndefined();
+  });
+
   it('applies complete versioned metadata, clears nullable values, and drops revoked rows', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();

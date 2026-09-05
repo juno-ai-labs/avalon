@@ -65,9 +65,9 @@ uses `useCitations.openPreview` to open the artifact lightbox, including an
 explicit unavailable-preview state rather than an inspector fallback; arrival
 of an artifact never opens a panel. Generated sites open the existing isolated
 native viewer inside a resource lightbox, not the file conversion endpoint.
-**Manage resources** below Generated artifacts opens the complete resource list,
-including incoming sources. File previews offer **Resource details**; the same
-lightbox retains refresh, watch, archive, version history, and Add resource.
+Generated artifacts has no **Manage resources** button or resource-list popup.
+File previews still offer individual **Resource details**; their lightbox retains
+refresh, watch, archive and version history, but no navigation to a resource list.
 Changing conversations closes both lightboxes and pending resource dialogs.
 Participant rows open the
 existing management dialog. This sidebar does not add substream navigation.
@@ -105,6 +105,49 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-05 — Optically align substream connectors
+
+Shift the flipped Tabler connector up eight pixels so its right-hand endpoint,
+not its SVG box, meets the button's vertical center. This applies equally to
+existing substreams and New substream, without changing row spacing or color.
+
+### 2026-09-05 — Remove the resource-management entry point and popup
+
+Removed the center-sidebar management button, its host callback, and the resource
+list mode of the lightbox at product request. Individual artifact previews and
+details remain; the parked right-sidebar architecture is unchanged. A detail
+lightbox cannot navigate back into the removed management list.
+
+### 2026-09-05 — Keep the center sidebar at work-stream scope
+
+The work-stream host supplies its live parent detail separately from the selected
+conversation. Sidebar artifacts, participant rows, previews and management actions
+use that parent detail and update the parent cache, even on a direct child link.
+This avoids replacing shared navigation with a private child's inventory or roster.
+The feed, its citations, composer and private membership remain child-addressed;
+the sidebar does not aggregate or publish private child resources. Parent-resource
+uploads from a child return to Main log, where the work-stream attachment draft
+lives, rather than silently placing a shared upload in the private composer.
+
+### 2026-09-04 — Address private substreams throughout the desktop surface
+
+**What changed:** The work-stream sidebar now lists viewer-visible private
+children from the parent control socket, keeps Main as an explicit destination,
+and opens a two-step prepare/preview/confirm dialog. Child selection stays under
+the parent route while socket caches, initial context, attachments, text drafts,
+and participant mutations use the full parent/child identity. Resource
+management is withheld in a child until it has a child-addressed mutation path.
+
+**Why:** A private child is a distinct conversation, not a filter over the main
+feed. Reusing parent-only draft or mutation identities could leak an unsent
+message or modify main while the child looked selected. The preparation preview
+also makes the context boundary visible before the irreversible confirmation.
+
+**Consequences:** Parent chrome and the control socket remain stable while the
+feed switches. Main retains its released draft key for continuity; child keys
+append the substream identity. Do not reintroduce parent REST mutations as a
+fallback for child controls.
 
 ### 2026-09-04 — Preserve resource capabilities without a right sidebar
 

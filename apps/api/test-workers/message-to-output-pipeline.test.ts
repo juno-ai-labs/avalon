@@ -424,6 +424,7 @@ async function openSubscribedSocket(
       "x-rally-workspace-id": WORKSPACE_ID,
       "x-rally-workstream-id": WORKSTREAM_ID,
       "x-rally-substream-id": substreamId,
+      ...(substreamId !== "0" ? { "x-rally-socket-admission-membership-version": "1" } : {}),
       "x-rally-user-id": USER_ID,
       "x-rally-session-id": SESSION_ID,
       "x-rally-socket-ticket-id": ticketId,
@@ -2060,6 +2061,14 @@ describe("a member's message travels the whole pipeline", () => {
         now: Date.now(),
       }],
     })).status).toBe(200);
+
+    // This direct bootstrap fixture bypasses the parent creation service, so
+    // install the same creator membership mirror that service confirms before
+    // issuing a child socket ticket.
+    await stub.applyPrivateChildMembership({
+      workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, substreamId,
+      userId: USER_ID, actorUserId: USER_ID, active: true, membershipVersion: 1,
+    });
 
     const { socket } = await openSubscribedSocket(
       stub,

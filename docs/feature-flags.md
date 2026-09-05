@@ -100,6 +100,11 @@ OpenRouter embeddings path but deliberately have no Flagship role. Their fixed
 `qwen/qwen3-embedding-8b` model, empty fallback plan, and 1,024-dimensional
 space form one Vectorize projection contract; changing that contract requires a
 code change and active-memory rebuild.
+Substream context summaries are another deliberate non-flagged route. Their
+model is platform policy recorded in the durable context recipe before
+inference starts. The structured-inference gateway accepts that explicit route
+with an empty fallback list, so a retry cannot pick up a later flag evaluation
+or Worker fallback change and produce a different seed under the same receipt.
 Admission and ranking get separate flags because admission turns connector
 activity into prompts while ranking orders them per user, and pinning one should
 not move the other.
@@ -1115,6 +1120,24 @@ add it to the attribute table here. If it needs a read of its own, it needs a
 cache entry of its own — three reads is the standing budget for an evaluation.
 
 ## Changelog
+
+### 2026-09-04 — Frozen substream summaries use their recorded route
+
+**What changed:** The structured-inference gateway can execute the explicit
+single-model route stored in a substream context recipe. It bypasses Flagship
+and default fallbacks for that operation while preserving the gateway's normal
+provider, diagnostic and accounting path.
+
+**Why:** A context seed is immutable and retryable. Re-evaluating a targeted
+model flag after interruption could generate a different summary under the
+same creation receipt.
+
+**Considered and rejected:** Adding a targeted substream-summary model flag,
+which would contradict the single platform policy; and constructing a provider
+client in the feature, which would fork deadlines and inference evidence.
+
+**Consequences:** Context-policy changes affect new preparation receipts only.
+An admitted receipt keeps its exact requested model and has no fallback route.
 
 ### 2026-09-03: The automation compiler and disposition roles are gone
 

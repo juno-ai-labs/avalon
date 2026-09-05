@@ -84,6 +84,7 @@ describe('setCachedWorkstreams', () => {
     ];
     const childPrefixes = [
       'substream-workstream',
+      'substream-initial-context',
       'substream-ordered-transcript',
       'substream-transcript-overlays',
       'substream-workstream-feed-source',
@@ -119,6 +120,8 @@ describe('setCachedWorkstreams', () => {
     queryClient.setQueryData(['workstream', workstreamId], { title: 'Parent' });
     queryClient.setQueryData(['substream-workstream', workstreamId, 'child-a'], { title: 'A' });
     queryClient.setQueryData(['substream-workstream', workstreamId, 'child-b'], { title: 'B' });
+    queryClient.setQueryData(['substream-initial-context', workstreamId, 'child-a'], { sensitive: true });
+    queryClient.setQueryData(['substream-initial-context', workstreamId, 'child-b'], { retained: true });
 
     evictCachedSubstream(queryClient, workstreamId, 'child-a');
 
@@ -127,6 +130,10 @@ describe('setCachedWorkstreams', () => {
       .toBeUndefined();
     expect(queryClient.getQueryData(['substream-workstream', workstreamId, 'child-b']))
       .toEqual({ title: 'B' });
+    expect(queryClient.getQueryData(['substream-initial-context', workstreamId, 'child-a']))
+      .toBeUndefined();
+    expect(queryClient.getQueryData(['substream-initial-context', workstreamId, 'child-b']))
+      .toEqual({ retained: true });
   });
 
   it('invalidates parent and child detail namespaces together', async () => {

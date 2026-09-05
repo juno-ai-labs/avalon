@@ -42,6 +42,7 @@ interface MessageFeedProps {
   messages: readonly Message[];
   onAnswerElicitation: (elicitationId: string, answer: string | string[] | null, customResponse?: string) => Promise<void>;
   onOpenAttachment?: (preview: AttachmentPreview) => void;
+  onStartSubstream?: (throughTurnId: string) => void;
   /** Creates the automation a proposal card names; see its card. */
   onAcceptDraft?: (automationId: string) => void;
   acceptingDraftFor?: string | null;
@@ -109,6 +110,7 @@ export function MessageFeed({
   messages,
   onAnswerElicitation,
   onOpenAttachment,
+  onStartSubstream,
   onAcceptDraft,
   acceptingDraftFor,
   acceptDraftError,
@@ -148,6 +150,7 @@ export function MessageFeed({
           message={message}
           onAnswerElicitation={onAnswerElicitation}
           onOpenAttachment={onOpenAttachment}
+          onStartSubstream={onStartSubstream}
           rowDisclosure={rowDisclosure}
           {...(onAcceptDraft ? { onAcceptDraft } : {})}
           acceptingDraftFor={acceptingDraftFor ?? null}

@@ -224,13 +224,12 @@ resolution, handshake, subscribe, and canonical state with a 10-second
 deadline; two timeout retries use 20- and 40-second deadlines. A cacheless open
 always subscribes from sequence zero even when its retained resume registry has
 a later cursor, because replay alone cannot reconstruct missing base caches. A
-schema-valid replay frame therefore does not finish opening; a socket snapshot
-or the existing REST resync must install both canonical caches. The resync read
-shares the active attempt's abort signal. At the deadline the client checks the
-caches once more so a concurrent **Try again** REST result can transition to
-ordinary reconnect behavior instead of being overwritten by a terminal socket
-error. Otherwise a timeout closes the broker-owned transport and aborts an
-in-flight ticket before reconnect jitter runs. After the third total attempt,
+schema-valid replay frame therefore does not finish opening; an authoritative
+socket snapshot must install both canonical caches. At the deadline the client
+checks the caches once more so a snapshot installed in the same turn can
+transition to ordinary reconnect behavior instead of being overwritten by a
+terminal socket error. Otherwise a timeout closes the broker-owned transport
+and aborts an in-flight ticket before reconnect jitter runs. After the third total attempt,
 the socket stops reconnecting and the opening screen shows a terminal error.
 Its **Try again** action starts a fresh three-attempt sequence. Once canonical
 caches exist, ordinary background reconnects remain governed by heartbeat and
@@ -686,6 +685,64 @@ the provider's redirect and cannot move; [`security.md`](security.md) records
 what that leaves exposed.
 
 ## Changelog
+
+### 2026-09-04 — A child is ready only after its inherited context is complete
+
+**What changed:** The desktop treats an initial-context snapshot as part of the
+child's canonical opening baseline. Chunked context must assemble and validate
+before sends become ready. A close during assembly discards the partial value
+and reconnects from sequence zero; malformed matching chunks request a fresh
+authoritative snapshot.
+
+**Why:** Resuming after the snapshot sequence while some context chunks were
+missing could permanently skip the immutable seed, and a malformed completed
+assembly previously remained full and ignored every retransmitted chunk.
+
+**Considered and rejected:** Keeping a previously cached seed while a newer
+snapshot's chunks arrive. That would call the child ready against context the
+current authority had not completed sending.
+
+**Consequences:** Main conversations retain their existing readiness path.
+Child readiness now requires detail, transcript, and either an explicitly empty
+context snapshot or one fully validated inherited-context payload.
+
+### 2026-09-04 — Private child tickets carry parent membership authority
+
+**What changed:** WorkstreamDO authorizes non-main feed tickets against the
+exact ready child and exact active member, returning that member's version. The
+signed ticket and Worker-to-object header carry the version. SubstreamAgent
+requires its versioned parent mirror before either prepared or direct socket
+admission and rechecks the mirror on commands. The WorkstreamDO control snapshot
+also pushes the viewer's complete ready-child directory.
+
+**Why:** Parent-level readability does not imply sibling-child readability, and
+a ticket minted before removal must stop working without waiting for expiry.
+
+**Considered and rejected:** A REST child-list fetch and child-local roster as
+the admission authority. They add a second refresh state machine and cannot
+fence a stale signed ticket against a later parent removal.
+
+**Consequences:** Rolling clients treat an absent `privateChildren` field as an
+empty list. New servers always send it. Non-main tickets with no positive
+membership version fail closed before SubstreamAgent creates an identity.
+
+### 2026-09-04 — Every conversation recovers through its addressed socket
+
+**What changed:** Both main and child `resync_required` handling now rejects
+pending range work, discards partial snapshot assembly, abandons the old
+connection generation, resets the addressed resume cursor to zero, and installs
+the new admitted socket's snapshot as the authoritative baseline. The opening
+screen's Retry action starts a fresh bounded socket sequence without a REST
+reader.
+
+**Why:** Main's REST detour and child's socket reset were two recovery state
+machines for the same SubstreamAgent authority. They could race independently
+ordered cache writes and made a child's correct identity-preserving behavior an
+exception.
+
+**Consequences:** Snapshot failure is visible instead of hidden behind a second
+transport. Keep sending disabled until the new baseline arrives, and preserve
+the connection-generation and snapshot fences that reject late frames.
 
 
 ### 2026-09-04: No feed ticket for an archived work stream

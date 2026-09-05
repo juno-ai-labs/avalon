@@ -39,7 +39,7 @@ export function workstreamFeedSourceQueryKey(
     : ['substream-workstream-feed-source', workstreamId, substreamId];
 }
 
-/** Monotonic fence that prevents a late REST recovery from replacing a socket snapshot. */
+/** Monotonic marker for consumers observing replacement socket snapshots. */
 export function workstreamSocketSnapshotGenerationQueryKey(
   workstreamId: string,
   substreamId = '0',
@@ -385,11 +385,13 @@ export function reportWorkstreamSendReady(
 export function reportWorkstreamSendReadyAfterPaint(
   workstreamId: string,
   workspaceSocketState: WorkstreamSendReadyWorkspaceSocketState,
+  afterPaint?: () => void,
 ): () => void {
   let paintedFrame = 0;
   const committedFrame = window.requestAnimationFrame(() => {
     paintedFrame = window.requestAnimationFrame(() => {
       reportWorkstreamSendReady(workstreamId, workspaceSocketState);
+      afterPaint?.();
     });
   });
   return () => {

@@ -59,6 +59,8 @@ export interface WorkstreamSocketAdmission {
    * refuses their writes: a child never outlives its parent's archive.
    */
   parentArchived: boolean;
+  /** Zero for main/automation conversations; parent-owned membership version for a private child. */
+  membershipVersion?: number;
 }
 
 export interface IssueWorkstreamSocketTicketOptions {
@@ -148,6 +150,7 @@ export async function issueSocketTicket(
       authority_generation: options.admission.authorityGeneration,
       role: options.admission.role,
       analytics_workspace_id: options.admission.analyticsWorkspaceId,
+      membership_version: options.admission.membershipVersion ?? 0,
       ...(options.admission.parentArchived ? { parent_archived: true } : {}),
     } : {}),
   })
@@ -209,6 +212,10 @@ export async function verifySocketTicket(env: Env, ticket: string): Promise<Sock
         || typeof payload.authority_generation !== "number"
         || !Number.isInteger(payload.authority_generation)
         || payload.authority_generation < 0
+        || (payload.membership_version !== undefined
+          && (typeof payload.membership_version !== "number"
+            || !Number.isInteger(payload.membership_version)
+            || payload.membership_version < 0))
         || (payload.role !== "owner" && payload.role !== "admin" && payload.role !== "member")
         || (payload.analytics_workspace_id !== null
           && typeof payload.analytics_workspace_id !== "string")
@@ -219,6 +226,7 @@ export async function verifySocketTicket(env: Env, ticket: string): Promise<Sock
         role: payload.role,
         analyticsWorkspaceId: payload.analytics_workspace_id,
         parentArchived: payload.parent_archived === true,
+        membershipVersion: typeof payload.membership_version === "number" ? payload.membership_version : 0,
       };
     }
     return {
@@ -489,6 +497,7 @@ export class SocketService {
         ...rallyHeaderAliases(RALLY_HEADERS.SOCKET_ADMISSION_AUTHORITY_GENERATION),
         ...rallyHeaderAliases(RALLY_HEADERS.SOCKET_ADMISSION_ROLE),
         ...rallyHeaderAliases(RALLY_HEADERS.SOCKET_ADMISSION_VERSION),
+        ...rallyHeaderAliases(RALLY_HEADERS.SOCKET_ADMISSION_MEMBERSHIP_VERSION),
         ...rallyHeaderAliases(RALLY_HEADERS.SOCKET_ANALYTICS_WORKSPACE_ID),
         ...rallyHeaderAliases(RALLY_HEADERS.SOCKET_AFTER_SEQUENCE),
         ...rallyHeaderAliases(RALLY_HEADERS.SOCKET_SPECULATIVE),
@@ -505,6 +514,10 @@ export class SocketService {
           String(claims.admission.authorityGeneration),
         );
         headers.set(RALLY_HEADERS.SOCKET_ADMISSION_ROLE, claims.admission.role);
+        headers.set(
+          RALLY_HEADERS.SOCKET_ADMISSION_MEMBERSHIP_VERSION,
+          String(claims.admission.membershipVersion ?? 0),
+        );
         if (claims.admission.parentArchived) headers.set(RALLY_HEADERS.PARENT_ARCHIVED, "true");
         if (claims.admission.analyticsWorkspaceId !== null) {
           headers.set(

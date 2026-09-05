@@ -10,6 +10,7 @@
     "./deferred-zod-schema": "./src/deferred-zod-schema.ts",
     "./connector-oauth-providers": "./src/connector-oauth-providers.ts",
     "./conversation-parent": "./src/conversation-parent.ts",
+    "./substream-creation": "./src/substream-creation.ts",
     "./conversation-effects": "./src/conversation-effects.ts",
     "./durable-object-migrations": "./src/durable-object-migrations.ts",
     "./engineering-inspection": "./src/engineering-inspection.ts",

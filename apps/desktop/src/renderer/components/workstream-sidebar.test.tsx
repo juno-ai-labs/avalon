@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WorkstreamResource } from '../lib/types';
+import { asSubstreamId, asUserId } from '@rally/contracts';
 import { WorkstreamSidebar } from './workstream-sidebar';
 
 const artifact: WorkstreamResource = {
@@ -73,7 +74,7 @@ describe('WorkstreamSidebar', () => {
     const view = setup();
     fireEvent.click(screen.getByRole('button', { name: 'Collapse work-stream sidebar' }));
     expect(screen.getByRole('complementary')).toHaveClass('is-compact');
-    expect(screen.queryByRole('button', { name: 'Go to conversation: Launch preparation' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Go to conversation: Launch preparation' })).toBeInTheDocument();
     expect(localStorage.getItem('rally.sidebar-collapsed')).toBeNull();
     view.unmount();
     setup();
@@ -81,6 +82,44 @@ describe('WorkstreamSidebar', () => {
     expect(screen.getByRole('button', { name: 'Open Launch draft.md' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Expand work-stream sidebar' }));
     expect(screen.getByRole('complementary')).not.toHaveClass('is-compact');
+  });
+
+  it('places creator-attributed children below Main and creation last while retaining compact navigation', async () => {
+    const onSelectSubstream = vi.fn();
+    const onNewSubstream = vi.fn();
+    render(<Tooltip.Provider><WorkstreamSidebar
+      workstream={{ ...workstream, privateChildren: [{
+        substreamId: asSubstreamId('00000000-0000-7000-8000-000000000099'), title: 'Launch risks', createdByUserId: asUserId(person.id),
+        createdAt: '2026-09-04T00:00:00.000Z', updatedAt: '2026-09-04T00:00:00.000Z',
+      }] }}
+      presentUserIds={[]}
+      selectedSubstreamId="00000000-0000-7000-8000-000000000099"
+      onSelectSubstream={onSelectSubstream}
+      onNewSubstream={onNewSubstream}
+      onOpenArtifact={vi.fn()}
+      onParticipants={vi.fn()}
+      onFocusTranscript={vi.fn()}
+    /></Tooltip.Provider>);
+    expect(screen.getByRole('button', { name: /Launch risks/ })).toHaveAttribute('aria-current', 'page');
+    const child = screen.getByRole('button', { name: /Launch risks/ });
+    expect(await within(child).findByText('AL')).toBeInTheDocument();
+    const sidebar = screen.getByRole('complementary');
+    const navigation = within(sidebar).getAllByRole('button').slice(1, 4);
+    expect(navigation.map((button) => button.getAttribute('aria-label'))).toEqual([
+      'Go to conversation: Launch preparation', 'Go to substream: Launch risks', 'New substream',
+    ]);
+    expect(sidebar.querySelectorAll('.tabler-icon-border-corner-pill')).toHaveLength(2);
+    expect(screen.getByRole('button', { name: 'New substream' }).querySelector('.tabler-icon-plus')).not.toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /Launch risks/ }));
+    expect(onSelectSubstream).toHaveBeenCalledWith('00000000-0000-7000-8000-000000000099');
+    fireEvent.click(screen.getByRole('button', { name: 'New substream' }));
+    expect(onNewSubstream).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse work-stream sidebar' }));
+    expect(sidebar).toHaveClass('is-compact');
+    fireEvent.click(child);
+    expect(onSelectSubstream).toHaveBeenLastCalledWith('00000000-0000-7000-8000-000000000099');
+    fireEvent.click(screen.getByRole('button', { name: 'Go to conversation: Launch preparation' }));
+    expect(onSelectSubstream).toHaveBeenLastCalledWith('0');
   });
 
   it('collapses for available pane width without overwriting the manual preference', () => {
