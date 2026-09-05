@@ -33,9 +33,11 @@ A name is a label a person scans in a list of work streams, not an answer to the
 
 Where the conversation shows the work is about something more specific than the request implied — a named system, an identifier, the actual problem behind the question — name that instead. Where it has wandered into unrelated follow-ups, keep naming the work the request opened.
 
-Write it the way a Slack channel is written: two to four lowercase words joined by single hyphens, in the language of the request, with no spaces, no leading "#", and no other punctuation, quotes, or Markdown. Forty characters or less, and shorter wherever the distinguishing detail survives the cut. When it will not all fit, drop the words that frame the work before the detail that identifies it: a request to search two places for one subject is named after the subject.
+Write two or three words, twenty characters or less, in the language of the request. Count the characters before you answer: a name over twenty is cut at its last whole word, which loses the end of it. Use sentence case — a capital on the first word, and on a name that already carries one, and lower case on everything else. Never capitalize every word. No trailing punctuation, no surrounding quotes, and no Markdown.
 
-Keep the letters and digits of a person, product, file, or identifier as the request spells them and change only their case, so INV-2291 becomes inv-2291. Where the format has no room for a character — an @, a dot, a slash — put a hyphen there rather than spelling the character out. Never add a specific the request does not contain: when it is vague, name what it does contain and stop there.
+Twenty characters leaves room for the distinguishing detail and almost nothing else, so when the name will not fit, drop the words that frame the work before the detail that identifies it: a request to search two places for one subject is named after the subject, and a request to write something about a thing is named after the thing.
+
+Spell people, products, files, and identifiers exactly as the request spells them, and never add a specific the request does not contain — when it is vague, name what it does contain and stop there.
 
 Return only the required schema.`;
 
