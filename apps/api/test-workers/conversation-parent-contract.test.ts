@@ -36,10 +36,11 @@ import { createAutomation } from "../src/services/automation-service";
 import { ConversationService } from "../src/services/conversation-service";
 import { SocketService, verifySocketTicket } from "../src/services/socket-service";
 import {
+  bootstrapConversationChildRuntime,
   bootstrapWorkstreamRuntimeEnvironment,
   provisionWorkstreamObject,
 } from "../src/services/workstream-runtime-database";
-import { deliverEffectsToWorkspace, deliverParentEffects } from "./helpers/conversation-effects";
+import { deliverChildEffects, deliverEffectsToWorkspace, deliverParentEffects } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
 import { post, seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 
@@ -92,9 +93,9 @@ function roomParent(roomId: string) {
   ));
 }
 
-function conversation(parentId: string) {
+function conversation(parentId: string, substreamId = "0") {
   return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
-    conversationObjectName("global", WORKSPACE_ID, parentId),
+    conversationObjectName("global", WORKSPACE_ID, parentId, asSubstreamId(substreamId)),
   ));
 }
 
@@ -225,6 +226,183 @@ beforeEach(async () => {
 });
 
 describe("conversation parent contract", () => {
+  it("publishes only ready private children to their exact roster and revokes them durably", async () => {
+    await seedRoom(PERSONAL_ROOM_ID, "personal", [AUTHOR_ID, PARTICIPANT_ID]);
+    const parent = roomParent(PERSONAL_ROOM_ID);
+    const recipe = {
+      policy: { revision: "test-empty-v1", strategy: { id: "empty", version: 1 }, config: {} },
+      capture: "none" as const,
+      parts: [],
+    };
+    const request = {
+      workspaceId: WORKSPACE_ID,
+      parentId: PERSONAL_ROOM_ID,
+      operationId: "private-child-create-1",
+      creatorUserId: AUTHOR_ID,
+      title: "Private branch",
+      sourceSubstreamId: "0" as const,
+      sourceThroughTurnId: null,
+      recipe,
+      membershipInitializer: {
+        plugin: { id: "creator-only", version: 1 }, config: {}, memberUserIds: [AUTHOR_ID],
+      },
+    };
+    const reserved = await parent.beginPrivateChildPreparation(request);
+    expect((await parent.beginPrivateChildPreparation(request)).substreamId).toBe(reserved.substreamId);
+    expect(await parent.authorizeViewer({
+      ...viewer(PERSONAL_ROOM_ID, AUTHOR_ID), substreamId: reserved.substreamId,
+    })).toEqual({ authorized: false, archived: false, childStatus: "reserved", membershipVersion: 1 });
+    expect(await parent.listVisiblePrivateChildren({
+      workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID, userId: AUTHOR_ID,
+    })).toEqual({ children: [] });
+
+    const hash = "0".repeat(64);
+    await parent.savePreparedPrivateChildContext({
+      workspaceId: WORKSPACE_ID,
+      parentId: PERSONAL_ROOM_ID,
+      operationId: request.operationId,
+      preparedContext: {
+        schemaVersion: 1, recipe, recipeHash: hash, capture: null, captureHash: null, parts: [], contentHash: hash,
+      },
+    });
+    const claimed = await parent.claimPrivateChildConfirmation({
+      workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID,
+      operationId: request.operationId, actorUserId: AUTHOR_ID,
+    });
+    expect(claimed.status).toBe("confirming");
+    expect((await parent.claimPrivateChildConfirmation({
+      workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID,
+      operationId: request.operationId, actorUserId: AUTHOR_ID,
+    })).substreamId).toBe(claimed.substreamId);
+    const cancellationError = await runInDurableObject(parent, async (instance) => {
+      try {
+        await instance.setPrivateChildTerminalStatus({
+          workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID,
+          operationId: request.operationId, status: "failed", errorCode: "cancelled",
+        });
+        return null;
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    });
+    expect(cancellationError).toContain("private_child_confirmation_in_progress");
+    const viewerWaterlineBeforeReady = await runInDurableObject(parent, (_instance, state) =>
+      state.storage.sql.exec<{ waterline: number }>(
+        `SELECT waterline FROM workstream_state_changes WHERE state_key = ? ORDER BY waterline DESC LIMIT 1`,
+        `user:${AUTHOR_ID}`,
+      ).one().waterline);
+    await bootstrapConversationChildRuntime(
+      TEST_ENV, WORKSPACE_ID, "workstream", PERSONAL_ROOM_ID, reserved.substreamId,
+    );
+    await provisionWorkstreamObject(TEST_ENV, {
+      workspaceId: WORKSPACE_ID, workstreamId: PERSONAL_ROOM_ID, substreamId: reserved.substreamId,
+      title: "Private branch", objective: "", scope: "personal", createdByUserId: AUTHOR_ID,
+      participantUserIds: [AUTHOR_ID], harnessStatus: "idle", titleStatus: "settled", emailAddress: null,
+      emailRouteStatus: null, systemKind: null, modelOverride: null, now: Date.now(),
+    });
+    await parent.setPrivateChildTerminalStatus({
+      workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID,
+      operationId: request.operationId, status: "ready", errorCode: null,
+    });
+    expect((await parent.claimPrivateChildConfirmation({
+      workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID,
+      operationId: request.operationId, actorUserId: AUTHOR_ID,
+    })).status).toBe("ready");
+    const viewerWaterlineAfterReady = await runInDurableObject(parent, (_instance, state) =>
+      state.storage.sql.exec<{ waterline: number }>(
+        `SELECT waterline FROM workstream_state_changes WHERE state_key = ? ORDER BY waterline DESC LIMIT 1`,
+        `user:${AUTHOR_ID}`,
+      ).one().waterline);
+    expect(viewerWaterlineAfterReady).toBe(viewerWaterlineBeforeReady);
+    expect(await runInDurableObject(parent, (_instance, state) =>
+      state.storage.sql.exec<{ waterline: number }>(
+        `SELECT waterline FROM workstream_state_changes WHERE state_key = ? ORDER BY waterline DESC LIMIT 1`,
+        `children:${AUTHOR_ID}`,
+      ).one().waterline)).toBeGreaterThan(0);
+    await deliverChildEffects(TEST_ENV, conversation(PERSONAL_ROOM_ID, reserved.substreamId));
+    const parentTitle = await runInDurableObject(parent, (_instance, state) =>
+      state.storage.sql.exec<{ title: string }>(`SELECT title FROM workstream_metadata WHERE id = 1`).one().title);
+    expect(parentTitle).toBe("Private room");
+
+    expect(await parent.authorizeViewer({
+      ...viewer(PERSONAL_ROOM_ID, AUTHOR_ID), substreamId: reserved.substreamId,
+    })).toEqual({ authorized: true, archived: false, childStatus: "ready", membershipVersion: 1 });
+    expect((await parent.listVisiblePrivateChildren({
+      workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID, userId: AUTHOR_ID,
+    })).children).toEqual([expect.objectContaining({ substreamId: reserved.substreamId, title: "Private branch" })]);
+    expect((await parent.listVisiblePrivateChildren({
+      workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID, userId: PARTICIPANT_ID,
+    })).children).toEqual([]);
+    expect(await parent.authorizeViewer(viewer(PERSONAL_ROOM_ID, PARTICIPANT_ID)))
+      .toEqual({ authorized: true, archived: false });
+
+    await parent.addPrivateChildParticipant({
+      workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID, substreamId: reserved.substreamId,
+      actorUserId: AUTHOR_ID, userId: PARTICIPANT_ID, operationId: "private-child-add-participant",
+    });
+    expect(await parent.addPrivateChildParticipant({
+      workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID, substreamId: reserved.substreamId,
+      actorUserId: AUTHOR_ID, userId: PARTICIPANT_ID, operationId: "private-child-add-participant",
+    })).toMatchObject({ outcome: "unchanged", membershipVersion: 1 });
+    expect(await parent.authorizeViewer({
+      ...viewer(PERSONAL_ROOM_ID, PARTICIPANT_ID), substreamId: reserved.substreamId,
+    })).toMatchObject({ authorized: true, membershipVersion: 1 });
+
+    const staleAuthorTicket = await new ConversationService(socketEnv, AUTH)
+      .socketTicket(PERSONAL_ROOM_ID, reserved.substreamId);
+    const preRemovalTicket = await new ConversationService(socketEnv, AUTH)
+      .socketTicket(PERSONAL_ROOM_ID, reserved.substreamId);
+    expect((await verifySocketTicket(socketEnv, staleAuthorTicket.ticket)).admission)
+      .toMatchObject({ membershipVersion: 1 });
+    await parent.removePrivateChildParticipant({
+      workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID, substreamId: reserved.substreamId,
+      actorUserId: PARTICIPANT_ID, userId: AUTHOR_ID, operationId: "private-child-remove-author",
+    });
+    const staleUpgrade = await new SocketService(socketEnv).upgrade(
+      PERSONAL_ROOM_ID, reserved.substreamId, staleAuthorTicket.ticket,
+      new Request(`https://api.test/socket/conversations/${PERSONAL_ROOM_ID}/${reserved.substreamId}`, {
+        headers: { Upgrade: "websocket", Origin: "app://avalon" },
+      }),
+    );
+    expect(staleUpgrade.status).toBe(403);
+    await parent.addPrivateChildParticipant({
+      workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID, substreamId: reserved.substreamId,
+      actorUserId: PARTICIPANT_ID, userId: AUTHOR_ID, operationId: "private-child-readd-author",
+    });
+    const readdedUpgrade = await new SocketService(socketEnv).upgrade(
+      PERSONAL_ROOM_ID, reserved.substreamId, preRemovalTicket.ticket,
+      new Request(`https://api.test/socket/conversations/${PERSONAL_ROOM_ID}/${reserved.substreamId}`, {
+        headers: { Upgrade: "websocket", Origin: "app://avalon" },
+      }),
+    );
+    expect(readdedUpgrade.status).toBe(403);
+
+    const removedFromParent = await post(conversation(PERSONAL_ROOM_ID), "/internal/product", {
+      operation: "remove_participant", auth: AUTH, userId: PARTICIPANT_ID,
+    });
+    expect(removedFromParent.status).toBe(200);
+    await deliverChildEffects(TEST_ENV, conversation(PERSONAL_ROOM_ID));
+    expect(await parent.authorizeViewer({
+      ...viewer(PERSONAL_ROOM_ID, PARTICIPANT_ID), substreamId: reserved.substreamId,
+    })).toMatchObject({ authorized: false });
+    await parent.removePrivateChildParticipant({
+      workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID, substreamId: reserved.substreamId,
+      actorUserId: AUTHOR_ID, userId: PARTICIPANT_ID, operationId: "private-child-remove-participant",
+    });
+    expect(await parent.authorizeViewer({
+      ...viewer(PERSONAL_ROOM_ID, PARTICIPANT_ID), substreamId: reserved.substreamId,
+    })).toMatchObject({ authorized: false });
+    expect((await parent.listVisiblePrivateChildren({
+      workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID, userId: PARTICIPANT_ID,
+    })).children).toEqual([]);
+
+    const mirror = await runInDurableObject(conversation(PERSONAL_ROOM_ID, reserved.substreamId), (_instance, state) =>
+      state.storage.sql.exec<{ active: number; version: number }>(
+        `SELECT active, version FROM private_child_membership_authority WHERE user_id = ?`, PARTICIPANT_ID,
+      ).one());
+    expect(mirror).toEqual({ active: 0, version: 2 });
+  });
+
   it("WorkstreamDO admits the creator of a personal room before the child's first effect arrives", async () => {
     // What creation looks like from the desktop's side: `POST /workstreams`
     // returns and the client opens the room at once. The parent has reserved

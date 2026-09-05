@@ -583,13 +583,13 @@ Not every read is a push. Reach for a `GET` when one of these holds:
 - **There is no socket yet.** Sign-in, session establishment, the identity
   endpoint, and choosing which workspace to open all precede the socket that
   would have pushed them. This is a bootstrap, not a data plane.
-- **Recovery when the socket cannot install canonical state.** A lost in-memory
-  replay window is normally repaired by a canonical snapshot on the admitted
-  socket. Snapshot failure or catch-up overflow returns `resync_required` with
-  reason `history_unavailable` without advancing the attachment cursor. A
-  cursor ahead of the room instead uses `sequence_ahead`; the normal cursor
-  guard cannot accept a lower-sequence snapshot, so both last-resort cases
-  reconcile over HTTP.
+- **Recovery stays on the admitted conversation socket.** A lost in-memory
+  replay window, snapshot failure, or catch-up overflow returns
+  `resync_required`. `history_unavailable` and `sequence_ahead` both abandon the
+  old connection generation, reject its pending range reads and partial
+  snapshot, reset that conversation's resume cursor to zero, and reconnect.
+  The new admitted socket installs one authoritative baseline before sending is
+  enabled again. This is identical for main and child conversations.
 - **The user asked for something specific and large.** A resource's content
   bytes, a note transcript, an export, an attachment preview. It is one
   person's explicit act, it is big, and nobody else's screen depends on it.
@@ -607,7 +607,8 @@ person went looking for.
 - Fetch what a person explicitly went looking for.
 - Keep the pre-socket bootstrap to what is needed to open the socket.
 - Say at the call site why this one is a fetch.
-- Re-read over HTTP when the socket has told you to resync.
+- Reconnect from cursor zero when the socket has told you to resync; accept
+  state only from the new connection generation.
 
 **Don't**
 
@@ -715,7 +716,7 @@ describes behaviour to replace, not a pattern to copy into something new.**
 | Work-stream common/viewer state | Pushed on both the WorkstreamDO and WorkspaceDO sockets, waterlined | Yes. |
 | Transcript parts, tool blocks, token frames, presence | SubstreamAgent socket, snapshot on subscribe | Yes. |
 | Transcript range loading | Correlated, snapshot-fenced half-open range request on the SubstreamAgent socket | Yes — a pull the reader asked for, answered by the authority with explicit inspected coverage. |
-| Opening a work stream | Selecting the row immediately subscribes the SubstreamAgent feed; its first `snapshot` carries metadata, the unread-centered 5 + anchor + 5 range, the latest-five range, active turns, and reconnect timing baselines, while the WorkstreamDO control socket starts independently | Yes. `GET /workstreams/:id` remains only as an explicit manual recovery twin after the socket starts retrying or becomes unavailable. |
+| Opening a conversation | Selecting it immediately subscribes the addressed SubstreamAgent feed; its first `snapshot` carries metadata, the unread-centered 5 + anchor + 5 range, the latest-five range, active turns, and reconnect timing baselines, while the WorkstreamDO control socket starts independently for work streams | Yes. Main and child conversations both recover by abandoning stale connection state and reconnecting from cursor zero; Retry restarts that same socket path. |
 | Workspace profile, members, invitations, connectors, resources, digest, flags, viewer preferences | `workspace_sync` invalidation on the socket → REST refetch of whichever surface is mounted | **No.** The socket carries the news; the data comes over HTTP. |
 | The sidebar's automations and notes | Carried on the `workspace_sync` answer to `subscribe`, then pushed whole as `workspace_sidebar_list` on every write, each with its own waterline | Yes. |
 | Suggested actions | `GET /work-opportunities?limit=4`, invalidated by the `activity` and `work_opportunities` topics | **No.** The rows are in the object holding the socket. |
@@ -798,6 +799,26 @@ read survives, and it is not a precedent.
   the caller is made to wait for.
 
 ## Changelog
+
+### 2026-09-04 — Main and child recovery use one socket baseline
+
+**What changed:** `history_unavailable` and `sequence_ahead` now abandon the
+addressed conversation connection, cancel its pending range and snapshot work,
+reset its resume cursor, and install a fresh snapshot from a new admitted
+socket. The main conversation no longer detours through the REST boot reader,
+and the visible Retry action restarts the socket opening sequence only.
+
+**Why:** The REST recovery twin gave main and child conversations different
+failure semantics and let two independently ordered transports write the same
+detail and transcript caches. Child recovery already demonstrated the smaller
+authority-preserving path: reconnect to that exact SubstreamAgent and accept a
+new baseline under the existing connection-generation fence.
+
+**Consequences:** A broken or oversized socket snapshot is now exposed as a
+socket failure instead of being hidden by HTTP. Keep snapshot assembly,
+cursor-zero admission, stale-frame rejection, and send readiness one state
+machine. The general conversation GET is not removed here because other
+parent-owned mutation wrappers still use it for read-after-write.
 
 ### 2026-09-03 — HyperSight has neither a socket nor a REST surface
 

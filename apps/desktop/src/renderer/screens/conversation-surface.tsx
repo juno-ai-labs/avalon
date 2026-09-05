@@ -25,6 +25,7 @@ import {
   type WorkstreamTranscriptSnapshot,
 } from '@rally/contracts';
 import type { ConversationParentKind } from '@rally/contracts/conversation-parent';
+import type { SubstreamInitialContext } from '@rally/contracts/substream-creation';
 import type { DesktopSession } from '../../common/desktop';
 import { useAppSession } from '../lib/app-session';
 import { useCitations } from '../lib/use-citations';
@@ -33,14 +34,11 @@ import { workstreamDraftKey } from '../lib/draft-keys';
 import { desktopBridge } from '../lib/platform';
 import {
   currentSurfaceEntrypoint,
-  cancelWorkstreamFeedOpen,
   reportTelemetryProductIntent,
   telemetryCountBucket,
   telemetryVisibility,
   type WorkstreamFeedSource,
-  workstreamFeedOpenAttemptId,
   workstreamFeedSourceQueryKey,
-  workstreamSocketSnapshotGenerationQueryKey,
   workstreamNavigation,
 } from '../lib/telemetry';
 import {
@@ -58,8 +56,6 @@ import {
   composerQueueOverlays,
   isComposerQueueOverlay,
   pendingOverlayInputId,
-  pendingTranscriptInputOverlay,
-  reconcileAuthoritativeTranscriptOverlays,
   transcriptOverlayIdentityKey,
   removeTranscriptOverlay,
   setTranscriptElicitationState,
@@ -79,6 +75,7 @@ import { JumpToLatestButton, RunStoppedNotice } from '../components/conversation
 import { RIGHT_SIDEBAR_ENABLED, type RailVariant, useUiStore } from '../lib/ui-store';
 import {
   orderedTranscriptQueryKey,
+  substreamInitialContextQueryKey,
   type SocketState,
   type WorkstreamMessageDeliveryMode,
   workstreamDetailQueryKey,
@@ -87,7 +84,7 @@ import { useRetainedWorkstreamSocket, useWorkstreamSocketOpenContext } from '../
 import { useWorkspaceSocket } from '../lib/workspace-socket';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
 import { evictCachedWorkstream, setCachedWorkstreams } from '../lib/workstreams-cache';
-import type { ElicitationData, HarnessRunMetadata, HarnessStatus, Message, Participant, ResourceVersion, WorkspaceMember, WorkstreamBoot, WorkstreamDetail, WorkstreamResource } from '../lib/types';
+import type { ElicitationData, HarnessRunMetadata, HarnessStatus, Message, Participant, ResourceVersion, WorkspaceMember, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import { AgentCompactionIndicator, AgentWorkTiming, type AgentWorkTimingProps } from '../components/agent-work-timing';
 import { InspectorRail } from '../components/inspector-rail';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
@@ -97,6 +94,7 @@ import { queueAuthorMember, type ComposerQueueItem } from '../components/compose
 import { MessageFeed, useMessageFeedVirtualizer } from '../components/message-feed';
 import { ConnectorConnectionsProvider } from '../components/connector-mentions';
 import { WorkstreamComposer } from '../components/workstream-composer';
+import { SubstreamContext } from '../components/substream-context';
 import { useRailExitFade } from '../components/rail-surface';
 
 /**
@@ -146,12 +144,6 @@ export function workstreamPresenceViewers(
   return members
     .filter((member) => presentIds.has(member.id) && !participantIds.has(member.id))
     .map((member) => ({ ...member, viewing: true }));
-}
-
-function detailFromRecoveryBoot(boot: WorkstreamBoot): WorkstreamDetail {
-  const { transcript, ...detail } = boot;
-  void transcript;
-  return detail;
 }
 
 export function workstreamRunTiming(
@@ -232,6 +224,7 @@ export function manualElicitationResponse(
 
 export function AddParticipantDialog({
   current,
+  privateSubstream = false,
   error,
   members,
   open,
@@ -241,6 +234,7 @@ export function AddParticipantDialog({
   onOpenChange,
 }: {
   current: WorkspaceMember[];
+  privateSubstream?: boolean;
   error?: string | undefined;
   members: WorkspaceMember[];
   open: boolean;
@@ -262,7 +256,9 @@ export function AddParticipantDialog({
   ];
   return (
     <Modal
-      description="Opening or viewing never adds someone as a participant. Add them explicitly here."
+      description={privateSubstream
+        ? 'Added participants can read this substream, including its inherited context. They must already have access to the parent work stream; adding them here does not grant that access.'
+        : 'Opening or viewing never adds someone as a participant. Add them explicitly here.'}
       onOpenChange={onOpenChange}
       open={open}
       title="Add a participant"
@@ -274,7 +270,7 @@ export function AddParticipantDialog({
           if (!isParticipant) {
             return (
               <button
-                aria-label={`Add ${member.name} to work stream`}
+                aria-label={`Add ${member.name} to ${privateSubstream ? 'substream' : 'work stream'}`}
                 className="member-action-row"
                 disabled={pending}
                 key={member.id}
@@ -308,7 +304,7 @@ export function AddParticipantDialog({
                       disabled={current.length <= 1 || pending}
                       onSelect={() => onRemove(member)}
                     >
-                      Remove from work stream
+                      Remove from {privateSubstream ? 'substream' : 'work stream'}
                     </DropdownMenu.Item>
                   </DropdownMenu.Content>
                 </DropdownMenu.Portal>
@@ -340,6 +336,7 @@ export function AddResourceDialog({
   onOpenChange,
   onSearchChange,
   onUpload,
+  uploadLabel = 'Upload file',
 }: {
   current: WorkstreamResource[];
   resources: WorkstreamResource[];
@@ -355,6 +352,7 @@ export function AddResourceDialog({
   onOpenChange: (open: boolean) => void;
   onSearchChange: (value: string) => void;
   onUpload: () => void;
+  uploadLabel?: string;
 }): React.JSX.Element {
   const currentIds = new Set(current.map((resource) => resource.id));
   const available = resources.filter((resource) => !currentIds.has(resource.id));
@@ -364,7 +362,7 @@ export function AddResourceDialog({
       footer={(
         <>
           <Button className="resource-upload-button" disabled={pending} onClick={onUpload}>
-            <FileUp aria-hidden="true" size={14} /> Upload file
+            <FileUp aria-hidden="true" size={14} /> {uploadLabel}
           </Button>
           {hasMore && (
             <Button disabled={fetching || pending} onClick={onLoadMore}>
@@ -571,11 +569,13 @@ export interface ConversationSurfaceProps {
   parentKind: ConversationParentKind;
   parentId: string;
   substreamId: string;
+  /** Parent-owned sidebar data; never substitute the selected child's roster or inventory. */
+  workstreamContext?: WorkstreamDetail;
+  onStartSubstream?: (throughTurnId: string) => void;
   renderHeader?: (context: ConversationHeaderContext) => React.ReactNode;
   renderSidebar?: (context: ConversationHeaderContext & {
     focusTranscript: () => void;
     openArtifact: (id: string, returnFocus: HTMLElement) => void;
-    openResources: (returnFocus: HTMLElement) => void;
   }) => React.ReactNode;
 }
 
@@ -593,10 +593,13 @@ export function ConversationSurface({
   parentKind,
   parentId: id,
   substreamId,
+  workstreamContext,
   renderHeader,
   renderSidebar,
+  onStartSubstream,
 }: ConversationSurfaceProps): React.JSX.Element {
   const detailQueryKey = useMemo(() => workstreamDetailQueryKey(id, substreamId), [id, substreamId]);
+  const parentDetailQueryKey = useMemo(() => workstreamDetailQueryKey(id, '0'), [id]);
   const transcriptQueryKey = useMemo(() => orderedTranscriptQueryKey(id, substreamId), [id, substreamId]);
   const readSocketOpenContext = useWorkstreamSocketOpenContext(id);
   const parentNoun = parentKind === 'automation' ? 'automation' : 'work stream';
@@ -616,6 +619,7 @@ export function ConversationSurface({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const [participantDialogOpen, setParticipantDialogOpen] = useState(false);
+  const [participantDialogSubstreamId, setParticipantDialogSubstreamId] = useState(substreamId);
   const [resourceDialogOpen, setResourceDialogOpen] = useState(false);
   const [resourceSearch, setResourceSearch] = useState('');
   const [debouncedResourceSearch, setDebouncedResourceSearch] = useState('');
@@ -631,17 +635,22 @@ export function ConversationSurface({
   const initialPositionedWorkstreamRef = useRef<string | null>(null);
   const readAckTimerRef = useRef<number | null>(null);
   const readAckInFlightRef = useRef<string | null>(null);
-  const activeWorkstreamIdRef = useRef(id);
+  const conversationAddress = `${id}:${substreamId}`;
+  const activeConversationAddressRef = useRef(conversationAddress);
   const pendingSendCount = useRef(0);
   const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreview | null>(null);
-  const [resourcePreview, setResourcePreview] = useState<{ resourceId: string | null; returnFocus: HTMLElement } | null>(null);
-  const openResourceDetails = useCallback((resourceId: string | null, returnFocus: HTMLElement): void => {
+  const [resourcePreview, setResourcePreview] = useState<{ resourceId: string; returnFocus: HTMLElement; workstreamScoped?: boolean } | null>(null);
+  const openResourceDetails = useCallback((resourceId: string, returnFocus: HTMLElement): void => {
     setAttachmentPreview(null);
     setResourcePreview({ resourceId, returnFocus });
   }, []);
+  const openWorkstreamResourceDetails = useCallback((resourceId: string, returnFocus: HTMLElement): void => {
+    setAttachmentPreview(null);
+    setResourcePreview({ resourceId, returnFocus, workstreamScoped: true });
+  }, []);
   const workspaceId = session?.workspace?.id ?? 'unbound';
   const workspaceRegion = session?.workspace?.region ?? 'global';
-  const attachmentDraft = useFileAttachments(api, workstreamDraftKey(workspaceRegion, workspaceId, id));
+  const attachmentDraft = useFileAttachments(api, workstreamDraftKey(workspaceRegion, workspaceId, id, substreamId));
   const transcriptDrop = useFileDrop(attachmentDraft.addFiles);
   const railDrop = useFileDrop(attachmentDraft.addFiles);
   // The composer does not take focus when a work stream opens, so a paste that
@@ -680,7 +689,7 @@ export function ConversationSurface({
   }, [closeRail, id, inspect, setRailScope]);
 
   useEffect(() => {
-    activeWorkstreamIdRef.current = id;
+    activeConversationAddressRef.current = conversationAddress;
     loadingOlderRef.current = false;
     loadingNewerRef.current = false;
     pendingOlderAfterReconnectRef.current = false;
@@ -692,7 +701,7 @@ export function ConversationSurface({
     readAckTimerRef.current = null;
     setLoadingOlder(false);
     setOlderMessagesError(undefined);
-  }, [id]);
+  }, [conversationAddress]);
 
   useEffect(() => {
     if (!resourceDialogOpen) {
@@ -703,54 +712,29 @@ export function ConversationSurface({
     return () => window.clearTimeout(timeout);
   }, [resourceDialogOpen, resourceSearch]);
 
-  // These fetchers are recovery paths, not the normal open. Selecting a work
-  // stream admits its feed socket immediately; the first snapshot populates
-  // both query keys. Keeping the REST readers attached to disabled observers
-  // gives the reconnecting/unavailable Retry button an explicit canonical fallback
-  // without racing a second boot against the room on every navigation.
+  // The admitted conversation socket is the only producer of these caches.
+  // Its canonical snapshot installs detail and transcript together, including
+  // after a cursor-zero recovery, so Retry restarts that same ordered path.
   const initialFeedCacheState = useMemo(() => (
     queryClient.getQueryData(transcriptQueryKey) !== undefined
       ? 'feed_cached'
       : queryClient.getQueryData(detailQueryKey) !== undefined ? 'detail_cached' : 'cold'
   ), [detailQueryKey, queryClient, transcriptQueryKey]);
-  const fetchWorkstreamDetail = useCallback(async (signal?: AbortSignal): Promise<WorkstreamDetail> => {
-    const snapshotGeneration = queryClient.getQueryData<number>(
-      workstreamSocketSnapshotGenerationQueryKey(id, substreamId),
-    ) ?? 0;
-    const boot = await api!.getConversation(id, signal, workstreamFeedOpenAttemptId(id));
-    if ((queryClient.getQueryData<number>(
-      workstreamSocketSnapshotGenerationQueryKey(id, substreamId),
-    ) ?? 0) !== snapshotGeneration) {
-      const socketDetail = queryClient.getQueryData<WorkstreamDetail>(detailQueryKey);
-      if (socketDetail) return socketDetail;
-      throw new Error('Socket snapshot superseded REST work-stream recovery');
-    }
-    queryClient.setQueryData<WorkstreamTranscriptSnapshot>(
-      transcriptQueryKey,
-      boot.transcript,
-    );
-    const canonical = orderedTranscriptMessages(boot.transcript, id);
-    const pendingOverlays = boot.transcript.pendingInputs.map((input) =>
-      pendingTranscriptInputOverlay(input, id, {
-        source: 'rest_snapshot',
-        snapshotId: boot.transcript.snapshotId,
-      }));
-    queryClient.setQueryData<TranscriptOverlay[]>(
-      transcriptOverlaysQueryKey(id, substreamId),
-      (current) => reconcileAuthoritativeTranscriptOverlays(canonical, current, pendingOverlays),
-    );
-    queryClient.setQueryData<WorkstreamFeedSource>(workstreamFeedSourceQueryKey(id, substreamId), 'boot_payload');
-    return detailFromRecoveryBoot(boot);
-  }, [api, detailQueryKey, id, queryClient, substreamId, transcriptQueryKey]);
-  const workstream = useQuery<WorkstreamDetail>({
+  const workstream = useQuery<WorkstreamDetail | undefined>({
     queryKey: detailQueryKey,
-    queryFn: ({ signal }) => fetchWorkstreamDetail(signal),
+    queryFn: async () => undefined,
     enabled: false,
     staleTime: 5_000,
   });
   const orderedTranscript = useQuery<WorkstreamTranscriptSnapshot | undefined>({
     queryKey: transcriptQueryKey,
     queryFn: async () => undefined,
+    enabled: false,
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+  const initialContext = useQuery<SubstreamInitialContext | null>({
+    queryKey: substreamInitialContextQueryKey(id, substreamId),
+    queryFn: async () => null,
     enabled: false,
     staleTime: Number.POSITIVE_INFINITY,
   });
@@ -782,11 +766,6 @@ export function ConversationSurface({
     orderedTranscript.data,
   );
   const routedDetail = payloadBelongsToRoute ? workstream.data : undefined;
-  useEffect(() => {
-    if (workstream.isError) {
-      cancelWorkstreamFeedOpen(id, performance.now(), readSocketOpenContext().socketLeaseId);
-    }
-  }, [id, readSocketOpenContext, workstream.isError]);
   const feedSource = useQuery<WorkstreamFeedSource | null>({
     queryKey: workstreamFeedSourceQueryKey(id, substreamId),
     queryFn: async () => null,
@@ -876,6 +855,12 @@ export function ConversationSurface({
     onOpenResourceDetails: openResourceDetails,
     resources: routedDetail?.resources ?? NO_RESOURCES,
   });
+  const sidebarCitations = useCitations({
+    loadResourceContent,
+    onOpenPreview: setAttachmentPreview,
+    onOpenResourceDetails: openWorkstreamResourceDetails,
+    resources: workstreamContext?.id === id ? workstreamContext.resources : NO_RESOURCES,
+  });
   // The store holds the rail's open state, but on the render that changes the
   // route it is still describing the previous work stream — the effect above
   // has not run yet. Reading it through the scope is what keeps that render
@@ -927,6 +912,7 @@ export function ConversationSurface({
     isReady: socketConnection.sendReady,
     workspaceSocketState: socketConnection.workspaceSocketState,
     workstreamId: id,
+    substreamId,
   });
   const socketState = socketConnection.state;
   const loadTranscriptRange = socketConnection.loadTranscriptRange;
@@ -1021,7 +1007,7 @@ export function ConversationSurface({
     const previousScrollHeight = scrollElement?.scrollHeight ?? 0;
     const previousScrollTop = scrollElement?.scrollTop ?? 0;
     try {
-      while (activeWorkstreamIdRef.current === id) {
+      while (activeConversationAddressRef.current === conversationAddress) {
         const snapshot = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
           transcriptQueryKey,
         );
@@ -1039,7 +1025,7 @@ export function ConversationSurface({
           throw error;
         }
       }
-      if (activeWorkstreamIdRef.current !== id) return;
+      if (activeConversationAddressRef.current !== conversationAddress) return;
       window.requestAnimationFrame(() => {
         const element = transcriptRef.current;
         if (!element) return;
@@ -1078,7 +1064,7 @@ export function ConversationSurface({
     loadingNewerRef.current = true;
     setOlderMessagesError(undefined);
     try {
-      while (activeWorkstreamIdRef.current === id) {
+      while (activeConversationAddressRef.current === conversationAddress) {
         const snapshot = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
           transcriptQueryKey,
         );
@@ -1149,7 +1135,7 @@ export function ConversationSurface({
           range = adjacentTranscriptRange(snapshot, 'newer');
           continue;
         }
-        if (activeWorkstreamIdRef.current !== id) return;
+        if (activeConversationAddressRef.current !== conversationAddress) return;
         const next = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(transcriptQueryKey);
         if (!next) {
           throw new Error('Rally could not load the latest messages. Try again.');
@@ -1199,24 +1185,41 @@ export function ConversationSurface({
   }, [jumpToLatest, loadNewerMessages, loadOlderMessages, socketState]);
 
   const addParticipant = useMutation({
-    mutationFn: (member: WorkspaceMember) => api!.addParticipant(id, member.id),
-    onSuccess: (updated) => {
-      queryClient.setQueryData(detailQueryKey, updated);
+    mutationFn: async ({ member, target }: { member: WorkspaceMember; target: string }): Promise<WorkstreamDetail | undefined> => {
+      if (target === '0') return api!.addParticipant(id, member.id);
+      await api!.addSubstreamParticipant(id, target, member.id);
+      return undefined;
+    },
+    onSuccess: (updated, { target, member }) => {
+      if (updated) queryClient.setQueryData(workstreamDetailQueryKey(id, target), updated);
+      else queryClient.setQueryData<WorkstreamDetail>(workstreamDetailQueryKey(id, target), (current) => current ? {
+        ...current,
+        participants: current.participants.some((person) => person.id === member.id)
+          ? current.participants : [...current.participants, member],
+      } : current);
       setParticipantDialogOpen(false);
     },
   });
 
   const removeParticipant = useMutation({
-    mutationFn: (member: WorkspaceMember) => api!.removeParticipant(id, member.id),
-    onSuccess: (_result, member) => {
-      const previous = queryClient.getQueryData<WorkstreamDetail>(detailQueryKey);
-      queryClient.setQueryData<WorkstreamDetail>(detailQueryKey, (current) => current ? {
+    mutationFn: ({ member, target }: { member: WorkspaceMember; target: string }) => target === '0'
+      ? api!.removeParticipant(id, member.id)
+      : api!.removeSubstreamParticipant(id, target, member.id),
+    onSuccess: (_result, { member, target }) => {
+      const targetKey = workstreamDetailQueryKey(id, target);
+      const previous = queryClient.getQueryData<WorkstreamDetail>(targetKey);
+      queryClient.setQueryData<WorkstreamDetail>(targetKey, (current) => current ? {
         ...current,
         participants: current.participants.filter((participant) => participant.id !== member.id),
       } : current);
       void queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
       if (member.id === session?.user.id && previous?.scope === 'personal') {
         setParticipantDialogOpen(false);
+        if (target !== '0') {
+          queryClient.removeQueries({ queryKey: targetKey, exact: true });
+          void navigate(`/workstreams/${id}`, { replace: true });
+          return;
+        }
         evictCachedWorkstream(queryClient, id);
         void navigate('/workstreams/new', { replace: true });
       }
@@ -1240,7 +1243,7 @@ export function ConversationSurface({
   const attachResource = useMutation({
     mutationFn: (resource: WorkstreamResource) => api!.attachResource(id, resource.id),
     onSuccess: (updated) => {
-      queryClient.setQueryData(detailQueryKey, updated);
+      queryClient.setQueryData(parentDetailQueryKey, updated);
       setResourceDialogOpen(false);
       setResourceSearch('');
     },
@@ -1274,9 +1277,9 @@ export function ConversationSurface({
     mutationFn: ({ resource, enabled }: { resource: WorkstreamResource; enabled: boolean }) =>
       api!.setResourceWatch(id, resource.id, enabled),
     onMutate: async ({ resource, enabled }) => {
-      await queryClient.cancelQueries({ queryKey: detailQueryKey, exact: true });
-      const previous = queryClient.getQueryData<WorkstreamDetail>(detailQueryKey);
-      queryClient.setQueryData<WorkstreamDetail>(detailQueryKey, (current) => current ? {
+      await queryClient.cancelQueries({ queryKey: parentDetailQueryKey, exact: true });
+      const previous = queryClient.getQueryData<WorkstreamDetail>(parentDetailQueryKey);
+      queryClient.setQueryData<WorkstreamDetail>(parentDetailQueryKey, (current) => current ? {
         ...current,
         resources: current.resources.map((item) => item.id === resource.id ? {
           ...item,
@@ -1287,10 +1290,10 @@ export function ConversationSurface({
       return { previous };
     },
     onError: (_error, _variables, context) => {
-      if (context?.previous) queryClient.setQueryData(detailQueryKey, context.previous);
+      if (context?.previous) queryClient.setQueryData(parentDetailQueryKey, context.previous);
     },
     onSuccess: (result, { resource, enabled }) => {
-      queryClient.setQueryData<WorkstreamDetail>(detailQueryKey, (current) => current ? {
+      queryClient.setQueryData<WorkstreamDetail>(parentDetailQueryKey, (current) => current ? {
         ...current,
         resources: current.resources.map((item) => item.id === resource.id ? {
           ...item,
@@ -1304,7 +1307,7 @@ export function ConversationSurface({
   const detachResource = useMutation({
     mutationFn: (resource: WorkstreamResource) => api!.detachResource(id, resource.id),
     onSuccess: (_result, resource) => {
-      queryClient.setQueryData<WorkstreamDetail>(detailQueryKey, (current) => current ? {
+      queryClient.setQueryData<WorkstreamDetail>(parentDetailQueryKey, (current) => current ? {
         ...current,
         resources: current.resources.filter((item) => item.id !== resource.id),
       } : current);
@@ -1314,7 +1317,7 @@ export function ConversationSurface({
   // The rail's detail shows one resource at a time, so its history is fetched
   // for that one rather than for every attachment the work stream carries.
   const inspectedResourceId = resourcePreview ? resourcePreview.resourceId : inspector?.type === 'resource' ? inspector.id : null;
-  const inspectedResourceVersion = workstream.data?.resources
+  const inspectedResourceVersion = (resourcePreview?.workstreamScoped ? workstreamContext : workstream.data)?.resources
     .find((resource) => resource.id === inspectedResourceId)?.currentVersion ?? null;
   const resourceVersions = useQuery({
     queryKey: resourceVersionsQueryKey(inspectedResourceId, inspectedResourceVersion),
@@ -1350,7 +1353,7 @@ export function ConversationSurface({
   const refreshResource = useMutation({
     mutationFn: (resource: WorkstreamResource) => api!.refreshResource(resource.id),
     onSuccess: (refreshed) => {
-      queryClient.setQueryData<WorkstreamDetail>(detailQueryKey, (current) => current ? {
+      queryClient.setQueryData<WorkstreamDetail>(parentDetailQueryKey, (current) => current ? {
         ...current,
         resources: current.resources.map((item) => item.id === refreshed.id
           ? { ...item, ...refreshed, relationshipType: item.relationshipType, direction: item.direction }
@@ -1608,7 +1611,7 @@ export function ConversationSurface({
     initialPositionedWorkstreamRef.current = id;
     const anchorSequence = routedDetail.firstUnreadSequenceNumber;
     window.requestAnimationFrame(() => {
-      if (activeWorkstreamIdRef.current !== id) return;
+      if (activeConversationAddressRef.current !== conversationAddress) return;
       // A work stream created moments ago has no transcript yet and a run
       // already going. There is nothing to position, and the reply that is
       // about to arrive is what the person is waiting to read.
@@ -1662,7 +1665,7 @@ export function ConversationSurface({
       detail.manualUnreadGeneration,
       currentSurfaceEntrypoint(),
     ).then((updated) => {
-      if (activeWorkstreamIdRef.current !== id) return;
+      if (activeConversationAddressRef.current !== conversationAddress) return;
       queryClient.setQueryData<WorkstreamDetail>(detailQueryKey, (current) =>
         current ? { ...current, ...updated } : current);
       setCachedWorkstreams(queryClient, (current) =>
@@ -1701,19 +1704,14 @@ export function ConversationSurface({
     if (
       socketConnection.state === 'reconnecting'
       || socketConnection.state === 'unavailable'
-      || workstream.error
     ) {
       return (
         <WorkstreamErrorState
-          description={workstream.error?.message
-            ?? socketConnection.openingError
+          description={socketConnection.openingError
             ?? (socketConnection.state === 'reconnecting'
               ? 'The live connection could not be opened. Try again while Rally reconnects.'
               : `This ${parentNoun} is unavailable.`)}
-          onRetry={() => {
-            socketConnection.retryOpening();
-            void workstream.refetch();
-          }}
+          onRetry={socketConnection.retryOpening}
           parentNoun={parentNoun}
           workstreamId={id}
         />
@@ -1744,6 +1742,10 @@ export function ConversationSurface({
       presenceUserIdsByWorkstream[id] ?? [],
     ),
   };
+  const sidebarDetail = workstreamContext?.id === id ? workstreamContext : {
+    ...displayedDetail, resources: [], participants: [], viewers: [],
+  };
+  const resourceManagementDetail = resourcePreview?.workstreamScoped ? sidebarDetail : displayedDetail;
   const discoveredResources = [...new Map(
     (availableResources.data?.pages.flatMap((page) => page.items) ?? []).map((resource) => [resource.id, resource]),
   ).values()];
@@ -1752,14 +1754,13 @@ export function ConversationSurface({
     <ConnectorConnectionsProvider connections={connections.data}>
     <div className="conversation-layout">
       {renderSidebar?.({
-        detail: displayedDetail,
+        detail: sidebarDetail,
         socketState,
         presentUserIds: presenceUserIdsByWorkstream[id] ?? [],
-        openParticipantDialog: () => setParticipantDialogOpen(true),
+        openParticipantDialog: () => { setParticipantDialogSubstreamId('0'); setParticipantDialogOpen(true); },
         openRail,
         rename: (title) => renameWorkstream.mutateAsync(title).then(() => undefined),
-        openArtifact: citations.openPreview,
-        openResources: (returnFocus) => openResourceDetails(null, returnFocus),
+        openArtifact: sidebarCitations.openPreview,
         focusTranscript: () => transcriptRef.current?.focus({ preventScroll: true }),
       })}
     <div className={clsx('workstream-screen', parentKind === 'automation' && 'automation-screen')}>
@@ -1767,7 +1768,7 @@ export function ConversationSurface({
         detail: displayedDetail,
         socketState,
         presentUserIds: presenceUserIdsByWorkstream[id] ?? [],
-        openParticipantDialog: () => setParticipantDialogOpen(true),
+        openParticipantDialog: () => { setParticipantDialogSubstreamId(substreamId); setParticipantDialogOpen(true); },
         openRail,
         rename: (title) => renameWorkstream.mutateAsync(title).then(() => undefined),
       })}
@@ -1837,6 +1838,10 @@ export function ConversationSurface({
             </div>
           )}
           {olderMessagesError && <InlineError>{olderMessagesError}</InlineError>}
+          {substreamId !== '0' && initialContext.data && <section className="substream-initial-context" aria-label="Initial context">
+            <strong>Context from the main conversation</strong>
+            <SubstreamContext context={initialContext.data} />
+          </section>}
           {/* Not while a run is going. A work stream opened the instant it was
               created has an empty transcript and an agent already working on
               it, and inviting the person to start it is both wrong and the
@@ -1864,6 +1869,7 @@ export function ConversationSurface({
               messages={visibleTranscript}
               onAnswerElicitation={answerElicitation}
               onOpenAttachment={setAttachmentPreview}
+              onStartSubstream={parentKind === 'workstream' && substreamId === '0' ? onStartSubstream : undefined}
               {...(api ? { onAcceptDraft: (automationId: string) => {
                 acceptProposedAutomation.mutate(automationId);
               } } : {})}
@@ -1922,10 +1928,11 @@ export function ConversationSurface({
             queueItems={queueItems}
             sending={sending}
             uploading={attachmentDraft.uploading}
-            key={displayedDetail.id}
+            key={conversationAddress}
             workstream={displayedDetail}
             workspaceId={workspaceId}
             workspaceRegion={workspaceRegion}
+            substreamId={substreamId}
           />
         </div>
       </div>
@@ -1934,7 +1941,6 @@ export function ConversationSurface({
         {...(resourcePreview ? { lightbox: {
           ...resourcePreview,
           onClose: () => setResourcePreview(null),
-          onSelect: (resourceId: string | null) => setResourcePreview((current) => current ? { ...current, resourceId } : null),
         } } : {})}
         dropTarget={railDrop}
         {...(api ? { loadResourceContent: loadResourceContent } : {})}
@@ -1944,33 +1950,36 @@ export function ConversationSurface({
           ?? refreshResource.error?.message
           ?? attachResource.error?.message}
         leaving={railLeaving}
-        onAddParticipant={() => setParticipantDialogOpen(true)}
-        onAddResource={() => setResourceDialogOpen(true)}
-        onDetachResource={(resource) => detachResource.mutateAsync(resource)}
+        onAddParticipant={() => { setParticipantDialogSubstreamId(resourcePreview?.workstreamScoped ? '0' : substreamId); setParticipantDialogOpen(true); }}
+        {...(substreamId === '0' || resourcePreview?.workstreamScoped ? {
+          onAddResource: () => setResourceDialogOpen(true),
+          onDetachResource: (resource: WorkstreamResource) => detachResource.mutateAsync(resource),
+          onRefreshResource: (resource: WorkstreamResource) => refreshResource.mutate(resource),
+          onToggleWatch: (resource: WorkstreamResource, enabled: boolean) => watchResource.mutate({ resource, enabled }),
+        } : {})}
         onOpenResourceVersion={openResourceVersion}
         onOpenWorkstreamAutomation={(automationId) => void navigate(`/automations/${automationId}`)}
-        onRefreshResource={(resource) => refreshResource.mutate(resource)}
-        onToggleWatch={(resource, enabled) => watchResource.mutate({ resource, enabled })}
         refreshingResourceId={refreshResource.isPending ? refreshResource.variables?.id ?? null : null}
         resourceVersions={resourceVersions.data}
         resourceVersionsError={resourceVersions.error?.message}
         {...(siteArtifacts ? { siteArtifacts } : {})}
-        workstream={displayedDetail}
+        workstream={resourceManagementDetail}
         workstreamAutomations={workstreamAutomations.data}
         workstreamAutomationsError={workstreamAutomations.error?.message}
       />}
 
       <AddParticipantDialog
-        current={displayedDetail.participants}
+        privateSubstream={participantDialogSubstreamId !== '0'}
+        current={participantDialogSubstreamId === '0' && renderSidebar ? sidebarDetail.participants : displayedDetail.participants}
         error={addParticipant.error?.message ?? removeParticipant.error?.message}
         members={members.data ?? []}
         onAdd={(member) => {
           removeParticipant.reset();
-          addParticipant.mutate(member);
+          addParticipant.mutate({ member, target: participantDialogSubstreamId });
         }}
         onRemove={(member) => {
           addParticipant.reset();
-          removeParticipant.mutate(member);
+          removeParticipant.mutate({ member, target: participantDialogSubstreamId });
         }}
         onOpenChange={(next) => {
           // A refused add is only worth showing while the dialog that provoked
@@ -1986,7 +1995,7 @@ export function ConversationSurface({
         pending={addParticipant.isPending || removeParticipant.isPending}
       />
       <AddResourceDialog
-        current={displayedDetail.resources}
+        current={resourceManagementDetail.resources}
         error={availableResources.error?.message ?? attachResource.error?.message}
         fetching={availableResources.isFetchingNextPage}
         hasMore={Boolean(availableResources.hasNextPage)}
@@ -2000,8 +2009,14 @@ export function ConversationSurface({
         onSearchChange={setResourceSearch}
         onUpload={() => {
           setResourceDialogOpen(false);
+          if (resourcePreview?.workstreamScoped && substreamId !== '0') {
+            setResourcePreview(null);
+            void navigate(`/workstreams/${id}`);
+            return;
+          }
           fileInputRef.current?.click();
         }}
+        uploadLabel={resourcePreview?.workstreamScoped && substreamId !== '0' ? 'Upload in Main log' : 'Upload file'}
         open={resourceDialogOpen}
         pending={attachResource.isPending}
         resources={discoveredResources}

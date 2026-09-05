@@ -186,14 +186,14 @@ describe('the right sidebar does not follow a work-stream switch', () => {
     expect(useUiStore.getState().inspector).toBeNull();
   });
 
-  it('closes resource lightboxes when switching work streams', async () => {
+  it('does not offer resource management before or after switching work streams', async () => {
     renderScreen();
     await screen.findByRole('button', { name: 'Go to conversation: First work stream', current: 'page' });
-    fireEvent.click(screen.getByRole('button', { name: 'Manage resources' }));
-    expect(screen.getByRole('dialog', { name: 'Resources' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Manage resources' })).toBeNull();
     act(() => switchWorkstream());
     await screen.findByRole('button', { name: 'Go to conversation: Second work stream', current: 'page' });
     expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Manage resources' })).toBeNull();
   });
 
   // A route switch must not run the rail's close animation over another work

@@ -302,7 +302,7 @@ describe("a conversation object's outbox", () => {
       expect(envelope).toMatchObject({ kind: "parent_effect", parentKind: "workstream", parentId: LEG_WORKSTREAM_ID });
     }
 
-    await deliverParentEffects(env, parent);
+    const parentDelivered = await deliverParentEffects(env, parent);
     const directory = await runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec<{
       workstream_id: string;
       title: string;
@@ -311,18 +311,19 @@ describe("a conversation object's outbox", () => {
       `SELECT workstream_id, title, waterline FROM workspace_workstream_directory WHERE workstream_id = ?`,
       LEG_WORKSTREAM_ID,
     ).toArray());
-    // The waterline is the parent's version of its own row, the number the
-    // workspace fences on, not any child's.
+    // Compare to the batch actually delivered, not the earlier inspection:
+    // another alarm may have published a newer projection between those reads.
     expect(directory).toEqual([{
       workstream_id: LEG_WORKSTREAM_ID,
       title: "Both legs",
-      waterline: parentCommon.at(-1)!.sourceVersion,
+      waterline: Math.max(...parentDelivered.filter((envelope) => envelope.effect.kind === "directory_common")
+        .map((envelope) => envelope.sourceVersion)),
     }]);
   });
 });
 
 describe("a parent with two children", () => {
-  it("sums one viewer's unread across both and numbers the aggregate itself", async () => {
+  it("retains private child unread locally without publishing it into Main's directory", async () => {
     const parent = workstreamStub(SIBLING_WORKSTREAM_ID);
     await parkEffectQueue(parent);
     const reserve = {
@@ -372,10 +373,10 @@ describe("a parent with two children", () => {
 
     const queued = (await pendingParentEffects(parent))
       .filter((envelope) => envelope.effect.kind === "directory_user");
-    // The provisional row was the parent's version 1; each child's aggregate
-    // is a newer version of the parent's own key, never the child's number.
-    expect(queued.map((envelope) => envelope.sourceVersion)).toEqual([2, 3]);
-    expect(queued.at(-1)?.effect).toMatchObject({ kind: "directory_user", unreadCount: 5, listable: true });
+    // Main advances the provisional parent row; private child activity never
+    // reaches the workspace-wide directory, even for a shared participant.
+    expect(queued.map((envelope) => envelope.sourceVersion)).toEqual([2]);
+    expect(queued.at(-1)?.effect).toMatchObject({ kind: "directory_user", unreadCount: 2, listable: true });
 
     await deliverParentEffects(env, parent);
     const viewer = await runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec<{
@@ -386,7 +387,7 @@ describe("a parent with two children", () => {
       SIBLING_WORKSTREAM_ID,
       USER_ID,
     ).toArray());
-    expect(viewer).toEqual([{ unread_count: 5, waterline: 3 }]);
+    expect(viewer).toEqual([{ unread_count: 2, waterline: 2 }]);
   });
 });
 

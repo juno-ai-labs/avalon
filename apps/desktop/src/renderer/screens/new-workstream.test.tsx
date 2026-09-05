@@ -324,6 +324,7 @@ describe('New work-stream home', () => {
     await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledWith(expect.objectContaining({
       openingMessage: 'ask @Samantha Lee',
       participantIds: ['user-2'],
+      operationId: expect.any(String),
       mentions: [{
         type: 'person',
         label: 'Samantha Lee',
@@ -446,11 +447,14 @@ describe('New work-stream home', () => {
     await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledWith({
       openingMessage: 'Prepare the launch brief',
       participantIds: ['user-2'],
+      operationId: expect.any(String),
       // The create request travels under the trace id the screen printed;
       // asserted as present rather than by value so the exact-shape check that
       // proves `modelOverride` is absent keeps working.
       requestId: expect.any(String),
     }));
+    const request = api.createWorkstream.mock.calls[0]?.[0];
+    expect(request?.operationId).toBe(request?.requestId);
   });
 
   it('focuses the recipient search when the new chat opens', async () => {
@@ -492,6 +496,7 @@ describe('New work-stream home', () => {
     await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledWith({
       openingMessage: 'Prepare the launch brief',
       participantIds: [],
+      operationId: expect.any(String),
       requestId: expect.any(String),
     }));
   });
@@ -510,6 +515,7 @@ describe('New work-stream home', () => {
     await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledWith({
       openingMessage: 'Prepare the launch brief',
       participantIds: [],
+      operationId: expect.any(String),
       modelOverride: 'openai/gpt-5.6-sol',
       requestId: expect.any(String),
     }));
@@ -534,6 +540,7 @@ describe('New work-stream home', () => {
     await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledWith({
       openingMessage: 'Prepare the launch brief',
       participantIds: [],
+      operationId: expect.any(String),
       modelOverride: 'x-ai/grok-4.3',
       requestId: expect.any(String),
     }));
@@ -556,6 +563,7 @@ describe('New work-stream home', () => {
     await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledWith({
       openingMessage: 'Prepare the launch brief',
       participantIds: [],
+      operationId: expect.any(String),
       requestId: expect.any(String),
     }));
   });
@@ -580,6 +588,7 @@ describe('New work-stream home', () => {
     await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledWith({
       openingMessage: 'Prepare the launch brief',
       participantIds: [],
+      operationId: expect.any(String),
       requestId: expect.any(String),
     }));
   });
@@ -601,6 +610,7 @@ describe('New work-stream home', () => {
     expect(api.createWorkstream).toHaveBeenCalledWith({
       openingMessage: 'Create this once',
       participantIds: [],
+      operationId: expect.any(String),
       requestId: expect.any(String),
     });
 
@@ -622,6 +632,7 @@ describe('New work-stream home', () => {
     await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledWith({
       openingMessage: '',
       participantIds: [],
+      operationId: expect.any(String),
       attachmentIds: ['resource-notes'],
       requestId: expect.any(String),
     }));

@@ -1,4 +1,8 @@
 import { ConversationParentKindSchema } from "@rally/contracts/conversation-parent";
+import { SubstreamAddressSchema, type SubstreamContextCapture } from "@rally/contracts/substream-creation";
+import { workstreamDOName } from "./names";
+import { initialContextFrames } from "./substream-context-transfer";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { pendingBindToolBatch } from "@rally/agent-harness";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import {
@@ -260,6 +264,7 @@ const SocketAttachmentSchema = z.object({
    * parent's archive. Absent on attachments from before the decision existed.
    */
   parentArchived: z.boolean().default(false),
+  membershipVersion: z.number().int().nonnegative().default(0),
   /** A `request_snapshot` from this socket is assembling; broadcasts skip it. */
   snapshotInFlight: z.boolean().default(false),
   transcriptSnapshot: z.object({
@@ -283,11 +288,12 @@ const SocketAdmissionPreparationSchema = z.strictObject({
   authorityGeneration: z.number().int().nonnegative(),
   role: z.enum(["owner", "admin", "member"]),
   analyticsWorkspaceId: z.string().nullable(),
+  membershipVersion: z.number().int().nonnegative().default(0),
   afterSequence: z.number().int().nonnegative().optional(),
   speculative: z.boolean(),
 });
 
-export type SocketAdmissionPreparation = z.infer<typeof SocketAdmissionPreparationSchema>;
+export type SocketAdmissionPreparation = z.input<typeof SocketAdmissionPreparationSchema>;
 
 const SocketUpgradeIdentitySchema = z.object({
   workspaceId: WorkspaceIdSchema,
@@ -306,6 +312,7 @@ const SocketUpgradeIdentitySchema = z.object({
   authorityGeneration: z.coerce.number().int().nonnegative().optional(),
   role: z.enum(["owner", "admin", "member"]).optional(),
   analyticsWorkspaceId: z.string().optional(),
+  membershipVersion: z.coerce.number().int().nonnegative().optional(),
 });
 
 type SocketUpgradeIdentity = z.infer<typeof SocketUpgradeIdentitySchema>;
@@ -732,6 +739,7 @@ type SocketSnapshotEvent = Extract<ServerSocketEvent, { type: "snapshot" }>;
 
 interface PreparedSocketSnapshot {
   event: SocketSnapshotEvent;
+  initialContextChunks: Extract<ServerSocketEvent, { type: "initial_context_snapshot_chunk" }>[];
   pendingInputChunks: WorkstreamTranscriptSnapshot["pendingInputs"][];
   encodedBytes: number;
   transcriptSnapshot: SocketAttachment["transcriptSnapshot"];
@@ -1162,6 +1170,89 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     await this.storageReady;
   }
 
+  /** Apply one versioned mirror of the parent-owned roster for a private child. */
+  async applyPrivateChildMembership(input: {
+    workspaceId: string;
+    parentId: string;
+    substreamId: string;
+    userId: string;
+    actorUserId: string;
+    active: boolean;
+    membershipVersion: number;
+  }): Promise<{ outcome: "applied" | "stale" | "unchanged" }> {
+    await this.storageReady;
+    const request = z.strictObject({
+      workspaceId: WorkspaceIdSchema,
+      parentId: IdSchema,
+      substreamId: SubstreamIdSchema.refine((value) => value !== "0"),
+      userId: UserIdSchema,
+      actorUserId: UserIdSchema,
+      active: z.boolean(),
+      membershipVersion: z.number().int().positive(),
+    }).parse(input);
+    const identity = this.objectStore.identity();
+    const persistedSubstream = this.state.storage.sql.exec<{ external_substream_id: string }>(
+      `SELECT external_substream_id FROM substream_agent_identity WHERE id = 1`,
+    ).toArray()[0]?.external_substream_id;
+    if (!identity || identity.workspaceId !== request.workspaceId
+      || identity.parentId !== request.parentId || identity.parentKind !== "workstream"
+      || persistedSubstream !== request.substreamId) {
+      throw new Error("private_child_membership_identity_mismatch");
+    }
+    const now = Date.now();
+    const outcome = this.state.storage.transactionSync(() => {
+      const current = this.state.storage.sql.exec<{ version: number; active: number }>(
+        `SELECT version, active FROM private_child_membership_authority WHERE user_id = ?`,
+        request.userId,
+      ).toArray()[0];
+      if (current && current.version > request.membershipVersion) return "stale" as const;
+      if (current?.version === request.membershipVersion) {
+        if (current.active !== Number(request.active)) throw new Error("private_child_membership_version_conflict");
+        return "unchanged" as const;
+      }
+      this.state.storage.sql.exec(
+        `INSERT INTO private_child_membership_authority(user_id, version, active, actor_user_id, updated_at)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(user_id) DO UPDATE SET version = excluded.version, active = excluded.active,
+           actor_user_id = excluded.actor_user_id, updated_at = excluded.updated_at`,
+        request.userId, request.membershipVersion, Number(request.active), request.actorUserId, now,
+      );
+      if (request.active) {
+        this.state.storage.sql.exec(
+          `INSERT INTO participants
+             (user_id, participation_reason, added_by_user_id, status, participant_epoch,
+              added_at, removed_at, updated_at)
+           VALUES (?, 'explicit', ?, 'active', 0, ?, NULL, ?)
+           ON CONFLICT(user_id) DO UPDATE SET participation_reason = 'explicit',
+             added_by_user_id = excluded.added_by_user_id, status = 'active',
+             participant_epoch = participants.participant_epoch + CASE WHEN participants.status = 'removed' THEN 1 ELSE 0 END,
+             added_at = CASE WHEN participants.status = 'removed' THEN excluded.added_at ELSE participants.added_at END,
+             removed_at = NULL, updated_at = excluded.updated_at`,
+          request.userId, request.actorUserId, now, now,
+        );
+      } else {
+        this.state.storage.sql.exec(
+          `UPDATE participants SET status = 'removed', removed_at = ?,
+             participant_epoch = participant_epoch + 1, updated_at = ?
+           WHERE user_id = ? AND status = 'active'`,
+          now, now, request.userId,
+        );
+      }
+      return "applied" as const;
+    });
+    if (!request.active && outcome === "applied") this.evictReadersWhoLostLocalAccess();
+    return { outcome };
+  }
+
+  private privateChildMembershipAllows(userId: string, requiredVersion: number): boolean {
+    if (this.objectStore.identity()?.parentKind !== "workstream" || this.externalSubstreamId() === "0") return true;
+    const row = this.state.storage.sql.exec<{ version: number; active: number }>(
+      `SELECT version, active FROM private_child_membership_authority WHERE user_id = ?`,
+      userId,
+    ).toArray()[0];
+    return row?.active === 1 && row.version === requiredVersion;
+  }
+
   /**
    * Prepare one feed admission while its already-issued ticket is in transit.
    *
@@ -1185,6 +1276,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     ) {
       return { outcome: "refused" };
     }
+    if (preparation.parentKind === "workstream"
+      && preparation.substreamId !== "0"
+      && preparation.membershipVersion <= 0) return { outcome: "refused" };
 
     try {
       this.ensureSubstreamIdentity(preparation.substreamId);
@@ -1216,6 +1310,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       || this.objectStore.realtimeAuthorityGeneration() !== preparation.authorityGeneration
       || !this.objectStore.isRealtimeWritable()
       || !this.product.canRead(preparation.userId)
+      || !this.privateChildMembershipAllows(preparation.userId, preparation.membershipVersion)
     ) return { outcome: "refused" };
 
     const entry: PreparedSocketAdmission = {
@@ -1268,7 +1363,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         // Pending-input spill is intentionally unbounded by aggregate transport
         // size. It must stay a streaming delivery path, never retained as a
         // prepared array of encoded frames.
-        if (snapshot.pendingInputChunks.length > 0) {
+        if (snapshot.pendingInputChunks.length > 0 || snapshot.initialContextChunks.length > 0) {
           return { outcome: "admission_prepared" };
         }
         this.clearPreparedSocketSnapshot();
@@ -1367,6 +1462,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       && input.afterSequence === identity.afterSequence
       && input.speculative === identity.speculative
       && input.authorityGeneration === identity.authorityGeneration
+      && (input.membershipVersion ?? 0) === (identity.membershipVersion ?? 0)
       && input.role === identity.role
       && input.analyticsWorkspaceId === (identity.analyticsWorkspaceId ?? null);
     if (
@@ -1376,6 +1472,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       || this.objectStore.realtimeAuthorityGeneration() !== input.authorityGeneration
       || !this.objectStore.isRealtimeWritable()
       || !this.product.canRead(input.userId)
+      || !this.privateChildMembershipAllows(input.userId, input.membershipVersion ?? 0)
     ) {
       this.deletePreparedSocketAdmission(identity.ticketId);
       return null;
@@ -1846,6 +1943,70 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   async bootstrapRuntime(input: SubstreamRuntimeBootstrapRequest): Promise<DurableObjectRpcResult> {
     await this.initialized;
     return responseToRpcResult(await this.acceptRuntimeBootstrap(this.rpcRequest(input)));
+  }
+
+  async captureInitialSubstreamContext(input: {
+    source: { workspaceId: string; workstreamId: string; substreamId: string };
+    operationId: string;
+    userId: string;
+    throughTurnId: string | null;
+  }): Promise<SubstreamContextCapture> {
+    await this.initialized;
+    const source = SubstreamAddressSchema.parse(input.source);
+    const identity = this.objectStore.identity();
+    if (!identity || identity.parentKind !== "workstream"
+      || identity.workspaceId !== source.workspaceId || identity.parentId !== source.workstreamId
+      || source.substreamId !== "0" || this.externalSubstreamId() !== "0") {
+      throw new Error("substream_source_identity_mismatch");
+    }
+    const parent = await durableObjectStubForWorkspace(this.env, this.env.WORKSTREAM_DOS,
+      source.workspaceId, workstreamDOName(this.env.AVALON_REGION, source.workspaceId, source.workstreamId));
+    const authorization = await parent.authorizeViewer({
+      workspaceId: source.workspaceId, parentId: source.workstreamId,
+      substreamId: asSubstreamId("0"), userId: asUserId(input.userId),
+    });
+    const operation = await parent.readPrivateChildPreparation({
+      workspaceId: source.workspaceId, parentId: source.workstreamId, operationId: input.operationId,
+    });
+    if (!authorization.authorized || authorization.archived || !operation
+      || operation.creatorUserId !== input.userId
+      || operation.sourceThroughTurnId !== input.throughTurnId) throw new Error("substream_capture_forbidden");
+    return this.transcript.captureSubstreamContext({
+      operationId: input.operationId, source, throughTurnId: input.throughTurnId,
+    });
+  }
+
+  /** Provisioned by the coordinator, seeded from the parent's durable receipt, never client text. */
+  async installPreparedSubstreamContext(input: {
+    workspaceId: string; workstreamId: string; substreamId: string; operationId: string;
+  }): Promise<{ installed: true }> {
+    await this.initialized;
+    const address = SubstreamAddressSchema.parse({
+      workspaceId: input.workspaceId, workstreamId: input.workstreamId, substreamId: input.substreamId,
+    });
+    const identity = this.objectStore.identity();
+    if (!identity || identity.parentKind !== "workstream"
+      || identity.workspaceId !== address.workspaceId || identity.parentId !== address.workstreamId
+      || address.substreamId === "0" || this.externalSubstreamId() !== address.substreamId) {
+      throw new Error("substream_target_identity_mismatch");
+    }
+    const parent = await durableObjectStubForWorkspace(this.env, this.env.WORKSTREAM_DOS,
+      address.workspaceId, workstreamDOName(this.env.AVALON_REGION, address.workspaceId, address.workstreamId));
+    const operation = await parent.readPrivateChildPreparation({
+      workspaceId: address.workspaceId, parentId: address.workstreamId, operationId: input.operationId,
+    });
+    if (!operation || operation.substreamId !== address.substreamId || !operation.preparedContext
+      || (operation.status !== "confirming" && operation.status !== "ready")) {
+      throw new Error("substream_preparation_not_ready");
+    }
+    this.transcript.installInitialContext({ operationId: operation.operationId, context: {
+      source: { workspaceId: address.workspaceId, workstreamId: address.workstreamId, substreamId: asSubstreamId("0") },
+      throughTurnId: operation.preparedContext.capture?.throughTurnId ?? null,
+      policyRevision: operation.recipe.policy.revision,
+      contentHash: operation.preparedContext.contentHash,
+      parts: operation.preparedContext.parts.map((part) => part.content),
+    } });
+    return { installed: true };
   }
 
   async executeIdentityOperation(input: IdentityOperationRequest): Promise<DurableObjectRpcResult> {
@@ -3063,7 +3224,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         expectedBindStateRevision: projection?.stateRevision ?? 0,
         receipt: {
           runId,
-          substreamId: this.externalSubstreamId(),
+          // Each SubstreamAgent owns a local root row "0". The external
+          // child address belongs in executionContextJson, not this SQL FK.
+          substreamId: "0",
           executionEpoch: 1,
           leaseOwner,
           leaseExpiresAt: now + LOOP_EXECUTION_LEASE_MS,
@@ -4364,6 +4527,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       socket.close(1011, "Missing connection identity");
       return;
     }
+    if (!this.privateChildMembershipAllows(attachment.userId, attachment.membershipVersion)) {
+      socket.close(WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, "You can no longer read this conversation");
+      return;
+    }
 
     if (parsed.data.type === "subscribe") {
       const authority = await readWorkstreamAuthorityControl(this.env);
@@ -5440,9 +5607,20 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           request.headers,
           RALLY_HEADERS.SOCKET_ANALYTICS_WORKSPACE_ID,
         ),
+        membershipVersion: readRallyHeader(
+          request.headers,
+          RALLY_HEADERS.SOCKET_ADMISSION_MEMBERSHIP_VERSION,
+        ),
       });
 
     if (!identity.success) return jsonResponse({ error: "invalid_socket_identity" }, 400);
+
+    if ((identity.data.parentKind ?? this.objectStore.identity()?.parentKind) === "workstream"
+      && identity.data.substreamId !== "0"
+      && (identity.data.membershipVersion ?? 0) <= 0) {
+      span.setError("private_child_admission_missing");
+      return jsonResponse({ error: "forbidden" }, 403);
+    }
 
     span.setAttributes({
       "rally.workspace.id": identity.data.workspaceId,
@@ -5511,7 +5689,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         }, 503);
       }
     }
-    if (!auth || !this.product.canRead(identity.data.userId)) {
+    if (!auth || !this.product.canRead(identity.data.userId)
+      || !this.privateChildMembershipAllows(identity.data.userId, identity.data.membershipVersion ?? 0)) {
       span.setError("forbidden");
       return jsonResponse({ error: "forbidden" }, 403);
     }
@@ -5549,6 +5728,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       publishPresence: identity.data.afterSequence === undefined,
       speculative: identity.data.speculative,
       parentArchived: identity.data.parentArchived,
+      membershipVersion: identity.data.membershipVersion ?? 0,
       snapshotInFlight: false,
       transcriptSnapshot: null,
     };
@@ -6014,6 +6194,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         ),
       });
       socket.send(JSON.stringify(snapshot.event));
+      for (const chunk of snapshot.initialContextChunks) socket.send(JSON.stringify(chunk));
       for (const [chunkIndex, inputs] of snapshot.pendingInputChunks.entries()) {
         const frame = JSON.stringify(ServerSocketEventSchema.parse({
           type: "pending_inputs_snapshot_chunk",
@@ -6092,6 +6273,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       : null;
     const occurredAt = new Date().toISOString();
     let pendingInputChunks: WorkstreamTranscriptSnapshot["pendingInputs"][] = [];
+    const initialContextChunks = initialContextFrames(this.transcript.initialContext(), {
+      sequence, occurredAt, snapshotId: transcript.snapshotId,
+    });
     const snapshotEvent = (): SocketSnapshotEvent => ServerSocketEventSchema.parse({
       type: "snapshot",
       reason,
@@ -6100,6 +6284,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       workstream,
       transcript,
       pendingInputChunkCount: pendingInputChunks.length,
+      initialContextChunkCount: initialContextChunks.length,
       activeStreams,
       activeCompaction,
     }) as SocketSnapshotEvent;
@@ -6171,6 +6356,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     return {
       event,
       pendingInputChunks,
+      initialContextChunks,
       encodedBytes,
       transcriptSnapshot: {
         snapshotId: transcript.snapshotId,

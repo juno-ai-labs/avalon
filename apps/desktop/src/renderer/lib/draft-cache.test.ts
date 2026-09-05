@@ -183,6 +183,11 @@ describe('draft cache', () => {
     expect(await readDraftAttachments(globalKey)).toHaveLength(1);
   });
 
+  it('keeps main and private-child drafts separate without moving the released main key', () => {
+    expect(workstreamDraftKey('global', 'workspace', 'parent')).toBe('workspace:global:workspace:workstream:parent');
+    expect(workstreamDraftKey('global', 'workspace', 'parent', 'child')).toBe('workspace:global:workspace:workstream:parent:substream:child');
+  });
+
   it('moves released single-workspace draft keys into the regional namespace', async () => {
     await writeDraftText('workstream:room-one', 'existing room');
     await writeDraftText('new-workstream:shared-workspace', 'new room');

@@ -1612,6 +1612,44 @@ directory write at all.
 
 ## Changelog
 
+### 2026-09-05 — Private child projections have an independent local clock
+
+Child discovery uses `children:<user>` state keys and exposes
+`privateChildrenWaterline` on control metadata. Reusing `user:<user>` allocated
+versions that were never forwarded to WorkspaceDO, so later notifications could
+wait for an impossible viewer version. Child projections are still recorded and
+receipted but do not aggregate Main viewers, including child members absent from
+Main. A separate aggregation hook preserves automation lifecycle callbacks even
+when forwarding is disabled. Parent access is checked at prepared-content and
+confirmation commits, and readiness checks all undelivered membership rows,
+including deferred retries rather than only the currently due batch.
+
+### 2026-09-04 — WorkstreamDO owns private child preparation and membership
+
+**What changed:** Non-main work-stream conversations now reserve a stable child
+and a retryable preparation receipt in WorkstreamDO. The receipt pins the source
+cutoff, context recipe, membership initializer and initialized roster. A child
+is absent from authorization and the viewer-filtered control-socket directory
+until its prepared seed and parent-to-child membership mirrors are installed.
+Explicit participant changes use versioned durable effects; only main (`0`)
+conversation effects contribute parent title, activity and workspace directory
+projections.
+
+**Why:** A parent-wide viewer answer and OR-aggregation across every child made
+a private branch inherit sibling readers and allowed a child to replace its
+parent's metadata. WorkstreamDO is the authority that can make reservation,
+readiness, roster visibility and idempotent retry one decision.
+
+**Considered and rejected:** Treating the SubstreamAgent participant table as
+the roster authority, or publishing a child before its seed/mirror install.
+Both create a window where a ticket and the target disagree and make retry
+reconstruct policy instead of replaying a pinned receipt.
+
+**Consequences:** Reserved and failed children are private implementation state.
+The parent control snapshot includes only ready children visible to its socket
+viewer. A new membership initializer must be registered by the coordinator and
+its resolved member set must be stored in the begin receipt.
+
 ### 2026-09-04: The creator can open a new room at once, and every substream attaches its own resources
 
 **What changed:** `ConversationParentObject.isParticipant` answers from the

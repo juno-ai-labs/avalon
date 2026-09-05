@@ -15,21 +15,27 @@ import {
   X,
 } from 'lucide-react';
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import { useParams, useSearchParams } from 'react-router-dom';
+import type { SubstreamPreparationPreview } from '@rally/contracts/substream-creation';
 import { workstreamCanonicalUrl } from '@rally/contracts/workstream-links';
 import type { WorkspaceTarget } from '@rally/contracts/workspace-target';
 import { useAppSession } from '../lib/app-session';
 import { isComposingKeyEvent } from '../lib/ime';
 import { useNamingSkeleton } from '../lib/naming-skeleton';
 import { desktopBridge } from '../lib/platform';
-import { reportTelemetryProductIntent } from '../lib/telemetry';
+import { reportTelemetryProductIntent, uuidV7 } from '../lib/telemetry';
+import { holdCreationTraceUntilSendReady, startPerfTrace } from '../lib/perf-trace';
 import { useTextClipped } from '../lib/use-text-clipped';
 import { RIGHT_SIDEBAR_ENABLED, type RailVariant, useUiStore } from '../lib/ui-store';
 import type { SocketState } from '../lib/use-workstream-socket';
+import type { WorkstreamChildDirectory } from '../lib/use-workstream-control-socket';
 import type { WorkstreamDetail } from '../lib/types';
-import { AvatarStack, Badge, IconButton, InlineError, SocketStatusIndicator, StatusDot, TitleSkeleton } from '../components/primitives';
+import { useRetainedWorkstreamSocket } from '../lib/workstream-socket-pool';
+import { AvatarStack, Badge, Button, IconButton, InlineError, Modal, SocketStatusIndicator, StatusDot, TitleSkeleton } from '../components/primitives';
 import { WorkstreamGlyph } from '../components/workstream-glyph';
 import { WorkstreamSidebar } from '../components/workstream-sidebar';
+import { SubstreamContext } from '../components/substream-context';
 import { ConversationSurface } from './conversation-surface';
 
 // The feed, composer and rail live in `conversation-surface.tsx`, shared with
@@ -396,17 +402,124 @@ export function WorkstreamHeader({
 /** A work stream: the shared conversation surface under the work-stream header. */
 export function WorkstreamScreen(): React.JSX.Element {
   const { id = '' } = useParams();
-  const { session } = useAppSession();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { api, session } = useAppSession();
+  const selectedSubstreamId = searchParams.get('substream') || '0';
+  // Parent chrome remains live even on a direct link into a child. Reuse the
+  // retained Main connection rather than deriving its inventory from the child.
+  useRetainedWorkstreamSocket(api, id, Boolean(api && id && selectedSubstreamId !== '0'), 'workstream', '0');
+  const parent = useQuery<WorkstreamDetail | undefined>({
+    queryKey: ['workstream', id], queryFn: async () => undefined, enabled: false,
+  });
+  const children = useQuery<WorkstreamChildDirectory | undefined>({
+    queryKey: ['workstream-children', id], queryFn: async () => undefined, enabled: false,
+  });
+  const [creation, setCreation] = useState<{ operationId: string; parentId: string; title: string; throughTurnId: string | null; preparationWaitMs: number } | null>(null);
+  const [preview, setPreview] = useState<SubstreamPreparationPreview | null>(null);
+  const [creationError, setCreationError] = useState<string | null>(null);
+  const [creationPending, setCreationPending] = useState<'prepare' | 'confirm' | null>(null);
+  const creationRef = useRef(creation);
+  creationRef.current = creation;
+  const selectSubstream = (substreamId: string): void => {
+    const next = new URLSearchParams(searchParams);
+    if (substreamId === '0') next.delete('substream');
+    else next.set('substream', substreamId);
+    setSearchParams(next, { replace: true });
+  };
+  const resetCreation = (): void => {
+    creationRef.current = null;
+    setCreation(null); setPreview(null); setCreationError(null); setCreationPending(null);
+  };
+  const cancelCreation = (): void => {
+    if (creationPending === 'confirm') return;
+    if (api && creation) void api.cancelSubstream(creation.parentId, creation.operationId).catch(() => undefined);
+    resetCreation();
+  };
+  const startCreation = (throughTurnId: string | null): void => {
+    setPreview(null); setCreationError(null); setCreationPending(null);
+    setCreation({ operationId: uuidV7(), parentId: id, title: 'New substream', throughTurnId, preparationWaitMs: 0 });
+  };
+  const updateCreationTitle = (nextTitle: string): void => {
+    const active = creationRef.current;
+    if (!active || creationPending) return;
+    if (api && creationError) void api.cancelSubstream(active.parentId, active.operationId).catch(() => undefined);
+    setCreationError(null);
+    setCreation({ ...active, operationId: uuidV7(), title: nextTitle, preparationWaitMs: 0 });
+  };
+  useEffect(() => {
+    const active = creationRef.current;
+    if (active && active.parentId !== id) {
+      if (api) void api.cancelSubstream(active.parentId, active.operationId).catch(() => undefined);
+      resetCreation();
+    }
+  }, [api, id]);
+  const prepare = async (): Promise<void> => {
+    const attempt = creationRef.current;
+    if (!api || !attempt?.title.trim() || creationPending) return;
+    const startedAt = performance.now();
+    const trace = startPerfTrace('substream_prepare', { operationId: attempt.operationId });
+    setCreationPending('prepare'); setCreationError(null);
+    try {
+      const prepared = await trace.step('prepare_request', () => api.prepareSubstream(attempt.parentId, {
+        operationId: attempt.operationId, title: attempt.title.trim(), throughTurnId: attempt.throughTurnId,
+      }));
+      const elapsed = Math.max(0, performance.now() - startedAt);
+      trace.end({ outcome: 'completed', workstreamId: attempt.parentId, systemWaitMs: elapsed });
+      if (creationRef.current?.operationId !== attempt.operationId || creationRef.current.parentId !== attempt.parentId) return;
+      setCreation((current) => current?.operationId === attempt.operationId ? { ...current, preparationWaitMs: current.preparationWaitMs + elapsed } : current);
+      setPreview(prepared);
+    } catch (error) {
+      trace.end({ outcome: 'failed', workstreamId: attempt.parentId });
+      if (creationRef.current?.operationId !== attempt.operationId || creationRef.current.parentId !== attempt.parentId) return;
+      const elapsed = Math.max(0, performance.now() - startedAt);
+      setCreation((current) => current?.operationId === attempt.operationId ? { ...current, preparationWaitMs: current.preparationWaitMs + elapsed } : current);
+      setCreationError(error instanceof Error ? error.message : 'The substream preview could not be prepared.');
+    } finally {
+      if (creationRef.current?.operationId === attempt.operationId) setCreationPending(null);
+    }
+  };
+  const confirm = async (): Promise<void> => {
+    const attempt = creationRef.current;
+    if (!api || !preview || !attempt || creationPending) return;
+    const startedAt = performance.now();
+    const trace = startPerfTrace('substream_create', { operationId: attempt.operationId });
+    setCreationPending('confirm'); setCreationError(null);
+    try {
+      const result = await trace.step('confirm_request', () => api.confirmSubstream(attempt.parentId, attempt.operationId));
+      if (creationRef.current?.operationId !== attempt.operationId || creationRef.current.parentId !== attempt.parentId) {
+        trace.end({ outcome: 'superseded' }); return;
+      }
+      trace.annotate({ workstreamId: attempt.parentId });
+      holdCreationTraceUntilSendReady(
+        trace,
+        attempt.parentId,
+        result.substreamId,
+        attempt.preparationWaitMs + Math.max(0, performance.now() - startedAt),
+      );
+      resetCreation();
+      selectSubstream(result.substreamId);
+    } catch (error) {
+      trace.end({ outcome: 'failed', workstreamId: attempt.parentId });
+      if (creationRef.current?.operationId !== attempt.operationId || creationRef.current.parentId !== attempt.parentId) return;
+      setCreationError(error instanceof Error ? error.message : 'The substream could not be created.');
+      setCreationPending(null);
+    }
+  };
   return (
+    <>
     <ConversationSurface
       parentId={id}
       parentKind="workstream"
+      workstreamContext={parent.data}
+      onStartSubstream={startCreation}
       renderSidebar={(context) => (
         <WorkstreamSidebar
-          workstream={context.detail}
+          workstream={{ ...context.detail, title: parent.data?.title ?? context.detail.title, privateChildren: children.data?.privateChildren }}
           presentUserIds={context.presentUserIds}
+          selectedSubstreamId={selectedSubstreamId}
+          onSelectSubstream={selectSubstream}
+          onNewSubstream={() => startCreation(null)}
           onOpenArtifact={context.openArtifact}
-          onResources={context.openResources}
           onParticipants={context.openParticipantDialog}
           onFocusTranscript={context.focusTranscript}
         />
@@ -424,10 +537,30 @@ export function WorkstreamScreen(): React.JSX.Element {
             region: session.workspace.region,
             workspaceId: session.workspace.id,
           } : null}
-          workstream={context.detail}
+          workstream={parent.data ?? context.detail}
         />
       )}
-      substreamId="0"
+      substreamId={selectedSubstreamId}
     />
+    <Modal
+      description="Only you can see this private substream until you add participants. Review the selected context before creating it."
+      footer={<>
+        <Button className="secondary" disabled={creationPending === 'confirm'} onClick={cancelCreation}>Cancel</Button>
+        {preview
+          ? <Button disabled={creationPending !== null} onClick={() => void confirm()}>{creationPending === 'confirm' ? 'Creating…' : 'Create substream'}</Button>
+          : <Button disabled={creationPending !== null || !creation?.title.trim()} onClick={() => void prepare()}>{creationPending === 'prepare' ? 'Preparing…' : 'Review context'}</Button>}
+      </>}
+      onOpenChange={(open) => { if (!open) cancelCreation(); }}
+      open={creation?.parentId === id}
+      title="New substream"
+    >
+      {creationError && <InlineError>{creationError}</InlineError>}
+      {!preview ? <label className="form-field"><span>Title</span><input autoFocus disabled={creationPending !== null} onChange={(event) => updateCreationTitle(event.target.value)} value={creation?.title ?? ''} /></label> : <div className="substream-context-preview">
+        <strong>{preview.title}</strong>
+        <p>Context from the main conversation</p>
+        <SubstreamContext context={preview.context} />
+      </div>}
+    </Modal>
+    </>
   );
 }

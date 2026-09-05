@@ -19,6 +19,7 @@ export interface ResolvedConversationParent {
   authorityGeneration: number;
   /** Whether the parent is archived: readers are admitted, writers refused. */
   archived: boolean;
+  membershipVersion: number;
 }
 
 /**
@@ -54,7 +55,7 @@ export class ConversationService {
     );
     const asWorkstream = await workstream.authority({ workspaceId: this.auth.workspaceId, parentId });
     if (asWorkstream.exists) {
-      return { kind: "workstream", id: parentId, ...asWorkstream };
+      return { kind: "workstream", id: parentId, membershipVersion: 0, ...asWorkstream };
     }
     const automation = await durableObjectStubForWorkspace(
       this.env,
@@ -64,7 +65,7 @@ export class ConversationService {
     );
     const asAutomation = await automation.authority({ workspaceId: this.auth.workspaceId, parentId });
     if (asAutomation.exists) {
-      return { kind: "automation", id: parentId, ...asAutomation };
+      return { kind: "automation", id: parentId, membershipVersion: 0, ...asAutomation };
     }
     throw new ApiError(404, "conversation_not_found", "Conversation not found");
   }
@@ -85,6 +86,7 @@ export class ConversationService {
       workspaceId: this.auth.workspaceId,
       parentId,
       userId: this.auth.userId,
+      substreamId: asSubstreamId(substreamId),
     }));
     if (!decision.authorized) throw new ApiError(404, "conversation_not_found", "Conversation not found");
     if (parent.kind === "automation") {
@@ -106,7 +108,11 @@ export class ConversationService {
         throw error;
       }
     }
-    return { ...parent, archived: decision.archived || parent.archived };
+    return {
+      ...parent,
+      archived: decision.archived || parent.archived,
+      membershipVersion: decision.membershipVersion ?? 0,
+    };
   }
 
   /** The object client for the parent's main conversation, or a 503 on a stack that never opened the authority. */
@@ -162,6 +168,7 @@ export class ConversationService {
           role: this.auth.role,
           analyticsWorkspaceId: this.auth.analyticsWorkspaceId ?? null,
           parentArchived: parent.archived,
+          membershipVersion: parent.membershipVersion,
         },
       },
     );
@@ -178,6 +185,7 @@ export class ConversationService {
         ...(afterSequence === undefined ? {} : { afterSequence }),
         speculative,
         authorityGeneration: authority.generation,
+        membershipVersion: 0,
       });
     }
     const url = new URL(this.env.PUBLIC_API_BASE_URL);
@@ -210,6 +218,7 @@ export class ConversationService {
     afterSequence?: number;
     speculative: boolean;
     authorityGeneration: number;
+    membershipVersion: number;
   }): void {
     if (!this.defer) return;
     const startedAt = Date.now();
@@ -232,6 +241,7 @@ export class ConversationService {
           ticketIssuedAt: input.ticketIssuedAt,
           ticketExpiresAt: input.ticketExpiresAt,
           authorityGeneration: input.authorityGeneration,
+          membershipVersion: input.membershipVersion,
           role: this.auth.role,
           analyticsWorkspaceId: this.auth.analyticsWorkspaceId ?? null,
           ...(input.afterSequence === undefined ? {} : { afterSequence: input.afterSequence }),

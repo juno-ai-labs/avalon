@@ -8,8 +8,9 @@ const api = vi.hoisted(() => ({
   addParticipant: vi.fn(),
   clientFeatureFlags: vi.fn(),
   getWorkspaceMembers: vi.fn(),
-  getConversation: vi.fn(),
   removeParticipant: vi.fn(),
+  prepareSubstream: vi.fn(),
+  cancelSubstream: vi.fn(),
 }));
 const retainedSocket = vi.hoisted(() => vi.fn());
 const scrollTranscriptToEnd = vi.hoisted(() => vi.fn());
@@ -57,8 +58,7 @@ vi.mock('../lib/use-transcript-follow', () => ({
 }));
 
 import { WorkstreamScreen } from './workstream';
-import { workstreamFeedSourceQueryKey, workstreamSocketSnapshotGenerationQueryKey } from '../lib/telemetry';
-import type { WorkstreamBoot, WorkstreamDetail } from '../lib/types';
+import type { WorkstreamBoot, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 
 const workstreamId = '00000000-0000-7000-8000-000000000650';
 
@@ -104,15 +104,7 @@ function recoveryBoot(overrides: Partial<WorkstreamBoot> = {}): WorkstreamBoot {
   } as WorkstreamBoot;
 }
 
-function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
-  let resolve!: (value: T) => void;
-  return {
-    promise: new Promise<T>((next) => { resolve = next; }),
-    resolve,
-  };
-}
-
-function renderScreen(seed?: (queryClient: QueryClient) => void): QueryClient {
+function renderScreen(seed?: (queryClient: QueryClient) => void, substreamId?: string): QueryClient {
   const queryClient = new QueryClient({
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
   });
@@ -120,7 +112,7 @@ function renderScreen(seed?: (queryClient: QueryClient) => void): QueryClient {
   render(
     <Tooltip.Provider>
       <QueryClientProvider client={queryClient}>
-        <MemoryRouter initialEntries={[`/workstreams/${workstreamId}`]}>
+        <MemoryRouter initialEntries={[`/workstreams/${workstreamId}${substreamId ? `?substream=${substreamId}` : ''}`]}>
           <Routes>
             <Route element={<WorkstreamScreen />} path="/workstreams/:id" />
           </Routes>
@@ -146,12 +138,64 @@ describe('socket-first work-stream open', () => {
     });
   });
 
+  it('keeps preparation inputs stable while pending and cancels a failed attempt only once on edit', async () => {
+    let rejectPreparation!: (error: Error) => void;
+    api.prepareSubstream.mockImplementation(() => new Promise((_resolve, reject) => { rejectPreparation = reject; }));
+    api.cancelSubstream.mockResolvedValue(undefined);
+    const boot = recoveryBoot();
+    renderScreen((cache) => {
+      cache.setQueryData(['workstream', workstreamId], boot);
+      cache.setQueryData(['ordered-transcript', workstreamId], boot.transcript);
+    });
+    fireEvent.click(await screen.findByRole('button', { name: 'New substream' }));
+    const title = screen.getByRole('textbox', { name: 'Title' });
+    fireEvent.click(screen.getByRole('button', { name: 'Review context' }));
+    expect(title).toBeDisabled();
+    await act(async () => { rejectPreparation(new Error('Preparation failed')); });
+    expect(title).toBeEnabled();
+    expect(screen.getByText('Preparation failed')).toBeInTheDocument();
+    fireEvent.change(title, { target: { value: 'Revised title' } });
+    expect(screen.queryByText('Preparation failed')).not.toBeInTheDocument();
+    fireEvent.change(title, { target: { value: 'Revised title again' } });
+    expect(api.cancelSubstream).toHaveBeenCalledTimes(1);
+    expect(api.cancelSubstream).toHaveBeenCalledWith(workstreamId, api.prepareSubstream.mock.calls[0]![1].operationId);
+  });
+
+  it('keeps sidebar membership and management at the parent while a child is selected', async () => {
+    const childId = '00000000-0000-7000-8000-000000000660';
+    const member = { id: '00000000-0000-7000-8000-000000000661', name: 'Parent member', email: 'parent@example.test', timezone: 'UTC' };
+    const newcomer = { ...member, id: '00000000-0000-7000-8000-000000000662', name: 'New member' };
+    const artifact: WorkstreamResource = {
+      id: '00000000-0000-7000-8000-000000000663', title: 'Parent artifact', resourceType: 'document', currentVersion: 1,
+      direction: 'artifact', relationshipType: 'generated', refreshSupported: false, watchEnabled: false, watchStatus: 'unsupported',
+    };
+    const parent = recoveryBoot({ participants: [member], resources: [artifact] });
+    const child = recoveryBoot({ title: 'Private child', participants: [], resources: [{ ...artifact, id: 'child-artifact', title: 'Child artifact' }] });
+    api.getWorkspaceMembers.mockResolvedValue([member, newcomer]);
+    api.addParticipant.mockResolvedValue({ ...parent, participants: [member, newcomer] });
+    const client = renderScreen((cache) => {
+      cache.setQueryData(['workstream', workstreamId], parent);
+      cache.setQueryData(['substream-workstream', workstreamId, childId], child);
+      cache.setQueryData(['substream-ordered-transcript', workstreamId, childId], child.transcript);
+    }, childId);
+
+    expect(await screen.findByRole('button', { name: 'Manage participants: Parent member' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Manage resources' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Open Parent artifact' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Open Child artifact' })).not.toBeInTheDocument();
+    expect(retainedSocket).toHaveBeenCalledWith(api, workstreamId, true, 'workstream', '0');
+    fireEvent.click(screen.getByRole('button', { name: 'Manage work-stream participants' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Add New member to work stream' }));
+    await waitFor(() => expect(api.addParticipant).toHaveBeenCalledWith(workstreamId, newcomer.id));
+    expect(await screen.findByRole('button', { name: 'Manage participants: New member' })).toBeInTheDocument();
+    expect(client.getQueryData<WorkstreamDetail>(['substream-workstream', workstreamId, childId])?.participants).toEqual([]);
+  });
+
   it('admits the feed while the snapshot is pending without starting REST boot readers', async () => {
     renderScreen();
 
     expect(screen.getByText('Opening work stream…')).toBeInTheDocument();
     await waitFor(() => expect(retainedSocket).toHaveBeenCalledWith(api, workstreamId, true, 'workstream', '0'));
-    expect(api.getConversation).not.toHaveBeenCalled();
   });
 
   it('requests a replacement snapshot when a retained socket outlives its base caches', async () => {
@@ -169,7 +213,6 @@ describe('socket-first work-stream open', () => {
     renderScreen();
 
     await waitFor(() => expect(requestSnapshot).toHaveBeenCalledTimes(1));
-    expect(api.getConversation).not.toHaveBeenCalled();
   });
 
   it('does not run payload effects until detail and transcript both belong to the route', async () => {
@@ -253,7 +296,7 @@ describe('socket-first work-stream open', () => {
     expect(screen.queryByText('Adam cannot add Jordan')).not.toBeInTheDocument();
   });
 
-  it('offers REST recovery after the first socket attempt fails', async () => {
+  it('retries the authoritative socket after the first attempt fails', async () => {
     const retryOpening = vi.fn();
     retainedSocket.mockReturnValue({
       activeCompaction: null,
@@ -264,16 +307,13 @@ describe('socket-first work-stream open', () => {
       state: 'reconnecting',
       workspaceSocketState: 'connecting',
     });
-    api.getConversation.mockRejectedValue(new Error('recovery unavailable'));
     renderScreen();
 
     expect(await screen.findByText('Work stream could not be opened')).toBeInTheDocument();
-    expect(api.getConversation).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
 
     expect(retryOpening).toHaveBeenCalledTimes(1);
-    await waitFor(() => expect(api.getConversation).toHaveBeenCalledTimes(1));
   });
 
   it('shows the terminal error after all three timed opening attempts expire', async () => {
@@ -294,39 +334,4 @@ describe('socket-first work-stream open', () => {
     expect(screen.getByText('The live connection timed out after 3 attempts.')).toBeInTheDocument();
   });
 
-  it('keeps a newer socket snapshot when REST recovery resolves late', async () => {
-    retainedSocket.mockReturnValue({
-      activeCompaction: null,
-      createMessage: vi.fn(),
-      requestSnapshot: vi.fn(),
-      retryOpening: vi.fn(),
-      sendReady: true,
-      state: 'reconnecting',
-      workspaceSocketState: 'connecting',
-    });
-    const recovery = deferred<WorkstreamBoot>();
-    api.getConversation.mockReturnValue(recovery.promise);
-    const queryClient = renderScreen();
-
-    fireEvent.click(await screen.findByRole('button', { name: 'Try again' }));
-    await waitFor(() => expect(api.getConversation).toHaveBeenCalledTimes(1));
-
-    const socketDetail = recoveryBoot({ title: 'Canonical socket title' });
-    const { transcript: socketTranscript, ...detail } = socketDetail;
-    act(() => {
-      queryClient.setQueryData(workstreamSocketSnapshotGenerationQueryKey(workstreamId), 1);
-      queryClient.setQueryData(workstreamFeedSourceQueryKey(workstreamId), 'socket_snapshot');
-      queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], detail);
-      queryClient.setQueryData(['ordered-transcript', workstreamId], socketTranscript);
-    });
-    await act(async () => {
-      recovery.resolve(recoveryBoot({ title: 'Stale REST title' }));
-      await recovery.promise;
-    });
-
-    await waitFor(() => expect(queryClient.getQueryData<WorkstreamDetail>(['workstream', workstreamId])?.title)
-      .toBe('Canonical socket title'));
-    expect(queryClient.getQueryData(['ordered-transcript', workstreamId])).toEqual(socketTranscript);
-    expect(queryClient.getQueryData(workstreamFeedSourceQueryKey(workstreamId))).toBe('socket_snapshot');
-  });
 });

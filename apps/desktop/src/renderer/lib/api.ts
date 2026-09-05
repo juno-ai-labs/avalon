@@ -1,4 +1,6 @@
 import { RALLY_HEADERS } from '@rally/contracts/http-headers';
+import { MutatePrivateChildParticipantResultSchema } from '@rally/contracts/conversation-parent';
+import { SubstreamPreparationPreviewSchema, type SubstreamPreparationPreview } from '@rally/contracts/substream-creation';
 import {
   AutomationDetailSchema as WireAutomationDetailSchema,
   AutomationExecutionPrincipalClaimSchema,
@@ -1326,6 +1328,8 @@ export class RallyApi {
     modelOverride?: AgentModelOverride;
     /** The caller's open `workstream_create` trace id, when it has one. */
     requestId?: string;
+    /** Creation lineage retained through the destination's send-ready paint. */
+    operationId?: string;
   }): Promise<CreatedWorkstream> {
     const mentions = input.openingMessage.includes('@') || (input.mentions?.length ?? 0) > 0
       ? await this.messageMentionPayload(input.openingMessage, input.mentions)
@@ -1335,7 +1339,7 @@ export class RallyApi {
       ...mentions.flatMap((mention) => mention.type === 'person' && mention.userId ? [mention.userId] : []),
     ])];
     const clientMessageId = crypto.randomUUID();
-    const operationId = uuidV7();
+    const operationId = input.operationId ?? uuidV7();
     reportTelemetryProductIntent({ kind: 'workstream_create_requested', entrypoint: 'composer', operationId });
     reportTelemetryProductIntent({ kind: 'run_requested', entrypoint: 'composer', operationId });
     const response = await this.request('/workstreams', {
@@ -1607,6 +1611,50 @@ export class RallyApi {
   async detachResource(parentId: string, resourceId: string): Promise<void> {
     await this.requestVoid(`/conversations/${encodeURIComponent(parentId)}/resources/${encodeURIComponent(resourceId)}`, {
       method: 'DELETE',
+    });
+  }
+
+  async prepareSubstream(parentId: string, input: {
+    operationId: string;
+    title: string;
+    throughTurnId: string | null;
+  }): Promise<SubstreamPreparationPreview> {
+    return this.request(`/conversations/${encodeURIComponent(parentId)}/substreams/prepare`, {
+      method: 'POST',
+      headers: { [RALLY_HEADERS.OPERATION_ID]: input.operationId },
+      body: input,
+      schema: SubstreamPreparationPreviewSchema,
+    });
+  }
+
+  async confirmSubstream(parentId: string, operationId: string): Promise<{ substreamId: string }> {
+    return this.request(`/conversations/${encodeURIComponent(parentId)}/substreams/confirm`, {
+      method: 'POST',
+      headers: { [RALLY_HEADERS.OPERATION_ID]: operationId },
+      body: { operationId },
+      schema: z.strictObject({ substreamId: z.string().min(1) }),
+    });
+  }
+
+  async cancelSubstream(parentId: string, operationId: string): Promise<void> {
+    await this.requestVoid(`/conversations/${encodeURIComponent(parentId)}/substreams/cancel`, {
+      method: 'POST', headers: { [RALLY_HEADERS.OPERATION_ID]: operationId }, body: { operationId },
+    });
+  }
+
+  async addSubstreamParticipant(parentId: string, substreamId: string, userId: string): Promise<void> {
+    await this.request(`/conversations/${encodeURIComponent(parentId)}/substreams/${encodeURIComponent(substreamId)}/participants`, {
+      method: 'POST',
+      body: { userId, operationId: uuidV7() },
+      schema: MutatePrivateChildParticipantResultSchema,
+    });
+  }
+
+  async removeSubstreamParticipant(parentId: string, substreamId: string, userId: string): Promise<void> {
+    await this.request(`/conversations/${encodeURIComponent(parentId)}/substreams/${encodeURIComponent(substreamId)}/participants/remove`, {
+      method: 'POST',
+      body: { userId, operationId: uuidV7() },
+      schema: MutatePrivateChildParticipantResultSchema,
     });
   }
 
