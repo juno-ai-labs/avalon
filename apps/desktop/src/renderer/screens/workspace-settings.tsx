@@ -2289,7 +2289,7 @@ export function WorkspaceSettingsScreen({
                       />
                     </div>
                     {updateDebugEnabled.error && <InlineError>{updateDebugEnabled.error.message}</InlineError>}
-                    <div className="settings-pane-heading settings-pane-heading-spaced">
+                    <div className="settings-pane-heading settings-pane-heading-spaced settings-telemetry-heading">
                       <div><h3><SettingLabel setting={settings.telemetry} /></h3><p>Recent contract decisions only. Values and identifiers are always redacted.</p></div>
                       <Button
                         aria-label="Refresh telemetry inspector"
@@ -2302,9 +2302,9 @@ export function WorkspaceSettingsScreen({
                     </div>
                     {telemetryInspectorError && <InlineError>{telemetryInspectorError}</InlineError>}
                     {telemetryInspectorLoading && telemetryInspector.length === 0 ? (
-                      <div className="settings-list-card"><p role="status">Loading telemetry decisions…</p></div>
+                      <div className="settings-list-card settings-telemetry-empty"><p role="status">Loading telemetry decisions…</p></div>
                     ) : telemetryInspector.length === 0 ? (
-                      <div className="settings-list-card"><p>No telemetry decisions in this process yet.</p></div>
+                      <div className="settings-list-card settings-telemetry-empty"><p>No telemetry decisions in this process yet.</p></div>
                     ) : (
                       <dl className="settings-list-card settings-diagnostics">
                         {telemetryInspector.map((entry, index) => (
@@ -2380,7 +2380,7 @@ export function WorkspaceSettingsScreen({
           title={webhookRotationTarget ? `Refresh ${webhookDisplayName}?` : 'Create inbound webhook'}
         >
           {webhookSecretResult ? (
-            <div className="settings-list-card">
+            <div className="settings-list-card webhook-secret-result">
               <p>Copy the endpoint and secret now. Rally will not show this secret again.</p>
               <label className="form-field">
                 <span><SettingLabel setting={settings.webhookEndpoint} /></span>

@@ -193,8 +193,8 @@
   --av-sys-color-scrim-solid: rgba(246, 245, 241, 0.98);
 
   /* The colour of a focus indicator. */
-  --av-sys-color-focus-default: var(--av-sys-color-brand-base);
-  --av-sys-color-focus-quiet: #c9b48f;
+  --av-sys-color-focus-default: #0c64c1;
+  --av-sys-color-focus-quiet: #0c64c1;
 
   /* Selected text. */
   --av-sys-color-selection-background: rgba(210, 130, 44, 0.22);
@@ -237,8 +237,8 @@
 
   /* Whole box-shadow values for a focus ring, so a theme controls its spread
    * as well as its colour. */
-  --av-sys-focus-ring-default: 0 0 0 2px rgba(210, 130, 44, 0.32);
-  --av-sys-focus-ring-quiet: 0 0 0 2px rgba(210, 130, 44, 0.14);
+  --av-sys-focus-ring-default: 0 0 0 2px rgba(12, 100, 193, 0.32);
+  --av-sys-focus-ring-quiet: 0 0 0 2px rgba(12, 100, 193, 0.14);
   --av-sys-focus-ring-brand: 0 0 0 2px rgba(210, 130, 44, 0.3);
 
   /* The corner scale. */
@@ -273,17 +273,16 @@
   /* Between paragraphs. */
   --av-sys-space-prose-gap: 22px;
 
-  /* The families. `ui` and `mono` are Geist, which ships inside the
-   * application as a `bundled` font source — a family the app only names is a
-   * family the platform substitutes, and weight then resolves against whatever
-   * it picked. */
-  --av-sys-font-family-ui: Geist, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  /* System sans-serif for application UI, including secondary windows and
+   * portals. Bundled Geist Mono remains available for code and technical
+   * content. */
+  --av-sys-font-family-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --av-sys-font-family-display: var(--av-sys-font-family-ui);
   --av-sys-font-family-mono: "Geist Mono", ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
 
   /* The sizes the interface sets, as against the document size a theme
    * inherits. */
-  --av-sys-font-size-base: 15px;
+  --av-sys-font-size-base: 14px;
   --av-sys-font-size-prose: 16.5px;
   --av-sys-font-size-row: 14.5px;
   --av-sys-font-size-hint: 11px;
@@ -294,7 +293,7 @@
 
   /* Line height. */
   --av-sys-font-leading-prose: 1.85;
-  --av-sys-font-leading-base: 1.75;
+  --av-sys-font-leading-base: 20px;
 
   /* Weights. Only meaningful to the degree the resolved family supports them. */
   --av-sys-font-weight-strong: 450;
@@ -461,6 +460,12 @@
   --av-cmp-connector-search-foreground: #2a5f85;
   --av-cmp-connector-plug-background: #f4f3e8;
   --av-cmp-connector-plug-foreground: #6c6a2c;
+
+  /* Neutral primary actions, separate from brand identity and semantic danger
+   * or success states. */
+  --av-cmp-button-primary-background: #070707;
+  --av-cmp-button-primary-color: #fcfcfc;
+  --av-cmp-button-primary-hover: #2f2f2f;
 }
 /* Rally Dark — The dark GrokBot-inspired Rally appearance. */
 [data-theme='dark'] {
@@ -589,8 +594,8 @@
   --av-sys-color-scrim-subtle: rgba(6, 4, 2, 0.5);
   --av-sys-color-scrim-solid: rgba(7, 5, 3, 0.98);
 
-  --av-sys-color-focus-default: var(--av-sys-color-brand-base);
-  --av-sys-color-focus-quiet: #6b5a44;
+  --av-sys-color-focus-default: #0c64c1;
+  --av-sys-color-focus-quiet: #0c64c1;
 
   --av-sys-color-selection-background: rgba(224, 140, 58, 0.24);
 
@@ -623,8 +628,8 @@
   --av-sys-elevation-shadow-rail-strong: -16px 0 60px rgba(0, 0, 0, 0.66);
   --av-sys-elevation-shadow-drawer: 16px 0 56px rgba(0, 0, 0, 0.6);
 
-  --av-sys-focus-ring-default: 0 0 0 2px rgba(224, 140, 58, 0.28);
-  --av-sys-focus-ring-quiet: 0 0 0 2px rgba(224, 140, 58, 0.12);
+  --av-sys-focus-ring-default: 0 0 0 2px rgba(12, 100, 193, 0.32);
+  --av-sys-focus-ring-quiet: 0 0 0 2px rgba(12, 100, 193, 0.14);
   --av-sys-focus-ring-brand: 0 0 0 2px rgba(224, 140, 58, 0.26);
 
   --av-sys-size-radius-xs: 2px;
@@ -650,11 +655,11 @@
 
   --av-sys-space-prose-gap: 22px;
 
-  --av-sys-font-family-ui: Geist, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --av-sys-font-family-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --av-sys-font-family-display: var(--av-sys-font-family-ui);
   --av-sys-font-family-mono: "Geist Mono", ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
 
-  --av-sys-font-size-base: 15px;
+  --av-sys-font-size-base: 14px;
   --av-sys-font-size-prose: 16.5px;
   --av-sys-font-size-row: 14.5px;
   --av-sys-font-size-hint: 11px;
@@ -664,7 +669,7 @@
   --av-sys-font-size-title: 15px;
 
   --av-sys-font-leading-prose: 1.85;
-  --av-sys-font-leading-base: 1.75;
+  --av-sys-font-leading-base: 20px;
 
   --av-sys-font-weight-strong: 450;
   --av-sys-font-weight-heading: 480;
@@ -773,4 +778,8 @@
   --av-cmp-connector-search-foreground: #8fb0c6;
   --av-cmp-connector-plug-background: #191509;
   --av-cmp-connector-plug-foreground: #c4b478;
+
+  --av-cmp-button-primary-background: #fcfcfc;
+  --av-cmp-button-primary-color: #070707;
+  --av-cmp-button-primary-hover: #dedede;
 }

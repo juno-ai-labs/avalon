@@ -545,10 +545,10 @@ export function WorkstreamScreen(): React.JSX.Element {
     <Modal
       description="Only you can see this private substream until you add participants. Review the selected context before creating it."
       footer={<>
-        <Button className="secondary" disabled={creationPending === 'confirm'} onClick={cancelCreation}>Cancel</Button>
+        <Button className="button-secondary" disabled={creationPending === 'confirm'} onClick={cancelCreation}>Cancel</Button>
         {preview
-          ? <Button disabled={creationPending !== null} onClick={() => void confirm()}>{creationPending === 'confirm' ? 'Creating…' : 'Create substream'}</Button>
-          : <Button disabled={creationPending !== null || !creation?.title.trim()} onClick={() => void prepare()}>{creationPending === 'prepare' ? 'Preparing…' : 'Review context'}</Button>}
+          ? <Button className="button-primary" disabled={creationPending !== null} onClick={() => void confirm()}>{creationPending === 'confirm' ? 'Creating…' : 'Create substream'}</Button>
+          : <Button className="button-primary" disabled={creationPending !== null || !creation?.title.trim()} onClick={() => void prepare()}>{creationPending === 'prepare' ? 'Preparing…' : 'Review context'}</Button>}
       </>}
       onOpenChange={(open) => { if (!open) cancelCreation(); }}
       open={creation?.parentId === id}
