@@ -3,7 +3,7 @@ import { sha256Hex } from '../lib/crypto';
 import { SearchDocumentBatchSchema, type SearchDocument, type SearchDocumentBatch } from './search-document';
 import { searchChunkPolicy, embedSearchDocument } from './search-embedding';
 import { semanticChunks, type SemanticChunkPolicy } from './semantic-chunks';
-import { MEMORY_EMBEDDING_MODEL } from './structured-inference';
+import { isMemoryEmbeddingModel } from './structured-inference';
 import { SEARCH_EMBEDDING_DIMENSIONS, workspaceSearchIndex, type TextSearchDocument, type TextSearchIndex } from './text-search';
 
 /** Every source uses these exact inputs, offsets, chunk strategies, and model checks. */
@@ -15,8 +15,7 @@ export async function indexSemanticDocument(index: TextSearchIndex,
   const rows: TextSearchDocument[] = [];
   for (const chunk of chunks) {
     const embedding = await embed(chunk.embeddingText);
-    // OpenRouter returns the provider's Qwen/Qwen3-Embedding-8B spelling.
-    if (embedding.model.toLowerCase() !== MEMORY_EMBEDDING_MODEL
+    if (!isMemoryEmbeddingModel(embedding.model)
       || embedding.vector.length !== SEARCH_EMBEDDING_DIMENSIONS
       || !embedding.vector.every(Number.isFinite)) throw new Error('search_embedding_space_mismatch');
     const id = await sha256Hex(JSON.stringify([

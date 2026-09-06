@@ -24,7 +24,7 @@ import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
 import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
 import { createIdentityObjectPort } from "../runtime/identity-port";
-import { MEMORY_EMBEDDING_MODEL, runEmbeddingInference } from "./structured-inference";
+import { isMemoryEmbeddingModel, MEMORY_EMBEDDING_MODEL, runEmbeddingInference } from "./structured-inference";
 
 export const MEMORY_EMBEDDING_DIMENSIONS = 1_024;
 const MEMORY_EMBEDDING_SPACE_VERSION = "v1";
@@ -414,7 +414,7 @@ async function embedMemory(
   });
   if (
     result.requestedModel !== MEMORY_EMBEDDING_MODEL
-    || result.resolvedModel !== MEMORY_EMBEDDING_MODEL
+    || !isMemoryEmbeddingModel(result.resolvedModel)
   ) {
     throw new Error("memory_embedding_model_mismatch");
   }

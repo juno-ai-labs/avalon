@@ -793,7 +793,7 @@ it the same way. Until the projector filters a replayed memory result against
 the current union, the scope union is the authority for what a run may
 *search*, not a guarantee about everything in its context.
 
-Memory items retain structured provenance, access metadata, expiry, revisions, and reversible invalidation, but no confidence field. Agents add by scope kind and update or invalidate by item ID plus expected revision. Workspace writes require a workspace principal or an owner/admin user. WorkspaceDO FTS is synchronous; OpenRouter `qwen/qwen3-embedding-8b` embeddings and the regional Vectorize projection advance through a replayable WorkspaceDO outbox. Requests explicitly ask for 1,024 dimensions—supported by Qwen3 Embedding 8B's Matryoshka representation—to match the immutable Vectorize index shape and distinguish query from document input. The model is a fixed inference-gateway constant with no Flagship role, Worker override, or model fallback. A fixed-model-and-dimension-derived namespace prevents embeddings from different semantic spaces from ever being compared; OpenRouter reporting a different resolved model fails the request closed, and retrieval falls back to FTS. Changing the constant requires a code change paired with requeueing active memories, and retrieval safely falls back to FTS until that rebuild completes. Hybrid hits are always reloaded from WorkspaceDO before exposure and rechecked against current D1 membership. A non-message root run that performs automatic admission recall stores an immutable snapshot and hash; a message-origin run stores no memory-context hash.
+Memory items retain structured provenance, access metadata, expiry, revisions, and reversible invalidation, but no confidence field. Agents add by scope kind and update or invalidate by item ID plus expected revision. Workspace writes require a workspace principal or an owner/admin user. WorkspaceDO FTS is synchronous; OpenRouter `qwen/qwen3-embedding-8b` embeddings and the regional Vectorize projection advance through a replayable WorkspaceDO outbox. Requests explicitly ask for 1,024 dimensions—supported by Qwen3 Embedding 8B's Matryoshka representation—to match the immutable Vectorize index shape and distinguish query from document input. The model is a fixed inference-gateway constant with no Flagship role, Worker override, or model fallback. A fixed-model-and-dimension-derived namespace prevents embeddings from different semantic spaces from ever being compared; Provider model capitalization is normalized through the shared `isMemoryEmbeddingModel` comparison used by text search; OpenRouter reporting a genuinely different resolved model fails the request closed, and retrieval falls back to FTS. Changing the constant requires a code change paired with requeueing active memories, and retrieval safely falls back to FTS until that rebuild completes. Hybrid hits are always reloaded from WorkspaceDO before exposure and rechecked against current D1 membership. A non-message root run that performs automatic admission recall stores an immutable snapshot and hash; a message-origin run stores no memory-context hash.
 
 Root runs also receive the separate stable `rally_tables` plugin for large structured collections that should not enter prompt context as prose memories. Tables inherit the same work-stream, automation, user, and workspace authorization union. Reads accept a reauthorized table ID plus typed filter/search/projection/order/cursor arguments or an exact `memoryTableRowIds` selector for conflict recovery; they never accept scope or owner selectors and expose no raw SQL. Rows use typed columns, a declared natural key, synchronous WorkspaceDO FTS for searchable text, typed cell indexes, revision compare-and-swap, reversible invalidation, and receipt-backed append-only mutation records.
 
@@ -1187,6 +1187,18 @@ Nothing pins `breakerScope`, so deleting that one property from `routePlan` woul
 silently return every test to the shared key while each still passes alone.
 
 ## Changelog
+
+### 2026-09-06 — Accept provider model capitalization in memory embeddings
+
+**What changed:** Memory and text search share a case-insensitive comparison
+against the canonical Qwen embedding model. Scoped-memory tests exercise both
+provider spellings through document indexing and semantic retrieval.
+
+**Why:** OpenRouter returns `Qwen/Qwen3-Embedding-8B` for the lowercase routing
+slug. The exact comparison rejected valid vectors, leaving memory indexing to
+retry and recall to fall back to FTS. Normalizing only case preserves rejection
+of genuinely different models and keeps existing namespace identities intact;
+changing the embedding model still requires rebuilding its projection.
 
 ### 2026-09-04: Child seeds enter Bind once as inert context
 
