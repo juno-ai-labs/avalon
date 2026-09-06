@@ -210,9 +210,9 @@ existing regional `ACTIVITY_QUEUE` transport with reference-only messages. The
 consumer reloads current source state and conditionally writes its revision.
 Resource watermarks survive deletion; transcript deletes publish tombstones.
 
-Object alarms dispatch pending references only when the regional key, embedding key,
-and valid chunk settings are present. Otherwise intents remain pending and search
-due-times are excluded from alarms. Configure and wake the objects to resume. Queue acceptance clears only the
+Object alarms dispatch pending references only when the regional Turbopuffer key
+and `OPENROUTER_API_KEY` are present. Otherwise intents remain pending and search
+due-times are excluded from alarms. Provision credentials and wake the objects to resume. Queue acceptance clears only the
 revision dispatched, so a concurrent edit remains pending. Dispatch failures use
 the existing regional outbox retry interval; projection failures remain Queue
 failures and follow its configured retries and dead-letter handling. Once a job
@@ -245,8 +245,8 @@ missing derivatives cannot produce body matches until extraction completes.
 
 ## Open questions
 
-Production needs team-selected global chunk token size and overlap before enabling
-indexing jobs, followed by deployment and backfill. Memory,
+Production deployment and backfill remain to be completed and verified; the
+512/128-token policy requires no environment configuration. Memory,
 notes/table text, agent tools, and external provider ranking still need migration.
 Conversation discovery queries the workspace namespace and authorizes each hit;
 archived parents and automation runs still require navigation/coverage verification.
@@ -292,8 +292,9 @@ budgets require team policy; no arbitrary new caps are introduced here.
 constants. Environment parsing, deployment variables, and development forwarding
 for chunk settings are removed.
 
-**Why:** The team requested one fixed chunking policy for all text sources and
-regions, eliminating configuration drift and an unnecessary indexing prerequisite.
+**Why:** The team selected 512 tokens with 25% overlap to preserve boundary
+context, and requested one fixed code policy for all sources and regions to
+eliminate configuration drift and an unnecessary indexing prerequisite.
 
 **Considered and rejected:** Environment overrides could make identical content
 use different chunking policies across deployments.
@@ -301,22 +302,6 @@ use different chunking policies across deployments.
 **Consequences:** Provider credentials still gate indexing. Namespace hashing
 retains the string representation of the selected values, preserving identity for
 512/128 indexes. Future policy changes require a code change and semantic backfill.
-
-### 2026-09-06 — Set the shared chunk budget to 512/128 tokens
-
-**What changed:** Both regional Workers and the development environment example
-configure 512 tokens per chunk and 128 tokens of sliding-window overlap.
-
-**Why:** The team selected a focused passage size with 25% overlap to preserve
-boundary context and unblock the previously unconfigured indexing pipeline.
-
-**Considered and rejected:** Leaving the settings unset would continue pausing
-indexing. Source-specific budgets would violate the shared pipeline contract.
-
-**Consequences:** Recursive and sliding-window chunks use the same maximum;
-distinct spans from both strategies add embedding cost. These settings do not
-truncate lexical text. Deployment and backfill remain separate operations, and
-future budget changes require rebuilding the corresponding semantic namespace.
 
 ### 2026-09-06 — Member search and one regional text pipeline
 
