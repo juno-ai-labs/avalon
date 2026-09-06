@@ -19,6 +19,7 @@ const pipelineEnv: Env = { ...env, TURBO_PUFFER_DEV_API_KEY: 'test-only', OPENRO
   LOG_LEVEL: 'warn' };
 const writes: Array<{ path: string; body: Record<string, unknown> }> = [];
 const embeddingInputs: string[] = [];
+const embeddingBatches: string[][] = [];
 let onEmbed: (() => Promise<void>) | undefined;
 let tokenizerReads = 0;
 // Sized above 512 tokens for the actual pinned Qwen tokenizer.
@@ -32,6 +33,7 @@ beforeEach(() => {
   resourceId = crypto.randomUUID();
   writes.length = 0;
   embeddingInputs.length = 0;
+  embeddingBatches.length = 0;
   tokenizerReads = 0;
   onEmbed = undefined;
   vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -42,14 +44,15 @@ beforeEach(() => {
       return new Response('asset host unavailable', { status: 503 });
     }
     if (url.hostname === 'openrouter.ai') {
-      const body = z.object({ input: z.string() }).parse(await request.json());
-      if (!body.input.trim()) return Response.json({ error: { message: "Input must not be empty", code: 400 } }, { status: 400 });
-      embeddingInputs.push(body.input);
+      const body = z.object({ input: z.array(z.string()) }).parse(await request.json());
+      if (body.input.some((text) => !text.trim())) return Response.json({ error: { message: "Input must not be empty", code: 400 } }, { status: 400 });
+      embeddingInputs.push(...body.input);
+      embeddingBatches.push(body.input);
       const callback = onEmbed;
       onEmbed = undefined;
       await callback?.();
       return Response.json({ object: 'list', model: 'Qwen/Qwen3-Embedding-8B',
-        data: [{ object: 'embedding', index: 0, embedding: Array.from({ length: 1024 }, () => 1) }],
+        data: body.input.map((_text, index) => ({ object: 'embedding', index, embedding: Array.from({ length: 1024 }, () => 1) })),
         usage: { prompt_tokens: 1, total_tokens: 1 } });
     }
     if (url.hostname.endsWith('.turbopuffer.com')) {
@@ -130,6 +133,7 @@ describe('shared Queue indexing pipeline', () => {
     expect(files.filter((row) => row.record_type === 'chunk').length).toBeGreaterThan(1);
     const chunks = files.filter((row) => row.record_type === 'chunk');
     expect(embeddingInputs).toEqual([...chunks, ...chunks].map((row) => row.text));
+    expect(embeddingBatches).toEqual([chunks, chunks].map((rows) => rows.map((row) => row.text)));
     expect(tokenizerReads).toBe(0); // The asset host can be unavailable throughout indexing.
   });
 
