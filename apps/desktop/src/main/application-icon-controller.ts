@@ -1,3 +1,4 @@
+import type { StoredApplicationIconSelection } from './application-icon';
 import {
   parseApplicationIconId,
   type ApplicationIconId,
@@ -8,7 +9,7 @@ export interface ApplicationIconControllerDependencies {
   readonly supported: boolean;
   readonly automaticIcon: () => ApplicationIconId;
   readonly validateIcon: (iconId: ApplicationIconId) => void;
-  readonly readStoredIcon: () => Promise<ApplicationIconId | null>;
+  readonly readStoredIcon: () => Promise<StoredApplicationIconSelection>;
   readonly writeStoredIcon: (iconId: ApplicationIconId) => Promise<void>;
   readonly clearStoredIcon: () => Promise<void>;
   readonly applyIcon: (iconId: ApplicationIconId) => Promise<void>;
@@ -44,6 +45,15 @@ export class ApplicationIconController {
     if (!this.dependencies.supported) return;
     const storedIcon = await this.dependencies.readStoredIcon();
     if (!storedIcon) return;
+    if (storedIcon === 'retired') {
+      // Preserve the retired preference until cleanup succeeds so startup retries
+      // a failed native reset instead of leaving Finder permanently stale.
+      await this.dependencies.resetNativeIcon();
+      await this.dependencies.clearStoredIcon();
+      this.selectedIcon = null;
+      this.dependencies.onStateChange(this.state());
+      return;
+    }
     this.dependencies.validateIcon(storedIcon);
     await this.dependencies.applyIcon(storedIcon);
     this.selectedIcon = storedIcon;

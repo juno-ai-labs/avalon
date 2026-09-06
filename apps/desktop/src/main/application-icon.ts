@@ -1,3 +1,4 @@
+import { TELEMETRY_APPLICATION_ICON_IDS } from '@rally/contracts/telemetry';
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -39,10 +40,20 @@ export function parseStoredApplicationIcon(value: unknown): ApplicationIconId | 
   return stored.version === 1 ? parseApplicationIconId(stored.icon) : null;
 }
 
-export async function readStoredApplicationIcon(userDataDirectory: string): Promise<ApplicationIconId | null> {
+export type StoredApplicationIconSelection = ApplicationIconId | 'retired' | null;
+
+export async function readStoredApplicationIcon(userDataDirectory: string): Promise<StoredApplicationIconSelection> {
   try {
     const encoded = await readFile(join(userDataDirectory, applicationIconPreferenceFileName), 'utf8');
-    return parseStoredApplicationIcon(JSON.parse(encoded) as unknown);
+    const value: unknown = JSON.parse(encoded);
+    const selected = parseStoredApplicationIcon(value);
+    if (selected) return selected;
+    if (value && typeof value === 'object' && !Array.isArray(value)
+      && 'version' in value && value.version === 1 && 'icon' in value
+      && TELEMETRY_APPLICATION_ICON_IDS.some((id) => id === value.icon)) {
+      return 'retired';
+    }
+    return null;
   } catch (error) {
     if (error instanceof SyntaxError) return null;
     if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return null;
