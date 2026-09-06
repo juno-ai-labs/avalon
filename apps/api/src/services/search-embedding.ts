@@ -1,4 +1,5 @@
-import { Tokenizer } from '@huggingface/tokenizers';
+import { BPE, Tokenizer } from '@huggingface/tokenizers';
+import { gunzipSync, strFromU8 } from 'fflate';
 import { z } from 'zod';
 import type { Env } from '../env';
 import { SEARCH_CHUNK_MAX_TOKENS, SEARCH_CHUNK_OVERLAP_TOKENS, type SemanticChunkPolicy } from './semantic-chunks';
@@ -12,20 +13,36 @@ export function searchIndexingConfigured(env: Env): boolean {
   return Boolean(key && env.OPENROUTER_API_KEY);
 }
 
-/** One policy per regional Queue batch; sources cannot override it. */
-export async function searchChunkPolicy(): Promise<SemanticChunkPolicy> {
+// Only closure-private public model data survives a delivery. Never share request promises,
+// streams, credentials, source text, or the tokenizer's input cache.
+let sharedPolicy: SemanticChunkPolicy | undefined;
+
+/** One tokenizer per isolate, even when multiple Queue deliveries overlap. */
+export function searchChunkPolicy(): SemanticChunkPolicy {
+  return sharedPolicy ??= createSearchChunkPolicy();
+}
+
+function createSearchChunkPolicy(): SemanticChunkPolicy {
   if (tokenizerAsset.revision !== QWEN_MODEL_COMMIT) throw new Error('search_tokenizer_revision_mismatch');
-  // Inflate inside the Queue delivery, not during Worker module startup. These
-  // immutable bytes ship with the Worker; no provider download or shared I/O.
+  // Lazy synchronous initialization cannot interleave with another delivery or
+  // retain I/O owned by its request. Keep vocabulary parsing out of startup.
   const bytes = Uint8Array.from(atob(tokenizerAsset.gzipBase64), (character) => character.charCodeAt(0));
-  const payload: unknown = await new Response(new Blob([bytes]).stream()
-    .pipeThrough(new DecompressionStream('gzip'))).json();
+  const payload: unknown = JSON.parse(strFromU8(gunzipSync(bytes)));
   const { definition, config } = z.object({
     definition: z.record(z.string(), z.unknown()),
     config: z.record(z.string(), z.unknown()),
   }).parse(payload);
   const tokenizer = new Tokenizer(definition, config);
-  return { maxTokens: SEARCH_CHUNK_MAX_TOKENS, overlapTokens: SEARCH_CHUNK_OVERLAP_TOKENS, countTokens: (text) => tokenizer.encode(text).ids.length };
+  const model = tokenizer.model;
+  if (!(model instanceof BPE)) throw new Error('search_tokenizer_model_mismatch');
+  return Object.freeze({
+    maxTokens: SEARCH_CHUNK_MAX_TOKENS,
+    overlapTokens: SEARCH_CHUNK_OVERLAP_TOKENS,
+    countTokens: (text: string) => {
+      try { return tokenizer.encode(text).ids.length; }
+      finally { model.clear_cache(); }
+    },
+  });
 }
 
 export async function embedSearchDocument(env: Env, workspaceId: string, text: string) {

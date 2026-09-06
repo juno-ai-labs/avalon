@@ -46,7 +46,18 @@ export async function semanticChunks(text: string, policy: SemanticChunkPolicy):
   // a document has no whitespace (code, URLs, or CJK text).
   const boundaries = [0];
   for (const character of text) boundaries.push(boundaries[boundaries.length - 1]! + character.length);
-  const positions = new Map(boundaries.map((offset, index) => [offset, index]));
+  // Look up existing offsets in the sorted array instead of retaining a Map
+  // entry (and allocating a construction pair) for every source code point.
+  const positionOf = (offset: number) => {
+    let low = 0;
+    let high = boundaries.length - 1;
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2);
+      if (boundaries[middle]! < offset) low = middle + 1;
+      else high = middle;
+    }
+    return low;
+  };
   const chunks = new Map<string, SemanticChunk>();
   const add = (start: number, end: number, strategy: SemanticChunk["strategies"][number]) => {
     const key = `${start}:${end}`;
@@ -63,9 +74,9 @@ export async function semanticChunks(text: string, policy: SemanticChunkPolicy):
   };
 
   const windowEnd = async (start: number, end: number) => {
-    let low = positions.get(start)! + 1;
-    const startPosition = positions.get(start)!;
-    const endPosition = positions.get(end)!;
+    const startPosition = positionOf(start);
+    const endPosition = positionOf(end);
+    let low = startPosition + 1;
     let high = Math.min(low, endPosition);
     let best = start;
     // Grow from the chunk start instead of repeatedly tokenizing half of the
@@ -126,8 +137,8 @@ export async function semanticChunks(text: string, policy: SemanticChunkPolicy):
     if (end === text.length) break;
     let next = end;
     if (policy.overlapTokens > 0) {
-      let low = positions.get(start)! + 1; // every window must advance
-      let high = positions.get(end)!;
+      let low = positionOf(start) + 1; // every window must advance
+      let high = positionOf(end);
       while (low <= high) {
         const middle = Math.floor((low + high) / 2);
         const offset = boundaries[middle]!;
@@ -137,8 +148,8 @@ export async function semanticChunks(text: string, policy: SemanticChunkPolicy):
       }
       // Prefix framing can leave less room than the requested overlap. Reduce
       // overlap until the next window can include new source content.
-      const firstNewEnd = boundaries[positions.get(end)! + 1]!;
-      while (next < end && !await fits(next, firstNewEnd)) next = boundaries[positions.get(next)! + 1]!;
+      const firstNewEnd = boundaries[positionOf(end) + 1]!;
+      while (next < end && !await fits(next, firstNewEnd)) next = boundaries[positionOf(next) + 1]!;
     }
     start = next;
   }
