@@ -20,6 +20,7 @@ const writes: Array<{ path: string; body: Record<string, unknown> }> = [];
 const embeddingInputs: string[] = [];
 let onEmbed: (() => Promise<void>) | undefined;
 let tokenizerReads = 0;
+// Sized above 512 tokens for the character-level tokenizer asset double below.
 const documentBody = 'beta\n\ngamma delta'.repeat(40);
 
 // External provider assets/API responses are the only doubles. The tokenizer,

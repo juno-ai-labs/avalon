@@ -7,7 +7,7 @@ import { SEARCH_EMBEDDING_DIMENSIONS, QWEN_MODEL_COMMIT } from './text-search';
 
 // Immutable public model assets; source text is tokenized locally, never sent here.
 const TOKENIZER_ROOT = `https://huggingface.co/Qwen/Qwen3-Embedding-8B/resolve/${QWEN_MODEL_COMMIT}`;
-/** Missing deployment settings leave durable intents pending, without a hot alarm. */
+/** Missing provider credentials leave durable intents pending, without a hot alarm. */
 export function searchIndexingConfigured(env: Env): boolean {
   const key = env.APP_ENV === 'production' ? env.TURBO_PUFFER_PROD_API_KEY : env.TURBO_PUFFER_DEV_API_KEY;
   return Boolean(key && env.OPENROUTER_API_KEY);

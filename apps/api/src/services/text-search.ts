@@ -4,7 +4,6 @@ import { z } from "zod";
 import type { Env } from "../env";
 import { sha256Hex } from "../lib/crypto";
 import { MEMORY_EMBEDDING_MODEL } from "./structured-inference";
-
 import { SEARCH_CHUNK_MAX_TOKENS, SEARCH_CHUNK_OVERLAP_TOKENS } from "./semantic-chunks";
 
 export const SEARCH_EMBEDDING_DIMENSIONS = 1_024;
@@ -21,6 +20,7 @@ export async function workspaceSearchIndex(env: Env, workspaceId: string): Promi
   ]));
   const semanticSpace = await sha256Hex(JSON.stringify([
     space, "recursive-sliding-v1", QWEN_MODEL_COMMIT,
+    // Keep the former environment-string encoding; changing it requires semantic backfill.
     String(SEARCH_CHUNK_MAX_TOKENS), String(SEARCH_CHUNK_OVERLAP_TOKENS),
   ]));
   return new TextSearchIndex({
