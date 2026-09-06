@@ -49,7 +49,7 @@ beforeEach(() => {
       const callback = onEmbed;
       onEmbed = undefined;
       await callback?.();
-      return Response.json({ object: 'list', model: 'qwen/qwen3-embedding-8b',
+      return Response.json({ object: 'list', model: 'Qwen/Qwen3-Embedding-8B',
         data: [{ object: 'embedding', index: 0, embedding: Array.from({ length: 1024 }, () => 1) }],
         usage: { prompt_tokens: 1, total_tokens: 1 } });
     }

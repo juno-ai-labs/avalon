@@ -286,6 +286,24 @@ budgets require team policy; no arbitrary new caps are introduced here.
 
 ## Changelog
 
+### 2026-09-06 — Accept the provider's Qwen model spelling
+
+**What changed:** Semantic indexing compares the returned model identifier without
+case sensitivity, while retaining dimension and finite-value validation.
+Search and scoped memory share `isMemoryEmbeddingModel` in
+`structured-inference.ts` for both document and query embeddings.
+
+**Why:** Production OpenRouter responses identify the requested model as
+`Qwen/Qwen3-Embedding-8B`. The previous comparison required the lowercase routing
+slug and rejected valid 1,024-dimensional embeddings after the lexical write.
+
+**Considered and rejected:** Ignoring the returned model entirely would admit
+embeddings from an incompatible model. Only case differences are accepted.
+
+**Consequences:** Namespace identity is unchanged. Failed search references need
+redrive after deployment; a successful schema migration does not repair dead letters.
+The real-workerd provider fixture now uses the observed response spelling.
+
 ### 2026-09-06 — Keep the shared chunk policy in code
 
 **What changed:** The 512-token maximum and 128-token overlap are shared code
