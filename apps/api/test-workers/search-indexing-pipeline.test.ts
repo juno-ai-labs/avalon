@@ -20,10 +20,10 @@ const writes: Array<{ path: string; body: Record<string, unknown> }> = [];
 const embeddingInputs: string[] = [];
 let onEmbed: (() => Promise<void>) | undefined;
 let tokenizerReads = 0;
-// Sized above 512 tokens for the character-level tokenizer asset double below.
-const documentBody = 'beta\n\ngamma delta'.repeat(40);
+// Sized above 512 tokens for the actual pinned Qwen tokenizer.
+const documentBody = 'beta\n\ngamma delta'.repeat(180);
 
-// External provider assets/API responses are the only doubles. The tokenizer,
+// External API responses are the only doubles. The bundled Qwen tokenizer,
 // Queue consumer, source RPC, SQLite migrations, and R2 contents run in workerd.
 beforeEach(() => {
   workspaceId = asWorkspaceId(crypto.randomUUID());
@@ -38,13 +38,11 @@ beforeEach(() => {
     const url = new URL(request.url);
     if (url.hostname === 'huggingface.co') {
       tokenizerReads += 1;
-      if (url.pathname.endsWith('tokenizer_config.json')) return Response.json({});
-      return Response.json({ decoder: null, normalizer: null, pre_tokenizer: null, post_processor: null, model: { type: 'BPE', merges: [],
-        vocab: Object.fromEntries([...new Set('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ :/.\n')]
-          .map((character, index) => [character, index])) }, added_tokens: [] });
+      return new Response('asset host unavailable', { status: 503 });
     }
     if (url.hostname === 'openrouter.ai') {
       const body = z.object({ input: z.string() }).parse(await request.json());
+      if (!body.input.trim()) return Response.json({ error: { message: "Input must not be empty", code: 400 } }, { status: 400 });
       embeddingInputs.push(body.input);
       const callback = onEmbed;
       onEmbed = undefined;
@@ -113,7 +111,7 @@ describe('shared Queue indexing pipeline', () => {
     expect(files.filter((row) => row.record_type === 'chunk').length).toBeGreaterThan(1);
     const chunks = files.filter((row) => row.record_type === 'chunk');
     expect(embeddingInputs).toEqual([...chunks, ...chunks].map((row) => row.text));
-    expect(tokenizerReads).toBe(2); // One definition/config pair for the whole batch.
+    expect(tokenizerReads).toBe(0); // The asset host can be unavailable throughout indexing.
   });
 
   it('uses identical passages for generated artifacts and captured web pages', async () => {

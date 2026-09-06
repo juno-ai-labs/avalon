@@ -95,13 +95,20 @@ written first and remains available.
 
 The shared integration loads the Qwen3-Embedding-8B tokenizer's public assets at
 immutable revision `1d8ad4ca9b3dd8059ad90a75d4983776a23d44af` and runs them locally
-with `@huggingface/tokenizers`. User content is never sent to the asset host.
+with `@huggingface/tokenizers`. The compressed tokenizer definition and config
+ship in the Worker bundle and inflate within each Queue batch. Runtime indexing
+never downloads assets from Hugging Face. Refresh the pinned assets with
+`node scripts/vendor-search-tokenizer.mjs`; their source hashes and Apache 2.0
+license ship beside the bundled data. Updating the model revision requires
+regenerating these assets and changing the embedding namespace together.
 Counts include tokenizer special tokens. Document embeddings use OpenRouter's
 `search_document` task through the existing inference client. The binary boundary
 search checks every accepted span; nonmonotonic BPE counts may leave budget unused,
 but cannot admit an oversized span. No character-count approximation is used.
 
-Every chunk stores exact UTF-16 offsets, canonical source ID, scope, and revision.
+Whitespace-only semantic passages are omitted because embedding providers reject
+blank inputs. Lexical text stays lossless, and meaningful chunks keep their
+original text and exact UTF-16 offsets, canonical source ID, scope, and revision.
 All vectors are checked before the generation write. Qwen3-Embedding-8B at 1,024
 dimensions is the configured space; a changed model, wrong dimension, or nonfinite
 vector fails the job. There is no Qwen/Gemini fallback. Changing model requires a
@@ -285,6 +292,26 @@ through Queue failure rather than silent truncation. Document-size and capture
 budgets require team policy; no arbitrary new caps are introduced here.
 
 ## Changelog
+
+### 2026-09-06 — Remove tokenizer downloads and blank inputs from backfill
+
+**What changed:** Queue batches load the exact pinned Qwen tokenizer from
+compressed, licensed assets in the Worker bundle. The regeneration script records
+the immutable source revision and SHA-256 hashes, and normalizes the gzip OS
+header so regeneration does not encode the developer machine. Workerd tests use that real
+tokenizer while the external asset host returns an error. Whitespace-only
+semantic chunks are skipped without modifying lexical text or source offsets.
+
+**Why:** After the model-name fix unblocked embeddings, production backfill
+exposed repeated `search_tokenizer_unavailable` errors: each batch downloaded the
+same two assets, coupling indexing throughput to an external asset host. Shipping
+the already-pinned bytes removes that runtime dependency without a cache or a
+second retrieval path. Provider HTTP 400 responses also exposed whitespace-only
+semantic passages, which carry no semantic content and must not be embedded.
+Gzip keeps the large vocabulary out of module-startup parsing; decompression and tokenizer creation stay local to a Queue batch.
+
+**Consequences:** Model, tokenizer revision, token budgets, and namespaces remain
+unchanged. Dead-lettered search references still need replay after deployment.
 
 ### 2026-09-06 — Accept the provider's Qwen model spelling
 

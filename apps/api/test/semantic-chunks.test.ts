@@ -56,6 +56,22 @@ describe("semantic chunking", () => {
       .rejects.toThrow("semantic_chunk_budget_too_small");
   });
 
+  it("omits whitespace-only passages without changing meaningful text or offsets", async () => {
+    const policy = { maxTokens: 3, overlapTokens: 1, countTokens };
+    expect(await semanticChunks(" \n\t ", policy)).toEqual([]);
+    const text = "alpha" + " ".repeat(12) + "beta";
+    const chunks = await semanticChunks(text, policy);
+    expect(chunks.length).toBeGreaterThan(0);
+    expect(chunks.every((chunk) => chunk.embeddingText.trim().length > 0)).toBe(true);
+    for (const chunk of chunks) expect(chunk.text).toBe(text.slice(chunk.start, chunk.end));
+    for (const strategy of ["recursive", "sliding_window"] as const) {
+      for (let i = 0; i < text.length; i += 1) {
+        if (text[i]!.trim()) expect(chunks.some((chunk) => chunk.strategies.includes(strategy)
+          && chunk.start <= i && chunk.end > i)).toBe(true);
+      }
+    }
+  });
+
   it("handles empty content and rejects a nonadvancing overlap policy", async () => {
     expect(await semanticChunks("", { maxTokens: 3, overlapTokens: 1, countTokens })).toEqual([]);
     await expect(semanticChunks("abc", { maxTokens: 3, overlapTokens: 3, countTokens }))
