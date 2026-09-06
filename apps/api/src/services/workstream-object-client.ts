@@ -1,3 +1,4 @@
+import { SearchLinkSchema } from '../durable-objects/conversation-link-search';
 import {
   ElicitationSchema,
   ParticipantSchema,
@@ -6,6 +7,7 @@ import {
   WorkstreamDetailSchema,
   WorkstreamTranscriptSnapshotSchema,
   WorkstreamSchema,
+  TranscriptTurnSchema,
   WorkstreamMessageAdmissionReceiptSchema,
   type Elicitation,
   asSubstreamId,
@@ -188,6 +190,18 @@ export class WorkstreamObjectClient {
 
   async get(): Promise<WorkstreamDetail> {
     return WorkstreamDetailSchema.parse(await this.request({ operation: "get" }));
+  }
+
+  async searchLink(turnId: string, linkId: string) {
+    return z.object({ title: z.string(), link: SearchLinkSchema.nullable() }).parse(
+      await this.request({ operation: "search_link", turnId, linkId }),
+    );
+  }
+
+  async searchTurns(turnIds: string[]) {
+    return z.object({ title: z.string(), turns: z.array(TranscriptTurnSchema) }).parse(
+      await this.request({ operation: "search_turns", turnIds }),
+    );
   }
 
   /** Detail plus its canonical ordered transcript opening snapshot. */

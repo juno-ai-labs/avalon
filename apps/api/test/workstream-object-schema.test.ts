@@ -78,6 +78,7 @@ const EXPECTED_TABLES = [
   "bind_provider_boundaries",
   "content_audience_fences",
   "content_refs",
+  "conversation_search_links",
   "delivered_loop_inputs",
   "description_refresh_state",
   "due_work",

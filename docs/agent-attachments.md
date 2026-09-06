@@ -42,6 +42,10 @@ source of truth for retry, replay, and compaction recovery.
 
 ## How it works
 
+### Member search projection
+
+The member Files and Artifacts tabs search resource names, descriptions, and full available text derivatives through Turbopuffer. `resource-search-text.ts` defines the canonical field order for both indexing and match offsets. The source adapter returns this text to the shared Queue Worker pipeline; attachments have no separate chunking or embedding policy. Resource triggers enqueue reindexing when extraction or metadata changes; missing derivatives do not silently become truncated bodies. Search rechecks current resource and attachment authority before displaying excerpts. See [text search](text-search.md).
+
 ### Kind and schema selection
 
 Rally classifies an attachment into exactly one of `image`, `audio`, `markdown`,
@@ -613,6 +617,16 @@ terms rather than duplicating attachment text. Future changes must preserve thos
 cheap discovery and continuation paths.
 
 ## Changelog
+
+### 2026-09-05 — Member search projection
+
+**What changed:** Search now reads canonical attachment originals or extracted text and rechecks access after loading bytes.
+
+**Why:** Uploaded files and generated artifacts need content matches without opening a separate ingestion path.
+
+**Considered and rejected:** Source-specific chunking was rejected; the shared Queue owns it.
+
+**Consequences:** Binary originals stay binary and private child access must be checked at the owning child.
 
 ### 2026-09-03: The compiler's attachment path is gone
 

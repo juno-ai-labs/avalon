@@ -1,3 +1,6 @@
+import { SearchModal } from './search-modal';
+import { AttachmentLightbox } from './attachment-lightbox';
+import type { AttachmentPreview } from './attachments';
 import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type PropsWithChildren } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -232,6 +235,19 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     session,
     signOut,
   } = useAppSession();
+  const [searchOpen, setSearchOpen] = useState(false);
+  useEffect(() => {
+    const openSearch = (event: KeyboardEvent) => {
+      if (api && (event.metaKey || event.ctrlKey) && event.shiftKey && event.code === 'KeyF' && !event.isComposing) {
+        event.preventDefault();
+        setSearchOpen(true);
+      }
+    };
+    window.addEventListener('keydown', openSearch);
+    return () => window.removeEventListener('keydown', openSearch);
+  }, [api]);
+  const searchIdentity = `${workspace.id}:${workspace.currentUser.id}`;
+  const [searchPreview, setSearchPreview] = useState<{ identity: string; preview: AttachmentPreview } | null>(null);
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
@@ -462,6 +478,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     >
       <div className={shellClassName} style={shellStyle}>
       <Sidebar
+        onOpenSearch={api ? () => setSearchOpen(true) : undefined}
         accountMenu={(
           <WorkspaceAccountMenu
             activeWorkspace={activeWorkspace}
@@ -801,6 +818,20 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
           {children}
         </main>
       </div>
+      {api && <SearchModal key={`${workspace.id}:${workspace.currentUser.id}`} workspaceId={`${workspace.id}:${workspace.currentUser.id}`}
+        open={searchOpen} onOpenChange={setSearchOpen}
+        search={(request, signal) => api.searchWorkspace(request, signal)}
+        onSelect={(result) => {
+          const target = result.location;
+          if (target.kind === 'message') {
+            navigate(`/workstreams/${target.workstreamId}?substream=${encodeURIComponent(target.substreamId)}&turn=${encodeURIComponent(target.turnId)}&sequence=${target.transcriptSequence}`);
+          } else if (target.kind === 'link') {
+            void desktopBridge().openExternal(target.url);
+          } else {
+            setSearchPreview({ identity: searchIdentity, preview: { name: result.title, ...(target.mimeType ? { mimeType: target.mimeType } : {}), loadContent: (signal) => api.getSearchResourcePreviewContent(target.resourceId, signal) } });
+          }
+        }} />}
+      <AttachmentLightbox key={searchIdentity} preview={searchPreview?.identity === searchIdentity ? searchPreview.preview : null} onClose={() => setSearchPreview(null)} />
     </WorkstreamSocketPool>
   );
 }
