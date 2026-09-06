@@ -86,11 +86,12 @@ from the same canonical text used for lexical indexing. Recursive splitting trie
 paragraphs, lines, sentence endings, and spaces before code-point boundaries.
 Identical spans are deduplicated and carry both strategy labels.
 
-`SEARCH_CHUNK_MAX_TOKENS` and `SEARCH_CHUNK_OVERLAP_TOKENS` are global pipeline
-settings, never source options. They have no guessed defaults. Missing or invalid
-settings pause producers while retaining intents; an already queued job still fails
-the vector step and retries rather than silently disabling
-semantic indexing. Lexical text is written first and remains available.
+The shared constants in `semantic-chunks.ts` set a 512-token maximum and
+128-token sliding-window overlap for every source and region. These are code
+policy, with no environment or source overrides. Missing provider credentials
+pause producers while retaining intents; an already queued job retries failed
+vector writes rather than silently disabling semantic indexing. Lexical text is
+written first and remains available.
 
 The shared integration loads the Qwen3-Embedding-8B tokenizer's public assets at
 immutable revision `1d8ad4ca9b3dd8059ad90a75d4983776a23d44af` and runs them locally
@@ -221,9 +222,8 @@ completed migration's backfill INSERT. New source edits produce new intents. Do
 not discard DLQ messages or assume a migration report repairs their contents.
 
 Deploy both API Workers with their `BROWSER` binding and production Turbopuffer
-secret and the shared `SEARCH_CHUNK_MAX_TOKENS` / `SEARCH_CHUNK_OVERLAP_TOKENS`
-settings before running backfill. `pnpm env:sync` forwards the development key and
-both chunk settings from `.env.local`; it never copies the production key into
+secret before running backfill. The 512/128-token policy ships with the code.
+`pnpm env:sync` forwards the development key from `.env.local`; it never copies the production key into
 development Workers. Use the existing migration tracker's **Force a
 migration** action for WorkspaceDO and SubstreamAgent in each region to wake
 stored objects; an untouched object does not migrate just because code deployed.
@@ -285,6 +285,38 @@ through Queue failure rather than silent truncation. Document-size and capture
 budgets require team policy; no arbitrary new caps are introduced here.
 
 ## Changelog
+
+### 2026-09-06 — Keep the shared chunk policy in code
+
+**What changed:** The 512-token maximum and 128-token overlap are shared code
+constants. Environment parsing, deployment variables, and development forwarding
+for chunk settings are removed.
+
+**Why:** The team requested one fixed chunking policy for all text sources and
+regions, eliminating configuration drift and an unnecessary indexing prerequisite.
+
+**Considered and rejected:** Environment overrides could make identical content
+use different chunking policies across deployments.
+
+**Consequences:** Provider credentials still gate indexing. Namespace hashing
+retains the string representation of the selected values, preserving identity for
+512/128 indexes. Future policy changes require a code change and semantic backfill.
+
+### 2026-09-06 — Set the shared chunk budget to 512/128 tokens
+
+**What changed:** Both regional Workers and the development environment example
+configure 512 tokens per chunk and 128 tokens of sliding-window overlap.
+
+**Why:** The team selected a focused passage size with 25% overlap to preserve
+boundary context and unblock the previously unconfigured indexing pipeline.
+
+**Considered and rejected:** Leaving the settings unset would continue pausing
+indexing. Source-specific budgets would violate the shared pipeline contract.
+
+**Consequences:** Recursive and sliding-window chunks use the same maximum;
+distinct spans from both strategies add embedding cost. These settings do not
+truncate lexical text. Deployment and backfill remain separate operations, and
+future budget changes require rebuilding the corresponding semantic namespace.
 
 ### 2026-09-06 — Member search and one regional text pipeline
 
