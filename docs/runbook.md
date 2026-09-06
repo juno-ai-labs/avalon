@@ -33,7 +33,7 @@ Create independent resource sets for `global` and `eu`:
 - A D1 database
 - Turbopuffer search access for gcp-us-west1 (Global) and gcp-europe-west1 (EU),
   plus Browser Run bindings; see [text search](text-search.md#operations) for
-  required chunk settings and pending-intent activation.
+  provider credentials and pending-intent activation.
 - An R2 payload bucket
 - A dedicated telemetry R2 bucket (`avalon-global-telemetry` or the
   EU-jurisdiction `avalon-eu-telemetry`), separate from workspace payloads
