@@ -50,8 +50,6 @@ export interface Env {
   BROWSER?: BrowserRun;
   TURBO_PUFFER_DEV_API_KEY?: string;
   TURBO_PUFFER_PROD_API_KEY?: string;
-  SEARCH_CHUNK_MAX_TOKENS?: string;
-  SEARCH_CHUNK_OVERLAP_TOKENS?: string;
   RUN_ANALYTICS: AnalyticsEngineDataset;
   TERMINAL_ANALYTICS: AnalyticsEngineDataset;
   DOCUMENT_PROCESSOR: DocumentProcessingRpcBinding;
@@ -398,8 +396,6 @@ const EnvContractSchema = z.object({
   // Optional, but a value that is present must be readable. This is the half
   // `numericEnv` cannot express: absent legitimately means "use the default",
   // while unparseable means someone typed it wrong and nobody found out.
-  SEARCH_CHUNK_MAX_TOKENS: numericString.optional(),
-  SEARCH_CHUNK_OVERLAP_TOKENS: numericString.optional(),
   HARNESS_MAX_PLUGIN_CATALOG_TOKENS: numericString.optional(),
   HARNESS_REQUEST_ESTABLISHMENT_TIMEOUT_MS: numericString.optional(),
   HARNESS_TTFT_TIMEOUT_MS: numericString.optional(),

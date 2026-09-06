@@ -15,11 +15,12 @@ let parentId: string;
 let resourceId: string;
 const resourceMessage = () => ({ type: 'resource_search_projection_v1', region: 'global', workspaceId, resourceId });
 const pipelineEnv: Env = { ...env, TURBO_PUFFER_DEV_API_KEY: 'test-only', OPENROUTER_API_KEY: 'test-only',
-  LOG_LEVEL: 'warn', SEARCH_CHUNK_MAX_TOKENS: '12', SEARCH_CHUNK_OVERLAP_TOKENS: '4' };
+  LOG_LEVEL: 'warn' };
 const writes: Array<{ path: string; body: Record<string, unknown> }> = [];
 const embeddingInputs: string[] = [];
 let onEmbed: (() => Promise<void>) | undefined;
 let tokenizerReads = 0;
+const documentBody = 'beta\n\ngamma delta'.repeat(40);
 
 // External provider assets/API responses are the only doubles. The tokenizer,
 // Queue consumer, source RPC, SQLite migrations, and R2 contents run in workerd.
@@ -72,7 +73,7 @@ async function seedResource(provider = 'avalon_upload') {
       VALUES (?, ?, 'file', ?, 'pipeline-fixture', 'alpha', 'text/plain',
         'pipeline/body', '{}', 'attached', 'ready', '2026-09-05T00:00:00Z', '2026-09-05T00:00:00Z')`, resourceId, workspaceId, provider);
   });
-  await env.PAYLOADS.put('pipeline/body', 'beta\n\ngamma delta');
+  await env.PAYLOADS.put('pipeline/body', documentBody);
   return stub;
 }
 
@@ -99,7 +100,7 @@ describe('shared Queue indexing pipeline', () => {
     const stub = env.SUBSTREAM_AGENTS.getByName(conversationObjectName('global', workspaceId, parentId, '0'));
     await runInDurableObject(stub, async (_instance, state) => {
       seedWorkstreamRoot(state, 1, { workspaceId, workstreamId: parentId });
-      await seedParticipantMessage(state, { id: 'message', sequence: 1, text: 'alpha\nbeta\n\ngamma delta' });
+      await seedParticipantMessage(state, { id: 'message', sequence: 1, text: `alpha\n${documentBody}` });
     });
     const result = await consume([resourceMessage(), { type: 'search_projection_v1', region: 'global', workspaceId,
       parentId, substreamId: '0', turnId: 'message', revision: 1 }]);
@@ -127,7 +128,7 @@ describe('shared Queue indexing pipeline', () => {
       await seedParticipantMessage(state, { id: 'link-message', sequence: 1, text: `[alpha](${url})` });
       state.storage.sql.exec(`INSERT INTO conversation_search_links
         (id, turn_id, url, label, markdown, captured, deleted, revision)
-        VALUES (?, 'link-message', ?, 'alpha', 'beta\n\ngamma delta', 1, 0, 1)`, linkId, url);
+        VALUES (?, 'link-message', ?, 'alpha', ?, 1, 0, 1)`, linkId, url, documentBody);
     });
     const result = await consume([resourceMessage(), { type: 'search_projection_v1', region: 'global', workspaceId,
       parentId, substreamId: '0', turnId: 'link-message', revision: 1 }]);
@@ -177,7 +178,7 @@ describe('shared Queue indexing pipeline', () => {
 
   it('keeps lexical text available but retries rather than silently skipping an unconfigured vector pipeline', async () => {
     await seedResource();
-    const result = await consume([resourceMessage()], { SEARCH_CHUNK_MAX_TOKENS: '' });
+    const result = await consume([resourceMessage()], { OPENROUTER_API_KEY: '' });
     expect(result.explicitAcks).toEqual([]);
     expect(result.retryMessages).toEqual([{ msgId: 'search-0' }]);
     expect(liveRows().some((row) => row.text.includes('gamma delta'))).toBe(true);
