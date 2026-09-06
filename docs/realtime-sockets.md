@@ -496,7 +496,8 @@ The initial socket snapshot carries bounded canonical transcript ranges. When a
 viewport is within 160 px of the top, Electron requests the adjacent half-open
 sequence range, merges it under the snapshot fence, and restores `scrollTop` by
 the exact height inserted above the viewport. Newer-range and jump-to-latest
-recovery use the same socket path. Layout, scrolling, resizing, and window visibility all recheck that position.
+recovery use the same socket path. Layout, scrolling, resizing, and window visibility all
+recheck that position.
 Short opening feeds fill through the same path. Errors stop automatic paging
 and expose a retry control; normal paging shows only a loading status.
 A hidden window produces no automatic paging traffic, and the
@@ -690,13 +691,20 @@ what that leaves exposed.
 
 ### 2026-09-06 — Page older history from viewport position
 
-The desktop requests older ranges whenever its visible viewport approaches the
-loaded top, including after layout and resizing. A loading status replaces the
-normal pagination button; errors stop automatic requests and offer retry. This
-fills short opening snapshots and supports infinite scrolling without requiring
-input gestures or increasing server snapshot sizes. Hidden windows remain idle.
-The snapshot fence and range sizes are unchanged; renderer behavior belongs to
+**What changed:** The desktop reuses snapshot-fenced range requests for
+position-based infinite scrolling, after initial viewport positioning completes.
+
+**Why:** Short opening snapshots needed more history even without a scroll event.
+
+**Considered and rejected:** Enlarging every opening snapshot to guess at rendered
+height; the existing range transport can fetch only what the viewport needs.
+
+**Consequences:** Range sizes and authorization remain unchanged. Covered
+intervals must advance even when a page contains no visible rows; the client
+reports non-advancing coverage as an error. Renderer behavior is owned by
 [`transcript-scrolling.md`](transcript-scrolling.md).
+
+Shipped through [PR #565](https://github.com/juno-ai-labs/avalon/pull/565).
 
 ### 2026-09-04 — A child is ready only after its inherited context is complete
 
