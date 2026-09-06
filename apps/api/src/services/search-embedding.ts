@@ -13,7 +13,7 @@ export function searchIndexingConfigured(env: Env): boolean {
   return Boolean(key && env.OPENROUTER_API_KEY);
 }
 
-// Only immutable model data survives a delivery. Never share request promises,
+// Only closure-private public model data survives a delivery. Never share request promises,
 // streams, credentials, source text, or the tokenizer's input cache.
 let sharedPolicy: SemanticChunkPolicy | undefined;
 
@@ -35,11 +35,14 @@ function createSearchChunkPolicy(): SemanticChunkPolicy {
   const tokenizer = new Tokenizer(definition, config);
   const model = tokenizer.model;
   if (!(model instanceof BPE)) throw new Error('search_tokenizer_model_mismatch');
-  return Object.freeze({ maxTokens: SEARCH_CHUNK_MAX_TOKENS, overlapTokens: SEARCH_CHUNK_OVERLAP_TOKENS,
+  return Object.freeze({
+    maxTokens: SEARCH_CHUNK_MAX_TOKENS,
+    overlapTokens: SEARCH_CHUNK_OVERLAP_TOKENS,
     countTokens: (text: string) => {
       try { return tokenizer.encode(text).ids.length; }
       finally { model.clear_cache(); }
-    } });
+    },
+  });
 }
 
 export async function embedSearchDocument(env: Env, workspaceId: string, text: string) {

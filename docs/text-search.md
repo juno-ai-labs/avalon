@@ -136,6 +136,11 @@ from those loaders, never from the index.
 
 ## Invariants
 
+- One tokenizer is retained per isolate (about 46 MiB in a local Node 22 heap
+  measurement). Its model stays closure-private; only the policy wrapper is
+  frozen. Input fragments must be cleared before every count returns or throws.
+- Chunk offsets use the sorted code-point boundary array directly; do not add
+  a per-character Map and its transient construction pairs.
 - Source loaders must check current authority after retrieval and reject stale
   revisions. Otherwise revoked access or obsolete content could be returned.
 - Namespace identity includes the embedding model and dimensions. Mixing spaces
@@ -191,7 +196,7 @@ The cursor follows [Turbopuffer attribute pagination](https://turbopuffer.com/do
 
 ## Testing
 
-Run `pnpm --filter @rally/api exec vitest run test/text-search.test.ts test/semantic-chunks.test.ts`.
+Run `pnpm --filter @rally/api exec vitest run test/text-search.test.ts test/semantic-chunks.test.ts test/search-embedding-policy.test.ts`.
 The external SDK is doubled to prove source filtering and canonical result
 loading. No database or Durable Object runtime is simulated by this suite.
 
@@ -300,7 +305,9 @@ budgets require team policy; no arbitrary new caps are introduced here.
 ### 2026-09-06 — Share immutable tokenizer state across overlapping deliveries
 
 **What changed:** The bundled tokenizer is initialized lazily and synchronously
-once per Worker isolate using the existing `fflate` dependency. Only the completed,
+once per Worker isolate using the existing `fflate` dependency. The chunker
+finds positions by binary search in its existing sorted boundary array instead
+of constructing a Map entry and a temporary pair for each code point. Only the completed,
 frozen policy is shared. Encoding clears the BPE input cache on success or failure.
 Source data, provider requests, and indexing state remain local to each delivery.
 
@@ -311,11 +318,30 @@ under the Worker's shared 128 MiB isolate limit. Sequential work within a batch
 could not prevent overlap between deliveries. Synchronous initialization avoids
 both duplicate initialization and sharing an asynchronous stream across request
 contexts; reducing Queue concurrency would hide the duplicate allocations and
-slow unrelated activity work. This is shared compiled model state, not a source
-or result cache.
+slow unrelated activity work. This revises the per-batch lifecycle recorded in
+“Remove tokenizer downloads and blank inputs from backfill” below. A separate
+Node 22 allocation check for one million characters measured about 118 MiB of
+additional peak heap from building the removed Map; the boundary array retained
+about 11 MiB. This is shared compiled model state, not a source or result cache.
 
-**Consequences:** The model revision, exact token counts, chunk policy, namespaces,
-and regional routing are unchanged. Tests cover overlapping real Queue deliveries,
+**Considered and rejected:** A shared promise around synchronous construction
+does not move parsing off the event loop. Initialization remains synchronous
+and lazy (about 401 ms in a local Node 22 cold measurement), so it is paid once
+per isolate without duplicate model construction or request-owned streams.
+Clearing only after a document would retain one workspace's input fragments
+while chunking yields to another delivery; we retain cleanup after each count.
+It forfeits cache reuse across overlapping probes: an 87,000-character synthetic
+English document took roughly 1.03 s with cleanup versus 0.78–0.90 s without it
+on Node 22, with identical 92 chunks. These are local examples, not production
+latency guarantees. No arbitrary latency threshold or Queue concurrency cap is
+introduced.
+
+**Consequences:** The retained model reduces memory headroom for every later
+request in that isolate, including non-search activity work. Cold initialization
+also needs transient decompression/parsing/construction memory above that floor;
+check runtime outcomes after rollout rather than equating shared allocation with
+proof that every source fits. The model revision, exact token counts, chunk policy,
+namespaces, and regional routing are unchanged. Tests cover overlapping real Queue deliveries,
 policy reuse, and removal of input fragments even when encoding throws. Runtime
 memory outcomes must be checked after rollout; local tests do not enforce the
 production isolate's full memory accounting.

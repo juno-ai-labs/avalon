@@ -36,7 +36,7 @@ and [Versions and gradual deployments](https://developers.cloudflare.com/workers
 
 ### Search indexing and capture
 
-Both regional API configurations declare the `BROWSER` Browser Run binding for asynchronous conversation-link capture. The existing activity Queue consumer centralizes lexical indexing, Qwen tokenization, chunking, and embeddings in the regional API Worker. The tokenizer dependency is statically imported; public model assets are fetched at a pinned revision during Queue execution, not isolate startup. Both regions use the shared code policy of 512 tokens per chunk and 128 tokens of sliding-window overlap; there are no chunk-budget environment variables. Turbopuffer credentials are server secrets: production uses `TURBO_PUFFER_PROD_API_KEY`, development uses `TURBO_PUFFER_DEV_API_KEY`. Deploying these bindings does not backfill dormant objects; the [text-search operations procedure](text-search.md#operations) covers the separate migration wake and Queue verification.
+Both regional API configurations declare the `BROWSER` Browser Run binding for asynchronous conversation-link capture. The existing activity Queue consumer centralizes lexical indexing, Qwen tokenization, chunking, and embeddings in the regional API Worker. The tokenizer dependency is statically imported; the pinned public model assets ship in the bundle and are inflated synchronously on first use, once per isolate rather than once per Queue delivery. Parsing remains outside module startup. The BPE input cache is cleared after every token count. Both regions use the shared code policy of 512 tokens per chunk and 128 tokens of sliding-window overlap; there are no chunk-budget environment variables. Turbopuffer credentials are server secrets: production uses `TURBO_PUFFER_PROD_API_KEY`, development uses `TURBO_PUFFER_DEV_API_KEY`. Deploying these bindings does not backfill dormant objects; the [text-search operations procedure](text-search.md#operations) covers the separate migration wake and Queue verification.
 
 Every Worker has one complete static dependency graph. Both regional APIs bind
 to `DOCUMENT_PROCESSOR` and `TERMINAL_PROVIDER`; Global also binds to
@@ -293,6 +293,23 @@ catalog reads plus sixteen small KV writes; inference performs only the KV reads
 for Azure-bound models in its route plan.
 
 ## Changelog
+
+### 2026-09-06 — Bundle and share the search tokenizer
+
+**What changed:** Corrected the deployment description for bundled Qwen assets
+and lazy, synchronous tokenizer initialization once per isolate.
+
+**Why:** Runtime asset downloads failed during backfill, and separate tokenizers
+for overlapping Queue deliveries exceeded the isolate memory limit. The model
+now ships with the Worker and is shared without retaining request I/O or input
+fragments. This supersedes the fetching description in the search-capture entry.
+
+**Considered and rejected:** A tokenizer per delivery duplicates the same public
+vocabulary; module-startup parsing would spend the startup budget before search
+is used. Both regional startup profiles still gate deployment.
+
+**Consequences:** No new binding, secret, region, or chunk-policy configuration.
+See [text search](text-search.md) for the lifecycle and memory trade-offs.
 
 ### 2026-09-05 — Search capture binding
 

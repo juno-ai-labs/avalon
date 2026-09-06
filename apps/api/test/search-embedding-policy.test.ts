@@ -4,10 +4,9 @@ import { searchChunkPolicy } from '../src/services/search-embedding';
 
 afterEach(() => vi.restoreAllMocks());
 
-it('reuses one immutable policy with exact Qwen counts across overlapping callers', async () => {
-  const [first, second] = await Promise.all([
-    Promise.resolve().then(searchChunkPolicy), Promise.resolve().then(searchChunkPolicy),
-  ]);
+it('reuses one immutable policy with exact Qwen counts', () => {
+  const first = searchChunkPolicy();
+  const second = searchChunkPolicy();
   expect(first).toBe(second);
   expect(Object.isFrozen(first)).toBe(true);
   expect(first.countTokens('A harmless memory measurement.')).toBe(6);
@@ -15,6 +14,7 @@ it('reuses one immutable policy with exact Qwen counts across overlapping caller
 });
 
 it('does not retain input fragments in the shared model after counting', () => {
+  // These published library members deliberately pin the cache cleanup contract.
   const bpe = vi.spyOn(BPE.prototype, 'bpe');
   searchChunkPolicy().countTokens('A harmless memory measurement.');
   expect(bpe).toHaveBeenCalled();
