@@ -53,7 +53,6 @@ export {
   orderedTranscriptOwnsRunTiming,
   preservedPrependScrollTop,
   resourceVersionsQueryKey,
-  shouldLoadEarlierFromScroll,
   workspaceMemberFromSession,
   workstreamPayloadBelongsToRoute,
   workstreamPresenceViewers,

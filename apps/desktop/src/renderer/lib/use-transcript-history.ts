@@ -1,53 +1,63 @@
-import { useLayoutEffect, useRef, type RefObject } from 'react';
+import { useLayoutEffect, useRef, useState, type RefObject } from 'react';
 
-export const TRANSCRIPT_HISTORY_EDGE = 160;
+const TRANSCRIPT_HISTORY_EDGE = 160;
 
-/** Load adjacent history whenever layout or scrolling brings its edge near the viewport. */
+/** Observe the loaded edge; the surface owns readiness, requests, and errors. */
 export function useTranscriptHistory({
   scrollRef,
+  contentRef,
   conversationAddress,
   enabled,
+  canLoad,
   loadOlder,
 }: {
   scrollRef: RefObject<HTMLElement | null>;
+  contentRef: RefObject<HTMLElement | null>;
   conversationAddress: string;
   enabled: boolean;
-  loadOlder: () => Promise<void>;
-}): void {
-  const requestInFlight = useRef<{ address: string } | null>(null);
+  canLoad: boolean;
+  loadOlder: () => void;
+}): boolean {
+  const latest = useRef({ canLoad, loadOlder });
+  const checkRef = useRef<(() => void) | null>(null);
+  const [nearEdge, setNearEdge] = useState(false);
+  useLayoutEffect(() => { latest.current = { canLoad, loadOlder }; });
 
-  // Run after every commit: virtual row measurements can replace estimates
-  // without changing the transcript data. Observe resizing as well, including
-  // disclosure rows that collapse entirely within MessageFeed.
   useLayoutEffect(() => {
     const element = scrollRef.current;
+    const content = contentRef.current;
+    setNearEdge(false);
     if (!element || !enabled) return;
     let frame: number | undefined;
     const check = (): void => {
-      if (frame !== undefined) cancelAnimationFrame(frame);
+      // Keep an already scheduled check: streaming commits must not postpone it.
+      if (frame !== undefined) return;
       frame = requestAnimationFrame(() => {
-        if (document.visibilityState === 'hidden'
-          || requestInFlight.current?.address === conversationAddress
-          || element.clientHeight <= 0 || element.scrollTop >= TRANSCRIPT_HISTORY_EDGE) return;
-        const request = { address: conversationAddress };
-        requestInFlight.current = request;
-        void loadOlder().finally(() => {
-          if (requestInFlight.current === request) requestInFlight.current = null;
-        });
+        frame = undefined;
+        const near = document.visibilityState !== 'hidden'
+          && element.clientHeight > 0 && element.scrollTop < TRANSCRIPT_HISTORY_EDGE;
+        setNearEdge(near);
+        if (near && latest.current.canLoad) latest.current.loadOlder();
       });
     };
+    checkRef.current = check;
     const observer = new ResizeObserver(check);
     observer.observe(element);
-    if (element.firstElementChild) observer.observe(element.firstElementChild);
+    if (content) observer.observe(content);
     element.addEventListener('scroll', check, { passive: true });
     document.addEventListener('visibilitychange', check);
     check();
     return () => {
+      checkRef.current = null;
       if (frame !== undefined) cancelAnimationFrame(frame);
       observer.disconnect();
       element.removeEventListener('scroll', check);
       document.removeEventListener('visibilitychange', check);
     };
-  });
+  }, [scrollRef, contentRef, enabled, conversationAddress]);
 
+  // Row measurements may change on any commit. Recheck without rebuilding
+  // observers or cancelling the frame another commit has already scheduled.
+  useLayoutEffect(() => { checkRef.current?.(); });
+  return nearEdge;
 }

@@ -6,16 +6,21 @@ import { useTranscriptHistory } from './use-transcript-history';
 let frames: Map<number, FrameRequestCallback>;
 let nextFrame = 0;
 let resize: () => void;
+let observed: Element[];
+let observers = 0;
+let disconnects = 0;
 let geometry: { clientHeight: number; scrollHeight: number; scrollTop: number };
 
-function Feed({ address = 'a', enabled = true, load = async () => {} }: {
+function Feed({ address = 'a', enabled = true, canLoad = true, load = () => {} }: {
   address?: string;
   enabled?: boolean;
-  load?: () => Promise<void>;
+  canLoad?: boolean;
+  load?: () => void;
 }): React.JSX.Element {
   const ref = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
   useTranscriptHistory({
-    scrollRef: ref, conversationAddress: address, enabled, loadOlder: load,
+    scrollRef: ref, contentRef, conversationAddress: address, enabled, canLoad, loadOlder: load,
   });
   return <div ref={(element) => {
     ref.current = element;
@@ -24,7 +29,7 @@ function Feed({ address = 'a', enabled = true, load = async () => {} }: {
         Object.defineProperty(element, property, { configurable: true, get: () => geometry[property] });
       }
     }
-  }} data-testid="feed"><div /></div>;
+  }} data-testid="feed"><div ref={contentRef} data-testid="content" /></div>;
 }
 
 async function frame(): Promise<void> {
@@ -37,6 +42,9 @@ async function frame(): Promise<void> {
 
 beforeEach(() => {
   frames = new Map();
+  observed = [];
+  observers = 0;
+  disconnects = 0;
   geometry = { clientHeight: 600, scrollHeight: 600, scrollTop: 0 };
   vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
     frames.set(++nextFrame, callback);
@@ -44,9 +52,9 @@ beforeEach(() => {
   });
   vi.stubGlobal('cancelAnimationFrame', (id: number) => { frames.delete(id); });
   vi.stubGlobal('ResizeObserver', class {
-    constructor(callback: () => void) { resize = callback; }
-    observe(): void {}
-    disconnect(): void {}
+    constructor(callback: () => void) { resize = callback; observers += 1; }
+    observe(element: Element): void { observed.push(element); }
+    disconnect(): void { disconnects += 1; }
   });
   vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
 });
@@ -54,7 +62,7 @@ beforeEach(() => {
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('opening transcript history', () => {
-  it('fills after layout without a scroll, continuing until measured content overflows', async () => {
+  it('loads after layout and stops when the viewport leaves the history edge', async () => {
     const load = vi.fn(async () => {});
     const view = render(<Feed load={load} />);
     expect(load).not.toHaveBeenCalled();
@@ -102,28 +110,22 @@ describe('opening transcript history', () => {
     expect(load).toHaveBeenCalledTimes(2);
   });
 
-  it('does not duplicate an in-flight page, including resize notifications', async () => {
-    let finish = (): void => {};
-    const load = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
+  it('keeps observers and pending checks across streaming commits while using current permission', async () => {
+    const load = vi.fn();
     const view = render(<Feed load={load} />);
-    await frame();
+    expect(observed).toEqual([screen.getByTestId('feed'), screen.getByTestId('content')]);
     view.rerender(<Feed load={load} />);
+    view.rerender(<Feed load={load} />);
+    expect(observers).toBe(1);
+    expect(disconnects).toBe(0);
+    expect(frames.size).toBe(1);
+    await frame();
+    expect(load).toHaveBeenCalledOnce();
+    view.rerender(<Feed canLoad={false} load={load} />);
     resize();
     await frame();
     expect(load).toHaveBeenCalledOnce();
-    await act(async () => { finish(); });
-  });
-
-  it('lets a new conversation fill while a departed conversation has a pending page', async () => {
-    let finish = (): void => {};
-    const oldLoad = () => new Promise<void>((resolve) => { finish = resolve; });
-    const newLoad = vi.fn(async () => {});
-    const view = render(<Feed load={oldLoad} />);
-    await frame();
-    view.rerender(<Feed address="b" load={newLoad} />);
-    await frame();
-    expect(newLoad).toHaveBeenCalledOnce();
-    await act(async () => { finish(); });
+    expect(observers).toBe(1);
   });
 
   it('does not fill without permission, or after permission is withdrawn before layout', async () => {

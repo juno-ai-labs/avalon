@@ -67,7 +67,7 @@ import { useFileAttachments } from '../lib/use-file-attachments';
 import { useFileDrop } from '../lib/use-file-drop';
 import { useWindowFilePaste } from '../lib/use-file-paste';
 import { TRANSCRIPT_END_SLACK, useTranscriptFollow } from '../lib/use-transcript-follow';
-import { TRANSCRIPT_HISTORY_EDGE, useTranscriptHistory } from '../lib/use-transcript-history';
+import { useTranscriptHistory } from '../lib/use-transcript-history';
 import { useWorkstreamFeedOpenTelemetry } from '../lib/use-workstream-feed-open-telemetry';
 import { useWorkstreamSendReadyTelemetry } from '../lib/use-workstream-send-ready-telemetry';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
@@ -473,14 +473,6 @@ export function initialTranscriptAnchorIndex(
   return firstUnreadIndex < 0 ? null : Math.max(0, firstUnreadIndex - 1);
 }
 
-export function shouldLoadEarlierFromScroll(
-  scrollTop: number,
-  hasEarlierCursor: boolean,
-  loading: boolean,
-): boolean {
-  return scrollTop < TRANSCRIPT_HISTORY_EDGE && hasEarlierCursor && !loading;
-}
-
 export function preservedPrependScrollTop(
   previousScrollTop: number,
   previousScrollHeight: number,
@@ -624,6 +616,10 @@ export function ConversationSurface({
   const setRailScope = useUiStore((state) => state.setRailScope);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
+  const transcriptContentRef = useRef<HTMLDivElement>(null);
+  const conversationGenerationRef = useRef(0);
+  const olderRequestsRef = useRef(new Map<string, Promise<void>>());
+  const [positionedConversation, setPositionedConversation] = useState<string | null>(null);
   const [participantDialogOpen, setParticipantDialogOpen] = useState(false);
   const [participantDialogSubstreamId, setParticipantDialogSubstreamId] = useState(substreamId);
   const [resourceDialogOpen, setResourceDialogOpen] = useState(false);
@@ -633,7 +629,8 @@ export function ConversationSurface({
   const [sending, setSending] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [olderMessagesError, setOlderMessagesError] = useState<string | undefined>();
-  const loadingOlderRef = useRef(false);
+  const [otherHistoryError, setOtherHistoryError] = useState<string | undefined>();
+
   const loadingNewerRef = useRef(false);
   const pendingOlderAfterReconnectRef = useRef(false);
   const pendingNewerAfterReconnectRef = useRef(false);
@@ -694,9 +691,11 @@ export function ConversationSurface({
     };
   }, [closeRail, id, inspect, setRailScope]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     activeConversationAddressRef.current = conversationAddress;
-    loadingOlderRef.current = false;
+    conversationGenerationRef.current += 1;
+    setPositionedConversation(null);
+    setOtherHistoryError(undefined);
     loadingNewerRef.current = false;
     pendingOlderAfterReconnectRef.current = false;
     pendingNewerAfterReconnectRef.current = false;
@@ -1015,6 +1014,7 @@ export function ConversationSurface({
       releaseTranscriptFollow();
       initialPositionedWorkstreamRef.current = id;
       transcriptVirtualizer.scrollToIndex(index, { align: 'start' });
+      setPositionedConversation(conversationAddress);
       return;
     }
     const snapshot = orderedTranscript.data;
@@ -1025,7 +1025,7 @@ export function ConversationSurface({
         next.delete('turn'); next.delete('sequence');
         return next;
       }, { replace: true });
-      setOlderMessagesError('The matching message is no longer available.');
+      setOtherHistoryError('The matching message is no longer available.');
       return;
     }
     const requestKey = `${targetKey}:${snapshot.snapshotId}`;
@@ -1036,82 +1036,91 @@ export function ConversationSurface({
       range: { startInclusive: searchSequence, endExclusive: searchSequence + 1 },
       resumeAfterEventSequence: snapshot.eventSequence,
     }).catch((error: unknown) => {
-      if (activeConversationAddressRef.current === conversationAddress && requestedSearch.current === requestKey) setOlderMessagesError(error instanceof Error ? error.message : 'The matching message could not be opened.');
+      if (activeConversationAddressRef.current === conversationAddress && requestedSearch.current === requestKey) setOtherHistoryError(error instanceof Error ? error.message : 'The matching message could not be opened.');
     });
   }, [conversationAddress, id, loadTranscriptRange, orderedTranscript.data, releaseTranscriptFollow,
     searchSequence, searchTurnId, setSearchParams, socketState, transcript, transcriptVirtualizer]);
 
   const loadOlderMessages = useCallback(async (): Promise<void> => {
-    const orderedSnapshot = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
-      transcriptQueryKey,
-    );
-    const orderedRange = orderedSnapshot
-      ? adjacentTranscriptRange(orderedSnapshot, 'older')
-      : null;
-    if (!orderedSnapshot || !orderedRange || loadingOlderRef.current) return;
+    const generation = conversationGenerationRef.current;
+    const stillCurrent = (): boolean => activeConversationAddressRef.current === conversationAddress
+      && conversationGenerationRef.current === generation;
+    const pending = olderRequestsRef.current.get(conversationAddress);
+    if (pending) {
+      setLoadingOlder(true);
+      await pending;
+      if (stillCurrent()) setLoadingOlder(false);
+      return;
+    }
+    const orderedSnapshot = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(transcriptQueryKey);
+    if (!orderedSnapshot || !adjacentTranscriptRange(orderedSnapshot, 'older')) return;
     if (socketState !== 'connected') {
       pendingOlderAfterReconnectRef.current = true;
-      setOlderMessagesError(undefined);
       return;
     }
     pendingOlderAfterReconnectRef.current = false;
-    loadingOlderRef.current = true;
     setLoadingOlder(true);
     setOlderMessagesError(undefined);
     const scrollElement = transcriptRef.current;
     const previousScrollHeight = scrollElement?.scrollHeight ?? 0;
     const previousScrollTop = scrollElement?.scrollTop ?? 0;
-    try {
-      while (activeConversationAddressRef.current === conversationAddress) {
-        const snapshot = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
-          transcriptQueryKey,
-        );
-        const range = snapshot ? adjacentTranscriptRange(snapshot, 'older') : null;
-        if (!snapshot || !range) return;
-        try {
-          await loadTranscriptRange({
-            snapshotId: snapshot.snapshotId,
-            range,
-            resumeAfterEventSequence: snapshot.eventSequence,
-          });
-          break;
-        } catch (error) {
-          if (error instanceof ApiError && error.code === 'transcript_snapshot_changed') continue;
-          throw error;
+    const request = (async (): Promise<void> => {
+      try {
+        while (stillCurrent()) {
+          const snapshot = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(transcriptQueryKey);
+          const range = snapshot ? adjacentTranscriptRange(snapshot, 'older') : null;
+          if (!snapshot || !range) return;
+          try {
+            await loadTranscriptRange({
+              snapshotId: snapshot.snapshotId,
+              range,
+              resumeAfterEventSequence: snapshot.eventSequence,
+            });
+            const next = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(transcriptQueryKey);
+            if (!next || (next.snapshotId === snapshot.snapshotId && !transcriptCoverageAdvanced(snapshot, next))) {
+              throw new Error('Earlier messages could not be loaded. Try again.');
+            }
+            break;
+          } catch (error) {
+            if (error instanceof ApiError && error.code === 'transcript_snapshot_changed') continue;
+            throw error;
+          }
         }
+        if (!stillCurrent()) return;
+        window.requestAnimationFrame(() => {
+          if (!stillCurrent()) return;
+          const element = transcriptRef.current;
+          if (!element) return;
+          scrollTranscriptTo(preservedPrependScrollTop(
+            previousScrollTop, previousScrollHeight, element.scrollHeight,
+          ));
+        });
+      } catch (error) {
+        if (!stillCurrent()) return;
+        if (error instanceof ApiError && error.code === 'workstream_socket_unavailable') {
+          pendingOlderAfterReconnectRef.current = true;
+          return;
+        }
+        setOlderMessagesError(error instanceof Error ? error.message : 'Earlier messages could not be loaded.');
       }
-      if (activeConversationAddressRef.current !== conversationAddress) return;
-      window.requestAnimationFrame(() => {
-        if (activeConversationAddressRef.current !== conversationAddress) return;
-        const element = transcriptRef.current;
-        if (!element) return;
-        scrollTranscriptTo(preservedPrependScrollTop(
-          previousScrollTop,
-          previousScrollHeight,
-          element.scrollHeight,
-        ));
-      });
-    } catch (error) {
-      if (activeConversationAddressRef.current !== conversationAddress) return;
-      if (error instanceof ApiError && error.code === 'workstream_socket_unavailable') {
-        pendingOlderAfterReconnectRef.current = true;
-        return;
-      }
-      setOlderMessagesError(error instanceof Error ? error.message : 'Earlier messages could not be loaded.');
+    })();
+    olderRequestsRef.current.set(conversationAddress, request);
+    try {
+      await request;
     } finally {
-      if (activeConversationAddressRef.current === conversationAddress) {
-        loadingOlderRef.current = false;
-        setLoadingOlder(false);
-      }
+      olderRequestsRef.current.delete(conversationAddress);
+      if (activeConversationAddressRef.current === conversationAddress) setLoadingOlder(false);
     }
   }, [conversationAddress, loadTranscriptRange, queryClient, scrollTranscriptTo, socketState, transcriptQueryKey]);
 
-  useTranscriptHistory({
+  const nearHistoryEdge = useTranscriptHistory({
     scrollRef: transcriptRef,
+    contentRef: transcriptContentRef,
     conversationAddress,
-    enabled: payloadBelongsToRoute && socketState === 'connected'
-      && olderTranscriptRange !== null && !loadingOlder && !olderMessagesError,
-    loadOlder: loadOlderMessages,
+    enabled: payloadBelongsToRoute && positionedConversation === conversationAddress
+      && !searchTurnId && olderTranscriptRange !== null,
+    canLoad: socketState === 'connected' && !loadingOlder && !olderMessagesError,
+    loadOlder: () => { void loadOlderMessages(); },
   });
 
   const loadNewerMessages = useCallback(async (): Promise<void> => {
@@ -1124,12 +1133,12 @@ export function ConversationSurface({
     if (!orderedSnapshot || !orderedRange || loadingNewerRef.current) return;
     if (socketState !== 'connected') {
       pendingNewerAfterReconnectRef.current = true;
-      setOlderMessagesError(undefined);
+      setOtherHistoryError(undefined);
       return;
     }
     pendingNewerAfterReconnectRef.current = false;
     loadingNewerRef.current = true;
-    setOlderMessagesError(undefined);
+    setOtherHistoryError(undefined);
     try {
       while (activeConversationAddressRef.current === conversationAddress) {
         const snapshot = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
@@ -1154,7 +1163,7 @@ export function ConversationSurface({
         pendingNewerAfterReconnectRef.current = true;
         return;
       }
-      setOlderMessagesError(error instanceof Error ? error.message : 'Newer messages could not be loaded.');
+      setOtherHistoryError(error instanceof Error ? error.message : 'Newer messages could not be loaded.');
     } finally {
       loadingNewerRef.current = false;
     }
@@ -1164,12 +1173,12 @@ export function ConversationSurface({
     if (loadingNewerRef.current) return;
     if (socketState !== 'connected') {
       pendingJumpAfterReconnectRef.current = true;
-      setOlderMessagesError(undefined);
+      setOtherHistoryError(undefined);
       return;
     }
     pendingJumpAfterReconnectRef.current = false;
     loadingNewerRef.current = true;
-    setOlderMessagesError(undefined);
+    setOtherHistoryError(undefined);
     try {
       const orderedSnapshot = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
         transcriptQueryKey,
@@ -1228,7 +1237,7 @@ export function ConversationSurface({
         pendingJumpAfterReconnectRef.current = true;
         return;
       }
-      setOlderMessagesError(error instanceof Error ? error.message : 'The latest messages could not be loaded.');
+      setOtherHistoryError(error instanceof Error ? error.message : 'The latest messages could not be loaded.');
     } finally {
       loadingNewerRef.current = false;
     }
@@ -1677,13 +1686,16 @@ export function ConversationSurface({
     if (!routedDetail || searchTurnId || initialPositionedWorkstreamRef.current === id) return;
     initialPositionedWorkstreamRef.current = id;
     const anchorSequence = routedDetail.firstUnreadSequenceNumber;
+    const generation = conversationGenerationRef.current;
     window.requestAnimationFrame(() => {
-      if (activeConversationAddressRef.current !== conversationAddress) return;
+      if (activeConversationAddressRef.current !== conversationAddress
+        || conversationGenerationRef.current !== generation) return;
       // A work stream created moments ago has no transcript yet and a run
       // already going. There is nothing to position, and the reply that is
       // about to arrive is what the person is waiting to read.
       if (transcript.length === 0) {
         scrollTranscriptToEnd();
+        setPositionedConversation(conversationAddress);
         return;
       }
       const anchorIndex = initialTranscriptAnchorIndex(transcript, anchorSequence);
@@ -1697,9 +1709,11 @@ export function ConversationSurface({
         // its reconcile loop is what corrects the estimate as they measure. It
         // aims at a row that is not moving, so it settles instead of following.
         transcriptVirtualizer.scrollToIndex(anchorIndex, { align: 'start' });
+        setPositionedConversation(conversationAddress);
         return;
       }
       scrollTranscriptToEnd();
+      setPositionedConversation(conversationAddress);
     });
   }, [id, routedDetail, transcript, transcriptVirtualizer]);
 
@@ -1882,22 +1896,24 @@ export function ConversationSurface({
         }}
         ref={transcriptRef}
       >
-        <div className="transcript-column">
-          {olderTranscriptRange && loadingOlder && (
-            <div className="transcript-history-control" role="status">
+        <div className="transcript-column" ref={transcriptContentRef}>
+          <div role="status" className={loadingOlder || (nearHistoryEdge && socketState !== 'connected')
+            ? 'transcript-history-control' : undefined}>
+            {(loadingOlder || (nearHistoryEdge && socketState !== 'connected')) && <>
               <LoaderCircle aria-hidden="true" className="spin" size={14} />
-              <span>Loading earlier messages…</span>
-            </div>
-          )}
+              <span>{socketState !== 'connected' ? 'Waiting to reconnect…' : 'Loading earlier messages…'}</span>
+            </>}
+          </div>
           {olderTranscriptRange && olderMessagesError && !loadingOlder && (
             <div className="transcript-history-control">
               <Button disabled={socketState !== 'connected'} onClick={() => void loadOlderMessages()}>
                 <RefreshCcw aria-hidden="true" size={14} />
-                Retry loading earlier messages
+                {socketState !== 'connected' ? 'Waiting to reconnect…' : 'Retry loading earlier messages'}
               </Button>
             </div>
           )}
           {olderMessagesError && <InlineError>{olderMessagesError}</InlineError>}
+          {otherHistoryError && <InlineError>{otherHistoryError}</InlineError>}
           {substreamId !== '0' && initialContext.data && <section className="substream-initial-context" aria-label="Initial context">
             <strong>Context from the main conversation</strong>
             <SubstreamContext context={initialContext.data} />
