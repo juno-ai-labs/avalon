@@ -104,8 +104,8 @@ describe("semantic indexing", () => {
   });
 
   it("rejects model drift before writing any chunks", async () => {
-    await expect(indexSemanticDocument(index, document, policy, async () => ({
-      model: "different-model", vectors: [],
+    await expect(indexSemanticDocument(index, document, policy, async (texts) => ({
+      model: "different-model", vectors: texts.map(() => Array.from({ length: 1024 }, () => 1)),
     }))).rejects.toThrow("search_embedding_space_mismatch");
     expect(provider.write).not.toHaveBeenCalled();
   });

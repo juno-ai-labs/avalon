@@ -57,10 +57,10 @@ function createSearchChunkPolicy(): SemanticChunkPolicy {
 // 32,768 input tokens and 65,536 vector values. Every chunk is still processed.
 export const SEARCH_EMBEDDING_BATCH_SIZE = 64;
 
-export async function embedSearchDocuments(env: Env, workspaceId: string, text: string[]) {
+export async function embedSearchDocuments(env: Env, workspaceId: string, texts: string[]) {
   try {
     const result = await runEmbeddingInference(env, {
-      context: { workspaceId }, text, inputType: 'search_document',
+      context: { workspaceId }, text: texts, inputType: 'search_document',
       dimensions: SEARCH_EMBEDDING_DIMENSIONS, generationName: 'search_document_embedding',
       executionPrincipalType: 'workspace', executionPrincipalId: workspaceId,
       feature: 'search_embedding',
