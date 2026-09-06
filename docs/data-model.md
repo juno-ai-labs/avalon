@@ -886,12 +886,13 @@ perform the regional audit/control write explicitly through
 
 ### 2026-09-05 — Search projection state
 
-WorkspaceDO migration 33 owns `resource_search_versions`: a retained resource revision, pending flag, and dispatch time. Resource create/edit/delete triggers update it in the same transaction as the canonical write. SubstreamAgent migration 42 adds `conversation_search_links` and transcript-triggered `search_projection_v1` entries in `durable_outbox`. Both migrations enqueue existing records; these are projections, never new content authority. See [text search](text-search.md).
+**What changed:** Added resource revision watermarks, transcript intents, and captured-link rows.
 
-The member search requirement needs durable indexing and recognizable matching
-sections. Local filtering and synchronous page capture were rejected because
-they omit unloaded content or delay message admission. Current source authority
-and existing regional delivery remain the boundaries future changes must respect.
+**Why:** Delayed indexing must observe edits and deletions without resurrecting stale text.
+
+**Considered and rejected:** Physical deletion without a retained watermark cannot reject old writes.
+
+**Consequences:** Canonical stores remain authority; index revisions are projection concurrency controls.
 
 ### 2026-09-04: Private work-stream children gain parent and local authority tables
 

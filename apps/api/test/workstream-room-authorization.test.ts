@@ -521,6 +521,15 @@ describe("what authority the product API accepts", () => {
     message: "You are no longer an active member of this workspace",
   };
 
+  it.each([
+    { operation: "search_turns" as const, turnIds: ["private-turn"] },
+    { operation: "search_link" as const, turnId: "private-turn", linkId: "private-link" },
+  ])("refuses revoked sessions for $operation", async (operation) => {
+    const result = await roomFor(seededDatabase()).handleProductRequest({ ...operation, auth: productAuth() });
+    expect(result.status).toBe(401);
+    expect(rpcResultBody(result)).toEqual(sessionRefusal);
+  });
+
   it("still refuses a synthesized session id that claims no principal", async () => {
     const result = await roomFor(seededDatabase())
       .handleProductRequest({ operation: "get", auth: productAuth() });

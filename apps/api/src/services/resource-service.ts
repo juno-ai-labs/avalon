@@ -1,3 +1,4 @@
+import { WorkstreamDirectoryService } from './workstream-directory-service';
 import { ConversationService } from './conversation-service';
 import { asWorkspaceId } from '@rally/contracts';
 import { resourceSearchText } from './resource-search-text';
@@ -315,17 +316,44 @@ export class ResourceService {
     if ((row.provider === "avalon_upload" || row.provider === "avalon_generated")
       && row.uploaded_by_user_id !== this.auth.userId) {
       const access = await (await this.workspaceDirectory()).resourceAccess({ workspaceId: this.auth.workspaceId, resourceId: id, userId: this.auth.userId });
-      let readable = false;
-      for (const hint of access.items) {
+      const conversation = new ConversationService(this.env, this.auth);
+      const checked = new Set<string>();
+      const readableInParent = async (parentId: string): Promise<boolean> => {
+        if (checked.has(parentId)) return false;
+        checked.add(parentId);
         try {
-          const linked = await createResourceObjectPort(this.env, this.auth.workspaceId, hint.workstreamId).isAttached({ resourceId: id });
-          if (!linked) continue;
-          await new ConversationService(this.env, this.auth).authorizeViewer(hint.workstreamId);
-          readable = true;
-          break;
+          for (const substreamId of await conversation.children(parentId)) {
+            try {
+              await conversation.authorizeViewer(parentId, substreamId);
+              const linked = await createResourceObjectPort(this.env, this.auth.workspaceId, parentId, undefined, substreamId)
+                .isAttached({ resourceId: id });
+              if (!linked) continue;
+              await conversation.authorizeViewer(parentId, substreamId);
+              return true;
+            } catch (error) {
+              if (!(error instanceof ApiError && [401, 403, 404].includes(error.status))) throw error;
+            }
+          }
         } catch (error) {
           if (!(error instanceof ApiError && [401, 403, 404].includes(error.status))) throw error;
         }
+        return false;
+      };
+      let readable = false;
+      for (const hint of access.items) {
+        if (await readableInParent(hint.workstreamId)) { readable = true; break; }
+      }
+      // Main-feed projections are hints only: private-child-only attachments
+      // have none. Discover their parent, then ask the exact child authority.
+      const directory = new WorkstreamDirectoryService(this.env, this.auth);
+      let cursor: string | undefined;
+      while (!readable) {
+        const page = await directory.list(250, cursor, true);
+        for (const parent of page.items) {
+          if (await readableInParent(parent.id)) { readable = true; break; }
+        }
+        if (!page.nextCursor) break;
+        cursor = page.nextCursor;
       }
       if (!readable) throw new ApiError(404, "resource_not_found", "Resource not found");
     }

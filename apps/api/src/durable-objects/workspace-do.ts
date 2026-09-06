@@ -3428,7 +3428,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       `SELECT MIN(created_at) AS created_at FROM workspace_activity_events`,
     ).one().created_at;
     const publication = this.projectStorage().nextDefaultPublicationDueAt();
-    const search = nextResourceSearchDueAt(this.state.storage.sql);
+    const search = nextResourceSearchDueAt(this.state.storage.sql, this.env);
     return [
       ...(oldest === null ? [] : [Number(oldest) + ACTIVITY_EVENT_RETENTION_MS]),
       ...(publication === null ? [] : [publication]),

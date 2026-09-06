@@ -3,14 +3,24 @@ import { z } from 'zod';
 import type { Env } from '../env';
 import type { SemanticChunkPolicy } from './semantic-chunks';
 import { runEmbeddingInference } from './structured-inference';
-import { SEARCH_EMBEDDING_DIMENSIONS, SEARCH_TOKENIZER_REVISION } from './text-search';
+import { SEARCH_EMBEDDING_DIMENSIONS, QWEN_MODEL_COMMIT } from './text-search';
 
 // Immutable public model assets; source text is tokenized locally, never sent here.
-const TOKENIZER_ROOT = `https://huggingface.co/Qwen/Qwen3-Embedding-8B/resolve/${SEARCH_TOKENIZER_REVISION}`;
+const TOKENIZER_ROOT = `https://huggingface.co/Qwen/Qwen3-Embedding-8B/resolve/${QWEN_MODEL_COMMIT}`;
 const ChunkSettingsSchema = z.strictObject({
   maxTokens: z.coerce.number().int().positive(),
   overlapTokens: z.coerce.number().int().nonnegative(),
 }).refine((value) => value.overlapTokens < value.maxTokens);
+
+/** Missing deployment settings leave durable intents pending, without a hot alarm. */
+export function searchIndexingConfigured(env: Env): boolean {
+  const key = env.APP_ENV === 'production' ? env.TURBO_PUFFER_PROD_API_KEY : env.TURBO_PUFFER_DEV_API_KEY;
+  return Boolean(key && env.OPENROUTER_API_KEY && env.SEARCH_CHUNK_MAX_TOKENS
+    && env.SEARCH_CHUNK_OVERLAP_TOKENS !== undefined
+    && env.SEARCH_CHUNK_OVERLAP_TOKENS !== ''
+    && ChunkSettingsSchema.safeParse({ maxTokens: env.SEARCH_CHUNK_MAX_TOKENS,
+      overlapTokens: env.SEARCH_CHUNK_OVERLAP_TOKENS }).success);
+}
 
 /** One policy per regional Queue batch; sources cannot override it. */
 export async function searchChunkPolicy(env: Env): Promise<SemanticChunkPolicy> {

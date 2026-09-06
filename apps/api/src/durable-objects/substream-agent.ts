@@ -1,3 +1,4 @@
+import { searchIndexingConfigured } from '../services/search-embedding';
 import { prepareConversationLinks, readConversationSearchLink } from './conversation-link-search';
 import { drainSearchProjectionOutbox, nextSearchProjectionDueAt, SearchProjectionMessageSchema } from './search-projection-outbox';
 import { searchDocumentId } from '../services/text-search';
@@ -4466,6 +4467,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   }
 
   private async flushSearchProjectionOutbox(): Promise<void> {
+    if (!searchIndexingConfigured(this.env)) return;
     const identity = this.objectStore.identity();
     if (!identity) return;
     try {
@@ -4476,7 +4478,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     } catch {
       logWarn(this.env, "search_projection_dispatch_deferred", { workspace_id: identity.workspaceId });
     }
-    const next = nextSearchProjectionDueAt(this.state.storage.sql);
+    const next = nextSearchProjectionDueAt(this.state.storage.sql, this.env);
     if (next !== null) await this.ensureAlarmNoLaterThan(next);
   }
 
@@ -4518,7 +4520,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         reason: diagnosticErrorCode(error, "semantic_realtime_delivery_failed"),
       });
     }
-    const searchDueAt = nextSearchProjectionDueAt(this.state.storage.sql);
+    const searchDueAt = nextSearchProjectionDueAt(this.state.storage.sql, this.env);
     if (searchDueAt !== null) await this.ensureAlarmNoLaterThan(searchDueAt);
     const nextDueAt = this.objectStore.nextSemanticRealtimeDueAt();
     this.semanticRealtimePending = nextDueAt !== null;
@@ -5967,7 +5969,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       derivedCandidates: [
         this.objectStore.nextRegionalEffectDueAt(),
         this.objectStore.nextSemanticRealtimeDueAt(),
-        nextSearchProjectionDueAt(this.state.storage.sql),
+        nextSearchProjectionDueAt(this.state.storage.sql, this.env),
         this.nextExternalSettlementAt(),
         now + KEEP_ALIVE_INTERVAL_MS,
       ],
@@ -6042,7 +6044,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const candidates: Array<number | null> = [
       this.objectStore.nextRegionalEffectDueAt(),
       this.objectStore.nextSemanticRealtimeDueAt(),
-      nextSearchProjectionDueAt(this.state.storage.sql),
+      nextSearchProjectionDueAt(this.state.storage.sql, this.env),
       this.nextLoopWorkAt(now),
       this.nextExternalSettlementAt(),
     ];

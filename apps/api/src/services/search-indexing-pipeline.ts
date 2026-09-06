@@ -66,9 +66,14 @@ export function createSearchIndexingPipeline(env: Env) {
       const next = current.documents.find((value) => value.id === document.id);
       if (next?.revision === document.revision && next.text === document.text) continue;
       changed = true;
-      await index.remove(document.id, document.revision);
+      // An equal-revision extraction change must remain rewritable on retry.
+      // A tombstone here would permanently reject the replacement lexical row.
+      if (!next || next.revision > document.revision || next.text === null) {
+        await index.remove(document.id, document.revision);
+      }
       await index.removeSemanticGenerations(document, 'Eq');
     }
-    if (changed || input.retry || current.retry) throw new Error('search_source_retry_required');
+    if (changed) throw new Error('search_source_changed');
+    if (input.retry || current.retry) throw new Error('search_capture_retry_required');
   };
 }

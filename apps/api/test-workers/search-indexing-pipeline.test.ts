@@ -154,6 +154,27 @@ describe('shared Queue indexing pipeline', () => {
     expect(writes.some(({ body }) => JSON.stringify(body.delete_by_filter ?? null).includes(JSON.stringify(['revision', 'Lte', revision! + 1])))).toBe(true);
   });
 
+  it('does not tombstone a live same-revision extraction change', async () => {
+    await seedResource();
+    onEmbed = async () => { await env.PAYLOADS.put('pipeline/body', 'updated body'); };
+    const result = await consume([resourceMessage()]);
+    expect(result.retryMessages).toEqual([{ msgId: 'search-0' }]);
+    const id = await searchDocumentId('files', workspaceId, resourceId);
+    const tombstones = writes.flatMap(({ body }) => z.array(z.object({ id: z.string(), deleted: z.boolean().optional() }))
+      .safeParse(body.upsert_rows).data ?? []).filter((row) => row.id === id && row.deleted);
+    expect(tombstones).toEqual([]);
+    expect((await consume([resourceMessage()])).explicitAcks).toEqual(['search-0']);
+    expect(liveRows().some((row) => row.text.includes('updated body'))).toBe(true);
+  });
+
+  it('rejects wrong-region references before reading or writing any source', async () => {
+    const result = await consume([{ ...resourceMessage(), region: 'eu' }]);
+    expect(result.explicitAcks).toEqual([]);
+    expect(result.retryMessages).toEqual([{ msgId: 'search-0' }]);
+    expect(writes).toEqual([]);
+    expect(embeddingInputs).toEqual([]);
+  });
+
   it('keeps lexical text available but retries rather than silently skipping an unconfigured vector pipeline', async () => {
     await seedResource();
     const result = await consume([resourceMessage()], { SEARCH_CHUNK_MAX_TOKENS: '' });

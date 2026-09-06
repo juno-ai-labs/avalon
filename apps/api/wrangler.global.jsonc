@@ -274,15 +274,10 @@
       {
         "queue": "avalon-global-activities",
         "max_batch_size": 10,
-        // The consumer handles every message independently
-        // (`consumeActivityQueue` is a bare `Promise.all` over the batch), so a
-        // batch buys fewer invocations and nothing else — no coalescing, no
-        // shared statement, no merged provider call. At Avalon's volume the
-        // batch almost never fills, so the timeout was the whole latency: a
-        // Slack `link_shared` waited the full five seconds before anything ran,
-        // and an unfurl that took a second to build appeared six seconds after
-        // the message was posted. One second is the smallest wait that still
-        // groups a genuine burst.
+        // Control effects run independently. Search references use a sequential
+        // lane and share one tokenizer per delivery, amortizing asset parsing.
+        // Retain the existing batch size and one-second burst grouping so Slack
+        // unfurls do not regain the former five-second admission delay.
         "max_batch_timeout": 1,
         "max_retries": 5,
         "dead_letter_queue": "avalon-global-activities-dead-letter"

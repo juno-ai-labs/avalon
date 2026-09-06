@@ -28,6 +28,10 @@ describe('conversation link discovery', () => {
     expect([...conversationLinks(turn([tool])).keys()]).toEqual(['https://example.com/']);
     expect(conversationLinks(turn([{ ...tool, pluginId: 'another:plugin' }])).size).toBe(0);
     expect(conversationLinks(turn([{ ...tool, status: 'failed' }])).size).toBe(0);
+    for (const toolName of ['web_fetch', 'web.fetch']) {
+      expect(conversationLinks(turn([{ ...tool, toolName }])).size).toBe(1);
+      expect(conversationLinks(turn([{ ...tool, toolName, pluginId: 'another:plugin' }])).size).toBe(0);
+    }
   });
 });
 

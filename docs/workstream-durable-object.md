@@ -1618,12 +1618,13 @@ directory write at all.
 
 ### 2026-09-05 — Durable search delivery
 
-Transcript writes commit a coalesced search intent through SQLite triggers. SubstreamAgent alarms publish references to the regional activity Queue; its internal preparation RPC reloads canonical text and captures links. The Queue Worker alone performs lexical indexing, shared chunking, embedding, and generation cleanup. WorkspaceDO uses retained resource revision watermarks and the same Queue. Captured link Markdown stays in the originating substream and canonical search reads enforce current parent and child access. See [text search](text-search.md) for migration and failure behavior.
+**What changed:** Transcript and resource mutations produce durable reference-only search intents.
 
-The member search requirement needs durable indexing and recognizable matching
-sections. Local filtering and synchronous page capture were rejected because
-they omit unloaded content or delay message admission. Current source authority
-and existing regional delivery remain the boundaries future changes must respect.
+**Why:** Message admission must not wait for provider indexing, while committed edits must survive Worker failure.
+
+**Considered and rejected:** Synchronous indexing and per-source vectorization were rejected in favor of the existing Queue.
+
+**Consequences:** Unconfigured producers retain intents without hot alarms; canonical child authority controls access to captured links and attachments.
 
 ### 2026-09-05 — Private child projections have an independent local clock
 

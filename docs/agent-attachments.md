@@ -620,12 +620,13 @@ cheap discovery and continuation paths.
 
 ### 2026-09-05 — Member search projection
 
-The member Files and Artifacts tabs search resource names, descriptions, and full available text derivatives through Turbopuffer. `resource-search-text.ts` defines the canonical field order for both indexing and match offsets. The source adapter returns this text to the shared Queue Worker pipeline; attachments have no separate chunking or embedding policy. Resource triggers enqueue reindexing when extraction or metadata changes; missing derivatives do not silently become truncated bodies. Search rechecks current resource and attachment authority before displaying excerpts. See [text search](text-search.md).
+**What changed:** Search now reads canonical attachment originals or extracted text and rechecks access after loading bytes.
 
-The member search requirement needs durable indexing and recognizable matching
-sections. Local filtering and synchronous page capture were rejected because
-they omit unloaded content or delay message admission. Current source authority
-and existing regional delivery remain the boundaries future changes must respect.
+**Why:** Uploaded files and generated artifacts need content matches without opening a separate ingestion path.
+
+**Considered and rejected:** Source-specific chunking was rejected; the shared Queue owns it.
+
+**Consequences:** Binary originals stay binary and private child access must be checked at the owning child.
 
 ### 2026-09-03: The compiler's attachment path is gone
 

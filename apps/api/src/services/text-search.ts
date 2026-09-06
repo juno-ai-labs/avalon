@@ -6,7 +6,7 @@ import { sha256Hex } from "../lib/crypto";
 import { MEMORY_EMBEDDING_MODEL } from "./structured-inference";
 
 export const SEARCH_EMBEDDING_DIMENSIONS = 1_024;
-export const SEARCH_TOKENIZER_REVISION = "1d8ad4ca9b3dd8059ad90a75d4983776a23d44af"; // gitleaks:allow -- public Hugging Face commit, not a credential.
+export const QWEN_MODEL_COMMIT = "1d8ad4ca9b3dd8059ad90a75d4983776a23d44af";
 
 /** Separate deployments and embedding spaces; EU never falls back to Global. */
 export async function workspaceSearchIndex(env: Env, workspaceId: string): Promise<TextSearchIndex> {
@@ -18,7 +18,7 @@ export async function workspaceSearchIndex(env: Env, workspaceId: string): Promi
     MEMORY_EMBEDDING_MODEL, SEARCH_EMBEDDING_DIMENSIONS,
   ]));
   const semanticSpace = await sha256Hex(JSON.stringify([
-    space, "recursive-sliding-v1", SEARCH_TOKENIZER_REVISION,
+    space, "recursive-sliding-v1", QWEN_MODEL_COMMIT,
     env.SEARCH_CHUNK_MAX_TOKENS, env.SEARCH_CHUNK_OVERLAP_TOKENS,
   ]));
   return new TextSearchIndex({
@@ -63,7 +63,8 @@ export type TextSearchCandidate = z.infer<typeof CandidateSchema>;
 /** Created by a source's authority resolver, never deserialized from a request. */
 export interface AuthorizedSearchSource<T> {
   source: string;
-  scopeIds: readonly string[];
+  /** null searches this workspace namespace; load must authorize every candidate. */
+  scopeIds: readonly string[] | null;
   /** Reload current records and reauthorize after the external search await. */
   load: (candidates: readonly TextSearchCandidate[]) => Promise<ReadonlyMap<string, T>>;
 }
@@ -73,6 +74,7 @@ export interface TextSearchOptions {
   mode: TextSearchMode;
   limit: number;
   vector?: number[];
+  signal?: AbortSignal;
 }
 
 /** Escape syntax so a person's substring is always literal, including * and ?. */
@@ -177,16 +179,17 @@ export class TextSearchIndex {
     sources: readonly AuthorizedSearchSource<T>[],
     options: TextSearchOptions,
   ): Promise<T[]> {
-    const authorized = sources.filter((source) => source.scopeIds.length > 0);
+    const authorized = sources.filter((source) => source.scopeIds === null || source.scopeIds.length > 0);
     if (authorized.length === 0) return [];
     const filters: Filter = ["And", [["deleted", "Eq", false],
       ["record_type", "Eq", options.mode === "semantic" ? "chunk" : "document"], ["Or", authorized.map((source): Filter => ["And", [
       ["source", "Eq", source.source],
-      ["scope_id", "In", [...source.scopeIds]],
+      ...(source.scopeIds === null ? [] : [["scope_id", "In", [...source.scopeIds]] as Filter]),
     ]])]]];
     const values: T[] = [];
     let afterId: string | undefined;
     do {
+      options.signal?.throwIfAborted();
       const pageFilters: Filter[] = [filters];
       if (options.mode === "substring") pageFilters.push(["text", "IGlob", literalSubstringPattern(options.query)]);
       if (afterId !== undefined) pageFilters.push(["id", "Gt", afterId]);
@@ -196,17 +199,18 @@ export class TextSearchIndex {
         rank_by: searchRanking(options),
         limit: options.limit,
         consistency: { level: "strong" },
-      }).catch((error: unknown) => {
+      }, ...options.signal ? [{ signal: options.signal }] as const : []).catch((error: unknown) => {
         // A namespace does not exist until its first write.
         if (error instanceof Error && "status" in error && error.status === 404) return { rows: [] };
         throw new Error("search_index_query_failed");
       });
+      options.signal?.throwIfAborted();
       const candidates = z.array(CandidateSchema).parse(result.rows ?? []);
       // Index metadata is never authority, including on refill pages.
       const loaded = await Promise.all(authorized.map(async (source) => {
-        const scopes = new Set(source.scopeIds);
+        const scopes = source.scopeIds === null ? null : new Set(source.scopeIds);
         return source.load(candidates.filter((row) =>
-          row.source === source.source && scopes.has(row.scope_id)));
+          row.source === source.source && (scopes === null || scopes.has(row.scope_id))));
       }));
       const rows = new Map(loaded.flatMap((items) => [...items]));
       for (const candidate of candidates) {
