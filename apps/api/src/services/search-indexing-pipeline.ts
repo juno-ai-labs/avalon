@@ -1,7 +1,7 @@
 import type { Env } from '../env';
 import { sha256Hex } from '../lib/crypto';
 import { SearchDocumentBatchSchema, type SearchDocument, type SearchDocumentBatch } from './search-document';
-import { searchChunkPolicy, embedSearchDocument } from './search-embedding';
+import { searchChunkPolicy, embedSearchDocuments, SEARCH_EMBEDDING_BATCH_SIZE } from './search-embedding';
 import { semanticChunks, type SemanticChunkPolicy } from './semantic-chunks';
 import { isMemoryEmbeddingModel } from './structured-inference';
 import { SEARCH_EMBEDDING_DIMENSIONS, workspaceSearchIndex, type TextSearchDocument, type TextSearchIndex } from './text-search';
@@ -9,21 +9,29 @@ import { SEARCH_EMBEDDING_DIMENSIONS, workspaceSearchIndex, type TextSearchDocum
 /** Every source uses these exact inputs, offsets, chunk strategies, and model checks. */
 export async function indexSemanticDocument(index: TextSearchIndex,
   document: SearchDocument & { text: string }, policy: SemanticChunkPolicy,
-  embed: (text: string) => Promise<{ model: string; vector: number[] }>,
+  embed: (text: string[]) => Promise<{ model: string; vectors: number[][] }>,
+  batchSize = SEARCH_EMBEDDING_BATCH_SIZE,
 ): Promise<string[]> {
+  if (!Number.isSafeInteger(batchSize) || batchSize <= 0) {
+    throw new Error('invalid_search_embedding_batch_size');
+  }
   const chunks = await semanticChunks(document.text, policy);
   const rows: TextSearchDocument[] = [];
-  for (const chunk of chunks) {
-    const embedding = await embed(chunk.embeddingText);
+  for (let start = 0; start < chunks.length; start += batchSize) {
+    const batch = chunks.slice(start, start + batchSize);
+    const embedding = await embed(batch.map((chunk) => chunk.embeddingText));
     if (!isMemoryEmbeddingModel(embedding.model)
-      || embedding.vector.length !== SEARCH_EMBEDDING_DIMENSIONS
-      || !embedding.vector.every(Number.isFinite)) throw new Error('search_embedding_space_mismatch');
-    const id = await sha256Hex(JSON.stringify([
-      'semantic-chunks-v1', document.source, document.scopeId, document.sourceId,
-      document.revision, chunk.start, chunk.end, chunk.embeddingText,
-    ]));
-    rows.push({ ...document, id, text: chunk.text, vector: embedding.vector,
-      chunk: { start: chunk.start, end: chunk.end, strategies: chunk.strategies } });
+      || embedding.vectors.length !== batch.length
+      || !embedding.vectors.every((vector) => vector.length === SEARCH_EMBEDDING_DIMENSIONS
+        && vector.every(Number.isFinite))) throw new Error('search_embedding_space_mismatch');
+    for (const [offset, chunk] of batch.entries()) {
+      const id = await sha256Hex(JSON.stringify([
+        'semantic-chunks-v1', document.source, document.scopeId, document.sourceId,
+        document.revision, chunk.start, chunk.end, chunk.embeddingText,
+      ]));
+      rows.push({ ...document, id, text: chunk.text, vector: embedding.vectors[offset]!,
+        chunk: { start: chunk.start, end: chunk.end, strategies: chunk.strategies } });
+    }
   }
   // Prepare all vectors before publishing this generation; a model mismatch
   // cannot leave a half-written generation. Queue retries reuse deterministic IDs.
@@ -54,7 +62,7 @@ export function createSearchIndexingPipeline(env: Env) {
     for (const document of input.documents) {
       if (document.text === null) continue;
       await indexSemanticDocument(index, { ...document, text: document.text }, searchChunkPolicy(),
-        (text) => embedSearchDocument(env, workspaceId, text));
+        (text) => embedSearchDocuments(env, workspaceId, text));
     }
     // An edit or deletion can commit during embedding. Remove this stale
     // generation before retrying; newer revisions are never removed by this job.
