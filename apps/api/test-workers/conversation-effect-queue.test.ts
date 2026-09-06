@@ -172,7 +172,8 @@ async function openWorkstream(stub: DurableObjectStub<SubstreamAgent>, workstrea
 
 async function outboxCount(stub: DurableObjectStub): Promise<number> {
   return runInDurableObject(stub, (_instance, state) => state.storage.sql.exec<{ count: number }>(
-    `SELECT COUNT(*) AS count FROM durable_outbox WHERE state IN ('pending', 'inflight')`,
+    `SELECT COUNT(*) AS count FROM durable_outbox
+     WHERE channel = ? AND state IN ('pending', 'inflight')`, REGIONAL_EFFECT_CHANNEL,
   ).one().count);
 }
 

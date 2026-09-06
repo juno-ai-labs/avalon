@@ -31,6 +31,9 @@ If the local account cannot sign in, run `pnpm env:sync`, confirm `.env.local` r
 Create independent resource sets for `global` and `eu`:
 
 - A D1 database
+- Turbopuffer search access for gcp-us-west1 (Global) and gcp-europe-west1 (EU),
+  plus Browser Run bindings; see [text search](text-search.md#operations) for
+  required chunk settings and pending-intent activation.
 - An R2 payload bucket
 - A dedicated telemetry R2 bucket (`avalon-global-telemetry` or the
   EU-jurisdiction `avalon-eu-telemetry`), separate from workspace payloads
@@ -86,6 +89,7 @@ than the Flagship dashboard so connected clients receive the Queue push.
 
 Set these shared Worker secrets separately in each regional deployment:
 
+- `TURBO_PUFFER_PROD_API_KEY` (search; development uses a separate DEV key)
 - `OPENROUTER_API_KEY`
 - `AZURE_OPENAI_ENDPOINT`
 - `AZURE_OPENAI_API_KEY`

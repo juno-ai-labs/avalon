@@ -119,10 +119,15 @@ describe("authentication session lifecycle", () => {
     vi.useFakeTimers();
     try {
       vi.setSystemTime(new Date("2026-09-02T12:00:00.000Z"));
-      const [earlier, later] = await Promise.all([
+      const [first, second] = await Promise.all([
         service.refresh(oldRefreshToken),
         service.refresh(oldRefreshToken),
       ]);
+      // Promise.all preserves invocation order, not the order in which async
+      // hashing lets the rotations commit. Identify the retired answer from
+      // the committed watermark rather than assuming the first call wins.
+      const earlier = await sha256(first.refreshToken) === database.previousHash ? first : second;
+      const later = earlier === first ? second : first;
       expect(earlier.refreshToken).not.toBe(later.refreshToken);
 
       vi.setSystemTime(new Date("2026-09-02T12:01:01.000Z"));

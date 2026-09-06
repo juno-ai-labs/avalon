@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { searchRoutes } from "./routes/search";
 import type { HonoAppEnv } from "./env";
 import { errorHandler, notFoundHandler } from "./middleware/errors";
 import { requireAuth, requireIdentityAuth } from "./middleware/auth";
@@ -146,6 +147,7 @@ export function createApp(): Hono<HonoAppEnv> {
   protectedApi.route("/conversations", conversationRoutes);
   protectedApi.route("/connections", connectionRoutes);
   protectedApi.route("/resources", resourceRoutes);
+  protectedApi.route("/search", searchRoutes);
   protectedApi.route("/speech", speechRoutes);
   protectedApi.route("/realtime", realtimeRoutes);
   app.route("/", protectedApi);
