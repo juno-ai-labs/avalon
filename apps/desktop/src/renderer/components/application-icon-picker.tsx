@@ -6,23 +6,23 @@ import {
   type ApplicationIconId,
   type DesktopApplicationIconState,
 } from '../../common/application-icons';
-import ballFeltIcon from '../assets/app-icons/ball-felt.png';
-import clayCourtIcon from '../assets/app-icons/clay-court.png';
+import builderIcon from '../assets/app-icons/builder.png';
+import calmIcon from '../assets/app-icons/calm.png';
 import darkIcon from '../assets/app-icons/dark.png';
-import grassCourtIcon from '../assets/app-icons/grass-court.png';
-import hardCourtIcon from '../assets/app-icons/hard-court.png';
+import homageIcon from '../assets/app-icons/homage.png';
 import lightIcon from '../assets/app-icons/light.png';
-import nightMatchIcon from '../assets/app-icons/night-match.png';
+import ludicrousSpeedIcon from '../assets/app-icons/ludicrous.png';
+import quietIcon from '../assets/app-icons/quiet.png';
 import { desktopBridge } from '../lib/platform';
 
 const applicationIconArtwork: Record<ApplicationIconId, string> = {
   light: lightIcon,
   dark: darkIcon,
-  'grass-court': grassCourtIcon,
-  'clay-court': clayCourtIcon,
-  'hard-court': hardCourtIcon,
-  'ball-felt': ballFeltIcon,
-  'night-match': nightMatchIcon,
+  calm: calmIcon,
+  ludicrous: ludicrousSpeedIcon,
+  homage: homageIcon,
+  builder: builderIcon,
+  quiet: quietIcon,
 };
 
 export function ApplicationIconPicker(): React.JSX.Element {

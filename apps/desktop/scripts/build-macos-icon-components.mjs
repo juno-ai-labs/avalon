@@ -24,11 +24,11 @@ const selectableIconOutputDirectory = join(desktopDirectory, '.native-build', 'a
 const selectableIconNames = [
   'light',
   'dark',
-  'grass-court',
-  'clay-court',
-  'hard-court',
-  'ball-felt',
-  'night-match',
+  'calm',
+  'ludicrous',
+  'homage',
+  'builder',
+  'quiet',
 ];
 
 if (process.platform !== 'darwin' || process.arch !== 'arm64') {
@@ -88,7 +88,7 @@ try {
     '-o',
     smokeExecutablePath,
   ]);
-  await run(smokeExecutablePath, []);
+  await run(smokeExecutablePath, selectableIconNames.map((name) => join(selectableIconSourceDirectory, `${name}.png`)));
 } finally {
   await rm(smokeExecutablePath, { force: true });
 }

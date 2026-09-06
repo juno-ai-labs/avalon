@@ -72,11 +72,11 @@ static NSString *const RallyApplicationIconNotification = @"ai.rallywith.desktop
     allowedIdentifiers = [NSSet setWithArray:@[
       @"light",
       @"dark",
-      @"grass-court",
-      @"clay-court",
-      @"hard-court",
-      @"ball-felt",
-      @"night-match",
+      @"calm",
+      @"ludicrous",
+      @"homage",
+      @"builder",
+      @"quiet",
     ]];
   });
   NSString *identifier = stored[@"icon"];
