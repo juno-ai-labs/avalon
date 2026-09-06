@@ -16,7 +16,7 @@ a thing to argue for rather than a thing to preserve.
 ## Where the code lives
 
 - `apps/desktop/src/renderer/components/conversation-follow.tsx` owns the
-  transcript viewport, follow controller, and **Jump to latest** integration.
+  **Jump to latest** and transient `ActivityPresence`, sharing retained motion.
 - `apps/desktop/src/renderer/components/message-feed.tsx` renders the ordered
   list itself — every row, the unread divider, the oversized-message
   placeholder, and row disclosure — and `workstream-blocks.tsx` renders
@@ -47,7 +47,9 @@ conversation identity, for a work stream's conversation and an automation's
 alike. The common viewport follows only while the reader owns
 the latest edge; scrolling transfers ownership to the reader until **Jump to
 latest** is selected. Programmatic repositioning is announced before changing
-`scrollTop`, and reduced-motion preference controls whether the jump animates.
+`scrollTop`. Reduced-motion preference gates arrivals, activity transitions, and
+the jump control. Exiting controls remain mounted but inaccessible until their
+fade completes; changing direction reverses the active animation in place.
 
 Sharing stops at product semantics. Work streams retain participants, unread,
 resource, run, and steering controls. The in-flight pending queue is one of
@@ -106,9 +108,25 @@ prove layout, focus, scroll position, or overlap.
 
 ## Changelog
 
+### 2026-09-05 — Correct row identity and retained animation lifecycle
+
+Plugin and other non-text rows now consume their own arrival identities rather
+than a shared turn ID; only text reconciliation uses client/turn identity.
+The live-ID set is memoized and arrivals are scanned only when their inputs
+change, avoiding unrelated scroll-render work. Retained activity and jump motion
+share one lifecycle, reverse an in-flight animation instead of restarting it,
+and hold the final exit paint until removal. Hidden-window transitions skip
+motion. Tests cover same-turn groups, hidden/reduced-motion suppression, and
+both re-entry/reversal paths with hook-owned animation doubles.
+
+Blanket row animation remains rejected: it would replay loaded history and
+destabilize the measured feed. Motion stays on the existing inner paint layer,
+using the reference's arrival scale/easing rather than changing its visual
+language in response to subjective review preferences.
+
 ### 2026-09-05 — Animate live arrivals without moving the measured row
 
-The feed consumes event/command-origin arrival IDs once per mounted conversation,
+The feed consumes event/command-origin arrival IDs once per mounted feed,
 including offscreen rows, and animates only an inner paint layer. Snapshots and
 history ranges do not opt in; client/turn identity prevents reconciliation from
 replaying an entrance. This preserves the virtualizer's measured geometry and
