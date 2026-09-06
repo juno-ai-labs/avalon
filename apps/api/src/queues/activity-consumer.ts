@@ -1,3 +1,6 @@
+import { ResourceSearchProjectionSchema } from '../durable-objects/resource-search-projection';
+import { SearchProjectionMessageSchema } from '../durable-objects/search-projection-outbox';
+import { createSearchIndexingPipeline } from '../services/search-indexing-pipeline';
 import { ConnectorError, connectorOriginUrl, connectorRetryAfterMs } from "@rally/connectors";
 import {
   ACTIVITY_STREAM_NOT_DIGESTIBLE_METADATA_KEY,
@@ -116,7 +119,26 @@ function matchesFilters(activity: ActivityRow, filters: Record<string, unknown>)
 
 /** Cloudflare Queue entrypoint for control effects and connector events. */
 export async function consumeActivityQueue(batch: MessageBatch<unknown>, env: Env): Promise<void> {
-  await Promise.all(batch.messages.map((message) => consumeOne(message, env)));
+  const indexSearch = createSearchIndexingPipeline(env);
+  const isSearch = (message: Message<unknown>) =>
+    ResourceSearchProjectionSchema.safeParse(message.body).success
+    || SearchProjectionMessageSchema.safeParse(message.body).success;
+  // Search shares a tokenizer and processes one document source at a time.
+  // Unrelated control effects do not wait behind embedding provider calls.
+  await Promise.all([
+    Promise.all(batch.messages.filter((message) => !isSearch(message))
+      .map((message) => consumeOne(message, env, indexSearch))),
+    (async () => {
+      for (const message of batch.messages.filter(isSearch)) {
+        try { await consumeOne(message, env, indexSearch); }
+        catch (error) {
+          logWarn(env, 'search_indexing_retry', { region: env.AVALON_REGION, queue_attempts: message.attempts,
+            error_code: diagnosticErrorCode(error, 'search_indexing_failed') });
+          message.retry();
+        }
+      }
+    })(),
+  ]);
 }
 
 export const activityQueueConsumer = consumeActivityQueue;
@@ -159,7 +181,28 @@ export async function recoverPendingActivityQueue(env: Env, limit = 100): Promis
   return pending.results.length;
 }
 
-async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
+async function consumeOne(message: Message<unknown>, env: Env,
+  indexSearch: ReturnType<typeof createSearchIndexingPipeline>): Promise<void> {
+  const resourceProjection = ResourceSearchProjectionSchema.safeParse(message.body);
+  if (resourceProjection.success) {
+    const input = resourceProjection.data;
+    if (input.region !== env.AVALON_REGION) throw new Error("search_projection_region_mismatch");
+    const stub = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, input.workspaceId,
+      workspaceDOName(input.region, input.workspaceId));
+    await indexSearch(input.workspaceId, () => stub.prepareResourceSearch(input));
+    message.ack();
+    return;
+  }
+  const searchProjection = SearchProjectionMessageSchema.safeParse(message.body);
+  if (searchProjection.success) {
+    const input = searchProjection.data;
+    if (input.region !== env.AVALON_REGION) throw new Error("search_projection_region_mismatch");
+    const stub = await durableObjectStubForWorkspace(env, env.SUBSTREAM_AGENTS, input.workspaceId,
+      conversationObjectName(input.region, input.workspaceId, input.parentId, input.substreamId));
+    await indexSearch(input.workspaceId, () => stub.prepareSearchTurn(input));
+    message.ack();
+    return;
+  }
   const externalDelivery = WorkspaceExternalEventDeliveryQueueMessageSchema.safeParse(message.body);
   if (externalDelivery.success) {
     const input = externalDelivery.data;

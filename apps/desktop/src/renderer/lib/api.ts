@@ -1,3 +1,4 @@
+import { SearchResponseSchema, type SearchRequest, type SearchResponse } from '@rally/contracts/search';
 import { RALLY_HEADERS } from '@rally/contracts/http-headers';
 import { MutatePrivateChildParticipantResultSchema } from '@rally/contracts/conversation-parent';
 import { SubstreamPreparationPreviewSchema, type SubstreamPreparationPreview } from '@rally/contracts/substream-creation';
@@ -669,6 +670,10 @@ export class RallyApi {
         method, path: safePath, status, durationMs, requestId: id,
       });
     }
+  }
+
+  searchWorkspace(request: SearchRequest, signal?: AbortSignal): Promise<SearchResponse> {
+    return this.request('/search', { method: 'POST', body: request, schema: SearchResponseSchema, signal });
   }
 
   private async request<T>(path: string, options: RequestOptions<T>): Promise<T> {
@@ -1508,6 +1513,15 @@ export class RallyApi {
 
   async getResourcePreviewContent(id: string, signal?: AbortSignal): Promise<Blob> {
     const response = await this.execute(`/resources/${encodeURIComponent(id)}/preview`, {
+      method: 'GET',
+      ...(signal ? { signal } : {}),
+    });
+    if (!response.ok) return this.throwResponseError(response);
+    return response.blob();
+  }
+
+  async getSearchResourcePreviewContent(id: string, signal?: AbortSignal): Promise<Blob> {
+    const response = await this.execute(`/search/resources/${encodeURIComponent(id)}/preview`, {
       method: 'GET',
       ...(signal ? { signal } : {}),
     });

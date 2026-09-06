@@ -1,3 +1,5 @@
+import { RESOURCE_SEARCH_MIGRATION_STATEMENTS, ResourceSearchProjectionSchema, ResourceSearchRevisionRequestSchema,
+  resourceSearchRevision, nextResourceSearchDueAt, publishResourceSearch, prepareResourceSearch } from './resource-search-projection';
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import {
   ExternalEventEvaluatorV1Schema,
@@ -826,6 +828,7 @@ const WORKSPACE_ALARM_SOURCE_TABLES = new Set([
 ]);
 
 const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
+  "resource_search_versions",
   "workstream_notification_intents",
   // Converted to typed methods, so a generic statement naming one is a
   // mistake rather than a legacy caller. Refusing it here is what makes the
@@ -2621,6 +2624,10 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
       WHEN NEW.workspace_id IS NOT (SELECT workspace_id FROM workspace_identity WHERE id = 1)
       BEGIN SELECT RAISE(ABORT, 'workspace_identity_mismatch'); END`,
   ],
+}, {
+  version: 33,
+  description: "project resource text through Turbopuffer with durable revision watermarks and existing-content backfill",
+  statements: RESOURCE_SEARCH_MIGRATION_STATEMENTS,
 }];
 
 interface AutomationDirectoryRow extends Record<string, SqlStorageValue> {
@@ -3096,6 +3103,21 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return json({ error: "not_found" }, 404);
   }
 
+  async resourceSearchRevision(input: unknown): Promise<number | null> {
+    await this.initialized;
+    const request = ResourceSearchRevisionRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return resourceSearchRevision(this.state.storage.sql, request.resourceId);
+  }
+
+  async prepareResourceSearch(input: unknown) {
+    await this.initialized;
+    const request = ResourceSearchProjectionSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    if (request.region !== this.env.AVALON_REGION) throw new Error("search_projection_region_mismatch");
+    return prepareResourceSearch(this.state.storage.sql, this.env, request.workspaceId, request.resourceId);
+  }
+
   /** Trusted Worker compatibility port for WorkspaceDO-owned relational state. */
   async executeRuntimeSql(input: WorkspaceRuntimeSqlRequest): Promise<DurableObjectRpcResult> {
     await this.initialized;
@@ -3406,9 +3428,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       `SELECT MIN(created_at) AS created_at FROM workspace_activity_events`,
     ).one().created_at;
     const publication = this.projectStorage().nextDefaultPublicationDueAt();
+    const search = nextResourceSearchDueAt(this.state.storage.sql);
     return [
       ...(oldest === null ? [] : [Number(oldest) + ACTIVITY_EVENT_RETENTION_MS]),
       ...(publication === null ? [] : [publication]),
+      ...(search === null ? [] : [search]),
     ];
   }
 
@@ -3422,6 +3446,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   protected override async runDueAlarmWork(now: number): Promise<void> {
     const workspaceId = this.workspaceId();
     if (workspaceId) {
+      try { await publishResourceSearch(this.state.storage.sql, this.env, workspaceId); }
+      catch { logWarn(this.env, "resource_search_dispatch_deferred", { workspace_id: workspaceId }); }
       await this.instrumentWorkspaceAlarmPhase("project_default_publish", undefined, async () => {
         try {
           await publishProjectDefaultResourceTargets({

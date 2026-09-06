@@ -51,6 +51,10 @@ knowing an object's ID is enough to read it — it never is.
 
 ## How it works
 
+### Search projection state
+
+WorkspaceDO migration 33 owns `resource_search_versions`: a retained resource revision, pending flag, and dispatch time. Resource create/edit/delete triggers update it in the same transaction as the canonical write. SubstreamAgent migration 42 adds `conversation_search_links` and transcript-triggered `search_projection_v1` entries in `durable_outbox`. Both migrations enqueue existing records; these are projections, never new content authority. See [text search](text-search.md).
+
 ### Identity and tenancy
 
 - `users` stores Google identity subjects and display information, plus the
@@ -879,6 +883,15 @@ perform the regional audit/control write explicitly through
 `workspaceRegionalDatabase`, with idempotent repair on retry.
 
 ## Changelog
+
+### 2026-09-05 — Search projection state
+
+WorkspaceDO migration 33 owns `resource_search_versions`: a retained resource revision, pending flag, and dispatch time. Resource create/edit/delete triggers update it in the same transaction as the canonical write. SubstreamAgent migration 42 adds `conversation_search_links` and transcript-triggered `search_projection_v1` entries in `durable_outbox`. Both migrations enqueue existing records; these are projections, never new content authority. See [text search](text-search.md).
+
+The member search requirement needs durable indexing and recognizable matching
+sections. Local filtering and synchronous page capture were rejected because
+they omit unloaded content or delay message admission. Current source authority
+and existing regional delivery remain the boundaries future changes must respect.
 
 ### 2026-09-04: Private work-stream children gain parent and local authority tables
 

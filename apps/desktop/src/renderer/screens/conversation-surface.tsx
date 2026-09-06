@@ -15,7 +15,7 @@ import {
   Search,
 } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   MESSAGE_MAX_CHARACTERS,
   MESSAGE_TOO_LONG_MESSAGE,
@@ -604,6 +604,12 @@ export function ConversationSurface({
   const readSocketOpenContext = useWorkstreamSocketOpenContext(id);
   const parentNoun = parentKind === 'automation' ? 'automation' : 'work stream';
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const searchSequence = Number(searchParams.get('sequence'));
+  const searchTurnId = Number.isSafeInteger(searchSequence) && searchSequence > 0 ? searchParams.get('turn') : null;
+  const positionedSearch = useRef<string | null>(null);
+  const requestedSearch = useRef<string | null>(null);
+
   const { api, session } = useAppSession();
   const { presenceUserIdsByWorkstream } = useWorkspaceSocket();
   const featureFlags = useClientFeatureFlags(api);
@@ -985,6 +991,36 @@ export function ConversationSurface({
       && adjacentTranscriptRange(orderedTranscript.data, 'newer') === null,
     id,
   );
+
+  useEffect(() => {
+    if (socketState !== 'connected') requestedSearch.current = null;
+    if (!searchTurnId || !Number.isSafeInteger(searchSequence) || searchSequence < 1
+      || socketState !== 'connected' || !orderedTranscript.data) return;
+    const targetKey = `${conversationAddress}:${searchTurnId}`;
+    if (positionedSearch.current === targetKey) return;
+    const index = transcript.findIndex((message) => message.transcriptTurnId === searchTurnId);
+    if (index >= 0) {
+      positionedSearch.current = targetKey;
+      releaseTranscriptFollow();
+      initialPositionedWorkstreamRef.current = id;
+      transcriptVirtualizer.scrollToIndex(index, { align: 'start' });
+      return;
+    }
+    const snapshot = orderedTranscript.data;
+    if (snapshot.ranges.some((range) => range.covered.startInclusive <= searchSequence
+      && range.covered.endExclusive > searchSequence)) return;
+    const requestKey = `${targetKey}:${snapshot.snapshotId}`;
+    if (requestedSearch.current === requestKey) return;
+    requestedSearch.current = requestKey;
+    void loadTranscriptRange({
+      snapshotId: snapshot.snapshotId,
+      range: { startInclusive: searchSequence, endExclusive: searchSequence + 1 },
+      resumeAfterEventSequence: snapshot.eventSequence,
+    }).catch((error: unknown) => {
+      if (activeConversationAddressRef.current === conversationAddress && requestedSearch.current === requestKey) setOlderMessagesError(error instanceof Error ? error.message : 'The matching message could not be opened.');
+    });
+  }, [conversationAddress, id, loadTranscriptRange, orderedTranscript.data, releaseTranscriptFollow,
+    searchSequence, searchTurnId, socketState, transcript, transcriptVirtualizer]);
 
   const loadOlderMessages = useCallback(async (): Promise<void> => {
     const orderedSnapshot = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
@@ -1607,7 +1643,7 @@ export function ConversationSurface({
   };
 
   useEffect(() => {
-    if (!routedDetail || initialPositionedWorkstreamRef.current === id) return;
+    if (!routedDetail || searchTurnId || initialPositionedWorkstreamRef.current === id) return;
     initialPositionedWorkstreamRef.current = id;
     const anchorSequence = routedDetail.firstUnreadSequenceNumber;
     window.requestAnimationFrame(() => {

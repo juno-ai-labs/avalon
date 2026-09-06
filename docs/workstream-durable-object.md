@@ -90,6 +90,10 @@ does not serve workspace product state or transcripts after cutover.
 
 ## How it works
 
+### Durable search delivery
+
+Transcript writes commit a coalesced search intent through SQLite triggers. SubstreamAgent alarms publish references to the regional activity Queue; its internal preparation RPC reloads canonical text and captures links. The Queue Worker alone performs lexical indexing, shared chunking, embedding, and generation cleanup. WorkspaceDO uses retained resource revision watermarks and the same Queue. Captured link Markdown stays in the originating substream and canonical search reads enforce current parent and child access. See [text search](text-search.md) for migration and failure behavior.
+
 ### Ordered transcript authority
 
 Main `SubstreamAgent("0")` owns one canonical transcript substrate. Semantic
@@ -1611,6 +1615,15 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-09-05 — Durable search delivery
+
+Transcript writes commit a coalesced search intent through SQLite triggers. SubstreamAgent alarms publish references to the regional activity Queue; its internal preparation RPC reloads canonical text and captures links. The Queue Worker alone performs lexical indexing, shared chunking, embedding, and generation cleanup. WorkspaceDO uses retained resource revision watermarks and the same Queue. Captured link Markdown stays in the originating substream and canonical search reads enforce current parent and child access. See [text search](text-search.md) for migration and failure behavior.
+
+The member search requirement needs durable indexing and recognizable matching
+sections. Local filtering and synchronous page capture were rejected because
+they omit unloaded content or delay message admission. Current source authority
+and existing regional delivery remain the boundaries future changes must respect.
 
 ### 2026-09-05 — Private child projections have an independent local clock
 

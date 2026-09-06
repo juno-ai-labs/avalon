@@ -24,6 +24,10 @@ follow — see [Boundary](#boundary).
 
 ## How it works
 
+### Opening a search result
+
+A search result supplies a canonical turn ID and transcript sequence. `conversation-surface.tsx` hydrates that sequence through the existing range protocol when necessary, releases following, and asks the virtualizer to position the matching row. This is an explicit reader-requested reposition, alongside initial unread positioning. Invalid sequence parameters do not suppress normal initial positioning. It does not yet highlight the matching range inside the full message.
+
 ### Following
 
 `useTranscriptFollow` holds one piece of truth: whether the transcript is
@@ -259,6 +263,15 @@ There is no test that renders `WorkstreamScreen`, so the wiring in
 client. That seam is where the original defect lived.
 
 ## Changelog
+
+### 2026-09-05 — Opening a search result
+
+A search result supplies a canonical turn ID and transcript sequence. `conversation-surface.tsx` hydrates that sequence through the existing range protocol when necessary, releases following, and asks the virtualizer to position the matching row. This is an explicit reader-requested reposition, alongside initial unread positioning. Invalid sequence parameters do not suppress normal initial positioning. It does not yet highlight the matching range inside the full message.
+
+The member search requirement needs durable indexing and recognizable matching
+sections. Local filtering and synchronous page capture were rejected because
+they omit unloaded content or delay message admission. Current source authority
+and existing regional delivery remain the boundaries future changes must respect.
 
 ### 2026-08-28 — Automation authoring adopts the shared follow controller
 
