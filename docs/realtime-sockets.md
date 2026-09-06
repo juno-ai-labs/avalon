@@ -493,11 +493,14 @@ lower-sequence socket snapshot; [`architecture.md`](architecture.md) owns the
 rest of that behavior.
 
 The initial socket snapshot carries bounded canonical transcript ranges. When a
-user scrolls within 160 px of the top, Electron requests the adjacent half-open
+viewport is within 160 px of the top, Electron requests the adjacent half-open
 sequence range, merges it under the snapshot fence, and restores `scrollTop` by
 the exact height inserted above the viewport. Newer-range and jump-to-latest
-recovery use the same socket path. Requests exist only while the user navigates
-history; an idle/background window produces no pagination traffic, and the
+recovery use the same socket path. Layout, scrolling, resizing, and window visibility all
+recheck that position.
+Short opening feeds fill through the same path. Errors stop automatic paging
+and expose a retry control; normal paging shows only a loading status.
+A hidden window produces no automatic paging traffic, and the
 accepted socket continues to hibernate. A transcript frame is capped at the
 shared 1,000,000-byte realtime-frame limit: multi-turn ranges narrow to
 truthful coverage, while an indivisible oversized turn keeps its sequence as a
@@ -685,6 +688,23 @@ the provider's redirect and cannot move; [`security.md`](security.md) records
 what that leaves exposed.
 
 ## Changelog
+
+### 2026-09-06 — Page older history from viewport position
+
+**What changed:** The desktop reuses snapshot-fenced range requests for
+position-based infinite scrolling, after initial viewport positioning completes.
+
+**Why:** Short opening snapshots needed more history even without a scroll event.
+
+**Considered and rejected:** Enlarging every opening snapshot to guess at rendered
+height; the existing range transport can fetch only what the viewport needs.
+
+**Consequences:** Range sizes and authorization remain unchanged. Covered
+intervals must advance even when a page contains no visible rows; the client
+reports non-advancing coverage as an error. Renderer behavior is owned by
+[`transcript-scrolling.md`](transcript-scrolling.md).
+
+Shipped through [PR #565](https://github.com/juno-ai-labs/avalon/pull/565).
 
 ### 2026-09-04 — A child is ready only after its inherited context is complete
 

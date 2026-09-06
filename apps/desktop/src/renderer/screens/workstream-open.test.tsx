@@ -1,8 +1,8 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const api = vi.hoisted(() => ({
   addParticipant: vi.fn(),
@@ -14,6 +14,7 @@ const api = vi.hoisted(() => ({
 }));
 const retainedSocket = vi.hoisted(() => vi.fn());
 const scrollTranscriptToEnd = vi.hoisted(() => vi.fn());
+const restoreTranscriptPosition = vi.hoisted(() => vi.fn());
 
 vi.mock('../lib/app-session', () => ({
   useAppSession: () => ({ api, session: null }),
@@ -52,7 +53,7 @@ vi.mock('../lib/use-transcript-follow', () => ({
     onScroll: vi.fn(),
     onWheel: vi.fn(),
     release: vi.fn(),
-    scrollTo: vi.fn(),
+    scrollTo: restoreTranscriptPosition,
     scrollToEnd: scrollTranscriptToEnd,
   }),
 }));
@@ -104,6 +105,9 @@ function recoveryBoot(overrides: Partial<WorkstreamBoot> = {}): WorkstreamBoot {
   } as WorkstreamBoot;
 }
 
+let navigateInTest: ReturnType<typeof useNavigate>;
+function NavigationProbe(): null { navigateInTest = useNavigate(); return null; }
+
 function renderScreen(seed?: (queryClient: QueryClient) => void, substreamId?: string): QueryClient {
   const queryClient = new QueryClient({
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
@@ -113,6 +117,7 @@ function renderScreen(seed?: (queryClient: QueryClient) => void, substreamId?: s
     <Tooltip.Provider>
       <QueryClientProvider client={queryClient}>
         <MemoryRouter initialEntries={[`/workstreams/${workstreamId}${substreamId ? `?substream=${substreamId}` : ''}`]}>
+          <NavigationProbe />
           <Routes>
             <Route element={<WorkstreamScreen />} path="/workstreams/:id" />
           </Routes>
@@ -124,6 +129,7 @@ function renderScreen(seed?: (queryClient: QueryClient) => void, substreamId?: s
 }
 
 describe('socket-first work-stream open', () => {
+  afterEach(() => { vi.restoreAllMocks(); });
   beforeEach(() => {
     vi.clearAllMocks();
     api.getWorkspaceMembers.mockResolvedValue([]);
@@ -136,6 +142,174 @@ describe('socket-first work-stream open', () => {
       state: 'connecting',
       workspaceSocketState: 'connecting',
     });
+  });
+
+  function historyBoot(id = workstreamId): WorkstreamBoot {
+    const boot = recoveryBoot({ id });
+    boot.transcript.snapshotThrough = 10;
+    boot.transcript.ranges = [{
+      purpose: 'latest', requested: { startInclusive: 10, endExclusive: 11 },
+      covered: { startInclusive: 10, endExclusive: 11 }, turns: [], activities: [], pluginRuns: [],
+    }];
+    return boot;
+  }
+
+  it('positions a laid-out opening before enabling automatic history requests', async () => {
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(600);
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(2000);
+    scrollTranscriptToEnd.mockImplementationOnce(() => { screen.getByRole('log').scrollTop = 1400; });
+    const loadTranscriptRange = vi.fn().mockResolvedValue(undefined);
+    retainedSocket.mockReturnValue({
+      state: 'connected', workspaceSocketState: 'connected', activeCompaction: null,
+      sendReady: true, requestSnapshot: vi.fn(), loadTranscriptRange,
+    });
+    const boot = historyBoot();
+    renderScreen(cache => {
+      cache.setQueryData(['workstream', workstreamId], boot);
+      cache.setQueryData(['ordered-transcript', workstreamId], boot.transcript);
+    });
+    await waitFor(() => expect(scrollTranscriptToEnd).toHaveBeenCalled());
+    await act(async () => { await new Promise<void>(resolve => requestAnimationFrame(() => resolve())); });
+    expect(loadTranscriptRange).not.toHaveBeenCalled();
+  });
+
+  it('shares pending requests across A to B to A and discards departed-visit restoration', async () => {
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(600);
+    const other = '00000000-0000-7000-8000-000000000651';
+    let resolveA = (): void => {};
+    let resolveB = (): void => {};
+    const loadA = vi.fn(() => new Promise<void>(resolve => { resolveA = resolve; }));
+    const loadB = vi.fn(() => new Promise<void>(resolve => { resolveB = resolve; }));
+    retainedSocket.mockImplementation((_api, id) => ({
+      state: 'connected', workspaceSocketState: 'connected', activeCompaction: null,
+      sendReady: true, requestSnapshot: vi.fn(), loadTranscriptRange: id === other ? loadB : loadA,
+    }));
+    const boots = [historyBoot(), historyBoot(other)];
+    const cache = renderScreen(cache => {
+      for (const boot of boots) {
+        cache.setQueryData(['workstream', boot.id], boot);
+        cache.setQueryData(['ordered-transcript', boot.id], boot.transcript);
+      }
+    });
+    await waitFor(() => expect(loadA).toHaveBeenCalledOnce());
+    act(() => navigateInTest('/workstreams/' + other));
+    await waitFor(() => expect(loadB).toHaveBeenCalledOnce());
+    act(() => navigateInTest('/workstreams/' + workstreamId));
+    await screen.findByText('Loading earlier messages…');
+    await act(async () => { await new Promise<void>(resolve => requestAnimationFrame(() => resolve())); });
+    expect(loadA).toHaveBeenCalledOnce();
+    await act(async () => {
+      for (const boot of boots) cache.setQueryData(['ordered-transcript', boot.id], {
+        ...boot.transcript, ranges: boot.transcript.ranges.map(range => ({
+          ...range, covered: { startInclusive: 1, endExclusive: 11 },
+        })),
+      });
+      resolveA(); resolveB();
+    });
+    await act(async () => { await new Promise<void>(resolve => requestAnimationFrame(() => resolve())); });
+    expect(restoreTranscriptPosition).not.toHaveBeenCalled();
+    expect(loadA).toHaveBeenCalledOnce();
+  });
+
+  it('shows reconnect status at an unloaded edge and resumes when connected', async () => {
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(600);
+    const loadTranscriptRange = vi.fn().mockRejectedValue(new Error('offline test'));
+    const socket = { state: 'connecting', workspaceSocketState: 'connected', activeCompaction: null,
+      sendReady: false, requestSnapshot: vi.fn(), loadTranscriptRange };
+    retainedSocket.mockReturnValue(socket);
+    const boot = historyBoot();
+    const cache = renderScreen(cache => {
+      cache.setQueryData(['workstream', workstreamId], boot);
+      cache.setQueryData(['ordered-transcript', workstreamId], boot.transcript);
+    });
+    expect(await screen.findByText('Waiting to reconnect…')).toBeInTheDocument();
+    expect(loadTranscriptRange).not.toHaveBeenCalled();
+    socket.state = 'connected';
+    act(() => cache.setQueryData(['workstream', workstreamId], { ...boot, title: 'Reconnected' }));
+    await waitFor(() => expect(loadTranscriptRange).toHaveBeenCalledOnce());
+  });
+
+  it('does not offer an older retry or block older paging after a newer-gap failure', async () => {
+    const boot = historyBoot();
+    boot.transcript.snapshotThrough = 30;
+    boot.transcript.ranges.push({ ...boot.transcript.ranges[0]!,
+      covered: { startInclusive: 30, endExclusive: 31 },
+      requested: { startInclusive: 30, endExclusive: 31 },
+    });
+    const loadTranscriptRange = vi.fn().mockRejectedValue(new Error('Newer gap unavailable'));
+    retainedSocket.mockReturnValue({ state: 'connected', workspaceSocketState: 'connected',
+      activeCompaction: null, sendReady: true, requestSnapshot: vi.fn(), loadTranscriptRange });
+    renderScreen(cache => {
+      cache.setQueryData(['workstream', workstreamId], boot);
+      cache.setQueryData(['ordered-transcript', workstreamId], boot.transcript);
+    });
+    await waitFor(() => expect(scrollTranscriptToEnd).toHaveBeenCalled());
+    const log = screen.getByRole('log');
+    Object.defineProperty(log, 'clientHeight', { value: 600, configurable: true });
+    Object.defineProperty(log, 'scrollHeight', { value: 1000, configurable: true });
+    log.scrollTop = 400;
+    fireEvent.scroll(log);
+    expect(await screen.findByText('Newer gap unavailable')).toBeInTheDocument();
+    expect(loadTranscriptRange).toHaveBeenCalledWith(expect.objectContaining({
+      range: { startInclusive: 11, endExclusive: 30 },
+    }));
+    expect(screen.queryByRole('button', { name: 'Retry loading earlier messages' })).not.toBeInTheDocument();
+    log.scrollTop = 0;
+    fireEvent.scroll(log);
+    await waitFor(() => expect(loadTranscriptRange).toHaveBeenCalledWith(expect.objectContaining({
+      range: { startInclusive: 1, endExclusive: 10 },
+    })));
+  });
+
+  it.each([true, false])('bounds invisible history by canonical coverage (advances=%s)', async (advances) => {
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(600);
+    const boot = historyBoot();
+    const loadTranscriptRange = vi.fn(async () => {
+      if (advances) cache.setQueryData(['ordered-transcript', workstreamId], {
+        ...boot.transcript, ranges: [{ ...boot.transcript.ranges[0]!,
+          covered: { startInclusive: 1, endExclusive: 11 },
+        }],
+      });
+    });
+    retainedSocket.mockReturnValue({ state: 'connected', workspaceSocketState: 'connected',
+      activeCompaction: null, sendReady: true, requestSnapshot: vi.fn(), loadTranscriptRange });
+    const cache = renderScreen(cache => {
+      cache.setQueryData(['workstream', workstreamId], boot);
+      cache.setQueryData(['ordered-transcript', workstreamId], boot.transcript);
+    });
+    await waitFor(() => expect(loadTranscriptRange).toHaveBeenCalledOnce());
+    if (!advances) expect(await screen.findByRole('button', { name: 'Retry loading earlier messages' })).toBeInTheDocument();
+    await act(async () => { await new Promise<void>(resolve => requestAnimationFrame(() => resolve())); });
+    expect(loadTranscriptRange).toHaveBeenCalledOnce();
+    if (advances) expect(screen.queryByRole('button', { name: /earlier messages/ })).not.toBeInTheDocument();
+  });
+
+  it('automatically loads near the history edge and only offers a button after failure', async () => {
+    const boot = recoveryBoot();
+    boot.transcript.snapshotThrough = 10;
+    boot.transcript.ranges = [{
+      purpose: 'latest', requested: { startInclusive: 10, endExclusive: 11 },
+      covered: { startInclusive: 10, endExclusive: 11 }, turns: [], activities: [], pluginRuns: [],
+    }];
+    const loadTranscriptRange = vi.fn().mockRejectedValue(new Error('History unavailable'));
+    retainedSocket.mockReturnValue({
+      activeCompaction: null, state: 'connected', workspaceSocketState: 'connected',
+      requestSnapshot: vi.fn(), sendReady: true, loadTranscriptRange,
+    });
+    renderScreen((cache) => {
+      cache.setQueryData(['workstream', workstreamId], boot);
+      cache.setQueryData(['ordered-transcript', workstreamId], boot.transcript);
+    });
+    const log = screen.getByRole('log');
+    Object.defineProperty(log, 'clientHeight', { configurable: true, value: 600 });
+    expect(screen.queryByRole('button', { name: /earlier messages/i })).not.toBeInTheDocument();
+    fireEvent.scroll(log);
+    await waitFor(() => expect(loadTranscriptRange).toHaveBeenCalledOnce());
+    const retry = await screen.findByRole('button', { name: 'Retry loading earlier messages' });
+    fireEvent.scroll(log);
+    expect(loadTranscriptRange).toHaveBeenCalledOnce();
+    fireEvent.click(retry);
+    await waitFor(() => expect(loadTranscriptRange).toHaveBeenCalledTimes(2));
   });
 
   it('keeps preparation inputs stable while pending and cancels a failed attempt only once on edit', async () => {
