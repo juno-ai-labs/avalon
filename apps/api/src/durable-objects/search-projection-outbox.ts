@@ -1,3 +1,5 @@
+import type { Env } from '../env';
+import { searchIndexingConfigured } from '../services/search-embedding';
 import { z } from 'zod';
 import { SubstreamIdSchema, WorkspaceIdSchema, IdSchema } from '@rally/contracts';
 
@@ -11,7 +13,8 @@ export const SearchProjectionMessageSchema = z.strictObject({
   revision: z.number().int().positive(),
 });
 
-export function nextSearchProjectionDueAt(sql: SqlStorage): number | null {
+export function nextSearchProjectionDueAt(sql: SqlStorage, env?: Env): number | null {
+  if (env && !searchIndexingConfigured(env)) return null;
   return sql.exec<{ due_at: number | null }>(
     `SELECT MIN(not_before) AS due_at FROM durable_outbox
      WHERE channel = 'search_projection_v1' AND state = 'pending'`,

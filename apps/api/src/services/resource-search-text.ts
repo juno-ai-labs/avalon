@@ -20,8 +20,10 @@ export function resourceSearchCategory(provider: unknown, canonicalUrl: unknown)
 export async function resourceSearchText(env: Env, row: Record<string, unknown>): Promise<string> {
   let description = '';
   if (typeof row.metadata_json === 'string') {
-    const metadata = z.object({ description: z.string().optional() }).safeParse(JSON.parse(row.metadata_json));
-    if (metadata.success) description = metadata.data.description ?? '';
+    try {
+      const metadata = z.object({ description: z.string().optional() }).safeParse(JSON.parse(row.metadata_json));
+      if (metadata.success) description = metadata.data.description ?? '';
+    } catch { /* Legacy malformed metadata does not hide the canonical file text. */ }
   }
   const derivative = isSearchableText('', row.model_mime_type) && typeof row.model_content_ref === 'string';
   const original = isSearchableText(row.title, row.mime_type);

@@ -266,12 +266,13 @@ client. That seam is where the original defect lived.
 
 ### 2026-09-05 — Opening a search result
 
-A search result supplies a canonical turn ID and transcript sequence. `conversation-surface.tsx` hydrates that sequence through the existing range protocol when necessary, releases following, and asks the virtualizer to position the matching row. This is an explicit reader-requested reposition, alongside initial unread positioning. Invalid sequence parameters do not suppress normal initial positioning. It does not yet highlight the matching range inside the full message.
+**What changed:** Message search targets hydrate the matching range and consume navigation parameters after positioning.
 
-The member search requirement needs durable indexing and recognizable matching
-sections. Local filtering and synchronous page capture were rejected because
-they omit unloaded content or delay message admission. Current source authority
-and existing regional delivery remain the boundaries future changes must respect.
+**Why:** Reopening the same result must scroll again, and changing children must not inherit an unresolved target.
+
+**Considered and rejected:** A lifetime marker keyed only by turn ID suppressed valid repeated navigation.
+
+**Consequences:** Search positioning releases follow and must clear stale parameters before normal unread positioning resumes.
 
 ### 2026-08-28 — Automation authoring adopts the shared follow controller
 

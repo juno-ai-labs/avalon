@@ -1,3 +1,5 @@
+import { nextResourceSearchDueAt, publishResourceSearch } from '../src/durable-objects/resource-search-projection';
+import { nextSearchProjectionDueAt } from '../src/durable-objects/search-projection-outbox';
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 import { env } from 'cloudflare:workers';
 import { runInDurableObject } from 'cloudflare:test';
@@ -25,7 +27,7 @@ describe('resource searchable contents', () => {
     await env.PAYLOADS.put(derivativeRef, 'unique extracted body');
     try {
       for (const mimeType of ['application/json', 'application/javascript', 'application/xml']) {
-        expect(await resourceSearchText(env, { title: 'Source', mime_type: mimeType, content_ref: originalRef }))
+        expect(await resourceSearchText(env, { title: 'Source', mime_type: mimeType, content_ref: originalRef, metadata_json: '{broken' }))
           .toContain('unique structured body');
       }
       expect(await resourceSearchText(env, { title: 'misleading.txt', mime_type: 'image/png', content_ref: originalRef }))
@@ -82,7 +84,7 @@ describe('conversation page capture', () => {
 describe('durable resource search projection', () => {
   it('records create, edits, and deletion with a retained monotonic watermark', async () => {
     const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName('global', workspaceId)));
-    await runInDurableObject(stub, (_instance, state) => {
+    await runInDurableObject(stub, async (_instance, state) => {
       const sql = state.storage.sql;
       sql.exec(`INSERT OR IGNORE INTO workspace_identity
         (id, workspace_id, region, placement_affinity, created_at, updated_at)
@@ -97,6 +99,11 @@ describe('durable resource search projection', () => {
       ).one();
       const created = revision();
       expect(created.pending).toBe(1);
+      expect(nextResourceSearchDueAt(sql, env)).toBeNull();
+      await publishResourceSearch(sql, env, workspaceId);
+      expect(revision().pending).toBe(1);
+      expect(nextResourceSearchDueAt(sql, { ...env, TURBO_PUFFER_DEV_API_KEY: 'test-only',
+        OPENROUTER_API_KEY: 'test-only', SEARCH_CHUNK_MAX_TOKENS: '12', SEARCH_CHUNK_OVERLAP_TOKENS: '4' })).toBe(0);
       sql.exec('UPDATE resource_search_versions SET pending = 0 WHERE resource_id = ?', resourceId);
       sql.exec('UPDATE resources SET title = ? WHERE id = ?', 'Revised plan', resourceId);
       const edited = revision();
@@ -153,6 +160,8 @@ describe('transcript search migration', () => {
       const sql = state.storage.sql;
       expect(sql.exec<{ payload_json: string }>(`SELECT payload_json FROM durable_outbox WHERE channel = 'search_projection_v1'`).one().payload_json)
         .toBe(JSON.stringify({ turnId: 'historical-turn' }));
+      expect(nextSearchProjectionDueAt(sql, env)).toBeNull();
+      expect(nextSearchProjectionDueAt(sql)).toBe(0);
       sql.exec(`CREATE TRIGGER fail_search_delivery_intent BEFORE INSERT ON durable_outbox
         WHEN NEW.channel = 'search_projection_v1' BEGIN SELECT RAISE(ABORT, 'search_intent_rejected'); END`);
       await expect(new WorkstreamTranscriptStorage(state.storage).appendParticipantMessage({

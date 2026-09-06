@@ -132,6 +132,15 @@ export class ConversationService {
     return new WorkstreamObjectClient(this.env, this.auth, parentId, "0");
   }
 
+  /** Canonical child inventory; callers still authorize each returned child. */
+  async children(parentId: string): Promise<string[]> {
+    const parent = await this.authorizeViewer(parentId);
+    const result = await (await this.parentStub(parent)).listChildren({
+      workspaceId: this.auth.workspaceId, parentId,
+    });
+    return result.children.map((child) => child.substreamId);
+  }
+
   async socketTicket(
     parentId: string,
     substreamId = "0",

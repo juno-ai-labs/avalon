@@ -604,10 +604,10 @@ export function ConversationSurface({
   const readSocketOpenContext = useWorkstreamSocketOpenContext(id);
   const parentNoun = parentKind === 'automation' ? 'automation' : 'work stream';
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const searchSequence = Number(searchParams.get('sequence'));
   const searchTurnId = Number.isSafeInteger(searchSequence) && searchSequence > 0 ? searchParams.get('turn') : null;
-  const positionedSearch = useRef<string | null>(null);
+
   const requestedSearch = useRef<string | null>(null);
 
   const { api, session } = useAppSession();
@@ -997,10 +997,16 @@ export function ConversationSurface({
     if (!searchTurnId || !Number.isSafeInteger(searchSequence) || searchSequence < 1
       || socketState !== 'connected' || !orderedTranscript.data) return;
     const targetKey = `${conversationAddress}:${searchTurnId}`;
-    if (positionedSearch.current === targetKey) return;
+
     const index = transcript.findIndex((message) => message.transcriptTurnId === searchTurnId);
     if (index >= 0) {
-      positionedSearch.current = targetKey;
+      requestedSearch.current = null;
+      setSearchParams((current) => {
+        const next = new URLSearchParams(current);
+        next.delete('turn');
+        next.delete('sequence');
+        return next;
+      }, { replace: true });
       releaseTranscriptFollow();
       initialPositionedWorkstreamRef.current = id;
       transcriptVirtualizer.scrollToIndex(index, { align: 'start' });
@@ -1008,7 +1014,15 @@ export function ConversationSurface({
     }
     const snapshot = orderedTranscript.data;
     if (snapshot.ranges.some((range) => range.covered.startInclusive <= searchSequence
-      && range.covered.endExclusive > searchSequence)) return;
+      && range.covered.endExclusive > searchSequence)) {
+      setSearchParams((current) => {
+        const next = new URLSearchParams(current);
+        next.delete('turn'); next.delete('sequence');
+        return next;
+      }, { replace: true });
+      setOlderMessagesError('The matching message is no longer available.');
+      return;
+    }
     const requestKey = `${targetKey}:${snapshot.snapshotId}`;
     if (requestedSearch.current === requestKey) return;
     requestedSearch.current = requestKey;
@@ -1020,7 +1034,7 @@ export function ConversationSurface({
       if (activeConversationAddressRef.current === conversationAddress && requestedSearch.current === requestKey) setOlderMessagesError(error instanceof Error ? error.message : 'The matching message could not be opened.');
     });
   }, [conversationAddress, id, loadTranscriptRange, orderedTranscript.data, releaseTranscriptFollow,
-    searchSequence, searchTurnId, socketState, transcript, transcriptVirtualizer]);
+    searchSequence, searchTurnId, setSearchParams, socketState, transcript, transcriptVirtualizer]);
 
   const loadOlderMessages = useCallback(async (): Promise<void> => {
     const orderedSnapshot = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
