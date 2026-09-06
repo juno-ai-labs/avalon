@@ -46,6 +46,7 @@ type ExactKeys<Base, Value extends Base> = Value
   & Record<Exclude<keyof Value, keyof Base>, never>;
 
 type CloudflareBinding =
+  | BrowserRun
   | Ai
   | DurableObjectNamespace
   | Env["SUBSTREAM_AGENTS"]

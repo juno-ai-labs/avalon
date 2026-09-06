@@ -1,3 +1,7 @@
+import { searchIndexingConfigured } from '../services/search-embedding';
+import { prepareConversationLinks, readConversationSearchLink } from './conversation-link-search';
+import { drainSearchProjectionOutbox, nextSearchProjectionDueAt, SearchProjectionMessageSchema } from './search-projection-outbox';
+import { searchDocumentId } from '../services/text-search';
 import { ConversationParentKindSchema } from "@rally/contracts/conversation-parent";
 import { SubstreamAddressSchema, type SubstreamContextCapture } from "@rally/contracts/substream-creation";
 import { workstreamDOName } from "./names";
@@ -373,6 +377,8 @@ const ProductRequestSchema = z.discriminatedUnion("operation", [
     input: InitializeWorkstreamObjectInputSchema }),
   z.strictObject({ operation: z.literal("get"), auth: ProductAuthSchema }),
   z.strictObject({ operation: z.literal("boot"), auth: ProductAuthSchema }),
+  z.strictObject({ operation: z.literal("search_link"), auth: ProductAuthSchema, turnId: TranscriptTurnIdSchema, linkId: z.string() }),
+  z.strictObject({ operation: z.literal("search_turns"), auth: ProductAuthSchema, turnIds: z.array(TranscriptTurnIdSchema) }),
   z.strictObject({ operation: z.literal("update"), auth: ProductAuthSchema, input: UpdateWorkstreamRequestSchema }),
   z.strictObject({ operation: z.literal("acknowledge_read"), auth: ProductAuthSchema, input: AcknowledgeWorkstreamReadRequestSchema }),
   z.strictObject({ operation: z.literal("mark_unread"), auth: ProductAuthSchema }),
@@ -2857,6 +2863,20 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           harnessRunId: result.harnessRunId,
         });
       }
+      if (request.operation === "search_link") {
+        const root = await this.product.authorize(current);
+        const link = readConversationSearchLink(this.state.storage.sql, request.linkId, this.transcript.participantTurn(request.turnId));
+        return jsonResponse({ title: root.title, link });
+      }
+      if (request.operation === "search_turns") {
+        // Search must authorize the current reader without marking the feed read.
+        const root = await this.product.authorize(current);
+        const turns = request.turnIds.flatMap((turnId) => {
+          const turn = this.transcript.participantTurn(turnId);
+          return turn?.entryKind === "conversation" ? [turn] : [];
+        });
+        return jsonResponse({ title: root.title, turns });
+      }
       if (request.operation === "get") {
         return jsonResponse(await span.step("workstream.room.product.get", () => this.product.get(current)));
       }
@@ -4424,11 +4444,48 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     }
   }
 
+  /** Internal Queue consumer entrypoint; never mounted on the public API. */
+  async prepareSearchTurn(input: unknown) {
+    await this.storageReady;
+    const request = SearchProjectionMessageSchema.parse(input);
+    const identity = this.objectStore.identity();
+    if (!identity || request.region !== this.env.AVALON_REGION
+      || request.workspaceId !== identity.workspaceId || request.parentId !== identity.parentId
+      || request.substreamId !== this.externalSubstreamId()) throw new Error("search_projection_identity_mismatch");
+    const links = await prepareConversationLinks(this.state.storage.sql, this.env,
+      { ...identity, substreamId: request.substreamId }, request.turnId,
+      () => this.transcript.participantTurn(request.turnId));
+    // Capture awaits external I/O, so read the message only after extraction.
+    const turn = this.transcript.participantTurn(request.turnId);
+    const sourceId = `${request.substreamId}/${request.turnId}`;
+    const id = await searchDocumentId("messages", identity.parentId, sourceId);
+    links.documents.unshift({ id, source: "messages", sourceId, scopeId: identity.parentId,
+      revision: turn?.revision ?? request.revision,
+      text: turn?.entryKind === "conversation"
+        ? turn.blocks.filter((block) => block.type === "text").map((block) => block.text).join("\n") : null });
+    return links;
+  }
+
+  private async flushSearchProjectionOutbox(): Promise<void> {
+    if (!searchIndexingConfigured(this.env)) return;
+    const identity = this.objectStore.identity();
+    if (!identity) return;
+    try {
+      await drainSearchProjectionOutbox(this.state.storage.sql, this.env.ACTIVITY_QUEUE, {
+        region: this.env.AVALON_REGION, workspaceId: identity.workspaceId,
+        parentId: identity.parentId, substreamId: this.externalSubstreamId(),
+      });
+    } catch {
+      logWarn(this.env, "search_projection_dispatch_deferred", { workspace_id: identity.workspaceId });
+    }
+    const next = nextSearchProjectionDueAt(this.state.storage.sql, this.env);
+    if (next !== null) await this.ensureAlarmNoLaterThan(next);
+  }
+
   /**
    * Deliver one ordered batch. An outbox row is acknowledged only after the
-   * semantic frame has been accepted
-   * locally. Replaying the same sequence after a crash is harmless at the
-   * client cursor and is deduplicated in this isolate's replay cache.
+   * semantic frame has been accepted locally. Replaying the same sequence after
+   * a crash is harmless at the client cursor and deduplicated in this isolate.
    */
   private async drainSemanticRealtimeOutbox(): Promise<void> {
     const pending = this.objectStore.dueSemanticRealtime();
@@ -4463,6 +4520,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         reason: diagnosticErrorCode(error, "semantic_realtime_delivery_failed"),
       });
     }
+    const searchDueAt = nextSearchProjectionDueAt(this.state.storage.sql, this.env);
+    if (searchDueAt !== null) await this.ensureAlarmNoLaterThan(searchDueAt);
     const nextDueAt = this.objectStore.nextSemanticRealtimeDueAt();
     this.semanticRealtimePending = nextDueAt !== null;
     if (nextDueAt !== null) {
@@ -5414,6 +5473,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
 
   protected override async runDueAlarmWork(): Promise<void> {
     this.loopDrainDeferred = false;
+    await this.flushSearchProjectionOutbox();
     const nextEffectAt = this.objectStore.nextRegionalEffectDueAt();
     const nextSemanticRealtimeAt = this.objectStore.nextSemanticRealtimeDueAt();
     const hasLoopWork = this.nextLoopWorkAt() !== null;
@@ -5909,6 +5969,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       derivedCandidates: [
         this.objectStore.nextRegionalEffectDueAt(),
         this.objectStore.nextSemanticRealtimeDueAt(),
+        nextSearchProjectionDueAt(this.state.storage.sql, this.env),
         this.nextExternalSettlementAt(),
         now + KEEP_ALIVE_INTERVAL_MS,
       ],
@@ -5983,6 +6044,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const candidates: Array<number | null> = [
       this.objectStore.nextRegionalEffectDueAt(),
       this.objectStore.nextSemanticRealtimeDueAt(),
+      nextSearchProjectionDueAt(this.state.storage.sql, this.env),
       this.nextLoopWorkAt(now),
       this.nextExternalSettlementAt(),
     ];

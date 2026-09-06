@@ -422,6 +422,8 @@ export function WorkstreamScreen(): React.JSX.Element {
   creationRef.current = creation;
   const selectSubstream = (substreamId: string): void => {
     const next = new URLSearchParams(searchParams);
+    next.delete('turn');
+    next.delete('sequence');
     if (substreamId === '0') next.delete('substream');
     else next.set('substream', substreamId);
     setSearchParams(next, { replace: true });

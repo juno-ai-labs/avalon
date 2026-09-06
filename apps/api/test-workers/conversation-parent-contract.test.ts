@@ -20,7 +20,7 @@
 
 import { env } from "cloudflare:workers";
 import { reset, runInDurableObject } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { asAutomationId, asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId, type UserId } from "@rally/contracts";
 
@@ -33,6 +33,8 @@ import {
 } from "../src/durable-objects/names";
 import type { AuthContext, Env } from "../src/env";
 import { createAutomation } from "../src/services/automation-service";
+import { searchWorkspace } from '../src/services/workspace-search-service';
+import { seedParticipantMessage } from './helpers/substream-fixture';
 import { ConversationService } from "../src/services/conversation-service";
 import { SocketService, verifySocketTicket } from "../src/services/socket-service";
 import {
@@ -308,6 +310,41 @@ describe("conversation parent contract", () => {
       workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID,
       operationId: request.operationId, actorUserId: AUTHOR_ID,
     })).status).toBe("ready");
+    // Provider hits deliberately include a private child. The real service,
+    // parent authority, child RPC and canonical resource reads decide visibility.
+    const searchResourceId = crypto.randomUUID();
+    await runInDurableObject(conversation(PERSONAL_ROOM_ID, reserved.substreamId), async (_instance, state) => {
+      await seedParticipantMessage(state, { id: 'search-private-turn', sequence: 1, text: 'private search phrase' });
+      state.storage.sql.exec(`INSERT INTO workstream_resource_links
+        (resource_id, attached_by_user_id, watch_enabled, relationship_type, resource_json, attached_at, updated_at)
+        VALUES (?, NULL, 0, 'attachment', '{}', 1, 1)`, searchResourceId);
+    });
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      state.storage.sql.exec(`INSERT INTO resources
+        (id, workspace_id, resource_type, provider, provider_resource_id, title, mime_type,
+         metadata_json, attachment_status, model_content_status, created_at, updated_at)
+        VALUES (?, ?, 'file', 'avalon_generated', ?, 'private search artifact', 'text/plain',
+          '{}', 'attached', 'ready', ?, ?)`, searchResourceId, WORKSPACE_ID, searchResourceId, NOW, NOW);
+    });
+    const searchEnv: Env = { ...TEST_ENV, TURBO_PUFFER_DEV_API_KEY: 'test-only' };
+    const resourceRevision = await workspaceStub().resourceSearchRevision({ workspaceId: WORKSPACE_ID, resourceId: searchResourceId });
+    let source = 'messages';
+    vi.stubGlobal('fetch', async () => Response.json({ rows: [{ id: 'search-candidate', source,
+      scope_id: source === 'messages' ? PERSONAL_ROOM_ID : WORKSPACE_ID,
+      source_id: source === 'messages' ? `${reserved.substreamId}/search-private-turn` : searchResourceId,
+      revision: source === 'messages' ? 1 : resourceRevision }] }));
+    try {
+      expect(await searchWorkspace(searchEnv, AUTH, { query: 'private search', category: 'messages' }))
+        .toMatchObject([{ excerpt: 'private search phrase' }]);
+      expect(await searchWorkspace(searchEnv, { ...AUTH, userId: PARTICIPANT_ID },
+        { query: 'private search', category: 'messages' })).toEqual([]);
+      source = 'artifacts';
+      expect(await searchWorkspace(searchEnv, AUTH, { query: 'private search', category: 'artifacts' }))
+        .toMatchObject([{ title: 'private search artifact' }]);
+      expect(await searchWorkspace(searchEnv, { ...AUTH, userId: PARTICIPANT_ID },
+        { query: 'private search', category: 'artifacts' })).toEqual([]);
+    } finally { vi.unstubAllGlobals(); }
+
     const viewerWaterlineAfterReady = await runInDurableObject(parent, (_instance, state) =>
       state.storage.sql.exec<{ waterline: number }>(
         `SELECT waterline FROM workstream_state_changes WHERE state_key = ? ORDER BY waterline DESC LIMIT 1`,

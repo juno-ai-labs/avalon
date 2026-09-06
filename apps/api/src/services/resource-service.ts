@@ -1,3 +1,7 @@
+import { WorkstreamDirectoryService } from './workstream-directory-service';
+import { ConversationService } from './conversation-service';
+import { asWorkspaceId } from '@rally/contracts';
+import { resourceSearchText } from './resource-search-text';
 import { ConnectorError, type ConnectorConnectionContext } from "@rally/connectors";
 import {
   classifyAttachmentKind,
@@ -270,6 +274,90 @@ export class ResourceService {
   async get(id: string) {
     const row = await this.loadResource(id);
     return this.toResource(row);
+  }
+
+  /** Reload readable source text for search; never trust text returned by an index. */
+  async searchText(id: string) {
+    const stub = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS, this.auth.workspaceId,
+      workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(this.auth.workspaceId)));
+    const request = { workspaceId: this.auth.workspaceId, resourceId: id };
+    const revision = await stub.resourceSearchRevision(request);
+    if (revision === null) return null;
+    const row = await this.loadSearchResource(id);
+    const text = await resourceSearchText(this.env, row);
+    if (await stub.resourceSearchRevision(request) !== revision) return null;
+    // The final source read rechecks resource authority after every external await.
+    const current = await this.loadSearchResource(id);
+    if (current.updated_at !== row.updated_at || current.model_content_ref !== row.model_content_ref
+      || current.content_ref !== row.content_ref || current.metadata_json !== row.metadata_json
+      || current.title !== row.title || current.canonical_url !== row.canonical_url) return null;
+    return { resource: this.toResource(current), text, revision: String(revision) };
+  }
+
+  /** Opening a search result repeats the same attachment authority checks. */
+  async searchPreview(id: string, signal: AbortSignal): Promise<Response> {
+    const before = await this.loadSearchResource(id);
+    const response = await this.preview(id, signal);
+    try {
+      const after = await this.loadSearchResource(id);
+      if (before.content_ref !== after.content_ref || before.content_sha256 !== after.content_sha256
+        || before.mime_type !== after.mime_type) {
+        throw new ApiError(409, "search_source_changed", "This file changed. Search again to open its current contents.");
+      }
+      return response;
+    } catch (error) {
+      await response.body?.cancel();
+      throw error;
+    }
+  }
+
+  private async loadSearchResource(id: string): Promise<Record<string, unknown>> {
+    const row = await this.loadResource(id);
+    if ((row.provider === "avalon_upload" || row.provider === "avalon_generated")
+      && row.uploaded_by_user_id !== this.auth.userId) {
+      const access = await (await this.workspaceDirectory()).resourceAccess({ workspaceId: this.auth.workspaceId, resourceId: id, userId: this.auth.userId });
+      const conversation = new ConversationService(this.env, this.auth);
+      const checked = new Set<string>();
+      const readableInParent = async (parentId: string): Promise<boolean> => {
+        if (checked.has(parentId)) return false;
+        checked.add(parentId);
+        try {
+          for (const substreamId of await conversation.children(parentId)) {
+            try {
+              await conversation.authorizeViewer(parentId, substreamId);
+              const linked = await createResourceObjectPort(this.env, this.auth.workspaceId, parentId, undefined, substreamId)
+                .isAttached({ resourceId: id });
+              if (!linked) continue;
+              await conversation.authorizeViewer(parentId, substreamId);
+              return true;
+            } catch (error) {
+              if (!(error instanceof ApiError && [401, 403, 404].includes(error.status))) throw error;
+            }
+          }
+        } catch (error) {
+          if (!(error instanceof ApiError && [401, 403, 404].includes(error.status))) throw error;
+        }
+        return false;
+      };
+      let readable = false;
+      for (const hint of access.items) {
+        if (await readableInParent(hint.workstreamId)) { readable = true; break; }
+      }
+      // Main-feed projections are hints only: private-child-only attachments
+      // have none. Discover their parent, then ask the exact child authority.
+      const directory = new WorkstreamDirectoryService(this.env, this.auth);
+      let cursor: string | undefined;
+      while (!readable) {
+        const page = await directory.list(250, cursor, true);
+        for (const parent of page.items) {
+          if (await readableInParent(parent.id)) { readable = true; break; }
+        }
+        if (!page.nextCursor) break;
+        cursor = page.nextCursor;
+      }
+      if (!readable) throw new ApiError(404, "resource_not_found", "Resource not found");
+    }
+    return row;
   }
 
   async content(id: string): Promise<Response> {

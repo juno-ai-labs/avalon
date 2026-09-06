@@ -48,6 +48,7 @@ export async function runEmbeddingInference(
       userId?: string;
     };
     text: string;
+    feature?: "memory_embedding" | "search_embedding";
     inputType: "search_query" | "search_document";
     dimensions: number;
     generationName: string;
@@ -58,6 +59,7 @@ export async function runEmbeddingInference(
     signal?: AbortSignal;
   },
 ): Promise<EmbeddingResult> {
+  const feature = input.feature ?? MEMORY_EMBEDDING_FEATURE;
   const substreamId = input.context.workstreamId
     ? input.context.substreamId ?? "0"
     : undefined;
@@ -67,8 +69,8 @@ export async function runEmbeddingInference(
     fallbackModels: [],
     appName: "Rally",
     traceContext: {
-      source: MEMORY_EMBEDDING_FEATURE,
-      feature: MEMORY_EMBEDDING_FEATURE,
+      source: feature,
+      feature,
       region: env.AVALON_REGION,
       environment: env.APP_ENV,
       ...(env.BUILD_SHA ? { buildSha: env.BUILD_SHA } : {}),
@@ -108,8 +110,8 @@ export async function runEmbeddingInference(
         trace_id: input.requestId ?? input.harnessRunId ?? diagnostic.inferenceRequestId,
         session_id: sessionId,
         inference_request_id: diagnostic.inferenceRequestId,
-        source: MEMORY_EMBEDDING_FEATURE,
-        feature: MEMORY_EMBEDDING_FEATURE,
+        source: feature,
+        feature,
         input_type: input.inputType,
         provider: "openrouter",
         intended_model: diagnostic.intendedModel,
