@@ -2727,6 +2727,8 @@ pre {
 .transcript-history-control { display: flex; justify-content: center; margin-bottom: 18px; }
 .transcript-history-control + .inline-error { margin-bottom: 18px; }
 .virtual-message-row { display: flow-root; }
+.message-arrival-layer { display: flow-root; transform-origin: center bottom; }
+.activity-presence { display: flow-root; transform-origin: left center; }
 .message-block { margin: 0 0 var(--av-sys-space-stack-gap); }
 .message-block > header { align-items: center; display: flex; gap: 8px; margin-bottom: 6px; }
 /* The header mixes three type sizes, and each one's line box is taller than its
