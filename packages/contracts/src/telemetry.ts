@@ -46,14 +46,32 @@ export const TELEMETRY_WORKSTREAM_CREATION_SOURCES = [
 ] as const;
 export type TelemetryWorkstreamCreationSource = typeof TELEMETRY_WORKSTREAM_CREATION_SOURCES[number];
 
-export const TELEMETRY_APPLICATION_ICON_IDS = [
+export const CURRENT_APPLICATION_ICON_IDS = [
   "light",
   "dark",
   "calm",
-  "ludicrous-speed",
+  "ludicrous",
   "homage",
   "builder",
   "quiet",
+] as const;
+export type CurrentApplicationIconId = typeof CURRENT_APPLICATION_ICON_IDS[number];
+
+// Ingestion and the on-disk spool must continue accepting released clients.
+// Retired artwork is never reintroduced into the selectable preference allowlist.
+export const TELEMETRY_APPLICATION_ICON_IDS = [
+  ...CURRENT_APPLICATION_ICON_IDS,
+  "sunset-sherbet",
+  "ludicrous-speed",
+  "ruby",
+  "holographic",
+  "leather",
+  "blueprint",
+  "grass-court",
+  "clay-court",
+  "hard-court",
+  "ball-felt",
+  "night-match",
 ] as const;
 export type TelemetryApplicationIconId = typeof TELEMETRY_APPLICATION_ICON_IDS[number];
 

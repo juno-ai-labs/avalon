@@ -25,7 +25,7 @@ const selectableIconNames = [
   'light',
   'dark',
   'calm',
-  'ludicrous-speed',
+  'ludicrous',
   'homage',
   'builder',
   'quiet',
@@ -88,7 +88,7 @@ try {
     '-o',
     smokeExecutablePath,
   ]);
-  await run(smokeExecutablePath, []);
+  await run(smokeExecutablePath, selectableIconNames.map((name) => join(selectableIconSourceDirectory, `${name}.png`)));
 } finally {
   await rm(smokeExecutablePath, { force: true });
 }
