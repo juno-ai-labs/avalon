@@ -53,17 +53,19 @@ function createSearchChunkPolicy(): SemanticChunkPolicy {
   });
 }
 
-export async function embedSearchDocument(env: Env, workspaceId: string, text: string) {
+// Approved by the team on 2026-09-06: 64 chunks per request, at most
+// 32,768 input tokens and 65,536 vector values. Every chunk is still processed.
+export const SEARCH_EMBEDDING_BATCH_SIZE = 64;
+
+export async function embedSearchDocuments(env: Env, workspaceId: string, texts: string[]) {
   try {
     const result = await runEmbeddingInference(env, {
-      context: { workspaceId }, text, inputType: 'search_document',
+      context: { workspaceId }, text: texts, inputType: 'search_document',
       dimensions: SEARCH_EMBEDDING_DIMENSIONS, generationName: 'search_document_embedding',
       executionPrincipalType: 'workspace', executionPrincipalId: workspaceId,
       feature: 'search_embedding',
     });
-    const vector = result.embeddings[0];
-    if (!vector) throw new Error('search_embedding_missing');
-    return { model: result.resolvedModel, vector };
+    return { model: result.resolvedModel, vectors: result.embeddings };
   } catch {
     throw new Error('search_embedding_failed');
   }

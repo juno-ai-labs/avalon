@@ -113,6 +113,15 @@ matching `encode` without allocating token-ID and attention-mask arrays. This
 lifecycle depends on the locked library implementation and must be rechecked
 when upgrading it; differential tests compare against an unmodified tokenizer.
 
+Embedding inputs are sent as arrays through the existing OpenRouter client, in
+chunk order. `SEARCH_EMBEDDING_BATCH_SIZE` in `search-embedding.ts` controls how
+many chunks share a request: 64, approved by the team on 2026-09-06. This bounds
+one response to 65,536 vector values without limiting total document content. Every chunk is still processed, including a final partial
+batch. A missing or extra vector, model drift, wrong dimension, or nonfinite value
+rejects the entire generation before any semantic rows are written. Batches do
+not change chunk boundaries, namespace identity, lexical indexing, or source
+revalidation. Search jobs remain sequential within each Queue delivery.
+
 Counts include tokenizer special tokens. Document embeddings use OpenRouter's
 `search_document` task through the existing inference client. The binary boundary
 search checks every accepted span; nonmonotonic BPE counts may leave budget unused,
@@ -309,6 +318,31 @@ through Queue failure rather than silent truncation. Document-size and capture
 budgets require team policy; no arbitrary new caps are introduced here.
 
 ## Changelog
+
+### 2026-09-06 — Batch semantic embedding inputs
+
+**What changed:** The shared pipeline sends arrays of chunk inputs through the
+existing inference client instead of making a request for each chunk. Responses
+must contain exactly one valid vector per input, in input order. All batches are
+validated before publishing a generation, and the source is reloaded afterward.
+
+**Why:** Two production Queue invocations hit Cloudflare's 15-minute wall-time
+limit after 196 and 207 successful serial embedding requests. Their cumulative
+provider latency was about 898 and 884 seconds. Reducing tokenizer memory did not
+remove that network round-trip bottleneck, so large documents continued to hold
+up the shared Queue.
+
+**Considered and rejected:** Increasing Queue concurrency does not make an
+individual document finish within its invocation. Dropping chunks would make
+search incomplete. Native array inputs reduce round trips while keeping the
+same model, tokenizer, offsets, deterministic IDs, and complete source content.
+
+**Consequences:** The team approved 64 chunks per request on 2026-09-06: at most
+32,768 input tokens and 65,536 vector values per response. This reduces serial
+round trips while bounding individual responses during memory recovery. This is a request-shaping change, so it requires no
+namespace migration. A provider or late-batch validation failure still retries
+the source without publishing a partially validated generation. Whole-document
+chunking and accumulation of all validated vectors remain memory costs.
 
 ### 2026-09-06 — Release tokenizer construction tables and unused encoding arrays
 
