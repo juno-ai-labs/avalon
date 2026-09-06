@@ -116,11 +116,11 @@ for (const appearance of ['NSAppearanceNameAqua', 'NSAppearanceNameDarkAqua', 'I
 const applicationIconNames = [
   'light',
   'dark',
-  'grass-court',
-  'clay-court',
-  'hard-court',
-  'ball-felt',
-  'night-match',
+  'calm',
+  'ludicrous-speed',
+  'homage',
+  'builder',
+  'quiet',
 ];
 const applicationIconDirectory = join(resourcesDirectory, 'app-icons');
 const expectedApplicationIconFiles = new Set(applicationIconNames.map((name) => `${name}.icns`));
