@@ -254,6 +254,18 @@ allocated — `MAX(position) + 1` inside the insert — rather than by the schem
 
 ## Changelog
 
+### 2026-09-05 — Open the first sidebar work stream by default
+
+Startup and workspace activation now resolve the root route from the shared
+socket-backed directory: the first stored pin, otherwise the first recency-grouped
+work stream, using the sidebar's existing ordering functions. Missing directory
+data shows an opening state; only a confirmed empty list opens the new composer.
+This replaces the unconditional new-workstream landing because returning members
+should enter their existing conversations. Explicit New actions and deep links
+retain their destinations, and later directory updates never redirect an open
+conversation. The landing component tests cover ordering, pending/empty/error
+states and explicit routes; session tests cover cross-workspace route reset.
+
 ### 2026-09-04 — Retire numbered navigation, retain pin ordering
 
 Command-number hints and activation were removed to simplify navigation. Pin

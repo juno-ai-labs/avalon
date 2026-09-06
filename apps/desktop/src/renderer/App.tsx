@@ -7,6 +7,7 @@ import { HashRouter, Navigate, Route, Routes, useLocation } from 'react-router-d
 import { logError } from '../common/logger';
 import { desktopWorkspaceIdentityKey } from '../common/desktop';
 import { AppShell } from './components/app-shell';
+import { WorkstreamLandingScreen } from './screens/workstream-landing';
 import { Button, EmptyState, LoadingState } from './components/primitives';
 import { SpeechPlaybackProvider } from './components/speech-playback';
 import { ApiError, isSessionRejection } from './lib/api';
@@ -252,7 +253,7 @@ function WorkspaceApp(): React.JSX.Element {
             <WorkspaceOnboardingJourney key={`${workspace.data.region}:${workspace.data.id}:${workspace.data.currentUser.id}`} workspace={workspace.data}>
             <AppShell workspace={workspace.data}>
               <Routes>
-                <Route element={<Navigate replace to="/workstreams/new" />} path="/" />
+                <Route element={<WorkstreamLandingScreen />} path="/" />
                 <Route element={<NewWorkstreamScreen workspace={workspace.data} />} path="/workstreams/new" />
                 <Route element={<ProjectSpaceScreen />} path="/projects/:projectId" />
                 <Route element={<NewWorkstreamScreen workspace={workspace.data} projectId="route" />} path="/projects/:projectId/workstreams/new" />
