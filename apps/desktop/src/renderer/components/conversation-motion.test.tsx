@@ -1,11 +1,35 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { act, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { act, cleanup, render, screen } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ActivityPresence, JumpToLatestButton } from './conversation-follow';
 import { MessageFeed } from './message-feed';
 import type { Message } from '../lib/types';
 
-afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+const animations: { onfinish: (() => void) | null; cancel: ReturnType<typeof vi.fn>; reverse: ReturnType<typeof vi.fn>; playState: string }[] = [];
+const animate = vi.fn<(frames: Keyframe[], options: KeyframeAnimationOptions) => Animation>(() => {
+  const animation = { onfinish: null, cancel: vi.fn(), reverse: vi.fn(), playState: 'running' };
+  animations.push(animation);
+  return animation as unknown as Animation;
+});
+let originalAnimate: PropertyDescriptor | undefined;
+let reducedMotion = false;
+let hidden = false;
+beforeEach(() => {
+  originalAnimate = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'animate');
+  Object.defineProperty(HTMLElement.prototype, 'animate', { configurable: true, writable: true, value: animate });
+  animate.mockClear();
+  animations.length = 0;
+  reducedMotion = false;
+  hidden = false;
+  vi.stubGlobal('matchMedia', () => ({ matches: reducedMotion }));
+  vi.spyOn(document, 'visibilityState', 'get').mockImplementation(() => hidden ? 'hidden' : 'visible');
+});
+afterEach(() => {
+  cleanup();
+  if (originalAnimate) Object.defineProperty(HTMLElement.prototype, 'animate', originalAnimate);
+  else Reflect.deleteProperty(HTMLElement.prototype, 'animate');
+  vi.restoreAllMocks(); vi.unstubAllGlobals();
+});
 
 function row(id: string, extra: Partial<Message> = {}): Message {
   return { id, workstreamId: 'one', authorType: 'human', messageType: 'text',
@@ -14,10 +38,6 @@ function row(id: string, extra: Partial<Message> = {}): Message {
 
 describe('conversation motion', () => {
   it('only animates live arrivals once, including optimistic reconciliation', () => {
-    const animate = vi.fn();
-    const original = HTMLElement.prototype.animate;
-    HTMLElement.prototype.animate = animate;
-    try {
       const props = { onAnswerElicitation: async () => undefined };
       const view = render(<MessageFeed {...props} messages={[row('history')]} />);
       expect(animate).not.toHaveBeenCalled();
@@ -28,51 +48,66 @@ describe('conversation motion', () => {
       view.rerender(<MessageFeed {...props} liveMessageIds={new Set(['canonical'])} messages={[row('canonical', { clientMessageId: 'client' })]} />);
       view.rerender(<MessageFeed {...props} liveMessageIds={new Set(['live'])} messages={messages} />);
       expect(animate).toHaveBeenCalledTimes(1);
-    } finally { HTMLElement.prototype.animate = original; vi.unstubAllGlobals(); }
   });
 
   it('consumes reduced-motion arrivals instead of replaying them later', () => {
-    vi.stubGlobal('matchMedia', () => ({ matches: true }));
-    const original = HTMLElement.prototype.animate;
-    const animate = vi.fn();
-    HTMLElement.prototype.animate = animate;
-    try {
+    reducedMotion = true;
       const props = { onAnswerElicitation: async () => undefined, messages: [row('live')], liveMessageIds: new Set(['live']) };
       const view = render(<MessageFeed {...props} />);
-      vi.stubGlobal('matchMedia', () => ({ matches: false }));
-      view.rerender(<MessageFeed {...props} />);
+      reducedMotion = false;
+      view.rerender(<MessageFeed {...props} messages={[...props.messages]} />);
       expect(animate).not.toHaveBeenCalled();
-    } finally { HTMLElement.prototype.animate = original; }
   });
 
   it('removes activity immediately under reduced motion', () => {
-    vi.stubGlobal('matchMedia', () => ({ matches: true }));
+    reducedMotion = true;
     const view = render(<ActivityPresence><span>Working</span></ActivityPresence>);
     expect(screen.getByText('Working')).toBeVisible();
     view.rerender(<ActivityPresence>{null}</ActivityPresence>);
     expect(screen.queryByText('Working')).toBeNull();
   });
 
-  it('retains the disabled jump button until its exit finishes and cancels on reversal', () => {
-    const animations: { onfinish: (() => void) | null; cancel: ReturnType<typeof vi.fn> }[] = [];
-    const original = HTMLElement.prototype.animate;
-    HTMLElement.prototype.animate = vi.fn(() => {
-      const animation = { onfinish: null, cancel: vi.fn() };
-      animations.push(animation);
-      return animation as unknown as Animation;
-    });
-    try {
-      const content = (visible: boolean) => <Tooltip.Provider><JumpToLatestButton onJump={() => undefined} visible={visible} /></Tooltip.Provider>;
-      const view = render(content(true));
+  it.each(['jump', 'activity'])('retains and reverses %s without restarting entrance or flashing at exit', (kind) => {
+      const content = (visible: boolean) => kind === 'jump'
+        ? <Tooltip.Provider><JumpToLatestButton onJump={() => undefined} visible={visible} /></Tooltip.Provider>
+        : <ActivityPresence>{visible ? <span>Working</span> : null}</ActivityPresence>;
+      const view = render(content(false));
+      view.rerender(content(true));
+      expect(animate).toHaveBeenCalledTimes(1);
+      expect(animations[0]!.cancel).not.toHaveBeenCalled();
       view.rerender(content(false));
-      expect(screen.getByRole('button', { hidden: true })).toBeDisabled();
+      if (kind === 'jump') expect(screen.getByRole('button', { hidden: true })).toBeDisabled();
       const exit = animations.at(-1)!;
       view.rerender(content(true));
-      expect(exit.cancel).toHaveBeenCalled();
-      expect(screen.getByRole('button', { name: 'Jump to latest' })).toBeEnabled();
+      expect(exit.reverse).toHaveBeenCalledTimes(2);
+      expect(animate).toHaveBeenCalledTimes(1);
       view.rerender(content(false));
-      act(() => animations.at(-1)!.onfinish?.());
+      expect(animate.mock.calls[0]?.[1]).toMatchObject({ fill: 'forwards' });
+      act(() => { exit.playState = 'finished'; exit.onfinish?.(); });
       expect(screen.queryByRole('button', { hidden: true })).toBeNull();
-    } finally { HTMLElement.prototype.animate = original; }
+      expect(screen.queryByText('Working')).toBeNull();
+      view.rerender(content(true));
+      expect(animate).toHaveBeenCalledTimes(2);
+  });
+
+  it('animates independent plugin groups after text in the same turn', () => {
+    const props = { onAnswerElicitation: async () => undefined };
+    const text = row('turn:text', { transcriptTurnId: 'turn' });
+    const view = render(<MessageFeed {...props} liveMessageIds={new Set([text.id])} messages={[text]} />);
+    const plugin = row('turn:tool:1:plugin-group:browser', { transcriptTurnId: 'turn', messageType: 'plugin_activity' });
+    const other = row('turn:tool:2:plugin-group:files', { transcriptTurnId: 'turn', messageType: 'plugin_activity' });
+    view.rerender(<MessageFeed {...props} liveMessageIds={new Set(['turn:tool:1', 'turn:tool:2'])} messages={[text, plugin, other]} />);
+    expect(animate.mock.contexts.map((element) => (element as HTMLElement).dataset.arrivalId)).toEqual([text.id, plugin.id, other.id]);
+    view.rerender(<MessageFeed {...props} liveMessageIds={new Set(['stored:text'])} messages={[row('stored:text', { transcriptTurnId: 'turn' }), plugin, other]} />);
+    expect(animate).toHaveBeenCalledTimes(3);
+  });
+
+  it('consumes hidden-window arrivals without replaying them when shown', () => {
+    hidden = true;
+    const props = { onAnswerElicitation: async () => undefined, messages: [row('live')], liveMessageIds: new Set(['live']) };
+    const view = render(<MessageFeed {...props} />);
+    hidden = false;
+    view.rerender(<MessageFeed {...props} messages={[...props.messages]} />);
+    expect(animate).not.toHaveBeenCalled();
   });
 });

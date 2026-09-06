@@ -946,6 +946,11 @@ export function ConversationSurface({
     })),
     [members.data, queueOverlays],
   );
+  const liveMessageIds = useMemo(() => new Set((transcriptOverlays.data ?? [])
+    .filter((overlay) => overlay.provenance.source === 'client_command'
+      || overlay.provenance.source === 'stream_event'
+      || overlay.provenance.source === 'socket_event')
+    .map((overlay) => overlay.message.id)), [transcriptOverlays.data]);
   const transcript = useMemo(
     () => {
       const feedOverlays = (transcriptOverlays.data ?? []).filter((overlay) =>
@@ -1867,10 +1872,7 @@ export function ConversationSurface({
               firstUnreadIndex={firstUnreadIndex}
               loadAttachmentContent={loadAttachmentContent}
               messages={visibleTranscript}
-              liveMessageIds={new Set((transcriptOverlays.data ?? []).filter((overlay) =>
-                overlay.provenance.source === 'client_command'
-                || overlay.provenance.source === 'stream_event'
-                || overlay.provenance.source === 'socket_event').map((overlay) => overlay.message.id))}
+              liveMessageIds={liveMessageIds}
               onAnswerElicitation={answerElicitation}
               onOpenAttachment={setAttachmentPreview}
               onStartSubstream={parentKind === 'workstream' && substreamId === '0' ? onStartSubstream : undefined}
