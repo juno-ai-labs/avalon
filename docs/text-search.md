@@ -297,7 +297,8 @@ budgets require team policy; no arbitrary new caps are introduced here.
 
 **What changed:** Queue batches load the exact pinned Qwen tokenizer from
 compressed, licensed assets in the Worker bundle. The regeneration script records
-the immutable source revision and SHA-256 hashes. Workerd tests use that real
+the immutable source revision and SHA-256 hashes, and normalizes the gzip OS
+header so regeneration does not encode the developer machine. Workerd tests use that real
 tokenizer while the external asset host returns an error. Whitespace-only
 semantic chunks are skipped without modifying lexical text or source offsets.
 
