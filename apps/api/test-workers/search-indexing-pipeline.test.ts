@@ -101,15 +101,15 @@ describe('shared Queue indexing pipeline', () => {
     workspaceId = asWorkspaceId(crypto.randomUUID());
     resourceId = crypto.randomUUID();
     await seedResource();
-    const encode = vi.spyOn(Tokenizer.prototype, 'encode');
+    const tokenize = vi.spyOn(Tokenizer.prototype, 'tokenize');
     const results = await Promise.all([consume([firstMessage]), consume([resourceMessage()])]);
     for (const result of results) {
       expect(result.explicitAcks).toEqual(['search-0']);
       expect(result.retryMessages).toEqual([]);
     }
     expect(liveRows().filter((row) => row.record_type === 'chunk').length).toBeGreaterThan(2);
-    expect(encode).toHaveBeenCalled();
-    expect(new Set(encode.mock.contexts).size).toBe(1);
+    expect(tokenize).toHaveBeenCalled();
+    expect(new Set(tokenize.mock.contexts).size).toBe(1);
     expect(tokenizerReads).toBe(0);
   });
 

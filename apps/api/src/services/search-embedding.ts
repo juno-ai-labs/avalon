@@ -35,11 +35,19 @@ function createSearchChunkPolicy(): SemanticChunkPolicy {
   const tokenizer = new Tokenizer(definition, config);
   const model = tokenizer.model;
   if (!(model instanceof BPE)) throw new Error('search_tokenizer_model_mismatch');
+  // The pinned library compiles these construction tables into tokens_to_ids
+  // and bpe_ranks. Encoding uses those maps, not the retained source tables.
+  // Keep the runtime maps/vocabulary and all framing/normalization settings.
+  model.config.vocab = {};
+  model.config.merges = [];
+  model.merges = [];
   return Object.freeze({
     maxTokens: SEARCH_CHUNK_MAX_TOKENS,
     overlapTokens: SEARCH_CHUNK_OVERLAP_TOKENS,
     countTokens: (text: string) => {
-      try { return tokenizer.encode(text).ids.length; }
+      // tokenize uses the same pipeline as encode without allocating unused
+      // token-ID and attention-mask arrays. Its framing default is different.
+      try { return tokenizer.tokenize(text, { add_special_tokens: true }).length; }
       finally { model.clear_cache(); }
     },
   });
