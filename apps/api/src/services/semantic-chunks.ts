@@ -32,7 +32,7 @@ export async function semanticChunks(text: string, policy: SemanticChunkPolicy):
     || policy.overlapTokens >= policy.maxTokens) {
     throw new Error("invalid_semantic_chunk_policy");
   }
-  if (!text) return [];
+  if (!text.trim()) return [];
   const prefix = policy.prefix ?? "";
   const count = async (value: string): Promise<number> => {
     const tokens = await policy.countTokens(value);
@@ -56,6 +56,9 @@ export async function semanticChunks(text: string, policy: SemanticChunkPolicy):
       return;
     }
     const passage = text.slice(start, end);
+    // Whitespace has no semantic content and embedding providers reject it.
+    // Keep the original offsets and bytes of every meaningful passage.
+    if (!passage.trim()) return;
     chunks.set(key, { start, end, text: passage, embeddingText: prefix + passage, strategies: [strategy] });
   };
 
