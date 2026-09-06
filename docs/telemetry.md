@@ -62,6 +62,12 @@ whose source is `api`; server producers call the internal emitter directly. The
 shared envelope schema accepts API events so those internal producers remain
 typed, not so a session-bearing client can claim server authority.
 
+Application icon ingestion retains every shipped identifier in
+`TELEMETRY_APPLICATION_ICON_IDS`, including retired artwork, for both regional
+collectors and the desktop spool. `CURRENT_APPLICATION_ICON_IDS` is the smaller
+selection/persistence allowlist. Replacing artwork adds a new identifier rather
+than reusing a retired one; Ludicrous speed's supplied artwork uses `ludicrous`.
+
 Legacy envelopes have the frozen context v1 shape. Native desktop enrichment
 uses `contextSchemaVersion: 2`; the regional reader accepts both shapes, while
 API-generated events remain on v1. The regional reader must reach both regions
@@ -686,6 +692,23 @@ the dry-run evidence; change batching or sampling only after measuring those
 signals, never by weakening policy or deadline tests.
 
 ## Changelog
+
+### 2026-09-06 — Retain historical application icon identifiers
+
+**What changed:** Separated current selectable icons from the append-only
+telemetry icon enum, retaining both previous artwork generations in ingestion.
+
+**Why:** Removing old values rejects legitimate events from installed clients
+and queued events during an upgrade. A selection change must not shrink the
+released event contract.
+
+**Considered and rejected:** Versioning the same event solely for an artwork
+replacement would add a second event shape without changing its meaning.
+
+**Consequences:** Both regions and the desktop spool continue to accept retired
+IDs. New artwork receives a fresh ID so historical observations stay distinct.
+
+PR: #566.
 
 ### 2026-09-04 — Stop emitting retired navigation-shortcut events
 

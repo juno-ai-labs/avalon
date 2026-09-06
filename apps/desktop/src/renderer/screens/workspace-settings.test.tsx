@@ -1748,14 +1748,14 @@ describe('Workspace settings', () => {
     renderSettings();
     openSettingsSection('Application');
 
-    const clay = await screen.findByRole('button', { name: 'Clay court app icon' });
+    const ludicrous = await screen.findByRole('button', { name: 'Ludicrous speed app icon' });
     expect(screen.getByRole('button', { name: 'Dark app icon' })).toHaveAttribute('aria-pressed', 'true');
-    fireEvent.click(clay);
+    fireEvent.click(ludicrous);
 
-    expect(clay).toHaveClass('is-jumping');
-    expect(clay).toHaveAttribute('aria-pressed', 'true');
-    await waitFor(() => expect(setApplicationIcon).toHaveBeenCalledWith('clay-court'));
-    expect(await screen.findByText('Clay court is selected.')).toBeVisible();
+    expect(ludicrous).toHaveClass('is-jumping');
+    expect(ludicrous).toHaveAttribute('aria-pressed', 'true');
+    await waitFor(() => expect(setApplicationIcon).toHaveBeenCalledWith('ludicrous'));
+    expect(await screen.findByText('Ludicrous speed is selected.')).toBeVisible();
 
     fireEvent.click(screen.getByRole('button', { name: 'Use the system icon' }));
     await waitFor(() => expect(resetApplicationIcon).toHaveBeenCalledTimes(1));

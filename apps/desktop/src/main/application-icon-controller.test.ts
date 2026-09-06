@@ -52,12 +52,31 @@ function setup(overrides: Partial<ApplicationIconControllerDependencies> = {}) {
 }
 
 describe('application icon controller', () => {
+  it('cleans a retired native icon before clearing its preference and retries failures', async () => {
+    const context = setup({ readStoredIcon: vi.fn(async (): Promise<'retired'> => 'retired') });
+    context.resetNativeIcon.mockRejectedValueOnce(new Error('native reset failed'));
+    await expect(context.controller.restore()).rejects.toThrow('native reset failed');
+    expect(context.clearStoredIcon).not.toHaveBeenCalled();
+    await context.controller.restore();
+    expect(context.resetNativeIcon).toHaveBeenCalledTimes(2);
+    expect(context.clearStoredIcon).toHaveBeenCalledOnce();
+    expect(context.controller.state().isAutomatic).toBe(true);
+    expect(context.applyIcon).not.toHaveBeenCalled();
+  });
+
+  it('leaves an absent preference alone on startup', async () => {
+    const context = setup();
+    await context.controller.restore();
+    expect(context.resetNativeIcon).not.toHaveBeenCalled();
+    expect(context.clearStoredIcon).not.toHaveBeenCalled();
+  });
+
   it('reports a restored icon only after native application succeeds', async () => {
     const successful = setup();
-    successful.setStoredIcon('clay-court');
+    successful.setStoredIcon('ludicrous');
     await successful.controller.restore();
     expect(successful.controller.state()).toEqual({
-      activeIcon: 'clay-court',
+      activeIcon: 'ludicrous',
       isAutomatic: false,
       supported: true,
     });
@@ -67,7 +86,7 @@ describe('application icon controller', () => {
         throw new Error('native restore failed');
       }),
     });
-    failed.setStoredIcon('clay-court');
+    failed.setStoredIcon('ludicrous');
     await expect(failed.controller.restore()).rejects.toThrow('native restore failed');
     expect(failed.controller.state()).toEqual({
       activeIcon: 'light',
@@ -81,10 +100,10 @@ describe('application icon controller', () => {
     context.setStoredIcon('dark');
     await context.controller.restore();
     context.applyIcon.mockImplementation(async (iconId) => {
-      if (iconId === 'clay-court') throw new Error('cache refresh failed');
+      if (iconId === 'ludicrous') throw new Error('cache refresh failed');
     });
 
-    await expect(context.controller.change('clay-court')).rejects.toThrow('cache refresh failed');
+    await expect(context.controller.change('ludicrous')).rejects.toThrow('cache refresh failed');
 
     expect(context.storedIcon()).toBe('dark');
     expect(context.applyIcon).toHaveBeenLastCalledWith('dark');
@@ -97,7 +116,7 @@ describe('application icon controller', () => {
     });
     const context = setup({ applyIcon });
 
-    await expect(context.controller.change('clay-court')).rejects.toThrow('finder update failed');
+    await expect(context.controller.change('ludicrous')).rejects.toThrow('finder update failed');
 
     expect(context.storedIcon()).toBeNull();
     expect(context.resetNativeIcon).toHaveBeenCalledOnce();
@@ -106,15 +125,15 @@ describe('application icon controller', () => {
 
   it('re-applies the custom icon when reset fails partway', async () => {
     const context = setup();
-    context.setStoredIcon('grass-court');
+    context.setStoredIcon('calm');
     await context.controller.restore();
     context.resetNativeIcon.mockRejectedValueOnce(new Error('reset failed'));
 
     await expect(context.controller.reset()).rejects.toThrow('reset failed');
 
-    expect(context.storedIcon()).toBe('grass-court');
-    expect(context.applyIcon).toHaveBeenLastCalledWith('grass-court');
-    expect(context.controller.state().activeIcon).toBe('grass-court');
+    expect(context.storedIcon()).toBe('calm');
+    expect(context.applyIcon).toHaveBeenLastCalledWith('calm');
+    expect(context.controller.state().activeIcon).toBe('calm');
   });
 
   it('serializes overlapping mutations', async () => {
@@ -122,34 +141,34 @@ describe('application icon controller', () => {
     const calls: ApplicationIconId[] = [];
     const applyIcon = vi.fn((iconId: ApplicationIconId) => {
       calls.push(iconId);
-      if (iconId !== 'clay-court') return Promise.resolve();
+      if (iconId !== 'ludicrous') return Promise.resolve();
       return new Promise<void>((resolve) => {
         finishFirst = resolve;
       });
     });
     const context = setup({ applyIcon });
 
-    const first = context.controller.change('clay-court');
-    const second = context.controller.change('grass-court');
-    await vi.waitFor(() => expect(calls).toEqual(['clay-court']));
+    const first = context.controller.change('ludicrous');
+    const second = context.controller.change('calm');
+    await vi.waitFor(() => expect(calls).toEqual(['ludicrous']));
     finishFirst();
-    await expect(first).resolves.toMatchObject({ activeIcon: 'clay-court' });
-    await expect(second).resolves.toMatchObject({ activeIcon: 'grass-court' });
-    expect(calls).toEqual(['clay-court', 'grass-court']);
+    await expect(first).resolves.toMatchObject({ activeIcon: 'ludicrous' });
+    await expect(second).resolves.toMatchObject({ activeIcon: 'calm' });
+    expect(calls).toEqual(['ludicrous', 'calm']);
   });
 
   it('continues the mutation queue after a rejected change', async () => {
     const applyIcon = vi.fn(async (iconId: ApplicationIconId) => {
-      if (iconId === 'clay-court') throw new Error('first change failed');
+      if (iconId === 'ludicrous') throw new Error('first change failed');
     });
     const context = setup({ applyIcon });
 
-    const failed = context.controller.change('clay-court');
-    const next = context.controller.change('grass-court');
+    const failed = context.controller.change('ludicrous');
+    const next = context.controller.change('calm');
 
     await expect(failed).rejects.toThrow('first change failed');
-    await expect(next).resolves.toMatchObject({ activeIcon: 'grass-court' });
-    expect(context.storedIcon()).toBe('grass-court');
+    await expect(next).resolves.toMatchObject({ activeIcon: 'calm' });
+    expect(context.storedIcon()).toBe('calm');
   });
 
   it('waits for startup restoration before accepting a user mutation', async () => {
@@ -166,17 +185,17 @@ describe('application icon controller', () => {
     context.setStoredIcon('dark');
 
     const restore = context.controller.restore();
-    const change = context.controller.change('clay-court');
+    const change = context.controller.change('ludicrous');
     await vi.waitFor(() => expect(calls).toEqual(['dark']));
     finishRestore();
     await restore;
-    await expect(change).resolves.toMatchObject({ activeIcon: 'clay-court' });
-    expect(calls).toEqual(['dark', 'clay-court']);
+    await expect(change).resolves.toMatchObject({ activeIcon: 'ludicrous' });
+    expect(calls).toEqual(['dark', 'ludicrous']);
   });
 
   it('rejects unsupported and unallowlisted requests before persistence', async () => {
     const unsupported = setup({ supported: false });
-    await expect(unsupported.controller.change('clay-court')).rejects.toThrow('only on macOS');
+    await expect(unsupported.controller.change('ludicrous')).rejects.toThrow('only on macOS');
     expect(unsupported.writeStoredIcon).not.toHaveBeenCalled();
 
     const invalid = setup();
