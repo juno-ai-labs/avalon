@@ -1393,6 +1393,50 @@ pre {
 .fatal-error-card > svg { color: var(--av-sys-color-danger-base); }
 .fatal-error-card p { color: var(--av-sys-color-text-muted); }
 
+/* Connection recovery uses the same soft, grouped surfaces as Settings. */
+.service-setup-screen,
+.fatal-error-screen { overflow: auto; padding: 64px 24px 32px; }
+.service-setup-card,
+.fatal-error-card {
+  background: var(--av-sys-color-surface-raised);
+  border: .5px solid var(--av-ref-color-line-3);
+  border-radius: 24px;
+  box-shadow: var(--av-sys-elevation-shadow-sm);
+  margin: auto;
+  padding: 24px;
+  width: min(480px, 100%);
+}
+.service-setup-card .setup-icon {
+  background: var(--av-sys-color-surface-raised-hover);
+  border-radius: 14px;
+  color: var(--av-sys-color-text-subtle);
+  margin-bottom: 18px;
+  height: 44px;
+  width: 44px;
+}
+.service-setup-card h1 { font-size: 22px; font-weight: 560; letter-spacing: -.025em; line-height: 1.3; margin: 6px 0 10px; }
+.fatal-error-card h1 { font-size: 22px; font-weight: 560; letter-spacing: -.025em; line-height: 1.3; margin: 0 0 10px; }
+.fatal-error-card > svg { background: var(--av-sys-color-danger-wash); border-radius: 14px; box-sizing: content-box; display: block; margin-bottom: 18px; padding: 11px; }
+.fatal-error-card p { font-size: 14px; line-height: 1.5; margin: 0 0 20px; overflow-wrap: anywhere; }
+.fatal-error-card > .button { border-radius: 999px; min-height: 36px; padding: 8px 14px; }
+.service-setup-card > p:not(.eyebrow) { font-size: 14px; line-height: 1.5; }
+.service-setup-card dl { background: var(--av-sys-color-surface-raised-hover); border: .5px solid var(--av-ref-color-line-3); border-radius: 12px; margin: 20px 0 12px; overflow: hidden; padding: 0; }
+.service-setup-card dl div { align-items: baseline; gap: 12px; grid-template-columns: 88px minmax(0, 1fr); padding: 12px 14px; }
+.service-setup-card dl div + div { border-top: .5px solid var(--av-ref-color-line-3); }
+.service-setup-card dd { line-height: 1.45; min-width: 0; }
+.service-setup-card .setup-guidance { background: var(--av-sys-color-surface-raised-hover); border-radius: 12px; padding: 14px; }
+.service-setup-card .setup-guidance strong { color: var(--av-sys-color-text-default); font-weight: 560; }
+.service-setup-card .setup-guidance p { line-height: 1.5; margin-top: 6px; }
+.service-setup-card .setup-actions { flex-wrap: wrap; gap: 8px; margin-top: 20px; }
+.service-setup-card .setup-actions .button { border-radius: 999px; min-height: 36px; padding: 8px 14px; }
+@media (max-width: 480px) {
+  .service-setup-screen,
+  .fatal-error-screen { padding-inline: 16px; }
+  .service-setup-card,
+  .fatal-error-card { padding: 20px; }
+  .service-setup-card .setup-actions .button { flex: 1 1 auto; }
+}
+
 /* Shared screens */
 
 .screen-with-titlebar { height: 100%; position: relative; }
@@ -3362,9 +3406,31 @@ pre {
 .run-stopped-copy { min-width: 0; }
 .run-stopped-copy strong { color: var(--av-sys-color-text-default); display: block; font-size: 12px; margin-bottom: 3px; }
 .run-stopped-copy p { color: var(--av-sys-color-text-subtle); font-size: 11px; line-height: 1.45; margin: 0; }
+.run-failure-notice,
+.run-stopped-notice {
+  border-width: .5px;
+  border-radius: 16px;
+  gap: 12px;
+  grid-template-columns: 32px minmax(0, 1fr);
+  padding: 16px;
+}
+.run-failure-notice { background: var(--av-sys-color-danger-wash); border-color: var(--av-sys-color-danger-edge); }
+.run-stopped-notice { background: var(--av-sys-color-surface-raised); border-color: var(--av-ref-color-line-3); }
+.run-failure-icon,
+.run-stopped-icon { background: var(--av-sys-color-surface-raised-hover); border-radius: 10px; height: 32px; padding: 0; width: 32px; }
+.run-failure-copy strong,
+.run-stopped-copy strong { font-size: 14px; font-weight: 560; margin-bottom: 5px; }
+.run-failure-copy p,
+.run-stopped-copy p { font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.run-failure-copy code { display: block; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; white-space: pre-wrap; }
+.run-failure-actions { flex-wrap: wrap; gap: 8px; grid-column: 2; }
+.run-stopped-notice > .button { grid-column: 2; justify-self: start; }
+.run-failure-actions .button,
+.run-stopped-notice > .button { border-radius: 999px; min-height: 36px; padding: 8px 14px; white-space: normal; }
 .jump-bottom { align-items: center; background: var(--av-sys-color-surface-raised-hover); border: 1px solid var(--av-ref-color-line-4); border-radius: var(--av-sys-size-radius-pill); box-shadow: var(--av-sys-elevation-shadow-sm); color: var(--av-sys-color-text-subtle); display: flex; height: 30px; justify-content: center; left: 50%; padding: 0; pointer-events: auto; position: absolute; top: 5px; transform: translateX(-50%); width: 30px; z-index: 4; }
 .jump-bottom:hover { background: var(--av-sys-color-surface-elevated-hover); border-color: var(--av-ref-color-line-5); color: var(--av-sys-color-text-default); }
 .jump-bottom:focus-visible { border-color: var(--av-sys-color-focus-default); outline: 0; }
+.jump-bottom[aria-hidden="true"] { pointer-events: none; }
 
 /* Composer */
 

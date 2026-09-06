@@ -120,18 +120,25 @@ export function MessageFeed({
   virtualizer,
 }: MessageFeedProps): React.JSX.Element {
   const feed = useRef<HTMLDivElement>(null);
+  // Keep consumed globally unique row IDs for this feed's lifetime, including
+  // route revisits: a still-live cached overlay must not replay on navigation.
   const seen = useRef(new Set<string>());
   useLayoutEffect(() => {
     const entering = new Set<string>();
+    const liveIds = [...(liveMessageIds ?? [])];
     for (const message of messages) {
-      const identity = message.clientMessageId ?? message.transcriptTurnId ?? message.id;
+      // Only text replacements reconcile at turn scope. Tools and plugin groups
+      // are independent rows, even when they share the text's turn/client ID.
+      const identity = message.messageType === 'text'
+        ? `text:${message.clientMessageId ?? message.transcriptTurnId ?? message.id}`
+        : `row:${message.id}`;
       const live = liveMessageIds?.has(message.id) || (message.messageType === 'plugin_activity'
-        && [...(liveMessageIds ?? [])].some((id) => message.id.startsWith(`${id}:plugin-group:`)));
+        && liveIds.some((id) => message.id.startsWith(`${id}:plugin-group:`)));
       if (!seen.current.has(identity) && live) entering.add(message.id);
       // Consume offscreen arrivals too: scrolling them into view is not arrival.
       seen.current.add(identity);
     }
-    if (document.visibilityState === 'hidden' || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+    if (!entering.size || document.visibilityState === 'hidden' || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
     for (const element of feed.current?.querySelectorAll<HTMLElement>('[data-arrival-id]') ?? []) {
       if (!entering.has(element.dataset.arrivalId ?? '') || !element.animate) continue;
       element.animate([
@@ -139,7 +146,7 @@ export function MessageFeed({
         { opacity: 1, transform: 'translateY(0) scale(1)' },
       ], { duration: 240, easing: 'cubic-bezier(.23, 1, .32, 1)' });
     }
-  });
+  }, [messages, liveMessageIds]);
   // Held here rather than by each adapter: which rows a reader has opened is
   // feed state, it resets when the feed unmounts, and neither screen did
   // anything else with it. One set for both kinds of collapsible row — a
