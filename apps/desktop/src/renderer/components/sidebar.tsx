@@ -75,6 +75,7 @@ import { ContextNestedMenu } from './nested-menu';
 import { WorkstreamGlyph } from './workstream-glyph';
 
 interface SidebarProps {
+  onOpenSearch?: () => void;
   /** GrokBot-style shell: navigation is work streams only. */
   conversationOnly?: boolean;
   /** The responsive or manually selected GrokBot icon rail. */
@@ -990,6 +991,7 @@ function moveWithin(ids: string[], id: string, index: number): string[] {
 }
 
 export function Sidebar({
+  onOpenSearch,
   conversationOnly = false,
   compact = false,
   workspace,
@@ -1029,7 +1031,6 @@ export function Sidebar({
   onLoadMoreNotes,
 }: SidebarProps): React.JSX.Element {
   const debugEnabled = useDebugEnabled();
-  const [searchQuery, setSearchQuery] = useState('');
   const location = useLocation();
   const sidebarOpen = useUiStore((state) => state.sidebarOpen);
   const sidebarCollapsed = useUiStore((state) => state.sidebarCollapsed);
@@ -1113,34 +1114,9 @@ export function Sidebar({
   const [batchPreviewFailed, setBatchPreviewFailed] = useState(false);
   const batchPreviewGeneration = useRef(0);
   const [deleteTarget, setDeleteTarget] = useState<AutomationSummary | null>(null);
-  const normalizedSearch = searchQuery.trim().toLowerCase();
-  const searchedPage = useRef<{ query: string; rows: typeof workstreams } | null>(null);
-  useEffect(() => {
-    if (!normalizedSearch) {
-      searchedPage.current = null;
-      return;
-    }
-    if (!hasMoreWorkstreams || loadingMoreWorkstreams || !onLoadMoreWorkstreams) return;
-    // A failed page leaves the same rows in place. Do not automatically retry
-    // that failure forever; the explicit load action below can retry it.
-    if (searchedPage.current?.query === normalizedSearch && searchedPage.current.rows === workstreams) return;
-    searchedPage.current = { query: normalizedSearch, rows: workstreams };
-    onLoadMoreWorkstreams();
-  }, [normalizedSearch, hasMoreWorkstreams, loadingMoreWorkstreams, onLoadMoreWorkstreams, workstreams]);
-  const visibleWorkstreams = useMemo(() => normalizedSearch
-    ? workstreams.filter((workstream) => [workstream.title, workstream.preview, workstream.objective]
-      .some((value) => value?.toLowerCase().includes(normalizedSearch)))
-    : workstreams, [normalizedSearch, workstreams]);
-  const visibleNotes = useMemo(() => conversationOnly
-    ? []
-    : normalizedSearch
-      ? notes.filter((note) => note.title.toLowerCase().includes(normalizedSearch))
-      : notes, [conversationOnly, normalizedSearch, notes]);
-  const visibleAutomations = useMemo(() => conversationOnly
-    ? []
-    : normalizedSearch
-      ? automations.filter((automation) => automation.name.toLowerCase().includes(normalizedSearch))
-      : automations, [automations, conversationOnly, normalizedSearch]);
+  const visibleWorkstreams = workstreams;
+  const visibleNotes = useMemo(() => conversationOnly ? [] : notes, [conversationOnly, notes]);
+  const visibleAutomations = useMemo(() => conversationOnly ? [] : automations, [conversationOnly, automations]);
   // Drafts are listed with the rest: a draft is a conversation in progress on
   // the automation's own screen, which is where its row leads.
   const orderedAutomations = visibleAutomations;
@@ -1693,17 +1669,10 @@ export function Sidebar({
           ref={scrollRef}
         >
           <div className="sidebar-commandbar window-no-drag">
-            <label className="sidebar-search">
+            <button className="sidebar-search" type="button" onClick={onOpenSearch} aria-label="Search workspace">
               <Search aria-hidden="true" size={14} />
-              <span className="sr-only">Search work streams</span>
-              <input
-                aria-label="Search work streams"
-                onChange={(event) => setSearchQuery(event.currentTarget.value)}
-                placeholder="Search"
-                type="search"
-                value={searchQuery}
-              />
-            </label>
+              <span>Search</span>
+            </button>
           </div>
           {conversationOnly && location.pathname === '/workstreams/new' && (
             <div aria-current="page" aria-label="New chat draft" className="sidebar-new-chat-draft">
@@ -1858,9 +1827,7 @@ export function Sidebar({
               // holds when nothing is pinned either; with everything pinned the
               // section has nothing left to say and says nothing.
               pinnedWorkstreams.length === 0 && (
-                <p className="sidebar-empty">{normalizedSearch
-                  ? hasMoreWorkstreams ? 'No matches in loaded work streams' : 'No matching work streams'
-                  : 'No work streams or notes yet'}</p>
+                <p className="sidebar-empty">No work streams or notes yet</p>
               )
             ) : (
               groups.map((group) => (
@@ -1946,9 +1913,7 @@ export function Sidebar({
             {(loadingMoreWorkstreams || loadingMoreNotes) && (
               <p aria-live="polite" className="sidebar-empty">Loading more…</p>
             )}
-            {normalizedSearch && hasMoreWorkstreams && !loadingMoreWorkstreams && onLoadMoreWorkstreams && (
-              <button className="sidebar-empty" onClick={onLoadMoreWorkstreams} type="button">Search more work streams</button>
-            )}
+
           </section>
         </nav>
 
