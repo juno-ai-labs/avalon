@@ -86,9 +86,9 @@ describe("semantic indexing", () => {
   const document = { id: "test-document", source: "note", sourceId: "n1", scopeId: "private", revision: 3, text: "alpha\n\nbeta\n\ngamma" };
   const policy = { maxTokens: 12, overlapTokens: 4, countTokens: (text: string) => text.length };
 
-  it("writes both chunk strategies with the parent's authority and revision", async () => {
+  it.each(["qwen/qwen3-embedding-8b", "Qwen/Qwen3-Embedding-8B"])("writes both chunk strategies for %s with the parent's authority and revision", async (model) => {
     const ids = await indexSemanticDocument(index, document, policy, async () => ({
-      model: "qwen/qwen3-embedding-8b", vector: Array.from({ length: 1024 }, () => 1),
+      model, vector: Array.from({ length: 1024 }, () => 1),
     }));
     expect(ids.length).toBeGreaterThan(1);
     expect(provider.write).toHaveBeenCalledWith(expect.objectContaining({

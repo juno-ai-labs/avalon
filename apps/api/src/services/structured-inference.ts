@@ -19,6 +19,12 @@ import { captureStructuredInferenceDiagnostic } from "./inference-lakehouse";
 
 const STRUCTURED_INFERENCE_TIMEOUT_MS = 2 * 60_000;
 export const MEMORY_EMBEDDING_MODEL = "qwen/qwen3-embedding-8b" as const;
+/** Provider capitalization is not a change of embedding space. */
+export function isMemoryEmbeddingModel(model: string): boolean {
+  // OpenRouter returns Qwen/Qwen3-Embedding-8B for the canonical routing slug.
+  return model.toLowerCase() === MEMORY_EMBEDDING_MODEL;
+}
+
 const MEMORY_EMBEDDING_FEATURE = "memory_embedding";
 
 type StructuredInferenceRole = Extract<

@@ -614,8 +614,9 @@ describe("scoped agent memory", () => {
     });
   });
 
-  it("uses one fixed embedding space, rejects stale vectors, and degrades to FTS", async () => {
+  it.each(["qwen/qwen3-embedding-8b", "Qwen/Qwen3-Embedding-8B"])("uses one fixed embedding space for %s, rejects stale vectors, and degrades to FTS", async (model) => {
     const { objectDatabase, env, embeddings, vector } = fixture();
+    embeddings.resolvedModel = model;
     const getObjectDetails = vi.fn<Flagship["getObjectDetails"]>();
     env.FLAGS = createCloudflareTestBinding<Flagship>({ getObjectDetails });
     const runInput = input("owner");
