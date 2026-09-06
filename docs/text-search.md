@@ -290,6 +290,8 @@ budgets require team policy; no arbitrary new caps are introduced here.
 
 **What changed:** Semantic indexing compares the returned model identifier without
 case sensitivity, while retaining dimension and finite-value validation.
+Search and scoped memory share `isMemoryEmbeddingModel` in
+`structured-inference.ts` for both document and query embeddings.
 
 **Why:** Production OpenRouter responses identify the requested model as
 `Qwen/Qwen3-Embedding-8B`. The previous comparison required the lowercase routing
