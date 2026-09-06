@@ -1,3 +1,4 @@
+import { searchIndexingConfigured } from '../services/search-embedding';
 import { z } from 'zod';
 import { IdSchema, WorkspaceIdSchema } from '@rally/contracts';
 import type { Env } from '../env';
@@ -34,11 +35,13 @@ export function resourceSearchRevision(sql: SqlStorage, resourceId: string): num
   return sql.exec<{ revision: number }>('SELECT revision FROM resource_search_versions WHERE resource_id = ?', resourceId)
     .toArray()[0]?.revision ?? null;
 }
-export function nextResourceSearchDueAt(sql: SqlStorage): number | null {
+export function nextResourceSearchDueAt(sql: SqlStorage, env?: Env): number | null {
+  if (env && !searchIndexingConfigured(env)) return null;
   return sql.exec<{ due_at: number | null }>('SELECT MIN(not_before) AS due_at FROM resource_search_versions WHERE pending = 1')
     .one().due_at;
 }
 export async function publishResourceSearch(sql: SqlStorage, env: Env, workspaceId: string): Promise<void> {
+  if (!searchIndexingConfigured(env)) return;
   // The existing activity Queue accepts at most 100 messages in one batch.
   const rows = sql.exec<{ resource_id: string; revision: number }>(
     'SELECT resource_id, revision FROM resource_search_versions WHERE pending = 1 AND not_before <= ? ORDER BY resource_id LIMIT 100', Date.now(),

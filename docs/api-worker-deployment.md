@@ -296,12 +296,13 @@ for Azure-bound models in its route plan.
 
 ### 2026-09-05 — Search capture binding
 
-Both regional API configurations declare the `BROWSER` Browser Run binding for asynchronous conversation-link capture. The existing activity Queue consumer centralizes lexical indexing, Qwen tokenization, chunking, and embeddings in the regional API Worker. The tokenizer dependency is statically imported; public model assets are fetched at a pinned revision during Queue execution, not isolate startup. Both regions need explicit `SEARCH_CHUNK_MAX_TOKENS` and `SEARCH_CHUNK_OVERLAP_TOKENS` settings before indexing jobs run. Turbopuffer credentials are server secrets: production uses `TURBO_PUFFER_PROD_API_KEY`, development uses `TURBO_PUFFER_DEV_API_KEY`. Deploying these bindings does not backfill dormant objects; the [text-search operations procedure](text-search.md#operations) covers the separate migration wake and Queue verification.
+**What changed:** Both regional Workers gained Browser Run and shared search configuration.
 
-The member search requirement needs durable indexing and recognizable matching
-sections. Local filtering and synchronous page capture were rejected because
-they omit unloaded content or delay message admission. Current source authority
-and existing regional delivery remain the boundaries future changes must respect.
+**Why:** Indexing must be deployable without flooding the control-effect dead-letter queue before settings exist.
+
+**Considered and rejected:** Unconfigured jobs are retained at producers rather than published into guaranteed retries.
+
+**Consequences:** Configure keys and token budgets, wake objects, and verify indexing separately from schema reports.
 
 ### 2026-09-02 — Take zod 4.5's prototype memoization for API startup headroom
 

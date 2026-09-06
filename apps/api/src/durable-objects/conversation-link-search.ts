@@ -1,3 +1,4 @@
+import { logWarn } from "../observability/logger";
 import { HttpUrlSchema } from '@rally/contracts/url-schemas';
 import { AVALON_WEB_PLUGIN_ID } from '@rally/agent-harness';
 import { z } from 'zod';
@@ -49,8 +50,8 @@ export function conversationLinks(turn: TranscriptTurn): Map<string, string> {
         add(url, label || url);
       }
     } else if (block.type === 'tool' && block.status === 'completed'
-      && (block.toolName === 'web_fetch' || block.toolName === 'web.fetch'
-        || (block.pluginId === AVALON_WEB_PLUGIN_ID && block.toolName === 'fetch'))) {
+      && block.pluginId === AVALON_WEB_PLUGIN_ID
+      && (block.toolName === 'web_fetch' || block.toolName === 'web.fetch' || block.toolName === 'fetch')) {
       const input = z.object({ url: z.string() }).safeParse(block.participantSafeInput);
       if (input.success) add(input.data.url);
     }
@@ -101,7 +102,13 @@ export async function prepareConversationLinks(sql: SqlStorage, env: Env,
       if (!readConversationSearchLink(sql, row.id, readTurn())) continue;
       sql.exec(`UPDATE conversation_search_links SET markdown = ?, captured = 1, revision = revision + 1
         WHERE id = ? AND revision = ? AND deleted = 0`, payload.result, row.id, row.revision);
-    } catch { captureFailed = true; }
+    } catch {
+      captureFailed = true;
+      logWarn(env, 'search_link_capture_failed', {
+        workspace_id: identity.workspaceId, workstream_id: identity.parentId,
+        substream_id: identity.substreamId, link_id: row.id,
+      });
+    }
   }
   const documents: SearchDocumentBatch['documents'] = [];
   for (const row of sql.exec<LinkRow>('SELECT * FROM conversation_search_links WHERE turn_id = ?', turnId).toArray()) {

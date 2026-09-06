@@ -58,8 +58,18 @@ export async function semanticChunks(text: string, policy: SemanticChunkPolicy):
 
   const windowEnd = async (start: number, end: number) => {
     let low = positions.get(start)! + 1;
-    let high = positions.get(end)!;
+    const startPosition = positions.get(start)!;
+    const endPosition = positions.get(end)!;
+    let high = Math.min(low, endPosition);
     let best = start;
+    // Grow from the chunk start instead of repeatedly tokenizing half of the
+    // entire remaining document for every window.
+    while (await fits(start, boundaries[high]!)) {
+      best = boundaries[high]!;
+      if (high === endPosition) return best;
+      low = high + 1;
+      high = Math.min(endPosition, startPosition + (high - startPosition) * 2);
+    }
     // Token counts need not be strictly monotonic under BPE. Binary search may
     // leave some budget unused, but every accepted candidate is measured.
     while (low <= high) {
@@ -105,7 +115,7 @@ export async function semanticChunks(text: string, policy: SemanticChunkPolicy):
 
   let start = 0;
   while (start < text.length) {
-    const end = await fits(start, text.length) ? text.length : await windowEnd(start, text.length);
+    const end = await windowEnd(start, text.length);
     add(start, end, "sliding_window");
     if (end === text.length) break;
     let next = end;

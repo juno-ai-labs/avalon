@@ -1669,7 +1669,7 @@ export function Sidebar({
           ref={scrollRef}
         >
           <div className="sidebar-commandbar window-no-drag">
-            <button className="sidebar-search" type="button" onClick={onOpenSearch} aria-label="Search workspace">
+            <button className="sidebar-search" type="button" onClick={onOpenSearch} disabled={!onOpenSearch} aria-label="Search workspace">
               <Search aria-hidden="true" size={14} />
               <span>Search</span>
             </button>

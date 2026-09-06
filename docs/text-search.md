@@ -88,7 +88,8 @@ Identical spans are deduplicated and carry both strategy labels.
 
 `SEARCH_CHUNK_MAX_TOKENS` and `SEARCH_CHUNK_OVERLAP_TOKENS` are global pipeline
 settings, never source options. They have no guessed defaults. Missing or invalid
-settings fail the vector step and retry the job; they do not silently disable
+settings pause producers while retaining intents; an already queued job still fails
+the vector step and retries rather than silently disabling
 semantic indexing. Lexical text is written first and remains available.
 
 The shared integration loads the Qwen3-Embedding-8B tokenizer's public assets at
@@ -208,10 +209,16 @@ existing regional `ACTIVITY_QUEUE` transport with reference-only messages. The
 consumer reloads current source state and conditionally writes its revision.
 Resource watermarks survive deletion; transcript deletes publish tombstones.
 
-Object alarms dispatch pending references. Queue acceptance clears only the
+Object alarms dispatch pending references only when the regional key, embedding key,
+and valid chunk settings are present. Otherwise intents remain pending and search
+due-times are excluded from alarms. Configure and wake the objects to resume. Queue acceptance clears only the
 revision dispatched, so a concurrent edit remains pending. Dispatch failures use
 the existing regional outbox retry interval; projection failures remain Queue
-failures and follow its configured retries and dead-letter handling.
+failures and follow its configured retries and dead-letter handling. Once a job
+reaches the DLQ its original dispatch intent has already been cleared. Recovery
+requires redriving the dead-letter reference; a routine wake does not recreate a
+completed migration's backfill INSERT. New source edits produce new intents. Do
+not discard DLQ messages or assume a migration report repairs their contents.
 
 Deploy both API Workers with their `BROWSER` binding and production Turbopuffer
 secret and the shared `SEARCH_CHUNK_MAX_TOKENS` / `SEARCH_CHUNK_OVERLAP_TOKENS`
@@ -241,88 +248,72 @@ missing derivatives cannot produce body matches until extraction completes.
 Production needs team-selected global chunk token size and overlap before enabling
 indexing jobs, followed by deployment and backfill. Memory,
 notes/table text, agent tools, and external provider ranking still need migration.
-The member conversation source currently enumerates the work-stream directory;
-archived parents and automation-run coverage need an explicit source inventory.
+Conversation discovery queries the workspace namespace and authorizes each hit;
+archived parents and automation runs still require navigation/coverage verification.
 BM25/semantic canonical filtering can shorten a page; their refill and client
 pagination are not implemented. Substring requests refill rejected candidates.
 
+## Regional impact
+
+Global projects content into Turbopuffer gcp-us-west1; EU uses gcp-europe-west1.
+Namespace identity includes workspace, environment and region. Browser Run is a
+Cloudflare hosted dependency in each regional Worker. The Qwen embedding provider
+receives the source passages through the existing inference integration; the
+Turbopuffer region alone does not establish residency for that separate processor.
+No cross-region fallback is permitted.
+
+## Security and trust model
+
+Index content is never an access grant. Member routes reauthenticate after awaits,
+and source loaders recheck canonical parent/private-child or connector ownership
+before returning text. Connector resources retain their existing connection scope
+and owner rules. Attachment access checks the exact owning child, including when
+the main-feed directory has no attachment hint. The workspace namespace permits
+candidate discovery without enumerating the directory; every candidate still
+passes canonical authorization.
+
+The public tokenizer commit is an identifier, not a secret. Production and
+development keys must have appropriately separate provider permissions; namespace
+names are not credential isolation. No key reaches the renderer. Browser capture
+is unauthenticated public-page retrieval explicitly requested for posted links;
+it sends no user browser cookies or connector credentials. The URL helper rejects
+literal local/private hosts, including mapped and site-local IPv6, but is not a DNS
+or redirect firewall. Browser Run executes remotely rather than on a user's or
+Worker's private network. Captures are snapshots and are not refreshed just because
+the same URL is mentioned again. Missing extraction/capture work remains observable
+through Queue failure rather than silent truncation. Document-size and capture
+budgets require team policy; no arbitrary new caps are introduced here.
+
 ## Changelog
 
-### 2026-09-05 — Centralize text processing in the Queue Worker
+### 2026-09-06 — Member search and one regional text pipeline
 
-**What changed:** Source RPCs now return canonical documents instead of writing
-indexes. One regional Queue pipeline owns lossless lexical indexing, recursive and
-sliding-window chunking, Qwen tokenization and embedding, and generation cleanup.
+**What changed:** Added the five-tab modal, canonical excerpts, repeatable message
+navigation, authorized resource previews, and durable projection intents. The
+regional Queue pipeline owns lexical text plus recursive/sliding-window chunks
+and Qwen embeddings for messages, attachments, artifacts, and captured pages.
+Review fixes pause unconfigured producers without losing intents, batch message
+reads, and preserve equal-revision rewrites during extraction races.
 
-**Why:** Messages, attachments, artifacts, and pages must receive identical text
-processing. Letting individual source handlers select indexing policy would make
-results and chunk sizes drift as new sources were added.
+**Why:** The requested product direction is one Turbopuffer search system and one
+text-processing pipeline. Local sidebar filtering cannot search unloaded contents.
+Semantic indexing ships now because all sources were explicitly requested to use
+the same chunking/embedding pipeline; member ANN controls and the remaining
+memory/agent/provider cutover are separate unfinished callers.
 
-**Considered and rejected:** Per-source vectorization and chunk-size overrides
-were removed. The existing regional Queue provides durable delivery, so a second
-transport was unnecessary. Character token estimates were rejected in favor of
-the pinned model tokenizer.
+**Considered and rejected:** Keeping SQLite FTS plus Vectorize for some sources
+would preserve the split the user asked to remove. Per-source chunk policies and
+hybrid rank fusion were rejected by the requested architecture. Skipping failed
+semantic work with an acknowledgement would lose indexing; unconfigured producers
+instead retain their durable intents without hot alarms. Keeping old result pages
+after a new request would weaken revocation freshness, so pending results remain
+hidden and typing is debounced using the existing resource-picker delay.
 
-**Consequences:** Sources retain extraction and authorization. Global chunk size
-and overlap must be configured before production delivery; missing settings retry
-rather than silently acknowledging incomplete vector indexing. Legacy memory and
-agent/provider callers still need to migrate into this shared boundary.
-
-### 2026-09-05 — Member search and durable lexical projection
-
-**What changed:** Added the tabbed member modal, authorized canonical excerpts,
-message navigation, resource previews, transactional source indexing jobs, and
-Browser Run capture of conversation links. Split complete lexical documents and
-semantic chunks into generation-v3 namespaces. Reused attachment classification
-for readable originals so JSON and code MIME types contribute their contents.
-
-**Why:** People need to recognize the matching section and search uploaded or
-generated content without knowing its storage system. Capturing page contents on
-message admission would delay sending; durable background jobs keep that work
-off the interaction path and survive retries.
-
-**Considered and rejected:** Local sidebar filtering cannot search unloaded
-messages. Workspace-wide capture rows would lose private-substream audience.
-Putting lexical parents in a vector namespace would require synthetic embeddings.
-
-**Consequences:** Source stores remain authority and stale index results are
-rejected. Dormant objects require a migration wake. The broader memory and agent
-migration remains outstanding; the UI addition does not constitute that cutover.
-
-### 2026-09-04 — Separate retrieval modes and chunk semantic documents
-
-**What changed:** Removed hybrid retrieval and rank fusion. Added recursive and
-sliding-window semantic chunking, exact source offsets, duplicate-span elimination,
-model-space checks, and chunk-only ANN queries.
-
-**Why:** The requested product direction is explicit text or semantic retrieval.
-Structure-preserving passages and overlapping windows offer different semantic
-contexts without blending lexical scores into vector ranking.
-
-**Considered and rejected:** A single fixed character budget would ignore the
-selected embedding tokenizer and framing. Long model context windows do not by
-themselves define useful retrieval passage sizes. Silent Qwen/Gemini fallback
-would mix incompatible embedding spaces.
-
-**Consequences:** Sources must supply tokenizer-backed chunk policies and persist
-chunk generation IDs. Production cutover and existing memory search migration
-remain outstanding. No source-specific chunk-size defaults are chosen here.
-
-
-### 2026-09-04 — Shared retrieval boundary introduced
-
-**What changed:** Added the Turbopuffer SDK boundary, source grants, canonical
-loaders, four retrieval modes, and versioned deletion watermarks. Production
-credentials were provisioned separately on both regional API Workers.
-
-**Why:** Product and agent search need one retrieval system while retaining each
-data source's actual authorization authority. Separate FTS and vector-specific
-implementations would continue duplicating retrieval policy.
-
-**Considered and rejected:** Treating index metadata as authorization was rejected
-because revocation can happen while an external query is in flight. Physical
-row deletion alone was rejected because a delayed upsert could restore it.
-
-**Consequences:** This is not yet a product cutover. Source indexing, backfill,
-canonical authorization adapters, member UI, memory migration, and agent/provider
-search integration remain outstanding. No specialist reranker is introduced.
+**Consequences:** Set the team-selected chunk size and overlap, deploy and wake
+objects to publish pending work, then verify Queue drain and access revocation.
+Credentials were provisioned separately on both regional API Workers; code has not
+yet been deployed. Memory, notes/table text, agent tools and provider ranking still
+need migration. The old local sidebar filter for workstream/note/automation names
+is removed as part of the requested modal replacement; those name-only searches
+are not yet supported by the five indexed content categories. No reranker or
+embedding-model fallback is introduced.

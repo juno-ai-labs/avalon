@@ -5,7 +5,6 @@ import { useEffect, useId, useRef, useState } from 'react';
 import type { SearchCategory, SearchRequest, SearchResult } from '@rally/contracts/search';
 import { isComposingKeyEvent } from '../lib/ime';
 import { formatRelative } from '../lib/format';
-import './search-modal.css';
 
 const TABS: Array<{ id: SearchCategory; label: string }> = [
   { id: 'all', label: 'All' }, { id: 'messages', label: 'Messages' },
@@ -42,16 +41,22 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect 
   const list = useRef<HTMLDivElement>(null);
   const listId = useId();
   const normalized = query.trim();
+  const [settledQuery, setSettledQuery] = useState('');
+  useEffect(() => {
+    // Same typing delay as the conversation resource picker.
+    const timer = window.setTimeout(() => setSettledQuery(normalized), 250);
+    return () => window.clearTimeout(timer);
+  }, [normalized]);
   const response = useQuery({
-    queryKey: ['workspace-search', workspaceId, category, normalized],
-    queryFn: ({ signal }) => search({ query: normalized, category }, signal),
-    enabled: open && normalized.length > 0,
+    queryKey: ['workspace-search', workspaceId, category, settledQuery],
+    queryFn: ({ signal }) => search({ query: settledQuery, category }, signal),
+    enabled: open && settledQuery.length > 0 && settledQuery === normalized,
     // A search result must be reauthorized when this modal opens again.
     staleTime: 0,
     gcTime: 0,
     retry: false,
   });
-  const results = open && normalized && !response.isFetching && !response.isError ? response.data?.results ?? [] : [];
+  const results = open && normalized && settledQuery === normalized && !response.isFetching && !response.isError ? response.data?.results ?? [] : [];
   const active = Math.min(selected, Math.max(0, results.length - 1));
   useEffect(() => {
     list.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
@@ -66,7 +71,7 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect 
     <Dialog.Portal>
       <Dialog.Overlay className="rally-search-overlay" />
       <Dialog.Content className="rally-search-modal" aria-describedby={undefined}
-        onOpenAutoFocus={(event) => { event.preventDefault(); input.current?.focus(); }}
+        onOpenAutoFocus={(event) => { event.preventDefault(); input.current?.focus(); input.current?.select(); }}
         onEscapeKeyDown={(event) => { if (isComposingKeyEvent(event)) event.preventDefault(); }}>
         <Dialog.Title className="sr-only">Search workspace</Dialog.Title>
         <div className="rally-search-input-row">
@@ -116,7 +121,7 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect 
         </div>
         {results.length === 0 && <div className="rally-search-state" role="status">
           {!normalized ? 'Search messages, links, artifacts, and files'
-            : response.isFetching ? 'Searching…'
+            : (response.isFetching || settledQuery !== normalized) ? 'Searching…'
             : response.isError ? 'Search could not be completed. Please try again.' : 'No results'}
         </div>}
       </Dialog.Content>
