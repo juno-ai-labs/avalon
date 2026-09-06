@@ -493,11 +493,13 @@ lower-sequence socket snapshot; [`architecture.md`](architecture.md) owns the
 rest of that behavior.
 
 The initial socket snapshot carries bounded canonical transcript ranges. When a
-user scrolls within 160 px of the top, Electron requests the adjacent half-open
+viewport is within 160 px of the top, Electron requests the adjacent half-open
 sequence range, merges it under the snapshot fence, and restores `scrollTop` by
 the exact height inserted above the viewport. Newer-range and jump-to-latest
-recovery use the same socket path. Requests exist only while the user navigates
-history; an idle/background window produces no pagination traffic, and the
+recovery use the same socket path. Layout, scrolling, resizing, and window visibility all recheck that position.
+Short opening feeds fill through the same path. Errors stop automatic paging
+and expose a retry control; normal paging shows only a loading status.
+A hidden window produces no automatic paging traffic, and the
 accepted socket continues to hibernate. A transcript frame is capped at the
 shared 1,000,000-byte realtime-frame limit: multi-turn ranges narrow to
 truthful coverage, while an indivisible oversized turn keeps its sequence as a
@@ -685,6 +687,16 @@ the provider's redirect and cannot move; [`security.md`](security.md) records
 what that leaves exposed.
 
 ## Changelog
+
+### 2026-09-06 — Page older history from viewport position
+
+The desktop requests older ranges whenever its visible viewport approaches the
+loaded top, including after layout and resizing. A loading status replaces the
+normal pagination button; errors stop automatic requests and offer retry. This
+fills short opening snapshots and supports infinite scrolling without requiring
+input gestures or increasing server snapshot sizes. Hidden windows remain idle.
+The snapshot fence and range sizes are unchanged; renderer behavior belongs to
+[`transcript-scrolling.md`](transcript-scrolling.md).
 
 ### 2026-09-04 — A child is ready only after its inherited context is complete
 

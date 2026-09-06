@@ -125,6 +125,15 @@ range also carries the bounded lifecycle activities referenced by those turns;
 the reducer merges them by stable activity identity and revision so historical
 “worked for” timing appears when its owning turn enters memory.
 
+`use-transcript-history.ts` checks scroll position after layout, on scroll,
+on resize, and when a hidden window becomes visible. While the viewport is
+within 160 px of the loaded top edge, it requests adjacent older ranges one
+at a time. It does not require a wheel, keyboard, or pointer gesture: opening
+and programmatic positioning can trigger the same infinite scrolling.
+A short viewport fills through this same path. Loading shows a status indicator;
+there is no normal history button. An error stops automatic requests and offers
+**Retry loading earlier messages**. Hidden windows do not load automatically.
+
 Approaching a loaded edge requests only the adjacent 20-sequence interval over
 the already-open SubstreamAgent socket and preserves the visible prepend
 anchor. **Jump to latest** never downloads the middle: the latest island is
@@ -231,6 +240,11 @@ gone.
 
 ## Testing
 
+`use-transcript-history.test.tsx` exercises position-based paging, resize,
+visibility, in-flight requests, and conversation changes. `workstream-open.test.tsx`
+checks automatic edge loading and the error-only retry control. Run these with
+`pnpm --filter @rally/desktop exec vitest run src/renderer/lib/use-transcript-history.test.tsx src/renderer/screens/workstream-open.test.tsx`.
+
 [`apps/desktop/src/renderer/lib/use-transcript-follow.test.tsx`](../apps/desktop/src/renderer/lib/use-transcript-follow.test.tsx),
 in the desktop suite (`pnpm --filter @rally/desktop test`).
 
@@ -257,12 +271,30 @@ every bug in which the follow declines to write — which is most of them, becau
 declining is what it does once the reader has taken over. `stream()` in that file
 fires the event only when `scrollTop` changed.
 
-There is no test that renders `WorkstreamScreen`, so the wiring in
-`workstream.tsx` — `canFollow`, the **Jump to latest** condition, and which of
-`scrollToEnd`/`release` each open path calls — is covered only by running the
-client. That seam is where the original defect lived.
+The surface tests render `WorkstreamScreen` with socket and follow doubles,
+so the complete interaction between real row measurements, unread positioning,
+follow, and paging still needs Electron verification. A passing DOM assertion
+does not prove that prepend restoration leaves the same message visible.
 
 ## Changelog
+
+### 2026-09-06 — Load history from viewport position
+
+**What changed:** The shared conversation surface requests older ranges whenever
+its visible viewport is within 160 px of the loaded top, including after layout
+or resizing. A loading status replaces the normal history button; errors expose
+a manual retry and suspend automatic requests.
+
+**Why:** Opening snapshots can leave most of the viewport empty, and readers
+should receive earlier messages by scrolling rather than operating pagination.
+
+**Considered and rejected:** Gating paging on upward input misses programmatic
+positioning and short content that cannot scroll. Increasing the server page
+size guesses at rendered height and charges every opening for extra content.
+
+**Consequences:** Snapshot coverage and sequential requests bound the work to
+the visible edge. Hidden windows stay idle. Prepend restoration remains with
+the follow controller and is fenced to the conversation that requested it.
 
 ### 2026-09-05 — Opening a search result
 
@@ -273,6 +305,7 @@ client. That seam is where the original defect lived.
 **Considered and rejected:** A lifetime marker keyed only by turn ID suppressed valid repeated navigation.
 
 **Consequences:** Search positioning releases follow and must clear stale parameters before normal unread positioning resumes.
+
 
 ### 2026-08-28 — Automation authoring adopts the shared follow controller
 
