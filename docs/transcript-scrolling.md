@@ -132,7 +132,11 @@ at a time. It does not require a wheel, keyboard, or pointer gesture: opening
 and programmatic positioning can trigger the same infinite scrolling.
 A short viewport fills through this same path. Loading shows a status indicator;
 there is no normal history button. An error stops automatic requests and offers
-**Retry loading earlier messages**. Hidden windows do not load automatically.
+**Retry loading earlier messages**. The retry uses the shared button primitive
+with a retry icon, including its hover, focus, and disabled styles. The centered
+history row uses control typography and spacing in both appearances; its label
+can wrap in narrow feeds without shrinking the icon. Hidden windows do not load
+automatically.
 
 Approaching a loaded edge requests only the adjacent 20-sequence interval over
 the already-open SubstreamAgent socket and preserves the visible prepend
@@ -283,7 +287,9 @@ does not prove that prepend restoration leaves the same message visible.
 **What changed:** The shared conversation surface requests older ranges whenever
 its visible viewport is within 160 px of the loaded top, including after layout
 or resizing. A loading status replaces the normal history button; errors expose
-a manual retry and suspend automatic requests.
+a manual retry and suspend automatic requests. Both states use centered control
+typography and spacing; the shared retry button carries a retry icon and wraps
+its label when space is constrained.
 
 **Why:** Opening snapshots can leave most of the viewport empty, and readers
 should receive earlier messages by scrolling rather than operating pagination.
