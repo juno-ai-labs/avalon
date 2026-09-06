@@ -53,7 +53,7 @@ export async function runEmbeddingInference(
       substreamId?: string;
       userId?: string;
     };
-    text: string;
+    text: string | string[];
     feature?: "memory_embedding" | "search_embedding";
     inputType: "search_query" | "search_document";
     dimensions: number;
