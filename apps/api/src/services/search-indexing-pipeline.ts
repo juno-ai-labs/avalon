@@ -32,9 +32,8 @@ export async function indexSemanticDocument(index: TextSearchIndex,
   return rows.map((row) => row.id);
 }
 
-/** Batch-local state only. One tokenizer/policy serves all sources in a Queue delivery. */
+/** Source state stays batch-local; the immutable tokenizer is shared by the isolate. */
 export function createSearchIndexingPipeline(env: Env) {
-  let policy: Promise<SemanticChunkPolicy> | undefined;
   return async (workspaceId: string, load: () => Promise<SearchDocumentBatch>): Promise<void> => {
     const input = SearchDocumentBatchSchema.parse(await load());
     if (!input.documents.length) {
@@ -54,8 +53,7 @@ export function createSearchIndexingPipeline(env: Env) {
     }
     for (const document of input.documents) {
       if (document.text === null) continue;
-      policy ??= searchChunkPolicy();
-      await indexSemanticDocument(index, { ...document, text: document.text }, await policy,
+      await indexSemanticDocument(index, { ...document, text: document.text }, searchChunkPolicy(),
         (text) => embedSearchDocument(env, workspaceId, text));
     }
     // An edit or deletion can commit during embedding. Remove this stale
