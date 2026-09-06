@@ -84,7 +84,7 @@ describe("telemetry registry", () => {
       launchAtLoginAvailable: true,
       lockdownModeEnabled: false,
       lockdownModeAvailable: true,
-      applicationIcon: "clay-court",
+      applicationIcon: "ludicrous-speed",
       applicationIconAutomatic: false,
       applicationIconAvailable: true,
     }],
@@ -103,7 +103,7 @@ describe("telemetry registry", () => {
     ["application_icon_changed", "desktop-main", {
       previousIcon: "dark",
       previousAutomatic: true,
-      selectedIcon: "night-match",
+      selectedIcon: "quiet",
       automatic: false,
     }],
     ["application_opened", "desktop-main", {
@@ -554,7 +554,7 @@ describe("telemetry registry", () => {
     ["application_settings_state_v2", "desktop-main", "workspace-user", {
       launchAtLoginEnabled: true, launchAtLoginAvailable: true, lockdownModeEnabled: false,
       lockdownModeAvailable: true, menuBarEnabled: true, menuBarAvailable: true,
-      menuBarPresent: true, applicationIcon: "clay-court", applicationIconAutomatic: false,
+      menuBarPresent: true, applicationIcon: "ludicrous-speed", applicationIconAutomatic: false,
       applicationIconAvailable: true,
     }],
     ["application_setting_change_completed_v2", "desktop-main", "workspace-user", {
