@@ -275,7 +275,7 @@
         "queue": "avalon-global-activities",
         "max_batch_size": 10,
         // Control effects run independently. Search references use a sequential
-        // lane and share one tokenizer per delivery, amortizing asset parsing.
+        // lane per delivery and share one tokenizer per Worker isolate.
         // Retain the existing batch size and one-second burst grouping so Slack
         // unfurls do not regain the former five-second admission delay.
         "max_batch_timeout": 1,
