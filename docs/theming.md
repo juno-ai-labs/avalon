@@ -116,6 +116,22 @@ serves only generated IDs and enforces the cache's size and integrity checks.
 
 ## Changelog
 
+### 2026-09-05 — Align fatal and run recovery states with the theme
+
+Fatal recovery shares the connection screen's rounded raised card and pill
+action. Failed and stopped run notices use compact rounded surfaces, quieter
+icon tiles and wrapping actions below the message so long diagnostics do not
+compete with buttons for width. Semantic danger colors and all recovery behavior
+remain unchanged; these scoped rules do not restyle unrelated alerts.
+
+### 2026-09-05 — Bring connection recovery into the current visual language
+
+The regional service error card now uses soft rounded grouped surfaces, quieter
+icon treatment, compact typography and pill actions in both appearances. Styling
+is scoped to recovery screens so onboarding does not inherit the change.
+The endpoint, development guidance and recovery actions remain intact;
+the screen scrolls in short windows and actions wrap at narrow widths.
+
 ### 2026-09-05 — Review fixes preserve scaling and keyboard visibility
 
 The base leading is a unitless 20/14 ratio, not an inherited 20px height: larger
