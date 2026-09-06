@@ -105,6 +105,13 @@ never downloads assets from Hugging Face. Refresh the pinned assets with
 `node scripts/vendor-search-tokenizer.mjs`; their source hashes and Apache 2.0
 license ship beside the bundled data. Updating the model revision requires
 regenerating these assets and changing the embedding namespace together.
+The locked Tokenizers.js implementation compiles its source vocabulary and merge
+tables into lookup maps. After construction, the shared tokenizer releases the
+unused source tables while retaining runtime maps, vocabulary, normalization,
+and framing. Token counting uses `tokenize` with `add_special_tokens: true`,
+matching `encode` without allocating token-ID and attention-mask arrays. This
+lifecycle depends on the locked library implementation and must be rechecked
+when upgrading it; differential tests compare against an unmodified tokenizer.
 Counts include tokenizer special tokens. Document embeddings use OpenRouter's
 `search_document` task through the existing inference client. The binary boundary
 search checks every accepted span; nonmonotonic BPE counts may leave budget unused,
@@ -136,7 +143,8 @@ from those loaders, never from the index.
 
 ## Invariants
 
-- One tokenizer is retained per isolate (about 46 MiB in a local Node 22 heap
+- One tokenizer is retained per isolate (about 26 MiB after releasing construction
+  tables in a local Node 22 heap
   measurement). Its model stays closure-private; only the policy wrapper is
   frozen. Input fragments must be cleared before every count returns or throws.
 - Chunk offsets use the sorted code-point boundary array directly; do not add
@@ -301,6 +309,33 @@ through Queue failure rather than silent truncation. Document-size and capture
 budgets require team policy; no arbitrary new caps are introduced here.
 
 ## Changelog
+
+### 2026-09-06 — Release tokenizer construction tables and unused encoding arrays
+
+**What changed:** After the pinned BPE constructor builds its runtime lookup maps,
+search releases the original vocabulary object and merge arrays. Counting uses
+the library's tokenization API with special tokens explicitly enabled, avoiding
+unused ID and attention-mask arrays. The shared model remains closure-private,
+and each count still clears input fragments in finally.
+
+**Why:** Live replay after sharing the tokenizer still showed memory-limit
+outcomes. Inspection found that the library retained both its constructor input
+and compiled maps; a Node 22 heap check fell from about 50 MiB to 26 MiB after
+releasing the construction tables, with identical token IDs in the comparison
+inputs. Sharing alone had not removed that permanent per-isolate overhead.
+
+**Considered and rejected:** Reimplementing BPE, normalization, or special-token
+framing would create a second definition of token counts. We retain the library's
+runtime and only release tables whose reads in the locked implementation occur
+during construction. No source truncation, estimated counts, or Queue concurrency
+limit is introduced.
+
+**Consequences:** Exact counts and chunk namespaces remain unchanged. Upgrading
+Tokenizers.js requires checking this construction/runtime boundary; the tests
+compare the compact counter against a fresh unmodified tokenizer on Unicode,
+normalization, special tokens, whitespace, URLs, and unbroken text. Cold
+construction still has a transient peak and document work still allocates memory;
+production runtime outcomes remain a rollout gate rather than an assumed result.
 
 ### 2026-09-06 — Share immutable tokenizer state across overlapping deliveries
 
