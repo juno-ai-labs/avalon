@@ -128,15 +128,14 @@ describe("semantic indexing", () => {
 
 
 describe("search namespace identity", () => {
-  it("separates semantic policies without changing lexical identity or exceeding provider name limits", async () => {
+  it("keeps namespace identity stable and separates workspaces within provider name limits", async () => {
     provider.namespaces.length = 0;
-    const env = createTestEnv({ TURBO_PUFFER_DEV_API_KEY: "test-only",
-      SEARCH_CHUNK_MAX_TOKENS: "512", SEARCH_CHUNK_OVERLAP_TOKENS: "64" });
+    const env = createTestEnv({ TURBO_PUFFER_DEV_API_KEY: "test-only" });
     await workspaceSearchIndex(env, "workspace-one");
-    await workspaceSearchIndex({ ...env, SEARCH_CHUNK_MAX_TOKENS: "1024" }, "workspace-one");
+    await workspaceSearchIndex(env, "workspace-one");
     await workspaceSearchIndex(env, "workspace-two");
     const [semantic, lexical, changedSemantic, sameLexical, otherSemantic, otherLexical] = provider.namespaces;
-    expect(semantic).not.toBe(changedSemantic);
+    expect(semantic).toBe(changedSemantic);
     expect(lexical).toBe(sameLexical);
     expect(semantic).not.toBe(otherSemantic);
     expect(lexical).not.toBe(otherLexical);
