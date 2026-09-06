@@ -57,7 +57,7 @@ async function touchLastSeen(env: Env, workspaceId: string, userId: string): Pro
   }
 }
 
-async function authenticate(c: Context): Promise<IdentityAuthContext> {
+export async function authenticate(c: Context): Promise<IdentityAuthContext> {
   if (c.env.APP_ENV === "development" && c.env.RALLY_DEV_AUTH === "true") {
     // Parsed, not cast: a malformed development header is a request that
     // simply is not using dev auth, and must fall through to ordinary

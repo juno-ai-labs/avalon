@@ -5169,6 +5169,10 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 .sidebar-new-button:active { transform: scale(.94); }
 
 .sidebar-search {
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
   align-items: center;
   background: var(--av-cmp-row-background-hover);
   border: 0;

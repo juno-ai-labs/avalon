@@ -1,3 +1,5 @@
+import { CONVERSATION_LINK_SEARCH_SCHEMA } from './conversation-link-search';
+import { TRANSCRIPT_SEARCH_MIGRATION_STATEMENTS } from './search-projection-outbox';
 /**
  * Object-local SQL schema for the existing one-room-per-work-stream namespace.
  *
@@ -18,7 +20,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 41;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 42;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -2853,6 +2855,11 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
          updated_at INTEGER NOT NULL
        ) STRICT`,
     ],
+  },
+  {
+    version: 42,
+    description: "durably project canonical transcript text and backfill existing turns",
+    statements: [...CONVERSATION_LINK_SEARCH_SCHEMA, ...TRANSCRIPT_SEARCH_MIGRATION_STATEMENTS],
   },
 ];
 

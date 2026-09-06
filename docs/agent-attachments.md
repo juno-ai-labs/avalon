@@ -42,6 +42,10 @@ source of truth for retry, replay, and compaction recovery.
 
 ## How it works
 
+### Member search projection
+
+The member Files and Artifacts tabs search resource names, descriptions, and full available text derivatives through Turbopuffer. `resource-search-text.ts` defines the canonical field order for both indexing and match offsets. The source adapter returns this text to the shared Queue Worker pipeline; attachments have no separate chunking or embedding policy. Resource triggers enqueue reindexing when extraction or metadata changes; missing derivatives do not silently become truncated bodies. Search rechecks current resource and attachment authority before displaying excerpts. See [text search](text-search.md).
+
 ### Kind and schema selection
 
 Rally classifies an attachment into exactly one of `image`, `audio`, `markdown`,
@@ -613,6 +617,15 @@ terms rather than duplicating attachment text. Future changes must preserve thos
 cheap discovery and continuation paths.
 
 ## Changelog
+
+### 2026-09-05 — Member search projection
+
+The member Files and Artifacts tabs search resource names, descriptions, and full available text derivatives through Turbopuffer. `resource-search-text.ts` defines the canonical field order for both indexing and match offsets. The source adapter returns this text to the shared Queue Worker pipeline; attachments have no separate chunking or embedding policy. Resource triggers enqueue reindexing when extraction or metadata changes; missing derivatives do not silently become truncated bodies. Search rechecks current resource and attachment authority before displaying excerpts. See [text search](text-search.md).
+
+The member search requirement needs durable indexing and recognizable matching
+sections. Local filtering and synchronous page capture were rejected because
+they omit unloaded content or delay message admission. Current source authority
+and existing regional delivery remain the boundaries future changes must respect.
 
 ### 2026-09-03: The compiler's attachment path is gone
 

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MessageAttachment } from '../lib/types';
@@ -29,7 +29,14 @@ describe('attachment presentation', () => {
     });
   });
 
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(async () => {
+    cleanup();
+    // Radix restores focus in a zero-delay timer after unmount. Let that event
+    // run while its jsdom window still owns CustomEvent; otherwise file teardown
+    // can replace the constructor before it dispatches on the old DOM node.
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    vi.unstubAllGlobals();
+  });
 
   it('opens only the selected gallery entry on the first render', async () => {
     const first = { name: 'first.png', mimeType: 'image/png', loadContent: vi.fn(async () => new Blob(['first'])) };

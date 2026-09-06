@@ -62,6 +62,7 @@ function fixture(payloads: Parameters<typeof createCloudflareTestBinding<R2Bucke
   });
   const rpcs = workspaceObjectRpcs(workspaceObject.instance, [
     "resourceExists",
+    "resourceAccess",
     "createUploadDraftResource",
     "deleteUploadDraftResource",
     "refreshResourceHydration",
@@ -115,6 +116,32 @@ function fixture(payloads: Parameters<typeof createCloudflareTestBinding<R2Bucke
 }
 
 describe('uploaded attachment drafts', () => {
+  it('does not open a search result merely because an upload is attached somewhere', async () => {
+    const get = vi.fn(async () => ({
+      body: new Blob(['private']).stream(), httpEtag: '"search-preview"', writeHttpMetadata() {},
+    }));
+    const { database, env } = fixture({ async put() {}, get });
+    const service = new ResourceService(env, auth);
+    await service.upload(new File(['private'], 'private.txt', { type: 'text/plain' }), undefined, draftId);
+    database.prepare("UPDATE resources SET attachment_status = 'attached', uploaded_by_user_id = ? WHERE id = ?")
+      .run('00000000-0000-7000-8000-000000000004', draftId);
+    await expect(service.searchPreview(draftId, new AbortController().signal)).rejects.toMatchObject({ status: 404 });
+    expect(get).not.toHaveBeenCalled();
+  });
+
+  it('rechecks search preview ownership after loading bytes', async () => {
+    let revoke = () => {};
+    const { database, env } = fixture({ async put() {}, async get() {
+      revoke();
+      return { body: new Blob(['private']).stream(), httpEtag: '"search-preview"', writeHttpMetadata() {} };
+    } });
+    const service = new ResourceService(env, auth);
+    await service.upload(new File(['private'], 'private.txt', { type: 'text/plain' }), undefined, draftId);
+    revoke = () => { database.prepare('UPDATE resources SET uploaded_by_user_id = ? WHERE id = ?')
+      .run('00000000-0000-7000-8000-000000000004', draftId); };
+    await expect(service.searchPreview(draftId, new AbortController().signal)).rejects.toMatchObject({ status: 404 });
+  });
+
   it('uses the client draft ID, hides drafts from resource lists, and deletes storage on removal', async () => {
     const stored = new Set<string>();
     const { database, env } = fixture({
