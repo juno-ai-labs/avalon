@@ -1885,12 +1885,14 @@ export function ConversationSurface({
         <div className="transcript-column">
           {olderTranscriptRange && loadingOlder && (
             <div className="transcript-history-control" role="status">
-              <LoaderCircle aria-hidden="true" className="spin" size={14} /> Loading earlier messages…
+              <LoaderCircle aria-hidden="true" className="spin" size={14} />
+              <span>Loading earlier messages…</span>
             </div>
           )}
           {olderTranscriptRange && olderMessagesError && !loadingOlder && (
             <div className="transcript-history-control">
               <Button disabled={socketState !== 'connected'} onClick={() => void loadOlderMessages()}>
+                <RefreshCcw aria-hidden="true" size={14} />
                 Retry loading earlier messages
               </Button>
             </div>
