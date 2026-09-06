@@ -72,7 +72,8 @@ allows substrings to span semantic boundaries and preserves exact UTF-16 offsets
 There is no lossy per-source normalization. Source-specific fields such as a file's
 name and description are assembled before this shared boundary.
 
-Search jobs run sequentially within a delivery and share one tokenizer. Unrelated
+Search jobs run sequentially within a delivery. Overlapping deliveries share one
+immutable tokenizer per Worker isolate. Unrelated
 control-effect messages run concurrently. Each search message is acknowledged only
 after indexing and canonical revalidation finish; individual failures request a
 Queue retry and eventually use the existing regional dead-letter queue. Reusing the
@@ -96,7 +97,10 @@ written first and remains available.
 The shared integration loads the Qwen3-Embedding-8B tokenizer's public assets at
 immutable revision `1d8ad4ca9b3dd8059ad90a75d4983776a23d44af` and runs them locally
 with `@huggingface/tokenizers`. The compressed tokenizer definition and config
-ship in the Worker bundle and inflate within each Queue batch. Runtime indexing
+ship in the Worker bundle and inflate synchronously on first use in an isolate.
+The completed policy is reused without sharing promises or request-owned I/O.
+Every token count clears the BPE input cache in `finally`, so only public model
+data survives between jobs. Runtime indexing
 never downloads assets from Hugging Face. Refresh the pinned assets with
 `node scripts/vendor-search-tokenizer.mjs`; their source hashes and Apache 2.0
 license ship beside the bundled data. Updating the model revision requires
@@ -292,6 +296,29 @@ through Queue failure rather than silent truncation. Document-size and capture
 budgets require team policy; no arbitrary new caps are introduced here.
 
 ## Changelog
+
+### 2026-09-06 — Share immutable tokenizer state across overlapping deliveries
+
+**What changed:** The bundled tokenizer is initialized lazily and synchronously
+once per Worker isolate using the existing `fflate` dependency. Only the completed,
+frozen policy is shared. Encoding clears the BPE input cache on success or failure.
+Source data, provider requests, and indexing state remain local to each delivery.
+
+**Why:** Production replay after bundling the tokenizer exposed `exceededMemory`
+Queue outcomes. Each independently constructed tokenizer retained about 46 MiB
+in a local Node 22 heap measurement, so overlapping batches multiplied the model
+under the Worker's shared 128 MiB isolate limit. Sequential work within a batch
+could not prevent overlap between deliveries. Synchronous initialization avoids
+both duplicate initialization and sharing an asynchronous stream across request
+contexts; reducing Queue concurrency would hide the duplicate allocations and
+slow unrelated activity work. This is shared compiled model state, not a source
+or result cache.
+
+**Consequences:** The model revision, exact token counts, chunk policy, namespaces,
+and regional routing are unchanged. Tests cover overlapping real Queue deliveries,
+policy reuse, and removal of input fragments even when encoding throws. Runtime
+memory outcomes must be checked after rollout; local tests do not enforce the
+production isolate's full memory accounting.
 
 ### 2026-09-06 — Remove tokenizer downloads and blank inputs from backfill
 
