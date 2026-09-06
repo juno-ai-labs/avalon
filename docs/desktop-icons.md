@@ -40,6 +40,15 @@ PostHog person properties.
 
 This follows the architecture described in Granola's [macOS app-icon implementation](https://www.granola.ai/blog/so-you-think-its-easy-to-change-an-app-icon). The cache refresh dynamically calls the private `SLSIconAppearanceConfiguration` selector used by System Settings. It is best-effort: icon selection still succeeds if that selector is unavailable on a later macOS release.
 
+The selectable list uses `CURRENT_APPLICATION_ICON_IDS`; telemetry ingestion
+keeps all shipped IDs in `TELEMETRY_APPLICATION_ICON_IDS` so older clients and
+spooled events remain valid. Never reuse a retired ID for different artwork:
+Ludicrous speed uses `ludicrous`, while historical `ludicrous-speed` stays retired.
+Startup resets the native icon for a recognized retired preference, then clears
+the preference. A failed reset leaves the preference intact for a later retry.
+The preview generator deletes only previews whose source has been removed; it
+never deletes supplied sources.
+
 ## Artwork rules
 
 Keep both native and selectable source artwork unmasked:
@@ -75,18 +84,17 @@ must reproduce them without unrelated diffs, so review what the run rewrote and
 revert any file whose pixels did not actually change — PNG encoder output
 differs between Pillow releases, and that churn is not a change to the artwork.
 
-Generator portability:
+**The social card is skipped off macOS.** It is the only generated asset with
+type in it, set in a system font that exists only there. The script says so
+when it skips; regenerating it anywhere else would quietly substitute a
+different typeface over the committed card.
 
-- **The social card is skipped off macOS.** It is the only generated asset with
-  type in it, set in a system font that exists only there. The script says so
-  when it skips; regenerating it anywhere else would quietly substitute a
-  different typeface over the committed card.
 ## Add a selectable icon
 
 1. Add the supplied artwork to `apps/desktop/resources/app-icons/<id>.png` as
    an opaque, full-bleed 1024×1024 image. Do not pre-mask it: the native build
    compiles it through the checked-in Icon Composer template.
-2. Add its identifier to `TELEMETRY_APPLICATION_ICON_IDS` in `packages/contracts/src/telemetry.ts`, then add its label to `applicationIconLabels` in `apps/desktop/src/common/application-icons.ts`. The shared identifier allowlist drives the renderer, main IPC validation, filenames, and telemetry schema; IPC never accepts a filesystem path.
+2. Add its identifier to `CURRENT_APPLICATION_ICON_IDS` in `packages/contracts/src/telemetry.ts`, then add its label to `applicationIconLabels` in `apps/desktop/src/common/application-icons.ts`. The current identifier allowlist drives the renderer, main IPC validation, filenames, and telemetry schema; IPC never accepts a filesystem path.
 3. Add the same identifier to the Dock plugin allowlist in `apps/desktop/native/dock-tile-plugin/RallyDockTilePlugin.m`.
 4. Add its identifier to `selectableIconNames` in `apps/desktop/scripts/build-macos-icon-components.mjs`, run `python3 scripts/generate-brand-assets.py` to produce its 128px renderer preview, then import that preview in `apps/desktop/src/renderer/components/application-icon-picker.tsx`.
 5. Add the expected resource to `apps/desktop/scripts/verify-macos-app.mjs` and update focused tests.
@@ -125,7 +133,7 @@ The package verifier checks:
 - the AppKit bridge used for Finder and cache updates; and
 - both menu bar template renditions, whose names are resolved at runtime rather than referenced in code.
 
-The plugin build also compiles and executes a smoke harness that invokes `setDockTile:nil`. This catches recursive implementations of the protocol setter before packaging.
+The plugin build also compiles and executes a smoke harness that rejects sources with incorrect dimensions or any transparent pixel before invoking `setDockTile:nil`. This catches recursive implementations of the protocol setter before packaging.
 
 Launch the packaged app with `pnpm start:desktop:packaged`, select several icons, quit Rally, and confirm the choice remains in the Dock. Check Finder, Spotlight, and Launchpad, then choose “Use the system icon” and confirm the adaptive icon returns.
 
@@ -140,6 +148,28 @@ For a notarized release candidate, repeat the selected-icon test from an install
 - **Packaging rejects nested code:** rebuild with `pnpm --filter @rally/desktop build:macos-icons` and verify the plugin contains only an arm64 executable before electron-builder signs it.
 
 ## Changelog
+
+### 2026-09-06 — Preserve released icon identities through replacement
+
+**What changed:** Split current selectable IDs from the historical telemetry
+allowlist, gave the new Ludicrous speed artwork the unused `ludicrous` ID,
+and made startup clean up native icons for retired preferences. Regenerated
+previews through the documented Pillow pipeline, restored orphan-preview
+cleanup, and added a native packaging gate for opaque 1024px sources.
+
+**Why:** Review found that replacing the ingestion enum rejected old-client
+and spooled events, while reusing a retired ID silently selected different art.
+The initial previews also used a different resampler than the documented pipeline.
+
+**Considered and rejected:** Rewriting old events or reusing their identifiers
+would conflate different artwork. Clearing a retired preference before native
+cleanup succeeds would lose the retry signal if Finder reset failed.
+
+**Consequences:** Historical telemetry IDs remain accepted but unselectable.
+The full-bleed check runs in native packaging; it cannot detect an opaque image
+that visually depicts a baked mask, which still needs visual review.
+
+PR: #566.
 
 ### 2026-09-06 — Replace procedural textures with supplied artwork
 

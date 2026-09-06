@@ -1754,7 +1754,7 @@ describe('Workspace settings', () => {
 
     expect(ludicrous).toHaveClass('is-jumping');
     expect(ludicrous).toHaveAttribute('aria-pressed', 'true');
-    await waitFor(() => expect(setApplicationIcon).toHaveBeenCalledWith('ludicrous-speed'));
+    await waitFor(() => expect(setApplicationIcon).toHaveBeenCalledWith('ludicrous'));
     expect(await screen.findByText('Ludicrous speed is selected.')).toBeVisible();
 
     fireEvent.click(screen.getByRole('button', { name: 'Use the system icon' }));

@@ -41,6 +41,30 @@ function envelope(name: string, properties: unknown) {
 }
 
 describe("telemetry registry", () => {
+  it.each([
+    "sunset-sherbet", "ludicrous-speed", "ruby", "holographic", "leather", "blueprint",
+    "grass-court", "clay-court", "hard-court", "ball-felt", "night-match",
+    "calm", "ludicrous", "homage", "builder", "quiet",
+  ])("accepts released and current icon %s in telemetry batches", (icon) => {
+    const settings = {
+      launchAtLoginEnabled: true, launchAtLoginAvailable: true,
+      lockdownModeEnabled: false, lockdownModeAvailable: true,
+      applicationIcon: icon, applicationIconAutomatic: false, applicationIconAvailable: true,
+    };
+    const events = [
+      envelope("application_settings_state", settings),
+      envelope("application_settings_state_v2", {
+        ...settings, menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true,
+      }),
+      envelope("application_icon_changed", {
+        previousIcon: icon, previousAutomatic: false, selectedIcon: icon, automatic: false,
+      }),
+    ].map((candidate) => ({ ...candidate, source: "desktop-main" }));
+    expect(TelemetryBatchSchema.parse({
+      installationId: envelope("x", {}).context.deviceId, events,
+    }).events).toHaveLength(3);
+  });
+
   it("defines complete governance and property classification for every event", () => {
     expect(new Set(telemetryEventNames).size).toBe(telemetryEventNames.length);
     expect(telemetryEventNames.length).toBeGreaterThan(10);
@@ -84,7 +108,7 @@ describe("telemetry registry", () => {
       launchAtLoginAvailable: true,
       lockdownModeEnabled: false,
       lockdownModeAvailable: true,
-      applicationIcon: "ludicrous-speed",
+      applicationIcon: "ludicrous",
       applicationIconAutomatic: false,
       applicationIconAvailable: true,
     }],
@@ -554,7 +578,7 @@ describe("telemetry registry", () => {
     ["application_settings_state_v2", "desktop-main", "workspace-user", {
       launchAtLoginEnabled: true, launchAtLoginAvailable: true, lockdownModeEnabled: false,
       lockdownModeAvailable: true, menuBarEnabled: true, menuBarAvailable: true,
-      menuBarPresent: true, applicationIcon: "ludicrous-speed", applicationIconAutomatic: false,
+      menuBarPresent: true, applicationIcon: "ludicrous", applicationIconAutomatic: false,
       applicationIconAvailable: true,
     }],
     ["application_setting_change_completed_v2", "desktop-main", "workspace-user", {

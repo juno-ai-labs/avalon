@@ -139,7 +139,7 @@ describe('TelemetryReporter', () => {
     await reporter.applicationIconChanged({
       previousIcon: 'dark',
       previousAutomatic: true,
-      selectedIcon: 'ludicrous-speed',
+      selectedIcon: 'ludicrous',
       automatic: false,
     });
     await reporter.applicationOpened('system_start', 'cold_start');
@@ -179,7 +179,7 @@ describe('TelemetryReporter', () => {
       {
         name: 'application_icon_changed',
         properties: {
-          previousIcon: 'dark', previousAutomatic: true, selectedIcon: 'ludicrous-speed', automatic: false,
+          previousIcon: 'dark', previousAutomatic: true, selectedIcon: 'ludicrous', automatic: false,
         },
       },
       {

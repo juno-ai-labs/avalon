@@ -1,26 +1,26 @@
 import {
-  TELEMETRY_APPLICATION_ICON_IDS,
-  type TelemetryApplicationIconId,
+  CURRENT_APPLICATION_ICON_IDS,
+  type CurrentApplicationIconId,
 } from '@rally/contracts/telemetry';
 
-const applicationIconLabels: Record<TelemetryApplicationIconId, string> = {
+const applicationIconLabels: Record<CurrentApplicationIconId, string> = {
   light: 'Light',
   dark: 'Dark',
-  'calm': 'Calm',
-  'ludicrous-speed': 'Ludicrous speed',
-  'homage': 'Homage',
-  'builder': 'Builder',
-  'quiet': 'Quiet',
+  calm: 'Calm',
+  ludicrous: 'Ludicrous speed',
+  homage: 'Homage',
+  builder: 'Builder',
+  quiet: 'Quiet',
 };
 
-export const applicationIconChoices = TELEMETRY_APPLICATION_ICON_IDS.map((id) => ({
+export const applicationIconChoices = CURRENT_APPLICATION_ICON_IDS.map((id) => ({
   id,
   label: applicationIconLabels[id],
   fileName: `${id}.icns`,
   artworkFileName: `${id}.png`,
 }));
 
-export type ApplicationIconId = TelemetryApplicationIconId;
+export type ApplicationIconId = CurrentApplicationIconId;
 
 export interface DesktopApplicationIconState {
   activeIcon: ApplicationIconId;

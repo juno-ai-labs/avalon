@@ -7,22 +7,22 @@ import {
   type DesktopApplicationIconState,
 } from '../../common/application-icons';
 import builderIcon from '../assets/app-icons/builder.png';
-import ludicrousSpeedIcon from '../assets/app-icons/ludicrous-speed.png';
-import darkIcon from '../assets/app-icons/dark.png';
 import calmIcon from '../assets/app-icons/calm.png';
+import darkIcon from '../assets/app-icons/dark.png';
 import homageIcon from '../assets/app-icons/homage.png';
 import lightIcon from '../assets/app-icons/light.png';
+import ludicrousSpeedIcon from '../assets/app-icons/ludicrous.png';
 import quietIcon from '../assets/app-icons/quiet.png';
 import { desktopBridge } from '../lib/platform';
 
 const applicationIconArtwork: Record<ApplicationIconId, string> = {
   light: lightIcon,
   dark: darkIcon,
-  'calm': calmIcon,
-  'ludicrous-speed': ludicrousSpeedIcon,
-  'homage': homageIcon,
-  'builder': builderIcon,
-  'quiet': quietIcon,
+  calm: calmIcon,
+  ludicrous: ludicrousSpeedIcon,
+  homage: homageIcon,
+  builder: builderIcon,
+  quiet: quietIcon,
 };
 
 export function ApplicationIconPicker(): React.JSX.Element {
