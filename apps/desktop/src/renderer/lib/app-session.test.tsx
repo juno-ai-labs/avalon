@@ -344,7 +344,7 @@ describe('single-platform desktop identity routing', () => {
       region: 'global', workspaceId: 'workspace-global', operationId: undefined,
     });
     expect(await screen.findByText('global:Global Studio')).toBeVisible();
-    expect(window.location.hash).toBe('#/workstreams/new');
+    expect(window.location.hash).toBe('#/');
     getWorkspace.mockRestore();
   });
 
@@ -1063,7 +1063,7 @@ describe('single-platform desktop identity routing', () => {
     await act(async () => { resolveRecord(record); await activation; });
 
     expect(await screen.findByText('global:Workspace A')).toBeVisible();
-    expect(window.location.hash).toBe('#/workstreams/new');
+    expect(window.location.hash).toBe('#/');
     expect(client.getQueryData(['workspace', workspaceA, 'user-1'])).toEqual(record);
     expect(client.getQueryData(CLIENT_FEATURE_FLAGS_QUERY_KEY)).toEqual(flags);
     expect(client.getQueryState(CLIENT_FEATURE_FLAGS_QUERY_KEY)?.dataUpdatedAt).toBe(0);
@@ -1133,7 +1133,7 @@ describe('single-platform desktop identity routing', () => {
     }));
     expect(await screen.findByText('global:Workspace A')).toBeVisible();
     await waitFor(() => expect(bridge.openSettings).toHaveBeenCalledWith('connections'));
-    expect(window.location.hash).toBe('#/workstreams/new');
+    expect(window.location.hash).toBe('#/');
   });
 
   it.each([
