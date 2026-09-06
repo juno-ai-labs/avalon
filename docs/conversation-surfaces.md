@@ -106,6 +106,22 @@ prove layout, focus, scroll position, or overlap.
 
 ## Changelog
 
+### 2026-09-05 — Animate live arrivals without moving the measured row
+
+The feed consumes event/command-origin arrival IDs once per mounted conversation,
+including offscreen rows, and animates only an inner paint layer. Snapshots and
+history ranges do not opt in; client/turn identity prevents reconciliation from
+replaying an entrance. This preserves the virtualizer's measured geometry and
+avoids the earlier scroll oscillation. Reduced motion and hidden windows skip
+arrival motion. The jump control remains mounted, disabled and hidden from
+accessibility during its short exit, cancelling that exit if shown again.
+Transient compaction/fallback activity uses the same retained-exit principle;
+grouped plugin arrivals use a small scale entrance. Settled activity remains in
+the normal transcript/accordion rather than being removed for a visual effect.
+Reactions and general message-anchor navigation have no current product surface,
+so this change adds neither dormant styling nor new interaction semantics for them.
+`conversation-motion.test.tsx` covers replay suppression and exit reversal.
+
 ### 2026-09-05 — Optically align substream connectors
 
 Shift the flipped Tabler connector up eight pixels so its right-hand endpoint,

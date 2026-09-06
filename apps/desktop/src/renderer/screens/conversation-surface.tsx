@@ -71,7 +71,7 @@ import { TRANSCRIPT_END_SLACK, useTranscriptFollow } from '../lib/use-transcript
 import { useWorkstreamFeedOpenTelemetry } from '../lib/use-workstream-feed-open-telemetry';
 import { useWorkstreamSendReadyTelemetry } from '../lib/use-workstream-send-ready-telemetry';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
-import { JumpToLatestButton, RunStoppedNotice } from '../components/conversation-follow';
+import { ActivityPresence, JumpToLatestButton, RunStoppedNotice } from '../components/conversation-follow';
 import { RIGHT_SIDEBAR_ENABLED, type RailVariant, useUiStore } from '../lib/ui-store';
 import {
   orderedTranscriptQueryKey,
@@ -1867,6 +1867,10 @@ export function ConversationSurface({
               firstUnreadIndex={firstUnreadIndex}
               loadAttachmentContent={loadAttachmentContent}
               messages={visibleTranscript}
+              liveMessageIds={new Set((transcriptOverlays.data ?? []).filter((overlay) =>
+                overlay.provenance.source === 'client_command'
+                || overlay.provenance.source === 'stream_event'
+                || overlay.provenance.source === 'socket_event').map((overlay) => overlay.message.id))}
               onAnswerElicitation={answerElicitation}
               onOpenAttachment={setAttachmentPreview}
               onStartSubstream={parentKind === 'workstream' && substreamId === '0' ? onStartSubstream : undefined}
@@ -1880,13 +1884,13 @@ export function ConversationSurface({
               virtualizer={transcriptVirtualizer}
             />
           )}
-          {socketConnection.activeCompaction
+          <ActivityPresence>{socketConnection.activeCompaction
             && detail.harnessStatus === 'running'
             && socketConnection.activeCompaction.harnessRunId === (detail.latestHarnessRunId ?? detail.latestHarnessRun?.id)
             ? <AgentCompactionIndicator />
             : !orderedOwnsRunTiming
               && runTiming
-              && <AgentWorkTiming key={detail.latestHarnessRunId ?? detail.latestHarnessRun?.id} {...runTiming} />}
+              && <AgentWorkTiming key={detail.latestHarnessRunId ?? detail.latestHarnessRun?.id} {...runTiming} />}</ActivityPresence>
           {detail.harnessStatus === 'failed' && detail.latestHarnessRun?.status === 'failed' && (
             <RunFailureNotice
               code={detail.latestHarnessRun.error?.code ?? 'harness_execution_failed'}
@@ -1904,9 +1908,7 @@ export function ConversationSurface({
       </div>
 
       <div className="composer-dock">
-        {!transcriptAtEnd && (
-          <JumpToLatestButton onJump={() => void jumpToLatest()} />
-        )}
+        <JumpToLatestButton onJump={() => void jumpToLatest()} visible={!transcriptAtEnd} />
         <div className="composer-stack">
           <WorkstreamComposer
             api={api ?? undefined}
