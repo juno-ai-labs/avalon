@@ -15,7 +15,8 @@ including code that only means to restore a position.
 | Path | Responsibility |
 | --- | --- |
 | [`apps/desktop/src/renderer/lib/use-transcript-follow.ts`](../apps/desktop/src/renderer/lib/use-transcript-follow.ts) | The whole mechanism, and **the only code that writes `scrollTop` on the transcript**: the follow, the reader-intent rules, and the recorded position that tells the two apart. |
-| [`apps/desktop/src/renderer/screens/workstream.tsx`](../apps/desktop/src/renderer/screens/workstream.tsx) | The only caller. Owns the scroll container, decides when following is permitted at all, and asks the hook to move the viewport when the screen needs it somewhere — on open, after an older canonical range is prepended, on **Jump to latest**, and on send. |
+| [`apps/desktop/src/renderer/screens/conversation-surface.tsx`](../apps/desktop/src/renderer/screens/conversation-surface.tsx) | The only caller. Owns the scroll container, decides when following is permitted at all, and asks the hook to move the viewport when the screen needs it somewhere — on open, after an older canonical range is prepended, on **Jump to latest**, and on send. |
+| `apps/desktop/src/renderer/lib/use-transcript-history.ts` | Observes viewport position, schedules edge checks, and reports whether reconnection blocks visible history. The surface owns request deduplication and errors. |
 | [`apps/desktop/src/renderer/styles/app.css`](../apps/desktop/src/renderer/styles/app.css) | `.transcript-scroll` and `.transcript-column`, whose bottom padding is what keeps the newest message clear of the composer when the viewport is at the end. |
 
 `@tanstack/react-virtual` measures and positions the rows, and corrects the
@@ -90,7 +91,7 @@ turn finishes.
 
 ### Where the screen puts the viewport
 
-`workstream.tsx` never writes `scrollTop`. It calls:
+`conversation-surface.tsx` never writes `scrollTop`. It calls:
 
 - `scrollToEnd()` when a work stream opens at the end, when it opens with no
   transcript at all — a work stream created moments ago, whose first reply is
@@ -124,6 +125,32 @@ gap; overlapping responses are de-duplicated by stable turn revision. Each lazy
 range also carries the bounded lifecycle activities referenced by those turns;
 the reducer merges them by stable activity identity and revision so historical
 “worked for” timing appears when its owning turn enters memory.
+
+`use-transcript-history.ts` starts only after the opening-position callback has
+placed the viewport at unread context, a search result, or the latest message.
+It then checks scroll position after layout, on scroll,
+on resize, and when a hidden window becomes visible. While the viewport is
+within 160 px of the loaded top edge, it requests adjacent older ranges one
+at a time. It does not require a wheel, keyboard, or pointer gesture: opening
+and programmatic positioning can trigger the same infinite scrolling.
+A short viewport fills through this same path. Loading shows a status indicator;
+there is no normal history button. An error stops automatic requests and offers
+**Retry loading earlier messages**. The retry uses the shared button primitive
+with a retry icon, including its hover, focus, and disabled styles. The centered
+history row uses control typography and spacing in both appearances; its label
+can wrap in narrow feeds without shrinking the icon. Hidden windows do not load
+automatically. A disconnected feed at the loaded edge shows **Waiting to
+reconnect…** and resumes automatic loading on reconnect. Newer-gap, latest,
+and search errors never expose the older-range retry control.
+
+Observers and listeners persist across streaming commits; each commit schedules
+a check without cancelling a frame already pending. The content element has an
+explicit ref, so child measurements are observed without relying on DOM order.
+The surface tracks pending older requests per conversation and deduplicates
+return visits. A separate visit generation fences scroll restoration and errors,
+so A → B → A cannot apply A's original reading position to its new visit.
+Pages containing no visible rows still advance canonical coverage. A response
+that does not advance coverage stops with an error rather than repeating forever.
 
 Approaching a loaded edge requests only the adjacent 20-sequence interval over
 the already-open SubstreamAgent socket and preserves the visible prepend
@@ -182,13 +209,12 @@ not know what a message is, when a turn is streaming, or how tall a row is; it
 reads three numbers off a DOM element and writes one back.
 
 It depends on the screen for permission — `canFollow` is false until
-`workstream.tsx` has positioned this work stream, while the transcript is empty,
+`conversation-surface.tsx` has positioned this work stream, while the transcript is empty,
 and whenever the end of the transcript is a page away rather than loaded, because
 following an end that is not the real end would strand the reader at a boundary.
-It also takes the work stream's id, because the screen is a single component
-across every route under `/workstreams/:id` and is never remounted between them:
-without it, a reader who scrolled away from one work stream would arrive at the
-next already not following it.
+It also takes the full parent-and-substream conversation address. The shared
+screen survives navigation, so both switching parents and switching children
+reset follow state rather than inheriting the previous conversation's decision.
 
 Row measurement, virtual positioning, and the scroll corrections applied when a
 row's measured height replaces its estimate belong to `@tanstack/react-virtual`
@@ -231,6 +257,12 @@ gone.
 
 ## Testing
 
+`use-transcript-history.test.tsx` exercises position-based paging, resize,
+visibility, in-flight requests, and conversation changes. `workstream-open.test.tsx`
+checks opening readiness, A → B → A request deduplication and restoration,
+reconnect status, direction-specific errors, and coverage-based termination. Run these with
+`pnpm --filter @rally/desktop exec vitest run src/renderer/lib/use-transcript-history.test.tsx src/renderer/screens/workstream-open.test.tsx`.
+
 [`apps/desktop/src/renderer/lib/use-transcript-follow.test.tsx`](../apps/desktop/src/renderer/lib/use-transcript-follow.test.tsx),
 in the desktop suite (`pnpm --filter @rally/desktop test`).
 
@@ -257,12 +289,37 @@ every bug in which the follow declines to write — which is most of them, becau
 declining is what it does once the reader has taken over. `stream()` in that file
 fires the event only when `scrollTop` changed.
 
-There is no test that renders `WorkstreamScreen`, so the wiring in
-`workstream.tsx` — `canFollow`, the **Jump to latest** condition, and which of
-`scrollToEnd`/`release` each open path calls — is covered only by running the
-client. That seam is where the original defect lived.
+The surface tests render `WorkstreamScreen` with socket and follow doubles,
+so the complete interaction between real row measurements, unread positioning,
+follow, and paging still needs Electron verification. A passing DOM assertion
+does not prove that prepend restoration leaves the same message visible.
 
 ## Changelog
+
+### 2026-09-06 — Load history from viewport position
+
+**What changed:** The shared conversation surface requests older ranges whenever
+its visible viewport is within 160 px of the loaded top, including after layout
+or resizing. A loading status replaces the normal history button; errors expose
+a manual retry and suspend automatic requests. Both states use centered control
+typography and spacing; the shared retry button carries a retry icon and wraps
+its label when space is constrained.
+
+**Why:** Opening snapshots can leave most of the viewport empty, and readers
+should receive earlier messages by scrolling rather than operating pagination.
+
+**Considered and rejected:** Gating paging on upward input misses programmatic
+positioning and short content that cannot scroll. Increasing the server page
+size guesses at rendered height and charges every opening for extra content.
+
+**Consequences:** Snapshot coverage and sequential requests bound the work to
+the visible edge. Hidden windows stay idle. Prepend restoration remains with
+the follow controller and is fenced to the conversation visit that requested it.
+Observer wiring is stable across commits, and non-advancing canonical coverage
+stops with a retryable error. Review regressions cover opening readiness,
+return visits, wrong-direction errors, and disconnected history.
+
+Shipped through [PR #565](https://github.com/juno-ai-labs/avalon/pull/565).
 
 ### 2026-09-05 — Opening a search result
 
@@ -273,6 +330,7 @@ client. That seam is where the original defect lived.
 **Considered and rejected:** A lifetime marker keyed only by turn ID suppressed valid repeated navigation.
 
 **Consequences:** Search positioning releases follow and must clear stale parameters before normal unread positioning resumes.
+
 
 ### 2026-08-28 — Automation authoring adopts the shared follow controller
 

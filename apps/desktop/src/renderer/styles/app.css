@@ -2768,7 +2768,19 @@ pre {
 .unread-divider::after { background: var(--av-sys-color-accent-tint); content: ''; flex: 1; height: 1px; }
 .unread-divider span { flex: 0 0 auto; }
 .transcript-column { margin: 0 auto; max-width: var(--av-cmp-feed-width); min-height: 100%; padding: var(--av-cmp-feed-padding-y) var(--av-cmp-feed-padding-x) 150px; }
-.transcript-history-control { display: flex; justify-content: center; margin-bottom: 18px; }
+.transcript-history-control {
+  align-items: center;
+  color: var(--av-sys-color-text-muted);
+  display: flex;
+  font-size: var(--av-cmp-control-font-size);
+  gap: 7px;
+  justify-content: center;
+  margin-bottom: 18px;
+  min-height: var(--av-sys-size-control-height);
+  text-align: center;
+}
+.transcript-history-control .button { max-width: 100%; white-space: normal; }
+.transcript-history-control svg { flex-shrink: 0; }
 .transcript-history-control + .inline-error { margin-bottom: 18px; }
 .virtual-message-row { display: flow-root; }
 .message-arrival-layer { display: flow-root; transform-origin: center bottom; }
