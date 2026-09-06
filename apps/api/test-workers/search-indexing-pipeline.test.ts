@@ -94,6 +94,17 @@ function liveRows() {
 }
 
 describe('shared Queue indexing pipeline', () => {
+  it('indexes overlapping Queue deliveries with the real shared tokenizer', async () => {
+    await seedResource();
+    const results = await Promise.all([consume([resourceMessage()]), consume([resourceMessage()])]);
+    for (const result of results) {
+      expect(result.explicitAcks).toEqual(['search-0']);
+      expect(result.retryMessages).toEqual([]);
+    }
+    expect(liveRows().filter((row) => row.record_type === 'chunk').length).toBeGreaterThan(2);
+    expect(tokenizerReads).toBe(0);
+  });
+
   it('uses the same canonical text, chunks, and embedding inputs for attachments and messages', async () => {
     await seedResource();
     const stub = env.SUBSTREAM_AGENTS.getByName(conversationObjectName('global', workspaceId, parentId, '0'));
