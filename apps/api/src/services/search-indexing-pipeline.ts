@@ -15,7 +15,8 @@ export async function indexSemanticDocument(index: TextSearchIndex,
   const rows: TextSearchDocument[] = [];
   for (const chunk of chunks) {
     const embedding = await embed(chunk.embeddingText);
-    if (embedding.model !== MEMORY_EMBEDDING_MODEL
+    // OpenRouter returns the provider's Qwen/Qwen3-Embedding-8B spelling.
+    if (embedding.model.toLowerCase() !== MEMORY_EMBEDDING_MODEL
       || embedding.vector.length !== SEARCH_EMBEDDING_DIMENSIONS
       || !embedding.vector.every(Number.isFinite)) throw new Error('search_embedding_space_mismatch');
     const id = await sha256Hex(JSON.stringify([
