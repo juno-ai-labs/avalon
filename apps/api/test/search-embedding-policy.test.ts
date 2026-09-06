@@ -28,16 +28,16 @@ it('does not retain input fragments in the shared model after counting', () => {
   }
 });
 
-it('clears input fragments when encoding throws', () => {
+it('clears input fragments when tokenization throws', () => {
   let model: BPE | undefined;
   vi.spyOn(Tokenizer.prototype, 'tokenize').mockImplementation(function (this: Tokenizer) {
     if (!(this.model instanceof BPE)) throw new Error('unexpected test model');
     model = this.model;
     model.bpe('private');
     expect(model.cache.get('private')).toBeDefined();
-    throw new Error('encoding failed');
+    throw new Error('tokenization failed');
   });
-  expect(() => searchChunkPolicy().countTokens('private')).toThrow('encoding failed');
+  expect(() => searchChunkPolicy().countTokens('private')).toThrow('tokenization failed');
   expect(model?.cache.get('private')).toBeUndefined();
 });
 
