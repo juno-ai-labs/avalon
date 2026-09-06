@@ -117,7 +117,7 @@ const applicationIconNames = [
   'light',
   'dark',
   'calm',
-  'ludicrous-speed',
+  'ludicrous',
   'homage',
   'builder',
   'quiet',

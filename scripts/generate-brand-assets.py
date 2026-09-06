@@ -183,7 +183,12 @@ def save_social_card(image: Image.Image, path: Path) -> None:
 
 def generate_application_icon_previews() -> None:
     """Build compact Retina thumbnails without duplicating 1024px app assets in Vite."""
-    for source_path in sorted(APPLICATION_ICON_DIRECTORY.glob("*.png")):
+    sources = sorted(APPLICATION_ICON_DIRECTORY.glob("*.png"))
+    source_names = {path.name for path in sources}
+    for preview_path in APPLICATION_ICON_PREVIEW_DIRECTORY.glob("*.png"):
+        if preview_path.name not in source_names:
+            preview_path.unlink()
+    for source_path in sources:
         with Image.open(source_path) as source:
             preview = source.convert("RGBA").resize((128, 128), Image.Resampling.LANCZOS)
             save(preview, APPLICATION_ICON_PREVIEW_DIRECTORY / source_path.name)

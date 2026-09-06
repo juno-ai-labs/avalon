@@ -87,11 +87,11 @@ sudo -E apt-get install -y --no-install-recommends \
   xvfb unzip libnss3 libdrm2 libgbm1 libxcomposite1 libxdamage1 libxfixes3 \
   libxrandr2 libxkbcommon0 libpango-1.0-0 libcairo2 libatspi2.0-0
 
-# `scripts/generate-brand-assets.py` renders the app icons, and the textured
-# selectable ones are composited with NumPy. Neither is in the base image, and
+# `scripts/generate-brand-assets.py` renders flat brand assets and resizes
+# supplied app artwork into previews with Pillow. It is not in the base image, and
 # PEP 668 marks the system interpreter externally managed — there is no virtual
 # environment here and one script is not worth one.
-sudo -E pip3 install --break-system-packages pillow numpy
+sudo -E pip3 install --break-system-packages pillow
 
 # Route the hosts whose clients break on the proxy's CONNECT tunnel around it.
 # `undici` — which Node, wrangler, and Electron's installer all use — aborts

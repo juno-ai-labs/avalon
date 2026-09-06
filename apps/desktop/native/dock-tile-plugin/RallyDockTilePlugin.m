@@ -73,7 +73,7 @@ static NSString *const RallyApplicationIconNotification = @"ai.rallywith.desktop
       @"light",
       @"dark",
       @"calm",
-      @"ludicrous-speed",
+      @"ludicrous",
       @"homage",
       @"builder",
       @"quiet",

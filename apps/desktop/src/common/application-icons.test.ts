@@ -13,7 +13,7 @@ describe('application icon choices', () => {
       'light',
       'dark',
       'calm',
-      'ludicrous-speed',
+      'ludicrous',
       'homage',
       'builder',
       'quiet',
@@ -21,13 +21,13 @@ describe('application icon choices', () => {
   });
 
   it('validates renderer-controlled identifiers before resolving a resource', () => {
-    expect(parseApplicationIconId('ludicrous-speed')).toBe('ludicrous-speed');
+    expect(parseApplicationIconId('ludicrous')).toBe('ludicrous');
     expect(parseApplicationIconId('../icon.png')).toBeNull();
-    expect(parseApplicationIconId({ id: 'ludicrous-speed' })).toBeNull();
+    expect(parseApplicationIconId({ id: 'ludicrous' })).toBeNull();
     // A choice retired in an earlier release is still on disk in somebody's
     // preference file; it has to degrade to the automatic icon, not resolve.
     expect(parseApplicationIconId('ruby')).toBeNull();
-    for (const retired of ['grass-court', 'clay-court', 'hard-court', 'ball-felt', 'night-match']) {
+    for (const retired of ['ludicrous-speed', 'grass-court', 'clay-court', 'hard-court', 'ball-felt', 'night-match']) {
       expect(parseApplicationIconId(retired)).toBeNull();
     }
     expect(applicationIconFileName('quiet')).toBe('quiet.icns');
