@@ -138,6 +138,34 @@ describe('socket-first work-stream open', () => {
     });
   });
 
+  it('automatically loads near the history edge and only offers a button after failure', async () => {
+    const boot = recoveryBoot();
+    boot.transcript.snapshotThrough = 10;
+    boot.transcript.ranges = [{
+      purpose: 'latest', requested: { startInclusive: 10, endExclusive: 11 },
+      covered: { startInclusive: 10, endExclusive: 11 }, turns: [], activities: [], pluginRuns: [],
+    }];
+    const loadTranscriptRange = vi.fn().mockRejectedValue(new Error('History unavailable'));
+    retainedSocket.mockReturnValue({
+      activeCompaction: null, state: 'connected', workspaceSocketState: 'connected',
+      requestSnapshot: vi.fn(), sendReady: true, loadTranscriptRange,
+    });
+    renderScreen((cache) => {
+      cache.setQueryData(['workstream', workstreamId], boot);
+      cache.setQueryData(['ordered-transcript', workstreamId], boot.transcript);
+    });
+    const log = screen.getByRole('log');
+    Object.defineProperty(log, 'clientHeight', { configurable: true, value: 600 });
+    expect(screen.queryByRole('button', { name: /earlier messages/i })).not.toBeInTheDocument();
+    fireEvent.scroll(log);
+    await waitFor(() => expect(loadTranscriptRange).toHaveBeenCalledOnce());
+    const retry = await screen.findByRole('button', { name: 'Retry loading earlier messages' });
+    fireEvent.scroll(log);
+    expect(loadTranscriptRange).toHaveBeenCalledOnce();
+    fireEvent.click(retry);
+    await waitFor(() => expect(loadTranscriptRange).toHaveBeenCalledTimes(2));
+  });
+
   it('keeps preparation inputs stable while pending and cancels a failed attempt only once on edit', async () => {
     let rejectPreparation!: (error: Error) => void;
     api.prepareSubstream.mockImplementation(() => new Promise((_resolve, reject) => { rejectPreparation = reject; }));
