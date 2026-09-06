@@ -3,7 +3,6 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tansta
 import clsx from 'clsx';
 import {
   AlertTriangle,
-  ArrowUp,
   Copy,
   Ellipsis,
   FileText,
@@ -68,6 +67,7 @@ import { useFileAttachments } from '../lib/use-file-attachments';
 import { useFileDrop } from '../lib/use-file-drop';
 import { useWindowFilePaste } from '../lib/use-file-paste';
 import { TRANSCRIPT_END_SLACK, useTranscriptFollow } from '../lib/use-transcript-follow';
+import { TRANSCRIPT_HISTORY_EDGE, useTranscriptHistory } from '../lib/use-transcript-history';
 import { useWorkstreamFeedOpenTelemetry } from '../lib/use-workstream-feed-open-telemetry';
 import { useWorkstreamSendReadyTelemetry } from '../lib/use-workstream-send-ready-telemetry';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
@@ -478,7 +478,7 @@ export function shouldLoadEarlierFromScroll(
   hasEarlierCursor: boolean,
   loading: boolean,
 ): boolean {
-  return scrollTop < 160 && hasEarlierCursor && !loading;
+  return scrollTop < TRANSCRIPT_HISTORY_EDGE && hasEarlierCursor && !loading;
 }
 
 export function preservedPrependScrollTop(
@@ -994,7 +994,7 @@ export function ConversationSurface({
       && transcript.length > 0
       && orderedTranscript.data !== undefined
       && adjacentTranscriptRange(orderedTranscript.data, 'newer') === null,
-    id,
+    conversationAddress,
   );
 
   useEffect(() => {
@@ -1082,6 +1082,7 @@ export function ConversationSurface({
       }
       if (activeConversationAddressRef.current !== conversationAddress) return;
       window.requestAnimationFrame(() => {
+        if (activeConversationAddressRef.current !== conversationAddress) return;
         const element = transcriptRef.current;
         if (!element) return;
         scrollTranscriptTo(preservedPrependScrollTop(
@@ -1091,16 +1092,27 @@ export function ConversationSurface({
         ));
       });
     } catch (error) {
+      if (activeConversationAddressRef.current !== conversationAddress) return;
       if (error instanceof ApiError && error.code === 'workstream_socket_unavailable') {
         pendingOlderAfterReconnectRef.current = true;
         return;
       }
       setOlderMessagesError(error instanceof Error ? error.message : 'Earlier messages could not be loaded.');
     } finally {
-      loadingOlderRef.current = false;
-      setLoadingOlder(false);
+      if (activeConversationAddressRef.current === conversationAddress) {
+        loadingOlderRef.current = false;
+        setLoadingOlder(false);
+      }
     }
-  }, [id, loadTranscriptRange, queryClient, scrollTranscriptTo, socketState]);
+  }, [conversationAddress, loadTranscriptRange, queryClient, scrollTranscriptTo, socketState, transcriptQueryKey]);
+
+  useTranscriptHistory({
+    scrollRef: transcriptRef,
+    conversationAddress,
+    enabled: payloadBelongsToRoute && socketState === 'connected'
+      && olderTranscriptRange !== null && !loadingOlder && !olderMessagesError,
+    loadOlder: loadOlderMessages,
+  });
 
   const loadNewerMessages = useCallback(async (): Promise<void> => {
     const orderedSnapshot = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
@@ -1861,13 +1873,6 @@ export function ConversationSurface({
           const element = event.currentTarget;
           onTranscriptScroll(element);
           const nearBottom = element.scrollHeight - element.scrollTop - element.clientHeight < TRANSCRIPT_END_SLACK;
-          if (shouldLoadEarlierFromScroll(
-            element.scrollTop,
-            olderTranscriptRange !== null,
-            loadingOlderRef.current,
-          )) {
-            void loadOlderMessages();
-          }
           if (nearBottom
             && newerTranscriptRange !== null
             && !loadingNewerRef.current) {
@@ -1878,17 +1883,15 @@ export function ConversationSurface({
         ref={transcriptRef}
       >
         <div className="transcript-column">
-          {olderTranscriptRange && (
+          {olderTranscriptRange && loadingOlder && (
+            <div className="transcript-history-control" role="status">
+              <LoaderCircle aria-hidden="true" className="spin" size={14} /> Loading earlier messages…
+            </div>
+          )}
+          {olderTranscriptRange && olderMessagesError && !loadingOlder && (
             <div className="transcript-history-control">
-              <Button disabled={loadingOlder || socketState !== 'connected'} onClick={() => void loadOlderMessages()}>
-                {loadingOlder || socketState !== 'connected'
-                  ? <LoaderCircle aria-hidden="true" className="spin" size={14} />
-                  : <ArrowUp aria-hidden="true" size={14} />}
-                {loadingOlder
-                  ? 'Loading earlier messages…'
-                  : socketState !== 'connected'
-                    ? 'Waiting to reconnect…'
-                    : 'Load earlier messages'}
+              <Button disabled={socketState !== 'connected'} onClick={() => void loadOlderMessages()}>
+                Retry loading earlier messages
               </Button>
             </div>
           )}
