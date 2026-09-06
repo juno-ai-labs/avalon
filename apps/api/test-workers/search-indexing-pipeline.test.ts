@@ -4,6 +4,7 @@ import { asWorkspaceId, type WorkspaceId } from '@rally/contracts';
 import { createExecutionContext, createMessageBatch, getQueueResult, runInDurableObject } from 'cloudflare:test';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
+import { Tokenizer } from '@huggingface/tokenizers';
 import { workspaceDOName, conversationObjectName } from '../src/durable-objects/names';
 import { consumeActivityQueue } from '../src/queues/activity-consumer';
 import { seedWorkstreamRoot, seedParticipantMessage } from './helpers/substream-fixture';
@@ -58,7 +59,7 @@ beforeEach(() => {
     throw new Error('unexpected_external_request');
   });
 });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 async function seedResource(provider = 'avalon_upload') {
   const stub = env.WORKSPACE_DOS.getByName(workspaceDOName('global', workspaceId));
@@ -96,12 +97,19 @@ function liveRows() {
 describe('shared Queue indexing pipeline', () => {
   it('indexes overlapping Queue deliveries with the real shared tokenizer', async () => {
     await seedResource();
-    const results = await Promise.all([consume([resourceMessage()]), consume([resourceMessage()])]);
+    const firstMessage = resourceMessage();
+    workspaceId = asWorkspaceId(crypto.randomUUID());
+    resourceId = crypto.randomUUID();
+    await seedResource();
+    const encode = vi.spyOn(Tokenizer.prototype, 'encode');
+    const results = await Promise.all([consume([firstMessage]), consume([resourceMessage()])]);
     for (const result of results) {
       expect(result.explicitAcks).toEqual(['search-0']);
       expect(result.retryMessages).toEqual([]);
     }
     expect(liveRows().filter((row) => row.record_type === 'chunk').length).toBeGreaterThan(2);
+    expect(encode).toHaveBeenCalled();
+    expect(new Set(encode.mock.contexts).size).toBe(1);
     expect(tokenizerReads).toBe(0);
   });
 
