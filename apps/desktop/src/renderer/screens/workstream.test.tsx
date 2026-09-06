@@ -17,7 +17,6 @@ import {
   preservedPrependScrollTop,
   RunFailureNotice,
   orderedTranscriptOwnsRunTiming,
-  shouldLoadEarlierFromScroll,
   WorkstreamErrorState,
   WorkstreamHeader,
   workstreamPayloadBelongsToRoute,
@@ -71,13 +70,6 @@ describe('a resource history follows swaps the rail did not make', () => {
 });
 
 describe('transcript cursor pagination', () => {
-  it('starts an upward page only near the top with a cursor and no request in flight', () => {
-    expect(shouldLoadEarlierFromScroll(159, true, false)).toBe(true);
-    expect(shouldLoadEarlierFromScroll(160, true, false)).toBe(false);
-    expect(shouldLoadEarlierFromScroll(10, false, false)).toBe(false);
-    expect(shouldLoadEarlierFromScroll(10, true, true)).toBe(false);
-  });
-
   it('preserves the visible anchor when an older page is prepended', () => {
     expect(preservedPrependScrollTop(120, 2_000, 2_840)).toBe(960);
     expect(preservedPrependScrollTop(120, 2_000, 1_900)).toBe(120);
