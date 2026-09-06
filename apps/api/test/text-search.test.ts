@@ -8,6 +8,7 @@ vi.mock("@turbopuffer/turbopuffer", () => ({
 }));
 
 import { createTestEnv } from "./helpers/cloudflare-test";
+import { semanticChunks } from "../src/services/semantic-chunks";
 import { indexSemanticDocument } from "../src/services/search-indexing-pipeline";
 import { literalSubstringPattern, TextSearchIndex, TextSearchModeSchema, workspaceSearchIndex } from "../src/services/text-search";
 
@@ -87,8 +88,8 @@ describe("semantic indexing", () => {
   const policy = { maxTokens: 12, overlapTokens: 4, countTokens: (text: string) => text.length };
 
   it.each(["qwen/qwen3-embedding-8b", "Qwen/Qwen3-Embedding-8B"])("writes both chunk strategies for %s with the parent's authority and revision", async (model) => {
-    const ids = await indexSemanticDocument(index, document, policy, async () => ({
-      model, vector: Array.from({ length: 1024 }, () => 1),
+    const ids = await indexSemanticDocument(index, document, policy, async (texts) => ({
+      model, vectors: texts.map(() => Array.from({ length: 1024 }, () => 1)),
     }));
     expect(ids.length).toBeGreaterThan(1);
     expect(provider.write).toHaveBeenCalledWith(expect.objectContaining({
@@ -104,9 +105,51 @@ describe("semantic indexing", () => {
 
   it("rejects model drift before writing any chunks", async () => {
     await expect(indexSemanticDocument(index, document, policy, async () => ({
-      model: "different-model", vector: Array.from({ length: 1024 }, () => 1),
+      model: "different-model", vectors: [],
     }))).rejects.toThrow("search_embedding_space_mismatch");
     expect(provider.write).not.toHaveBeenCalled();
+  });
+
+  it("batches every passage in order and keeps each vector paired with its source range", async () => {
+    const chunks = await semanticChunks(document.text, policy);
+    const embed = vi.fn(async (texts: string[]) => ({
+      model: "Qwen/Qwen3-Embedding-8B",
+      vectors: texts.map((text) => Array.from({ length: 1024 }, () => chunks.findIndex((chunk) => chunk.embeddingText === text))),
+    }));
+    await indexSemanticDocument(index, document, policy, embed, 2);
+    expect(embed.mock.calls.map(([texts]) => texts.length)).toEqual(
+      Array.from({ length: Math.ceil(chunks.length / 2) }, (_, i) => Math.min(2, chunks.length - i * 2)),
+    );
+    expect(embed.mock.calls.flatMap(([texts]) => texts)).toEqual(chunks.map((chunk) => chunk.embeddingText));
+    expect(provider.write).toHaveBeenCalledWith(expect.objectContaining({
+      upsert_rows: chunks.map((chunk, i) => expect.objectContaining({
+        text: chunk.text, chunk_start: chunk.start, chunk_end: chunk.end,
+        vector: Array.from({ length: 1024 }, () => i),
+      })),
+    }));
+  });
+
+  it.each(["missing", "extra", "dimension", "nonfinite", "model"])("rejects a later %s batch before publishing a generation", async (failure) => {
+    let call = 0;
+    const embed = async (texts: string[]) => {
+      const vectors = texts.map(() => Array.from({ length: 1024 }, () => 1));
+      call += 1;
+      if (call === 2) {
+        if (failure === "missing") vectors.pop();
+        if (failure === "extra") vectors.push(Array.from({ length: 1024 }, () => 1));
+        if (failure === "dimension") vectors[0]!.pop();
+        if (failure === "nonfinite") vectors[0]![0] = Number.NaN;
+      }
+      return { model: call === 2 && failure === "model" ? "different-model" : "Qwen/Qwen3-Embedding-8B", vectors };
+    };
+    await expect(indexSemanticDocument(index, document, policy, embed, 2)).rejects.toThrow("search_embedding_space_mismatch");
+    expect(provider.write).not.toHaveBeenCalled();
+  });
+
+  it("does not send empty semantic documents to the embedding provider", async () => {
+    const embed = vi.fn();
+    await indexSemanticDocument(index, { ...document, text: " \n\t" }, policy, embed);
+    expect(embed).not.toHaveBeenCalled();
   });
 
   it("issues only ANN for semantic search and only BM25 for full-text search", async () => {
