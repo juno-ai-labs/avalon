@@ -103,7 +103,7 @@ describe('durable resource search projection', () => {
       await publishResourceSearch(sql, env, workspaceId);
       expect(revision().pending).toBe(1);
       expect(nextResourceSearchDueAt(sql, { ...env, TURBO_PUFFER_DEV_API_KEY: 'test-only',
-        OPENROUTER_API_KEY: 'test-only', SEARCH_CHUNK_MAX_TOKENS: '12', SEARCH_CHUNK_OVERLAP_TOKENS: '4' })).toBe(0);
+        OPENROUTER_API_KEY: 'test-only' })).toBe(0);
       sql.exec('UPDATE resource_search_versions SET pending = 0 WHERE resource_id = ?', resourceId);
       sql.exec('UPDATE resources SET title = ? WHERE id = ?', 'Revised plan', resourceId);
       const edited = revision();

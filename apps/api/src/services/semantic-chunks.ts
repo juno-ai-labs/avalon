@@ -1,3 +1,6 @@
+export const SEARCH_CHUNK_MAX_TOKENS = 512;
+export const SEARCH_CHUNK_OVERLAP_TOKENS = 128;
+
 /** Shared pipeline retrieval granularity, measured by the embedding tokenizer. */
 export interface SemanticChunkPolicy {
   maxTokens: number;
