@@ -112,6 +112,7 @@ and framing. Token counting uses `tokenize` with `add_special_tokens: true`,
 matching `encode` without allocating token-ID and attention-mask arrays. This
 lifecycle depends on the locked library implementation and must be rechecked
 when upgrading it; differential tests compare against an unmodified tokenizer.
+
 Counts include tokenizer special tokens. Document embeddings use OpenRouter's
 `search_document` task through the existing inference client. The binary boundary
 search checks every accepted span; nonmonotonic BPE counts may leave budget unused,
@@ -144,8 +145,7 @@ from those loaders, never from the index.
 ## Invariants
 
 - One tokenizer is retained per isolate (about 26 MiB after releasing construction
-  tables in a local Node 22 heap
-  measurement). Its model stays closure-private; only the policy wrapper is
+  tables in a local Node 22 heap measurement). Its model stays closure-private; only the policy wrapper is
   frozen. Input fragments must be cleared before every count returns or throws.
 - Chunk offsets use the sorted code-point boundary array directly; do not add
   a per-character Map and its transient construction pairs.
