@@ -12,7 +12,7 @@ export async function indexSemanticDocument(index: TextSearchIndex,
   embed: (text: string[]) => Promise<{ model: string; vectors: number[][] }>,
   batchSize = SEARCH_EMBEDDING_BATCH_SIZE,
 ): Promise<string[]> {
-  if (batchSize !== Number.POSITIVE_INFINITY && (!Number.isSafeInteger(batchSize) || batchSize <= 0)) {
+  if (!Number.isSafeInteger(batchSize) || batchSize <= 0) {
     throw new Error('invalid_search_embedding_batch_size');
   }
   const chunks = await semanticChunks(document.text, policy);
