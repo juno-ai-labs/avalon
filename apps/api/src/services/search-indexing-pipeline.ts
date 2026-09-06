@@ -54,7 +54,7 @@ export function createSearchIndexingPipeline(env: Env) {
     }
     for (const document of input.documents) {
       if (document.text === null) continue;
-      policy ??= searchChunkPolicy(env);
+      policy ??= searchChunkPolicy();
       await indexSemanticDocument(index, { ...document, text: document.text }, await policy,
         (text) => embedSearchDocument(env, workspaceId, text));
     }

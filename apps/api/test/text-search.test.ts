@@ -128,15 +128,18 @@ describe("semantic indexing", () => {
 
 
 describe("search namespace identity", () => {
-  it("separates semantic policies without changing lexical identity or exceeding provider name limits", async () => {
+  it("keeps namespace identity stable and separates workspaces within provider name limits", async () => {
     provider.namespaces.length = 0;
-    const env = createTestEnv({ TURBO_PUFFER_DEV_API_KEY: "test-only",
-      SEARCH_CHUNK_MAX_TOKENS: "512", SEARCH_CHUNK_OVERLAP_TOKENS: "64" });
+    const env = createTestEnv({ APP_ENV: "development", AVALON_REGION: "global", TURBO_PUFFER_DEV_API_KEY: "test-only" });
     await workspaceSearchIndex(env, "workspace-one");
-    await workspaceSearchIndex({ ...env, SEARCH_CHUNK_MAX_TOKENS: "1024" }, "workspace-one");
+    await workspaceSearchIndex(env, "workspace-one");
     await workspaceSearchIndex(env, "workspace-two");
     const [semantic, lexical, changedSemantic, sameLexical, otherSemantic, otherLexical] = provider.namespaces;
-    expect(semantic).not.toBe(changedSemantic);
+    // Characterize the former string-valued 512/128 policy. A changed namespace
+    // requires an explicit migration decision, not just deterministic output.
+    expect(semantic).toBe("rally-search-v3-semantic-84f27d3e97d5ef23fad29343a5be0e392746a5579c14c6ff083a708f71353eb1");
+    expect(lexical).toBe("rally-search-v3-da354ca1830dc84c51690d8569b7121aaf6f9dc4d95809293012ff15add194f7-text");
+    expect(semantic).toBe(changedSemantic);
     expect(lexical).toBe(sameLexical);
     expect(semantic).not.toBe(otherSemantic);
     expect(lexical).not.toBe(otherLexical);
