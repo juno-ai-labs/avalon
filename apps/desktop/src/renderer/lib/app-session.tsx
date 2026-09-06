@@ -468,8 +468,8 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
    * before it can draw anything, so it is fetched with the new credential
    * while the old workspace is still on screen and seeded into the fresh
    * cache the moment the session changes — otherwise the window shows a bare
-   * "Opening workspace…" between the two. The route is reset to the new
-   * work-stream page whenever the workspace actually changed: a work stream
+   * "Opening workspace…" between the two. The route is reset to the default
+   * work-stream landing whenever the workspace actually changed: a work stream
    * open in the previous workspace must not be looked up in the next one.
    * The feature flags ride across the same way so the account menu keeps its
    * shape while the new workspace's answer is on its way.
@@ -485,7 +485,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       ? await new RallyApi(nextSession.apiBaseUrl, nextSession).getWorkspace().catch(() => null)
       : null;
     const flags = queryClient.getQueryData(CLIENT_FEATURE_FLAGS_QUERY_KEY);
-    if (workspaceChanged) window.location.hash = '/workstreams/new';
+    if (workspaceChanged) window.location.hash = '/';
     applySession(nextSession);
     if (prefetched && target) {
       queryClient.setQueryData(['workspace', target.id, nextSession.user.id], prefetched);
@@ -777,7 +777,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         // workspace behind it. Resource actions below immediately replace this
         // safe landing; separate-window actions leave it ready when they close.
         if (entered.workspaceChanged) {
-          window.location.hash = '/workstreams/new';
+          window.location.hash = '/';
         }
         await action(entered.api);
       };
