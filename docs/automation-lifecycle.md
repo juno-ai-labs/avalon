@@ -101,7 +101,10 @@ Personal and workspace automations render as a horizontal scrolling strip at the
 including in the conversation-only shell. The strip is absent when neither personal nor workspace
 automations exist. Each tile uses a rounded hexagon with flat left and right sides without eyes, a stable identity
 color, a centered symbol from the shared stream icon family, and a bottom-right square lifecycle marker (active, paused, or draft). It opens
-the existing automation route and retains Run now and Delete context actions.
+the existing automation route. Personal tiles retain Run now and Delete context
+actions; workspace tiles are navigation-only because directory summaries lack
+management capabilities. Their tooltip and accessible name identify Workspace
+scope. Management remains on the automation page.
 Room-owned automations remain in their room rail. The sidebar directory excludes
 them at the server; the legacy row renderer still accepts room-owned fixtures. Compact mode keeps Search and New chat above the scrolling
 streams, while automation tiles remain above the account menu.
@@ -586,7 +589,11 @@ the production conversation-only sidebar.
 and require different behavior between expanded and compact modes.
 
 **Consequences:** Room-owned automations stay in their existing room navigation.
-The strip is absent only when neither standalone scope has entries.
+The strip is absent only when neither standalone scope has entries. Workspace
+tiles omit management menus until authoritative capabilities are available, rather
+than offering actions that viewer-only members cannot perform. The strip keeps the
+server directory order and horizontal overflow for the combined population; it
+does not add a separate cap or reorder by recent use.
 
 ### 2026-09-07 — Personal automations in the sidebar
 

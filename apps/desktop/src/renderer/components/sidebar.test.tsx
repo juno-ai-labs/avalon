@@ -195,6 +195,16 @@ describe('Sidebar work-stream markers', () => {
     expect(screen.queryByText('No automations')).not.toBeInTheDocument();
   });
 
+  it('keeps shared shortcuts navigable without offering management actions', () => {
+    const shared = { ...automation, id: 'shared', name: 'Team brief', scope: 'workspace' as const };
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} conversationOnly automations={[shared]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
+    const link = screen.getByRole('link', { name: /Team brief/u });
+    fireEvent.contextMenu(link);
+    expect(screen.queryByRole('menuitem', { name: 'Run now' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'Delete automation' })).not.toBeInTheDocument();
+    expect(link).toHaveAttribute('href', '/automations/shared');
+  });
+
   it('shows automation shortcuts above the user menu in the GrokBot shell', () => {
     render(
       <MemoryRouter>

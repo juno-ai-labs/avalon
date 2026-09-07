@@ -418,17 +418,18 @@ function AutomationRow({
 }): React.JSX.Element {
   const isDraft = automation.status === 'draft';
   const draftActive = useOpenDraftId() === automation.id;
+  const scopeDescription = automation.scope === 'workspace' ? ' · Workspace' : '';
   return (
     <ContextMenu.Root>
-      <ContextMenu.Trigger asChild>
+      <ContextMenu.Trigger asChild disabled={tile && automation.scope === 'workspace'}>
         <div className="sidebar-context-target">
           {/* One durable route for a draft and an accepted automation: the
               screen behind it is the automation's own conversation, with its
               lifecycle in the header. */}
           <NavLink
             className={({ isActive }) => clsx('sidebar-row automation-row', tile && 'automation-tile', (isDraft ? draftActive : isActive) && 'is-active', isDraft && 'is-draft')}
-            aria-label={tile ? `${automation.name}, ${automationStatusLabels[automation.status]}` : undefined}
-            title={tile ? `${automation.name} · ${automationStatusLabels[automation.status]}` : undefined}
+            aria-label={tile ? `${automation.name}, ${automationStatusLabels[automation.status]}${scopeDescription}` : undefined}
+            title={tile ? `${automation.name} · ${automationStatusLabels[automation.status]}${scopeDescription}` : undefined}
             onClick={() => markSurfaceEntrypoint('sidebar_automation')}
             to={`/automations/${automation.id}`}
           >
