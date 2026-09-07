@@ -1,6 +1,6 @@
 import { SearchDocumentJobSchema, publishSearchIndexingJobs, SearchEmbeddingBatchSchema, type SearchSourceReference } from '../services/search-indexing-jobs';
 import { embedSearchDocuments } from '../services/search-embedding';
-import { workspaceSearchIndex, searchChunkIdentity } from '../services/text-search';
+import { workspaceSearchIndex, searchChunkIdentity, searchDocumentId } from '../services/text-search';
 import { ResourceSearchProjectionSchema } from '../durable-objects/resource-search-projection';
 import { SearchProjectionMessageSchema } from '../durable-objects/search-projection-outbox';
 import { createSearchIndexingPipeline, indexSemanticBatch } from '../services/search-indexing-pipeline';
@@ -187,16 +187,26 @@ export async function recoverPendingActivityQueue(env: Env, limit = 100): Promis
   return pending.results.length;
 }
 
-async function loadSearchSource(env: Env, reference: SearchSourceReference, captureLinks = true, documentId?: string) {
+async function discoverSearchDocuments(env: Env, reference: SearchSourceReference): Promise<string[]> {
   if (reference.type === 'resource_search_projection_v1') {
-    const stub = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, reference.workspaceId,
-      workspaceDOName(reference.region, reference.workspaceId));
-    return documentId === undefined ? stub.prepareResourceSearch(reference) : stub.prepareResourceSearchDocument(reference, documentId);
+    // Category identities are deterministic, including deletion watermarks.
+    return Promise.all(['files', 'artifacts', 'links'].map((source) =>
+      searchDocumentId(source, reference.workspaceId, reference.resourceId)));
   }
   const stub = await durableObjectStubForWorkspace(env, env.SUBSTREAM_AGENTS, reference.workspaceId,
     conversationObjectName(reference.region, reference.workspaceId, reference.parentId, reference.substreamId));
-  return documentId === undefined ? stub.prepareSearchTurn(reference, captureLinks)
-    : stub.prepareSearchTurnDocument(reference, documentId, captureLinks);
+  return z.array(z.string().min(1)).parse(await stub.searchTurnDocumentIds(reference));
+}
+
+async function loadSearchSource(env: Env, reference: SearchSourceReference, captureLinks: boolean, documentId: string) {
+  if (reference.type === 'resource_search_projection_v1') {
+    const stub = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, reference.workspaceId,
+      workspaceDOName(reference.region, reference.workspaceId));
+    return stub.prepareResourceSearchDocument(reference, documentId);
+  }
+  const stub = await durableObjectStubForWorkspace(env, env.SUBSTREAM_AGENTS, reference.workspaceId,
+    conversationObjectName(reference.region, reference.workspaceId, reference.parentId, reference.substreamId));
+  return stub.prepareSearchTurnDocument(reference, documentId, captureLinks);
 }
 
 async function consumeOne(message: Message<unknown>, env: Env,
@@ -237,11 +247,10 @@ async function consumeOne(message: Message<unknown>, env: Env,
     if (source.data.region !== env.AVALON_REGION) throw new Error('search_projection_region_mismatch');
     // Source deliveries discover documents only. Capturing, tokenizing and
     // indexing each page happens in its own independently retriable delivery.
-    const input = await loadSearchSource(env, source.data, false);
-    await publishSearchIndexingJobs(env.ACTIVITY_QUEUE, input.documents.map((document) => ({
-      type: 'search_embedding_batch_v1', phase: 'document', reference: source.data, documentId: document.id,
+    const documentIds = await discoverSearchDocuments(env, source.data);
+    await publishSearchIndexingJobs(env.ACTIVITY_QUEUE, documentIds.map((documentId) => ({
+      type: 'search_embedding_batch_v1', phase: 'document', reference: source.data, documentId,
     })));
-    if (input.retry) throw new Error('search_source_retry_required');
     message.ack();
     return;
   }

@@ -1,5 +1,5 @@
 import { searchIndexingConfigured } from '../services/search-embedding';
-import { prepareConversationLinks, readConversationSearchLink } from './conversation-link-search';
+import { conversationSearchDocumentIds, prepareConversationLinks, readConversationSearchLink } from './conversation-link-search';
 import { drainSearchProjectionOutbox, nextSearchProjectionDueAt, SearchProjectionMessageSchema } from './search-projection-outbox';
 import { searchDocumentId } from '../services/text-search';
 import { ConversationParentKindSchema } from "@rally/contracts/conversation-parent";
@@ -4444,6 +4444,25 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     }
   }
 
+  private async searchTurnIdentity(input: unknown) {
+    await this.storageReady;
+    const request = SearchProjectionMessageSchema.parse(input);
+    const identity = this.objectStore.identity();
+    if (!identity || request.region !== this.env.AVALON_REGION
+      || request.workspaceId !== identity.workspaceId || request.parentId !== identity.parentId
+      || request.substreamId !== this.externalSubstreamId()) throw new Error("search_projection_identity_mismatch");
+    return { request, identity };
+  }
+
+  /** Identity-only discovery keeps sibling bodies out of the source delivery. */
+  async searchTurnDocumentIds(input: unknown) {
+    const { request, identity } = await this.searchTurnIdentity(input);
+    const links = await conversationSearchDocumentIds(this.state.storage.sql,
+      { ...identity, substreamId: request.substreamId }, request.turnId,
+      () => this.transcript.participantTurn(request.turnId));
+    return [await searchDocumentId('messages', identity.parentId, `${request.substreamId}/${request.turnId}`), ...links];
+  }
+
   /** Internal Queue consumer entrypoint; never mounted on the public API. */
   async prepareSearchTurn(input: unknown, captureLinks = true) {
     return this.prepareSearchTurnSource(input, captureLinks);
@@ -4455,12 +4474,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   }
 
   private async prepareSearchTurnSource(input: unknown, captureLinks: boolean, documentId?: string) {
-    await this.storageReady;
-    const request = SearchProjectionMessageSchema.parse(input);
-    const identity = this.objectStore.identity();
-    if (!identity || request.region !== this.env.AVALON_REGION
-      || request.workspaceId !== identity.workspaceId || request.parentId !== identity.parentId
-      || request.substreamId !== this.externalSubstreamId()) throw new Error("search_projection_identity_mismatch");
+    const { request, identity } = await this.searchTurnIdentity(input);
     const links = await prepareConversationLinks(this.state.storage.sql, this.env,
       { ...identity, substreamId: request.substreamId }, request.turnId,
       () => this.transcript.participantTurn(request.turnId), captureLinks, documentId);

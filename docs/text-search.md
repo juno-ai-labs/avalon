@@ -58,8 +58,9 @@ by semantic chunk boundaries. Semantic queries search only chunk records.
 
 ### One Queue pipeline
 
-Source deliveries discover canonical document IDs and publish document-phase
-jobs. Each document delivery captures only its selected page (when needed), writes
+Source deliveries discover canonical document IDs without loading bodies and
+publish document-phase jobs. Resource IDs are derived directly; turn discovery
+reconciles link metadata and selects only IDs, including retained deletions. Each document delivery captures only its selected page (when needed), writes
 its lexical record, plans its recursive/sliding chunks, and publishes embedding
 batches. Turns with many links therefore do not accumulate all page-planning CPU
 in one invocation. Document and embedding children load only their selected
@@ -403,7 +404,8 @@ budgets require team policy; no arbitrary new caps are introduced here.
 ### 2026-09-06 — Plan and capture each document independently
 
 **What changed:** Source references fan out document jobs before capture and
-chunk planning. Targeted source RPC reads exclude sibling page bodies, and
+chunk planning. Identity-only discovery avoids loading or serializing sibling bodies at all.
+Targeted source RPC reads exclude sibling page bodies, and
 freshness validation does not repeat capture. Capture failures include numeric
 HTTP/provider codes without URLs, response bodies, or provider error text.
 

@@ -189,6 +189,9 @@ describe('shared Queue indexing pipeline', () => {
     });
     const reference = { type: 'search_projection_v1', region: 'global', workspaceId,
       parentId, substreamId: '0', turnId: 'pages', revision: 1 };
+    const discoveredIds = await stub.searchTurnDocumentIds(reference);
+    expect(discoveredIds).toEqual(expect.arrayContaining(ids));
+    expect(discoveredIds).toHaveLength(3);
     const tokenize = vi.spyOn(Tokenizer.prototype, 'tokenize');
     const discovery = await consume([reference], {}, false, false);
     expect(discovery.explicitAcks).toEqual(['search-0']);
