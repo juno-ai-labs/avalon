@@ -102,8 +102,8 @@ including in the conversation-only shell. The strip is absent when neither perso
 automations exist. Each tile uses a rounded hexagon with flat left and right sides without eyes, a stable identity
 color, a centered symbol from the shared stream icon family, and a bottom-right square lifecycle marker (active, paused, or draft). It opens
 the existing automation route and retains Run now and Delete context actions.
-Room-owned automations remain in their room rail; legacy full-sidebar mode
-also retains their list rows. Compact mode keeps Search and New chat above the scrolling
+Room-owned automations remain in their room rail. The sidebar directory excludes
+them at the server; the legacy row renderer still accepts room-owned fixtures. Compact mode keeps Search and New chat above the scrolling
 streams, while automation tiles remain above the account menu.
 
 The strip follows the installed Grok Bot 0.44.0 pinned layout, inspected on
@@ -576,7 +576,7 @@ production inspection paths.
 ### 2026-09-07 — Include workspace automations in the strip
 
 **What changed:** The shared sidebar strip includes both personal and workspace
-scope, and its accessible name is now Automation shortcuts. Legacy rows exclude both
+scopes, and its accessible name is now Automation shortcuts. Legacy rows exclude both
 scopes so each automation appears once.
 
 **Why:** Workspace automations need the same direct access as personal ones in
