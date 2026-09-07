@@ -3,6 +3,7 @@ import { SettingToggle } from '../settings/setting-toggle';
 import { settings, collectSettings, coreSettingsProvider, defineSetting, isSettingAvailable, searchSettings, type SettingSearchResult, type SettingsSearchContext } from '../settings/registry';
 import { SettingCopy, SettingLabel } from '../settings/setting-label';
 import { SettingsSearchResults, useRevealSetting } from '../settings/search-results';
+import { SidebarSearch } from '../components/sidebar-search';
 import { digestDeliverySetting } from '../settings/digest-provider';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as Tooltip from '@radix-ui/react-tooltip';
@@ -1309,33 +1310,30 @@ export function WorkspaceSettingsScreen({
             event.currentTarget.querySelector('input')?.focus();
           }
         }}>
-          <label className="settings-search">
-            <Search aria-hidden="true" size={15} />
-            <span className="sr-only">Search settings</span>
-            <input
-              onChange={(event) => {
-                setSearchTarget(null);
-                setNavigationQuery(event.target.value);
-              }}
-              onKeyDown={(event) => {
-                if (event.nativeEvent.isComposing) return;
-                if (event.key === 'Escape' && navigationQuery) {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  setNavigationQuery('');
-                } else if (event.key === 'ArrowDown' && navigationQuery.trim()) {
-                  event.preventDefault();
-                  event.currentTarget.closest('aside')?.querySelector<HTMLButtonElement>('.settings-search-results button')?.focus();
-                } else if (event.key === 'Enter' && searchResults[0]) {
-                  event.preventDefault();
-                  selectSearchResult(searchResults[0]);
-                }
-              }}
-              placeholder="Search"
-              type="search"
-              value={navigationQuery}
-            />
-          </label>
+          <SidebarSearch
+            mode="input"
+            aria-label="Search settings"
+            onChange={(event) => {
+              setSearchTarget(null);
+              setNavigationQuery(event.target.value);
+            }}
+            onKeyDown={(event) => {
+              if (event.nativeEvent.isComposing) return;
+              if (event.key === 'Escape' && navigationQuery) {
+                event.preventDefault();
+                event.stopPropagation();
+                setNavigationQuery('');
+              } else if (event.key === 'ArrowDown' && navigationQuery.trim()) {
+                event.preventDefault();
+                event.currentTarget.closest('aside')?.querySelector<HTMLButtonElement>('.settings-search-results button')?.focus();
+              } else if (event.key === 'Enter' && searchResults[0]) {
+                event.preventDefault();
+                selectSearchResult(searchResults[0]);
+              }
+            }}
+            placeholder="Search"
+            value={navigationQuery}
+          />
           {navigationQuery.trim() ? <SettingsSearchResults results={searchResults} onSelect={selectSearchResult} /> : <nav aria-label="Settings sections" className="settings-navigation">
             {settingsNavigationWithConnectors.map((group) => (
               <div className="settings-navigation-group" key={group.label}>

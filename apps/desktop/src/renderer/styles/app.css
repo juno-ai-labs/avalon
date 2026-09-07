@@ -619,9 +619,13 @@ pre {
   .workspace-shell.rail-open .main-pane { padding-right: calc(var(--rail-slot) + 8px); }
 }
 
-.sidebar {
+.sidebar,
+.settings-sidebar {
   background: var(--av-cmp-sidebar-background);
   border-right: var(--av-sys-size-border-hairline) solid var(--av-cmp-sidebar-border);
+}
+
+.sidebar {
   bottom: 0;
   display: flex;
   flex-direction: column;
@@ -697,8 +701,12 @@ pre {
 }
 
 .sidebar-action:hover,
+.settings-navigation-group button:hover,
+.settings-search-results > button:hover,
+.settings-search-results > button:focus-visible,
 .sidebar-row:hover { background: var(--av-cmp-row-background-hover); color: var(--av-sys-color-text-default); }
 .sidebar-action.is-active,
+.settings-navigation-group button[aria-current='page'],
 .sidebar-row.is-active { background: var(--av-cmp-row-background-selected); color: var(--av-sys-color-text-default); }
 
 /* The row's leading mark.
@@ -1468,8 +1476,6 @@ pre {
 }
 
 .settings-sidebar {
-  background: var(--av-sys-color-surface-subtle);
-  border-right: .5px solid var(--av-sys-color-border-default);
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -1529,7 +1535,6 @@ pre {
   align-items: center;
   background: transparent;
   border-radius: 8px;
-  color: var(--av-ref-color-neutral-12);
   display: flex;
   font-size: 13px;
   font-weight: 400;
@@ -1542,8 +1547,6 @@ pre {
   width: 100%;
 }
 
-.settings-navigation-group button:hover { background: var(--av-sys-color-surface-raised); color: var(--av-sys-color-text-default); }
-.settings-navigation-group button[aria-current='page'] { background: var(--av-ref-color-neutral-5); color: var(--av-sys-color-text-default); }
 .settings-navigation-group button.settings-navigation-child {
   font-size: 11.5px;
   min-height: 32px;
@@ -1557,7 +1560,6 @@ pre {
 .settings-search-results > button {
   background: transparent;
   border-radius: 8px;
-  color: var(--av-sys-color-text-default);
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -1568,8 +1570,6 @@ pre {
 }
 .settings-search-results strong { font-size: 13px; font-weight: 400; overflow-wrap: anywhere; }
 .settings-search-results small { color: var(--av-sys-color-text-muted); font-size: 11px; overflow-wrap: anywhere; text-transform: capitalize; }
-.settings-search-results > button:hover,
-.settings-search-results > button:focus-visible { background: var(--av-ref-color-neutral-5); }
 .settings-search-highlight { animation: settings-search-reveal 1.8s ease-out; }
 @keyframes settings-search-reveal {
   from { box-shadow: inset 0 0 0 2px var(--av-sys-color-accent-base); }
@@ -5259,6 +5259,10 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   width: 100%;
   text-align: left;
   font: inherit;
+  font-size: 14px;
+  font-weight: 420;
+  line-height: 20px;
+  flex: 0 0 auto;
   cursor: pointer;
   align-items: center;
   background: var(--av-cmp-row-background-hover);
@@ -5273,7 +5277,10 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 }
 
 .sidebar-search:focus-within { box-shadow: inset 0 0 0 .5px var(--av-sys-color-border-strong); }
-.sidebar-search input { background: transparent; border: 0; color: var(--av-sys-color-text-default); font-size: 11.5px; min-width: 0; outline: 0; padding: 0; width: 100%; }
+.sidebar-search:has(input:focus-visible) { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: 2px; }
+.sidebar-search:has(input) { cursor: text; }
+.sidebar-search > svg { flex-shrink: 0; }
+.sidebar-search input { background: transparent; border: 0; color: var(--av-sys-color-text-default); font: inherit; height: 100%; min-width: 0; outline: 0; padding: 0; width: 100%; }
 .sidebar-search input::placeholder { color: var(--av-sys-color-text-muted); }
 .sidebar-search input::-webkit-search-cancel-button { display: none; }
 
@@ -5337,7 +5344,10 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   width: 6px;
 }
 .workstream-row .sidebar-row-main { align-self: stretch; justify-content: center; }
-.workstream-row .sidebar-row-title { align-items: baseline; color: var(--av-sys-color-text-default); display: flex; font-size: 12px; font-weight: 520; gap: 6px; justify-content: space-between; line-height: 15px; width: 100%; }
+.settings-navigation-group button,
+.settings-search-results > button,
+.workstream-row .sidebar-row-title { color: var(--av-sys-color-text-default); }
+.workstream-row .sidebar-row-title { align-items: baseline; display: flex; font-size: 12px; font-weight: 520; gap: 6px; justify-content: space-between; line-height: 15px; width: 100%; }
 .sidebar-row-title-copy { align-items: center; display: flex; gap: 4px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workstream-row.is-active { background: var(--av-sys-color-surface-raised-hover); }
 
@@ -5426,11 +5436,6 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 .grokbot-shell .sidebar-group { margin-top: 14px; }
 .grokbot-shell .sidebar-group:first-child { margin-top: 0; }
 .grokbot-shell .sidebar-group-heading { min-height: 30px; padding: 8px 8px 6px; }
-.grokbot-shell .sidebar-search input {
-  font-size: 14px;
-  font-weight: 420;
-  line-height: 20px;
-}
 .grokbot-shell .workstream-row .sidebar-row-title {
   font-size: 14px;
   font-weight: 500;
