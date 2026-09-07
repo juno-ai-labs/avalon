@@ -1,4 +1,5 @@
 import { Search } from 'lucide-react';
+import clsx from 'clsx';
 import type { ComponentProps } from 'react';
 
 type SidebarSearchProps =
@@ -10,15 +11,15 @@ export function SidebarSearch(props: SidebarSearchProps): React.JSX.Element {
   if (props.mode === 'button') {
     const { mode: _mode, className, ...buttonProps } = props;
     void _mode;
-    return <button {...buttonProps} className={`sidebar-search ${className ?? ''}`} type="button">
+    return <button {...buttonProps} className={clsx('sidebar-search', className)} type="button">
       <Search aria-hidden="true" size={14} />
       <span>Search</span>
     </button>;
   }
 
-  const { mode: _mode, className, ...inputProps } = props;
+  const { mode: _mode, ...inputProps } = props;
   void _mode;
-  return <label className={`sidebar-search ${className ?? ''}`}>
+  return <label className="sidebar-search">
     <Search aria-hidden="true" size={14} />
     <input placeholder="Search" {...inputProps} type="search" />
   </label>;
