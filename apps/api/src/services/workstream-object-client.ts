@@ -192,6 +192,12 @@ export class WorkstreamObjectClient {
     return WorkstreamDetailSchema.parse(await this.request({ operation: "get" }));
   }
 
+  async searchLinks(links: Array<{ turnId: string; linkId: string }>) {
+    return z.object({ title: z.string(), links: z.array(z.object({ linkId: z.string(), link: SearchLinkSchema.nullable() })) }).parse(
+      await this.request({ operation: "search_links", links }),
+    );
+  }
+
   async searchLink(turnId: string, linkId: string) {
     return z.object({ title: z.string(), link: SearchLinkSchema.nullable() }).parse(
       await this.request({ operation: "search_link", turnId, linkId }),

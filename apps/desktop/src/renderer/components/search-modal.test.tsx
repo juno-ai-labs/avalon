@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { describe, expect, it, vi } from 'vitest';
 import type { SearchResult } from '@rally/contracts/search';
+import { ApiError } from '../lib/api';
 import { SearchModal } from './search-modal';
 
 const result: SearchResult = {
@@ -29,11 +30,75 @@ describe('workspace search modal', () => {
     fireEvent.change(input, { target: { value: 'danil' } });
     const option = await screen.findByRole('option');
     expect(option.querySelector('strong')).toHaveTextContent('Danil');
-    expect(search).toHaveBeenLastCalledWith({ query: 'danil', category: 'messages' }, expect.any(AbortSignal));
+    expect(search).toHaveBeenLastCalledWith({ query: 'danil', category: 'messages', pageSize: 7 }, expect.any(AbortSignal));
     fireEvent.keyDown(input, { key: 'Enter' });
     expect(onSelect).toHaveBeenCalledWith(result);
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
+  it('continues a rejected page without showing a false empty result', async () => {
+    const search = vi.fn<React.ComponentProps<typeof SearchModal>['search']>()
+      .mockResolvedValueOnce({ results: [], nextCursor: 'rejected-1' })
+      .mockResolvedValueOnce({ results: [], nextCursor: 'rejected-2' })
+      .mockResolvedValueOnce({ results: [], nextCursor: 'rejected' })
+      .mockResolvedValueOnce({ results: [result], nextCursor: null });
+    setup(search);
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'danil' } });
+    await screen.findByRole('option');
+    expect(search).toHaveBeenLastCalledWith({ query: 'danil', category: 'all', pageSize: 7, cursor: 'rejected' }, expect.any(AbortSignal));
+    expect(screen.queryByText('No results')).not.toBeInTheDocument();
+  });
+
+  it('keeps the first page visible while loading a continuation and preserves result order', async () => {
+    let finish: ((value: { results: SearchResult[]; nextCursor: null }) => void) | undefined;
+    const search = vi.fn<React.ComponentProps<typeof SearchModal>['search']>()
+      .mockResolvedValueOnce({ results: [result], nextCursor: 'next' })
+      .mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    setup(search);
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'danil' } });
+    await screen.findByRole('option');
+    fireEvent.click(screen.getByRole('button', { name: 'Load more results' }));
+    await waitFor(() => expect(finish).toBeDefined());
+    expect(screen.getAllByRole('option')).toHaveLength(1);
+    expect(search).toHaveBeenLastCalledWith({ query: 'danil', category: 'all', pageSize: 7, cursor: 'next' }, expect.any(AbortSignal));
+    await act(async () => finish!({ results: [{ ...result, id: 'message-2', excerpt: 'Second result', highlights: [] }], nextCursor: null }));
+    await waitFor(() => expect(screen.getAllByRole('option')).toHaveLength(2));
+    expect(screen.getAllByRole('option').map((row) => row.textContent)).toEqual([
+      expect.stringContaining('Alex Danilowicz'), expect.stringContaining('Second result'),
+    ]);
+    expect(screen.queryByRole('button', { name: 'Load more results' })).not.toBeInTheDocument();
+  });
+
+  it('keeps prior results on a transient continuation failure and retries the same cursor', async () => {
+    const search = vi.fn<React.ComponentProps<typeof SearchModal>['search']>()
+      .mockResolvedValueOnce({ results: [result], nextCursor: 'next' })
+      .mockRejectedValueOnce(new ApiError('Unavailable', 503))
+      .mockResolvedValueOnce({ results: [{ ...result, id: 'message-2' }], nextCursor: null });
+    setup(search);
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'danil' } });
+    await screen.findByRole('option');
+    const more = screen.getByRole('button', { name: 'Load more results' });
+    expect(screen.getByRole('listbox')).not.toContainElement(more);
+    fireEvent.click(more);
+    const retry = await screen.findByRole('button', { name: 'Retry loading more results' });
+    expect(screen.getAllByRole('option')).toHaveLength(1);
+    fireEvent.click(retry);
+    await waitFor(() => expect(screen.getAllByRole('option')).toHaveLength(2));
+    expect(search.mock.calls[2]?.[0].cursor).toBe('next');
+  });
+
+  it.each([401, 403])('hides prior results after a %s continuation denial', async (status) => {
+    const search = vi.fn<React.ComponentProps<typeof SearchModal>['search']>()
+      .mockResolvedValueOnce({ results: [result], nextCursor: 'next' })
+      .mockRejectedValueOnce(new ApiError('Access changed', status));
+    setup(search);
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'danil' } });
+    await screen.findByRole('option');
+    fireEvent.click(screen.getByRole('button', { name: 'Load more results' }));
+    await screen.findByText('Search could not be completed. Please try again.');
+    expect(screen.queryByRole('option')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /more results/ })).not.toBeInTheDocument();
+  });
+
   it('discards an old category response that arrives after a newer query', async () => {
     let finishOld: ((value: { results: SearchResult[] }) => void) | undefined;
     const search = vi.fn((request) => request.category === 'all'
