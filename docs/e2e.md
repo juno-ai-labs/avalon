@@ -165,13 +165,15 @@ confirm all three actions and the extra rows disappear again.
 
 ### Multiple workspaces
 
-Use two disposable accounts and at least one Global and one EU workspace. Enable
+Use two disposable accounts with pre-provisioned Global and EU memberships. Enable
 `multiple-workspaces-enabled` except where a step says otherwise.
 
 1. Have account A invite B. While B is already signed in to another workspace,
    open the emailed link, confirm the modal names the workspace, inviter, and
    role, choose **Join**, and confirm B lands in it with both workspaces retained.
-2. From B's account menu, create a third workspace in the other region. Switch
+2. Confirm B's account menu omits About, Help Center, Send Feedback, and Create
+   a workspace. Existing members cannot create another workspace from this menu;
+   first-workspace creation is covered by onboarding acceptance. Switch
    Global → European Union → Global and confirm sidebar, transcript, Settings,
    meeting window, menu bar, and the singleton workspace socket follow the active
    workspace. Background traffic to the region left must be attention reads only.
@@ -224,7 +226,7 @@ Use two disposable accounts and at least one Global and one EU workspace. Enable
     switching still works from the encrypted set. Disable Lockdown or clear
     credentials and confirm no sibling credential/profile copy remains.
 14. Turn `multiple-workspaces-enabled` off with two memberships. Confirm the menu
-    has the legacy one-workspace anatomy and the device-local active workspace
+    shows Settings, one divider, and Log out; the device-local active workspace
     remains usable. Open the account with an older desktop build and confirm the
     singular compatibility workspace opens instead of onboarding failing.
 15. Open an invitation addressed to another email while signed in. Confirm the
@@ -234,7 +236,8 @@ Use two disposable accounts and at least one Global and one EU workspace. Enable
     one Google exchange. Confirm the same regional workspace reconnects in place
     rather than sending the account through setup. With enough workspace and
     invitation rows to exceed the account-menu viewport, confirm its body scrolls
-    while create, sign-out, and the active account identity remain reachable.
+    with Settings, workspace and invitation rows, and the final Log out reachable.
+    Confirm exactly one divider immediately precedes Log out and none follows it.
 
 ## Regional telemetry acceptance
 

@@ -62,6 +62,37 @@ describe('workspace account menu', () => {
     expect(screen.queryByText('Weekly usage')).not.toBeInTheDocument();
     expect(screen.queryByText('Get Rally for iOS')).not.toBeInTheDocument();
   });
+  it.each([true, false])('keeps compact account actions ordered and usable with workspaces enabled=%s', (enabled) => {
+    const invite = {
+      id: 'invite-1', workspaceId: 'workspace-invited', workspaceName: 'Invited Studio',
+      region: 'global' as const, email: currentUser.email, role: 'member' as const,
+      invitedByName: 'Grace', expiresAt: '2026-09-07T00:00:00.000Z',
+    };
+    const props = renderMenu({ presentation: 'grok', enabled, invitations: [invite] });
+    openMenu();
+    const menu = screen.getByRole('menu');
+    const items = within(menu).getAllByRole('menuitem');
+    expect(items).toHaveLength(enabled ? 5 : 2);
+    expect(items[0]).toHaveAccessibleName('Settings');
+    if (enabled) {
+      expect(items[1]).toHaveAccessibleName(/Global Studio.*Current/u);
+      expect(items[2]).toHaveAccessibleName(/Europe Studio/u);
+      expect(items[3]).toHaveAccessibleName(/Join Invited Studio.*Grace/u);
+    }
+    const logout = within(menu).getByRole('menuitem', { name: 'Log out' });
+    expect(items.at(-1)).toBe(logout);
+    expect(menu.lastElementChild).toBe(logout);
+    expect(within(menu).getAllByRole('separator')).toEqual([logout.previousElementSibling]);
+    for (const name of ['About', 'Help Center', 'Send Feedback', 'Create a workspace']) {
+      expect(within(menu).queryByRole('menuitem', { name })).not.toBeInTheDocument();
+    }
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Settings' }));
+    expect(props.onOpenSettings).toHaveBeenCalledOnce();
+    openMenu();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Log out' }));
+    expect(props.onSignOut).toHaveBeenCalledOnce();
+  });
+
   it('shows background attention, a cross-region tag, and one-action switching', () => {
     const props = renderMenu();
 
