@@ -14,8 +14,9 @@ is involved.
 | `apps/desktop/resources/app-icons/*.png` | Full-bleed 1024×1024 authoring sources, one per selectable icon. They are not shipped as Dock icons. |
 | `apps/desktop/src/renderer/assets/app-icons/*.png` | Generated 128×128 Retina previews; Vite never bundles the 1024px Dock sources. |
 | `apps/desktop/native/selectable-app-icon/icon.json` | Icon Composer template used to give each selectable source a system-owned enclosure and platform effects. |
+| `apps/desktop/.native-build/app-icons/manifest.json` | Versioned catalog of selectable IDs, read afresh by the Dock plugin on each notification. |
 | `apps/desktop/.native-build/app-icons/*.icns` | Generated static renditions compiled by Apple's `actool` and shipped for Finder and the Dock plug-in. |
-| `apps/desktop/.native-build/RallyDockTilePlugin.docktileplugin` | Generated, signed `NSDockTilePlugIn` that keeps the selected icon in the Dock when Rally is not running. |
+| `apps/desktop/.native-build/RallyDockTilePluginV2.docktileplugin` | Generated, signed `NSDockTilePlugIn` that keeps the selected icon in the Dock when Rally is not running. |
 | `apps/desktop/native/set-application-icon.js` | AppKit bridge that updates Finder and refreshes the Dock icon cache. |
 | `apps/desktop/resources/menu-bar/rallyTemplate.png` (+ `@2x`) | Generated macOS template image for the menu bar status item. Black plus alpha only; macOS owns its colour. [`menu-bar.md`](menu-bar.md) owns how it is used. |
 | `apps/desktop/resources/icon.icns` | Legacy, pre-masked DMG volume icon. It is not the app icon source. |
@@ -95,9 +96,21 @@ different typeface over the committed card.
    an opaque, full-bleed 1024×1024 image. Do not pre-mask it: the native build
    compiles it through the checked-in Icon Composer template.
 2. Add its identifier to `CURRENT_APPLICATION_ICON_IDS` in `packages/contracts/src/telemetry.ts`, then add its label to `applicationIconLabels` in `apps/desktop/src/common/application-icons.ts`. The current identifier allowlist drives the renderer, main IPC validation, filenames, and telemetry schema; IPC never accepts a filesystem path.
-3. Add the same identifier to the Dock plugin allowlist in `apps/desktop/native/dock-tile-plugin/RallyDockTilePlugin.m`.
-4. Add its identifier to `selectableIconNames` in `apps/desktop/scripts/build-macos-icon-components.mjs`, run `python3 scripts/generate-brand-assets.py` to produce its 128px renderer preview, then import that preview in `apps/desktop/src/renderer/components/application-icon-picker.tsx`.
-5. Add the expected resource to `apps/desktop/scripts/verify-macos-app.mjs` and update focused tests.
+3. Add its identifier to `selectableIconNames` in `apps/desktop/scripts/build-macos-icon-components.mjs`, run `python3 scripts/generate-brand-assets.py` to produce its 128px renderer preview, then import that preview in `apps/desktop/src/renderer/components/application-icon-picker.tsx`.
+4. Add the expected resource to `apps/desktop/scripts/verify-macos-app.mjs` and update focused tests.
+
+The build writes `manifest.json` beside the compiled icons from `selectableIconNames`.
+The plugin reads that catalog and the image from the installed bundle on every
+notification. Do not compile or cache the selectable IDs in the plugin: macOS can
+keep its host alive while the updater replaces the app. Identifier validation
+rejects path separators and dots before any image path is constructed. Missing,
+unsupported, or malformed catalogs clear the custom tile; the next notification
+retries the read.
+
+The V2 bundle, executable, bundle identifier, and Objective-C principal class form
+a new plugin identity. This transitions installations away from the old process
+that held a compiled allowlist. Keep the builder, signer, and verifier aligned
+with this identity. Catalog-only changes do not require another identity change.
 
 The Dock plugin is compiled for arm64 during guarded packaging by `apps/desktop/scripts/build-macos-icon-components.mjs`. Do not commit `.native-build` output.
 
@@ -133,7 +146,13 @@ The package verifier checks:
 - the AppKit bridge used for Finder and cache updates; and
 - both menu bar template renditions, whose names are resolved at runtime rather than referenced in code.
 
-The plugin build also compiles and executes a smoke harness that rejects sources with incorrect dimensions or any transparent pixel before invoking `setDockTile:nil`. This catches recursive implementations of the protocol setter before packaging.
+The plugin build also compiles and executes a native smoke harness. It rejects
+incorrect source dimensions and transparent pixels, exercises `setDockTile:nil`,
+and replaces real on-disk icon resources while retaining the same plugin
+instance. It verifies new artwork, retired IDs, traversal rejection, unsupported
+and missing catalogs, recovery, and reset. The fixture redirects only the
+installation and preference directories; parsing, image loading, and refresh
+use production code.
 
 Launch the packaged app with `pnpm start:desktop:packaged`, select several icons, quit Rally, and confirm the choice remains in the Dock. Check Finder, Spotlight, and Launchpad, then choose “Use the system icon” and confirm the adaptive icon returns.
 
@@ -141,13 +160,36 @@ For a notarized release candidate, repeat the selected-icon test from an install
 
 ## Troubleshooting
 
-- **The Dock changes only while Rally runs:** confirm `NSDockTilePlugIn` names `RallyDockTilePlugin.docktileplugin`, the signed plugin is under `Contents/PlugIns`, and the preference file contains an allowlisted identifier.
-- **Finder changes but the Dock does not:** inspect the Dock plugin signature and distributed notification name, then relaunch the Dock during development to force plugin discovery.
+- **The Dock changes only while Rally runs:** confirm `NSDockTilePlugIn` names `RallyDockTilePluginV2.docktileplugin`, the signed plugin is under `Contents/PlugIns`, and the preference file contains an allowlisted identifier.
+- **Finder changes but the Dock does not:** inspect the Dock plugin signature, distributed notification name, and the installed catalog. Use `lsof` on the Dock plugin host to check whether it still maps an older updater bundle. A V2 installation must load the V2 plugin; restarting the whole Dock is not the upgrade mechanism.
 - **The icon is square or double-masked:** confirm the source PNG is full-bleed and has no baked mask, inset, or platform shadow, then rebuild the selectable ICNS renditions with `pnpm --filter @rally/desktop build:macos-icons`.
 - **Reset leaves a stale icon:** confirm the native bridge can resolve `SLSIconAppearanceConfiguration`. The default returns after the Dock cache is rebuilt even when the private best-effort refresh is unavailable.
 - **Packaging rejects nested code:** rebuild with `pnpm --filter @rally/desktop build:macos-icons` and verify the plugin contains only an arm64 executable before electron-builder signs it.
 
 ## Changelog
+
+### 2026-09-07 — Dock hosts read the installed icon catalog across upgrades
+
+**What changed:** Replaced the compiled selectable-ID allowlist with a versioned
+catalog generated beside the ICNS resources and read on every refresh. A new V2
+plugin identity transitions already-running hosts away from the old implementation.
+Packaging signs and verifies the new identity and checks the catalog against the
+shipped icons. Native smoke coverage replaces resources beneath a surviving instance.
+
+**Why:** Finder accepted a selection while the Dock continued displaying stale
+artwork. The Dock host had retained a binary from a deleted ShipIt staging bundle;
+its UUID differed from the installed plugin. Reloading that host restored icon
+selection. The procedural artwork change exposed the compiled-list lifetime bug;
+it did not change the native setter.
+
+**Considered and rejected:** Restarting the Dock disrupts unrelated apps and fixes
+only one session. Recompiling another list leaves the same failure on the next
+artwork replacement. The catalog must be re-read, rather than cached at startup.
+
+**Consequences:** The manifest format is a compatibility contract for long-lived
+hosts. Keep version 1 for additive artwork changes. A real macOS fixture verified
+that replacing a V1 bundle with V2 loads the new plugin while the old host remains
+alive. A signed, notarized updater cycle remains a release sign-off requirement.
 
 ### 2026-09-06 — Preserve released icon identities through replacement
 

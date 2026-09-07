@@ -2,7 +2,7 @@
 
 static NSString *const RallyApplicationIconNotification = @"ai.rallywith.desktop.application-icon-changed";
 
-@interface RallyDockTilePlugin : NSObject <NSDockTilePlugIn> {
+@interface RallyDockTilePluginV2 : NSObject <NSDockTilePlugIn> {
  @private
   NSDockTile *_dockTile;
 }
@@ -10,7 +10,7 @@ static NSString *const RallyApplicationIconNotification = @"ai.rallywith.desktop
 @property(nonatomic, strong) NSImageView *imageView;
 @end
 
-@implementation RallyDockTilePlugin
+@implementation RallyDockTilePluginV2
 
 @synthesize dockTile = _dockTile;
 
@@ -41,9 +41,19 @@ static NSString *const RallyApplicationIconNotification = @"ai.rallywith.desktop
   [self refreshDockTile];
 }
 
-- (NSString *)selectedIconIdentifier {
-  NSString *applicationSupport = NSSearchPathForDirectoriesInDomains(
+- (NSString *)applicationSupportDirectory {
+  return NSSearchPathForDirectoriesInDomains(
       NSApplicationSupportDirectory, NSUserDomainMask, YES).firstObject;
+}
+
+- (NSURL *)iconDirectoryURL {
+  NSURL *pluginURL = [NSBundle bundleForClass:[RallyDockTilePluginV2 class]].bundleURL;
+  NSURL *contentsURL = [[pluginURL URLByDeletingLastPathComponent] URLByDeletingLastPathComponent];
+  return [contentsURL URLByAppendingPathComponent:@"Resources/app-icons"];
+}
+
+- (NSString *)selectedIconIdentifier {
+  NSString *applicationSupport = [self applicationSupportDirectory];
   // Both userData directory names, current first. The main process adopts
   // `Avalon` into `Rally` on launch, but when that rename fails it deliberately
   // keeps running out of the superseded directory — and it is exactly that
@@ -66,31 +76,30 @@ static NSString *const RallyApplicationIconNotification = @"ai.rallywith.desktop
     return nil;
   }
 
-  static NSSet<NSString *> *allowedIdentifiers;
-  static dispatch_once_t onceToken;
-  dispatch_once(&onceToken, ^{
-    allowedIdentifiers = [NSSet setWithArray:@[
-      @"light",
-      @"dark",
-      @"calm",
-      @"ludicrous",
-      @"homage",
-      @"builder",
-      @"quiet",
-    ]];
-  });
   NSString *identifier = stored[@"icon"];
-  return [allowedIdentifiers containsObject:identifier] ? identifier : nil;
+  // Preferences never supply paths, even if the installed manifest is malformed.
+  NSCharacterSet *invalidCharacters = [[NSCharacterSet characterSetWithCharactersInString:
+      @"abcdefghijklmnopqrstuvwxyz0123456789-"] invertedSet];
+  if (identifier.length == 0 || [identifier rangeOfCharacterFromSet:invalidCharacters].location != NSNotFound) {
+    return nil;
+  }
+
+  // Dock hosts survive app replacement. Read the installed catalog on every
+  // notification: a compiled or cached allowlist silently rejects future icons.
+  NSData *catalogData = [NSData dataWithContentsOfURL:
+      [[self iconDirectoryURL] URLByAppendingPathComponent:@"manifest.json"]];
+  if (!catalogData) return nil;
+  id catalog = [NSJSONSerialization JSONObjectWithData:catalogData options:0 error:NULL];
+  if (![catalog isKindOfClass:[NSDictionary class]] || ![catalog[@"version"] isEqual:@1] ||
+      ![catalog[@"icons"] isKindOfClass:[NSArray class]]) return nil;
+  return [catalog[@"icons"] containsObject:identifier] ? identifier : nil;
 }
 
 - (NSImage *)selectedIconImage {
   NSString *identifier = [self selectedIconIdentifier];
   if (!identifier) return nil;
 
-  NSURL *pluginURL = [NSBundle bundleForClass:self.class].bundleURL;
-  NSURL *contentsURL = [[pluginURL URLByDeletingLastPathComponent] URLByDeletingLastPathComponent];
-  NSURL *iconURL = [[[contentsURL URLByAppendingPathComponent:@"Resources/app-icons"]
-      URLByAppendingPathComponent:identifier]
+  NSURL *iconURL = [[[self iconDirectoryURL] URLByAppendingPathComponent:identifier]
       URLByAppendingPathExtension:@"icns"];
   return [[NSImage alloc] initWithContentsOfURL:iconURL];
 }
