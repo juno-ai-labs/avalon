@@ -1,7 +1,7 @@
-import { Building2, Check, ExternalLink, Globe2, LoaderCircle, ShieldCheck } from 'lucide-react';
+import { Building2, Check, Globe2, LoaderCircle, ShieldCheck } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { RallyDesktopBridge } from '../../common/desktop';
-import { RallyMark, Button, InlineError } from '../components/primitives';
+import { RallyMark, Button, ConnectorMark, InlineError } from '../components/primitives';
 import { useAppSession } from '../lib/app-session';
 import { isComposingKeyEvent } from '../lib/ime';
 import { desktopBridge } from '../lib/platform';
@@ -120,14 +120,15 @@ export function SignInScreen(): React.JSX.Element {
   };
 
   return (
-    <main className="onboarding-shell window-drag">
+    <main className="onboarding-shell signin-shell window-drag">
       <section className="signin-card window-no-drag" aria-labelledby="signin-heading">
         <RallyMark className="signin-mark" />
         <h1 id="signin-heading">Welcome to Rally</h1>
-        <p>Sign in first. Rally will then open your workspace, show invitations, or help you create a workspace.</p>
+        <p>Your team, your work, and Rally. All in one place.</p>
 
+        <p className="signin-account-copy">Sign in or create your account.</p>
         <Button className="button-primary signin-button" disabled={starting || exchangingTicket} onClick={beginGoogleLogin}>
-          {starting || exchangingTicket ? <LoaderCircle aria-hidden="true" className="spin" size={16} /> : <ExternalLink aria-hidden="true" size={16} />}
+          {starting || exchangingTicket ? <LoaderCircle aria-hidden="true" className="spin" size={16} /> : <ConnectorMark mark="google" />}
           {exchangingTicket ? 'Completing sign in…' : 'Continue with Google'}
         </Button>
 
@@ -138,7 +139,6 @@ export function SignInScreen(): React.JSX.Element {
         )}
 
         {(error ?? deepLinkError) && <InlineError>{error ?? deepLinkError}</InlineError>}
-        <p className="signin-help">Authentication opens temporarily in your system browser. Connector access is requested separately and only when needed.</p>
       </section>
     </main>
   );
@@ -190,17 +190,12 @@ export function RegionOnboarding(): React.JSX.Element {
   };
 
   return (
-    <main className="onboarding-shell window-drag">
-      <section className="onboarding-card window-no-drag" aria-labelledby="region-heading">
-        <div className="onboarding-brand">
-          <RallyMark />
-          <span>Rally</span>
-        </div>
+    <main className="onboarding-shell workspace-setup-shell window-drag">
+      <section className="onboarding-card workspace-setup-card window-no-drag" aria-labelledby="region-heading">
+        <RallyMark className="signin-mark" />
         <div className="onboarding-copy">
-          <p className="eyebrow">No invitations found</p>
           <h1 id="region-heading">Create your workspace</h1>
-          <p>Name your shared workspace and choose where Rally should keep its data.</p>
-          {session && <p className="signed-in-identity">Signed in as {session.user.email}</p>}
+          <p>A shared home for your team and Rally.</p>
         </div>
 
         <label className="onboarding-field">
@@ -234,6 +229,7 @@ export function RegionOnboarding(): React.JSX.Element {
           {working && <LoaderCircle aria-hidden="true" className="spin" size={16} />}
           Create workspace
         </Button>
+        {session && <p className="signed-in-identity">Signed in as {session.user.email}</p>}
         <button className="text-button onboarding-signout" onClick={() => void signOut()} type="button">Sign out</button>
       </section>
     </main>
@@ -285,7 +281,7 @@ export function InvitationOnboarding({
   };
 
   return (
-    <main className="onboarding-shell window-drag">
+    <main className="onboarding-shell signin-shell window-drag">
       <section className="signin-card invitation-card window-no-drag" aria-labelledby="invitation-heading">
         <span className="invitation-icon"><RallyMark /></span>
         <p className="eyebrow">Workspace invitations</p>

@@ -1,3 +1,6 @@
+import { ServerCog } from 'lucide-react';
+import { connectorProviders } from '../lib/connector-catalog';
+import { PersonalSetup } from './guided-onboarding';
 import { githubAvailabilityLabels, githubRemoteLabels, mcpAuthLabels } from '../settings/choices';
 import { SettingToggle } from '../settings/setting-toggle';
 import { settings, collectSettings, coreSettingsProvider, defineSetting, isSettingAvailable, searchSettings, type SettingSearchResult, type SettingsSearchContext } from '../settings/registry';
@@ -19,13 +22,11 @@ import {
   Plug,
   RefreshCcw,
   Search,
-  ServerCog,
   ShieldCheck,
   Trash2,
   UserRound,
   Users,
   Wifi,
-  Webhook,
   X,
   type LucideIcon,
 } from 'lucide-react';
@@ -51,7 +52,6 @@ import { connectorBrandMark } from '../lib/plugin-marks';
 import { ApplicationIconPicker } from '../components/application-icon-picker';
 import { ThemePicker } from '../components/theme-picker';
 import { DigestSettings } from '../components/digest-settings';
-import { SLACK_PERSONAL_CAPABILITIES } from '../lib/slack-personal-capabilities';
 import { useAppSession } from '../lib/app-session';
 import { invalidateCachedWorkstreamDetails } from '../lib/workstreams-cache';
 import { ApiError } from '../lib/api';
@@ -222,7 +222,7 @@ const settingsNavigation: Array<{ label: string; items: SettingsNavItem[] }> = [
   },
 ];
 
-const linearNativeAgentEnabled = import.meta.env.VITE_LINEAR_NATIVE_AGENT_ENABLED === 'true';
+
 function providerSetting(provider: { id: string; name: string; description: string; scopes: readonly string[] }, admin: boolean) {
   return defineSetting({
     id: 'provider:' + provider.id, section: 'connections', kind: 'custom',
@@ -250,113 +250,7 @@ const supportedTimezones = typeof Intl.supportedValuesOf === 'function'
   ? Intl.supportedValuesOf('timeZone')
   : ['America/Los_Angeles', 'Europe/London', 'UTC'];
 
-const connectorProviders = [
-  {
-    id: 'google-mail-calendar' as const,
-    provider: 'google' as const,
-    name: 'Google Mail + Calendar',
-    description: 'Search Gmail, create drafts, send mail, and work with calendar events.',
-    mark: 'google' as const,
-    scopes: ['you'] as const,
-    capabilities: ['gmail.read', 'gmail.draft', 'gmail.send', 'calendar.read', 'calendar.write'],
-  },
-  {
-    id: 'google-drive-workspace' as const,
-    provider: 'google' as const,
-    name: 'Google Drive + Docs + Sheets',
-    description: 'Read Drive files and work with Google Docs and Sheets content.',
-    mark: 'google-drive' as const,
-    scopes: ['you', 'workspace'] as const,
-    capabilities: ['drive.read', 'docs.read', 'docs.write', 'sheets.read', 'sheets.write'],
-  },
-  {
-    id: 'github' as const,
-    provider: 'github' as const,
-    name: 'GitHub',
-    description: 'Repositories, issues, pull requests, checks, and development events.',
-    mark: 'github' as const,
-    scopes: ['you', 'workspace'] as const,
-    capabilities: ['github.metadata.read', 'github.contents.read', 'github.issues.read', 'github.issues.write', 'github.pull_requests.read', 'github.pull_requests.write', 'github.actions.read', 'github.checks.read'],
-  },
-  {
-    id: 'granola' as const,
-    provider: 'granola' as const,
-    name: 'Granola',
-    description: 'Personal meeting context through Granola MCP, or workspace notes and transcripts through an admin API key.',
-    mark: 'granola' as const,
-    scopes: ['you', 'workspace'] as const,
-    personalCapabilities: ['granola.personal.read'],
-    capabilities: ['granola.workspace.read'],
-  },
-  {
-    id: 'linear' as const,
-    provider: 'linear' as const,
-    name: 'Linear',
-    description: 'Connect personally to act as you, or install Rally for shared workspace access and real-time activity.',
-    mark: 'linear' as const,
-    scopes: ['you', 'workspace'] as const,
-    personalCapabilities: [
-      'linear.read',
-      'linear.issue.create',
-      'linear.comment.create',
-      'linear.write',
-    ],
-    capabilities: [
-      'linear.read',
-      'linear.issue.create',
-      'linear.comment.create',
-      'linear.write',
-      ...(linearNativeAgentEnabled ? ['linear.agent'] : []),
-    ],
-  },
-  {
-    id: 'slack' as const,
-    provider: 'slack' as const,
-    name: 'Slack',
-    description: 'Messages, files, people, canvases, conversations, and the Rally workspace Agent.',
-    mark: 'slack' as const,
-    scopes: ['you', 'workspace'] as const,
-    personalCapabilities: SLACK_PERSONAL_CAPABILITIES,
-    capabilities: ['slack.agent', 'slack.notifications.write'],
-  },
-  {
-    id: 'notion' as const,
-    provider: 'notion' as const,
-    name: 'Notion',
-    description: 'Your Notion through its live MCP tools, or selected pages and change notifications shared with your Rally workspace.',
-    mark: 'notion' as const,
-    scopes: ['you', 'workspace'] as const,
-    personalCapabilities: ['notion.personal.mcp'],
-    capabilities: ['notion.read', 'notion.insert', 'notion.update', 'notion.comment.read', 'notion.comment.insert'],
-  },
-  {
-    id: 'custom-mcp' as const,
-    provider: 'custom_mcp' as const,
-    name: 'Custom MCP server',
-    description: 'Any Model Context Protocol server, by URL. Authorize it with OAuth or your own request headers; its tools are discovered live rather than listed here.',
-    icon: ServerCog,
-    scopes: ['you', 'workspace'] as const,
-    capabilities: [],
-  },
-  {
-    id: 'generic-webhook' as const,
-    provider: 'generic_webhook' as const,
-    name: 'Inbound webhook',
-    description: 'Receive signed activity from systems that do not have a native Rally connector.',
-    icon: Webhook,
-    scopes: ['you', 'workspace'] as const,
-    capabilities: [],
-  },
-  {
-    id: 'x' as const,
-    provider: 'x' as const,
-    name: 'Public X via TwitterAPI.io',
-    description: 'Read-only public X timelines, threads, replies, and Lists using a Rally-managed third-party API key.',
-    mark: 'x' as const,
-    scopes: ['workspace'] as const,
-    capabilities: ['x.read'],
-  },
-] as const;
+
 
 /**
  * The mark an installed connection wears, or nothing.
@@ -2213,6 +2107,7 @@ export function WorkspaceSettingsScreen({
                 {updateProductAnalytics.error && <InlineError>{updateProductAnalytics.error.message}</InlineError>}
                 <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Appearance</h2><p>Make Rally feel at home on this Mac.</p></div>
                 <ThemePicker />
+                <PersonalSetup />
                 {isSettingAvailable(settings.menuBar, settingsContext) && (
                   <>
                     <div className="settings-list-card">

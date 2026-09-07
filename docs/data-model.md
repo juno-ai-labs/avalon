@@ -57,6 +57,11 @@ WorkspaceDO migration 33 owns `resource_search_versions`: a retained resource re
 
 ### Identity and tenancy
 
+Account presentation and new-user eligibility are added by migration 0099.
+Global identity owns the revisioned name, initials, avatar and color, projected
+narrowly to EU. WorkspaceDO migrations 34 and 35 own resumable per-person
+onboarding and confirmed connector selections. See [new-user onboarding](new-user-onboarding.md).
+
 - `users` stores Google identity subjects and display information, plus the
   account's IANA `timezone` and the `timezone_source` that says who put it
   there. `client` means a desktop sign-in seeded it from the machine and a
@@ -883,6 +888,15 @@ perform the regional audit/control write explicitly through
 `workspaceRegionalDatabase`, with idempotent repair on retry.
 
 ## Changelog
+
+### 2026-09-07 — Persist new-user identity and learning progress
+
+Onboarding needs the same appearance and resumable setup across sessions.
+Migration 0099 stores the revisioned account presentation in identity D1;
+WorkspaceDO migrations 34–35 store the per-member journey and connector choices.
+Existing accounts are exempted. A second execution store was rejected: first
+work uses ordinary workstream creation and the existing durable agent loop.
+
 
 ### 2026-09-05 — Search projection state
 

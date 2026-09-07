@@ -1,3 +1,4 @@
+import { PersonalPresentationSchema } from '@rally/contracts';
 import {
   asUserId,
   asWorkspaceId,
@@ -619,7 +620,7 @@ export class WorkspaceService {
 
   async listMembers() {
     const result = await this.env.DB.prepare(
-      `SELECT u.id, u.email, u.name, u.avatar_url, u.timezone, u.created_at, m.role, m.status, m.joined_at
+      `SELECT u.id, u.email, u.name, u.avatar_url, u.presentation_json, u.timezone, u.created_at, m.role, m.status, m.joined_at
        FROM workspace_members m JOIN users u ON u.id = m.user_id
        WHERE m.workspace_id = ? AND m.status != 'suspended'
        ORDER BY u.name COLLATE NOCASE`,
@@ -632,6 +633,7 @@ export class WorkspaceService {
         email: String(row.email),
         name: String(row.name),
         avatarUrl: row.avatar_url == null ? null : String(row.avatar_url),
+        presentation: row.presentation_json ? PersonalPresentationSchema.parse(JSON.parse(String(row.presentation_json))) : null,
         timezone: String(row.timezone),
         createdAt: String(row.created_at),
       },

@@ -1,3 +1,5 @@
+import { AccountOnboardingSchema, PersonalPresentationSchema } from '@rally/contracts';
+import { publishWorkspaceSync } from './workspace-realtime-service';
 import {
   IanaTimezoneSchema,
   PendingWorkspaceInvitationSchema,
@@ -32,6 +34,7 @@ import {
 } from "../telemetry/preference";
 
 export const platformIdentitySchema = z.object({
+  accountOnboarding: AccountOnboardingSchema.optional(),
   platformUserId: z.string().uuid(),
   googleSubject: z.string().min(1).max(255),
   email: z.string().email().max(254),
@@ -394,6 +397,29 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
   }
 
   private async ensureRegionalUser(identity: PlatformIdentity): Promise<RegionalUserRow> {
+    const user = await this.resolveRegionalUser(identity);
+    const profile = identity.accountOnboarding;
+    if (profile && this.env.AVALON_REGION !== 'global') {
+      const result = await this.env.DB.prepare(
+        `UPDATE users SET onboarding_eligible = ?, onboarding_introduced = ?,
+          name = COALESCE(?, name), presentation_json = ?, onboarding_revision = ?
+         WHERE id = ? AND onboarding_revision <= ?
+           AND (onboarding_revision < ? OR onboarding_eligible != ? OR onboarding_introduced != ? OR presentation_json IS NOT ?)`,
+      ).bind(profile.eligible ? 1 : 0, profile.introduced ? 1 : 0,
+        profile.presentation?.displayName ?? null, profile.presentation ? JSON.stringify(profile.presentation) : null,
+        profile.revision, user.id, profile.revision, profile.revision, profile.eligible ? 1 : 0, profile.introduced ? 1 : 0, profile.presentation ? JSON.stringify(profile.presentation) : null).run();
+      if (result.meta.changes) {
+        const memberships = await this.env.DB.prepare(
+          "SELECT workspace_id FROM workspace_members WHERE user_id = ? AND status = 'active'",
+        ).bind(user.id).all<{ workspace_id: string }>();
+        await Promise.all(memberships.results.map((row) =>
+          publishWorkspaceSync(this.env, row.workspace_id, ['workspace_profile', 'member_directory']).catch(() => undefined)));
+      }
+    }
+    return user;
+  }
+
+  private async resolveRegionalUser(identity: PlatformIdentity): Promise<RegionalUserRow> {
     let user = await this.env.DB.prepare(
       "SELECT id, platform_user_id, google_subject, email FROM users WHERE platform_user_id = ?",
     ).bind(identity.platformUserId).first<RegionalUserRow>();
@@ -413,7 +439,7 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
         throw new ApiError(409, "regional_identity_conflict", "The regional identity is already linked to another account");
       }
       const result = await this.env.DB.prepare(
-        `UPDATE users SET platform_user_id = ?, email = ?, name = ?, avatar_url = ?, updated_at = ?
+        `UPDATE users SET platform_user_id = ?, email = ?, name = COALESCE(json_extract(presentation_json, '$.displayName'), ?), avatar_url = ?, updated_at = ?
          WHERE id = ? AND (platform_user_id IS NULL OR platform_user_id = ?)`,
       ).bind(
         identity.platformUserId,
@@ -468,7 +494,7 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
   private async syncRegionalProfile(userId: string, identity: PlatformIdentity): Promise<void> {
     try {
       await this.env.DB.prepare(
-        "UPDATE users SET email = ?, name = ?, avatar_url = ?, updated_at = ? WHERE id = ?",
+        "UPDATE users SET email = ?, name = COALESCE(json_extract(presentation_json, '$.displayName'), ?), avatar_url = ?, updated_at = ? WHERE id = ?",
       ).bind(identity.email, identity.name, identity.avatarUrl, nowIso(), userId).run();
     } catch {
       throw new ApiError(409, "regional_identity_conflict", "The verified account profile conflicts with a regional identity");
@@ -1049,7 +1075,7 @@ export class PlatformOnboardingService {
 
   private async loadPlatformIdentity(): Promise<PlatformIdentity> {
     const row = await this.env.DB.prepare(
-      `SELECT id, google_subject, email, name, avatar_url, timezone, created_at, platform_user_id
+      `SELECT id, google_subject, email, name, avatar_url, timezone, created_at, platform_user_id, onboarding_eligible, onboarding_introduced, onboarding_revision, presentation_json
        FROM users WHERE id = ?`,
     ).bind(this.auth.userId).first<{
       id: string;
@@ -1060,6 +1086,10 @@ export class PlatformOnboardingService {
       timezone: string;
       created_at: string;
       platform_user_id: string | null;
+      onboarding_eligible: number;
+      onboarding_introduced: number;
+      onboarding_revision: number;
+      presentation_json: string | null;
     }>();
     if (!row) throw new ApiError(401, "identity_not_found", "The signed-in user no longer exists");
     if (row.platform_user_id && row.platform_user_id !== row.id) {
@@ -1078,6 +1108,7 @@ export class PlatformOnboardingService {
       }
     }
     return platformIdentitySchema.parse({
+      accountOnboarding: { eligible: row.onboarding_eligible === 1, introduced: row.onboarding_introduced === 1, revision: row.onboarding_revision, presentation: row.presentation_json ? PersonalPresentationSchema.parse(JSON.parse(row.presentation_json)) : null },
       platformUserId: row.id,
       googleSubject: row.google_subject,
       email: row.email,

@@ -41,6 +41,7 @@ export function workspaceSyncTopicsForMutation(
   pathname: string,
 ): WorkspaceSyncTopic[] {
   if (["GET", "HEAD", "OPTIONS"].includes(method.toUpperCase())) return [];
+  if (pathname === "/workspace/onboarding") return ["workspace_profile"];
   if (pathname === "/workspace/me") return ["workspace_profile", "member_directory"];
   if (pathname.startsWith("/workspace/terminal")) return ["terminal_policy"];
   if (pathname.startsWith("/workspace/invitations")) {

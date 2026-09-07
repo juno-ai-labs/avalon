@@ -482,10 +482,10 @@ describe('public Rally site', () => {
     const connectorHub = readProjectFile('support/connectors/index.html');
     const sitemap = readProjectFile('public/sitemap.xml');
     const desktopSettings = readRepositoryFile(
-      'apps/desktop/src/renderer/screens/workspace-settings.tsx',
+      'apps/desktop/src/renderer/lib/connector-catalog.ts',
     );
     const desktopCatalog = desktopSettings.match(
-      /const connectorProviders = \[(?<catalog>[\s\S]*?)\] as const;/u,
+      /(?:export )?const connectorProviders = \[(?<catalog>[\s\S]*?)\] as const;/u,
     )?.groups?.catalog;
     if (!desktopCatalog) throw new Error('Desktop connector catalog was not found');
     const desktopProviders = new Set(

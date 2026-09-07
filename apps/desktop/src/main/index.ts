@@ -1,3 +1,4 @@
+import { AccountOnboardingSchema, UpdateAccountOnboardingSchema } from '@rally/contracts';
 import { RALLY_HEADERS } from '@rally/contracts/http-headers';
 import {
   ActivateWorkspaceRequestSchema,
@@ -3258,6 +3259,25 @@ function registerIpc(): void {
   ipcMain.handle('auth:create-development-session', (event, input: unknown) => {
     assertTrustedIpcSender(event);
     return createDevelopmentSession(input);
+  });
+  ipcMain.handle('onboarding:get-account', async (event) => {
+    assertTrustedIpcSender(event);
+    const { response } = await onboardingIdentityRequest((credential) => net.fetch(
+      `${runtimeConfig().api.global}/onboarding/account`,
+      { headers: { Authorization: `Bearer ${credential.accessToken}` } },
+    ));
+    if (!response.ok) throw await responseError(response);
+    return AccountOnboardingSchema.parse(await response.json());
+  });
+  ipcMain.handle('onboarding:update-account', async (event, raw: unknown) => {
+    assertTrustedIpcSender(event);
+    const input = UpdateAccountOnboardingSchema.parse(raw);
+    const { response } = await onboardingIdentityRequest((credential) => net.fetch(
+      `${runtimeConfig().api.global}/onboarding/account`,
+      { method: 'PATCH', headers: { Authorization: `Bearer ${credential.accessToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify(input) },
+    ));
+    if (!response.ok) throw await responseError(response);
+    return AccountOnboardingSchema.parse(await response.json());
   });
   ipcMain.handle('onboarding:get-state', (event) => {
     assertTrustedIpcSender(event);
