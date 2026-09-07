@@ -41,7 +41,7 @@ effect pipeline its children use are owned by
 | `apps/api/src/services/resend-inbound-email-service.ts` | `ingestAutomation`: resolves the sender, stores the message, and calls `admitInboundEmail` once. |
 | `apps/api/src/services/memory-service.ts` | `resolveMemoryAccess`: a conversation whose parent is an automation resolves the workspace scope and the automation's own `automation` scope. |
 | `apps/desktop/src/renderer/screens/automation.tsx`, `components/automation-header.tsx`, `screens/conversation-surface.tsx` | `/automations/new` calls `POST /automations` and replaces itself with `/automations/:id`; that route renders the header (lifecycle badge, scope, email address, Create or Apply changes, Pause, Resume, Delete, Run now, the run list from `GET /automations/:id/runs`) over the shared conversation surface with `parentKind: "automation"` and `substreamId: "0"`. |
-| `apps/desktop/src/renderer/components/sidebar.tsx`, `components/inspector-rail.tsx` | The sidebar's automation rows (drafts labelled **Draft**, the **New automation** action beside **New work stream**) and the room rail's automation grouping from `GET /automations/workstream/:workstreamId`; an automation's own conversation shows no such grouping. |
+| `apps/desktop/src/renderer/components/sidebar.tsx`, `components/inspector-rail.tsx` | The sidebar's personal automation strip above the user menu, legacy non-personal automation rows, and **New automation** action and the room rail's automation grouping from `GET /automations/workstream/:workstreamId`; an automation's own conversation shows no such grouping. |
 
 ## How it works
 
@@ -102,16 +102,19 @@ including in the conversation-only shell. The strip is absent when no personal
 automations exist. Each tile uses a rounded hexagon with flat left and right sides without eyes, a stable identity
 color, a centered symbol from the shared stream icon family, and a bottom-right square lifecycle marker (active, paused, or draft). It opens
 the existing automation route and retains Run now and Delete context actions.
-Workspace automations stay in the full sidebar list; room-owned automations
-stay in their room rail.
+The legacy full-sidebar mode retains workspace automation rows. The production
+conversation-only shell does not render that list; room-owned automations remain
+in their room rail. Compact mode keeps Search and New chat above the scrolling
+streams, while personal automation tiles remain above the account menu.
 
 The strip follows the installed Grok Bot 0.44.0 pinned layout, inspected on
 2026-09-07 in `Contents/Resources/app.asar`: `index-C6zjACOA.js` and
 `index-DfPT5G9o.css`. Its 80px tiles are centered with an 8px gap, 60px
 artwork, 6px artwork-to-caption gap, 6px/4px top/bottom tile padding,
 4px horizontal tile padding, and 10px corners. Captions use 11px type,
-16px line height, and .005em tracking. Hover and selected fills are
-`#77777717` and `#7777772b`. The outer 8px/12px plus inner 6px block
+16px line height, and .005em tracking. Hover and selected fills use `--av-cmp-row-background-hover` and
+`--av-cmp-row-background-selected`; icons use `--av-sys-color-text-on-inverse`.
+These preserve the reference proportions while following light and dark appearance. The outer 8px/12px plus inner 6px block
 padding becomes 14px/18px on our strip. One tile can grow to fit a caption
 up to 92px. The deliberate differences are one horizontally scrolling row
 (the reference wraps an auto-fit grid), lifecycle state instead of message
@@ -573,19 +576,26 @@ production inspection paths.
 
 ### 2026-09-07 — Personal automations in the sidebar
 
-Personal automations now appear above the user menu as horizontally scrolling icon
-tiles so they remain directly reachable in the conversation-only shell. Reusing
-the existing row actions preserves navigation and deletion behavior. The strip
-renders only with personal entries; workspace and room-owned entries retain
-their existing homes. Lifecycle indicators use the stream marker’s 8px square, shared radius and
-glow tokens, and 14px background at bottom right, as requested. A follow-up
-inspection of Grok Bot 0.44.0 replaced estimated sizes and left alignment with
-the packaged pinned-tile metrics and centered alignment. Horizontal overflow
-remains intentional rather than adopting the reference wrapping grid. The final
-placement is outside the scrolling conversation list above the user menu, with
-hexagons with flat left and right sides and no eyes, following the revised design request. Centered icons reuse the stream identity
-symbol component and deterministic ID selection rather than a separate icon set.
+**What changed:** Personal automation tiles sit outside the scrolling stream list,
+above the account menu. `AutomationGlyph` owns the rounded hexagon and centered
+symbol. Compact mode keeps Search and New chat at the top. Links retain explicit
+accessible names when captions are hidden, and failed manual runs open the shared
+error dialog.
 
+**Why:** Personal automations need direct access in the conversation-only shell,
+including when a long stream list scrolls. Compact navigation needs the same
+search and creation actions as the expanded sidebar.
+
+**Considered and rejected:** The reference wrapping grid would grow with the
+number of automations, so the strip scrolls horizontally in both widths. Literal
+reference colors bypassed Rally's theme guard; semantic row, icon, and lifecycle
+tokens preserve appearance support instead.
+
+**Consequences:** Empty personal strips do not render, and personal-only directories
+suppress the misleading legacy empty list. State markers share stream square
+geometry but not its amber glow. Workspace automation rows remain available only
+in legacy full-sidebar mode. Reference bundle names above record the inspected
+version, not runtime dependencies.
 
 ### 2026-09-04: A replayed create provisions the conversation it skipped
 

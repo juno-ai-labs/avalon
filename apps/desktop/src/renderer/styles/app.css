@@ -6579,14 +6579,13 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   text-align: center;
   width: 100%;
 }
-.sidebar-row.automation-tile:hover { background: #77777717; }
+.sidebar-row.automation-tile:hover { background: var(--av-cmp-row-background-hover); }
 .sidebar-row.automation-tile.is-active,
-.sidebar-row.automation-tile.is-active:hover { background: #7777772b; }
+.sidebar-row.automation-tile.is-active:hover { background: var(--av-cmp-row-background-selected); }
 .sidebar-row.automation-tile:focus-visible { outline-offset: -2px; }
 .sidebar-automation-strip > .sidebar-context-target:only-child { flex-basis: auto; min-width: 80px; max-width: 100px; }
 .automation-tile-glyph { display: block; height: 60px; position: relative; width: 60px; }
-.automation-tile-glyph > svg:first-child { display: block; height: 100%; width: 100%; }
-.automation-tile-icon { color: white; height: 50%; inset: 25%; position: absolute; width: 50%; }
+.automation-glyph { color: var(--av-sys-color-text-on-inverse); display: block; height: 100%; width: 100%; }
 .automation-tile-name { font-size: 11px; font-weight: 400; letter-spacing: .005em; line-height: 16px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .automation-tile-state {
   background: var(--av-sys-color-surface-default);
@@ -6598,6 +6597,7 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   width: 14px;
 }
 .automation-tile-state .status-dot {
+  box-shadow: none;
   height: 8px;
   inset: auto;
   left: 50%;
@@ -6606,9 +6606,15 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   transform: translate(-50%, -50%);
   width: 8px;
 }
-.automation-tile-state.active .status-dot { background: var(--av-sys-color-project-blue); }
+.automation-tile-state.active .status-dot { background: var(--av-sys-color-success-base); }
 .automation-tile-state.paused .status-dot { background: var(--av-sys-color-workstream-stopped); }
 .automation-tile-state.draft .status-dot { background: transparent; border: 1px dashed var(--av-sys-color-text-muted); }
 .grokbot-shell .sidebar.is-compact .sidebar-automation-strip > .sidebar-context-target { flex-basis: 54px; }
 .grokbot-shell .sidebar.is-compact .automation-tile-glyph { height: 36px; width: 36px; }
 .grokbot-shell .sidebar.is-compact .automation-tile-name { display: none; }
+
+.grokbot-shell .sidebar-rail-actions { display: flex; flex-direction: column; align-items: center; flex-shrink: 0; }
+.grokbot-shell .sidebar-rail-actions .sidebar-search { width: 54px; height: 44px; padding: 0; justify-content: center; background: transparent; box-shadow: none; }
+.grokbot-shell .sidebar-rail-actions .sidebar-search > span { display: none; }
+.grokbot-shell .sidebar-rail-actions .sidebar-search > svg { width: 19px; height: 19px; }
+.grokbot-shell .sidebar-rail-actions .sidebar-search:hover { background: var(--av-cmp-row-background-hover); }
