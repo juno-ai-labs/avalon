@@ -120,7 +120,7 @@ function matchesFilters(activity: ActivityRow, filters: Record<string, unknown>)
 }
 
 
-const SearchChildJobTypeSchema = z.object({ type: z.enum(['search_embedding_batch_v1', 'search_document_v1']) });
+const SearchChildJobTypeSchema = z.object({ type: z.literal('search_embedding_batch_v1') });
 
 /** Cloudflare Queue entrypoint for control effects and connector events. */
 export async function consumeActivityQueue(batch: MessageBatch<unknown>, env: Env): Promise<void> {
@@ -191,11 +191,12 @@ async function loadSearchSource(env: Env, reference: SearchSourceReference, capt
   if (reference.type === 'resource_search_projection_v1') {
     const stub = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, reference.workspaceId,
       workspaceDOName(reference.region, reference.workspaceId));
-    return stub.prepareResourceSearch(reference, documentId);
+    return documentId === undefined ? stub.prepareResourceSearch(reference) : stub.prepareResourceSearchDocument(reference, documentId);
   }
   const stub = await durableObjectStubForWorkspace(env, env.SUBSTREAM_AGENTS, reference.workspaceId,
     conversationObjectName(reference.region, reference.workspaceId, reference.parentId, reference.substreamId));
-  return stub.prepareSearchTurn(reference, captureLinks, documentId);
+  return documentId === undefined ? stub.prepareSearchTurn(reference, captureLinks)
+    : stub.prepareSearchTurnDocument(reference, documentId, captureLinks);
 }
 
 async function consumeOne(message: Message<unknown>, env: Env,
@@ -209,8 +210,10 @@ async function consumeOne(message: Message<unknown>, env: Env,
     return;
   }
   const embeddingBatch = SearchEmbeddingBatchSchema.safeParse(message.body);
-  if (!embeddingBatch.success && SearchChildJobTypeSchema.safeParse(message.body).success) {
-    throw new Error('invalid_search_embedding_batch');
+  const childType = SearchChildJobTypeSchema.safeParse(message.body);
+  if (!embeddingBatch.success && childType.success) {
+    throw new Error(z.object({ phase: z.literal('document') }).safeParse(message.body).success
+      ? 'invalid_search_document_job' : 'invalid_search_embedding_batch');
   }
   if (embeddingBatch.success) {
     const job = embeddingBatch.data;
@@ -236,7 +239,7 @@ async function consumeOne(message: Message<unknown>, env: Env,
     // indexing each page happens in its own independently retriable delivery.
     const input = await loadSearchSource(env, source.data, false);
     await publishSearchIndexingJobs(env.ACTIVITY_QUEUE, input.documents.map((document) => ({
-      type: 'search_document_v1', reference: source.data, documentId: document.id,
+      type: 'search_embedding_batch_v1', phase: 'document', reference: source.data, documentId: document.id,
     })));
     if (input.retry) throw new Error('search_source_retry_required');
     message.ack();
