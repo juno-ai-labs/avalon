@@ -350,22 +350,37 @@ async function externallySettledRun(stub: DurableObjectStub, runId: string): Pro
   return settled!;
 }
 
+/**
+ * The run a pending input's activation created for this trigger, then its
+ * settlement.
+ *
+ * Activation happens on the object's alarm, and the alarm is forced first for
+ * the reason `settledRun` gives. But a force that finds the alarm already in
+ * flight returns `false` and waits for nothing, so a single read after it can
+ * land before the activation commits — which is exactly what one contended
+ * full-suite run produced: `no execution receipt was created`, for a receipt
+ * that existed a moment later. The receipt is therefore polled for on the same
+ * wall-clock budget as the settlement it precedes.
+ */
 async function settledRunForTrigger(
   stub: DurableObjectStub,
   triggerMessageId: string,
 ): Promise<RunRow> {
   await runDurableObjectAlarm(stub);
-  const runId = await runInDurableObject(stub, (_instance, state) => {
-    const rows = state.storage.sql.exec<{ run_id: string; execution_context_json: string }>(
-      `SELECT run_id, execution_context_json FROM runs
-        WHERE execution_context_json IS NOT NULL ORDER BY created_at, run_id`,
-    ).toArray();
-    return rows.find((row) => (
-      JSON.parse(row.execution_context_json) as { triggerMessageId?: string | null }
-    ).triggerMessageId === triggerMessageId)?.run_id ?? null;
-  });
-  if (!runId) throw new Error(`no execution receipt was created for ${triggerMessageId}`);
-  return settledRun(stub, runId);
+  let runId: string | null = null;
+  await expect.poll(async () => {
+    runId = await runInDurableObject(stub, (_instance, state) => {
+      const rows = state.storage.sql.exec<{ run_id: string; execution_context_json: string }>(
+        `SELECT run_id, execution_context_json FROM runs
+          WHERE execution_context_json IS NOT NULL ORDER BY created_at, run_id`,
+      ).toArray();
+      return rows.find((row) => (
+        JSON.parse(row.execution_context_json) as { triggerMessageId?: string | null }
+      ).triggerMessageId === triggerMessageId)?.run_id ?? null;
+    });
+    return runId === null ? `no execution receipt was created for ${triggerMessageId}` : "activated";
+  }, { timeout: RUN_SETTLE_TIMEOUT_MS, interval: 50 }).toBe("activated");
+  return settledRun(stub, runId!);
 }
 
 async function waitForLoopRelease(stub: DurableObjectStub): Promise<void> {
