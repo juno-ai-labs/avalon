@@ -96,6 +96,14 @@ describe("text search authority boundary", () => {
     expect(provider.query.mock.calls[1]?.[0].filters[1]).toContainEqual(["id", "Gt", "first"]);
   });
 
+  it("uses the last authorized result as the cursor when a page ends in rejected candidates", async () => {
+    const rows = ['authorized', 'private'].map((id) => ({ id, source: 'messages', source_id: '0/turn', scope_id: 'room', revision: 1 }));
+    provider.query.mockResolvedValueOnce({ rows });
+    const sources = [{ source: 'messages', scopeIds: ['room'], load: async () => new Map([['authorized', 'visible']]) }];
+    expect(await index.queryPage(sources, { query: 'needle', mode: 'substring', limit: 2 }))
+      .toEqual({ results: ['visible'], nextCursor: 'authorized' });
+  });
+
   it("escapes glob operators in literal substring input", () => {
     expect(literalSubstringPattern("a*b? [c] {d} \\e")).toBe("*a\\*b\\? \\[c\\] \\{d\\} \\\\e*");
   });
