@@ -59,16 +59,19 @@ export async function publishResourceSearch(sql: SqlStorage, env: Env, workspace
   }
 }
 /** Extraction only: the Queue Worker owns all indexing and chunking. */
-export async function prepareResourceSearch(sql: SqlStorage, env: Env, workspaceId: string, resourceId: string): Promise<SearchDocumentBatch> {
+export async function prepareResourceSearch(sql: SqlStorage, env: Env, workspaceId: string, resourceId: string, documentId?: string): Promise<SearchDocumentBatch> {
   const revision = resourceSearchRevision(sql, resourceId);
   if (revision === null) return { documents: [], retry: false };
   const row = sql.exec('SELECT * FROM resources WHERE id = ?', resourceId).toArray()[0];
   const category = row ? resourceSearchCategory(row.provider, row.canonical_url) : null;
-  const text = row && category ? await resourceSearchText(env, row) : null;
+  const categoryId = category ? await searchDocumentId(category, workspaceId, resourceId) : null;
+  const text = row && category && (documentId === undefined || documentId === categoryId) ? await resourceSearchText(env, row) : null;
   if (resourceSearchRevision(sql, resourceId) !== revision) throw new Error('search_source_changed');
   const documents: SearchDocument[] = [];
   for (const source of ['files', 'artifacts', 'links'] as const) {
-    documents.push({ id: await searchDocumentId(source, workspaceId, resourceId),
+    const id = await searchDocumentId(source, workspaceId, resourceId);
+    if (documentId !== undefined && documentId !== id) continue;
+    documents.push({ id,
       source, sourceId: resourceId, scopeId: workspaceId, revision,
       text: source === category ? text : null });
   }

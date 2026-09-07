@@ -69,14 +69,14 @@ export function readConversationSearchLink(sql: SqlStorage, id: string, turn: Tr
     text: [row.label, row.url, row.markdown].filter(Boolean).join('\n'), revision: row.revision });
 }
 
-/** Called by the durable projection Queue, never by message admission. */
-export async function prepareConversationLinks(sql: SqlStorage, env: Env,
-  identity: { workspaceId: string; parentId: string; substreamId: string }, turnId: string,
-  readTurn: () => TranscriptTurn | null, capture = true,
-): Promise<SearchDocumentBatch> {
+/** Reconcile identity/labels without ever loading a captured body. */
+async function reconcileConversationLinks(sql: SqlStorage,
+  identity: { parentId: string; substreamId: string }, turnId: string,
+  readTurn: () => TranscriptTurn | null,
+): Promise<void> {
   const turn = readTurn();
   const links = turn ? conversationLinks(turn) : new Map<string, string>();
-  const existing = sql.exec<LinkRow>('SELECT * FROM conversation_search_links WHERE turn_id = ?', turnId).toArray();
+  const existing = sql.exec<Pick<LinkRow, 'id' | 'url' | 'deleted'>>('SELECT id, url, deleted FROM conversation_search_links WHERE turn_id = ?', turnId).toArray();
   for (const row of existing) {
     if (!links.has(row.url) && row.deleted === 0) {
       sql.exec('UPDATE conversation_search_links SET deleted = 1, markdown = ?, captured = 0, revision = revision + 1 WHERE id = ?', '', row.id);
@@ -89,16 +89,44 @@ export async function prepareConversationLinks(sql: SqlStorage, env: Env,
         revision = conversation_search_links.revision + 1
       WHERE conversation_search_links.label != excluded.label OR conversation_search_links.deleted = 1`, id, turnId, url, label);
   }
+}
+
+export async function conversationSearchDocumentIds(sql: SqlStorage,
+  identity: { parentId: string; substreamId: string }, turnId: string,
+  readTurn: () => TranscriptTurn | null,
+): Promise<string[]> {
+  await reconcileConversationLinks(sql, identity, turnId, readTurn);
+  // Retained deleted IDs must also publish their tombstone jobs.
+  return sql.exec<{ id: string }>('SELECT id FROM conversation_search_links WHERE turn_id = ?', turnId)
+    .toArray().map((row) => row.id);
+}
+
+/** Called by the durable projection Queue, never by message admission. */
+export async function prepareConversationLinks(sql: SqlStorage, env: Env,
+  identity: { workspaceId: string; parentId: string; substreamId: string }, turnId: string,
+  readTurn: () => TranscriptTurn | null, capture = true, documentId?: string,
+): Promise<SearchDocumentBatch> {
+  await reconcileConversationLinks(sql, identity, turnId, readTurn);
+  // A child must not load every sibling's captured body into its RPC payload.
+  const rows = () => documentId === undefined
+    ? sql.exec<LinkRow>('SELECT * FROM conversation_search_links WHERE turn_id = ?', turnId).toArray()
+    : sql.exec<LinkRow>('SELECT * FROM conversation_search_links WHERE turn_id = ? AND id = ?', turnId, documentId).toArray();
   let captureFailed = false;
-  for (const row of sql.exec<LinkRow>('SELECT * FROM conversation_search_links WHERE turn_id = ?', turnId).toArray()) {
+  for (const row of rows()) {
     if (!capture || row.deleted) continue;
     if (row.captured) continue;
     try { assertSafePublicUrl(row.url); } catch { continue; }
+    let captureStatus: number | undefined;
+    let captureCode: number | undefined;
     try {
       if (!env.BROWSER) throw new Error('browser_run_unavailable');
       const response = await env.BROWSER.quickAction('markdown', { url: row.url, gotoOptions: { waitUntil: 'networkidle2' } });
+      captureStatus = response.status;
+      const body: unknown = await response.json();
+      const failure = z.object({ errors: z.array(z.object({ code: z.number() })).optional() }).safeParse(body);
+      if (failure.success) captureCode = failure.data.errors?.[0]?.code;
       if (!response.ok) throw new Error('browser_run_capture_failed');
-      const payload = z.object({ success: z.literal(true), result: z.string() }).parse(await response.json());
+      const payload = z.object({ success: z.literal(true), result: z.string() }).parse(body);
       if (!readConversationSearchLink(sql, row.id, readTurn())) continue;
       sql.exec(`UPDATE conversation_search_links SET markdown = ?, captured = 1, revision = revision + 1
         WHERE id = ? AND revision = ? AND deleted = 0`, payload.result, row.id, row.revision);
@@ -107,11 +135,12 @@ export async function prepareConversationLinks(sql: SqlStorage, env: Env,
       logWarn(env, 'search_link_capture_failed', {
         workspace_id: identity.workspaceId, workstream_id: identity.parentId,
         substream_id: identity.substreamId, link_id: row.id,
+        http_status: captureStatus, provider_code: captureCode,
       });
     }
   }
   const documents: SearchDocumentBatch['documents'] = [];
-  for (const row of sql.exec<LinkRow>('SELECT * FROM conversation_search_links WHERE turn_id = ?', turnId).toArray()) {
+  for (const row of rows()) {
     const current = readConversationSearchLink(sql, row.id, readTurn());
     if (!current && !row.deleted) { captureFailed = true; continue; }
     documents.push({ id: row.id, source: 'conversation_links',
