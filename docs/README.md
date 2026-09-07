@@ -153,7 +153,7 @@ update it in the same change.
 | [`performance-tracing.md`](performance-tracing.md) | Custom spans over Cloudflare's automatic tracing for starting, opening, and sending a message to a work stream: the span names, the OpenTelemetry-style attribute registry, the correlation attributes that join traces the platform necessarily keeps apart, the `perf_flow` log row beside them, and the identity question to settle before any of it reaches PostHog. Read before instrumenting one of those flows, adding a fourth, or reaching for an OpenTelemetry package — the answer to that last one is here and it is no. |
 | [`type-safety-boundaries.md`](type-safety-boundaries.md) | Where runtime parsing, capability-typed mocks, production assertion rules, and centralized Cloudflare test builders keep TypeScript contracts from being asserted past. Read before adding a type escape or platform test double. |
 | [`automated-code-review.md`](automated-code-review.md) | The five Azure AI Foundry Cline reviewers, their triggers and credentials, and the context, tool-denial, and posting boundaries that treat pull-request content as untrusted. Read before changing `.github/workflows/azure-ai-reviewers.yml`. |
-| [`desktop-icons.md`](desktop-icons.md) | The native adaptive icon, the selectable icon set, and the generation pipeline. Read before changing the artwork. |
+| [`desktop-icons.md`](desktop-icons.md) | The adaptive and selectable icons, generation pipeline, Dock plugin identity, and packaged catalog contract. Read before changing artwork or native icon delivery. |
 
 ## Related material outside this folder
 

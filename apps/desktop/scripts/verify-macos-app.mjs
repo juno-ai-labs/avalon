@@ -86,7 +86,7 @@ const dockTilePluginName = runWithStderr('/usr/bin/plutil', [
   'raw',
   infoPlistPath,
 ]).trim();
-if (dockTilePluginName !== 'RallyDockTilePlugin.docktileplugin') {
+if (dockTilePluginName !== 'RallyDockTilePluginV2.docktileplugin') {
   throw new Error(`Packaged app must declare the Rally Dock tile plugin; found ${dockTilePluginName || '(none)'}`);
 }
 
@@ -123,11 +123,16 @@ const applicationIconNames = [
   'quiet',
 ];
 const applicationIconDirectory = join(resourcesDirectory, 'app-icons');
-const expectedApplicationIconFiles = new Set(applicationIconNames.map((name) => `${name}.icns`));
+const expectedApplicationIconFiles = new Set(['manifest.json', ...applicationIconNames.map((name) => `${name}.icns`)]);
 for (const fileName of readdirSync(applicationIconDirectory)) {
   if (!expectedApplicationIconFiles.has(fileName)) {
     throw new Error(`Packaged app contains unexpected selectable icon resource ${fileName}`);
   }
+}
+const applicationIconManifest = JSON.parse(readFileSync(join(applicationIconDirectory, 'manifest.json'), 'utf8'));
+if (applicationIconManifest.version !== 1
+  || JSON.stringify(applicationIconManifest.icons) !== JSON.stringify(applicationIconNames)) {
+  throw new Error('Packaged app icon manifest does not match its selectable icons');
 }
 for (const name of applicationIconNames) {
   const iconPath = join(applicationIconDirectory, `${name}.icns`);
@@ -236,11 +241,11 @@ verifyNestedComponent(crashpadPath, crashpadPath, 'Electron chrome_crashpad_hand
 
 const dockTilePluginPath = join(
   appPath,
-  'Contents/PlugIns/RallyDockTilePlugin.docktileplugin',
+  'Contents/PlugIns/RallyDockTilePluginV2.docktileplugin',
 );
 verifyNestedComponent(
   dockTilePluginPath,
-  join(dockTilePluginPath, 'Contents/MacOS/RallyDockTilePlugin'),
+  join(dockTilePluginPath, 'Contents/MacOS/RallyDockTilePluginV2'),
   'Rally Dock tile plugin',
   { expectEntitlements: false },
 );
