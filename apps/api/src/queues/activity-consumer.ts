@@ -1,4 +1,4 @@
-import { SearchEmbeddingBatchSchema, type SearchSourceReference } from '../services/search-indexing-jobs';
+import { SearchDocumentJobSchema, publishSearchIndexingJobs, SearchEmbeddingBatchSchema, type SearchSourceReference } from '../services/search-indexing-jobs';
 import { embedSearchDocuments } from '../services/search-embedding';
 import { workspaceSearchIndex, searchChunkIdentity } from '../services/text-search';
 import { ResourceSearchProjectionSchema } from '../durable-objects/resource-search-projection';
@@ -120,13 +120,13 @@ function matchesFilters(activity: ActivityRow, filters: Record<string, unknown>)
 }
 
 
-const SearchEmbeddingBatchTypeSchema = z.object({ type: z.literal('search_embedding_batch_v1') });
+const SearchChildJobTypeSchema = z.object({ type: z.enum(['search_embedding_batch_v1', 'search_document_v1']) });
 
 /** Cloudflare Queue entrypoint for control effects and connector events. */
 export async function consumeActivityQueue(batch: MessageBatch<unknown>, env: Env): Promise<void> {
   const indexSearch = createSearchIndexingPipeline(env);
   const isSearch = (message: Message<unknown>) =>
-    SearchEmbeddingBatchTypeSchema.safeParse(message.body).success
+    SearchChildJobTypeSchema.safeParse(message.body).success
     || ResourceSearchProjectionSchema.safeParse(message.body).success
     || SearchProjectionMessageSchema.safeParse(message.body).success;
   // Search shares a tokenizer and processes one document source at a time.
@@ -187,21 +187,29 @@ export async function recoverPendingActivityQueue(env: Env, limit = 100): Promis
   return pending.results.length;
 }
 
-async function loadSearchSource(env: Env, reference: SearchSourceReference, captureLinks = true) {
+async function loadSearchSource(env: Env, reference: SearchSourceReference, captureLinks = true, documentId?: string) {
   if (reference.type === 'resource_search_projection_v1') {
     const stub = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, reference.workspaceId,
       workspaceDOName(reference.region, reference.workspaceId));
-    return stub.prepareResourceSearch(reference);
+    return stub.prepareResourceSearch(reference, documentId);
   }
   const stub = await durableObjectStubForWorkspace(env, env.SUBSTREAM_AGENTS, reference.workspaceId,
     conversationObjectName(reference.region, reference.workspaceId, reference.parentId, reference.substreamId));
-  return stub.prepareSearchTurn(reference, captureLinks);
+  return stub.prepareSearchTurn(reference, captureLinks, documentId);
 }
 
 async function consumeOne(message: Message<unknown>, env: Env,
   indexSearch: ReturnType<typeof createSearchIndexingPipeline>): Promise<void> {
+  const documentJob = SearchDocumentJobSchema.safeParse(message.body);
+  if (documentJob.success) {
+    const job = documentJob.data;
+    if (job.reference.region !== env.AVALON_REGION) throw new Error('search_projection_region_mismatch');
+    await indexSearch(job.reference, (captureLinks = true) => loadSearchSource(env, job.reference, captureLinks, job.documentId));
+    message.ack();
+    return;
+  }
   const embeddingBatch = SearchEmbeddingBatchSchema.safeParse(message.body);
-  if (!embeddingBatch.success && SearchEmbeddingBatchTypeSchema.safeParse(message.body).success) {
+  if (!embeddingBatch.success && SearchChildJobTypeSchema.safeParse(message.body).success) {
     throw new Error('invalid_search_embedding_batch');
   }
   if (embeddingBatch.success) {
@@ -214,7 +222,7 @@ async function consumeOne(message: Message<unknown>, env: Env,
       return;
     }
     const outcome = await indexSemanticBatch(await workspaceSearchIndex(env, job.reference.workspaceId), job,
-      () => loadSearchSource(env, job.reference, false), (texts) => embedSearchDocuments(env, job.reference.workspaceId, texts));
+      () => loadSearchSource(env, job.reference, false, job.document.id), (texts) => embedSearchDocuments(env, job.reference.workspaceId, texts));
     if (outcome === 'stale') logWarn(env, 'search_embedding_stale', { region: env.AVALON_REGION,
       workspace_id: job.reference.workspaceId, source: job.document.source, source_id: job.document.sourceId, revision: job.document.revision });
     message.ack();
@@ -224,7 +232,13 @@ async function consumeOne(message: Message<unknown>, env: Env,
   const source = reference.success ? reference : SearchProjectionMessageSchema.safeParse(message.body);
   if (source.success) {
     if (source.data.region !== env.AVALON_REGION) throw new Error('search_projection_region_mismatch');
-    await indexSearch(source.data, () => loadSearchSource(env, source.data));
+    // Source deliveries discover documents only. Capturing, tokenizing and
+    // indexing each page happens in its own independently retriable delivery.
+    const input = await loadSearchSource(env, source.data, false);
+    await publishSearchIndexingJobs(env.ACTIVITY_QUEUE, input.documents.map((document) => ({
+      type: 'search_document_v1', reference: source.data, documentId: document.id,
+    })));
+    if (input.retry) throw new Error('search_source_retry_required');
     message.ack();
     return;
   }

@@ -58,6 +58,17 @@ by semantic chunk boundaries. Semantic queries search only chunk records.
 
 ### One Queue pipeline
 
+Source deliveries discover canonical document IDs and publish `search_document_v1`
+jobs. Each document delivery captures only its selected page (when needed), writes
+its lexical record, plans its recursive/sliding chunks, and publishes embedding
+batches. Turns with many links therefore do not accumulate all page-planning CPU
+in one invocation. Document and embedding children load only their selected
+canonical document; resource category tombstones remain separate documents.
+The final freshness read never recaptures a failed page. Browser failures record
+only numeric HTTP status and provider code, preserving the reference in the DLQ
+when retries are exhausted. A failed page does not retry sibling documents.
+
+
 All current message, upload, generated-artifact, and captured-page sources emit
 reference-only jobs through their transactional outboxes to the existing regional
 `ACTIVITY_QUEUE`. The regional API Worker consumes these jobs. Its source adapters
@@ -75,7 +86,8 @@ name and description are assembled before this shared boundary.
 
 Search jobs run sequentially within a delivery. Overlapping deliveries share one
 immutable tokenizer per Worker isolate. Unrelated
-control-effect messages run concurrently. Source messages are acknowledged after lexical indexing, durable batch publication,
+control-effect messages run concurrently. Source messages are acknowledged after
+document-job publication. Document messages are acknowledged after lexical indexing, durable embedding-batch publication,
 and canonical revalidation; embedding messages are acknowledged after their batch
 and post-write freshness checks finish; individual failures request a
 Queue retry and eventually use the existing regional dead-letter queue. Reusing the
@@ -387,6 +399,31 @@ through Queue failure rather than silent truncation. Document-size and capture
 budgets require team policy; no arbitrary new caps are introduced here.
 
 ## Changelog
+
+### 2026-09-06 — Plan and capture each document independently
+
+**What changed:** Source references fan out document jobs before capture and
+chunk planning. Targeted source RPC reads exclude sibling page bodies, and
+freshness validation does not repeat capture. Capture failures include numeric
+HTTP/provider codes without URLs, response bodies, or provider error text.
+
+**Why:** Single-message Queue delivery still exceeded CPU and memory budgets:
+failed production turn jobs included 20–41 captured pages. A Queue message was
+not a single document. A direct failed-page probe also returned Browser Run 422,
+code 5006 (connection closed), while a public control page succeeded; treating
+that failure as a reason to replan every sibling amplified unrelated work.
+
+**Considered and rejected:** Increasing CPU allowance or lowering embedding
+batch size would retain the multi-document planning unit. Swallowing capture
+failures would falsely imply page content had migrated. Provider failures remain
+visible and independently retriable.
+
+**Consequences:** The shared 512/128-token chunk algorithm, 64-input embeddings,
+regional routing, canonical generation checks, and Queue settings are unchanged.
+Existing source and embedding jobs remain accepted. New document jobs carry
+references only and always reload current authority. Single unusually large
+sources may still exceed runtime limits; deployment and selective recovery must
+verify those cases rather than infer success from the new job boundary.
 
 ### 2026-09-06 — Give each activity message its own invocation
 
