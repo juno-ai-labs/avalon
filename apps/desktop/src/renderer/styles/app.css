@@ -1238,6 +1238,13 @@ pre {
   padding: 6px 8px;
 }
 
+/* Keep action icons and workspace marks on the same columns in this popup. */
+.account-menu-content .menu-item {
+  column-gap: 8px;
+  min-height: 34px;
+  padding: 6px 10px;
+}
+
 .account-menu-item-with-value.menu-item { grid-template-columns: 18px minmax(0, 1fr) auto 14px; }
 .account-menu-item.menu-item[data-highlighted] { background: var(--av-cmp-row-background-hover); }
 .account-menu-item > svg { height: 16px; stroke-width: 1.8; width: 16px; }
