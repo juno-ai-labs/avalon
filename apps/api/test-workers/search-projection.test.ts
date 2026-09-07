@@ -66,6 +66,9 @@ describe('conversation page capture', () => {
         createdAtUtc: '2026-09-05T00:00:00Z', attentionOrdinal: 1 });
       const identity = { workspaceId, parentId: resourceId, substreamId: '0' };
       const read = () => transcript.participantTurn('captured-link');
+      const uncaptured = await prepareConversationLinks(state.storage.sql, captureEnv, identity, 'captured-link', read, false);
+      expect(capture).not.toHaveBeenCalled();
+      expect(uncaptured.documents[0]?.text).toBe('Reference\nhttps://example.com/');
       const prepared = await prepareConversationLinks(state.storage.sql, captureEnv, identity, 'captured-link', read);
       const row = state.storage.sql.exec<{ id: string; captured: number }>('SELECT id, captured FROM conversation_search_links').one();
       expect(row.captured).toBe(1);
