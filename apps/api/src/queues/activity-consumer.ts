@@ -1,6 +1,9 @@
+import { SearchEmbeddingBatchSchema, type SearchSourceReference } from '../services/search-indexing-jobs';
+import { embedSearchDocuments } from '../services/search-embedding';
+import { workspaceSearchIndex, searchChunkIdentity } from '../services/text-search';
 import { ResourceSearchProjectionSchema } from '../durable-objects/resource-search-projection';
 import { SearchProjectionMessageSchema } from '../durable-objects/search-projection-outbox';
-import { createSearchIndexingPipeline } from '../services/search-indexing-pipeline';
+import { createSearchIndexingPipeline, indexSemanticBatch } from '../services/search-indexing-pipeline';
 import { ConnectorError, connectorOriginUrl, connectorRetryAfterMs } from "@rally/connectors";
 import {
   ACTIVITY_STREAM_NOT_DIGESTIBLE_METADATA_KEY,
@@ -121,7 +124,8 @@ function matchesFilters(activity: ActivityRow, filters: Record<string, unknown>)
 export async function consumeActivityQueue(batch: MessageBatch<unknown>, env: Env): Promise<void> {
   const indexSearch = createSearchIndexingPipeline(env);
   const isSearch = (message: Message<unknown>) =>
-    ResourceSearchProjectionSchema.safeParse(message.body).success
+    SearchEmbeddingBatchSchema.safeParse(message.body).success
+    || ResourceSearchProjectionSchema.safeParse(message.body).success
     || SearchProjectionMessageSchema.safeParse(message.body).success;
   // Search shares a tokenizer and processes one document source at a time.
   // Unrelated control effects do not wait behind embedding provider calls.
@@ -181,25 +185,38 @@ export async function recoverPendingActivityQueue(env: Env, limit = 100): Promis
   return pending.results.length;
 }
 
+async function loadSearchSource(env: Env, reference: SearchSourceReference, captureLinks = true) {
+  if (reference.type === 'resource_search_projection_v1') {
+    const stub = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, reference.workspaceId,
+      workspaceDOName(reference.region, reference.workspaceId));
+    return stub.prepareResourceSearch(reference);
+  }
+  const stub = await durableObjectStubForWorkspace(env, env.SUBSTREAM_AGENTS, reference.workspaceId,
+    conversationObjectName(reference.region, reference.workspaceId, reference.parentId, reference.substreamId));
+  return stub.prepareSearchTurn(reference, captureLinks);
+}
+
 async function consumeOne(message: Message<unknown>, env: Env,
   indexSearch: ReturnType<typeof createSearchIndexingPipeline>): Promise<void> {
-  const resourceProjection = ResourceSearchProjectionSchema.safeParse(message.body);
-  if (resourceProjection.success) {
-    const input = resourceProjection.data;
-    if (input.region !== env.AVALON_REGION) throw new Error("search_projection_region_mismatch");
-    const stub = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, input.workspaceId,
-      workspaceDOName(input.region, input.workspaceId));
-    await indexSearch(input.workspaceId, () => stub.prepareResourceSearch(input));
+  const embeddingBatch = SearchEmbeddingBatchSchema.safeParse(message.body);
+  if (embeddingBatch.success) {
+    const job = embeddingBatch.data;
+    if (job.reference.region !== env.AVALON_REGION) throw new Error('search_projection_region_mismatch');
+    if (job.chunkPolicy !== searchChunkIdentity()) {
+      await env.ACTIVITY_QUEUE.send(job.reference, { contentType: 'json' });
+      message.ack();
+      return;
+    }
+    await indexSemanticBatch(await workspaceSearchIndex(env, job.reference.workspaceId), job,
+      () => loadSearchSource(env, job.reference, false), (texts) => embedSearchDocuments(env, job.reference.workspaceId, texts));
     message.ack();
     return;
   }
-  const searchProjection = SearchProjectionMessageSchema.safeParse(message.body);
-  if (searchProjection.success) {
-    const input = searchProjection.data;
-    if (input.region !== env.AVALON_REGION) throw new Error("search_projection_region_mismatch");
-    const stub = await durableObjectStubForWorkspace(env, env.SUBSTREAM_AGENTS, input.workspaceId,
-      conversationObjectName(input.region, input.workspaceId, input.parentId, input.substreamId));
-    await indexSearch(input.workspaceId, () => stub.prepareSearchTurn(input));
+  const reference = ResourceSearchProjectionSchema.safeParse(message.body);
+  const source = reference.success ? reference : SearchProjectionMessageSchema.safeParse(message.body);
+  if (source.success) {
+    if (source.data.region !== env.AVALON_REGION) throw new Error('search_projection_region_mismatch');
+    await indexSearch(source.data, () => loadSearchSource(env, source.data));
     message.ack();
     return;
   }

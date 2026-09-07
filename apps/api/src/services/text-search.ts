@@ -7,6 +7,7 @@ import { MEMORY_EMBEDDING_MODEL } from "./structured-inference";
 import { SEARCH_CHUNK_MAX_TOKENS, SEARCH_CHUNK_OVERLAP_TOKENS } from "./semantic-chunks";
 
 export const SEARCH_EMBEDDING_DIMENSIONS = 1_024;
+export const SEARCH_CHUNK_ALGORITHM = "recursive-sliding-v1";
 export const QWEN_MODEL_COMMIT = "1d8ad4ca9b3dd8059ad90a75d4983776a23d44af";
 
 /** Separate deployments and embedding spaces; EU never falls back to Global. */
@@ -19,7 +20,7 @@ export async function workspaceSearchIndex(env: Env, workspaceId: string): Promi
     MEMORY_EMBEDDING_MODEL, SEARCH_EMBEDDING_DIMENSIONS,
   ]));
   const semanticSpace = await sha256Hex(JSON.stringify([
-    space, "recursive-sliding-v1", QWEN_MODEL_COMMIT,
+    space, SEARCH_CHUNK_ALGORITHM, QWEN_MODEL_COMMIT,
     // Keep the former environment-string encoding; changing it requires semantic backfill.
     String(SEARCH_CHUNK_MAX_TOKENS), String(SEARCH_CHUNK_OVERLAP_TOKENS),
   ]));
@@ -30,6 +31,12 @@ export async function workspaceSearchIndex(env: Env, workspaceId: string): Promi
     namespace: `rally-search-v3-${space}`,
     semanticNamespace: `rally-search-v3-semantic-${semanticSpace}`,
   });
+}
+
+/** Queued offsets must never be interpreted under a different embedding policy. */
+export function searchChunkIdentity(): string {
+  return JSON.stringify([SEARCH_CHUNK_ALGORITHM, QWEN_MODEL_COMMIT, MEMORY_EMBEDDING_MODEL,
+    SEARCH_EMBEDDING_DIMENSIONS, SEARCH_CHUNK_MAX_TOKENS, SEARCH_CHUNK_OVERLAP_TOKENS]);
 }
 
 export function searchDocumentId(source: string, scopeId: string, sourceId: string): Promise<string> {
@@ -48,6 +55,8 @@ export interface TextSearchDocument {
   revision: number;
   text: string;
   vector?: number[];
+  /** Hash of the complete canonical text for independently delivered chunks. */
+  generation?: string;
   chunk?: { start: number; end: number; strategies: string[] };
 }
 
@@ -57,6 +66,7 @@ const CandidateSchema = z.object({
   source_id: z.string(),
   scope_id: z.string(),
   revision: z.number().int().nonnegative(),
+  generation: z.string().nullable().optional(),
   chunk_start: z.number().int().nonnegative().nullable().optional(),
   chunk_end: z.number().int().nonnegative().nullable().optional(),
 });
@@ -76,6 +86,8 @@ export interface TextSearchOptions {
   mode: TextSearchMode;
   limit: number;
   vector?: number[];
+  /** Hash of the complete canonical text for independently delivered chunks. */
+  generation?: string;
   signal?: AbortSignal;
 }
 
@@ -127,6 +139,7 @@ export class TextSearchIndex {
         revision: { type: "uint" },
         deleted: { type: "bool" },
         record_type: { type: "string" },
+        generation: { type: "string" },
         chunk_start: { type: "uint" },
         chunk_end: { type: "uint" },
         chunk_strategies: { type: "[]string" },
@@ -139,6 +152,7 @@ export class TextSearchIndex {
         revision: document.revision,
         text: document.text,
         ...(isSemantic ? { vector: document.vector! } : {}),
+        generation: document.generation ?? null,
         deleted: false,
         record_type: document.chunk ? "chunk" : "document",
         chunk_start: document.chunk?.start ?? null,
@@ -154,13 +168,48 @@ export class TextSearchIndex {
 
   /** Reclaim obsolete vectors; canonical source checks still fence racing writes. */
   async removeSemanticGenerations(document: Pick<TextSearchDocument, "source" | "scopeId" | "sourceId" | "revision">,
-    comparison: "Lt" | "Lte" | "Eq"): Promise<void> {
+    comparison: "Lt" | "Lte" | "Eq", includeLegacyCurrent = false): Promise<void> {
     await this.namespace.write({
       delete_by_filter: ["And", [
         ["source", "Eq", document.source], ["scope_id", "Eq", document.scopeId],
-        ["source_id", "Eq", document.sourceId], ["revision", comparison, document.revision],
+        ["source_id", "Eq", document.sourceId],
+        includeLegacyCurrent ? ["Or", [["revision", comparison, document.revision],
+          ["And", [["revision", "Eq", document.revision], ["generation", "Eq", null]]]]]
+          : ["revision", comparison, document.revision],
       ]],
     }).catch((error: unknown) => {
+      if (error instanceof Error && "status" in error && error.status === 404) return;
+      throw new Error("search_index_write_failed");
+    });
+  }
+
+  /** Strong counts make duplicate deliveries receipts, without a separate ledger. */
+  async countSemanticChunks(document: Pick<TextSearchDocument, "source" | "scopeId" | "sourceId" | "revision">,
+    filter: { ids: string[] } | { generation: string }): Promise<number> {
+    const result = await this.namespace.query({
+      aggregate_by: { count: ["Count"] },
+      filters: ["And", [
+        ["source", "Eq", document.source], ["scope_id", "Eq", document.scopeId],
+        ["source_id", "Eq", document.sourceId], ["revision", "Eq", document.revision],
+        ["record_type", "Eq", "chunk"], ["deleted", "Eq", false],
+        "ids" in filter ? ["id", "In", filter.ids] : ["generation", "Eq", filter.generation],
+      ]],
+      consistency: { level: "strong" },
+    }).catch((error: unknown) => {
+      if (error instanceof Error && "status" in error && error.status === 404) return { aggregations: { count: 0 } };
+      throw new Error("search_index_query_failed");
+    });
+    return z.object({ count: z.number().int().nonnegative() }).parse(result.aggregations).count;
+  }
+
+  /** Never delete a newer generation when an old batch finishes late. */
+  async removeSemanticGeneration(document: Pick<TextSearchDocument, "source" | "scopeId" | "sourceId" | "revision">,
+    generation: string): Promise<void> {
+    await this.namespace.write({ schema: { generation: { type: "string" } }, delete_by_filter: ["And", [
+      ["source", "Eq", document.source], ["scope_id", "Eq", document.scopeId],
+      ["source_id", "Eq", document.sourceId], ["revision", "Eq", document.revision],
+      ["generation", "Eq", generation],
+    ]] }).catch((error: unknown) => {
       if (error instanceof Error && "status" in error && error.status === 404) return;
       throw new Error("search_index_write_failed");
     });
@@ -195,13 +244,22 @@ export class TextSearchIndex {
       const pageFilters: Filter[] = [filters];
       if (options.mode === "substring") pageFilters.push(["text", "IGlob", literalSubstringPattern(options.query)]);
       if (afterId !== undefined) pageFilters.push(["id", "Gt", afterId]);
-      const result = await (options.mode === "semantic" ? this.namespace : this.lexicalNamespace).query({
+      const namespace = options.mode === "semantic" ? this.namespace : this.lexicalNamespace;
+      const query = (includeGeneration: boolean) => namespace.query({
         filters: ["And", pageFilters],
-        include_attributes: ["source", "source_id", "scope_id", "revision", "chunk_start", "chunk_end"],
+        include_attributes: ["source", "source_id", "scope_id", "revision", "chunk_start", "chunk_end",
+          ...includeGeneration ? ["generation"] : []],
         rank_by: searchRanking(options),
         limit: options.limit,
         consistency: { level: "strong" },
-      }, ...options.signal ? [{ signal: options.signal }] as const : []).catch((error: unknown) => {
+      }, ...options.signal ? [{ signal: options.signal }] as const : []);
+      const result = await query(options.mode === "semantic").catch((error: unknown) => {
+        // Pre-fan-out namespaces have no generation attribute until their first
+        // new write. Preserve their existing revision-based retrieval contract.
+        if (options.mode === "semantic" && error instanceof Error && "status" in error && error.status === 400
+          && error.message.includes('attribute "generation" not found in schema')) return query(false);
+        throw error;
+      }).catch((error: unknown) => {
         // A namespace does not exist until its first write.
         if (error instanceof Error && "status" in error && error.status === 404) return { rows: [] };
         throw new Error("search_index_query_failed");

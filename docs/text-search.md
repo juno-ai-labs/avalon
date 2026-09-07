@@ -13,7 +13,8 @@ does not deploy this code or backfill dormant objects.
 
 - `apps/api/src/services/text-search.ts`: namespace selection, writes, revision
   tombstones, retrieval, and canonical result loading.
-- `apps/api/src/services/search-indexing-pipeline.ts`: the shared Queue indexing pipeline for every source.
+- `apps/api/src/services/search-indexing-pipeline.ts`: shared chunk planning and independently retriable batch indexing.
+- `apps/api/src/services/search-indexing-jobs.ts`: reference-only batch contracts and Queue publication.
 - `apps/api/src/services/search-document.ts`: canonical document and deletion contracts.
 - `apps/api/src/services/search-embedding.ts`: pinned Qwen tokenizer and embedding integration.
 - `apps/api/src/services/semantic-chunks.ts`: recursive and sliding-window semantic chunks.
@@ -74,15 +75,16 @@ name and description are assembled before this shared boundary.
 
 Search jobs run sequentially within a delivery. Overlapping deliveries share one
 immutable tokenizer per Worker isolate. Unrelated
-control-effect messages run concurrently. Each search message is acknowledged only
-after indexing and canonical revalidation finish; individual failures request a
+control-effect messages run concurrently. Source messages are acknowledged after lexical indexing, durable batch publication,
+and canonical revalidation; embedding messages are acknowledged after their batch
+and completion checks finish; individual failures request a
 Queue retry and eventually use the existing regional dead-letter queue. Reusing the
 existing Queue avoids a second transport and rollout configuration for the same
 source references. Global and EU stay on their respective Workers and queues.
 
 ### Semantic chunks
 
-`indexSemanticDocument` creates recursive passages and overlapping sliding windows
+`searchEmbeddingJobs` creates recursive passages and overlapping sliding windows
 from the same canonical text used for lexical indexing. Recursive splitting tries
 paragraphs, lines, sentence endings, and spaces before code-point boundaries.
 Identical spans are deduplicated and carry both strategy labels.
@@ -113,14 +115,27 @@ matching `encode` without allocating token-ID and attention-mask arrays. This
 lifecycle depends on the locked library implementation and must be rechecked
 when upgrading it; differential tests compare against an unmodified tokenizer.
 
+Each group of chunk ranges is a separate `search_embedding_batch_v1` message on
+the same regional Queue. It carries the source reference, document identity and
+revision, complete-text SHA-256, chunk-policy identity, total chunk count, and
+up to 64 ranges. It contains no source text or vectors. Publication groups jobs
+within Cloudflare's documented 100-message/256 KB limits, accounting for per-message
+metadata and the 128 KB individual-message limit. A failed publication leaves
+the source job unacknowledged; its retry can safely republish deterministic jobs.
+
+Batch Workers reload the canonical text, verify identity, revision, and hash,
+then reconstruct the already-planned ranges. They do not re-chunk the document
+or launch Browser Run captures; source deliveries own link discovery/capture.
+Jobs created under an older chunk policy re-enqueue their source for replanning.
 Embedding inputs are sent as arrays through the existing OpenRouter client, in
 chunk order. `SEARCH_EMBEDDING_BATCH_SIZE` in `search-embedding.ts` controls how
 many chunks share a request: 64, approved by the team on 2026-09-06. This bounds
 one response to 65,536 vector values without limiting total document content. Every chunk is still processed, including a final partial
 batch. A missing or extra vector, model drift, wrong dimension, or nonfinite value
-rejects the entire generation before any semantic rows are written. Batches do
-not change chunk boundaries, namespace identity, lexical indexing, or source
-revalidation. Search jobs remain sequential within each Queue delivery.
+rejects that batch before its semantic rows are written. A batch reloads the
+source before and after publication; stale work removes only its exact content
+generation. Batches do not change chunk boundaries, namespace identity, or
+lexical indexing. Search jobs remain sequential within each Queue delivery.
 
 Counts include tokenizer special tokens. Document embeddings use OpenRouter's
 `search_document` task through the existing inference client. The binary boundary
@@ -130,21 +145,40 @@ but cannot admit an oversized span. No character-count approximation is used.
 Whitespace-only semantic passages are omitted because embedding providers reject
 blank inputs. Lexical text stays lossless, and meaningful chunks keep their
 original text and exact UTF-16 offsets, canonical source ID, scope, and revision.
-All vectors are checked before the generation write. Qwen3-Embedding-8B at 1,024
+All vectors in a batch are checked before its write. Qwen3-Embedding-8B at 1,024
 dimensions is the configured space; a changed model, wrong dimension, or nonfinite
 vector fails the job. There is no Qwen/Gemini fallback. Changing model requires a
 matching tokenizer, embedding integration, and new namespace.
 See the [Qwen model card](https://huggingface.co/Qwen/Qwen3-Embedding-8B) and
 [Tokenizers.js documentation](https://github.com/huggingface/tokenizers.js).
 
-Chunk IDs include parent revision, offsets, and embedding input, making retries
-idempotent. Successful writes delete older semantic generations by source/scope/ID
-and revision. Deletion removes generations through its revision. The Worker reloads
-canonical source state after embeddings and removes its own obsolete generation
-if a concurrent edit or deletion won, then retries. A crash before this check leaves
-an unacknowledged job; its retry loads the current source and performs reclamation.
-Canonical result loaders always reject obsolete revisions, including during that
-recovery window. The retained lexical tombstone prevents delayed resurrection.
+Fan-out chunk IDs also include the complete-text generation hash, so two
+same-revision extraction results cannot overwrite each other's chunks. A strongly
+consistent count of the batch's deterministic IDs lets redelivery skip embeddings
+already stored successfully. After each batch, a strongly consistent generation
+count checks whether all planned chunks exist. Only then does cleanup remove older
+revisions and legacy same-revision rows without a generation hash. Duplicate and
+out-of-order batches therefore cannot prematurely retire a previous generation.
+No separate coordinator, counter, R2 staging area, or Durable Object table is needed.
+The existing Queue can deliver up to 10 such messages per invocation; each message
+performs at most one provider batch request, and acknowledgments remain individual.
+
+Successful batches become searchable progressively; a failed later batch leaves
+valid earlier batches in place and retries only its own work. This deliberately
+replaces whole-document validation/publication: holding every vector until the
+last provider request would recreate the document-sized execution and memory cost
+that fan-out removes. Deletion still removes generations through its revision.
+Canonical loaders reject obsolete revisions and, for new chunks, mismatched
+complete-text hashes. The retained lexical tombstone prevents delayed resurrection.
+Different same-revision hashed generations can coexist until a later source revision
+reclaims them; current-text hash validation prevents serving stale ones.
+
+Existing semantic namespaces acquire the generation attribute on their first new
+write. Semantic queries retry without that optional field only when Turbopuffer
+specifically reports its absence from an old schema; legacy rows retain their
+existing revision-based validation until replaced. No namespace reset or forced
+full backfill is required. A disposable live-provider probe verifies strong counts,
+missing-attribute behavior, and cleanup of legacy rows while retaining new chunks.
 
 Sources provide server-resolved scope IDs and a canonical loader. Search filters
 by those grants, validates returned candidate metadata, then invokes each loader
@@ -318,6 +352,34 @@ through Queue failure rather than silent truncation. Document-size and capture
 budgets require team policy; no arbitrary new caps are introduced here.
 
 ## Changelog
+
+### 2026-09-06 — Fan out chunk batches through the regional Queue
+
+**What changed:** A source delivery writes lexical text, runs the shared chunker,
+and publishes reference-only jobs for groups of 64 ranges. Each child reloads and
+validates current source text, embeds and writes its batch, and checks generation
+completion with a strong Turbopuffer count. Persisted deterministic rows make
+redelivery skip completed provider work. Generation hashes isolate equal-revision
+content changes and canonical result loading validates them.
+
+**Why:** The team requested Queue fan-out after approving provider batching.
+Batching reduces round trips, but a large document still occupies one delivery
+and retains all vectors until its final write. Separate Queue messages give each batch independent retries and bound each embedding/vector write
+to the approved 64 chunks.
+
+**Considered and rejected:** A new coordinator table or staging bucket would add
+another failure boundary to keep in sync. Source references plus offsets reconstruct
+the canonical input, and the index's idempotent rows and strongly consistent counts
+already supply the completion evidence. Publishing all vectors at once would
+preserve the original whole-document memory bottleneck.
+
+**Consequences:** Valid chunks become searchable progressively. A later malformed
+batch cannot write invalid vectors or trigger retirement before the generation is
+complete; successful earlier batches remain. Old revisions and legacy chunk rows
+are reclaimed only on completion, and current authority/content checks fence
+racing stale writes. Existing namespaces remain readable during schema transition.
+Parent-side chunk planning still processes the full document; fan-out does not
+claim to remove that CPU and tokenizer-memory cost.
 
 ### 2026-09-06 — Batch semantic embedding inputs
 
