@@ -59,14 +59,16 @@ by semantic chunk boundaries. Semantic queries search only chunk records.
 ### Interactive response latency
 
 The desktop requests seven candidates initially: the 360px results list minus
-16px padding fits seven 52px two-line rows with 2px gaps. Additional pages load
+16px padding shows six complete 52px two-line rows and part of the seventh,
+with 2px gaps. Additional pages load
 at the bottom of the list or through the keyboard-accessible Load more control.
-Fully rejected pages continue automatically until a current result is found or
-retrieval is exhausted. Existing rows stay visible while fetching another page;
-a failed reauthorization hides them. Query and category changes discard old pages.
+The server follows fully rejected candidate pages until a current result is found
+or retrieval is exhausted; rejected candidate IDs never become public cursors. Existing rows stay visible while fetching another page;
+a transient continuation failure offers retry, while a failed reauthorization hides them. Query and category changes discard old pages.
 
 Requests opt into pagination with `pageSize` and continue with the returned
-`nextCursor`. The cursor is a Turbopuffer id boundary, never an authorization
+`nextCursor`. The cursor is the last authorized Turbopuffer id boundary (stable
+hash order, not relevance or recency), never an authorization
 grant. Each page obtains current readable conversation scopes from WorkspaceDO
 (including archived/system conversations), filters retrieval by those scopes,
 and reauthorizes canonical results. Resource sources remain workspace-scoped and
@@ -435,6 +437,10 @@ through Queue failure rather than silent truncation. Document-size and capture
 budgets require team policy; no arbitrary new caps are introduced here.
 
 ## Changelog
+
+### 2026-09-07 — Search review corrections
+
+Search review fixes keep the complete scope prefilter independent of the 100-ID directory batch contract, authorize conversations after asynchronous content validation, and allow transient continuation retries without hiding already visible rows. Authorization denials still clear results; pagination controls sit outside the ARIA listbox.
 
 ### 2026-09-07 — Remove serial candidate hydration from interactive search
 

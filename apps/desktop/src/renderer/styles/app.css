@@ -6550,4 +6550,5 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 .rally-search-result-source { color: var(--av-sys-color-text-subtle); }
 .rally-search-result-excerpt strong { font-weight: 650; }
 .rally-search-result kbd { font: inherit; font-size: 11px; color: var(--av-sys-color-text-subtle); background: var(--av-sys-color-surface-raised); border-radius: 4px; padding: 1px 4px; }
+.rally-search-footer { display: flex; flex-direction: column; gap: 8px; padding: 8px 12px 12px; color: var(--av-sys-color-text-subtle); font-size: 13px; }
 .rally-search-state { position: absolute; top: 126px; left: 16px; right: 16px; color: var(--av-sys-color-text-subtle); font-size: 13px; text-align: center; pointer-events: none; }

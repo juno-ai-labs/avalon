@@ -123,6 +123,7 @@ import {
   WorkspaceDirectoryRecentRequestSchema,
   WorkspaceDirectoryReadableIdsRequestSchema,
   WorkspaceDirectoryReadableIdsResultSchema,
+  WorkspaceDirectorySearchableIdsResultSchema,
   WorkspaceDirectoryNotificationRequestSchema,
   WorkspaceDirectoryNotificationStateSchema,
   WorkspaceDirectoryPageSchema,
@@ -7966,7 +7967,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
        WHERE directory.scope = 'workspace' OR viewer.is_participant = 1
        ORDER BY directory.workstream_id`, request.userId,
     ).toArray();
-    return WorkspaceDirectoryReadableIdsResultSchema.parse({ items: rows.map((row) => row.workstream_id) });
+    return WorkspaceDirectorySearchableIdsResultSchema.parse({ items: rows.map((row) => row.workstream_id) });
   }
 
   async readableWorkstreamIds(

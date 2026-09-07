@@ -67,6 +67,11 @@ export const WorkspaceDirectoryReadableIdsRequestSchema = deferredZodSchema(() =
   workstreamIds: z.array(IdSchema).min(1).max(100),
 }));
 
+/** Complete search prefilter; the bounded readable-ID request is a different RPC. */
+export const WorkspaceDirectorySearchableIdsResultSchema = deferredZodSchema(() => z.strictObject({
+  items: z.array(IdSchema),
+}));
+
 export const WorkspaceDirectoryReadableIdsResultSchema = deferredZodSchema(() => z.strictObject({
   items: z.array(IdSchema).max(100),
 }));

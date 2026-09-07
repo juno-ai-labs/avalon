@@ -305,13 +305,18 @@ export class TextSearchIndex {
       }));
       options.onTiming?.("hydration", performance.now() - hydrationStarted);
       const rows = new Map(loaded.flatMap((items) => [...items]));
+      let lastAuthorizedId: string | undefined;
       for (const candidate of candidates) {
         const row = rows.get(candidate.id);
-        if (row !== undefined) values.push(row);
+        if (row !== undefined) { values.push(row); lastAuthorizedId = candidate.id; }
       }
       nextCursor = candidates.length === options.limit && options.mode === "substring" ? candidates.at(-1)!.id : null;
       if (nextCursor !== null && afterId !== undefined && nextCursor <= afterId) throw new Error("search_index_cursor_invalid");
-      if (singlePage) break;
+      if (singlePage && values.length > 0) {
+        // Never disclose a rejected candidate ID or expose empty candidate pages.
+        nextCursor = nextCursor === null ? null : lastAuthorizedId!;
+        break;
+      }
       if (values.length >= options.limit || candidates.length < options.limit || options.mode !== "substring") break;
       // Attribute-ordered pagination follows Turbopuffer's documented id cursor.
       // Revoked or obsolete candidates must not hide later authorized matches.

@@ -3,7 +3,7 @@ import type { DesktopTelemetryRendererPerfFlowIntent } from '../../common/deskto
 import { reportTelemetryProductIntent, telemetryCountBucket, uuidV7 } from './telemetry';
 
 /**
- * Client-side phase timing for the three latency-critical work-stream flows.
+ * Client-side phase timing for latency-critical product flows.
  *
  * The renderer is not a Worker, so Cloudflare's automatic tracing does not
  * reach it and there is no span to attach to. This is deliberately *not* an
@@ -196,6 +196,7 @@ export function rendererPerfFlowIntent(
     blockedMs: blocking.blockedMs,
     longTaskCount: telemetryCountBucket(blocking.longTasks),
     ...phaseProperties,
+    // Search may follow rejected pages; cumulative annotations override the last step.
     ...Object.fromEntries(['searchRequestMs', 'searchScopeMs', 'searchRetrievalMs', 'searchHydrationMs', 'searchServerMs']
       .flatMap((key) => { const value = telemetryNumber(fields[key]); return value === undefined ? [] : [[key, value]]; })),
     ...(workstreamId ? { workstreamId } : {}),
@@ -255,6 +256,8 @@ export function completeCreationTraceAfterPaint(workstreamId: string, substreamI
 }
 
 export interface PerfTraceOptions {
+  /** Original interaction clock when work is admitted after a debounce. */
+  startedAt?: number;
   /** Correlates with the Worker: `x-request-id`, a ticket id, a message id. */
   traceId?: string;
   /** UUIDv7 accepted by telemetry when `traceId` is a UUIDv4 product id. */
@@ -268,7 +271,7 @@ export function startPerfTrace(flow: PerfFlow, options: PerfTraceOptions = {}): 
   observeLongTasks();
   const traceId = options.traceId ?? uuidV7();
   const operationId = options.operationId ?? traceId;
-  const startedAt = now();
+  const startedAt = options.startedAt ?? now();
   const phases: Array<[string, number]> = [];
   let cursor = startedAt;
   let annotations: Record<string, unknown> = options.workstreamId
