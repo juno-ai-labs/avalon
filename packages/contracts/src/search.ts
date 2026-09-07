@@ -6,6 +6,8 @@ export type SearchCategory = z.infer<typeof SearchCategorySchema>;
 export const SearchRequestSchema = z.strictObject({
   query: z.string().trim().min(1),
   category: SearchCategorySchema,
+  pageSize: z.number().int().min(1).max(50).optional(),
+  cursor: z.string().min(1).optional(),
 });
 export type SearchRequest = z.infer<typeof SearchRequestSchema>;
 const TextRangeSchema = z.strictObject({ start: z.number().int().nonnegative(), end: z.number().int().nonnegative() });
@@ -26,6 +28,11 @@ export const SearchResultSchema = z.strictObject({
   ]),
 });
 export type SearchResult = z.infer<typeof SearchResultSchema>;
-export const SearchResponseSchema = z.strictObject({ results: z.array(SearchResultSchema) });
+export const SearchResponseSchema = z.strictObject({
+  results: z.array(SearchResultSchema),
+  nextCursor: z.string().nullable().optional(),
+  timings: z.strictObject({ scopeMs: z.number().nonnegative(), retrievalMs: z.number().nonnegative(),
+    hydrationMs: z.number().nonnegative(), serverMs: z.number().nonnegative() }).optional(),
+});
 
 export type SearchResponse = z.infer<typeof SearchResponseSchema>;

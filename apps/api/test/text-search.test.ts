@@ -85,6 +85,19 @@ describe("text search authority boundary", () => {
     expect(provider.query).toHaveBeenCalledTimes(3);
   });
 
+  it("returns a continuation after one page, even when authority rejects every candidate", async () => {
+    const row = { id: "first", source: "messages", source_id: "0/turn", scope_id: "room", revision: 1 };
+    provider.query.mockResolvedValueOnce({ rows: [row] }).mockResolvedValueOnce({ rows: [] });
+    const load = vi.fn(async () => new Map<string, string>());
+    const sources = [{ source: "messages", scopeIds: ["room"], load }];
+    const first = await index.queryPage(sources, { query: "needle", mode: "substring", limit: 1 });
+    expect(first).toEqual({ results: [], nextCursor: "first" });
+    expect(provider.query).toHaveBeenCalledTimes(1);
+    expect(await index.queryPage(sources, { query: "needle", mode: "substring", limit: 1 }, first.nextCursor!))
+      .toEqual({ results: [], nextCursor: null });
+    expect(provider.query.mock.calls[1]?.[0].filters[1]).toContainEqual(["id", "Gt", "first"]);
+  });
+
   it("escapes glob operators in literal substring input", () => {
     expect(literalSubstringPattern("a*b? [c] {d} \\e")).toBe("*a\\*b\\? \\[c\\] \\{d\\} \\\\e*");
   });
