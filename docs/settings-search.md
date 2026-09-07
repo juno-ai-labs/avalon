@@ -110,6 +110,13 @@ scrolling and both appearances.
 
 ## Changelog
 
+### 2026-09-07 — Preserve the theme guard across grouped selectors
+
+The navigation-painter invariant now allows the separate Settings panel and
+checks every selector in a grouped rule. Reading only the final selector could
+hide a nested painter behind an allowed panel. Search input props now stay on
+the input, and its wrapper focus rule is separate from the global focus rule.
+
 ### 2026-09-07 — Match sidebar interaction colors
 
 Settings navigation and search results now share the main sidebar's color
