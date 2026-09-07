@@ -7953,6 +7953,22 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return this.directoryVisible(request.userId, request.workstreamId);
   }
 
+  /** Search includes archived and system conversations; final parent checks remain authoritative. */
+  async searchableWorkstreamIds(input: { workspaceId: string; userId: string }) {
+    await this.initialized;
+    const request = z.strictObject({ workspaceId: z.string().uuid(), userId: z.string().uuid() }).parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const rows = this.state.storage.sql.exec<{ workstream_id: string }>(
+      `SELECT directory.workstream_id FROM workspace_workstream_directory directory
+       LEFT JOIN workspace_workstream_viewers viewer
+         ON viewer.workstream_id = directory.workstream_id AND viewer.user_id = ?
+        AND viewer.authority_generation = directory.authority_generation
+       WHERE directory.scope = 'workspace' OR viewer.is_participant = 1
+       ORDER BY directory.workstream_id`, request.userId,
+    ).toArray();
+    return WorkspaceDirectoryReadableIdsResultSchema.parse({ items: rows.map((row) => row.workstream_id) });
+  }
+
   async readableWorkstreamIds(
     input: WorkspaceDirectoryReadableIdsRequest,
   ): Promise<WorkspaceDirectoryReadableIdsResult> {

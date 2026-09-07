@@ -29,11 +29,42 @@ describe('workspace search modal', () => {
     fireEvent.change(input, { target: { value: 'danil' } });
     const option = await screen.findByRole('option');
     expect(option.querySelector('strong')).toHaveTextContent('Danil');
-    expect(search).toHaveBeenLastCalledWith({ query: 'danil', category: 'messages' }, expect.any(AbortSignal));
+    expect(search).toHaveBeenLastCalledWith({ query: 'danil', category: 'messages', pageSize: 7 }, expect.any(AbortSignal));
     fireEvent.keyDown(input, { key: 'Enter' });
     expect(onSelect).toHaveBeenCalledWith(result);
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
+  it('continues a rejected page without showing a false empty result', async () => {
+    const search = vi.fn<React.ComponentProps<typeof SearchModal>['search']>()
+      .mockResolvedValueOnce({ results: [], nextCursor: 'rejected' })
+      .mockResolvedValueOnce({ results: [result], nextCursor: null });
+    setup(search);
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'danil' } });
+    await screen.findByRole('option');
+    expect(search).toHaveBeenLastCalledWith({ query: 'danil', category: 'all', pageSize: 7, cursor: 'rejected' }, expect.any(AbortSignal));
+    expect(screen.queryByText('No results')).not.toBeInTheDocument();
+  });
+
+  it('keeps the first page visible while loading a continuation and preserves result order', async () => {
+    let finish: ((value: { results: SearchResult[]; nextCursor: null }) => void) | undefined;
+    const search = vi.fn<React.ComponentProps<typeof SearchModal>['search']>()
+      .mockResolvedValueOnce({ results: [result], nextCursor: 'next' })
+      .mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    setup(search);
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'danil' } });
+    await screen.findByRole('option');
+    fireEvent.click(screen.getByRole('button', { name: 'Load more results' }));
+    await waitFor(() => expect(finish).toBeDefined());
+    expect(screen.getAllByRole('option')).toHaveLength(1);
+    expect(search).toHaveBeenLastCalledWith({ query: 'danil', category: 'all', pageSize: 7, cursor: 'next' }, expect.any(AbortSignal));
+    await act(async () => finish!({ results: [{ ...result, id: 'message-2', excerpt: 'Second result', highlights: [] }], nextCursor: null }));
+    await waitFor(() => expect(screen.getAllByRole('option')).toHaveLength(2));
+    expect(screen.getAllByRole('option').map((row) => row.textContent)).toEqual([
+      expect.stringContaining('Alex Danilowicz'), expect.stringContaining('Second result'),
+    ]);
+    expect(screen.queryByRole('button', { name: 'Load more results' })).not.toBeInTheDocument();
+  });
+
   it('discards an old category response that arrives after a newer query', async () => {
     let finishOld: ((value: { results: SearchResult[] }) => void) | undefined;
     const search = vi.fn((request) => request.category === 'all'

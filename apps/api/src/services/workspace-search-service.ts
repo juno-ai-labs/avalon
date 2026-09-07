@@ -1,3 +1,5 @@
+import { WorkstreamDirectoryService } from './workstream-directory-service';
+import { logInfo } from '../observability/logger';
 import type { SearchRequest, SearchResult } from '@rally/contracts/search';
 import type { AuthContext, Env } from '../env';
 import { ApiError } from '../lib/api-error';
@@ -19,10 +21,20 @@ function denied(error: unknown): boolean {
 }
 
 export async function searchWorkspace(env: Env, auth: AuthContext, request: SearchRequest, signal?: AbortSignal): Promise<SearchResult[]> {
+  return (await searchWorkspacePage(env, auth, request, signal)).results;
+}
+
+export async function searchWorkspacePage(env: Env, auth: AuthContext, request: SearchRequest, signal?: AbortSignal) {
   signal?.throwIfAborted();
+  const started = performance.now();
+  const scopes = request.pageSize && ['all', 'messages', 'links'].includes(request.category)
+    ? await new WorkstreamDirectoryService(env, auth).searchableIds() : null;
+  const scopeMs = performance.now() - started;
+  let retrievalMs = 0;
+  let hydrationMs = 0;
   const sources: AuthorizedSearchSource<SearchResult>[] = [];
   if (request.category === 'all' || request.category === 'messages' || request.category === 'links') {
-    if (request.category !== 'links') sources.push({ source: 'messages', scopeIds: null, load: async (candidates) => {
+    if (request.category !== 'links') sources.push({ source: 'messages', scopeIds: scopes, load: async (candidates) => {
       const results = new Map<string, SearchResult>();
       const groups = new Map<string, { parentId: string; substreamId: string; candidates: Array<TextSearchCandidate & { turnId: string }> }>();
       for (const candidate of candidates) {
@@ -36,7 +48,7 @@ export async function searchWorkspace(env: Env, auth: AuthContext, request: Sear
         group.candidates.push({ ...candidate, turnId: candidate.source_id.slice(separator + 1) });
         groups.set(key, group);
       }
-      for (const group of groups.values()) {
+      await Promise.all([...groups.values()].map(async (group) => {
         signal?.throwIfAborted();
         try {
           const conversation = new ConversationService(env, auth);
@@ -61,30 +73,43 @@ export async function searchWorkspace(env: Env, auth: AuthContext, request: Sear
             });
           }
         } catch (error) { if (!denied(error)) throw error; }
-      }
+      }));
       return results;
     } });
-    if (request.category !== 'messages') sources.push({ source: 'conversation_links', scopeIds: null, load: async (candidates) => {
+    if (request.category !== 'messages') sources.push({ source: 'conversation_links', scopeIds: scopes, load: async (candidates) => {
       const results = new Map<string, SearchResult>();
+      const groups = new Map<string, { parentId: string; substreamId: string;
+        candidates: Array<{ candidate: TextSearchCandidate; turnId: string; linkId: string }> }>();
       for (const candidate of candidates) {
-        signal?.throwIfAborted();
         const [substreamId, turnId, linkId] = candidate.source_id.split('/');
         if (!SubstreamIdSchema.safeParse(substreamId).success || !substreamId || !turnId || !linkId
           || !IdSchema.safeParse(candidate.scope_id).success) continue;
-        try {
-          await new ConversationService(env, auth).authorizeViewer(candidate.scope_id, substreamId);
-          const record = await new WorkstreamObjectClient(env, auth, candidate.scope_id, substreamId).searchLink(turnId, linkId);
-          if (!record.link || record.link.revision !== candidate.revision) continue;
-          if (candidate.generation && await searchContentHash(record.link.text) !== candidate.generation) continue;
-          const passage = matchingPassage(record.link.text, literalMatchRanges(record.link.text, request.query), PREVIEW_CONTEXT_CHARACTERS);
-          if (!passage) continue;
-          await new ConversationService(env, auth).authorizeViewer(candidate.scope_id, substreamId);
-          results.set(candidate.id, { id: candidate.id, category: 'links', title: record.link.label,
-            sourceLabel: record.title, occurredAt: null, revision: String(record.link.revision),
-            excerpt: passage.excerpt, excerptStart: passage.excerptStart, highlights: passage.highlights,
-            location: { kind: 'link', url: record.link.url, range: passage.range } });
-        } catch (error) { if (!denied(error)) throw error; }
+        const key = `${candidate.scope_id}/${substreamId}`;
+        const group = groups.get(key) ?? { parentId: candidate.scope_id, substreamId, candidates: [] };
+        group.candidates.push({ candidate, turnId, linkId });
+        groups.set(key, group);
       }
+      await Promise.all([...groups.values()].map(async (group) => {
+        signal?.throwIfAborted();
+        try {
+          const conversation = new ConversationService(env, auth);
+          await conversation.authorizeViewer(group.parentId, group.substreamId);
+          const record = await new WorkstreamObjectClient(env, auth, group.parentId, group.substreamId)
+            .searchLinks(group.candidates.map(({ turnId, linkId }) => ({ turnId, linkId })));
+          await conversation.authorizeViewer(group.parentId, group.substreamId);
+          for (const { candidate, linkId } of group.candidates) {
+            const link = record.links.find((value) => value.linkId === linkId)?.link;
+            if (!link || link.revision !== candidate.revision) continue;
+            if (candidate.generation && await searchContentHash(link.text) !== candidate.generation) continue;
+            const passage = matchingPassage(link.text, literalMatchRanges(link.text, request.query), PREVIEW_CONTEXT_CHARACTERS);
+            if (!passage) continue;
+            results.set(candidate.id, { id: candidate.id, category: 'links', title: link.label,
+              sourceLabel: record.title, occurredAt: null, revision: String(link.revision),
+              excerpt: passage.excerpt, excerptStart: passage.excerptStart, highlights: passage.highlights,
+              location: { kind: 'link', url: link.url, range: passage.range } });
+          }
+        } catch (error) { if (!denied(error)) throw error; }
+      }));
       return results;
     } });
   }
@@ -92,17 +117,17 @@ export async function searchWorkspace(env: Env, auth: AuthContext, request: Sear
     if (request.category !== 'all' && request.category !== category) continue;
     sources.push({ source: category, scopeIds: [auth.workspaceId], load: async (candidates) => {
       const results = new Map<string, SearchResult>();
-      for (const candidate of candidates) {
+      await Promise.all(candidates.map(async (candidate) => {
         signal?.throwIfAborted();
         try {
           const record = await new ResourceService(env, auth).searchText(candidate.source_id);
-          if (!record || Number(record.revision) !== candidate.revision) continue;
+          if (!record || Number(record.revision) !== candidate.revision) return;
           const resource = record.resource;
           const actualCategory = resourceSearchCategory(resource.provider, resource.canonicalUrl);
-          if (actualCategory !== category) continue;
-          if (candidate.generation && await searchContentHash(record.text) !== candidate.generation) continue;
+          if (actualCategory !== category) return;
+          if (candidate.generation && await searchContentHash(record.text) !== candidate.generation) return;
           const passage = matchingPassage(record.text, literalMatchRanges(record.text, request.query), PREVIEW_CONTEXT_CHARACTERS);
-          if (!passage) continue;
+          if (!passage) return;
           results.set(candidate.id, {
             id: candidate.id, category, title: resource.title, sourceLabel: resource.title,
             occurredAt: resource.updatedAt, revision: record.revision,
@@ -110,10 +135,21 @@ export async function searchWorkspace(env: Env, auth: AuthContext, request: Sear
             location: { kind: 'resource', resourceId: resource.id, mimeType: resource.mimeType, range: passage.range },
           });
         } catch (error) { if (!denied(error)) throw error; }
-      }
+      }));
       return results;
     } });
   }
   const index = await workspaceSearchIndex(env, auth.workspaceId);
-  return index.query(sources, { query: request.query, mode: 'substring', limit: SEARCH_PAGE_SIZE, ...(signal ? { signal } : {}) });
+  const options = { query: request.query, mode: 'substring' as const, limit: request.pageSize ?? SEARCH_PAGE_SIZE,
+    ...(signal ? { signal } : {}), onTiming: (phase: 'retrieval' | 'hydration', ms: number) => {
+      if (phase === 'retrieval') retrievalMs += ms;
+      else hydrationMs += ms;
+    } };
+  const result = request.pageSize ? await index.queryPage(sources, options, request.cursor)
+    : { results: await index.query(sources, options) };
+  logInfo(env, 'search_response_timing', { scope_ms: scopeMs, retrieval_ms: retrievalMs,
+    hydration_ms: hydrationMs, duration_ms: performance.now() - started, result_count: result.results.length,
+    paginated: Boolean(request.pageSize), continuation: Boolean(request.cursor) });
+  return request.pageSize ? { ...result, timings: { scopeMs, retrievalMs, hydrationMs,
+    serverMs: performance.now() - started } } : result;
 }
