@@ -73,6 +73,7 @@ const PROJECT_ICONS: Record<ProjectIconKey, LucideIcon> = {
 };
 
 function label(value: string): string {
+  if (value === 'orange') return 'Neon yellow';
   return value.split('-').map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`).join(' ');
 }
 

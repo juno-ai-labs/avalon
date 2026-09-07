@@ -1,3 +1,6 @@
+import { publishWorkspaceSync } from '../services/workspace-realtime-service';
+import { AccountOnboardingService } from '../services/account-onboarding-service';
+import { AccountOnboardingSchema, UpdateAccountOnboardingSchema } from '@rally/contracts';
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import { zValidator } from "../middleware/validation";
 import {
@@ -150,3 +153,18 @@ onboardingRoutes.post(
     return c.body(null, 204);
   },
 );
+
+
+onboardingRoutes.get('/account', async (c) =>
+  c.json(AccountOnboardingSchema.parse(await new AccountOnboardingService(c.env, getIdentityAuth(c)).get())));
+onboardingRoutes.patch('/account', zValidator('json', UpdateAccountOnboardingSchema), async (c) => {
+  const auth = getIdentityAuth(c);
+  const result = await new AccountOnboardingService(c.env, auth).update(c.req.valid('json'));
+  // Discovery projects the narrow identity preferences into both regions. A
+  // failed projection is retryable: the account save above is replay-safe.
+  requestDeferral(c)((async () => {
+    const discovery = await new PlatformOnboardingService(c.env, auth).state();
+    await Promise.all(discovery.workspaces.filter((workspace) => workspace.region === 'global').map((workspace) => publishWorkspaceSync(c.env, workspace.id, ['workspace_profile', 'member_directory'])));
+  })().catch(() => undefined));
+  return c.json(AccountOnboardingSchema.parse(result));
+});

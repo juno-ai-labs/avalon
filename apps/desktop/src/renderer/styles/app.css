@@ -1,5 +1,6 @@
 @import "tw-fade/css";
 @import "./themes.css";
+@import "./onboarding.css";
 
 @tailwind base;
 @tailwind components;
@@ -1367,14 +1368,32 @@ pre {
 .region-note { color: var(--av-ref-color-neutral-9); font-size: var(--av-cmp-control-font-size); line-height: 1.45; }
 .onboarding-continue { margin-top: 20px; width: 100%; }
 
-.signin-card { text-align: center; width: min(400px, 100%); }
-.signin-mark { height: 34px; margin-bottom: 20px; width: 34px; }
-.signin-card h1 { margin-bottom: 8px; }
-.signin-button { margin-top: 24px; width: 100%; }
-.signin-button + .signin-button { margin-top: 8px; }
-.signin-help { color: var(--av-ref-color-neutral-8) !important; font-size: var(--av-cmp-control-font-size); line-height: 1.5; margin-top: 18px !important; }
+.signin-shell { overflow-y: auto; }
+.signin-card { text-align: center; width: min(420px, 100%); padding: 24px 0; }
+.signin-mark { height: 56px; margin-bottom: 26px; width: 56px; }
+.signin-card h1 { font-size: 34px; font-weight: 600; letter-spacing: -.04em; margin: 0 0 14px; }
+.signin-card > p:not(.inline-error) { font-size: 15px; line-height: 1.6; }
+.signin-card > p.signin-account-copy { margin-top: 38px; font-size: 13px; }
+.signin-button { margin-top: 14px; width: 100%; min-height: 48px; border-radius: 26px; font-size: 14px; gap: 10px; }
+.signin-button .connector-mark { width: 18px; height: 18px; color: inherit; }
+.signin-button + .signin-button { margin-top: 10px; font-size: 12px; min-height: 40px; }
 .signin-region-question { margin-top: 24px !important; text-align: left; }
 .signin-card .region-options { text-align: left; }
+.workspace-setup-shell { overflow-y: auto; }
+.workspace-setup-card { width: min(420px, 100%); padding: 24px 0; text-align: center; }
+.workspace-setup-card .onboarding-copy h1 { font-size: 34px; font-weight: 600; letter-spacing: -.04em; margin: 0 0 14px; }
+.workspace-setup-card .onboarding-copy > p { font-size: 15px; line-height: 1.6; }
+.workspace-setup-card .onboarding-field { margin-top: 32px; text-align: left; }
+.workspace-setup-card .onboarding-input-wrap { border-radius: 14px; min-height: 48px; }
+.workspace-setup-card .onboarding-input-wrap input { min-width: 0; font-size: 14px; }
+.workspace-setup-card .region-question { text-align: left; }
+.workspace-setup-card .region-options { text-align: left; margin-bottom: 12px; }
+.workspace-setup-card .region-option { border-radius: 14px; }
+.workspace-setup-card .region-option:focus-within { box-shadow: var(--av-sys-focus-ring-quiet); }
+.workspace-setup-card .region-note { text-align: left; font-size: 12px; line-height: 1.6; }
+.workspace-setup-card .onboarding-continue { border-radius: 26px; min-height: 48px; font-size: 14px; margin-top: 22px; }
+.workspace-setup-card .signed-in-identity { margin-top: 22px !important; overflow-wrap: anywhere; }
+.workspace-setup-card .onboarding-signout { margin-top: 8px; }
 .back-region { margin-top: 14px; }
 .signed-in-identity { color: var(--av-sys-color-text-subtle) !important; font-size: var(--av-cmp-control-font-size); margin-top: 10px !important; }
 .onboarding-signout { display: block; margin: 14px auto 0; }

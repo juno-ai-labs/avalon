@@ -1,3 +1,4 @@
+import type { PersonalPresentation } from '@rally/contracts';
 import type {
   AgentModelOverride,
   AutomationDraft as ContractAutomationDraft,
@@ -46,6 +47,7 @@ export type NoteDetail = ContractNoteDetail;
 export type NoteTranscriptSegment = ContractNoteTranscriptSegment;
 
 export interface WorkspaceMember {
+  presentation?: PersonalPresentation | null;
   id: string;
   name: string;
   email: string;

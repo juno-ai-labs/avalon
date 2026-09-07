@@ -1,3 +1,4 @@
+import type { AccountOnboarding } from '@rally/contracts';
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
   RallyDesktopBridge,
@@ -157,6 +158,8 @@ const bridge: RallyDesktopBridge = {
   cancelDesktopAuthAttempt: (attemptId) => ipcRenderer.invoke('auth:cancel-desktop-attempt', attemptId) as Promise<void>,
   exchangeDesktopTicket: (input) => ipcRenderer.invoke('auth:exchange-desktop-ticket', input) as Promise<DesktopSession>,
   createDevelopmentSession: (apiBaseUrl, workspaceName) => ipcRenderer.invoke('auth:create-development-session', { apiBaseUrl, workspaceName }) as Promise<DesktopSession>,
+  getAccountOnboarding: () => ipcRenderer.invoke('onboarding:get-account') as Promise<AccountOnboarding>,
+  updateAccountOnboarding: (input) => ipcRenderer.invoke('onboarding:update-account', input) as Promise<AccountOnboarding>,
   getOnboardingState: () => ipcRenderer.invoke('onboarding:get-state') as Promise<DesktopWorkspaceOnboardingState>,
   getWorkspaceAttention: (input) => ipcRenderer.invoke('workspace:get-attention', input),
   leaveWorkspace: (input) => ipcRenderer.invoke('workspace:leave', input),

@@ -71,7 +71,7 @@ vi.mock('../lib/app-session', () => ({
         api: { global: 'https://api.rallywith.ai', eu: 'https://eu.api.rallywith.ai' },
         devAuthEnabled: true,
       },
-      session: { apiBaseUrl: 'https://eu.api.rallywith.ai' },
+      session: { apiBaseUrl: 'https://eu.api.rallywith.ai', user: { id: 'user-1', name: 'Adam', email: 'adam@example.com' } },
       leaveWorkspace,
       signOut,
       pendingConnectorOAuth,
