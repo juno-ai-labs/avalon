@@ -11,13 +11,13 @@ const sourceDirectory = join(desktopDirectory, 'native', 'dock-tile-plugin');
 const outputBundle = join(
   desktopDirectory,
   '.native-build',
-  'RallyDockTilePlugin.docktileplugin',
+  'RallyDockTilePluginV2.docktileplugin',
 );
 const contentsDirectory = join(outputBundle, 'Contents');
 const executableDirectory = join(contentsDirectory, 'MacOS');
 const resourcesDirectory = join(contentsDirectory, 'Resources');
-const executablePath = join(executableDirectory, 'RallyDockTilePlugin');
-const smokeExecutablePath = join(desktopDirectory, '.native-build', 'RallyDockTilePluginSmoke');
+const executablePath = join(executableDirectory, 'RallyDockTilePluginV2');
+const smokeExecutablePath = join(desktopDirectory, '.native-build', 'RallyDockTilePluginV2Smoke');
 const selectableIconSourceDirectory = join(desktopDirectory, 'resources', 'app-icons');
 const selectableIconTemplateDirectory = join(desktopDirectory, 'native', 'selectable-app-icon');
 const selectableIconOutputDirectory = join(desktopDirectory, '.native-build', 'app-icons');
@@ -41,7 +41,7 @@ await mkdir(executableDirectory, { recursive: true });
 await mkdir(resourcesDirectory, { recursive: true });
 await mkdir(selectableIconOutputDirectory, { recursive: true });
 await copyFile(join(sourceDirectory, 'Info.plist'), join(contentsDirectory, 'Info.plist'));
-await writeFile(join(resourcesDirectory, 'version.txt'), 'Rally Dock Tile Plugin 1\n');
+await writeFile(join(resourcesDirectory, 'version.txt'), 'Rally Dock Tile Plugin 2\n');
 await run('/usr/bin/xcrun', [
   '--sdk',
   'macosx',
@@ -146,6 +146,10 @@ async function compileSelectableIcon(name) {
 }
 
 for (const name of selectableIconNames) await compileSelectableIcon(name);
+await writeFile(
+  join(selectableIconOutputDirectory, 'manifest.json'),
+  `${JSON.stringify({ version: 1, icons: selectableIconNames }, null, 2)}\n`,
+);
 
 console.log(`Built ${outputBundle}`);
 console.log(`Built ${selectableIconNames.length} system-rendered selectable icons in ${selectableIconOutputDirectory}`);
