@@ -22,11 +22,27 @@ const writes: Array<{ path: string; body: Record<string, unknown>; semanticCount
 const embeddingInputs: string[] = [];
 const embeddingBatches: string[][] = [];
 let onEmbed: (() => Promise<void>) | undefined;
+let onWrite: (() => Promise<void>) | undefined;
 let tokenizerReads = 0;
 let responseModel = 'Qwen/Qwen3-Embedding-8B';
 const trackPublishedBatches = () => vi.spyOn(env.ACTIVITY_QUEUE, 'sendBatch');
 let publish: ReturnType<typeof trackPublishedBatches>;
 const indexed = new Map<string, Record<string, unknown>>();
+// Model only the external provider's filters; canonical stores and Queue are real.
+function matchesFilter(row: Record<string, unknown>, filter: unknown): boolean {
+  const parts = z.array(z.unknown()).parse(filter);
+  if (parts[0] === 'And' || parts[0] === 'Or') {
+    const children = z.array(z.unknown()).parse(parts[1]);
+    return parts[0] === 'And' ? children.every((child) => matchesFilter(row, child))
+      : children.some((child) => matchesFilter(row, child));
+  }
+  const value = row[z.string().parse(parts[0])] ?? null;
+  if (parts[1] === 'Eq') return value === parts[2];
+  if (parts[1] === 'In') return z.array(z.unknown()).parse(parts[2]).includes(value);
+  if (parts[1] === 'Lt') return z.number().parse(value) < z.number().parse(parts[2]);
+  if (parts[1] === 'Lte') return z.number().parse(value) <= z.number().parse(parts[2]);
+  throw new Error('unsupported_provider_filter');
+}
 // Sized above 512 tokens for the actual pinned Qwen tokenizer.
 const documentBody = 'beta\n\ngamma delta'.repeat(180);
 
@@ -44,6 +60,7 @@ beforeEach(() => {
   tokenizerReads = 0;
   responseModel = 'Qwen/Qwen3-Embedding-8B';
   onEmbed = undefined;
+  onWrite = undefined;
   vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = new Request(input, init);
     const url = new URL(request.url);
@@ -65,16 +82,24 @@ beforeEach(() => {
     }
     if (url.hostname.endsWith('.turbopuffer.com')) {
       const body = z.record(z.string(), z.unknown()).parse(await request.json());
+      const namespace = url.pathname.replace(/\/query$/, '');
       if (url.pathname.endsWith('/query')) {
-        const filters = JSON.stringify(body.filters);
-        const rows = [...indexed.values()].filter((row) => ['source', 'source_id', 'scope_id', 'revision']
-          .every((key) => filters.includes(JSON.stringify([key, 'Eq', row[key]])))
-          && (filters.includes(JSON.stringify(row.id)) || (row.generation && filters.includes(JSON.stringify(row.generation)))));
+        const rows = [...indexed].filter(([key, row]) => key.startsWith(`${namespace}\0`)
+          && matchesFilter(row, body.filters));
         return Response.json({ aggregations: { count: rows.length } });
       }
       writes.push({ path: url.pathname, body, semanticCount: [...indexed.values()].filter((row) => row.record_type === 'chunk').length });
+      if (body.delete_by_filter) {
+        for (const [key, row] of indexed) {
+          if (key.startsWith(`${namespace}\0`) && matchesFilter(row, body.delete_by_filter)) indexed.delete(key);
+        }
+      }
       for (const row of z.array(z.record(z.string(), z.unknown())).parse(body.upsert_rows ?? [])) {
-        if (typeof row.id === 'string') indexed.set(row.id, row);
+        if (typeof row.id === 'string') indexed.set(`${namespace}\0${row.id}`, row);
+      }
+      if (z.array(z.object({ record_type: z.string().optional() })).parse(body.upsert_rows ?? [])
+        .some((row) => row.record_type === 'chunk')) {
+        const callback = onWrite; onWrite = undefined; await callback?.();
       }
       return Response.json({ rows_affected: 1 });
     }
@@ -180,13 +205,17 @@ describe('shared Queue indexing pipeline', () => {
     expect(jobs.length).toBeGreaterThan(1);
     expect(jobs.every((job) => job.spans.length <= 64)).toBe(true);
     expect(embeddingBatches.map((batch) => batch.length)).toEqual(jobs.map((job) => job.spans.length));
-    expect(liveRows().filter((row) => row.record_type === 'chunk')).toHaveLength(jobs[0]!.totalChunks);
+    expect(liveRows().filter((row) => row.record_type === 'chunk')).toHaveLength(jobs.flatMap((job) => job.spans).length);
     const previousCalls = embeddingInputs.length;
     expect((await consume([jobs[0]])).explicitAcks).toEqual(['search-0']);
     expect(embeddingInputs).toHaveLength(previousCalls);
     const cleanup = writes.filter(({ body }) => JSON.stringify(body.delete_by_filter ?? null).includes('"Lt"'));
     expect(cleanup.length).toBeGreaterThan(0);
-    expect(cleanup.every((write) => write.semanticCount === jobs[0]!.totalChunks)).toBe(true);
+    expect(cleanup).toHaveLength(1);
+    expect(cleanup[0]!.semanticCount).toBe(0);
+    await consume([resourceMessage()]);
+    expect([...indexed.values()].filter((row) => row.record_type === 'chunk')).toHaveLength(jobs.flatMap((job) => job.spans).length);
+    expect(embeddingInputs).toHaveLength(previousCalls);
   });
 
   it('splits fan-out publication within the real Queue byte and message limits', async () => {
@@ -195,18 +224,49 @@ describe('shared Queue indexing pipeline', () => {
     await consume([resourceMessage()], {}, false);
     const job = SearchEmbeddingBatchSchema.parse([...publish.mock.calls[0]![0]][0]!.body);
     publish.mockClear();
-    await publishSearchEmbeddingBatches(env.ACTIVITY_QUEUE, Array.from({ length: 101 }, () => job));
+    await publishSearchEmbeddingBatches(env.ACTIVITY_QUEUE, Array.from({ length: 101 }, () => ({ ...job, spans: job.spans.slice(0, 1) })));
     expect(publish.mock.calls.length).toBeGreaterThan(1);
     expect(publish.mock.calls.flatMap(([messages]) => [...messages])).toHaveLength(101);
   });
 
-  it('retries only a failed child and retires old chunks after out-of-order completion', async () => {
+  it('splits below 100 messages when the serialized byte budget is reached', async () => {
+    await seedResource();
+    await env.PAYLOADS.put('pipeline/body', documentBody.repeat(40));
+    await consume([resourceMessage()], {}, false);
+    const job = SearchEmbeddingBatchSchema.parse([...publish.mock.calls[0]![0]][0]!.body);
+    const bytes = new TextEncoder().encode(JSON.stringify({ body: job, contentType: 'json' })).byteLength + 100;
+    const count = Math.floor(256_000 / bytes) + 1;
+    expect(count).toBeLessThan(100);
+    publish.mockClear();
+    await publishSearchEmbeddingBatches(env.ACTIVITY_QUEUE, Array.from({ length: count }, () => job));
+    expect(publish.mock.calls.length).toBeGreaterThan(1);
+    for (const [messages] of publish.mock.calls) {
+      const total = [...messages].reduce((sum, message) => sum + new TextEncoder().encode(JSON.stringify(message)).byteLength + 100, 0);
+      expect(total).toBeLessThanOrEqual(256_000);
+    }
+    expect(publish.mock.calls.flatMap(([messages]) => [...messages])).toHaveLength(count);
+  });
+
+  it('reclaims only the written generation when canonical text changes during the upsert', async () => {
+    await seedResource();
+    await consume([resourceMessage()], {}, false);
+    const job = SearchEmbeddingBatchSchema.parse([...publish.mock.calls[0]![0]][0]!.body);
+    onWrite = async () => { await env.PAYLOADS.put('pipeline/body', 'changed after write'); };
+    expect((await consume([job])).explicitAcks).toEqual(['search-0']);
+    expect(liveRows().some((row) => row.record_type === 'chunk')).toBe(true);
+    expect([...indexed.values()].filter((row) => row.record_type === 'chunk')).toEqual([]);
+    expect(writes.some(({ body }) => JSON.stringify(body.delete_by_filter ?? null)
+      .includes(JSON.stringify(['generation', 'Eq', job.generation])))).toBe(true);
+  });
+
+  it('retries only a failed child and preserves completed chunks out of order', async () => {
     await seedResource();
     await env.PAYLOADS.put('pipeline/body', documentBody.repeat(40));
     expect((await consume([resourceMessage()], {}, false)).explicitAcks).toEqual(['search-0']);
     const jobs = publish.mock.calls.flatMap(([messages]) => [...messages])
       .map((message) => SearchEmbeddingBatchSchema.parse(message.body));
     expect(jobs.length).toBeGreaterThan(1);
+    writes.length = 0;
     responseModel = 'different-model';
     expect((await consume([jobs[0]])).retryMessages).toEqual([{ msgId: 'search-0' }]);
     expect(liveRows().filter((row) => row.record_type === 'chunk')).toEqual([]);
@@ -214,17 +274,26 @@ describe('shared Queue indexing pipeline', () => {
     for (const job of jobs.slice(1).reverse()) expect((await consume([job])).explicitAcks).toEqual(['search-0']);
     expect(writes.some(({ body }) => JSON.stringify(body.delete_by_filter ?? null).includes('"Lt"'))).toBe(false);
     expect((await consume([jobs[0]])).explicitAcks).toEqual(['search-0']);
-    expect(writes.some(({ body }) => JSON.stringify(body.delete_by_filter ?? null).includes('"Lt"'))).toBe(true);
+    expect(writes.some(({ body }) => JSON.stringify(body.delete_by_filter ?? null).includes('"Lt"'))).toBe(false);
+    expect([...indexed.values()].filter((row) => row.record_type === 'chunk')).toHaveLength(jobs.flatMap((job) => job.spans).length);
   });
 
-  it('replans an old chunk policy and rejects wrong-region child jobs before indexing', async () => {
+  it('retries malformed embedding jobs instead of acknowledging them as legacy messages', async () => {
+    const result = await consume([{ type: 'search_embedding_batch_v1', spans: [] }]);
+    expect(result.explicitAcks).toEqual([]);
+    expect(result.retryMessages).toEqual([{ msgId: 'search-0' }]);
+    expect(writes).toEqual([]);
+    expect(publish).not.toHaveBeenCalled();
+  });
+
+  it('discards obsolete policies without multiplying source backfills and rejects wrong-region children', async () => {
     await seedResource();
     await consume([resourceMessage()], {}, false);
     const job = SearchEmbeddingBatchSchema.parse([...publish.mock.calls[0]![0]][0]!.body);
     const send = vi.spyOn(env.ACTIVITY_QUEUE, 'send');
     writes.length = 0;
     expect((await consume([{ ...job, chunkPolicy: 'old-policy' }])).explicitAcks).toEqual(['search-0']);
-    expect(send).toHaveBeenCalledWith(job.reference, { contentType: 'json' });
+    expect(send).not.toHaveBeenCalled();
     expect((await consume([{ ...job, reference: { ...job.reference, region: 'eu' } }])).retryMessages)
       .toEqual([{ msgId: 'search-0' }]);
     expect(writes).toEqual([]);
@@ -265,7 +334,7 @@ describe('shared Queue indexing pipeline', () => {
     const result = await consume([resourceMessage()]);
     expect(result.explicitAcks).toEqual(['search-0']);
     expect(result.retryMessages).toEqual([]);
-    expect(liveRows().filter((row) => row.record_type === 'chunk')).toEqual([]);
+    expect([...indexed.values()].filter((row) => row.record_type === 'chunk')).toEqual([]);
     expect(writes.some(({ body }) => JSON.stringify(body.delete_by_filter ?? null).includes(JSON.stringify(['revision', 'Eq', revision])))).toBe(true);
     const retried = await consume([resourceMessage()]);
     expect(retried.explicitAcks).toEqual(['search-0']);

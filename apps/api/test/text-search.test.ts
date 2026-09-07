@@ -116,6 +116,23 @@ describe("semantic indexing", () => {
     }));
   });
 
+  it("initializes legacy cleanup schemas separately and preserves the exact deletion filter", async () => {
+    provider.write.mockRejectedValueOnce(Object.assign(new Error("filter error in key `generation`: attribute not found"), { status: 400 }));
+    await index.removeSemanticGenerations(document, "Lt", true);
+    expect(provider.write).toHaveBeenCalledTimes(3);
+    const [first, schema, retry] = provider.write.mock.calls;
+    expect(schema![0]).toEqual({ schema: first![0].schema });
+    expect(retry![0]).toEqual({ delete_by_filter: first![0].delete_by_filter });
+    provider.write.mockRejectedValueOnce(Object.assign(new Error("unrelated bad request"), { status: 400 }));
+    await expect(index.removeSemanticGenerations(document, "Lt", true)).rejects.toThrow("search_index_write_failed");
+    expect(provider.write).toHaveBeenCalledTimes(4);
+  });
+
+  it("rejects an unsupported embedding prefix instead of silently dropping it", async () => {
+    await expect(searchEmbeddingJobs(reference, document, { ...policy, prefix: "context: " }))
+      .rejects.toThrow("search_embedding_prefix_unsupported");
+  });
+
   it("distinguishes canonical UTF-16 text that UTF-8 would collapse", async () => {
     expect(await searchContentHash("\ud800")).not.toBe(await searchContentHash("\ufffd"));
     expect(await searchContentHash("é")).not.toBe(await searchContentHash("e\u0301"));
@@ -126,14 +143,12 @@ describe("semantic indexing", () => {
     const jobs = await searchEmbeddingJobs(reference, long, { maxTokens: 1, overlapTokens: 0, countTokens: (text) => text.length });
     expect(jobs.map((job) => job.spans.length)).toEqual([64, 1]);
     expect(jobs.flatMap((job) => job.spans).map(({ start, end }) => long.text.slice(start, end)).join("")).toBe(long.text);
-    expect(jobs.every((job) => job.totalChunks === 65)).toBe(true);
     expect(JSON.stringify(jobs)).not.toContain(long.text);
   });
 
-  it("pairs each vector with its source range and retires only after the final chunk count", async () => {
+  it("pairs each vector with its source range without deleting other batches", async () => {
     const [job] = await searchEmbeddingJobs(reference, document, policy);
-    provider.query.mockResolvedValueOnce({ aggregations: { count: 0 } })
-      .mockResolvedValueOnce({ aggregations: { count: job!.totalChunks } });
+    provider.query.mockResolvedValueOnce({ aggregations: { count: 0 } });
     const embed = vi.fn(async (texts: string[]) => ({ model: "Qwen/Qwen3-Embedding-8B",
       vectors: texts.map((_text, i) => Array.from({ length: 1024 }, () => i)) }));
     await indexSemanticBatch(index, job!, load, embed);
@@ -143,10 +158,9 @@ describe("semantic indexing", () => {
         chunk_start: span.start, chunk_end: span.end, vector: Array.from({ length: 1024 }, () => i),
       })),
     }));
-    expect(provider.write).toHaveBeenLastCalledWith(expect.objectContaining({ delete_by_filter:
-      ["And", expect.arrayContaining([["Or", expect.arrayContaining([["revision", "Lt", document.revision]])]])] }));
-    expect(provider.query).toHaveBeenLastCalledWith(expect.objectContaining({ consistency: { level: "strong" },
-      filters: ["And", expect.arrayContaining([["generation", "Eq", job!.generation]])] }));
+    expect(provider.write).toHaveBeenCalledTimes(1);
+    expect(provider.query).toHaveBeenCalledTimes(1);
+    expect(provider.query).toHaveBeenCalledWith(expect.objectContaining({ consistency: { level: "strong" } }));
   });
 
   it.each(["missing", "extra", "dimension", "nonfinite", "model"])("rejects a %s batch without writing its chunks or retiring the previous generation", async (failure) => {
@@ -164,8 +178,7 @@ describe("semantic indexing", () => {
 
   it("skips completed provider work on redelivery and leaves incomplete generations alone", async () => {
     const [job] = await searchEmbeddingJobs(reference, document, policy);
-    provider.query.mockResolvedValueOnce({ aggregations: { count: job!.spans.length } })
-      .mockResolvedValueOnce({ aggregations: { count: job!.totalChunks - 1 } });
+    provider.query.mockResolvedValueOnce({ aggregations: { count: job!.spans.length } });
     const embed = vi.fn();
     await indexSemanticBatch(index, job!, load, embed);
     expect(embed).not.toHaveBeenCalled();
