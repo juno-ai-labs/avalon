@@ -3110,12 +3110,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return resourceSearchRevision(this.state.storage.sql, request.resourceId);
   }
 
-  async prepareResourceSearch(input: unknown) {
+  async prepareResourceSearch(input: unknown, documentId?: string) {
     await this.initialized;
     const request = ResourceSearchProjectionSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
     if (request.region !== this.env.AVALON_REGION) throw new Error("search_projection_region_mismatch");
-    return prepareResourceSearch(this.state.storage.sql, this.env, request.workspaceId, request.resourceId);
+    return prepareResourceSearch(this.state.storage.sql, this.env, request.workspaceId, request.resourceId, documentId);
   }
 
   /** Trusted Worker compatibility port for WorkspaceDO-owned relational state. */

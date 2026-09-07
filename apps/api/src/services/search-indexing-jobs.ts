@@ -7,6 +7,14 @@ import { SEARCH_EMBEDDING_BATCH_SIZE } from './search-embedding';
 export const SearchSourceReferenceSchema = z.union([ResourceSearchProjectionSchema, SearchProjectionMessageSchema]);
 export type SearchSourceReference = z.infer<typeof SearchSourceReferenceSchema>;
 
+/** One document per planning delivery, even when a turn contains many pages. */
+export const SearchDocumentJobSchema = z.strictObject({
+  type: z.literal('search_document_v1'),
+  reference: SearchSourceReferenceSchema,
+  documentId: z.string().min(1),
+});
+export type SearchDocumentJob = z.infer<typeof SearchDocumentJobSchema>;
+
 /** Queue messages carry source/range references; text is reloaded from authority. */
 export const SearchEmbeddingBatchSchema = z.strictObject({
   type: z.literal('search_embedding_batch_v1'),
@@ -28,8 +36,8 @@ const QUEUE_BATCH_BYTES = 256_000;
 const QUEUE_BATCH_MESSAGES = 100;
 const QUEUE_METADATA_BYTES = 100;
 
-export async function publishSearchEmbeddingBatches(queue: Queue, jobs: SearchEmbeddingBatch[]): Promise<void> {
-  let batch: MessageSendRequest<SearchEmbeddingBatch>[] = [];
+export async function publishSearchIndexingJobs(queue: Queue, jobs: Array<SearchEmbeddingBatch | SearchDocumentJob>): Promise<void> {
+  let batch: MessageSendRequest<SearchEmbeddingBatch | SearchDocumentJob>[] = [];
   let bytes = 0;
   for (const job of jobs) {
     const message = { body: job, contentType: 'json' as const };
