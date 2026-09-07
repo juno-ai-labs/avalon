@@ -167,7 +167,9 @@ strong queries and stale candidates without preserving usable results. Cleanup
 never removes a hashed current generation. Children only reclaim their own exact
 generation when canonical validation fails. No completion count, coordinator,
 counter, staging bucket, or new Durable Object table is needed.
-The existing Queue can deliver up to 10 such messages per invocation; each message
+The regional activity Queues deliver one message per invocation, approved by the
+team on 2026-09-06. Each source plan gets a separate invocation CPU budget; this
+also changes grouping for the other activity consumers. Each embedding message
 performs at most one provider batch request, and acknowledgments remain individual.
 
 Successful batches become searchable progressively; a failed later batch leaves
@@ -385,6 +387,29 @@ through Queue failure rather than silent truncation. Document-size and capture
 budgets require team policy; no arbitrary new caps are introduced here.
 
 ## Changelog
+
+### 2026-09-06 — Give each activity message its own invocation
+
+**What changed:** Both regional activity Queue consumers use `max_batch_size: 1`,
+approved by the team on 2026-09-06. Embedding requests still contain up to 64
+chunks. Retry settings, grouping timeout, regional routing, and Worker CPU limits
+remain unchanged.
+
+**Why:** After embedding fan-out deployed, production still reported invocation
+CPU and memory failures. A synthetic 2.1-million-character source took about ten
+seconds to plan locally in workerd; ten source messages in one delivery share
+one CPU budget. One message per invocation removes that accumulation without
+raising the Worker-wide CPU allowance.
+
+**Considered and rejected:** Raising the Worker CPU limit would also affect
+unrelated API requests. Reducing the embedding request size would not address
+source planning. Neither change is part of this adjustment.
+
+**Consequences:** This changes grouping for every consumer of the shared regional
+activity Queue, including connector and control messages. It can increase Worker
+invocations; it does not cap concurrent invocations or guarantee that a single
+large source fits the runtime's memory or CPU limits. Verify deployment and replay
+failed search references selectively before declaring migration complete.
 
 ### 2026-09-06 — Fan out chunk batches through the regional Queue
 
