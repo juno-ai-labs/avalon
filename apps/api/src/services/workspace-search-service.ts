@@ -1,13 +1,12 @@
 import type { SearchRequest, SearchResult } from '@rally/contracts/search';
 import type { AuthContext, Env } from '../env';
-import { sha256Hex } from '../lib/crypto';
 import { ApiError } from '../lib/api-error';
 import { IdSchema, SubstreamIdSchema } from '@rally/contracts';
 import { WorkstreamObjectClient } from './workstream-object-client';
 import { ConversationService } from './conversation-service';
 import { ResourceService } from './resource-service';
 import { resourceSearchCategory } from './resource-search-text';
-import { workspaceSearchIndex, type TextSearchCandidate, type AuthorizedSearchSource } from './text-search';
+import { workspaceSearchIndex, searchContentHash, type TextSearchCandidate, type AuthorizedSearchSource } from './text-search';
 import { literalMatchRanges, matchingPassage } from './search-passages';
 
 /** Search uses the same 50-result page as the existing resource directory. */
@@ -50,7 +49,7 @@ export async function searchWorkspace(env: Env, auth: AuthContext, request: Sear
             const turn = record.turns.find((value) => value.turnId === candidate.turnId);
             if (!turn || turn.revision !== candidate.revision) continue;
             const text = turn.blocks.filter((block) => block.type === 'text').map((block) => block.text).join('\n');
-            if (candidate.generation && await sha256Hex(text) !== candidate.generation) continue;
+            if (candidate.generation && await searchContentHash(text) !== candidate.generation) continue;
             const passage = matchingPassage(text, literalMatchRanges(text, request.query), PREVIEW_CONTEXT_CHARACTERS);
             if (!passage) continue;
             results.set(candidate.id, {
@@ -76,7 +75,7 @@ export async function searchWorkspace(env: Env, auth: AuthContext, request: Sear
           await new ConversationService(env, auth).authorizeViewer(candidate.scope_id, substreamId);
           const record = await new WorkstreamObjectClient(env, auth, candidate.scope_id, substreamId).searchLink(turnId, linkId);
           if (!record.link || record.link.revision !== candidate.revision) continue;
-          if (candidate.generation && await sha256Hex(record.link.text) !== candidate.generation) continue;
+          if (candidate.generation && await searchContentHash(record.link.text) !== candidate.generation) continue;
           const passage = matchingPassage(record.link.text, literalMatchRanges(record.link.text, request.query), PREVIEW_CONTEXT_CHARACTERS);
           if (!passage) continue;
           await new ConversationService(env, auth).authorizeViewer(candidate.scope_id, substreamId);
@@ -101,7 +100,7 @@ export async function searchWorkspace(env: Env, auth: AuthContext, request: Sear
           const resource = record.resource;
           const actualCategory = resourceSearchCategory(resource.provider, resource.canonicalUrl);
           if (actualCategory !== category) continue;
-          if (candidate.generation && await sha256Hex(record.text) !== candidate.generation) continue;
+          if (candidate.generation && await searchContentHash(record.text) !== candidate.generation) continue;
           const passage = matchingPassage(record.text, literalMatchRanges(record.text, request.query), PREVIEW_CONTEXT_CHARACTERS);
           if (!passage) continue;
           results.set(candidate.id, {

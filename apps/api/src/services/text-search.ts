@@ -39,6 +39,11 @@ export function searchChunkIdentity(): string {
     SEARCH_EMBEDDING_DIMENSIONS, SEARCH_CHUNK_MAX_TOKENS, SEARCH_CHUNK_OVERLAP_TOKENS]);
 }
 
+/** JSON escaping preserves lone UTF-16 surrogates that UTF-8 alone would replace. */
+export function searchContentHash(text: string): Promise<string> {
+  return sha256Hex(JSON.stringify(text));
+}
+
 export function searchDocumentId(source: string, scopeId: string, sourceId: string): Promise<string> {
   return sha256Hex(JSON.stringify([source, scopeId, sourceId]));
 }

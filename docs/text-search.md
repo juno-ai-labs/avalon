@@ -117,7 +117,7 @@ when upgrading it; differential tests compare against an unmodified tokenizer.
 
 Each group of chunk ranges is a separate `search_embedding_batch_v1` message on
 the same regional Queue. It carries the source reference, document identity and
-revision, complete-text SHA-256, chunk-policy identity, total chunk count, and
+revision, SHA-256 of the JSON-escaped canonical text, chunk-policy identity, total chunk count, and
 up to 64 ranges. It contains no source text or vectors. Publication groups jobs
 within Cloudflare's documented 100-message/256 KB limits, accounting for per-message
 metadata and the 128 KB individual-message limit. A failed publication leaves
@@ -153,7 +153,9 @@ See the [Qwen model card](https://huggingface.co/Qwen/Qwen3-Embedding-8B) and
 [Tokenizers.js documentation](https://github.com/huggingface/tokenizers.js).
 
 Fan-out chunk IDs also include the complete-text generation hash, so two
-same-revision extraction results cannot overwrite each other's chunks. A strongly
+same-revision extraction results cannot overwrite each other's chunks. Hashing
+JSON-escaped text preserves exact UTF-16, including lone surrogates that raw UTF-8
+encoding would replace. A strongly
 consistent count of the batch's deterministic IDs lets redelivery skip embeddings
 already stored successfully. After each batch, a strongly consistent generation
 count checks whether all planned chunks exist. Only then does cleanup remove older

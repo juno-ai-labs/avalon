@@ -5,13 +5,13 @@ import { searchChunkPolicy, SEARCH_EMBEDDING_BATCH_SIZE } from './search-embeddi
 import { semanticChunks, type SemanticChunkPolicy } from './semantic-chunks';
 import { isMemoryEmbeddingModel } from './structured-inference';
 import { publishSearchEmbeddingBatches, type SearchEmbeddingBatch, type SearchSourceReference } from './search-indexing-jobs';
-import { SEARCH_EMBEDDING_DIMENSIONS, searchChunkIdentity, workspaceSearchIndex, type TextSearchDocument, type TextSearchIndex } from './text-search';
+import { SEARCH_EMBEDDING_DIMENSIONS, searchContentHash, searchChunkIdentity, workspaceSearchIndex, type TextSearchDocument, type TextSearchIndex } from './text-search';
 
 /** One canonical chunk plan; batch jobs contain offsets, not source text. */
 export async function searchEmbeddingJobs(reference: SearchSourceReference,
   document: SearchDocument & { text: string }, policy: SemanticChunkPolicy): Promise<SearchEmbeddingBatch[]> {
   const chunks = await semanticChunks(document.text, policy);
-  const generation = await sha256Hex(document.text);
+  const generation = await searchContentHash(document.text);
   const identity = { id: document.id, source: document.source, sourceId: document.sourceId,
     scopeId: document.scopeId, revision: document.revision };
   const jobs: SearchEmbeddingBatch[] = [];
@@ -32,7 +32,7 @@ export async function indexSemanticBatch(index: TextSearchIndex, job: SearchEmbe
     const current = SearchDocumentBatchSchema.parse(await load()).documents.find((document) => document.id === job.document.id);
     if (!current || current.text === null || current.revision !== job.document.revision
       || current.source !== job.document.source || current.sourceId !== job.document.sourceId
-      || current.scopeId !== job.document.scopeId || await sha256Hex(current.text) !== job.generation) return null;
+      || current.scopeId !== job.document.scopeId || await searchContentHash(current.text) !== job.generation) return null;
     return { ...current, text: current.text };
   };
   const document = await currentDocument();
@@ -105,7 +105,7 @@ export function createSearchIndexingPipeline(env: Env) {
       if (!next || next.revision > document.revision || next.text === null) {
         await index.remove(document.id, document.revision);
       }
-      if (document.text !== null) await index.removeSemanticGeneration(document, await sha256Hex(document.text));
+      if (document.text !== null) await index.removeSemanticGeneration(document, await searchContentHash(document.text));
     }
     if (changed) throw new Error('search_source_changed');
     if (input.retry || current.retry) throw new Error('search_capture_retry_required');
