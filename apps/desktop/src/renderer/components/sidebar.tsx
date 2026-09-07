@@ -3,6 +3,7 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { IconDots, IconLock } from '@tabler/icons-react';
 import clsx from 'clsx';
+import { SidebarSearch } from './sidebar-search';
 import {
   Archive,
   ChevronsLeft,
@@ -27,7 +28,6 @@ import {
   PinOff,
   Play,
   Plus,
-  Search,
   Settings,
   Smartphone,
   Trash2,
@@ -1669,10 +1669,7 @@ export function Sidebar({
           ref={scrollRef}
         >
           <div className="sidebar-commandbar window-no-drag">
-            <button className="sidebar-search" type="button" onClick={onOpenSearch} disabled={!onOpenSearch} aria-label="Search workspace">
-              <Search aria-hidden="true" size={14} />
-              <span>Search</span>
-            </button>
+            <SidebarSearch mode="button" onClick={onOpenSearch} disabled={!onOpenSearch} aria-label="Search workspace" />
           </div>
           {conversationOnly && location.pathname === '/workstreams/new' && (
             <div aria-current="page" aria-label="New chat draft" className="sidebar-new-chat-draft">
