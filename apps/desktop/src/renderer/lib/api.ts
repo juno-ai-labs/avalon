@@ -1,5 +1,4 @@
 import { SearchResponseSchema, type SearchRequest, type SearchResponse } from '@rally/contracts/search';
-import { OnboardingTeammatesSchema, type DiscoverOnboardingTeammates } from '@rally/contracts';
 import { OnboardingJourneySchema, type UpdateOnboardingJourney } from '@rally/contracts';
 import { RALLY_HEADERS } from '@rally/contracts/http-headers';
 import { MutatePrivateChildParticipantResultSchema } from '@rally/contracts/conversation-parent';
@@ -743,9 +742,6 @@ export class RallyApi {
     return response.body;
   }
 
-  discoverOnboardingTeammates(input: DiscoverOnboardingTeammates) {
-    return this.request('/workspace/onboarding/teammates', { schema: OnboardingTeammatesSchema, method: 'POST', body: input });
-  }
   getOnboardingJourney() {
     return this.request('/workspace/onboarding', { schema: OnboardingJourneySchema });
   }

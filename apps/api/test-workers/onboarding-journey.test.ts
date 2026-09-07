@@ -22,9 +22,11 @@ describe('durable onboarding journey', () => {
       expect(store.get(creator, 'creator').starterMessageId).toBe(initial.starterMessageId);
       expect(store.get(member, 'member').stage).toBe('profile');
       expect(store.update(creator, 'creator', { expectedRevision: 0, stage: 'example' })).toBeNull();
-      store.update(creator, 'creator', { expectedRevision: 0, stage: 'profile', connectorIds: ['google-mail-calendar'] });
+      store.update(creator, 'creator', { expectedRevision: 0, stage: 'profile', connectorIds: ['you:google-mail-calendar'] });
       expect(store.get(creator, 'creator').stage).toBe('profile');
       expect(store.update(creator, 'creator', { expectedRevision: 0, stage: 'people' })).toBeNull();
+      expect(store.update(creator, 'creator', { expectedRevision: 1, stage: 'complete' })).toBeNull();
+      expect(store.update(member, 'member', { expectedRevision: 0, stage: 'people' })).toBeNull();
       store.update(creator, 'creator', { expectedRevision: 1, stage: 'people' });
       store.update(creator, 'creator', { expectedRevision: 2, stage: 'complete' });
       expect(store.get(creator, 'creator')).toMatchObject({ stage: 'complete', starterWorkstreamId: null });
@@ -32,7 +34,7 @@ describe('durable onboarding journey', () => {
     });
     await runInDurableObject(stub, (_instance, state) => {
       const resumed = new OnboardingJourneyStore(state.storage.sql);
-      expect(resumed.get(creator, 'creator')).toMatchObject({ stage: 'complete', starterWorkstreamId: null, revision: 3, connectorIds: ['google-mail-calendar'] });
+      expect(resumed.get(creator, 'creator')).toMatchObject({ stage: 'complete', starterWorkstreamId: null, revision: 3, connectorIds: ['you:google-mail-calendar'] });
       expect(resumed.get(member, 'member')).toMatchObject({ stage: 'complete', starterWorkstreamId: null, revision: 1 });
     });
   });

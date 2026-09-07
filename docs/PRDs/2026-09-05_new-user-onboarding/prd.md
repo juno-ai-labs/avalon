@@ -295,7 +295,13 @@ also needs reconciliation with this spacious onboarding treatment when adopted.
 
 ## Decision log
 
-None yet.
+2026-09-07 — Final implementation decisions supersede the original first-task
+and discovery requirements above: creator setup proceeds through workspace and
+personal connectors, color/name/initials, then manual email-chip invitations.
+Members complete personal setup. Finishing opens New without creating a stream
+or starting an agent. The first-task screen, coaching and teammate-discovery API
+were removed. Avatars remain circles; no shape picker. Introduction examples use
+Aspen and Harper, without an Example or progress header, as requested.
 
 ## Key design decisions
 

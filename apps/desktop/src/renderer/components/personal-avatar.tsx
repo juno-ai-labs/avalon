@@ -52,7 +52,7 @@ export function PersonalAvatar({ color = 'blue', avatar = 'circle', className = 
       {avatar === 'flower' && <path d="M50 13 C78 -8 103 21 85 45 C110 70 82 100 57 85 C30 110 0 82 15 57 C-10 30 18 0 43 15Z" />}
       {avatar === 'spark' && <path d="M50 2 L63 27 L91 15 L79 43 L98 57 L72 66 L77 95 L50 81 L23 95 L28 66 L2 57 L21 43 L9 15 L37 27Z" />}
       {avatar === 'arch' && <path d="M7 50 A43 43 0 0 1 93 50 V84 Q93 93 84 93 H16 Q7 93 7 84Z" />}
-      {initials ? <text x="50" y="52" dominantBaseline="middle" textAnchor="middle" fill="var(--personal-ink-light)" fontSize={Math.min(36, 70 / Math.max(1, [...initials].length))} fontWeight="600">{initials}</text> : <g fill="var(--personal-ink-light)" transform="rotate(-14 50 60)"><rect x="34" y="56" width="7" height="17" rx="3.5" /><rect x="56" y="56" width="7" height="17" rx="3.5" /></g>}
+      {initials ? <text x="50" y="52" dominantBaseline="middle" textAnchor="middle" fill={['amber', 'orange', 'green', 'teal'].includes(color) ? 'var(--personal-ink-dark)' : 'var(--personal-ink-light)'} fontSize={Math.min(36, 70 / Math.max(1, [...initials].length))} fontWeight="600">{initials}</text> : <g fill={['amber', 'orange', 'green', 'teal'].includes(color) ? 'var(--personal-ink-dark)' : 'var(--personal-ink-light)'} transform="rotate(-14 50 60)"><rect x="34" y="56" width="7" height="17" rx="3.5" /><rect x="56" y="56" width="7" height="17" rx="3.5" /></g>}
     </svg></span>
   </span>;
 }
