@@ -21,7 +21,7 @@ switching, background attention, leaving, or abandonment.
 | `apps/desktop/src/main/workspace-selection.ts`, `workspace-activation.ts` | The local claim that answers a link to the active workspace, and the platform activation every other addressed link takes. |
 | `apps/desktop/src/main/credential-refresh.ts` | One rotation per refresh token: every path that renews a stored credential shares an in-flight refresh of the same token. |
 | `apps/desktop/src/main/workspace-directory.ts` | The account menu's directory: the stored set merged with discovery, and the reconciliation that retires a membership a complete discovery no longer lists. |
-| `apps/desktop/src/renderer/components/workspace-account-menu.tsx`, `app-shell.tsx` | Flagged switcher, invitations, creation, attention states, and switching presentation. |
+| `apps/desktop/src/renderer/components/workspace-account-menu.tsx`, `app-shell.tsx` | Flagged switcher, invitations, attention states, switching presentation, and creation in the legacy component variant. |
 | `apps/desktop/src/renderer/lib/draft-keys.ts`, `draft-cache.ts`, `app-session.tsx` | Workspace-scoped composer drafts and exact cleanup when one membership ends. |
 
 ## How it works
@@ -286,8 +286,17 @@ reported but cannot restore local authority.
 
 ### Desktop behavior
 
+The bottom-bar account popup shows Settings, the enabled workspace and invitation
+rows, and Log out last, separated by a divider above it. It omits About, Help
+Center, Send Feedback, workspace creation, and a trailing divider. The shipped
+shell always selects this compact presentation: existing members have no
+in-session workspace-creation entry point. Initial workspace setup remains in
+onboarding. The legacy component variant retains creation code and tests, but
+it is not a reachable product surface. Overflowing menus scroll within the
+available window height so Settings and Log out remain reachable.
+
 `multiple-workspaces-enabled` controls presentation only. When off, the account
-menu keeps its previous one-workspace anatomy; plural membership, credential
+menu shows Settings, one divider, and Log out; plural membership, credential
 storage, lifecycle fences, and singular onboarding compatibility remain active.
 When on, rows follow device recency, show a region tag only across mixed regions,
 and keep the menu open while a switch is pending. Offline selection is refused
@@ -398,6 +407,23 @@ encrypts the complete account set, while sign-out erases it locally before
 best-effort remote revocation.
 
 ## Changelog
+
+### 2026-09-07 — Simplify the bottom-bar account popup
+
+**What changed:** The compact popup keeps Settings, workspace switching,
+invitations, and Log out last with a divider above it. Rows share side padding,
+icon spacing, and minimum height; overflowing lists scroll within the window.
+
+**Why:** The product request explicitly removed About, support links, and Create
+a workspace to shorten the popup. This deliberately reverses the creation part
+of the 2026-09-04 entry: creating an additional workspace is no longer reachable
+from the shipped desktop shell. Moving creation or support to another surface
+was not requested. Initial onboarding still creates a first workspace; the
+legacy component variant is retained, not advertised as a product alternative.
+Review also exposed that moving Log out below an unbounded list could make it
+unreachable, so the popup now shares the legacy menu's available-height scroll
+behavior. Future changes must preserve switching, invitations, and reachable
+account actions in the compact presentation.
 
 ### 2026-09-04 — Keep workspace capabilities in the compact account presentation
 
