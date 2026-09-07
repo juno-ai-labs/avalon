@@ -185,9 +185,9 @@ describe('Sidebar work-stream markers', () => {
     expect(screen.queryByRole('region', { name: 'Automation shortcuts' })).not.toBeInTheDocument();
   });
 
-  it.each([false, true])('shows personal and workspace tiles exactly once (conversationOnly=%s)', (conversationOnly) => {
+  it.each([false, true].flatMap((conversationOnly) => [false, true].map((compact) => ({ conversationOnly, compact }))))('shows personal and workspace tiles exactly once (conversationOnly=$conversationOnly, compact=$compact)', ({ conversationOnly, compact }) => {
     const shared = { ...automation, id: 'shared-automation', name: 'Team brief', scope: 'workspace' as const };
-    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} conversationOnly={conversationOnly} automations={[automation, shared]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} conversationOnly={conversationOnly} compact={compact} automations={[automation, shared]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
     const sharedLinks = screen.getAllByRole('link', { name: /Team brief/u });
     expect(sharedLinks).toHaveLength(1);
     expect(sharedLinks[0]).toHaveClass('automation-tile');
@@ -195,7 +195,7 @@ describe('Sidebar work-stream markers', () => {
     expect(screen.queryByText('No automations')).not.toBeInTheDocument();
   });
 
-  it('shows personal automations above the user menu in the GrokBot shell', () => {
+  it('shows automation shortcuts above the user menu in the GrokBot shell', () => {
     render(
       <MemoryRouter>
         <Tooltip.Provider>

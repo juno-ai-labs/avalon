@@ -76,7 +76,7 @@ import { AutomationGlyph, WorkstreamGlyph } from './workstream-glyph';
 
 interface SidebarProps {
   onOpenSearch?: () => void;
-  /** GrokBot-style shell: work streams and personal automation shortcuts. */
+  /** GrokBot-style shell: work streams and personal/workspace automation shortcuts. */
   conversationOnly?: boolean;
   /** The responsive or manually selected GrokBot icon rail. */
   compact?: boolean;
