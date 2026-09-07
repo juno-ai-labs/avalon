@@ -30,13 +30,14 @@ publish:
 mac:
   icon: resources/icon.icon
   extraFiles:
-    - from: .native-build/RallyDockTilePlugin.docktileplugin
-      to: PlugIns/RallyDockTilePlugin.docktileplugin
+    - from: .native-build/RallyDockTilePluginV2.docktileplugin
+      to: PlugIns/RallyDockTilePluginV2.docktileplugin
   extraResources:
     - from: .native-build/app-icons
       to: app-icons
       filter:
         - "*.icns"
+        - "manifest.json"
     - from: native/set-application-icon.js
       to: native/set-application-icon.js
     # Both renditions ship: `nativeImage` resolves the `@2x` sibling by name at
@@ -54,7 +55,7 @@ mac:
   extendInfo:
     NSMicrophoneUsageDescription: Rally uses the microphone only when you start dictation or meeting notes.
     NSAudioCaptureUsageDescription: Rally captures computer audio only when you record meeting notes.
-    NSDockTilePlugIn: RallyDockTilePlugin.docktileplugin
+    NSDockTilePlugIn: RallyDockTilePluginV2.docktileplugin
   hardenedRuntime: true
   forceCodeSigning: true
   gatekeeperAssess: false
