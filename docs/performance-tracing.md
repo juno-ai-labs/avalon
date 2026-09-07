@@ -461,7 +461,8 @@ and the backoff explains it.
 
 ## Boundary
 
-This module owns latency diagnosis for the three named flows and nothing else.
+This module owns latency diagnosis for the named product flows, including
+workspace search and the work-stream flows described here.
 
 - **Its exported projection is diagnostic telemetry, not a product outcome.**
   [`telemetry.md`](telemetry.md) owns its regional routing, closed schema,
@@ -481,7 +482,7 @@ This module owns latency diagnosis for the three named flows and nothing else.
   `observability` in the Wrangler configs plus the account's OTLP destination,
   and neither is decided here.
 - Callers are the routes, services, and Durable Objects listed above. New spans
-  are welcome inside the three flows; a fourth flow means adding a name to
+  are welcome inside the documented flows; another flow means adding a name to
   `PerfFlow` and a section here.
 
 ## Failure modes and limits
