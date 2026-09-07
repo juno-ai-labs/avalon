@@ -69,11 +69,11 @@ export function readConversationSearchLink(sql: SqlStorage, id: string, turn: Tr
     text: [row.label, row.url, row.markdown].filter(Boolean).join('\n'), revision: row.revision });
 }
 
-/** Called by the durable projection Queue, never by message admission. */
-export async function prepareConversationLinks(sql: SqlStorage, env: Env,
-  identity: { workspaceId: string; parentId: string; substreamId: string }, turnId: string,
-  readTurn: () => TranscriptTurn | null, capture = true, documentId?: string,
-): Promise<SearchDocumentBatch> {
+/** Reconcile identity/labels without ever loading a captured body. */
+async function reconcileConversationLinks(sql: SqlStorage,
+  identity: { parentId: string; substreamId: string }, turnId: string,
+  readTurn: () => TranscriptTurn | null,
+): Promise<void> {
   const turn = readTurn();
   const links = turn ? conversationLinks(turn) : new Map<string, string>();
   const existing = sql.exec<Pick<LinkRow, 'id' | 'url' | 'deleted'>>('SELECT id, url, deleted FROM conversation_search_links WHERE turn_id = ?', turnId).toArray();
@@ -89,6 +89,24 @@ export async function prepareConversationLinks(sql: SqlStorage, env: Env,
         revision = conversation_search_links.revision + 1
       WHERE conversation_search_links.label != excluded.label OR conversation_search_links.deleted = 1`, id, turnId, url, label);
   }
+}
+
+export async function conversationSearchDocumentIds(sql: SqlStorage,
+  identity: { parentId: string; substreamId: string }, turnId: string,
+  readTurn: () => TranscriptTurn | null,
+): Promise<string[]> {
+  await reconcileConversationLinks(sql, identity, turnId, readTurn);
+  // Retained deleted IDs must also publish their tombstone jobs.
+  return sql.exec<{ id: string }>('SELECT id FROM conversation_search_links WHERE turn_id = ?', turnId)
+    .toArray().map((row) => row.id);
+}
+
+/** Called by the durable projection Queue, never by message admission. */
+export async function prepareConversationLinks(sql: SqlStorage, env: Env,
+  identity: { workspaceId: string; parentId: string; substreamId: string }, turnId: string,
+  readTurn: () => TranscriptTurn | null, capture = true, documentId?: string,
+): Promise<SearchDocumentBatch> {
+  await reconcileConversationLinks(sql, identity, turnId, readTurn);
   // A child must not load every sibling's captured body into its RPC payload.
   const rows = () => documentId === undefined
     ? sql.exec<LinkRow>('SELECT * FROM conversation_search_links WHERE turn_id = ?', turnId).toArray()
