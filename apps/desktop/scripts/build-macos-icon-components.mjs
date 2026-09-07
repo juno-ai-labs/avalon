@@ -31,6 +31,11 @@ const selectableIconNames = [
   'quiet',
 ];
 
+// Keep the build contract compatible with long-lived native plugin hosts.
+for (const name of selectableIconNames) {
+  if (!/^[a-z0-9-]+$/u.test(name)) throw new Error(`Dock icon identifier is not a lowercase slug: ${name}`);
+}
+
 if (process.platform !== 'darwin' || process.arch !== 'arm64') {
   throw new Error('The Rally Dock tile plugin must be built on arm64 macOS.');
 }
@@ -89,6 +94,15 @@ try {
     smokeExecutablePath,
   ]);
   await run(smokeExecutablePath, selectableIconNames.map((name) => join(selectableIconSourceDirectory, `${name}.png`)));
+  // Exercise NSBundle's real URL behavior while its loaded app is replaced.
+  await run('/usr/bin/xcrun', [
+    'clang', '-arch', 'arm64', '-fobjc-arc', '-fmodules', '-Wall', '-Wextra', '-Werror',
+    '-mmacosx-version-min=13.0', '-framework', 'AppKit', '-framework', 'Foundation',
+    join(sourceDirectory, 'RallyDockTilePluginBundleSmoke.m'), '-o', smokeExecutablePath,
+  ]);
+  await run(smokeExecutablePath, [outputBundle,
+    ...selectableIconNames.slice(0, 2).map((name) => join(selectableIconSourceDirectory, `${name}.png`)),
+  ]);
 } finally {
   await rm(smokeExecutablePath, { force: true });
 }
