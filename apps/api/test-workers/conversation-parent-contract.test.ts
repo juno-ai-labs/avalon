@@ -33,6 +33,7 @@ import {
 } from "../src/durable-objects/names";
 import type { AuthContext, Env } from "../src/env";
 import { createAutomation } from "../src/services/automation-service";
+import { searchContentHash } from '../src/services/text-search';
 import { searchWorkspace } from '../src/services/workspace-search-service';
 import { seedParticipantMessage } from './helpers/substream-fixture';
 import { ConversationService } from "../src/services/conversation-service";
@@ -329,7 +330,8 @@ describe("conversation parent contract", () => {
     const searchEnv: Env = { ...TEST_ENV, TURBO_PUFFER_DEV_API_KEY: 'test-only' };
     const resourceRevision = await workspaceStub().resourceSearchRevision({ workspaceId: WORKSPACE_ID, resourceId: searchResourceId });
     let source = 'messages';
-    vi.stubGlobal('fetch', async () => Response.json({ rows: [{ id: 'search-candidate', source,
+    let generation: string | undefined;
+    vi.stubGlobal('fetch', async () => Response.json({ rows: [{ id: 'search-candidate', source, generation,
       scope_id: source === 'messages' ? PERSONAL_ROOM_ID : WORKSPACE_ID,
       source_id: source === 'messages' ? `${reserved.substreamId}/search-private-turn` : searchResourceId,
       revision: source === 'messages' ? 1 : resourceRevision }] }));
@@ -338,11 +340,22 @@ describe("conversation parent contract", () => {
         .toMatchObject([{ excerpt: 'private search phrase' }]);
       expect(await searchWorkspace(searchEnv, { ...AUTH, userId: PARTICIPANT_ID },
         { query: 'private search', category: 'messages' })).toEqual([]);
+      generation = await searchContentHash('private search phrase');
+      expect(await searchWorkspace(searchEnv, AUTH, { query: 'private search', category: 'messages' }))
+        .toMatchObject([{ excerpt: 'private search phrase' }]);
+      generation = await searchContentHash('different private search phrase');
+      expect(await searchWorkspace(searchEnv, AUTH, { query: 'private search', category: 'messages' })).toEqual([]);
+      generation = undefined;
       source = 'artifacts';
       expect(await searchWorkspace(searchEnv, AUTH, { query: 'private search', category: 'artifacts' }))
         .toMatchObject([{ title: 'private search artifact' }]);
       expect(await searchWorkspace(searchEnv, { ...AUTH, userId: PARTICIPANT_ID },
         { query: 'private search', category: 'artifacts' })).toEqual([]);
+      generation = await searchContentHash('private search artifact');
+      expect(await searchWorkspace(searchEnv, AUTH, { query: 'private search', category: 'artifacts' }))
+        .toMatchObject([{ title: 'private search artifact' }]);
+      generation = await searchContentHash('different private search artifact');
+      expect(await searchWorkspace(searchEnv, AUTH, { query: 'private search', category: 'artifacts' })).toEqual([]);
     } finally { vi.unstubAllGlobals(); }
 
     const viewerWaterlineAfterReady = await runInDurableObject(parent, (_instance, state) =>

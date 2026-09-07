@@ -4445,7 +4445,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   }
 
   /** Internal Queue consumer entrypoint; never mounted on the public API. */
-  async prepareSearchTurn(input: unknown) {
+  async prepareSearchTurn(input: unknown, captureLinks = true) {
     await this.storageReady;
     const request = SearchProjectionMessageSchema.parse(input);
     const identity = this.objectStore.identity();
@@ -4454,7 +4454,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       || request.substreamId !== this.externalSubstreamId()) throw new Error("search_projection_identity_mismatch");
     const links = await prepareConversationLinks(this.state.storage.sql, this.env,
       { ...identity, substreamId: request.substreamId }, request.turnId,
-      () => this.transcript.participantTurn(request.turnId));
+      () => this.transcript.participantTurn(request.turnId), captureLinks);
     // Capture awaits external I/O, so read the message only after extraction.
     const turn = this.transcript.participantTurn(request.turnId);
     const sourceId = `${request.substreamId}/${request.turnId}`;
