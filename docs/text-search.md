@@ -272,6 +272,10 @@ from those loaders, never from the index.
 
 ## Invariants
 
+- Search scope enumeration includes archived and system conversations and has its own complete-list contract. Sidebar visibility is not search readability.
+- Scope prefilters are an optimization, never authority. Current canonical authorization decides every returned result.
+- Public cursors refer only to authorized result IDs and never grant access. Fully rejected candidate pages remain internal.
+
 - One tokenizer is retained per isolate (about 26 MiB after releasing construction
   tables in a local Node 22 heap measurement). Its model stays closure-private; only the policy wrapper is
   frozen. Input fragments must be cleared before every count returns or throws.
@@ -325,9 +329,11 @@ namespace. Callers must retain failed projection work for retry. The service doe
 not invent retry limits or result caps; the caller supplies its product limit.
 
 Substring retrieval advances an ID cursor when canonical filtering removes
-results, continuing until the requested page is filled or the index is exhausted.
+results, continuing until the legacy requested page is filled, or a paginated
+request finds an authorized candidate page, or the index is exhausted.
 BM25 and semantic retrieval currently return one candidate page and may return
-fewer canonical matches. The desktop does not yet expose subsequent pages.
+fewer canonical matches. The desktop exposes substring continuation through
+scroll and its pagination footer.
 The cursor follows [Turbopuffer attribute pagination](https://turbopuffer.com/docs/query#pagination).
 
 ## Testing
