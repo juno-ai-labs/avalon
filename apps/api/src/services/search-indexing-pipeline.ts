@@ -10,6 +10,9 @@ import { SEARCH_EMBEDDING_DIMENSIONS, searchContentHash, searchChunkIdentity, wo
 /** One canonical chunk plan; batch jobs contain offsets, not source text. */
 export async function searchEmbeddingJobs(reference: SearchSourceReference,
   document: SearchDocument & { text: string }, policy: SemanticChunkPolicy): Promise<SearchEmbeddingBatch[]> {
+  // Queue ranges reconstruct canonical text only. Adding a prefix requires
+  // extending the job and namespace contracts together, never silently dropping it.
+  if (policy.prefix) throw new Error('search_embedding_prefix_unsupported');
   const chunks = await semanticChunks(document.text, policy);
   const generation = await searchContentHash(document.text);
   const identity = { id: document.id, source: document.source, sourceId: document.sourceId,
@@ -17,17 +20,17 @@ export async function searchEmbeddingJobs(reference: SearchSourceReference,
   const jobs: SearchEmbeddingBatch[] = [];
   for (let start = 0; start < chunks.length; start += SEARCH_EMBEDDING_BATCH_SIZE) {
     jobs.push({ type: 'search_embedding_batch_v1', reference, document: identity, generation, chunkPolicy: searchChunkIdentity(),
-      totalChunks: chunks.length, spans: chunks.slice(start, start + SEARCH_EMBEDDING_BATCH_SIZE)
+      spans: chunks.slice(start, start + SEARCH_EMBEDDING_BATCH_SIZE)
         .map(({ start, end, strategies }) => ({ start, end, strategies })) });
   }
   return jobs;
 }
 
-/** Each delivery validates and publishes only its batch; completion reclaims old revisions. */
+/** Each delivery validates and publishes only its batch. Source jobs reclaim old revisions. */
 export async function indexSemanticBatch(index: TextSearchIndex, job: SearchEmbeddingBatch,
   load: () => Promise<SearchDocumentBatch>,
   embed: (texts: string[]) => Promise<{ model: string; vectors: number[][] }>,
-): Promise<void> {
+): Promise<'indexed' | 'stale'> {
   const currentDocument = async () => {
     const current = SearchDocumentBatchSchema.parse(await load()).documents.find((document) => document.id === job.document.id);
     if (!current || current.text === null || current.revision !== job.document.revision
@@ -38,7 +41,7 @@ export async function indexSemanticBatch(index: TextSearchIndex, job: SearchEmbe
   const document = await currentDocument();
   if (!document) {
     await index.removeSemanticGeneration(job.document, job.generation);
-    return;
+    return 'stale';
   }
   const chunks = job.spans.map((span) => {
     if (span.end <= span.start || span.end > document.text.length) throw new Error('invalid_search_chunk_range');
@@ -49,7 +52,7 @@ export async function indexSemanticBatch(index: TextSearchIndex, job: SearchEmbe
     document.revision, job.generation, chunk.start, chunk.end, chunk.text,
   ]))));
   // Persisted deterministic rows let retries skip already completed provider work.
-  if (await index.countSemanticChunks(document, { ids }) !== ids.length) {
+  if (await index.countSemanticChunks(document, ids) !== ids.length) {
     const embedding = await embed(chunks.map((chunk) => chunk.text));
     if (!isMemoryEmbeddingModel(embedding.model) || embedding.vectors.length !== chunks.length
       || !embedding.vectors.every((vector) => vector.length === SEARCH_EMBEDDING_DIMENSIONS
@@ -57,14 +60,10 @@ export async function indexSemanticBatch(index: TextSearchIndex, job: SearchEmbe
     const rows: TextSearchDocument[] = chunks.map((chunk, offset) => ({ ...document, id: ids[offset]!,
       text: chunk.text, vector: embedding.vectors[offset]!, generation: job.generation,
       chunk: { start: chunk.start, end: chunk.end, strategies: chunk.strategies } }));
-    // Avoid a stale write after a slow provider request; recheck after publication too.
-    if (!await currentDocument()) { await index.removeSemanticGeneration(job.document, job.generation); return; }
     await index.upsert(rows);
   }
-  if (!await currentDocument()) { await index.removeSemanticGeneration(job.document, job.generation); return; }
-  if (await index.countSemanticChunks(document, { generation: job.generation }) === job.totalChunks) {
-    await index.removeSemanticGenerations(document, 'Lt', true);
-  }
+  if (!await currentDocument()) { await index.removeSemanticGeneration(job.document, job.generation); return 'stale'; }
+  return 'indexed';
 }
 
 /** Source state stays batch-local; the immutable tokenizer is shared by the isolate. */
@@ -88,6 +87,9 @@ export function createSearchIndexingPipeline(env: Env) {
     }
     for (const document of input.documents) {
       if (document.text === null) continue;
+      // Old revisions cannot pass canonical result validation. Reclaim them
+      // once at planning, rather than waiting for every child to finish.
+      await index.removeSemanticGenerations(document, 'Lt', true);
       const jobs = await searchEmbeddingJobs(reference, { ...document, text: document.text }, searchChunkPolicy());
       if (jobs.length) await publishSearchEmbeddingBatches(env.ACTIVITY_QUEUE, jobs);
       else await index.removeSemanticGenerations(document, 'Lte');
