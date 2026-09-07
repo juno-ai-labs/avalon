@@ -108,9 +108,7 @@ function Story({ step }: { step: number }): React.JSX.Element {
   if (step === 1) return <SidebarStory />;
   if (step === 2) return <SubstreamStory />;
   return <div className={`onboarding-story onboarding-story-step-${step}`}>
-    {step !== 3 && step !== 1 && <div className="onboarding-story-label"><span>Example</span><small>Fictional notes and teammates</small></div>}
     <div className="onboarding-story-frame">
-      {step !== 3 && step !== 1 && <div className="onboarding-story-bar"><RallyMark /><strong>Customer pilot</strong><span>Work stream</span></div>}
       {(step === 3 || step === 1) && <div className="onboarding-stream-preview">
 
         <div className="onboarding-preview-feed">
@@ -125,7 +123,8 @@ function Story({ step }: { step: number }): React.JSX.Element {
   </div>;
 }
 
-export function OnboardingIntroduction({ onComplete, busy, error }: {
+export function OnboardingIntroduction({ onComplete, busy, error, signedIn = false }: {
+  signedIn?: boolean;
   onComplete: () => void | Promise<void>;
   busy: boolean;
   error: string | null;
@@ -139,7 +138,7 @@ export function OnboardingIntroduction({ onComplete, busy, error }: {
     <section className="guided-page window-no-drag" aria-labelledby="onboarding-introduction-title">
       <header><h1 id="onboarding-introduction-title" ref={heading} tabIndex={-1}>{slide.title}</h1><p>{slide.description}</p></header>
       <div className="guided-content"><Story key={step} step={slide.scene} />{error && <InlineError>{error}</InlineError>}</div>
-      <footer className="guided-footer"><Button className="button-primary" disabled={busy} onClick={() => { if (step === slides.length - 1) void onComplete(); else setStep(step + 1); }}>{busy ? 'Saving…' : slide.next}</Button><div className="onboarding-story-navigation">{step > 0 && <Button disabled={busy} onClick={() => setStep(step - 1)}>Back</Button>}{step < slides.length - 1 && <Button disabled={busy} onClick={() => void onComplete()}>Sign in</Button>}</div></footer>
+      <footer className="guided-footer"><Button className="button-primary" disabled={busy} onClick={() => { if (step === slides.length - 1) void onComplete(); else setStep(step + 1); }}>{busy ? 'Saving…' : slide.next}</Button><div className="onboarding-story-navigation">{step > 0 && <Button disabled={busy} onClick={() => setStep(step - 1)}>Back</Button>}{step < slides.length - 1 && <Button disabled={busy} onClick={() => void onComplete()}>{signedIn ? 'Skip intro' : 'Sign in'}</Button>}</div></footer>
     </section>
   </main>;
 }

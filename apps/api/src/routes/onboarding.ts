@@ -162,7 +162,9 @@ onboardingRoutes.patch('/account', zValidator('json', UpdateAccountOnboardingSch
   const result = await new AccountOnboardingService(c.env, auth).update(c.req.valid('json'));
   // Discovery projects the narrow identity preferences into both regions. A
   // failed projection is retryable: the account save above is replay-safe.
-  const discovery = await new PlatformOnboardingService(c.env, auth).state();
-  await Promise.all(discovery.workspaces.filter((workspace) => workspace.region === 'global').map((workspace) => publishWorkspaceSync(c.env, workspace.id, ['workspace_profile', 'member_directory'])));
+  requestDeferral(c)((async () => {
+    const discovery = await new PlatformOnboardingService(c.env, auth).state();
+    await Promise.all(discovery.workspaces.filter((workspace) => workspace.region === 'global').map((workspace) => publishWorkspaceSync(c.env, workspace.id, ['workspace_profile', 'member_directory'])));
+  })().catch(() => undefined));
   return c.json(AccountOnboardingSchema.parse(result));
 });

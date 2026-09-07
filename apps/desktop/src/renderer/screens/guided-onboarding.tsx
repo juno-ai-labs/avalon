@@ -2,7 +2,7 @@ import { MemberPresentationContext } from '../lib/member-presentation';
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, Search, X } from 'lucide-react';
-import { PersonalColorSchema, type AccountOnboarding, type OnboardingJourney, type PersonalPresentation } from '@rally/contracts';
+import { PersonalColorSchema, OnboardingJourneySchema, type AccountOnboarding, type OnboardingJourney, type PersonalPresentation } from '@rally/contracts';
 import { Button, ConnectorMark, InlineError, RallyMark } from '../components/primitives';
 import { PersonalAvatar, personalColor } from '../components/personal-avatar';
 import { useAppSession } from '../lib/app-session';
@@ -15,7 +15,7 @@ const AccountContext = createContext<AccountOnboarding | null>(null);
 export function useOnboardingAccount(): AccountOnboarding | null { return useContext(AccountContext); }
 
 export function AccountOnboardingGate({ children }: { children: ReactNode }): React.JSX.Element {
-  const { api, session, signOut } = useAppSession();
+  const { api, session, signOut, updateCurrentUserName } = useAppSession();
   const [previewed, setPreviewed] = useState(false);
   const members = useQuery({ queryKey: ['workspace-members'], queryFn: () => api!.getWorkspaceMembers(), enabled: Boolean(api && session?.workspace) });
   const account = useQuery({ queryKey: ['account-onboarding', session?.user.email],
@@ -24,10 +24,12 @@ export function AccountOnboardingGate({ children }: { children: ReactNode }): Re
     const root = document.documentElement;
     if (account.data?.presentation && session) root.dataset['personalColor'] = account.data.presentation.color;
     else delete root.dataset['personalColor'];
+    if (account.data?.presentation?.displayName) updateCurrentUserName?.(account.data.presentation.displayName);
     return () => { delete root.dataset['personalColor']; };
-  }, [account.data?.presentation, session]);
+  }, [account.data?.presentation, session, updateCurrentUserName]);
   if (!session) return previewed ? <>{children}</> : <OnboardingIntroduction busy={false} error={null} onComplete={() => setPreviewed(true)} />;
-  if (account.error) return <OnboardingPage title="Let's pick up where you left off" footer={<><Button onClick={() => void account.refetch()}>Retry</Button><Button onClick={() => void signOut()}>Sign out</Button></>}><InlineError>{account.error.message}</InlineError></OnboardingPage>;
+  if (account.error && !account.data && session.workspace) return <>{children}</>;
+  if (account.error && !account.data) return <OnboardingPage title="Let's pick up where you left off" footer={<><Button onClick={() => void account.refetch()}>Retry</Button><Button onClick={() => void signOut()}>Sign out</Button></>}><InlineError>{account.error.message}</InlineError></OnboardingPage>;
   if (!account.data) return <OnboardingPage title="Opening Rally"><RallyMark /></OnboardingPage>;
   const presentations = new Map((members.data ?? []).flatMap((member) => member.presentation ? [[member.id, member.presentation] as const] : []));
   if (account.data.presentation) presentations.set(session.user.id, account.data.presentation);
@@ -64,7 +66,7 @@ function PlatformIntroduction({ previewed }: { previewed: boolean }): React.JSX.
     if (previewed && !recorded.current) { recorded.current = true; void complete(); }
   }, [previewed, complete]);
   if (previewed) return <OnboardingPage title="Welcome to Rally" footer={error ? <Button onClick={() => void complete()}>Retry</Button> : undefined}>{error ? <InlineError>{error}</InlineError> : <RallyMark />}</OnboardingPage>;
-  return <OnboardingIntroduction onComplete={() => void complete()} busy={busy} error={error} />;
+  return <OnboardingIntroduction signedIn onComplete={() => void complete()} busy={busy} error={error} />;
 }
 
 export function PersonalSetup({ onSaved }: { onSaved?: () => Promise<void> }): React.JSX.Element {
@@ -74,13 +76,21 @@ export function PersonalSetup({ onSaved }: { onSaved?: () => Promise<void> }): R
   const [color, setColor] = useState<PersonalPresentation['color']>(account?.presentation?.color ?? 'blue');
   const [name, setName] = useState(account?.presentation?.displayName ?? session?.user.name ?? '');
   const [initials, setInitials] = useState(account?.presentation?.initials ?? (session?.user.name ?? '').split(/\s+/u).map((part) => part[0]).join('').slice(0, 2).toUpperCase());
+  const [draftRevision, setDraftRevision] = useState(account?.revision);
+  useEffect(() => {
+    if (!account || account.revision === draftRevision) return;
+    setColor(account.presentation?.color ?? 'blue');
+    setName(account.presentation?.displayName ?? session?.user.name ?? '');
+    setInitials(account.presentation?.initials ?? '');
+    setDraftRevision(account.revision);
+  }, [account, draftRevision, session?.user.name]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const save = async () => {
-    if (busy || !account) return;
+    if (busy || !account || draftRevision !== account.revision) return;
     setBusy(true); setError(null);
     try {
-      const updated = await desktopBridge().updateAccountOnboarding({ expectedRevision: account.revision, presentation: { color, avatar: 'circle', displayName: name.trim(), initials: initials.trim() } });
+      const updated = await desktopBridge().updateAccountOnboarding({ expectedRevision: draftRevision, presentation: { color, avatar: 'circle', displayName: name.trim(), initials: initials.trim() } });
       queryClient.setQueryData(['account-onboarding', session?.user.email], updated);
       await queryClient.invalidateQueries({ queryKey: ['workspace-members'] });
       await onSaved?.();
@@ -89,7 +99,7 @@ export function PersonalSetup({ onSaved }: { onSaved?: () => Promise<void> }): R
   };
   return <div className="personal-setup">
     <PersonalAvatar color={color} initials={initials} className="personal-setup-preview" />
-    <div className="personal-colors" role="group" aria-label="Your color">{PersonalColorSchema.options.map((value) => <button type="button" key={value} aria-label={value === 'orange' ? 'Neon yellow' : value} aria-pressed={color === value} style={{ background: personalColor(value) }} onClick={() => setColor(value)}>{color === value && <Check size={18} />}</button>)}</div>
+    <div className="personal-colors" role="group" aria-label="Your color">{PersonalColorSchema.options.map((value) => <button type="button" key={value} aria-label={value === 'orange' ? 'Neon yellow' : value} aria-pressed={color === value} style={{ background: personalColor(value), color: ['amber', 'orange', 'green', 'teal'].includes(value) ? 'var(--personal-ink-dark)' : 'var(--personal-ink-light)' }} onClick={() => setColor(value)}>{color === value && <Check size={18} />}</button>)}</div>
     <label className="guided-email-field">Name<input data-saved-value={account?.presentation?.displayName ?? session?.user.name ?? ''} value={name} onChange={(event) => setName(event.target.value)} autoComplete="name" /></label>
     <label className="guided-email-field">Avatar initials<input data-saved-value={account?.presentation?.initials ?? (session?.user.name ?? '').split(/\s+/u).map((part) => part[0]).join('').slice(0, 2).toUpperCase()} value={initials} onChange={(event) => setInitials(event.target.value)} /></label>
     <div className="personal-shell-preview" style={{ '--personal-preview-color': personalColor(color) } as CSSProperties}><aside><PersonalAvatar color={color} initials={initials} /><span>{name} · You</span><i /><i /></aside><div><strong>Your next idea starts here</strong><span>One place for your team to get work done.</span><button type="button" tabIndex={-1}>New work stream</button></div></div>
@@ -110,9 +120,13 @@ export function WorkspaceOnboardingJourney({ workspace, children }: { workspace:
   const [selected, setSelected] = useState<string[]>([]);
   const [configuring, setConfiguring] = useState(false);
   const [connectorScope, setConnectorScope] = useState<'workspace' | 'you'>('workspace');
+  const hydratedSelections = useRef<string | null>(null);
   useEffect(() => {
-    if (journey.data?.connectorIds) { setSelected(journey.data.connectorIds); }
-  }, [journey.data?.connectorIds]);
+    if (!journey.data || hydratedSelections.current === workspace.id) return;
+    hydratedSelections.current = workspace.id;
+    setSelected(journey.data.connectorIds);
+    if (journey.data.connectorIds.some((id) => id.startsWith('you:'))) setConnectorScope('you');
+  }, [journey.data, workspace.id]);
   const [emails, setEmails] = useState<string[]>([]);
   const [emailDraft, setEmailDraft] = useState('');
   const [sent, setSent] = useState<string[]>([]);
@@ -131,7 +145,7 @@ export function WorkspaceOnboardingJourney({ workspace, children }: { workspace:
     finally { setBusy(false); }
   };
   if (!account?.eligible) return <>{children}</>;
-  if (journey.error) return <OnboardingPage title="Resume your setup" footer={<Button onClick={() => void journey.refetch()}>Retry</Button>}><InlineError>{journey.error.message}</InlineError></OnboardingPage>;
+  if (journey.error && !journey.data) return <OnboardingPage title="Resume your setup" footer={<Button onClick={() => void journey.refetch()}>Retry</Button>}><InlineError>{journey.error.message}</InlineError></OnboardingPage>;
   const state = journey.data;
   if (!state) return <OnboardingPage title="Opening your workspace"><RallyMark /></OnboardingPage>;
   if (state.stage === 'complete') return <>{children}</>;
@@ -141,7 +155,6 @@ export function WorkspaceOnboardingJourney({ workspace, children }: { workspace:
   };
   if (state.stage === 'profile') return <OnboardingPage title="This is you in Rally" subtitle="Your team will see your avatar and color. They follow you across devices."><PersonalSetup onSaved={() => state.path === 'creator' ? advance('people') : finishOnboarding()} /></OnboardingPage>;
   const changeConnectorPage = (scope: 'workspace' | 'you'): void => {
-    setSelected([]);
     setConnectorScope(scope);
     setConfiguring(false);
     setSearch('');
@@ -158,9 +171,9 @@ export function WorkspaceOnboardingJourney({ workspace, children }: { workspace:
       : 'Only you can use these connections through Rally. Teammates do not gain access by sharing a stream with you.'}
     footer={<>
       <Button className="button-primary" disabled={busy} onClick={() => {
-        const pageSelected = connectorProviders.some((provider) => selected.includes(provider.id) && provider.scopes.some((scope) => scope === connectorScope));
+        const pageSelected = connectorProviders.some((provider) => selected.includes(`${connectorScope}:${provider.id}`) && provider.scopes.some((scope) => scope === connectorScope));
         if (!configuring && pageSelected) void perform(async () => {
-          const saved = await api!.updateOnboardingJourney({ expectedRevision: state.revision, stage: 'connectors', connectorIds: selected });
+          const saved = await api!.updateOnboardingJourney({ expectedRevision: state.revision, stage: 'connectors', connectorIds: OnboardingJourneySchema.shape.connectorIds.parse(selected) });
           queryClient.setQueryData(key, saved);
           setConfiguring(true);
         });
@@ -171,14 +184,14 @@ export function WorkspaceOnboardingJourney({ workspace, children }: { workspace:
     </>}>
     <p className="connector-access-note">{connectorScope === 'workspace' ? 'Workspace connections · 1 of 2' : 'Personal connections · 2 of 2. Any results you post in a shared stream are visible to its participants.'}</p>
     <label className="guided-search"><Search size={19} /><input aria-label="Search connectors" placeholder="Search" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
-    <div className="guided-connector-grid">{connectorProviders.filter((provider) => connectors.data?.includes(provider.provider) && provider.scopes.some((scope) => scope === connectorScope) && (!configuring || selected.includes(provider.id)) && provider.name.toLowerCase().includes(search.toLowerCase())).map((provider) => {
+    <div className="guided-connector-grid">{connectorProviders.filter((provider) => connectors.data?.includes(provider.provider) && provider.scopes.some((scope) => scope === connectorScope) && (!configuring || selected.includes(`${connectorScope}:${provider.id}`)) && provider.name.toLowerCase().includes(search.toLowerCase())).map((provider) => {
       const connected = connections.data?.some((connection) => connection.connectorType === provider.provider && connection.scope === connectorScope && connection.status === 'healthy' && (connection.scope === 'you' && 'personalCapabilities' in provider ? provider.personalCapabilities : provider.capabilities).every((capability) => connection.capabilities?.includes(capability)));
-      return <div className="guided-connector" key={provider.id}><button type="button" aria-pressed={selected.includes(provider.id)} onClick={() => setSelected((values) => values.includes(provider.id) ? values.filter((value) => value !== provider.id) : [...values, provider.id])}>{'mark' in provider ? <ConnectorMark mark={provider.mark} /> : <provider.icon size={24} />}<span>{provider.name}</span>{(connected || selected.includes(provider.id)) && <Check size={17} />}</button>{configuring && <><p>{provider.description}</p><div className="guided-connection-actions">{connected ? <span>Connected</span> : provider.scopes.filter((scope) => scope === connectorScope).map((scope) => <Button key={scope} disabled={busy} onClick={() => void perform(async () => {
+      return <div className="guided-connector" key={provider.id}><button type="button" aria-pressed={selected.includes(`${connectorScope}:${provider.id}`)} onClick={() => setSelected((values) => values.includes(`${connectorScope}:${provider.id}`) ? values.filter((value) => value !== `${connectorScope}:${provider.id}`) : [...values, `${connectorScope}:${provider.id}`])}>{'mark' in provider ? <ConnectorMark mark={provider.mark} /> : <provider.icon size={24} />}<span>{provider.name}</span>{(connected || selected.includes(`${connectorScope}:${provider.id}`)) && <Check size={17} />}</button>{configuring && <><p>{provider.description}</p><div className="guided-connection-actions">{connected ? <span>Connected</span> : provider.scopes.filter((scope) => scope === connectorScope).map((scope) => <Button key={scope} disabled={busy} onClick={() => void perform(async () => {
         if (provider.provider === 'x') { await api!.createXConnection([...provider.capabilities]); await connections.refetch(); return; }
         if (provider.provider === 'custom_mcp' || provider.provider === 'generic_webhook' || (provider.provider === 'granola' && scope === 'workspace')) { await desktopBridge().openSettings('connections'); return; }
         const capabilities = scope === 'you' && 'personalCapabilities' in provider ? [...provider.personalCapabilities] : [...provider.capabilities];
         const authorization = await api!.startProviderConnection(provider.provider, scope, capabilities);
-        setPendingConnectorOAuth({ attemptId: authorization.attemptId, provider: provider.provider, region: workspace.region, workspaceId: workspace.id });
+        setPendingConnectorOAuth({ attemptId: authorization.attemptId, provider: provider.provider, region: workspace.region, workspaceId: workspace.id, source: 'onboarding' });
         await desktopBridge().openExternal(authorization.url);
       })}>Connect {scope === 'you' ? 'for me' : 'for workspace'}</Button>)}</div></>}</div>;
     })}</div>{connectors.isLoading && <p>Loading available connectors…</p>}{(error ?? connectors.error?.message ?? connections.error?.message) && <InlineError>{error ?? connectors.error?.message ?? connections.error?.message}</InlineError>}
@@ -195,9 +208,13 @@ export function WorkspaceOnboardingJourney({ workspace, children }: { workspace:
     <Button className="button-primary" disabled={busy || !inviteAddresses.length || invalidEmails} onClick={() => void perform(async () => {
       const addresses = inviteAddresses.filter((email) => !sent.includes(email));
       setEmailDraft('');
+      setEmails(addresses);
+      const pendingInvitations = await api!.getWorkspaceInvitations();
+      const currentMembers = await api!.getWorkspaceMembers();
+      const alreadyInvited = new Set([...pendingInvitations.filter((invite) => invite.status === 'pending').map((invite) => invite.email.toLowerCase()), ...currentMembers.filter((member) => member.status === 'active').map((member) => member.email.toLowerCase())]);
       const failures: string[] = [];
       for (const email of addresses) {
-        try { await api!.createWorkspaceInvitation(email, 'member'); setSent((values) => [...values, email]); }
+        try { if (!alreadyInvited.has(email)) await api!.createWorkspaceInvitation(email, 'member'); setSent((values) => [...values, email]); }
         catch { failures.push(email); }
       }
       setEmails(failures);

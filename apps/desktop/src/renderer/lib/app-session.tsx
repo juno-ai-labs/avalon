@@ -53,6 +53,7 @@ export interface PendingInvitation {
 }
 
 export interface PendingConnectorOAuth {
+  source?: 'onboarding';
   attemptId: string;
   provider: ConnectorOAuthProvider;
   region: Region;
@@ -109,6 +110,7 @@ export interface AppSessionValue {
   editWorkspaceSetup: () => void;
   pendingInvitation: PendingInvitation | null;
   pendingConnectorOAuth: PendingConnectorOAuth | null;
+  updateCurrentUserName: (name: string) => void;
   setPendingConnectorOAuth: (attempt: PendingConnectorOAuth | null) => void;
   clearPendingInvitation: () => void;
   getOnboardingState: () => Promise<DesktopWorkspaceOnboardingState>;
@@ -208,6 +210,8 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
   const [session, setSession] = useState<DesktopSession | null>(null);
   const [pendingInvitation, setPendingInvitation] = useState<PendingInvitation | null>(null);
   const [pendingConnectorOAuth, setPendingConnectorOAuth] = useState<PendingConnectorOAuth | null>(null);
+  const pendingConnectorOAuthRef = useRef(pendingConnectorOAuth);
+  pendingConnectorOAuthRef.current = pendingConnectorOAuth;
   const [booting, setBooting] = useState(true);
   const [exchangingTicket, setExchangingTicket] = useState(false);
   const [deepLinkError, setDeepLinkError] = useState<string | null>(null);
@@ -958,7 +962,10 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
               invalidateCachedWorkstreamDetails(queryClient),
               queryClient.invalidateQueries({ queryKey: ['automation'] }),
             ]);
-            if (intent.target) await bridge.openSettings('connections');
+            const pending = pendingConnectorOAuthRef.current;
+            const fromOnboarding = pending?.source === 'onboarding' && pending.provider === intent.provider && pending.workspaceId === intent.target?.workspaceId && pending.region === intent.target?.region;
+            if (intent.target && !fromOnboarding) await bridge.openSettings('connections');
+            setPendingConnectorOAuth(null);
           } else {
             reportDeepLinkFailure(
               intent.status === 'denied'
@@ -1097,6 +1104,16 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     };
   }, [bridge, session]);
 
+  const updateCurrentUserName = useCallback((name: string): void => {
+    const current = sessionRef.current;
+    if (!current || current.user.name === name) return;
+    const updated = { ...current, user: { ...current.user, name } };
+    sessionRef.current = updated;
+    api?.setSession(updated);
+    setSession(updated);
+    void queryClient.invalidateQueries({ queryKey: ['workspace'] });
+  }, [api, queryClient]);
+
   const value = useMemo<AppSessionValue>(
     () => ({
       booting,
@@ -1114,6 +1131,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       pendingInvitation,
       pendingConnectorOAuth,
       setPendingConnectorOAuth,
+      updateCurrentUserName,
       clearPendingInvitation: () => {
         setPendingInvitation(null);
         if (session?.workspace) {
@@ -1151,6 +1169,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       getOnboardingState,
       pendingInvitation,
       pendingConnectorOAuth,
+      updateCurrentUserName,
       invitationApi,
       region,
       runtime,

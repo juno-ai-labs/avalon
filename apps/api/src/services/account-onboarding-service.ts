@@ -28,11 +28,11 @@ export class AccountOnboardingService {
     // Replaying a lost save response is harmless, including after a new session.
     if (current.revision !== input.expectedRevision) {
       if ((!input.introduced || current.introduced) && (!input.presentation ||
-        (current.presentation?.color === input.presentation.color && current.presentation.avatar === input.presentation.avatar && current.presentation.displayName === input.presentation.displayName && current.presentation.initials === input.presentation.initials))) return current;
+        (current.presentation?.color === input.presentation.color && current.presentation.avatar === input.presentation.avatar && (input.presentation.displayName === undefined || current.presentation.displayName === input.presentation.displayName) && (input.presentation.initials === undefined || current.presentation.initials === input.presentation.initials)))) return current;
       throw new ApiError(409, 'profile_revision_conflict', 'Your profile changed in another session. Review it and try again.');
     }
     const presentation = input.presentation
-      ? { ...input.presentation, revision: current.revision + 1 }
+      ? { ...current.presentation, ...input.presentation, revision: current.revision + 1 }
       : current.presentation;
     const result = await this.env.DB.prepare(
       `UPDATE users SET name = COALESCE(?, name), onboarding_introduced = ?, presentation_json = ?, onboarding_revision = onboarding_revision + 1

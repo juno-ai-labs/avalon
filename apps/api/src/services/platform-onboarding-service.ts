@@ -403,16 +403,17 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
       const result = await this.env.DB.prepare(
         `UPDATE users SET onboarding_eligible = ?, onboarding_introduced = ?,
           name = COALESCE(?, name), presentation_json = ?, onboarding_revision = ?
-         WHERE id = ? AND onboarding_revision <= ?`,
+         WHERE id = ? AND onboarding_revision <= ?
+           AND (onboarding_revision < ? OR onboarding_eligible != ? OR onboarding_introduced != ? OR presentation_json IS NOT ?)`,
       ).bind(profile.eligible ? 1 : 0, profile.introduced ? 1 : 0,
         profile.presentation?.displayName ?? null, profile.presentation ? JSON.stringify(profile.presentation) : null,
-        profile.revision, user.id, profile.revision).run();
+        profile.revision, user.id, profile.revision, profile.revision, profile.eligible ? 1 : 0, profile.introduced ? 1 : 0, profile.presentation ? JSON.stringify(profile.presentation) : null).run();
       if (result.meta.changes) {
         const memberships = await this.env.DB.prepare(
           "SELECT workspace_id FROM workspace_members WHERE user_id = ? AND status = 'active'",
         ).bind(user.id).all<{ workspace_id: string }>();
         await Promise.all(memberships.results.map((row) =>
-          publishWorkspaceSync(this.env, row.workspace_id, ['workspace_profile', 'member_directory'])));
+          publishWorkspaceSync(this.env, row.workspace_id, ['workspace_profile', 'member_directory']).catch(() => undefined)));
       }
     }
     return user;

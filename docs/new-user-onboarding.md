@@ -9,13 +9,12 @@ ships directly for newly created accounts, with no feature flag.
 
 | Path | Responsibility |
 | --- | --- |
-| `packages/contracts/src/onboarding.ts` | Account appearance, journey and teammate discovery contracts. |
+| `packages/contracts/src/onboarding.ts` | Account appearance and scoped journey contracts. |
 | `packages/db/migrations/0099_account_onboarding.sql` | Global identity preferences and regional projections; existing-account exemption. |
 | `apps/api/src/services/account-onboarding-service.ts` | Revision-checked account saves. |
 | `apps/api/src/services/platform-onboarding-service.ts` | Narrow profile projection through the existing regional identity bridge. |
 | `apps/api/src/durable-objects/onboarding-journey.ts` | WorkspaceDO-owned per-person setup progress. |
 | `apps/api/src/services/onboarding-journey-service.ts` | Membership, eligibility and completion checks. |
-| `apps/api/src/services/onboarding-teammates.ts`, `connection-service.ts` | Authorized Google Calendar discovery and content-free ranking. |
 | `apps/api/src/routes/onboarding.ts`, `workspace.ts` | Identity and workspace API boundaries. |
 | `apps/desktop/src/renderer/screens/guided-onboarding.tsx` | Introduction, connector setup, invitations and personal setup. |
 | `apps/desktop/src/renderer/components/personal-avatar.tsx`, `lib/onboarding-motion.ts`, `styles/onboarding.css` | Appearance and reference-derived motion. |
@@ -51,16 +50,10 @@ Finishing saves `complete` before opening `/workstreams/new`. No workstream or
 agent run is created by onboarding. Legacy `example` and `skipped` journeys are
 completed when read; old starter columns remain for stored-data compatibility.
 
-The invite page uses manual email chips. The teammate discovery API remains available, but onboarding no longer presents meeting-based suggestions. The
-person chooses their own healthy Google Calendar connection and a date range.
-Each request reads one provider page using the authorized connector wrapper.
-Only names, email addresses and opaque meeting IDs leave the service; the UI
-combines pages and ranks by distinct shared meetings. It excludes self, declined
-attendees, cancelled meetings, active members and pending invitees. Incomplete
-pages and omitted attendee details are labeled. Selected people populate the
-reviewable email list; invitations use the existing Member invitation API.
-Manual email entry works without a connection. Slack-based ranking is not part
-of this initial implementation.
+The invite page uses manual email chips separated by spaces, commas or semicolons.
+Before sending, it reconciles pending invitations and active members so retrying a
+lost response does not replace an invitation already sent. Failed addresses stay
+editable. Onboarding has no teammate discovery API.
 
 ## Invariants
 
@@ -71,8 +64,7 @@ of this initial implementation.
 - The workspace object owns progress. Generic SQL cannot address its typed-only
   onboarding table, and the public API cannot assign a starter workstream ID.
 - Finishing onboarding saves completion before opening New; it never creates a workstream or sends an agent prompt.
-- Suggestions never send invitations. The visible email list and invitation
-  action authorize sending through the existing workspace service.
+- The visible email list and invitation action authorize sending through the existing workspace service.
 
 ## Boundary
 
@@ -84,32 +76,44 @@ regional workspace credentials can update only their own eligible journey.
 ## Failure modes and limits
 
 Failed saves preserve the current screen and offer retry. Competing revisions
-reload durable progress. Failed OAuth is retryable or skippable. Failed meeting
-reads keep manual invitations available; there is no invented lookback window or
-new result cap. Provider pagination and existing connector response limits apply.
-Invitation failures retain failed email addresses for retry. A failed completion save keeps the current step visible and offers retry.
+refresh the appearance draft before another save. A failed identity lookup does
+not lock out a valid regional workspace session; background refetch failures keep
+cached onboarding state. OAuth is retryable or skippable and callbacks return to
+the onboarding flow that opened them.
 
-Confirmed connector selections are saved with the journey. Unsent invitation
-inputs currently remain in the current renderer; the durable checkpoint resumes the step, while successful connections
-and invitations remain on the server. Cross-region account projection can fail
-after Global has saved; retry replays the save and retries discovery.
+Connector choices retain both provider and access scope, using `workspace:` and
+`you:` prefixes. Refetches do not erase unsaved choices. Unsent invitation inputs
+remain in the renderer; successful connections and invitations remain on the
+server. Global account saves return independently of regional discovery and sync
+notifications. Subsequent identity discovery reconciles regional projections;
+equal projections do not emit repeated invalidations.
 
 ## Testing
 
-Run API Node tests `account-onboarding.test.ts`, `onboarding-teammates.test.ts`,
+Run API Node tests `account-onboarding.test.ts`,
 `platform-onboarding.test.ts`, and `workspace-do-schema.test.ts`, plus workerd
 `test-workers/onboarding-journey.test.ts`. Account tests apply the actual regional
 migrations; journey tests apply the actual WorkspaceDO migrations in workerd.
-The write-loss and prompt-overwrite mutation checks demonstrate those integration
+The write-loss and profile-update mutation checks demonstrate those integration
 tests fail when persistence is broken. Desktop session-gate and app-session suites
 cover existing authentication and activation behavior.
 
 Visual verification uses the isolated local Electron window. The reference
 inventory is [the PRD motion audit](PRDs/2026-09-05_new-user-onboarding/motion-reference.md).
-Real external OAuth and provider-backed agent completion require configured
-provider credentials; a local unconfigured harness failure is not a success.
+Real external OAuth requires configured provider credentials; onboarding no longer starts an agent run.
 
 ## Changelog
+
+### 2026-09-07 — Address review findings
+
+Scoped connector selections now survive both pages and refreshes. Profile drafts
+refresh on conflicting revisions, partial appearance updates retain name and
+initials, and regional discovery avoids repeated projection invalidations.
+Identity and sync outages must not lock an already authenticated regional user
+out of the app. OAuth callbacks stay in onboarding. Invitation retries reconcile
+server state to avoid replacing an already delivered invitation. The unused
+calendar discovery surface was removed because the final flow explicitly uses
+manual email chips. Bright avatar colors use dark ink for legibility.
 
 ### 2026-09-07 — Limit personal setup to color, name, and initials
 
