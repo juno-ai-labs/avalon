@@ -51,8 +51,8 @@ serves it through `rally-font://`.
 ## Invariants
 
 - **There is one design and exactly two resolved appearances.** Adding a named
-  theme family or another picker axis would restore UI and state the product no
-  longer supports.
+  theme family would restore UI and state the product no longer supports.
+  Account-owned accent color is independent of this light/dark preference.
 - **`system` is a preference, not a palette.** It must always resolve to light
   or dark before it reaches `data-theme`; otherwise the generated selectors do
   not provide a complete token set.
@@ -115,6 +115,25 @@ registration. Remote font URLs are not exposed directly to the renderer; main
 serves only generated IDs and enforces the cache's size and integrity checks.
 
 ## Changelog
+
+### 2026-09-07 — Replace the stale orange palette with Rally neon yellow
+
+Rally uses #ccff00, matching the public site's primary brand color. Both desktop
+appearances now use that yellow for brand fills and the legacy orange swatch.
+The stored swatch identifier remains compatible with existing user selections;
+its onboarding label is Neon yellow. Export accents also use the yellow.
+Brand marks and text stay black in light mode and white in dark mode for
+legibility, replacing the temporary onboarding-only override. Brand fills use
+dark foregrounds. Do not reintroduce the prior orange palette.
+
+
+### 2026-09-05 — Add account-owned personal accents
+
+Onboarding and Settings share a server-owned avatar/color editor. The selected
+color derives sidebar and highlight accents from the existing project palette;
+light/dark appearance remains device-owned. Bright colors use dark action text
+for contrast. This avoids introducing another named theme for each color. The
+[new-user onboarding module](new-user-onboarding.md) owns persistence and sync.
 
 ### 2026-09-05 — Align fatal and run recovery states with the theme
 

@@ -1,3 +1,8 @@
+import { ConnectionService } from '../services/connection-service';
+import { DiscoverOnboardingTeammatesSchema, OnboardingTeammatesSchema } from '@rally/contracts';
+import { OnboardingJourneyService } from '../services/onboarding-journey-service';
+import { OnboardingJourneySchema, UpdateOnboardingJourneySchema } from '@rally/contracts';
+import { ApiError } from '../lib/api-error';
 import { Hono, type Context } from "hono";
 import { zValidator } from "../middleware/validation";
 import {
@@ -96,4 +101,15 @@ workspaceRoutes.delete("/invitations/:id", zValidator("param", invitationParam),
 workspaceRoutes.post("/invitations/accept", zValidator("json", AcceptWorkspaceInvitationRequestSchema), async (c) => {
   await new WorkspaceService(c.env, getAuth(c)).acceptInvitation(c.req.valid("json").token);
   return c.body(null, 204);
+});
+
+workspaceRoutes.get('/onboarding', async (c) => c.json(OnboardingJourneySchema.parse(await new OnboardingJourneyService(c.env, getAuth(c)).get())));
+workspaceRoutes.patch('/onboarding', zValidator('json', UpdateOnboardingJourneySchema.omit({ starterWorkstreamId: true })), async (c) =>
+  c.json(OnboardingJourneySchema.parse(await new OnboardingJourneyService(c.env, getAuth(c)).get(c.req.valid('json')))));
+workspaceRoutes.post('/onboarding/teammates', zValidator('json', DiscoverOnboardingTeammatesSchema), async (c) => {
+  const auth = getAuth(c);
+  const journey = await new OnboardingJourneyService(c.env, auth).get();
+  if (journey.path !== 'creator' || journey.stage !== 'people') throw new ApiError(403, 'onboarding_people_unavailable', 'Teammate discovery is available during workspace setup.');
+  return c.json(OnboardingTeammatesSchema.parse(await new ConnectionService(c.env, auth)
+    .discoverOnboardingTeammates(c.req.valid('json'), c.req.raw.signal)));
 });

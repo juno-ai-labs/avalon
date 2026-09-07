@@ -1,3 +1,4 @@
+import type { AccountOnboarding, UpdateAccountOnboarding } from '@rally/contracts';
 import type { DesktopSettingsSection } from './settings';
 import type { ApplicationIconId, DesktopApplicationIconState } from './application-icons';
 import type { ThemeChoice } from './themes';
@@ -442,6 +443,8 @@ export interface RallyDesktopBridge {
     attemptId: string;
   }) => Promise<DesktopSession>;
   createDevelopmentSession: (apiBaseUrl: string, workspaceName: string) => Promise<DesktopSession>;
+  getAccountOnboarding: () => Promise<AccountOnboarding>;
+  updateAccountOnboarding: (input: UpdateAccountOnboarding) => Promise<AccountOnboarding>;
   getOnboardingState: () => Promise<DesktopWorkspaceOnboardingState>;
   getWorkspaceAttention: (input: { region: RallyRegion; workspaceId: string }) => Promise<WorkspaceAttention>;
   leaveWorkspace: (input: {

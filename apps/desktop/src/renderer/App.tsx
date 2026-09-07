@@ -1,3 +1,4 @@
+import { AccountOnboardingGate, WorkspaceOnboardingJourney } from './screens/guided-onboarding';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { AlertTriangle, Cable, RefreshCcw } from 'lucide-react';
@@ -248,6 +249,7 @@ function WorkspaceApp(): React.JSX.Element {
           <WorkstreamSocketResumeProvider
             scope={`${session?.user.email ?? 'unknown'}:${desktopWorkspaceIdentityKey(workspace.data.region, workspace.data.id)}`}
           >
+            <WorkspaceOnboardingJourney key={`${workspace.data.region}:${workspace.data.id}:${workspace.data.currentUser.id}`} workspace={workspace.data}>
             <AppShell workspace={workspace.data}>
               <Routes>
                 <Route element={<Navigate replace to="/workstreams/new" />} path="/" />
@@ -261,6 +263,7 @@ function WorkspaceApp(): React.JSX.Element {
                 <Route element={<NotFoundScreen />} path="*" />
               </Routes>
             </AppShell>
+            </WorkspaceOnboardingJourney>
           </WorkstreamSocketResumeProvider>
         </HashRouter>
       </SpeechPlaybackProvider>
@@ -401,7 +404,7 @@ export default function App(): React.JSX.Element {
       <QueryClientProvider client={queryClient}>
         <Tooltip.Provider>
           <AppSessionProvider>
-            <SessionGate />
+            <AccountOnboardingGate><SessionGate /></AccountOnboardingGate>
           </AppSessionProvider>
         </Tooltip.Provider>
       </QueryClientProvider>

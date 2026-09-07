@@ -156,7 +156,7 @@ const MEASURE_SCRIPT = `void 0, (async () => {
  * stream do not come out identical.
  */
 function splashBackground(seed: number): string {
-  const colours = ['#cedc00', '#47c7fc', '#ff8a50', '#b995f5', '#2f7d5c'];
+  const colours = ['#cedc00', '#47c7fc', '#ccff00', '#b995f5', '#2f7d5c'];
   const positions = [
     { size: '78% 34%', at: '6% 1%' },
     { size: '70% 30%', at: '96% 7%' },

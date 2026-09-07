@@ -1,6 +1,8 @@
+import { MemberPresentationContext } from '../lib/member-presentation';
 import { SearchModal } from './search-modal';
 import { AttachmentLightbox } from './attachment-lightbox';
 import type { AttachmentPreview } from './attachments';
+import { useContext } from 'react';
 import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type PropsWithChildren } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -220,6 +222,7 @@ export function useSocketOwnedList<T>(queryKey: readonly unknown[]): UseQueryRes
 }
 
 export function AppShell({ workspace, children }: AppShellProps): React.JSX.Element {
+  const personalPresentation = useContext(MemberPresentationContext).get(workspace.currentUser.id);
   const {
     acceptInvitation,
     activateWorkspace,
@@ -483,7 +486,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
           <WorkspaceAccountMenu
             activeWorkspace={activeWorkspace}
             attention={workspaceAttention.data ?? {}}
-            currentUser={workspace.currentUser}
+            currentUser={{ ...workspace.currentUser, name: personalPresentation?.displayName ?? workspace.currentUser.name }}
             enabled={multipleWorkspacesEnabled}
             invitations={workspaceDirectory.data?.invitations ?? []}
             promptedInvitation={promptedInvitation}
