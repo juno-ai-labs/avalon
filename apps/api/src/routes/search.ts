@@ -8,13 +8,14 @@ import type { HonoAppEnv } from '../env';
 import { zValidator } from '../middleware/validation';
 import { authenticate, getAuth } from '../middleware/auth';
 import { ApiError } from '../lib/api-error';
-import { searchWorkspace } from '../services/workspace-search-service';
+import { searchWorkspacePage } from '../services/workspace-search-service';
 
 export const searchRoutes = new Hono<HonoAppEnv>();
 searchRoutes.post('/', zValidator('json', SearchRequestSchema), async (c) => {
   const auth = getAuth(c);
+  const started = performance.now();
   let results;
-  try { results = await searchWorkspace(c.env, auth, c.req.valid('json'), c.req.raw.signal); }
+  try { results = await searchWorkspacePage(c.env, auth, c.req.valid('json'), c.req.raw.signal); }
   catch (error) {
     if (error instanceof ApiError) throw error;
     logWarn(c.env, 'search_workspace_unavailable', {
@@ -27,7 +28,9 @@ searchRoutes.post('/', zValidator('json', SearchRequestSchema), async (c) => {
   if (current.workspaceId !== auth.workspaceId || current.userId !== auth.userId || !current.role) {
     throw new ApiError(403, 'search_access_revoked', 'Workspace access has changed');
   }
-  return c.json(SearchResponseSchema.parse({ results }));
+  const response = SearchResponseSchema.parse(results);
+  if (response.timings) response.timings.serverMs = performance.now() - started;
+  return c.json(SearchResponseSchema.parse(response));
 });
 
 searchRoutes.get('/resources/:id/preview', zValidator('param', z.strictObject({ id: IdSchema })), async (c) => {

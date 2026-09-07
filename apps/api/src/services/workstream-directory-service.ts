@@ -44,6 +44,12 @@ export class WorkstreamDirectoryService {
     });
   }
 
+  async searchableIds(): Promise<string[]> {
+    return WorkspaceDirectoryReadableIdsResultSchema.parse(await (await this.workspace()).searchableWorkstreamIds({
+      workspaceId: this.auth.workspaceId, userId: this.auth.userId,
+    })).items;
+  }
+
   async readableIds(workstreamIds: string[]): Promise<string[]> {
     if (workstreamIds.length === 0) return [];
     const workspace = await this.workspace();

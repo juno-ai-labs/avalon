@@ -28,7 +28,7 @@ import { reportTelemetryProductIntent, telemetryCountBucket, uuidV7 } from './te
  * ids required to join the matching backend work.
  */
 
-export type PerfFlow = 'workstream_create' | 'substream_prepare' | 'substream_create' | 'workstream_open' | 'workstream_message_send';
+export type PerfFlow = 'workstream_create' | 'substream_prepare' | 'substream_create' | 'workstream_open' | 'workstream_message_send' | 'workspace_search';
 
 export interface PerfTrace {
   readonly traceId: string;
@@ -116,6 +116,9 @@ function blockingWithin(from: number, to: number): { blockedMs: number; longTask
 }
 
 const telemetryPhaseNames = {
+  search_debounce: 'searchDebounceMs',
+  search_request: 'searchRequestMs',
+  search_render: 'searchRenderMs',
   create_request: 'createRequestMs',
   prepare_request: 'prepareRequestMs',
   confirm_request: 'confirmRequestMs',
@@ -193,6 +196,8 @@ export function rendererPerfFlowIntent(
     blockedMs: blocking.blockedMs,
     longTaskCount: telemetryCountBucket(blocking.longTasks),
     ...phaseProperties,
+    ...Object.fromEntries(['searchRequestMs', 'searchScopeMs', 'searchRetrievalMs', 'searchHydrationMs', 'searchServerMs']
+      .flatMap((key) => { const value = telemetryNumber(fields[key]); return value === undefined ? [] : [[key, value]]; })),
     ...(workstreamId ? { workstreamId } : {}),
     ...(ticketId ? { ticketId } : {}),
     ...(sinceEffectMs !== undefined ? { sinceEffectMs } : {}),

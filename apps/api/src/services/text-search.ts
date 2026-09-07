@@ -106,6 +106,7 @@ export interface TextSearchOptions {
   limit: number;
   vector?: number[];
   signal?: AbortSignal;
+  onTiming?: (phase: "retrieval" | "hydration", durationMs: number) => void;
 }
 
 /** Escape syntax so a person's substring is always literal, including * and ?. */
@@ -246,15 +247,26 @@ export class TextSearchIndex {
     sources: readonly AuthorizedSearchSource<T>[],
     options: TextSearchOptions,
   ): Promise<T[]> {
+    return (await this.readPage(sources, options, undefined, false)).results;
+  }
+
+  /** One candidate page; the caller can continue past rejected rows without blocking first paint. */
+  async queryPage<T>(sources: readonly AuthorizedSearchSource<T>[], options: TextSearchOptions, cursor?: string) {
+    return this.readPage(sources, options, cursor, true);
+  }
+
+  private async readPage<T>(sources: readonly AuthorizedSearchSource<T>[], options: TextSearchOptions,
+    cursor: string | undefined, singlePage: boolean): Promise<{ results: T[]; nextCursor: string | null }> {
     const authorized = sources.filter((source) => source.scopeIds === null || source.scopeIds.length > 0);
-    if (authorized.length === 0) return [];
+    if (authorized.length === 0) return { results: [], nextCursor: null };
     const filters: Filter = ["And", [["deleted", "Eq", false],
       ["record_type", "Eq", options.mode === "semantic" ? "chunk" : "document"], ["Or", authorized.map((source): Filter => ["And", [
       ["source", "Eq", source.source],
       ...(source.scopeIds === null ? [] : [["scope_id", "In", [...source.scopeIds]] as Filter]),
     ]])]]];
     const values: T[] = [];
-    let afterId: string | undefined;
+    let afterId = cursor;
+    let nextCursor: string | null;
     do {
       options.signal?.throwIfAborted();
       const pageFilters: Filter[] = [filters];
@@ -269,6 +281,7 @@ export class TextSearchIndex {
         limit: options.limit,
         consistency: { level: "strong" },
       }, ...options.signal ? [{ signal: options.signal }] as const : []);
+      const retrievalStarted = performance.now();
       const result = await query(options.mode === "semantic").catch((error: unknown) => {
         // Pre-fan-out namespaces have no generation attribute until their first
         // new write. Preserve their existing revision-based retrieval contract.
@@ -281,6 +294,8 @@ export class TextSearchIndex {
         throw new Error("search_index_query_failed");
       });
       options.signal?.throwIfAborted();
+      options.onTiming?.("retrieval", performance.now() - retrievalStarted);
+      const hydrationStarted = performance.now();
       const candidates = z.array(CandidateSchema).parse(result.rows ?? []);
       // Index metadata is never authority, including on refill pages.
       const loaded = await Promise.all(authorized.map(async (source) => {
@@ -288,11 +303,15 @@ export class TextSearchIndex {
         return source.load(candidates.filter((row) =>
           row.source === source.source && (scopes === null || scopes.has(row.scope_id))));
       }));
+      options.onTiming?.("hydration", performance.now() - hydrationStarted);
       const rows = new Map(loaded.flatMap((items) => [...items]));
       for (const candidate of candidates) {
         const row = rows.get(candidate.id);
         if (row !== undefined) values.push(row);
       }
+      nextCursor = candidates.length === options.limit && options.mode === "substring" ? candidates.at(-1)!.id : null;
+      if (nextCursor !== null && afterId !== undefined && nextCursor <= afterId) throw new Error("search_index_cursor_invalid");
+      if (singlePage) break;
       if (values.length >= options.limit || candidates.length < options.limit || options.mode !== "substring") break;
       // Attribute-ordered pagination follows Turbopuffer's documented id cursor.
       // Revoked or obsolete candidates must not hide later authorized matches.
@@ -300,6 +319,6 @@ export class TextSearchIndex {
       if (nextId === undefined || (afterId !== undefined && nextId <= afterId)) throw new Error("search_index_cursor_invalid");
       afterId = nextId;
     } while (values.length < options.limit);
-    return values.slice(0, options.limit);
+    return { results: values.slice(0, options.limit), nextCursor };
   }
 }

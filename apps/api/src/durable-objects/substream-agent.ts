@@ -377,6 +377,8 @@ const ProductRequestSchema = z.discriminatedUnion("operation", [
     input: InitializeWorkstreamObjectInputSchema }),
   z.strictObject({ operation: z.literal("get"), auth: ProductAuthSchema }),
   z.strictObject({ operation: z.literal("boot"), auth: ProductAuthSchema }),
+  z.strictObject({ operation: z.literal("search_links"), auth: ProductAuthSchema,
+    links: z.array(z.strictObject({ turnId: TranscriptTurnIdSchema, linkId: z.string() })) }),
   z.strictObject({ operation: z.literal("search_link"), auth: ProductAuthSchema, turnId: TranscriptTurnIdSchema, linkId: z.string() }),
   z.strictObject({ operation: z.literal("search_turns"), auth: ProductAuthSchema, turnIds: z.array(TranscriptTurnIdSchema) }),
   z.strictObject({ operation: z.literal("update"), auth: ProductAuthSchema, input: UpdateWorkstreamRequestSchema }),
@@ -2862,6 +2864,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           turnId: result.turnId,
           harnessRunId: result.harnessRunId,
         });
+      }
+      if (request.operation === "search_links") {
+        const root = await this.product.authorize(current);
+        const links = request.links.map(({ turnId, linkId }) => ({ linkId,
+          link: readConversationSearchLink(this.state.storage.sql, linkId, this.transcript.participantTurn(turnId)),
+        }));
+        return jsonResponse({ title: root.title, links });
       }
       if (request.operation === "search_link") {
         const root = await this.product.authorize(current);
