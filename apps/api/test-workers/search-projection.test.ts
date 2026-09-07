@@ -42,6 +42,40 @@ describe('resource searchable contents', () => {
 });
 
 describe('conversation page capture', () => {
+  it('isolates failed captures and returned contents to the requested document', async () => {
+    const capture = vi.fn(async () => Response.json({ success: false, errors: [{ code: 5006 }] }, { status: 422 }));
+    const captureEnv: Env = { ...env, BROWSER: createCloudflareTestBinding<BrowserRun>({ quickAction: capture }) };
+    const stub = env.MIGRATION_PROBE_DO!.getByName('search-isolated-capture');
+    await stub.ping();
+    await runInDurableObject(stub, async (_instance, state) => {
+      applyDurableObjectSqliteMigrations({ storage: state.storage, migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS,
+        component: 'substream_agent_do', workerVersionId: 'search', now: 2_000 });
+      seedWorkstreamRoot(state);
+      const transcript = new WorkstreamTranscriptStorage(state.storage);
+      await transcript.appendParticipantMessage({ turnId: 'pages', actor: 'system', authorUserId: null,
+        authorSnapshot: null, text: 'https://example.com/ready https://example.com/failed',
+        createdAtUtc: '2026-09-05T00:00:00Z', attentionOrdinal: 1 });
+      const identity = { workspaceId, parentId: resourceId, substreamId: '0' };
+      const read = () => transcript.participantTurn('pages');
+      const initial = await prepareConversationLinks(state.storage.sql, captureEnv, identity, 'pages', read, false);
+      const ready = initial.documents.find((document) => document.text?.includes('/ready'))!;
+      const failed = initial.documents.find((document) => document.id !== ready.id)!;
+      state.storage.sql.exec('UPDATE conversation_search_links SET markdown = ?, captured = 1 WHERE id = ?',
+        'retained body', ready.id);
+      const success = await prepareConversationLinks(state.storage.sql, captureEnv, identity, 'pages', read, true, ready.id);
+      expect(success.retry).toBe(false);
+      expect(success.documents.map((document) => document.id)).toEqual([ready.id]);
+      expect(success.documents[0]?.text).toContain('retained body');
+      expect(capture).not.toHaveBeenCalled();
+      const failure = await prepareConversationLinks(state.storage.sql, captureEnv, identity, 'pages', read, true, failed.id);
+      expect(failure.retry).toBe(true);
+      expect(failure.documents.map((document) => document.id)).toEqual([failed.id]);
+      expect(failure.documents[0]?.text).toContain('/failed');
+      expect(capture).toHaveBeenCalledTimes(1);
+      expect(readConversationSearchLink(state.storage.sql, ready.id, read())?.text).toContain('retained body');
+    });
+  });
+
   it('persists captured contents, publishes them in the originating scope, and reuses the capture on retry', async () => {
     // Only external providers are doubled; canonical state runs in workerd.
     const writes: unknown[] = [];

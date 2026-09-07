@@ -1,6 +1,6 @@
-import { SearchEmbeddingBatchSchema, type SearchSourceReference } from '../services/search-indexing-jobs';
+import { SearchDocumentJobSchema, publishSearchIndexingJobs, SearchEmbeddingBatchSchema, type SearchSourceReference } from '../services/search-indexing-jobs';
 import { embedSearchDocuments } from '../services/search-embedding';
-import { workspaceSearchIndex, searchChunkIdentity } from '../services/text-search';
+import { workspaceSearchIndex, searchChunkIdentity, searchDocumentId } from '../services/text-search';
 import { ResourceSearchProjectionSchema } from '../durable-objects/resource-search-projection';
 import { SearchProjectionMessageSchema } from '../durable-objects/search-projection-outbox';
 import { createSearchIndexingPipeline, indexSemanticBatch } from '../services/search-indexing-pipeline';
@@ -120,13 +120,13 @@ function matchesFilters(activity: ActivityRow, filters: Record<string, unknown>)
 }
 
 
-const SearchEmbeddingBatchTypeSchema = z.object({ type: z.literal('search_embedding_batch_v1') });
+const SearchChildJobTypeSchema = z.object({ type: z.literal('search_embedding_batch_v1') });
 
 /** Cloudflare Queue entrypoint for control effects and connector events. */
 export async function consumeActivityQueue(batch: MessageBatch<unknown>, env: Env): Promise<void> {
   const indexSearch = createSearchIndexingPipeline(env);
   const isSearch = (message: Message<unknown>) =>
-    SearchEmbeddingBatchTypeSchema.safeParse(message.body).success
+    SearchChildJobTypeSchema.safeParse(message.body).success
     || ResourceSearchProjectionSchema.safeParse(message.body).success
     || SearchProjectionMessageSchema.safeParse(message.body).success;
   // Search shares a tokenizer and processes one document source at a time.
@@ -187,22 +187,43 @@ export async function recoverPendingActivityQueue(env: Env, limit = 100): Promis
   return pending.results.length;
 }
 
-async function loadSearchSource(env: Env, reference: SearchSourceReference, captureLinks = true) {
+async function discoverSearchDocuments(env: Env, reference: SearchSourceReference): Promise<string[]> {
   if (reference.type === 'resource_search_projection_v1') {
-    const stub = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, reference.workspaceId,
-      workspaceDOName(reference.region, reference.workspaceId));
-    return stub.prepareResourceSearch(reference);
+    // Category identities are deterministic, including deletion watermarks.
+    return Promise.all(['files', 'artifacts', 'links'].map((source) =>
+      searchDocumentId(source, reference.workspaceId, reference.resourceId)));
   }
   const stub = await durableObjectStubForWorkspace(env, env.SUBSTREAM_AGENTS, reference.workspaceId,
     conversationObjectName(reference.region, reference.workspaceId, reference.parentId, reference.substreamId));
-  return stub.prepareSearchTurn(reference, captureLinks);
+  return z.array(z.string().min(1)).parse(await stub.searchTurnDocumentIds(reference));
+}
+
+async function loadSearchSource(env: Env, reference: SearchSourceReference, captureLinks: boolean, documentId: string) {
+  if (reference.type === 'resource_search_projection_v1') {
+    const stub = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, reference.workspaceId,
+      workspaceDOName(reference.region, reference.workspaceId));
+    return stub.prepareResourceSearchDocument(reference, documentId);
+  }
+  const stub = await durableObjectStubForWorkspace(env, env.SUBSTREAM_AGENTS, reference.workspaceId,
+    conversationObjectName(reference.region, reference.workspaceId, reference.parentId, reference.substreamId));
+  return stub.prepareSearchTurnDocument(reference, documentId, captureLinks);
 }
 
 async function consumeOne(message: Message<unknown>, env: Env,
   indexSearch: ReturnType<typeof createSearchIndexingPipeline>): Promise<void> {
+  const documentJob = SearchDocumentJobSchema.safeParse(message.body);
+  if (documentJob.success) {
+    const job = documentJob.data;
+    if (job.reference.region !== env.AVALON_REGION) throw new Error('search_projection_region_mismatch');
+    await indexSearch(job.reference, (captureLinks = true) => loadSearchSource(env, job.reference, captureLinks, job.documentId));
+    message.ack();
+    return;
+  }
   const embeddingBatch = SearchEmbeddingBatchSchema.safeParse(message.body);
-  if (!embeddingBatch.success && SearchEmbeddingBatchTypeSchema.safeParse(message.body).success) {
-    throw new Error('invalid_search_embedding_batch');
+  const childType = SearchChildJobTypeSchema.safeParse(message.body);
+  if (!embeddingBatch.success && childType.success) {
+    throw new Error(z.object({ phase: z.literal('document') }).safeParse(message.body).success
+      ? 'invalid_search_document_job' : 'invalid_search_embedding_batch');
   }
   if (embeddingBatch.success) {
     const job = embeddingBatch.data;
@@ -214,7 +235,7 @@ async function consumeOne(message: Message<unknown>, env: Env,
       return;
     }
     const outcome = await indexSemanticBatch(await workspaceSearchIndex(env, job.reference.workspaceId), job,
-      () => loadSearchSource(env, job.reference, false), (texts) => embedSearchDocuments(env, job.reference.workspaceId, texts));
+      () => loadSearchSource(env, job.reference, false, job.document.id), (texts) => embedSearchDocuments(env, job.reference.workspaceId, texts));
     if (outcome === 'stale') logWarn(env, 'search_embedding_stale', { region: env.AVALON_REGION,
       workspace_id: job.reference.workspaceId, source: job.document.source, source_id: job.document.sourceId, revision: job.document.revision });
     message.ack();
@@ -224,7 +245,12 @@ async function consumeOne(message: Message<unknown>, env: Env,
   const source = reference.success ? reference : SearchProjectionMessageSchema.safeParse(message.body);
   if (source.success) {
     if (source.data.region !== env.AVALON_REGION) throw new Error('search_projection_region_mismatch');
-    await indexSearch(source.data, () => loadSearchSource(env, source.data));
+    // Source deliveries discover documents only. Capturing, tokenizing and
+    // indexing each page happens in its own independently retriable delivery.
+    const documentIds = await discoverSearchDocuments(env, source.data);
+    await publishSearchIndexingJobs(env.ACTIVITY_QUEUE, documentIds.map((documentId) => ({
+      type: 'search_embedding_batch_v1', phase: 'document', reference: source.data, documentId,
+    })));
     message.ack();
     return;
   }

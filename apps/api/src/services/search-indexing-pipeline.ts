@@ -4,7 +4,7 @@ import { SearchDocumentBatchSchema, type SearchDocument, type SearchDocumentBatc
 import { searchChunkPolicy, SEARCH_EMBEDDING_BATCH_SIZE } from './search-embedding';
 import { semanticChunks, type SemanticChunkPolicy } from './semantic-chunks';
 import { isMemoryEmbeddingModel } from './structured-inference';
-import { publishSearchEmbeddingBatches, type SearchEmbeddingBatch, type SearchSourceReference } from './search-indexing-jobs';
+import { publishSearchIndexingJobs, type SearchEmbeddingBatch, type SearchSourceReference } from './search-indexing-jobs';
 import { SEARCH_EMBEDDING_DIMENSIONS, searchContentHash, searchChunkIdentity, workspaceSearchIndex, type TextSearchDocument, type TextSearchIndex } from './text-search';
 
 /** One canonical chunk plan; batch jobs contain offsets, not source text. */
@@ -68,7 +68,7 @@ export async function indexSemanticBatch(index: TextSearchIndex, job: SearchEmbe
 
 /** Source state stays batch-local; the immutable tokenizer is shared by the isolate. */
 export function createSearchIndexingPipeline(env: Env) {
-  return async (reference: SearchSourceReference, load: () => Promise<SearchDocumentBatch>): Promise<void> => {
+  return async (reference: SearchSourceReference, load: (captureLinks?: boolean) => Promise<SearchDocumentBatch>): Promise<void> => {
     const input = SearchDocumentBatchSchema.parse(await load());
     if (!input.documents.length) {
       if (input.retry) throw new Error('search_source_retry_required');
@@ -91,12 +91,12 @@ export function createSearchIndexingPipeline(env: Env) {
       // once at planning, rather than waiting for every child to finish.
       await index.removeSemanticGenerations(document, 'Lt', true);
       const jobs = await searchEmbeddingJobs(reference, { ...document, text: document.text }, searchChunkPolicy());
-      if (jobs.length) await publishSearchEmbeddingBatches(env.ACTIVITY_QUEUE, jobs);
+      if (jobs.length) await publishSearchIndexingJobs(env.ACTIVITY_QUEUE, jobs);
       else await index.removeSemanticGenerations(document, 'Lte');
     }
     // An edit or deletion can commit during fan-out. Remove this stale
     // generation before retrying; newer revisions are never removed by this job.
-    const current = SearchDocumentBatchSchema.parse(await load());
+    const current = SearchDocumentBatchSchema.parse(await load(false));
     let changed = false;
     for (const document of input.documents) {
       const next = current.documents.find((value) => value.id === document.id);
