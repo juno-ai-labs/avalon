@@ -44,8 +44,10 @@ static void validateUpgrade(NSString *firstArtwork, NSString *secondArtwork) {
     FixtureDockTilePlugin *plugin = [[FixtureDockTilePlugin alloc] init];
     plugin.fixtureSupport = support;
     plugin.fixtureIcons = [NSURL fileURLWithPath:icons];
-    [plugin setDockTile:nil];
+    NSDockTile *tile = NSApplication.sharedApplication.dockTile;
+    [plugin setDockTile:tile];
     require(plugin.imageView.image != nil, @"Initial selected image must load");
+    require(tile.contentView == plugin.imageView, @"Selected image must be attached to the native tile");
     NSData *firstImage = plugin.imageView.image.TIFFRepresentation;
 
     // Replace the installed resources while retaining the exact same plugin.
@@ -57,6 +59,18 @@ static void validateUpgrade(NSString *firstArtwork, NSString *secondArtwork) {
     [plugin applicationIconChanged:nil];
     NSData *updatedImage = plugin.imageView.image.TIFFRepresentation;
     require(updatedImage != nil && ![updatedImage isEqual:firstImage], @"A surviving plugin must display newly installed artwork");
+
+    require([files removeItemAtPath:[icons stringByAppendingPathComponent:@"future-artwork.icns"] error:NULL], @"Remove image before replacement");
+    require([files copyItemAtPath:firstArtwork toPath:[icons stringByAppendingPathComponent:@"future-artwork.icns"] error:NULL], @"Replace same-ID artwork");
+    [plugin applicationIconChanged:nil];
+    require([plugin.imageView.image.TIFFRepresentation isEqual:firstImage], @"Same identifier must reload changed image bytes");
+    writeJSON(@{ @"version": @1, @"icon": @42 }, preference);
+    [plugin applicationIconChanged:nil];
+    require(plugin.imageView == nil && tile.contentView == nil, @"Non-string preference must clear the tile");
+    writeJSON(@{ @"version": @1, @"icon": @"future-artwork" }, preference);
+    writeJSON(@{ @"version": @1, @"icons": @42 }, manifest);
+    [plugin applicationIconChanged:nil];
+    require(plugin.imageView == nil, @"Non-array catalog must clear the tile");
 
     // Removing an ID from a later catalog must clear even a still-present file.
     writeJSON(@{ @"version": @1, @"icons": @[] }, manifest);
@@ -95,6 +109,7 @@ static BOOL validateArtwork(NSString *path) {
   if (!image.hasAlpha) return YES;
   for (NSInteger y = 0; y < image.pixelsHigh; y++) {
     @autoreleasepool {
+    [NSApplication sharedApplication];
       for (NSInteger x = 0; x < image.pixelsWide; x++) {
         if ([image colorAtX:x y:y].alphaComponent != 1.0) {
           NSLog(@"App icon source must be opaque and full-bleed: %@", path);
@@ -111,9 +126,16 @@ int main(int argc, const char *argv[]) {
     for (int i = 1; i < argc; i++) {
       if (!validateArtwork([NSString stringWithUTF8String:argv[i]])) return 1;
     }
-    if (argc >= 3) validateUpgrade([NSString stringWithUTF8String:argv[1]], [NSString stringWithUTF8String:argv[2]]);
-    RallyDockTilePluginV2 *plugin = [[RallyDockTilePluginV2 alloc] init];
-    [plugin setDockTile:nil];
+    if (argc < 3) {
+      NSLog(@"Expected at least two artwork sources for upgrade regression coverage");
+      return 1;
+    }
+    @try {
+      validateUpgrade([NSString stringWithUTF8String:argv[1]], [NSString stringWithUTF8String:argv[2]]);
+    } @catch (NSException *exception) {
+      NSLog(@"%@", exception.reason);
+      return 1;
+    }
   }
   return 0;
 }
