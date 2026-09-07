@@ -179,11 +179,20 @@ describe('Sidebar work-stream markers', () => {
 
   it.each([false, true].flatMap((conversationOnly) => [
     { label: 'empty', conversationOnly, automations: [] },
-    { label: 'workspace', conversationOnly, automations: [{ ...automation, scope: 'workspace' as const }] },
     { label: 'workstream', conversationOnly, automations: [{ ...automation, scope: 'workstream' as const }] },
-  ]))('omits the personal strip for $label entries (conversationOnly=$conversationOnly)', ({ automations, conversationOnly }) => {
+  ]))('omits the automation strip for $label entries (conversationOnly=$conversationOnly)', ({ automations, conversationOnly }) => {
     render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} conversationOnly={conversationOnly} automations={automations} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
-    expect(screen.queryByRole('region', { name: 'Personal automations' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Automation shortcuts' })).not.toBeInTheDocument();
+  });
+
+  it.each([false, true])('shows personal and workspace tiles exactly once (conversationOnly=%s)', (conversationOnly) => {
+    const shared = { ...automation, id: 'shared-automation', name: 'Team brief', scope: 'workspace' as const };
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} conversationOnly={conversationOnly} automations={[automation, shared]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
+    const sharedLinks = screen.getAllByRole('link', { name: /Team brief/u });
+    expect(sharedLinks).toHaveLength(1);
+    expect(sharedLinks[0]).toHaveClass('automation-tile');
+    expect(screen.getAllByRole('link', { name: /Daily product brief/u })).toHaveLength(1);
+    expect(screen.queryByText('No automations')).not.toBeInTheDocument();
   });
 
   it('shows personal automations above the user menu in the GrokBot shell', () => {
@@ -204,8 +213,8 @@ describe('Sidebar work-stream markers', () => {
     );
 
     expect(screen.getByText('Customer launch')).toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'Personal automations' })).toContainElement(screen.getByText('Daily product brief'));
-    const strip = screen.getByRole('region', { name: 'Personal automations' });
+    expect(screen.getByRole('region', { name: 'Automation shortcuts' })).toContainElement(screen.getByText('Daily product brief'));
+    const strip = screen.getByRole('region', { name: 'Automation shortcuts' });
     expect(strip.closest('.sidebar-scroll')).toBeNull();
     expect(strip.nextElementSibling).toBe(screen.getByRole('button', { name: 'Open account menu' }));
     expect(screen.queryByText('Meeting notes')).not.toBeInTheDocument();
@@ -1223,7 +1232,7 @@ describe('Sidebar work-stream markers', () => {
 
     // A draft is a conversation in progress on the automation's own screen,
     // which is where its tile leads; its accessible label identifies the draft.
-    const section = screen.getByRole('region', { name: 'Personal automations' });
+    const section = screen.getByRole('region', { name: 'Automation shortcuts' });
     expect([...section.querySelectorAll('.automation-tile-name')].map((row) => row.textContent))
       .toEqual(['Ad hoc competitor scan', 'Daily product brief']);
     const row = screen.getByRole('link', { name: /Ad hoc competitor scan/u });
