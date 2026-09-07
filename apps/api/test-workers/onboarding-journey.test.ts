@@ -19,9 +19,8 @@ describe('durable onboarding journey', () => {
       const store = new OnboardingJourneyStore(state.storage.sql);
       const initial = store.get(creator, 'creator');
       expect(initial.stage).toBe('connectors');
-      expect(store.get(creator, 'creator').starterMessageId).toBe(initial.starterMessageId);
       expect(store.get(member, 'member').stage).toBe('profile');
-      expect(store.update(creator, 'creator', { expectedRevision: 0, stage: 'example' })).toBeNull();
+      expect(store.update(creator, 'creator', { expectedRevision: 0, stage: 'complete' })).toBeNull();
       store.update(creator, 'creator', { expectedRevision: 0, stage: 'profile', connectorIds: ['you:google-mail-calendar'] });
       expect(store.get(creator, 'creator').stage).toBe('profile');
       expect(store.update(creator, 'creator', { expectedRevision: 0, stage: 'people' })).toBeNull();
@@ -29,13 +28,13 @@ describe('durable onboarding journey', () => {
       expect(store.update(member, 'member', { expectedRevision: 0, stage: 'people' })).toBeNull();
       store.update(creator, 'creator', { expectedRevision: 1, stage: 'people' });
       store.update(creator, 'creator', { expectedRevision: 2, stage: 'complete' });
-      expect(store.get(creator, 'creator')).toMatchObject({ stage: 'complete', starterWorkstreamId: null });
+      expect(store.get(creator, 'creator')).toMatchObject({ stage: 'complete' });
       store.update(member, 'member', { expectedRevision: 0, stage: 'complete' });
     });
     await runInDurableObject(stub, (_instance, state) => {
       const resumed = new OnboardingJourneyStore(state.storage.sql);
-      expect(resumed.get(creator, 'creator')).toMatchObject({ stage: 'complete', starterWorkstreamId: null, revision: 3, connectorIds: ['you:google-mail-calendar'] });
-      expect(resumed.get(member, 'member')).toMatchObject({ stage: 'complete', starterWorkstreamId: null, revision: 1 });
+      expect(resumed.get(creator, 'creator')).toMatchObject({ stage: 'complete', revision: 3, connectorIds: ['you:google-mail-calendar'] });
+      expect(resumed.get(member, 'member')).toMatchObject({ stage: 'complete', revision: 1 });
     });
   });
 });

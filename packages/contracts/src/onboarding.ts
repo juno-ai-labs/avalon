@@ -25,16 +25,13 @@ export const OnboardingConnectorIdSchema = z.enum(['google-mail-calendar', 'goog
 export const OnboardingConnectorSelectionSchema = z.templateLiteral([z.enum(['workspace', 'you']), ':', OnboardingConnectorIdSchema]);
 export const OnboardingJourneySchema = z.object({
   path: z.enum(['creator', 'member']),
-  stage: z.enum(['connectors', 'people', 'profile', 'example', 'complete', 'skipped']),
+  stage: z.enum(['connectors', 'people', 'profile', 'complete']),
   revision: z.number().int().nonnegative(),
-  starterWorkstreamId: z.string().uuid().nullable(),
-  starterMessageId: z.string().uuid(),
   connectorIds: z.array(OnboardingConnectorSelectionSchema),
 });
 export const UpdateOnboardingJourneySchema = z.strictObject({
   expectedRevision: z.number().int().nonnegative(),
   stage: OnboardingJourneySchema.shape.stage,
-  starterWorkstreamId: z.string().uuid().optional(),
   connectorIds: z.array(OnboardingConnectorSelectionSchema).optional(),
 });
 export type PersonalPresentation = z.infer<typeof PersonalPresentationSchema>;
