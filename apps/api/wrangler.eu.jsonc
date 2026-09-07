@@ -246,7 +246,7 @@
     "consumers": [
       {
         "queue": "avalon-eu-activities",
-        "max_batch_size": 10,
+        "max_batch_size": 1,
         // Matches Global; the reasoning is recorded there.
         "max_batch_timeout": 1,
         "max_retries": 5,
