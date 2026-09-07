@@ -51,6 +51,7 @@ const auth: IdentityAuthContext = {
 };
 
 const identity: PlatformIdentity = {
+  accountOnboarding: { eligible: false, introduced: true, presentation: null, revision: 0 },
   platformUserId,
   googleSubject: "google-subject-1",
   email: "member@example.com",
@@ -131,6 +132,7 @@ class IdentityDatabase {
               timezone: identity.timezone,
               created_at: at,
               platform_user_id: platformUserId,
+              onboarding_eligible: 0, onboarding_introduced: 1, onboarding_revision: 0, presentation_json: null,
             } as T;
           }
           if (record.sql === "SELECT platform_user_id FROM users WHERE id = ?") {

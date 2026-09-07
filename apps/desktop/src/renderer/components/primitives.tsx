@@ -1,3 +1,6 @@
+import { useContext } from 'react';
+import { MemberPresentationContext } from '../lib/member-presentation';
+import { PersonalAvatar } from './personal-avatar';
 import * as AvatarPrimitive from '@radix-ui/react-avatar';
 import * as Dialog from '@radix-ui/react-dialog';
 import * as Select from '@radix-ui/react-select';
@@ -175,6 +178,8 @@ export function Avatar({
   size?: 'small' | 'medium' | 'large';
   title?: string | null;
 }): React.JSX.Element {
+  const presentation = useContext(MemberPresentationContext).get(member.id) ?? member.presentation;
+  if (presentation) return <span className={clsx('avatar', `avatar-${size}`)} title={title ?? undefined}><PersonalAvatar color={presentation.color} avatar={presentation.avatar} initials={presentation.initials} /></span>;
   const initials = member.name
     .split(/\s+/)
     .map((part) => part[0])

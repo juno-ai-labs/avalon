@@ -102,14 +102,14 @@
   /* Rally's own colour. `ink` is the brand drawn as a mark or a label on an
    * ordinary surface, which is a different question from `base`: the
    * chartreuse is a fine fill on white and an illegible label on it. */
-  --av-sys-color-brand-base: #d2822c;
-  --av-sys-color-brand-strong: #b96c1e;
-  --av-sys-color-brand-soft: #c4762a;
-  --av-sys-color-brand-ink: #a2691f;
-  --av-sys-color-brand-wash: #fdf4e8;
-  --av-sys-color-brand-edge: #eccfa8;
-  --av-sys-color-brand-on: #ffffff;
-  --av-sys-color-brand-tint: rgba(210, 130, 44, 0.34);
+  --av-sys-color-brand-base: #ccff00;
+  --av-sys-color-brand-strong: #b8e600;
+  --av-sys-color-brand-soft: #d6ff33;
+  --av-sys-color-brand-ink: #000000;
+  --av-sys-color-brand-wash: #f5ffcc;
+  --av-sys-color-brand-edge: #d6ed7a;
+  --av-sys-color-brand-on: #141414;
+  --av-sys-color-brand-tint: rgba(204, 255, 0, 0.34);
   --av-sys-color-brand-hover: var(--av-sys-color-brand-strong);
 
   /* The hue for links and selection; keyboard focus has its own role. */
@@ -154,7 +154,7 @@
   --av-sys-color-project-gray: #6b7280;
   --av-sys-color-project-brown: #92400e;
   --av-sys-color-project-red: #dc2626;
-  --av-sys-color-project-orange: #ea580c;
+  --av-sys-color-project-orange: #ccff00;
   --av-sys-color-project-yellow: #ca8a04;
   --av-sys-color-project-green: #16a34a;
   --av-sys-color-project-teal: #0d9488;
@@ -524,14 +524,14 @@
   --av-sys-color-border-subtle: var(--av-ref-color-line-1);
   --av-sys-color-border-strong: var(--av-ref-color-line-3);
 
-  --av-sys-color-brand-base: #e8a15c;
-  --av-sys-color-brand-strong: #f0a55a;
-  --av-sys-color-brand-soft: #d29757;
-  --av-sys-color-brand-ink: #e08c3a;
-  --av-sys-color-brand-wash: #1d1409;
-  --av-sys-color-brand-edge: #3a2812;
-  --av-sys-color-brand-on: #140c04;
-  --av-sys-color-brand-tint: rgba(224, 140, 58, 0.34);
+  --av-sys-color-brand-base: #ccff00;
+  --av-sys-color-brand-strong: #b8e600;
+  --av-sys-color-brand-soft: #d6ff33;
+  --av-sys-color-brand-ink: #ffffff;
+  --av-sys-color-brand-wash: #202900;
+  --av-sys-color-brand-edge: #536600;
+  --av-sys-color-brand-on: #141414;
+  --av-sys-color-brand-tint: rgba(204, 255, 0, 0.34);
   --av-sys-color-brand-hover: var(--av-sys-color-brand-strong);
 
   --av-sys-color-accent-base: #7fa8c8;
@@ -568,7 +568,7 @@
   --av-sys-color-project-gray: #6b7280;
   --av-sys-color-project-brown: #92400e;
   --av-sys-color-project-red: #dc2626;
-  --av-sys-color-project-orange: #ea580c;
+  --av-sys-color-project-orange: #ccff00;
   --av-sys-color-project-yellow: #ca8a04;
   --av-sys-color-project-green: #16a34a;
   --av-sys-color-project-teal: #0d9488;

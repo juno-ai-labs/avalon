@@ -528,7 +528,7 @@ export class AuthService {
       `INSERT INTO users (id, google_subject, email, name, avatar_url, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(google_subject) DO UPDATE SET
-         email = excluded.email, name = excluded.name, avatar_url = excluded.avatar_url, updated_at = excluded.updated_at`,
+         email = excluded.email, name = COALESCE(json_extract(users.presentation_json, '$.displayName'), excluded.name), avatar_url = excluded.avatar_url, updated_at = excluded.updated_at`,
     )
       .bind(userId, input.subject, input.email, input.name, input.avatarUrl, at, at)
       .run();

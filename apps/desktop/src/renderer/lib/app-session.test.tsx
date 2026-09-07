@@ -1087,6 +1087,23 @@ describe('single-platform desktop identity routing', () => {
     getWorkspace.mockRestore();
   });
 
+  it('keeps onboarding OAuth completion in the onboarding window', async () => {
+    const workspaceId = '00000000-0000-7000-8000-000000000023';
+    bridge.getSession.mockResolvedValueOnce({ ...globalIdentitySession,
+      workspace: { id: workspaceId, name: 'Workspace A', region: 'global', role: 'owner' } });
+    bridge.reselectActiveWorkspace.mockResolvedValueOnce({ ...globalIdentitySession,
+      workspace: { id: workspaceId, name: 'Workspace A', region: 'global', role: 'owner' } });
+    renderProvider();
+    expect(await screen.findByText('global:Workspace A')).toBeVisible();
+    await act(async () => observedSetPendingConnectorOAuth!({ source: 'onboarding', provider: 'slack',
+      region: 'global', workspaceId, attemptId: 'a'.repeat(43) }));
+    await dispatchDeepLink(
+      `rallywithai://workspace/global/${workspaceId}/auth/complete?connection=1ba39221-dac7-40cc-8f77-a88132740f16&status=connected&attempt=${'a'.repeat(43)}&provider=slack`,
+    );
+    await waitFor(() => expect(screen.getByTestId('pending-connector-attempt')).toHaveTextContent('none'));
+    expect(bridge.openSettings).not.toHaveBeenCalled();
+  });
+
   it('returns from workspace B to same-region workspace A for connector completion', async () => {
     const workspaceA = '00000000-0000-7000-8000-000000000023';
     window.location.hash = '/workstreams/00000000-0000-7000-8000-000000000026';

@@ -1,3 +1,5 @@
+import { OnboardingJourneyService } from '../services/onboarding-journey-service';
+import { OnboardingJourneySchema, UpdateOnboardingJourneySchema } from '@rally/contracts';
 import { Hono, type Context } from "hono";
 import { zValidator } from "../middleware/validation";
 import {
@@ -97,3 +99,7 @@ workspaceRoutes.post("/invitations/accept", zValidator("json", AcceptWorkspaceIn
   await new WorkspaceService(c.env, getAuth(c)).acceptInvitation(c.req.valid("json").token);
   return c.body(null, 204);
 });
+
+workspaceRoutes.get('/onboarding', async (c) => c.json(OnboardingJourneySchema.parse(await new OnboardingJourneyService(c.env, getAuth(c)).get())));
+workspaceRoutes.patch('/onboarding', zValidator('json', UpdateOnboardingJourneySchema), async (c) =>
+  c.json(OnboardingJourneySchema.parse(await new OnboardingJourneyService(c.env, getAuth(c)).get(c.req.valid('json')))));

@@ -1,3 +1,4 @@
+import { AccountOnboardingSchema, UpdateAccountOnboardingSchema } from '@rally/contracts';
 import type {
   RallyDesktopBridge,
   DesktopApplicationSettings,
@@ -140,7 +141,7 @@ function normalizeApiBaseUrl(value: unknown): string | null {
 
 async function browserOnboardingRequest<T>(
   path: string,
-  options: { body?: unknown; method?: 'GET' | 'POST' } = {},
+  options: { body?: unknown; method?: 'GET' | 'POST' | 'PATCH' } = {},
 ): Promise<T> {
   if (!browserSession) throw new Error('Sign in before continuing workspace setup.');
   const response = await fetch(`${browserGlobalApiBaseUrl()}${path}`, {
@@ -350,6 +351,14 @@ const browserBridge: RallyDesktopBridge = {
     browserRefreshToken = null;
     browserAuthAttempts.clear();
     notifyBrowserSession();
+  },
+  async getAccountOnboarding() {
+    return AccountOnboardingSchema.parse(await browserOnboardingRequest('/onboarding/account'));
+  },
+  async updateAccountOnboarding(input) {
+    return AccountOnboardingSchema.parse(await browserOnboardingRequest('/onboarding/account', {
+      method: 'PATCH', body: UpdateAccountOnboardingSchema.parse(input),
+    }));
   },
   async getOnboardingState() {
     // The browser holds no stored set to merge and no identity credential to

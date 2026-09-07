@@ -1,5 +1,7 @@
 import { RESOURCE_SEARCH_MIGRATION_STATEMENTS, ResourceSearchProjectionSchema, ResourceSearchRevisionRequestSchema,
   resourceSearchRevision, nextResourceSearchDueAt, publishResourceSearch, prepareResourceSearch } from './resource-search-projection';
+import { ONBOARDING_JOURNEY_SQL, OnboardingJourneyStore } from './onboarding-journey';
+import { UpdateOnboardingJourneySchema, type OnboardingJourney, type UpdateOnboardingJourney } from '@rally/contracts';
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import {
   ExternalEventEvaluatorV1Schema,
@@ -830,6 +832,7 @@ const WORKSPACE_ALARM_SOURCE_TABLES = new Set([
 
 const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
   "resource_search_versions",
+  "onboarding_journeys",
   "workstream_notification_intents",
   // Converted to typed methods, so a generic statement naming one is a
   // mistake rather than a legacy caller. Refusing it here is what makes the
@@ -2629,6 +2632,10 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   version: 33,
   description: "project resource text through Turbopuffer with durable revision watermarks and existing-content backfill",
   statements: RESOURCE_SEARCH_MIGRATION_STATEMENTS,
+}, {
+  version: 34,
+  description: 'resumable new-user onboarding with scoped connector selections',
+  statements: [ONBOARDING_JOURNEY_SQL],
 }];
 
 interface AutomationDirectoryRow extends Record<string, SqlStorageValue> {
@@ -3781,6 +3788,18 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // dormant member, and re-arming for an instant already past is the one way
     // this object turns into a polling loop.
     await this.refreshProductAlarm({ suppressPastDue: launched === 0 });
+  }
+
+  /** Per-person learning progress stays inside the workspace authority. */
+  async onboardingJourney(input: { workspaceId: string; placementAffinity: WorkspacePlacementAffinity; userId: string; path: 'creator' | 'member'; update?: UpdateOnboardingJourney }): Promise<OnboardingJourney | null> {
+    await this.initialized;
+    this.ensureIdentity(input.workspaceId, input.placementAffinity);
+    z.string().uuid().parse(input.userId);
+    const path = z.enum(['creator', 'member']).parse(input.path);
+    return this.state.storage.transactionSync(() => {
+      const store = new OnboardingJourneyStore(this.state.storage.sql);
+      return input.update ? store.update(input.userId, path, UpdateOnboardingJourneySchema.parse(input.update)) : store.get(input.userId, path);
+    });
   }
 
   /**

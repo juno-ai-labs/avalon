@@ -113,7 +113,7 @@ function invalidateTopic(
   topic: WorkspaceSyncTopic,
 ): void {
   const roots: Record<WorkspaceSyncTopic, readonly (readonly unknown[])[]> = {
-    workspace_profile: [['workspace'], ['workspace-onboarding']],
+    workspace_profile: [['workspace'], ['workspace-onboarding'], ['account-onboarding'], ['onboarding-journey']],
     member_directory: [['workspace-members'], ['workspace-onboarding']],
     invitation_directory: [['workspace-invitations']],
     connector_connections: [
