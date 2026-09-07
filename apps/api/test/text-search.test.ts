@@ -10,7 +10,7 @@ vi.mock("@turbopuffer/turbopuffer", () => ({
 import { asWorkspaceId } from "@rally/contracts";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import { indexSemanticBatch, searchEmbeddingJobs } from "../src/services/search-indexing-pipeline";
-import { literalSubstringPattern, TextSearchIndex, TextSearchModeSchema, workspaceSearchIndex } from "../src/services/text-search";
+import { literalSubstringPattern, searchContentHash, TextSearchIndex, TextSearchModeSchema, workspaceSearchIndex } from "../src/services/text-search";
 
 // Turbopuffer is an external service. Its query semantics are checked separately
 // with a disposable live namespace; these tests prove our authority boundary.
@@ -114,6 +114,11 @@ describe("semantic indexing", () => {
         expect.objectContaining({ record_type: "chunk", chunk_strategies: ["sliding_window"] }),
       ]),
     }));
+  });
+
+  it("distinguishes canonical UTF-16 text that UTF-8 would collapse", async () => {
+    expect(await searchContentHash("\ud800")).not.toBe(await searchContentHash("\ufffd"));
+    expect(await searchContentHash("é")).not.toBe(await searchContentHash("e\u0301"));
   });
 
   it("fans out a document across the approved batch boundary with all source ranges", async () => {
