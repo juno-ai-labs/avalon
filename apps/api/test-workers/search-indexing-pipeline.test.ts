@@ -10,7 +10,7 @@ import { consumeActivityQueue } from '../src/queues/activity-consumer';
 import { seedWorkstreamRoot, seedParticipantMessage } from './helpers/substream-fixture';
 import { searchDocumentId } from '../src/services/text-search';
 import type { Env } from '../src/env';
-import { SearchEmbeddingBatchSchema, SearchSourceReferenceSchema, publishSearchEmbeddingBatches } from '../src/services/search-indexing-jobs';
+import { SearchDocumentJobSchema, SearchEmbeddingBatchSchema, SearchSourceReferenceSchema, publishSearchIndexingJobs } from '../src/services/search-indexing-jobs';
 
 let workspaceId: WorkspaceId;
 let parentId: string;
@@ -124,19 +124,30 @@ async function seedResource(provider = 'avalon_upload') {
   return stub;
 }
 
-async function consume(bodies: unknown[], overrides: Partial<Env> = {}, drainJobs = true) {
+async function consume(bodies: unknown[], overrides: Partial<Env> = {}, drainJobs = true, drainDocuments = true) {
   const firstSend = publish.mock.calls.length;
   const batch = createMessageBatch('avalon-do-runtime-test-activity', bodies.map((body, index) => ({
     id: `search-${index}`, timestamp: new Date(), body, attempts: 1,
   })));
   await consumeActivityQueue(batch, { ...pipelineEnv, ...overrides });
   const result = await getQueueResult(batch, createExecutionContext());
-  if (!drainJobs) return result;
+
   const references = bodies.map((body) => SearchSourceReferenceSchema.safeParse(body)).filter((value) => value.success)
     .map((value) => JSON.stringify(value.data));
+  const documents = publish.mock.calls.slice(firstSend).flatMap(([messages]) => [...messages])
+    .map((message) => SearchDocumentJobSchema.safeParse(message.body)).filter((value) => value.success)
+    .map((value) => value.data).filter((job) => references.includes(JSON.stringify(job.reference)));
+  if (drainDocuments) for (const job of documents) {
+    const child = await consume([job], overrides, drainJobs);
+    expect(child.retryMessages).toEqual([]);
+    expect(child.explicitAcks).toEqual(['search-0']);
+  }
+  if (!drainJobs) return result;
+  const jobReference = bodies.map((body) => SearchDocumentJobSchema.safeParse(body)).filter((value) => value.success)
+    .map((value) => JSON.stringify(value.data.reference));
   const jobs = publish.mock.calls.slice(firstSend).flatMap(([messages]) => [...messages])
     .map((message) => SearchEmbeddingBatchSchema.safeParse(message.body)).filter((value) => value.success)
-    .map((value) => value.data).filter((job) => references.includes(JSON.stringify(job.reference)));
+    .map((value) => value.data).filter((job) => jobReference.includes(JSON.stringify(job.reference)));
   for (const job of jobs) {
     if (overrides.OPENROUTER_API_KEY === '') continue;
     const child = await consume([job], overrides);
@@ -144,6 +155,15 @@ async function consume(bodies: unknown[], overrides: Partial<Env> = {}, drainJob
     expect(child.explicitAcks).toEqual(['search-0']);
   }
   return result;
+}
+
+
+function publishedEmbeddingJobs() {
+  return publish.mock.calls.flatMap(([messages]) => [...messages])
+    .flatMap((message) => {
+      const parsed = SearchEmbeddingBatchSchema.safeParse(message.body);
+      return parsed.success ? [parsed.data] : [];
+    });
 }
 
 const RowsSchema = z.array(z.object({ source: z.string(), text: z.string(), record_type: z.string(),
@@ -156,6 +176,53 @@ function liveRows() {
 }
 
 describe('shared Queue indexing pipeline', () => {
+  it('discovers a multi-page turn without tokenizing and plans only the selected page per delivery', async () => {
+    const stub = env.SUBSTREAM_AGENTS.getByName(conversationObjectName('global', workspaceId, parentId, '0'));
+    const urls = ['https://example.com/first', 'https://example.com/second'];
+    const ids = await Promise.all(urls.map((url) => searchDocumentId('conversation_links', `${parentId}/0/pages`, url)));
+    await runInDurableObject(stub, async (_instance, state) => {
+      seedWorkstreamRoot(state, 1, { workspaceId, workstreamId: parentId });
+      await seedParticipantMessage(state, { id: 'pages', sequence: 1, text: urls.join('\n') });
+      for (const [offset, url] of urls.entries()) state.storage.sql.exec(`INSERT INTO conversation_search_links
+        (id, turn_id, url, label, markdown, captured, deleted, revision)
+        VALUES (?, 'pages', ?, ?, ?, 1, 0, 1)`, ids[offset]!, url, url, `${offset} ${documentBody}`);
+    });
+    const reference = { type: 'search_projection_v1', region: 'global', workspaceId,
+      parentId, substreamId: '0', turnId: 'pages', revision: 1 };
+    const discoveredIds = await stub.searchTurnDocumentIds(reference);
+    expect(discoveredIds).toEqual(expect.arrayContaining(ids));
+    expect(discoveredIds).toHaveLength(3);
+    const tokenize = vi.spyOn(Tokenizer.prototype, 'tokenize');
+    const discovery = await consume([reference], {}, false, false);
+    expect(discovery.explicitAcks).toEqual(['search-0']);
+    expect(tokenize).not.toHaveBeenCalled();
+    expect(writes).toEqual([]);
+    const jobs = publish.mock.calls.flatMap(([messages]) => [...messages])
+      .map((message) => SearchDocumentJobSchema.parse(message.body));
+    expect(jobs).toHaveLength(3);
+    const pageJob = jobs.find((job) => job.documentId === ids[0])!;
+    const loaded = await stub.prepareSearchTurnDocument(reference, pageJob.documentId, false);
+    expect(loaded.documents.map((document) => document.id)).toEqual([ids[0]]);
+    const plan = await consume([pageJob], {}, false);
+    expect(plan.explicitAcks).toEqual(['search-0']);
+    expect(tokenize).toHaveBeenCalled();
+    expect(embeddingInputs).toEqual([]);
+    expect(liveRows().filter((row) => row.record_type === 'document').map((row) => row.text))
+      .toEqual(loaded.documents.map((document) => document.text));
+    expect(publishedEmbeddingJobs().length).toBeGreaterThan(0);
+    expect(publishedEmbeddingJobs().every((job) => job.document.id === ids[0])).toBe(true);
+  });
+
+  it('retries malformed and wrong-region document jobs without touching providers', async () => {
+    const result = await consume([{ type: 'search_embedding_batch_v1', phase: 'document' }, {
+      type: 'search_embedding_batch_v1', phase: 'document', reference: { ...resourceMessage(), region: 'eu' }, documentId: 'document',
+    }]);
+    expect(result.explicitAcks).toEqual([]);
+    expect(result.retryMessages).toEqual([{ msgId: 'search-0' }, { msgId: 'search-1' }]);
+    expect(writes).toEqual([]);
+    expect(publish).not.toHaveBeenCalled();
+  });
+
   it('indexes overlapping Queue deliveries with the real shared tokenizer', async () => {
     await seedResource();
     const firstMessage = resourceMessage();
@@ -200,8 +267,7 @@ describe('shared Queue indexing pipeline', () => {
     await env.PAYLOADS.put('pipeline/body', documentBody.repeat(40));
     const result = await consume([resourceMessage()]);
     expect(result.explicitAcks).toEqual(['search-0']);
-    const jobs = publish.mock.calls.flatMap(([messages]) => [...messages])
-      .map((message) => SearchEmbeddingBatchSchema.parse(message.body));
+    const jobs = publishedEmbeddingJobs();
     expect(jobs.length).toBeGreaterThan(1);
     expect(jobs.every((job) => job.spans.length <= 64)).toBe(true);
     expect(embeddingBatches.map((batch) => batch.length)).toEqual(jobs.map((job) => job.spans.length));
@@ -222,9 +288,9 @@ describe('shared Queue indexing pipeline', () => {
     await seedResource();
     await env.PAYLOADS.put('pipeline/body', documentBody.repeat(40));
     await consume([resourceMessage()], {}, false);
-    const job = SearchEmbeddingBatchSchema.parse([...publish.mock.calls[0]![0]][0]!.body);
+    const job = publishedEmbeddingJobs()[0]!;
     publish.mockClear();
-    await publishSearchEmbeddingBatches(env.ACTIVITY_QUEUE, Array.from({ length: 101 }, () => ({ ...job, spans: job.spans.slice(0, 1) })));
+    await publishSearchIndexingJobs(env.ACTIVITY_QUEUE, Array.from({ length: 101 }, () => ({ ...job, spans: job.spans.slice(0, 1) })));
     expect(publish.mock.calls.length).toBeGreaterThan(1);
     expect(publish.mock.calls.flatMap(([messages]) => [...messages])).toHaveLength(101);
   });
@@ -233,12 +299,12 @@ describe('shared Queue indexing pipeline', () => {
     await seedResource();
     await env.PAYLOADS.put('pipeline/body', documentBody.repeat(40));
     await consume([resourceMessage()], {}, false);
-    const job = SearchEmbeddingBatchSchema.parse([...publish.mock.calls[0]![0]][0]!.body);
+    const job = publishedEmbeddingJobs()[0]!;
     const bytes = new TextEncoder().encode(JSON.stringify({ body: job, contentType: 'json' })).byteLength + 100;
     const count = Math.floor(256_000 / bytes) + 1;
     expect(count).toBeLessThan(100);
     publish.mockClear();
-    await publishSearchEmbeddingBatches(env.ACTIVITY_QUEUE, Array.from({ length: count }, () => job));
+    await publishSearchIndexingJobs(env.ACTIVITY_QUEUE, Array.from({ length: count }, () => job));
     expect(publish.mock.calls.length).toBeGreaterThan(1);
     for (const [messages] of publish.mock.calls) {
       const total = [...messages].reduce((sum, message) => sum + new TextEncoder().encode(JSON.stringify(message)).byteLength + 100, 0);
@@ -250,7 +316,7 @@ describe('shared Queue indexing pipeline', () => {
   it('reclaims only the written generation when canonical text changes during the upsert', async () => {
     await seedResource();
     await consume([resourceMessage()], {}, false);
-    const job = SearchEmbeddingBatchSchema.parse([...publish.mock.calls[0]![0]][0]!.body);
+    const job = publishedEmbeddingJobs()[0]!;
     onWrite = async () => { await env.PAYLOADS.put('pipeline/body', 'changed after write'); };
     expect((await consume([job])).explicitAcks).toEqual(['search-0']);
     expect(liveRows().some((row) => row.record_type === 'chunk')).toBe(true);
@@ -263,8 +329,7 @@ describe('shared Queue indexing pipeline', () => {
     await seedResource();
     await env.PAYLOADS.put('pipeline/body', documentBody.repeat(40));
     expect((await consume([resourceMessage()], {}, false)).explicitAcks).toEqual(['search-0']);
-    const jobs = publish.mock.calls.flatMap(([messages]) => [...messages])
-      .map((message) => SearchEmbeddingBatchSchema.parse(message.body));
+    const jobs = publishedEmbeddingJobs();
     expect(jobs.length).toBeGreaterThan(1);
     writes.length = 0;
     responseModel = 'different-model';
@@ -289,7 +354,7 @@ describe('shared Queue indexing pipeline', () => {
   it('discards obsolete policies without multiplying source backfills and rejects wrong-region children', async () => {
     await seedResource();
     await consume([resourceMessage()], {}, false);
-    const job = SearchEmbeddingBatchSchema.parse([...publish.mock.calls[0]![0]][0]!.body);
+    const job = publishedEmbeddingJobs()[0]!;
     const send = vi.spyOn(env.ACTIVITY_QUEUE, 'send');
     writes.length = 0;
     expect((await consume([{ ...job, chunkPolicy: 'old-policy' }])).explicitAcks).toEqual(['search-0']);
@@ -367,7 +432,7 @@ describe('shared Queue indexing pipeline', () => {
     await seedResource();
     const result = await consume([resourceMessage()], { OPENROUTER_API_KEY: '' });
     expect(result.explicitAcks).toEqual(['search-0']);
-    const job = SearchEmbeddingBatchSchema.parse([...publish.mock.calls[0]![0]][0]!.body);
+    const job = publishedEmbeddingJobs()[0]!;
     const child = await consume([job], { OPENROUTER_API_KEY: '' });
     expect(child.explicitAcks).toEqual([]);
     expect(child.retryMessages).toEqual([{ msgId: 'search-0' }]);
