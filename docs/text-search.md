@@ -58,7 +58,7 @@ by semantic chunk boundaries. Semantic queries search only chunk records.
 
 ### One Queue pipeline
 
-Source deliveries discover canonical document IDs and publish `search_document_v1`
+Source deliveries discover canonical document IDs and publish document-phase
 jobs. Each document delivery captures only its selected page (when needed), writes
 its lexical record, plans its recursive/sliding chunks, and publishes embedding
 batches. Turns with many links therefore do not accumulate all page-planning CPU
@@ -137,7 +137,7 @@ the source job unacknowledged; its retry can safely republish deterministic jobs
 
 Batch Workers reload the canonical text, verify identity, revision, and hash,
 then reconstruct the already-planned ranges. They do not re-chunk the document
-or launch Browser Run captures; source deliveries own link discovery/capture.
+or launch Browser Run captures; source deliveries discover links and document deliveries own capture.
 Jobs created under an older chunk policy are acknowledged without indexing.
 Changing the policy already requires a canonical-source backfill for its new
 semantic namespace; letting every old child schedule it would multiply the work.
@@ -420,7 +420,11 @@ visible and independently retriable.
 
 **Consequences:** The shared 512/128-token chunk algorithm, 64-input embeddings,
 regional routing, canonical generation checks, and Queue settings are unchanged.
-Existing source and embedding jobs remain accepted. New document jobs carry
+Existing source and embedding jobs remain accepted. Document-phase jobs use the
+existing `search_embedding_batch_v1` envelope: old consumers reject the unfamiliar
+strict shape and retry instead of acknowledging an unknown type. Targeted reads
+use distinct RPC method names, so an old object cannot silently ignore a trailing
+argument and return every sibling. New document jobs carry
 references only and always reload current authority. Single unusually large
 sources may still exceed runtime limits; deployment and selective recovery must
 verify those cases rather than infer success from the new job boundary.

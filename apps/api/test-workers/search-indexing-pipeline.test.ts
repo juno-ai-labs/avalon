@@ -198,7 +198,7 @@ describe('shared Queue indexing pipeline', () => {
       .map((message) => SearchDocumentJobSchema.parse(message.body));
     expect(jobs).toHaveLength(3);
     const pageJob = jobs.find((job) => job.documentId === ids[0])!;
-    const loaded = await stub.prepareSearchTurn(reference, false, pageJob.documentId);
+    const loaded = await stub.prepareSearchTurnDocument(reference, pageJob.documentId, false);
     expect(loaded.documents.map((document) => document.id)).toEqual([ids[0]]);
     const plan = await consume([pageJob], {}, false);
     expect(plan.explicitAcks).toEqual(['search-0']);
@@ -206,12 +206,13 @@ describe('shared Queue indexing pipeline', () => {
     expect(embeddingInputs).toEqual([]);
     expect(liveRows().filter((row) => row.record_type === 'document').map((row) => row.text))
       .toEqual(loaded.documents.map((document) => document.text));
+    expect(publishedEmbeddingJobs().length).toBeGreaterThan(0);
     expect(publishedEmbeddingJobs().every((job) => job.document.id === ids[0])).toBe(true);
   });
 
   it('retries malformed and wrong-region document jobs without touching providers', async () => {
-    const result = await consume([{ type: 'search_document_v1' }, {
-      type: 'search_document_v1', reference: { ...resourceMessage(), region: 'eu' }, documentId: 'document',
+    const result = await consume([{ type: 'search_embedding_batch_v1', phase: 'document' }, {
+      type: 'search_embedding_batch_v1', phase: 'document', reference: { ...resourceMessage(), region: 'eu' }, documentId: 'document',
     }]);
     expect(result.explicitAcks).toEqual([]);
     expect(result.retryMessages).toEqual([{ msgId: 'search-0' }, { msgId: 'search-1' }]);
