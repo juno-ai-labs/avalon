@@ -687,6 +687,10 @@ both signals rather than trusting the comment there to survive.
 
 ## Changelog
 
+### 2026-09-07 — Search review corrections
+
+Search traces are admitted when a request starts, retaining the last interaction clock for debounce measurement. Superseded keystrokes that never issue work produce no event. Closing search is distinct from unmounting; cumulative request time includes rejected pages.
+
 ### 2026-09-07 — Measure search from typing through painted results
 
 **What changed:** The existing `renderer_perf_flow` contract accepts

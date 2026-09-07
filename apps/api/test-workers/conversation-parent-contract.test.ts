@@ -1,6 +1,7 @@
-import { WorkstreamObjectClient } from '../src/services/workstream-object-client';
-import { searchDocumentId } from '../src/services/text-search';
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
+import { WorkstreamObjectClient } from '../src/services/workstream-object-client';
+import { WorkstreamDirectoryService } from '../src/services/workstream-directory-service';
+import { searchDocumentId } from '../src/services/text-search';
 
 /**
  * The conversation-parent contract, answered by both parents.
@@ -22,7 +23,7 @@ import { searchDocumentId } from '../src/services/text-search';
 
 import { env } from "cloudflare:workers";
 import { reset, runInDurableObject } from "cloudflare:test";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { asAutomationId, asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId, type UserId } from "@rally/contracts";
 
@@ -224,13 +225,37 @@ function nextFrameOfType(socket: WebSocket, type: string): Promise<Record<string
   });
 }
 
+const originalFetch = globalThis.fetch;
+const externalFetch = vi.fn<typeof fetch>();
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
 beforeEach(async () => {
+  vi.stubGlobal('fetch', externalFetch.mockReset().mockImplementation(originalFetch));
   await reset();
   await seedRegionalDatabase();
   await workspaceStub().initializeWorkspace(WORKSPACE_ID, "wnam");
 });
 
 describe("conversation parent contract", () => {
+  it("returns every searchable scope beyond the bounded directory lookup size", async () => {
+    await seedRoom(WORKSPACE_ROOM_ID, "workspace", [AUTHOR_ID]);
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      const row = state.storage.sql.exec<Record<string, string | number | null>>(
+        "SELECT * FROM workspace_workstream_directory WHERE workstream_id = ?", WORKSPACE_ROOM_ID).one();
+      const columns = Object.keys(row);
+      for (let i = 0; i < 100; i++) {
+        const copy: Record<string, string | number | null> = { ...row, workstream_id: `00000000-0000-7000-8000-${String(i + 1000).padStart(12, '0')}`,
+          source_event_id: `search-scope-${i}` };
+        state.storage.sql.exec(`INSERT INTO workspace_workstream_directory (${columns.join(',')}) VALUES (${columns.map(() => '?').join(',')})`,
+          ...columns.map((column) => copy[column]!));
+      }
+    });
+    const scopes = await new WorkstreamDirectoryService(TEST_ENV, AUTH).searchableIds();
+    expect(scopes).toHaveLength(101);
+    expect(scopes).toContain(WORKSPACE_ROOM_ID);
+    expect(scopes).toContain('00000000-0000-7000-8000-000000001099');
+  });
+
   it("prefilters search scopes and loads independent conversations concurrently while batching links", async () => {
     await seedRoom(PERSONAL_ROOM_ID, "personal", [AUTHOR_ID]);
     await seedRoom(WORKSPACE_ROOM_ID, "workspace", [AUTHOR_ID]);
@@ -250,7 +275,7 @@ describe("conversation parent contract", () => {
     const rows = [...candidates, ...linkIds.map((id) => ({ id, source: 'conversation_links',
       scope_id: PERSONAL_ROOM_ID, source_id: `0/search-turn/${id}`, revision: 1 }))];
     const requests: unknown[] = [];
-    vi.stubGlobal('fetch', async (_input: RequestInfo | URL, init?: RequestInit) => {
+    externalFetch.mockImplementation(async (_input: RequestInfo | URL, init?: RequestInit) => {
       requests.push(JSON.parse(String(init?.body)));
       return Response.json({ rows });
     });
@@ -258,7 +283,7 @@ describe("conversation parent contract", () => {
     const gate = new Promise<void>((resolve) => { release = resolve; });
     let entered = 0;
     const original = WorkstreamObjectClient.prototype.searchTurns;
-    const turns = vi.spyOn(WorkstreamObjectClient.prototype, 'searchTurns').mockImplementation(async function (this: WorkstreamObjectClient, ids) {
+    vi.spyOn(WorkstreamObjectClient.prototype, 'searchTurns').mockImplementation(async function (this: WorkstreamObjectClient, ids) {
       if (++entered === 1) await gate;
       return original.call(this, ids);
     });
@@ -268,8 +293,7 @@ describe("conversation parent contract", () => {
     try {
       // The second canonical conversation read must start before the first finishes.
       await vi.waitFor(() => expect(entered).toBe(2));
-    } finally { release(); }
-    try {
+      release();
       const response = await pending;
       expect(response.results.map((row) => row.id)).toEqual(rows.map((row) => row.id));
       expect(links).toHaveBeenCalledTimes(1);
@@ -284,7 +308,35 @@ describe("conversation parent contract", () => {
       const restricted = await searchWorkspacePage({ ...TEST_ENV, TURBO_PUFFER_DEV_API_KEY: 'test-only' },
         { ...AUTH, userId: MEMBER_ID, sessionId: memberSession }, { query: 'needle', category: 'all', pageSize: 7 });
       expect(restricted.results.map((row) => row.id)).toEqual(['message-1']);
-    } finally { turns.mockRestore(); links.mockRestore(); vi.unstubAllGlobals(); }
+    } finally { release(); await pending.catch(() => {}); }
+  });
+
+  it("rechecks conversation authority after asynchronous content hashing", async () => {
+    await seedRoom(PERSONAL_ROOM_ID, "personal", [AUTHOR_ID, PARTICIPANT_ID]);
+    const text = 'needle revocation boundary';
+    await runInDurableObject(conversation(PERSONAL_ROOM_ID), async (_instance, state) => {
+      await seedParticipantMessage(state, { id: 'hash-turn', sequence: 1, text });
+    });
+    const generation = await searchContentHash(text);
+    externalFetch.mockImplementation(async () => Response.json({ rows: [{ id: 'hash-candidate', source: 'messages',
+      scope_id: PERSONAL_ROOM_ID, source_id: '0/hash-turn', revision: 1, generation }] }));
+    const digest = crypto.subtle.digest.bind(crypto.subtle);
+    let revoked = false;
+    vi.spyOn(crypto.subtle, 'digest').mockImplementation(async (algorithm, data) => {
+      const hashed = await digest(algorithm, data);
+      if (new TextDecoder().decode(data) === JSON.stringify(text)) {
+        const removal = await post(conversation(PERSONAL_ROOM_ID), '/internal/product', {
+          operation: 'remove_participant', auth: AUTH, userId: AUTHOR_ID,
+        });
+        expect(removal.status).toBe(200);
+        await deliverChildEffects(TEST_ENV, conversation(PERSONAL_ROOM_ID));
+        revoked = true;
+      }
+      return hashed;
+    });
+    expect(await searchWorkspace({ ...TEST_ENV, TURBO_PUFFER_DEV_API_KEY: 'test-only' }, AUTH,
+      { query: 'needle', category: 'messages' })).toEqual([]);
+    expect(revoked).toBe(true);
   });
 
   it("publishes only ready private children to their exact roster and revokes them durably", async () => {
@@ -372,8 +424,12 @@ describe("conversation parent contract", () => {
     // Provider hits deliberately include a private child. The real service,
     // parent authority, child RPC and canonical resource reads decide visibility.
     const searchResourceId = crypto.randomUUID();
+    const privateUrl = 'https://example.com/private';
+    const privateLinkId = await searchDocumentId('conversation_links', `${PERSONAL_ROOM_ID}/${reserved.substreamId}/search-private-turn`, privateUrl);
     await runInDurableObject(conversation(PERSONAL_ROOM_ID, reserved.substreamId), async (_instance, state) => {
-      await seedParticipantMessage(state, { id: 'search-private-turn', sequence: 1, text: 'private search phrase' });
+      await seedParticipantMessage(state, { id: 'search-private-turn', sequence: 1, text: `private search phrase ${privateUrl}` });
+      state.storage.sql.exec(`INSERT INTO conversation_search_links (id, turn_id, url, label, markdown, captured, deleted, revision)
+        VALUES (?, 'search-private-turn', ?, ?, 'private search page', 1, 0, 1)`, privateLinkId, privateUrl, privateUrl);
       state.storage.sql.exec(`INSERT INTO workstream_resource_links
         (resource_id, attached_by_user_id, watch_enabled, relationship_type, resource_json, attached_at, updated_at)
         VALUES (?, NULL, 0, 'attachment', '{}', 1, 1)`, searchResourceId);
@@ -389,21 +445,29 @@ describe("conversation parent contract", () => {
     const resourceRevision = await workspaceStub().resourceSearchRevision({ workspaceId: WORKSPACE_ID, resourceId: searchResourceId });
     let source = 'messages';
     let generation: string | undefined;
-    vi.stubGlobal('fetch', async () => Response.json({ rows: [{ id: 'search-candidate', source, generation,
-      scope_id: source === 'messages' ? PERSONAL_ROOM_ID : WORKSPACE_ID,
-      source_id: source === 'messages' ? `${reserved.substreamId}/search-private-turn` : searchResourceId,
-      revision: source === 'messages' ? 1 : resourceRevision }] }));
+    externalFetch.mockImplementation(async () => Response.json({ rows: [{ id: 'search-candidate', source, generation,
+      scope_id: source === 'artifacts' ? WORKSPACE_ID : PERSONAL_ROOM_ID,
+      source_id: source === 'messages' ? `${reserved.substreamId}/search-private-turn` : source === 'conversation_links' ? `${reserved.substreamId}/search-private-turn/${privateLinkId}` : searchResourceId,
+      revision: source === 'artifacts' ? resourceRevision : 1 }] }));
     try {
       expect(await searchWorkspace(searchEnv, AUTH, { query: 'private search', category: 'messages' }))
-        .toMatchObject([{ excerpt: 'private search phrase' }]);
+        .toMatchObject([{ excerpt: `private search phrase ${privateUrl}` }]);
       expect(await searchWorkspace(searchEnv, { ...AUTH, userId: PARTICIPANT_ID },
         { query: 'private search', category: 'messages' })).toEqual([]);
-      generation = await searchContentHash('private search phrase');
+      generation = await searchContentHash(`private search phrase ${privateUrl}`);
       expect(await searchWorkspace(searchEnv, AUTH, { query: 'private search', category: 'messages' }))
-        .toMatchObject([{ excerpt: 'private search phrase' }]);
+        .toMatchObject([{ excerpt: `private search phrase ${privateUrl}` }]);
       generation = await searchContentHash('different private search phrase');
       expect(await searchWorkspace(searchEnv, AUTH, { query: 'private search', category: 'messages' })).toEqual([]);
       generation = undefined;
+      source = 'conversation_links';
+      const participantSession = crypto.randomUUID();
+      await env.DB.prepare(`INSERT INTO sessions (id, user_id, workspace_id, region, revoked_at, expires_at)
+        VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`).bind(participantSession, PARTICIPANT_ID, WORKSPACE_ID).run();
+      expect(await searchWorkspace(searchEnv, AUTH, { query: 'private search', category: 'links' }))
+        .toMatchObject([{ excerpt: expect.stringContaining('private search page') }]);
+      expect(await searchWorkspace(searchEnv, { ...AUTH, userId: PARTICIPANT_ID, sessionId: participantSession },
+        { query: 'private search', category: 'links' })).toEqual([]);
       source = 'artifacts';
       expect(await searchWorkspace(searchEnv, AUTH, { query: 'private search', category: 'artifacts' }))
         .toMatchObject([{ title: 'private search artifact' }]);

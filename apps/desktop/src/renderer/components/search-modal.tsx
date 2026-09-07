@@ -4,6 +4,8 @@ import { useInfiniteQuery } from '@tanstack/react-query';
 import { File, Link, MessageSquare, Search, Shapes } from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
 import type { SearchCategory, SearchRequest, SearchResponse, SearchResult } from '@rally/contracts/search';
+import { Button } from './primitives';
+import { ApiError } from '../lib/api';
 import { isComposingKeyEvent } from '../lib/ime';
 import { formatRelative } from '../lib/format';
 
@@ -46,12 +48,24 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect 
   const normalized = query.trim();
   const trace = useRef<PerfTrace | null>(null);
   const traceTotals = useRef({ request: 0, scope: 0, retrieval: 0, hydration: 0, server: 0 });
+  const inputAt = useRef<number | null>(null);
   const beginSearch = () => {
     trace.current?.end({ outcome: 'superseded' });
-    trace.current = startPerfTrace('workspace_search');
+    trace.current = null;
+    inputAt.current = performance.now();
     traceTotals.current = { request: 0, scope: 0, retrieval: 0, hydration: 0, server: 0 };
   };
-  useEffect(() => () => { trace.current?.end({ outcome: 'unmounted' }); trace.current = null; }, [open, workspaceId]);
+  useEffect(() => {
+    if (!open) { trace.current?.end({ outcome: 'closed' }); trace.current = null; inputAt.current = null; }
+  }, [open]);
+  const traceWorkspace = useRef(workspaceId);
+  useEffect(() => {
+    if (traceWorkspace.current !== workspaceId) {
+      trace.current?.end({ outcome: 'superseded' }); trace.current = null; inputAt.current = null;
+      traceWorkspace.current = workspaceId;
+    }
+  }, [workspaceId]);
+  useEffect(() => () => { trace.current?.end({ outcome: 'unmounted' }); trace.current = null; }, []);
   const [settledQuery, setSettledQuery] = useState('');
   useEffect(() => {
     // Same typing delay as the conversation resource picker.
@@ -63,6 +77,9 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect 
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (page: SearchResponse) => page.nextCursor ?? undefined,
     queryFn: async ({ signal, pageParam }): Promise<SearchResponse> => {
+      if (!pageParam && !trace.current) {
+        trace.current = startPerfTrace('workspace_search', { startedAt: inputAt.current ?? performance.now() });
+      }
       const currentTrace = trace.current;
       const totals = traceTotals.current;
       if (!pageParam) currentTrace?.mark('search_debounce');
@@ -89,7 +106,9 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect 
     gcTime: 0,
     retry: false,
   });
-  const results = open && normalized && settledQuery === normalized && (!response.isFetching || response.isFetchingNextPage) && !response.isError
+  const continuationFailed = response.isFetchNextPageError
+    && (!(response.error instanceof ApiError) || response.error.status >= 500);
+  const results = open && normalized && settledQuery === normalized && (!response.isFetching || response.isFetchingNextPage) && (!response.isError || continuationFailed)
     ? [...new Map((response.data?.pages.flatMap((page) => page.results) ?? []).map((result) => [result.id, result])).values()] : [];
   useEffect(() => {
     if (!open || !normalized || settledQuery !== normalized || response.isFetching || !response.isFetched || (results.length === 0 && response.hasNextPage && !response.isError)) return;
@@ -105,14 +124,14 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect 
     return () => { cancelAnimationFrame(first); cancelAnimationFrame(second); };
   }, [open, normalized, settledQuery, response.isFetching, response.isFetched, response.isError, results.length, response.hasNextPage]);
   const loadMore = () => {
-    if (response.hasNextPage && !response.isFetching && !response.isError) void response.fetchNextPage();
+    if (open && settledQuery === normalized && response.hasNextPage && !response.isFetching && (!response.isError || continuationFailed)) void response.fetchNextPage({ cancelRefetch: false });
   };
   useEffect(() => {
     // A fully rejected candidate page is not an empty search. Follow its cursor
     // until a current authorized result is visible or the provider is exhausted.
     if (open && settledQuery === normalized && response.hasNextPage && !response.isFetching
       && !response.isError && results.length === 0) void response.fetchNextPage();
-  }, [open, settledQuery, normalized, response.hasNextPage, response.isFetching, response.isError, response.fetchNextPage, results.length]);
+  }, [open, settledQuery, normalized, response.hasNextPage, response.isFetching, response.isError, response.fetchNextPage, results.length, response.data?.pages.length]);
   const active = Math.min(selected, Math.max(0, results.length - 1));
   useEffect(() => {
     list.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
@@ -178,10 +197,14 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect 
               {index < 9 && <kbd aria-hidden="true">⌘{index + 1}</kbd>}
             </div>;
           })}
-          {response.hasNextPage && <button type="button" onClick={loadMore} disabled={response.isFetching}>
-            {response.isFetchingNextPage ? 'Loading more…' : 'Load more results'}
-          </button>}
         </div>
+        {settledQuery === normalized && response.hasNextPage && (!response.isError || continuationFailed) && <div className="rally-search-footer">
+          {continuationFailed && <div role="status">More results could not be loaded. Please try again.</div>}
+          <Button type="button" onClick={loadMore} aria-disabled={response.isFetching}
+            onMouseDown={(event) => event.preventDefault()}>
+            {response.isFetchingNextPage ? 'Loading more…' : continuationFailed ? 'Retry loading more results' : 'Load more results'}
+          </Button>
+        </div>}
         {results.length === 0 && <div className="rally-search-state" role="status">
           {!normalized ? 'Search messages, links, artifacts, and files'
             : (response.isFetching || settledQuery !== normalized) ? 'Searching…'

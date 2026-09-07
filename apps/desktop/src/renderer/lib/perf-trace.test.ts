@@ -18,13 +18,13 @@ function traceLines(spy: ConsoleSpy): Array<Record<string, unknown>> {
 describe('renderer performance tracing', () => {
   it('reports search phase timings without queries or result contents', () => {
     reportTelemetryProductIntent.mockClear();
-    const trace = startPerfTrace('workspace_search');
+    const trace = startPerfTrace('workspace_search', { startedAt: performance.now() - 250 });
     trace.mark('search_debounce');
     trace.mark('search_request');
     trace.mark('search_render');
-    trace.end({ searchScopeMs: 10, searchRetrievalMs: 20, searchHydrationMs: 30, searchServerMs: 65 });
+    trace.end({ searchRequestMs: 75, searchScopeMs: 10, searchRetrievalMs: 20, searchHydrationMs: 30, searchServerMs: 65 });
     expect(reportTelemetryProductIntent).toHaveBeenCalledWith(expect.objectContaining({
-      flow: 'workspace_search', searchDebounceMs: expect.any(Number), searchRequestMs: expect.any(Number),
+      flow: 'workspace_search', searchDebounceMs: expect.any(Number), searchRequestMs: 75,
       searchRenderMs: expect.any(Number), searchScopeMs: 10, searchRetrievalMs: 20,
       searchHydrationMs: 30, searchServerMs: 65,
     }));
