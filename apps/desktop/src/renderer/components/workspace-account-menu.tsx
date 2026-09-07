@@ -4,11 +4,8 @@ import type { WorkspaceAttention } from '@rally/contracts';
 import {
   Check,
   ChevronDown,
-  CircleHelp,
-  Info,
   LoaderCircle,
   LogOut,
-  Megaphone,
   Plus,
   Settings,
 } from 'lucide-react';
@@ -23,7 +20,6 @@ import { desktopWorkspaceIdentityKey } from '../../common/desktop';
 import { AccountSignInSupersededError, FINISH_SIGN_IN_IN_BROWSER, type AccountActionProgress } from '../lib/app-session';
 import type { WorkspaceMember } from '../lib/types';
 import { formatRelative } from '../lib/format';
-import { desktopBridge } from '../lib/platform';
 import { uuidV7 } from '../lib/telemetry';
 import { Avatar, Button, Modal } from './primitives';
 
@@ -163,11 +159,6 @@ export function WorkspaceAccountMenu({
     ? 'attention in another workspace'
     : backgroundHasAttention ? 'unread activity in another workspace' : null;
   const multipleRegions = new Set(workspaces.map((workspace) => workspace.region)).size > 1;
-  const openPublicPage = (path: string): void => {
-    void desktopBridge().getRuntimeConfig().then(({ webBaseUrl }) => (
-      desktopBridge().openExternal(new URL(path, `${webBaseUrl.replace(/\/$/u, '')}/`).toString())
-    )).catch(() => undefined);
-  };
 
   useEffect(() => {
     if (!promptedInvitation) return;
@@ -252,31 +243,12 @@ export function WorkspaceAccountMenu({
             side="top"
             sideOffset={8}
           >
-            {presentation === 'grok' ? (
-              <>
-                <DropdownMenu.Item className="menu-item account-menu-item" onSelect={onOpenSettings}>
-                  <Settings aria-hidden="true" />
-                  <span>Settings</span>
-                </DropdownMenu.Item>
-                <DropdownMenu.Item className="menu-item account-menu-item" onSelect={() => openPublicPage('/')}>
-                  <Info aria-hidden="true" />
-                  <span>About</span>
-                </DropdownMenu.Item>
-                <DropdownMenu.Item className="menu-item account-menu-item" onSelect={() => openPublicPage('/support/')}>
-                  <CircleHelp aria-hidden="true" />
-                  <span>Help Center</span>
-                </DropdownMenu.Item>
-                <DropdownMenu.Item className="menu-item account-menu-item" onSelect={() => openPublicPage('/support/')}>
-                  <Megaphone aria-hidden="true" />
-                  <span>Send Feedback</span>
-                </DropdownMenu.Item>
-                <DropdownMenu.Separator className="menu-separator account-menu-separator" />
-                <DropdownMenu.Item className="menu-item account-menu-item" onSelect={onSignOut}>
-                  <LogOut aria-hidden="true" />
-                  <span>Log out</span>
-                </DropdownMenu.Item>
-              </>
-            ) : null}
+            {presentation === 'grok' && (
+              <DropdownMenu.Item className="menu-item account-menu-item" onSelect={onOpenSettings}>
+                <Settings aria-hidden="true" />
+                <span>Settings</span>
+              </DropdownMenu.Item>
+            )}
             {enabled && (
               <>
                 <DropdownMenu.Label className="menu-label workspace-menu-section">Workspaces</DropdownMenu.Label>
@@ -362,18 +334,29 @@ export function WorkspaceAccountMenu({
                     </span>
                   </DropdownMenu.Item>
                 ))}
+                {presentation === 'workspace' && (
                   <DropdownMenu.Item className="menu-item" onSelect={() => {
                     setActionError(null);
                     setCreating(true);
                   }}>
-                  <Plus size={14} /> Create a workspace
-                </DropdownMenu.Item>
+                    <Plus size={14} /> Create a workspace
+                  </DropdownMenu.Item>
+                )}
                 {staleAt && (
                   <DropdownMenu.Label className="menu-label workspace-counts-stale">
                     Counts last updated {formatRelative(staleAt)}
                   </DropdownMenu.Label>
                 )}
-                <DropdownMenu.Separator className="menu-separator" />
+                {presentation === 'workspace' && <DropdownMenu.Separator className="menu-separator" />}
+              </>
+            )}
+            {presentation === 'grok' && (
+              <>
+                <DropdownMenu.Separator className="menu-separator account-menu-separator" />
+                <DropdownMenu.Item className="menu-item account-menu-item" onSelect={onSignOut}>
+                  <LogOut aria-hidden="true" />
+                  <span>Log out</span>
+                </DropdownMenu.Item>
               </>
             )}
             {presentation === 'workspace' && (
