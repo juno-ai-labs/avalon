@@ -6580,3 +6580,69 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 .rally-search-result kbd { font: inherit; font-size: 11px; color: var(--av-sys-color-text-subtle); background: var(--av-sys-color-surface-raised); border-radius: 4px; padding: 1px 4px; }
 .rally-search-footer { display: flex; flex-direction: column; gap: 8px; padding: 8px 12px 12px; color: var(--av-sys-color-text-subtle); font-size: 13px; }
 .rally-search-state { position: absolute; top: 126px; left: 16px; right: 16px; color: var(--av-sys-color-text-subtle); font-size: 13px; text-align: center; pointer-events: none; }
+
+/* Grok Bot 0.44.0 pinned-tile metrics; see automation-lifecycle.md.
+ * Keep one horizontal row instead of the reference auto-fit grid. */
+.sidebar-automation-strip {
+  display: flex;
+  flex-shrink: 0;
+  margin-inline: 12px;
+  min-width: 0;
+  gap: 8px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  justify-content: safe center;
+  padding: 14px 0 18px;
+  scrollbar-width: thin;
+}
+.sidebar-automation-strip > .sidebar-context-target { flex: 0 0 80px; min-width: 0; }
+.sidebar-row.automation-tile {
+  align-items: center;
+  border: 0;
+  border-radius: 10px;
+  color: var(--av-sys-color-text-default);
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 4px 4px;
+  text-align: center;
+  width: 100%;
+}
+.sidebar-row.automation-tile:hover { background: var(--av-cmp-row-background-hover); }
+.sidebar-row.automation-tile.is-active,
+.sidebar-row.automation-tile.is-active:hover { background: var(--av-cmp-row-background-selected); }
+.sidebar-row.automation-tile:focus-visible { outline-offset: -2px; }
+.sidebar-automation-strip > .sidebar-context-target:only-child { flex-basis: auto; min-width: 80px; max-width: 100px; }
+.automation-tile-glyph { display: block; height: 60px; position: relative; width: 60px; }
+.automation-glyph { color: var(--av-sys-color-text-on-inverse); display: block; height: 100%; width: 100%; }
+.automation-tile-name { font-size: 11px; font-weight: 400; letter-spacing: .005em; line-height: 16px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.automation-tile-state {
+  background: var(--av-sys-color-surface-default);
+  border-radius: var(--av-sys-size-radius-pill);
+  bottom: 0;
+  height: 14px;
+  position: absolute;
+  right: 0;
+  width: 14px;
+}
+.automation-tile-state .status-dot {
+  box-shadow: none;
+  height: 8px;
+  inset: auto;
+  left: 50%;
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 8px;
+}
+.automation-tile-state.active .status-dot { background: var(--av-sys-color-success-base); }
+.automation-tile-state.paused .status-dot { background: var(--av-sys-color-workstream-stopped); }
+.automation-tile-state.draft .status-dot { background: transparent; border: 1px dashed var(--av-sys-color-text-muted); }
+.grokbot-shell .sidebar.is-compact .sidebar-automation-strip > .sidebar-context-target { flex-basis: 54px; }
+.grokbot-shell .sidebar.is-compact .automation-tile-glyph { height: 36px; width: 36px; }
+.grokbot-shell .sidebar.is-compact .automation-tile-name { display: none; }
+
+.grokbot-shell .sidebar-rail-actions { display: flex; flex-direction: column; align-items: center; flex-shrink: 0; }
+.grokbot-shell .sidebar-rail-actions .sidebar-search { width: 54px; height: 44px; padding: 0; justify-content: center; background: transparent; box-shadow: none; }
+.grokbot-shell .sidebar-rail-actions .sidebar-search > span { display: none; }
+.grokbot-shell .sidebar-rail-actions .sidebar-search > svg { width: 19px; height: 19px; }
+.grokbot-shell .sidebar-rail-actions .sidebar-search:hover { background: var(--av-cmp-row-background-hover); }
