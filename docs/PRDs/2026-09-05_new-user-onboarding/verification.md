@@ -35,3 +35,20 @@ The four-scene explainer, editable draft-first requests and contextual private/s
 - Final identity tests also cover a delayed regional projection retaining the newer chosen name.
 
 The final integration also passed repository lint (zero warnings) and typecheck. Screenshot artifacts are retained in the task visualizations directory. No PR or deployment was performed.
+
+
+## 2026-09-07 final flow and PR review fixes
+
+The final requested flow supersedes the historical checks above: three animated
+introductions, creator workspace/personal connectors, color/name/initials with a
+fixed circle, then manual invitation chips and New. Members finish after their
+profile. The first-task screen, coaching, and unused discovery API are removed.
+
+Review regression checks cover partial profile updates, equal-revision regional
+projection, path-specific transitions, identity-service failure, refreshed profile
+drafts, scoped selections across refreshes, and invitation response-loss recovery.
+Removing the profile merge and no-op projection guard made their real-migration
+tests fail. Permitting creators to bypass invitations made the workerd test fail.
+The fixes were restored. Bright avatar initials and swatch checks were inspected
+in light and dark Electron windows using the final components and local fixtures.
+External OAuth and email delivery remain credentialed release checks.

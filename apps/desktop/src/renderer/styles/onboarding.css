@@ -9,7 +9,7 @@ html[data-personal-color='violet'] { --personal-color: var(--av-sys-color-projec
 html[data-personal-color='slate'] { --personal-color: var(--av-sys-color-project-gray); }
 html[data-personal-color] {
   --av-cmp-row-background-selected: color-mix(in srgb, var(--personal-color) 17%, transparent);
-  --av-sys-color-accent-base: var(--personal-color);
+  --av-sys-color-accent-base: color-mix(in srgb, var(--personal-color) 35%, var(--av-sys-color-text-default));
   --av-sys-color-accent-strong: color-mix(in srgb, var(--personal-color), var(--av-sys-color-text-default) 20%);
   --av-sys-color-accent-soft: color-mix(in srgb, var(--personal-color), var(--av-sys-color-surface-canvas) 20%);
   --av-sys-color-accent-wash: color-mix(in srgb, var(--personal-color) 10%, var(--av-sys-color-surface-canvas));

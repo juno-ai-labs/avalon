@@ -33,7 +33,7 @@ export class OnboardingJourneyStore {
     if ((!input.connectorIds || JSON.stringify(input.connectorIds) === JSON.stringify(current.connectorIds)) && current.stage === input.stage && (!input.starterWorkstreamId || current.starterWorkstreamId === input.starterWorkstreamId)) return current;
     if (current.revision !== input.expectedRevision) return null;
     const next: Record<OnboardingJourney['stage'], OnboardingJourney['stage'][]> = {
-      connectors: ['connectors', 'profile', 'people'], people: ['complete'], profile: ['people', 'complete'],
+      connectors: path === 'creator' ? ['connectors', 'profile'] : [], people: path === 'creator' ? ['complete'] : [], profile: path === 'creator' ? ['people'] : ['complete'],
       example: ['example', 'complete', 'skipped'], complete: [], skipped: ['complete'],
     };
     if (!next[current.stage].includes(input.stage)) return null;

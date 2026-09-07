@@ -1,5 +1,3 @@
-import { teammatesFromCalendarPage } from './onboarding-teammates';
-import type { DiscoverOnboardingTeammates } from '@rally/contracts';
 import { RALLY_HEADERS } from "@rally/contracts/http-headers";
 import {
   CUSTOM_MCP_CONNECTOR_TYPE,
@@ -1587,28 +1585,6 @@ export class ConnectionService {
       });
     }
     throw new ApiError(422, "reconnect_not_supported", "This connection does not use OAuth reconnect");
-  }
-
-  async discoverOnboardingTeammates(input: DiscoverOnboardingTeammates, signal: AbortSignal) {
-    const auth = this.requireAuth();
-    const connection = await this.loadVisible(input.connectionId);
-    if (connection.connector_type !== 'google' || connection.scope !== 'personal' || connection.owner_user_id !== auth.userId || connection.status !== 'healthy') {
-      throw new ApiError(403, 'personal_calendar_required', 'Choose your own connected Google Calendar account.');
-    }
-    const context = await this.context(connection);
-    if (!context.grantedScopes.includes('calendar.read')) throw new ApiError(409, 'calendar_access_required', 'Connect Google Calendar to find teammates.');
-    const adapter = this.registry().get('google');
-    const result = await withAuthorizedConnection(this.env, { connection: context, adapter, signal },
-      (authorized) => adapter.executeTool('calendar.list_events', {
-        calendarId: 'primary', timeMin: input.timeMin, timeMax: input.timeMax,
-        ...(input.pageToken ? { pageToken: input.pageToken } : {}),
-      }, { connection: authorized, principal: { type: 'user', userId: auth.userId }, signal }));
-    const members = await this.env.DB.prepare(`SELECT u.email FROM users u JOIN workspace_members m ON m.user_id = u.id
-      WHERE m.workspace_id = ? AND m.status = 'active'`).bind(auth.workspaceId).all<{ email: string }>();
-    const invitations = await this.env.DB.prepare(`SELECT email FROM workspace_invitations
-      WHERE workspace_id = ? AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > ?`)
-      .bind(auth.workspaceId, new Date().toISOString()).all<{ email: string }>();
-    return teammatesFromCalendarPage(result.output, new Set([...members.results, ...invitations.results].map((row) => row.email.toLowerCase())));
   }
 
   async test(id: string) {
