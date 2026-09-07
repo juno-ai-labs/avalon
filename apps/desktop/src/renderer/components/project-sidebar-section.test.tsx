@@ -153,7 +153,7 @@ describe('the Projects sidebar section', () => {
       expect(within(dialog).getByRole('button', { name })).toBeInTheDocument();
     }
     for (const color of PROJECT_COLOR_KEYS) {
-      const name = `${color[0]!.toUpperCase()}${color.slice(1)}`;
+      const name = color === 'orange' ? 'Neon yellow' : `${color[0]!.toUpperCase()}${color.slice(1)}`;
       expect(within(dialog).getByRole('button', { name })).toBeInTheDocument();
     }
     expect(within(dialog).getByRole('button', { name: 'Gray' })).toHaveAttribute('aria-pressed', 'true');
