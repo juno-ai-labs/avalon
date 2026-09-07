@@ -4445,7 +4445,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   }
 
   /** Internal Queue consumer entrypoint; never mounted on the public API. */
-  async prepareSearchTurn(input: unknown, captureLinks = true) {
+  async prepareSearchTurn(input: unknown, captureLinks = true, documentId?: string) {
     await this.storageReady;
     const request = SearchProjectionMessageSchema.parse(input);
     const identity = this.objectStore.identity();
@@ -4454,12 +4454,12 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       || request.substreamId !== this.externalSubstreamId()) throw new Error("search_projection_identity_mismatch");
     const links = await prepareConversationLinks(this.state.storage.sql, this.env,
       { ...identity, substreamId: request.substreamId }, request.turnId,
-      () => this.transcript.participantTurn(request.turnId), captureLinks);
+      () => this.transcript.participantTurn(request.turnId), captureLinks, documentId);
     // Capture awaits external I/O, so read the message only after extraction.
     const turn = this.transcript.participantTurn(request.turnId);
     const sourceId = `${request.substreamId}/${request.turnId}`;
     const id = await searchDocumentId("messages", identity.parentId, sourceId);
-    links.documents.unshift({ id, source: "messages", sourceId, scopeId: identity.parentId,
+    if (documentId === undefined || documentId === id) links.documents.unshift({ id, source: "messages", sourceId, scopeId: identity.parentId,
       revision: turn?.revision ?? request.revision,
       text: turn?.entryKind === "conversation"
         ? turn.blocks.filter((block) => block.type === "text").map((block) => block.text).join("\n") : null });
