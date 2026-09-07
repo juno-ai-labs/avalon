@@ -701,6 +701,10 @@ signals, never by weakening policy or deadline tests.
 
 ## Changelog
 
+### 2026-09-07 — Search review corrections
+
+Search emits a flow only for an issued request, retaining its original keystroke timestamp. This avoids counting canceled debounce inputs as searches while preserving the complete user-visible latency.
+
 ### 2026-09-07 — Measure search from typing through painted results
 
 **What changed:** The existing `renderer_perf_flow` contract accepts

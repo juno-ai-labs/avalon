@@ -28,9 +28,9 @@ searchRoutes.post('/', zValidator('json', SearchRequestSchema), async (c) => {
   if (current.workspaceId !== auth.workspaceId || current.userId !== auth.userId || !current.role) {
     throw new ApiError(403, 'search_access_revoked', 'Workspace access has changed');
   }
-  const response = SearchResponseSchema.parse(results);
-  if (response.timings) response.timings.serverMs = performance.now() - started;
-  return c.json(SearchResponseSchema.parse(response));
+  return c.json(SearchResponseSchema.parse({ ...results,
+    ...('timings' in results ? { timings: { ...results.timings, serverMs: performance.now() - started } } : {}),
+  }));
 });
 
 searchRoutes.get('/resources/:id/preview', zValidator('param', z.strictObject({ id: IdSchema })), async (c) => {

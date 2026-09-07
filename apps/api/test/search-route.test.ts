@@ -53,6 +53,17 @@ describe('member search route', () => {
     expect(providerQuery).toHaveBeenCalledTimes(1);
   });
 
+  it('validates pagination and returns timed resource pages at the HTTP boundary', async () => {
+    const { request } = fixture();
+    providerQuery.mockResolvedValue({ rows: [] });
+    const response = await request({ query: 'needle', category: 'files', pageSize: 7, cursor: 'authorized-id' });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ results: [], nextCursor: null, timings: {
+      scopeMs: expect.any(Number), retrievalMs: expect.any(Number), hydrationMs: expect.any(Number), serverMs: expect.any(Number),
+    } });
+    expect((await request({ query: 'needle', category: 'files', pageSize: 51 })).status).toBe(400);
+  });
+
   it('refuses a member revoked while the external search is in flight', async () => {
     const { db, request } = fixture();
     providerQuery.mockImplementation(async () => {

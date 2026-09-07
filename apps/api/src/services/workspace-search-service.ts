@@ -55,8 +55,7 @@ export async function searchWorkspacePage(env: Env, auth: AuthContext, request: 
           await conversation.authorizeViewer(group.parentId, group.substreamId);
           const record = await new WorkstreamObjectClient(env, auth, group.parentId, group.substreamId)
             .searchTurns(group.candidates.map((candidate) => candidate.turnId));
-          // Recheck after the awaited canonical read, once per conversation.
-          await conversation.authorizeViewer(group.parentId, group.substreamId);
+          const validated = new Map<string, SearchResult>();
           for (const candidate of group.candidates) {
             const turn = record.turns.find((value) => value.turnId === candidate.turnId);
             if (!turn || turn.revision !== candidate.revision) continue;
@@ -64,7 +63,7 @@ export async function searchWorkspacePage(env: Env, auth: AuthContext, request: 
             if (candidate.generation && await searchContentHash(text) !== candidate.generation) continue;
             const passage = matchingPassage(text, literalMatchRanges(text, request.query), PREVIEW_CONTEXT_CHARACTERS);
             if (!passage) continue;
-            results.set(candidate.id, {
+            validated.set(candidate.id, {
               id: candidate.id, category: 'messages', title: record.title, sourceLabel: record.title,
               occurredAt: turn.createdAtUtc, revision: String(turn.revision),
               excerpt: passage.excerpt, excerptStart: passage.excerptStart, highlights: passage.highlights,
@@ -72,6 +71,9 @@ export async function searchWorkspacePage(env: Env, auth: AuthContext, request: 
                 turnId: turn.turnId, transcriptSequence: turn.transcriptSequence, range: passage.range },
             });
           }
+          // Hashing is asynchronous too: authorize after all canonical validation.
+          await conversation.authorizeViewer(group.parentId, group.substreamId);
+          for (const [id, result] of validated) results.set(id, result);
         } catch (error) { if (!denied(error)) throw error; }
       }));
       return results;
@@ -96,18 +98,21 @@ export async function searchWorkspacePage(env: Env, auth: AuthContext, request: 
           await conversation.authorizeViewer(group.parentId, group.substreamId);
           const record = await new WorkstreamObjectClient(env, auth, group.parentId, group.substreamId)
             .searchLinks(group.candidates.map(({ turnId, linkId }) => ({ turnId, linkId })));
-          await conversation.authorizeViewer(group.parentId, group.substreamId);
+          const validated = new Map<string, SearchResult>();
           for (const { candidate, linkId } of group.candidates) {
             const link = record.links.find((value) => value.linkId === linkId)?.link;
             if (!link || link.revision !== candidate.revision) continue;
             if (candidate.generation && await searchContentHash(link.text) !== candidate.generation) continue;
             const passage = matchingPassage(link.text, literalMatchRanges(link.text, request.query), PREVIEW_CONTEXT_CHARACTERS);
             if (!passage) continue;
-            results.set(candidate.id, { id: candidate.id, category: 'links', title: link.label,
+            validated.set(candidate.id, { id: candidate.id, category: 'links', title: link.label,
               sourceLabel: record.title, occurredAt: null, revision: String(link.revision),
               excerpt: passage.excerpt, excerptStart: passage.excerptStart, highlights: passage.highlights,
               location: { kind: 'link', url: link.url, range: passage.range } });
           }
+          // Hashing is asynchronous too: authorize after all canonical validation.
+          await conversation.authorizeViewer(group.parentId, group.substreamId);
+          for (const [id, result] of validated) results.set(id, result);
         } catch (error) { if (!denied(error)) throw error; }
       }));
       return results;
