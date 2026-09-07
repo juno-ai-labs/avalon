@@ -37,6 +37,7 @@ mac:
       to: app-icons
       filter:
         - "*.icns"
+        - "manifest.json"
     - from: native/set-application-icon.js
       to: native/set-application-icon.js
     # Both renditions ship: `nativeImage` resolves the `@2x` sibling by name at
