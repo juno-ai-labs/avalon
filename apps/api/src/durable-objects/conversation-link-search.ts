@@ -72,7 +72,7 @@ export function readConversationSearchLink(sql: SqlStorage, id: string, turn: Tr
 /** Called by the durable projection Queue, never by message admission. */
 export async function prepareConversationLinks(sql: SqlStorage, env: Env,
   identity: { workspaceId: string; parentId: string; substreamId: string }, turnId: string,
-  readTurn: () => TranscriptTurn | null,
+  readTurn: () => TranscriptTurn | null, capture = true,
 ): Promise<SearchDocumentBatch> {
   const turn = readTurn();
   const links = turn ? conversationLinks(turn) : new Map<string, string>();
@@ -91,7 +91,7 @@ export async function prepareConversationLinks(sql: SqlStorage, env: Env,
   }
   let captureFailed = false;
   for (const row of sql.exec<LinkRow>('SELECT * FROM conversation_search_links WHERE turn_id = ?', turnId).toArray()) {
-    if (row.deleted) continue;
+    if (!capture || row.deleted) continue;
     if (row.captured) continue;
     try { assertSafePublicUrl(row.url); } catch { continue; }
     try {
