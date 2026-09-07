@@ -7,9 +7,9 @@ vi.mock("@turbopuffer/turbopuffer", () => ({
   },
 }));
 
+import { asWorkspaceId } from "@rally/contracts";
 import { createTestEnv } from "./helpers/cloudflare-test";
-import { semanticChunks } from "../src/services/semantic-chunks";
-import { indexSemanticDocument } from "../src/services/search-indexing-pipeline";
+import { indexSemanticBatch, searchEmbeddingJobs } from "../src/services/search-indexing-pipeline";
 import { literalSubstringPattern, TextSearchIndex, TextSearchModeSchema, workspaceSearchIndex } from "../src/services/text-search";
 
 // Turbopuffer is an external service. Its query semantics are checked separately
@@ -73,6 +73,18 @@ describe("text search authority boundary", () => {
     expect(provider.query).not.toHaveBeenCalled();
   });
 
+  it("keeps pre-fan-out semantic namespaces readable without hiding other provider errors", async () => {
+    const missing = Object.assign(new Error('attribute "generation" not found in schema'), { status: 400 });
+    provider.query.mockRejectedValueOnce(missing).mockResolvedValueOnce({ rows: [] });
+    const sources = [{ source: "note", scopeIds: ["private"], load: async () => new Map() }];
+    expect(await index.query(sources, { query: "topic", mode: "semantic", limit: 10, vector: [1, 0] })).toEqual([]);
+    expect(provider.query.mock.calls[1]![0].include_attributes).not.toContain("generation");
+    provider.query.mockRejectedValueOnce(Object.assign(new Error("unrelated bad request"), { status: 400 }));
+    await expect(index.query(sources, { query: "topic", mode: "semantic", limit: 10, vector: [1, 0] }))
+      .rejects.toThrow("search_index_query_failed");
+    expect(provider.query).toHaveBeenCalledTimes(3);
+  });
+
   it("escapes glob operators in literal substring input", () => {
     expect(literalSubstringPattern("a*b? [c] {d} \\e")).toBe("*a\\*b\\? \\[c\\] \\{d\\} \\\\e*");
   });
@@ -80,91 +92,101 @@ describe("text search authority boundary", () => {
 
 describe("semantic indexing", () => {
   const index = new TextSearchIndex({ apiKey: "test", region: "gcp-us-west1", namespace: "test" });
+  const reference = { type: "resource_search_projection_v1" as const, region: "global" as const,
+    workspaceId: asWorkspaceId("00000000-0000-7000-8000-000000000001"), resourceId: "00000000-0000-7000-8000-000000000002" };
+  const document = { id: "test-document", source: "note", sourceId: "n1", scopeId: "private", revision: 3, text: "alpha\n\nbeta\n\ngamma" };
+  const policy = { maxTokens: 12, overlapTokens: 4, countTokens: (text: string) => text.length };
+  const load = async () => ({ documents: [document], retry: false });
+  const vectors = (texts: string[]) => texts.map(() => Array.from({ length: 1024 }, () => 1));
   beforeEach(() => {
     vi.resetAllMocks();
     provider.write.mockResolvedValue({});
+    provider.query.mockResolvedValue({ aggregations: { count: 0 } });
   });
-  const document = { id: "test-document", source: "note", sourceId: "n1", scopeId: "private", revision: 3, text: "alpha\n\nbeta\n\ngamma" };
-  const policy = { maxTokens: 12, overlapTokens: 4, countTokens: (text: string) => text.length };
 
-  it.each(["qwen/qwen3-embedding-8b", "Qwen/Qwen3-Embedding-8B"])("writes both chunk strategies for %s with the parent's authority and revision", async (model) => {
-    const ids = await indexSemanticDocument(index, document, policy, async (texts) => ({
-      model, vectors: texts.map(() => Array.from({ length: 1024 }, () => 1)),
-    }));
-    expect(ids.length).toBeGreaterThan(1);
+  it.each(["qwen/qwen3-embedding-8b", "Qwen/Qwen3-Embedding-8B"])("writes both chunk strategies for %s with source authority", async (model) => {
+    const [job] = await searchEmbeddingJobs(reference, document, policy);
+    await indexSemanticBatch(index, job!, load, async (texts) => ({ model, vectors: vectors(texts) }));
     expect(provider.write).toHaveBeenCalledWith(expect.objectContaining({
       upsert_rows: expect.arrayContaining([
-        expect.objectContaining({
-          source: "note", source_id: "n1", scope_id: "private", revision: 3,
-          record_type: "chunk", chunk_strategies: ["recursive"],
-        }),
+        expect.objectContaining({ source: "note", source_id: "n1", scope_id: "private", revision: 3,
+          generation: job!.generation, record_type: "chunk", chunk_strategies: ["recursive"] }),
         expect.objectContaining({ record_type: "chunk", chunk_strategies: ["sliding_window"] }),
       ]),
     }));
   });
 
-  it("rejects model drift before writing any chunks", async () => {
-    await expect(indexSemanticDocument(index, document, policy, async (texts) => ({
-      model: "different-model", vectors: texts.map(() => Array.from({ length: 1024 }, () => 1)),
-    }))).rejects.toThrow("search_embedding_space_mismatch");
-    expect(provider.write).not.toHaveBeenCalled();
+  it("fans out a document across the approved batch boundary with all source ranges", async () => {
+    const long = { ...document, text: "a".repeat(65) };
+    const jobs = await searchEmbeddingJobs(reference, long, { maxTokens: 1, overlapTokens: 0, countTokens: (text) => text.length });
+    expect(jobs.map((job) => job.spans.length)).toEqual([64, 1]);
+    expect(jobs.flatMap((job) => job.spans).map(({ start, end }) => long.text.slice(start, end)).join("")).toBe(long.text);
+    expect(jobs.every((job) => job.totalChunks === 65)).toBe(true);
+    expect(JSON.stringify(jobs)).not.toContain(long.text);
   });
 
-  it("batches every passage in order and keeps each vector paired with its source range", async () => {
-    const chunks = await semanticChunks(document.text, policy);
-    const embed = vi.fn(async (texts: string[]) => ({
-      model: "Qwen/Qwen3-Embedding-8B",
-      vectors: texts.map((text) => Array.from({ length: 1024 }, () => chunks.findIndex((chunk) => chunk.embeddingText === text))),
-    }));
-    await indexSemanticDocument(index, document, policy, embed, 2);
-    expect(embed.mock.calls.map(([texts]) => texts.length)).toEqual(
-      Array.from({ length: Math.ceil(chunks.length / 2) }, (_, i) => Math.min(2, chunks.length - i * 2)),
-    );
-    expect(embed.mock.calls.flatMap(([texts]) => texts)).toEqual(chunks.map((chunk) => chunk.embeddingText));
+  it("pairs each vector with its source range and retires only after the final chunk count", async () => {
+    const [job] = await searchEmbeddingJobs(reference, document, policy);
+    provider.query.mockResolvedValueOnce({ aggregations: { count: 0 } })
+      .mockResolvedValueOnce({ aggregations: { count: job!.totalChunks } });
+    const embed = vi.fn(async (texts: string[]) => ({ model: "Qwen/Qwen3-Embedding-8B",
+      vectors: texts.map((_text, i) => Array.from({ length: 1024 }, () => i)) }));
+    await indexSemanticBatch(index, job!, load, embed);
+    expect(embed).toHaveBeenCalledWith(job!.spans.map(({ start, end }) => document.text.slice(start, end)));
     expect(provider.write).toHaveBeenCalledWith(expect.objectContaining({
-      upsert_rows: chunks.map((chunk, i) => expect.objectContaining({
-        text: chunk.text, chunk_start: chunk.start, chunk_end: chunk.end,
-        vector: Array.from({ length: 1024 }, () => i),
+      upsert_rows: job!.spans.map((span, i) => expect.objectContaining({
+        chunk_start: span.start, chunk_end: span.end, vector: Array.from({ length: 1024 }, () => i),
       })),
     }));
+    expect(provider.write).toHaveBeenLastCalledWith(expect.objectContaining({ delete_by_filter:
+      ["And", expect.arrayContaining([["Or", expect.arrayContaining([["revision", "Lt", document.revision]])]])] }));
+    expect(provider.query).toHaveBeenLastCalledWith(expect.objectContaining({ consistency: { level: "strong" },
+      filters: ["And", expect.arrayContaining([["generation", "Eq", job!.generation]])] }));
   });
 
-  it.each(["missing", "extra", "dimension", "nonfinite", "model"])("rejects a later %s batch before publishing a generation", async (failure) => {
-    let call = 0;
-    const embed = async (texts: string[]) => {
-      const vectors = texts.map(() => Array.from({ length: 1024 }, () => 1));
-      call += 1;
-      if (call === 2) {
-        if (failure === "missing") vectors.pop();
-        if (failure === "extra") vectors.push(Array.from({ length: 1024 }, () => 1));
-        if (failure === "dimension") vectors[0]!.pop();
-        if (failure === "nonfinite") vectors[0]![0] = Number.NaN;
-      }
-      return { model: call === 2 && failure === "model" ? "different-model" : "Qwen/Qwen3-Embedding-8B", vectors };
-    };
-    await expect(indexSemanticDocument(index, document, policy, embed, 2)).rejects.toThrow("search_embedding_space_mismatch");
+  it.each(["missing", "extra", "dimension", "nonfinite", "model"])("rejects a %s batch without writing its chunks or retiring the previous generation", async (failure) => {
+    const [job] = await searchEmbeddingJobs(reference, document, policy);
+    await expect(indexSemanticBatch(index, job!, load, async (texts) => {
+      const result = vectors(texts);
+      if (failure === "missing") result.pop();
+      if (failure === "extra") result.push(Array.from({ length: 1024 }, () => 1));
+      if (failure === "dimension") result[0]!.pop();
+      if (failure === "nonfinite") result[0]![0] = Number.NaN;
+      return { model: failure === "model" ? "different-model" : "Qwen/Qwen3-Embedding-8B", vectors: result };
+    })).rejects.toThrow("search_embedding_space_mismatch");
     expect(provider.write).not.toHaveBeenCalled();
   });
 
-  it("does not send empty semantic documents to the embedding provider", async () => {
+  it("skips completed provider work on redelivery and leaves incomplete generations alone", async () => {
+    const [job] = await searchEmbeddingJobs(reference, document, policy);
+    provider.query.mockResolvedValueOnce({ aggregations: { count: job!.spans.length } })
+      .mockResolvedValueOnce({ aggregations: { count: job!.totalChunks - 1 } });
     const embed = vi.fn();
-    await indexSemanticDocument(index, { ...document, text: " \n\t" }, policy, embed);
+    await indexSemanticBatch(index, job!, load, embed);
     expect(embed).not.toHaveBeenCalled();
+    expect(provider.write).not.toHaveBeenCalled();
+  });
+
+  it("rejects equal-revision content changes before embedding", async () => {
+    const [job] = await searchEmbeddingJobs(reference, document, policy);
+    const embed = vi.fn();
+    await indexSemanticBatch(index, job!, async () => ({ documents: [{ ...document, text: "changed" }], retry: false }), embed);
+    expect(embed).not.toHaveBeenCalled();
+    expect(provider.write).toHaveBeenCalledWith(expect.objectContaining({ delete_by_filter:
+      ["And", expect.arrayContaining([["generation", "Eq", job!.generation]])] }));
+  });
+
+  it("does not enqueue blank semantic documents", async () => {
+    expect(await searchEmbeddingJobs(reference, { ...document, text: " \n\t" }, policy)).toEqual([]);
   });
 
   it("issues only ANN for semantic search and only BM25 for full-text search", async () => {
     provider.query.mockResolvedValue({ rows: [] });
     const sources = [{ source: "note", scopeIds: ["private"], load: async () => new Map() }];
     await index.query(sources, { query: "topic", mode: "semantic", limit: 10, vector: [1, 0] });
-    expect(provider.query).toHaveBeenLastCalledWith(expect.objectContaining({
-      rank_by: ["vector", "ANN", [1, 0]],
-      filters: ["And", expect.arrayContaining([["And", expect.arrayContaining([["record_type", "Eq", "chunk"]])]])],
-    }));
+    expect(provider.query).toHaveBeenLastCalledWith(expect.objectContaining({ rank_by: ["vector", "ANN", [1, 0]] }));
     await index.query(sources, { query: "topic", mode: "text", limit: 10 });
-    expect(provider.query).toHaveBeenLastCalledWith(expect.objectContaining({
-      rank_by: ["text", "BM25", "topic"],
-      filters: ["And", expect.arrayContaining([["And", expect.arrayContaining([["record_type", "Eq", "document"]])]])],
-    }));
+    expect(provider.query).toHaveBeenLastCalledWith(expect.objectContaining({ rank_by: ["text", "BM25", "topic"] }));
     expect(provider.query).toHaveBeenCalledTimes(2);
   });
 });
