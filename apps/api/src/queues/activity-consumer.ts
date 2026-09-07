@@ -120,11 +120,13 @@ function matchesFilters(activity: ActivityRow, filters: Record<string, unknown>)
 }
 
 
+const SearchEmbeddingBatchTypeSchema = z.object({ type: z.literal('search_embedding_batch_v1') });
+
 /** Cloudflare Queue entrypoint for control effects and connector events. */
 export async function consumeActivityQueue(batch: MessageBatch<unknown>, env: Env): Promise<void> {
   const indexSearch = createSearchIndexingPipeline(env);
   const isSearch = (message: Message<unknown>) =>
-    SearchEmbeddingBatchSchema.safeParse(message.body).success
+    SearchEmbeddingBatchTypeSchema.safeParse(message.body).success
     || ResourceSearchProjectionSchema.safeParse(message.body).success
     || SearchProjectionMessageSchema.safeParse(message.body).success;
   // Search shares a tokenizer and processes one document source at a time.
@@ -199,16 +201,22 @@ async function loadSearchSource(env: Env, reference: SearchSourceReference, capt
 async function consumeOne(message: Message<unknown>, env: Env,
   indexSearch: ReturnType<typeof createSearchIndexingPipeline>): Promise<void> {
   const embeddingBatch = SearchEmbeddingBatchSchema.safeParse(message.body);
+  if (!embeddingBatch.success && SearchEmbeddingBatchTypeSchema.safeParse(message.body).success) {
+    throw new Error('invalid_search_embedding_batch');
+  }
   if (embeddingBatch.success) {
     const job = embeddingBatch.data;
     if (job.reference.region !== env.AVALON_REGION) throw new Error('search_projection_region_mismatch');
     if (job.chunkPolicy !== searchChunkIdentity()) {
-      await env.ACTIVITY_QUEUE.send(job.reference, { contentType: 'json' });
+      // A policy change requires one canonical-source backfill for the new
+      // namespace. N obsolete children must not schedule N duplicate replans.
       message.ack();
       return;
     }
-    await indexSemanticBatch(await workspaceSearchIndex(env, job.reference.workspaceId), job,
+    const outcome = await indexSemanticBatch(await workspaceSearchIndex(env, job.reference.workspaceId), job,
       () => loadSearchSource(env, job.reference, false), (texts) => embedSearchDocuments(env, job.reference.workspaceId, texts));
+    if (outcome === 'stale') logWarn(env, 'search_embedding_stale', { region: env.AVALON_REGION,
+      workspace_id: job.reference.workspaceId, source: job.document.source, source_id: job.document.sourceId, revision: job.document.revision });
     message.ack();
     return;
   }

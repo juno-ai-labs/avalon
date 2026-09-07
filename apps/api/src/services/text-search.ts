@@ -10,6 +10,20 @@ export const SEARCH_EMBEDDING_DIMENSIONS = 1_024;
 export const SEARCH_CHUNK_ALGORITHM = "recursive-sliding-v1";
 export const QWEN_MODEL_COMMIT = "1d8ad4ca9b3dd8059ad90a75d4983776a23d44af";
 
+const SEARCH_DOCUMENT_SCHEMA = {
+  text: { type: "string", full_text_search: true, glob: true },
+  source: { type: "string" },
+  source_id: { type: "string" },
+  scope_id: { type: "string" },
+  revision: { type: "uint" },
+  deleted: { type: "bool" },
+  record_type: { type: "string" },
+  generation: { type: "string" },
+  chunk_start: { type: "uint" },
+  chunk_end: { type: "uint" },
+  chunk_strategies: { type: "[]string" },
+} as const;
+
 /** Separate deployments and embedding spaces; EU never falls back to Global. */
 export async function workspaceSearchIndex(env: Env, workspaceId: string): Promise<TextSearchIndex> {
   const apiKey = env.APP_ENV === "production"
@@ -91,8 +105,6 @@ export interface TextSearchOptions {
   mode: TextSearchMode;
   limit: number;
   vector?: number[];
-  /** Hash of the complete canonical text for independently delivered chunks. */
-  generation?: string;
   signal?: AbortSignal;
 }
 
@@ -136,19 +148,7 @@ export class TextSearchIndex {
     if (isSemantic && semantic.some((document) => !document.vector)) throw new Error("search_embedding_required");
     await (isSemantic ? this.namespace : this.lexicalNamespace).write({
       ...(isSemantic ? { distance_metric: "cosine_distance" as const } : {}),
-      schema: {
-        text: { type: "string", full_text_search: true, glob: true },
-        source: { type: "string" },
-        source_id: { type: "string" },
-        scope_id: { type: "string" },
-        revision: { type: "uint" },
-        deleted: { type: "bool" },
-        record_type: { type: "string" },
-        generation: { type: "string" },
-        chunk_start: { type: "uint" },
-        chunk_end: { type: "uint" },
-        chunk_strategies: { type: "[]string" },
-      },
+      schema: SEARCH_DOCUMENT_SCHEMA,
       upsert_rows: documents.map((document) => ({
         id: document.id,
         source: document.source,
@@ -173,31 +173,45 @@ export class TextSearchIndex {
 
   /** Reclaim obsolete vectors; canonical source checks still fence racing writes. */
   async removeSemanticGenerations(document: Pick<TextSearchDocument, "source" | "scopeId" | "sourceId" | "revision">,
-    comparison: "Lt" | "Lte" | "Eq", includeLegacyCurrent = false): Promise<void> {
-    await this.namespace.write({
-      delete_by_filter: ["And", [
-        ["source", "Eq", document.source], ["scope_id", "Eq", document.scopeId],
-        ["source_id", "Eq", document.sourceId],
-        includeLegacyCurrent ? ["Or", [["revision", comparison, document.revision],
-          ["And", [["revision", "Eq", document.revision], ["generation", "Eq", null]]]]]
-          : ["revision", comparison, document.revision],
-      ]],
-    }).catch((error: unknown) => {
-      if (error instanceof Error && "status" in error && error.status === 404) return;
-      throw new Error("search_index_write_failed");
-    });
+    comparison: "Lt" | "Lte", includeLegacyCurrent = false): Promise<void> {
+    await this.deleteSemanticRows(["And", [
+      ["source", "Eq", document.source], ["scope_id", "Eq", document.scopeId],
+      ["source_id", "Eq", document.sourceId],
+      includeLegacyCurrent ? ["Or", [["revision", comparison, document.revision],
+        ["And", [["revision", "Eq", document.revision], ["generation", "Eq", null]]]]]
+        : ["revision", comparison, document.revision],
+    ]]);
   }
 
-  /** Strong counts make duplicate deliveries receipts, without a separate ledger. */
+  private async deleteSemanticRows(filter: Filter): Promise<void> {
+    try {
+      await this.namespace.write({ schema: SEARCH_DOCUMENT_SCHEMA, delete_by_filter: filter });
+    } catch (error) {
+      if (error instanceof Error && "status" in error && error.status === 404) return;
+      // Live API, 2026-09-06: delete filters see the schema before this write.
+      // Existing pre-fan-out namespaces need a separate schema initialization.
+      if (error instanceof Error && "status" in error && error.status === 400
+        && error.message.includes("filter error in key `generation`: attribute not found")) {
+        try {
+          await this.namespace.write({ schema: SEARCH_DOCUMENT_SCHEMA });
+          await this.namespace.write({ delete_by_filter: filter });
+          return;
+        } catch { throw new Error("search_index_write_failed"); }
+      }
+      throw new Error("search_index_write_failed", { cause: error });
+    }
+  }
+
+  /** Persisted batch IDs make duplicate deliveries receipts, without a separate ledger. */
   async countSemanticChunks(document: Pick<TextSearchDocument, "source" | "scopeId" | "sourceId" | "revision">,
-    filter: { ids: string[] } | { generation: string }): Promise<number> {
+    ids: string[]): Promise<number> {
     const result = await this.namespace.query({
       aggregate_by: { count: ["Count"] },
       filters: ["And", [
         ["source", "Eq", document.source], ["scope_id", "Eq", document.scopeId],
         ["source_id", "Eq", document.sourceId], ["revision", "Eq", document.revision],
         ["record_type", "Eq", "chunk"], ["deleted", "Eq", false],
-        "ids" in filter ? ["id", "In", filter.ids] : ["generation", "Eq", filter.generation],
+        ["id", "In", ids],
       ]],
       consistency: { level: "strong" },
     }).catch((error: unknown) => {
@@ -210,20 +224,17 @@ export class TextSearchIndex {
   /** Never delete a newer generation when an old batch finishes late. */
   async removeSemanticGeneration(document: Pick<TextSearchDocument, "source" | "scopeId" | "sourceId" | "revision">,
     generation: string): Promise<void> {
-    await this.namespace.write({ schema: { generation: { type: "string" } }, delete_by_filter: ["And", [
+    await this.deleteSemanticRows(["And", [
       ["source", "Eq", document.source], ["scope_id", "Eq", document.scopeId],
       ["source_id", "Eq", document.sourceId], ["revision", "Eq", document.revision],
       ["generation", "Eq", generation],
-    ]] }).catch((error: unknown) => {
-      if (error instanceof Error && "status" in error && error.status === 404) return;
-      throw new Error("search_index_write_failed");
-    });
+    ]]);
   }
 
   /** Keep a version watermark so a delayed upsert cannot resurrect deleted text. */
   async remove(id: string, revision: number): Promise<void> {
     await this.lexicalNamespace.write({
-      schema: { revision: { type: "uint" }, deleted: { type: "bool" } },
+      schema: SEARCH_DOCUMENT_SCHEMA,
       upsert_rows: [{
         id, revision, deleted: true,
       }],

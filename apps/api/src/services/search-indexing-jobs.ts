@@ -14,7 +14,6 @@ export const SearchEmbeddingBatchSchema = z.strictObject({
   document: SearchDocumentSchema.omit({ text: true }),
   chunkPolicy: z.string(),
   generation: z.string().regex(/^[a-f0-9]{64}$/u),
-  totalChunks: z.number().int().positive(),
   spans: z.array(z.strictObject({
     start: z.number().int().nonnegative(), end: z.number().int().positive(),
     strategies: z.array(z.enum(['recursive', 'sliding_window'])).min(1),
