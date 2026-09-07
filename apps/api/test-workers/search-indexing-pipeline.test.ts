@@ -10,6 +10,7 @@ import { consumeActivityQueue } from '../src/queues/activity-consumer';
 import { seedWorkstreamRoot, seedParticipantMessage } from './helpers/substream-fixture';
 import { searchDocumentId } from '../src/services/text-search';
 import type { Env } from '../src/env';
+import { SearchEmbeddingBatchSchema, SearchSourceReferenceSchema, publishSearchEmbeddingBatches } from '../src/services/search-indexing-jobs';
 
 let workspaceId: WorkspaceId;
 let parentId: string;
@@ -17,11 +18,31 @@ let resourceId: string;
 const resourceMessage = () => ({ type: 'resource_search_projection_v1', region: 'global', workspaceId, resourceId });
 const pipelineEnv: Env = { ...env, TURBO_PUFFER_DEV_API_KEY: 'test-only', OPENROUTER_API_KEY: 'test-only',
   LOG_LEVEL: 'warn' };
-const writes: Array<{ path: string; body: Record<string, unknown> }> = [];
+const writes: Array<{ path: string; body: Record<string, unknown>; semanticCount: number }> = [];
 const embeddingInputs: string[] = [];
 const embeddingBatches: string[][] = [];
 let onEmbed: (() => Promise<void>) | undefined;
+let onWrite: (() => Promise<void>) | undefined;
 let tokenizerReads = 0;
+let responseModel = 'Qwen/Qwen3-Embedding-8B';
+const trackPublishedBatches = () => vi.spyOn(env.ACTIVITY_QUEUE, 'sendBatch');
+let publish: ReturnType<typeof trackPublishedBatches>;
+const indexed = new Map<string, Record<string, unknown>>();
+// Model only the external provider's filters; canonical stores and Queue are real.
+function matchesFilter(row: Record<string, unknown>, filter: unknown): boolean {
+  const parts = z.array(z.unknown()).parse(filter);
+  if (parts[0] === 'And' || parts[0] === 'Or') {
+    const children = z.array(z.unknown()).parse(parts[1]);
+    return parts[0] === 'And' ? children.every((child) => matchesFilter(row, child))
+      : children.some((child) => matchesFilter(row, child));
+  }
+  const value = row[z.string().parse(parts[0])] ?? null;
+  if (parts[1] === 'Eq') return value === parts[2];
+  if (parts[1] === 'In') return z.array(z.unknown()).parse(parts[2]).includes(value);
+  if (parts[1] === 'Lt') return z.number().parse(value) < z.number().parse(parts[2]);
+  if (parts[1] === 'Lte') return z.number().parse(value) <= z.number().parse(parts[2]);
+  throw new Error('unsupported_provider_filter');
+}
 // Sized above 512 tokens for the actual pinned Qwen tokenizer.
 const documentBody = 'beta\n\ngamma delta'.repeat(180);
 
@@ -32,10 +53,14 @@ beforeEach(() => {
   parentId = crypto.randomUUID();
   resourceId = crypto.randomUUID();
   writes.length = 0;
+  indexed.clear();
+  publish = trackPublishedBatches();
   embeddingInputs.length = 0;
   embeddingBatches.length = 0;
   tokenizerReads = 0;
+  responseModel = 'Qwen/Qwen3-Embedding-8B';
   onEmbed = undefined;
+  onWrite = undefined;
   vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = new Request(input, init);
     const url = new URL(request.url);
@@ -51,12 +76,31 @@ beforeEach(() => {
       const callback = onEmbed;
       onEmbed = undefined;
       await callback?.();
-      return Response.json({ object: 'list', model: 'Qwen/Qwen3-Embedding-8B',
+      return Response.json({ object: 'list', model: responseModel,
         data: body.input.map((_text, index) => ({ object: 'embedding', index, embedding: Array.from({ length: 1024 }, () => 1) })),
         usage: { prompt_tokens: 1, total_tokens: 1 } });
     }
     if (url.hostname.endsWith('.turbopuffer.com')) {
-      writes.push({ path: url.pathname, body: z.record(z.string(), z.unknown()).parse(await request.json()) });
+      const body = z.record(z.string(), z.unknown()).parse(await request.json());
+      const namespace = url.pathname.replace(/\/query$/, '');
+      if (url.pathname.endsWith('/query')) {
+        const rows = [...indexed].filter(([key, row]) => key.startsWith(`${namespace}\0`)
+          && matchesFilter(row, body.filters));
+        return Response.json({ aggregations: { count: rows.length } });
+      }
+      writes.push({ path: url.pathname, body, semanticCount: [...indexed.values()].filter((row) => row.record_type === 'chunk').length });
+      if (body.delete_by_filter) {
+        for (const [key, row] of indexed) {
+          if (key.startsWith(`${namespace}\0`) && matchesFilter(row, body.delete_by_filter)) indexed.delete(key);
+        }
+      }
+      for (const row of z.array(z.record(z.string(), z.unknown())).parse(body.upsert_rows ?? [])) {
+        if (typeof row.id === 'string') indexed.set(`${namespace}\0${row.id}`, row);
+      }
+      if (z.array(z.object({ record_type: z.string().optional() })).parse(body.upsert_rows ?? [])
+        .some((row) => row.record_type === 'chunk')) {
+        const callback = onWrite; onWrite = undefined; await callback?.();
+      }
       return Response.json({ rows_affected: 1 });
     }
     throw new Error('unexpected_external_request');
@@ -80,12 +124,26 @@ async function seedResource(provider = 'avalon_upload') {
   return stub;
 }
 
-async function consume(bodies: unknown[], overrides: Partial<Env> = {}) {
+async function consume(bodies: unknown[], overrides: Partial<Env> = {}, drainJobs = true) {
+  const firstSend = publish.mock.calls.length;
   const batch = createMessageBatch('avalon-do-runtime-test-activity', bodies.map((body, index) => ({
     id: `search-${index}`, timestamp: new Date(), body, attempts: 1,
   })));
   await consumeActivityQueue(batch, { ...pipelineEnv, ...overrides });
-  return getQueueResult(batch, createExecutionContext());
+  const result = await getQueueResult(batch, createExecutionContext());
+  if (!drainJobs) return result;
+  const references = bodies.map((body) => SearchSourceReferenceSchema.safeParse(body)).filter((value) => value.success)
+    .map((value) => JSON.stringify(value.data));
+  const jobs = publish.mock.calls.slice(firstSend).flatMap(([messages]) => [...messages])
+    .map((message) => SearchEmbeddingBatchSchema.safeParse(message.body)).filter((value) => value.success)
+    .map((value) => value.data).filter((job) => references.includes(JSON.stringify(job.reference)));
+  for (const job of jobs) {
+    if (overrides.OPENROUTER_API_KEY === '') continue;
+    const child = await consume([job], overrides);
+    expect(child.retryMessages).toEqual([]);
+    expect(child.explicitAcks).toEqual(['search-0']);
+  }
+  return result;
 }
 
 const RowsSchema = z.array(z.object({ source: z.string(), text: z.string(), record_type: z.string(),
@@ -137,6 +195,111 @@ describe('shared Queue indexing pipeline', () => {
     expect(tokenizerReads).toBe(0); // The asset host can be unavailable throughout indexing.
   });
 
+  it('fans out a large document through real Queue sends and skips completed batches on redelivery', async () => {
+    await seedResource();
+    await env.PAYLOADS.put('pipeline/body', documentBody.repeat(40));
+    const result = await consume([resourceMessage()]);
+    expect(result.explicitAcks).toEqual(['search-0']);
+    const jobs = publish.mock.calls.flatMap(([messages]) => [...messages])
+      .map((message) => SearchEmbeddingBatchSchema.parse(message.body));
+    expect(jobs.length).toBeGreaterThan(1);
+    expect(jobs.every((job) => job.spans.length <= 64)).toBe(true);
+    expect(embeddingBatches.map((batch) => batch.length)).toEqual(jobs.map((job) => job.spans.length));
+    expect(liveRows().filter((row) => row.record_type === 'chunk')).toHaveLength(jobs.flatMap((job) => job.spans).length);
+    const previousCalls = embeddingInputs.length;
+    expect((await consume([jobs[0]])).explicitAcks).toEqual(['search-0']);
+    expect(embeddingInputs).toHaveLength(previousCalls);
+    const cleanup = writes.filter(({ body }) => JSON.stringify(body.delete_by_filter ?? null).includes('"Lt"'));
+    expect(cleanup.length).toBeGreaterThan(0);
+    expect(cleanup).toHaveLength(1);
+    expect(cleanup[0]!.semanticCount).toBe(0);
+    await consume([resourceMessage()]);
+    expect([...indexed.values()].filter((row) => row.record_type === 'chunk')).toHaveLength(jobs.flatMap((job) => job.spans).length);
+    expect(embeddingInputs).toHaveLength(previousCalls);
+  });
+
+  it('splits fan-out publication within the real Queue byte and message limits', async () => {
+    await seedResource();
+    await env.PAYLOADS.put('pipeline/body', documentBody.repeat(40));
+    await consume([resourceMessage()], {}, false);
+    const job = SearchEmbeddingBatchSchema.parse([...publish.mock.calls[0]![0]][0]!.body);
+    publish.mockClear();
+    await publishSearchEmbeddingBatches(env.ACTIVITY_QUEUE, Array.from({ length: 101 }, () => ({ ...job, spans: job.spans.slice(0, 1) })));
+    expect(publish.mock.calls.length).toBeGreaterThan(1);
+    expect(publish.mock.calls.flatMap(([messages]) => [...messages])).toHaveLength(101);
+  });
+
+  it('splits below 100 messages when the serialized byte budget is reached', async () => {
+    await seedResource();
+    await env.PAYLOADS.put('pipeline/body', documentBody.repeat(40));
+    await consume([resourceMessage()], {}, false);
+    const job = SearchEmbeddingBatchSchema.parse([...publish.mock.calls[0]![0]][0]!.body);
+    const bytes = new TextEncoder().encode(JSON.stringify({ body: job, contentType: 'json' })).byteLength + 100;
+    const count = Math.floor(256_000 / bytes) + 1;
+    expect(count).toBeLessThan(100);
+    publish.mockClear();
+    await publishSearchEmbeddingBatches(env.ACTIVITY_QUEUE, Array.from({ length: count }, () => job));
+    expect(publish.mock.calls.length).toBeGreaterThan(1);
+    for (const [messages] of publish.mock.calls) {
+      const total = [...messages].reduce((sum, message) => sum + new TextEncoder().encode(JSON.stringify(message)).byteLength + 100, 0);
+      expect(total).toBeLessThanOrEqual(256_000);
+    }
+    expect(publish.mock.calls.flatMap(([messages]) => [...messages])).toHaveLength(count);
+  });
+
+  it('reclaims only the written generation when canonical text changes during the upsert', async () => {
+    await seedResource();
+    await consume([resourceMessage()], {}, false);
+    const job = SearchEmbeddingBatchSchema.parse([...publish.mock.calls[0]![0]][0]!.body);
+    onWrite = async () => { await env.PAYLOADS.put('pipeline/body', 'changed after write'); };
+    expect((await consume([job])).explicitAcks).toEqual(['search-0']);
+    expect(liveRows().some((row) => row.record_type === 'chunk')).toBe(true);
+    expect([...indexed.values()].filter((row) => row.record_type === 'chunk')).toEqual([]);
+    expect(writes.some(({ body }) => JSON.stringify(body.delete_by_filter ?? null)
+      .includes(JSON.stringify(['generation', 'Eq', job.generation])))).toBe(true);
+  });
+
+  it('retries only a failed child and preserves completed chunks out of order', async () => {
+    await seedResource();
+    await env.PAYLOADS.put('pipeline/body', documentBody.repeat(40));
+    expect((await consume([resourceMessage()], {}, false)).explicitAcks).toEqual(['search-0']);
+    const jobs = publish.mock.calls.flatMap(([messages]) => [...messages])
+      .map((message) => SearchEmbeddingBatchSchema.parse(message.body));
+    expect(jobs.length).toBeGreaterThan(1);
+    writes.length = 0;
+    responseModel = 'different-model';
+    expect((await consume([jobs[0]])).retryMessages).toEqual([{ msgId: 'search-0' }]);
+    expect(liveRows().filter((row) => row.record_type === 'chunk')).toEqual([]);
+    responseModel = 'Qwen/Qwen3-Embedding-8B';
+    for (const job of jobs.slice(1).reverse()) expect((await consume([job])).explicitAcks).toEqual(['search-0']);
+    expect(writes.some(({ body }) => JSON.stringify(body.delete_by_filter ?? null).includes('"Lt"'))).toBe(false);
+    expect((await consume([jobs[0]])).explicitAcks).toEqual(['search-0']);
+    expect(writes.some(({ body }) => JSON.stringify(body.delete_by_filter ?? null).includes('"Lt"'))).toBe(false);
+    expect([...indexed.values()].filter((row) => row.record_type === 'chunk')).toHaveLength(jobs.flatMap((job) => job.spans).length);
+  });
+
+  it('retries malformed embedding jobs instead of acknowledging them as legacy messages', async () => {
+    const result = await consume([{ type: 'search_embedding_batch_v1', spans: [] }]);
+    expect(result.explicitAcks).toEqual([]);
+    expect(result.retryMessages).toEqual([{ msgId: 'search-0' }]);
+    expect(writes).toEqual([]);
+    expect(publish).not.toHaveBeenCalled();
+  });
+
+  it('discards obsolete policies without multiplying source backfills and rejects wrong-region children', async () => {
+    await seedResource();
+    await consume([resourceMessage()], {}, false);
+    const job = SearchEmbeddingBatchSchema.parse([...publish.mock.calls[0]![0]][0]!.body);
+    const send = vi.spyOn(env.ACTIVITY_QUEUE, 'send');
+    writes.length = 0;
+    expect((await consume([{ ...job, chunkPolicy: 'old-policy' }])).explicitAcks).toEqual(['search-0']);
+    expect(send).not.toHaveBeenCalled();
+    expect((await consume([{ ...job, reference: { ...job.reference, region: 'eu' } }])).retryMessages)
+      .toEqual([{ msgId: 'search-0' }]);
+    expect(writes).toEqual([]);
+    expect(embeddingInputs).toEqual([]);
+  });
+
   it('uses identical passages for generated artifacts and captured web pages', async () => {
     const workspace = await seedResource('avalon_generated');
     const url = 'https://example.com/';
@@ -161,7 +324,7 @@ describe('shared Queue indexing pipeline', () => {
     expect(pages.filter((row) => row.record_type === 'chunk').length).toBeGreaterThan(1);
   });
 
-  it('reclaims a generation and retries when deletion commits during embedding', async () => {
+  it('discards a stale batch when deletion commits during embedding', async () => {
     const stub = await seedResource('avalon_generated');
     const revision = await stub.resourceSearchRevision({ workspaceId, resourceId });
     expect(revision).not.toBeNull();
@@ -169,8 +332,9 @@ describe('shared Queue indexing pipeline', () => {
       state.storage.sql.exec('DELETE FROM resources WHERE id = ?', resourceId);
     });
     const result = await consume([resourceMessage()]);
-    expect(result.explicitAcks).toEqual([]);
-    expect(result.retryMessages).toEqual([{ msgId: 'search-0' }]);
+    expect(result.explicitAcks).toEqual(['search-0']);
+    expect(result.retryMessages).toEqual([]);
+    expect([...indexed.values()].filter((row) => row.record_type === 'chunk')).toEqual([]);
     expect(writes.some(({ body }) => JSON.stringify(body.delete_by_filter ?? null).includes(JSON.stringify(['revision', 'Eq', revision])))).toBe(true);
     const retried = await consume([resourceMessage()]);
     expect(retried.explicitAcks).toEqual(['search-0']);
@@ -181,7 +345,8 @@ describe('shared Queue indexing pipeline', () => {
     await seedResource();
     onEmbed = async () => { await env.PAYLOADS.put('pipeline/body', 'updated body'); };
     const result = await consume([resourceMessage()]);
-    expect(result.retryMessages).toEqual([{ msgId: 'search-0' }]);
+    expect(result.explicitAcks).toEqual(['search-0']);
+    expect(result.retryMessages).toEqual([]);
     const id = await searchDocumentId('files', workspaceId, resourceId);
     const tombstones = writes.flatMap(({ body }) => z.array(z.object({ id: z.string(), deleted: z.boolean().optional() }))
       .safeParse(body.upsert_rows).data ?? []).filter((row) => row.id === id && row.deleted);
@@ -201,8 +366,11 @@ describe('shared Queue indexing pipeline', () => {
   it('keeps lexical text available but retries rather than silently skipping an unconfigured vector pipeline', async () => {
     await seedResource();
     const result = await consume([resourceMessage()], { OPENROUTER_API_KEY: '' });
-    expect(result.explicitAcks).toEqual([]);
-    expect(result.retryMessages).toEqual([{ msgId: 'search-0' }]);
+    expect(result.explicitAcks).toEqual(['search-0']);
+    const job = SearchEmbeddingBatchSchema.parse([...publish.mock.calls[0]![0]][0]!.body);
+    const child = await consume([job], { OPENROUTER_API_KEY: '' });
+    expect(child.explicitAcks).toEqual([]);
+    expect(child.retryMessages).toEqual([{ msgId: 'search-0' }]);
     expect(liveRows().some((row) => row.text.includes('gamma delta'))).toBe(true);
     expect(embeddingInputs).toEqual([]);
   });
