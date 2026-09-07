@@ -16,6 +16,7 @@ without maintaining a second list of section keywords.
 | `apps/desktop/src/common/settings.ts` | Section identities shared with the desktop window. |
 | `apps/desktop/src/renderer/settings/digest-provider.ts` | Connection-backed digest destination definitions. |
 | `apps/desktop/src/renderer/settings/search-results.tsx` | Result navigation and lazy target revelation. |
+| `apps/desktop/src/renderer/components/sidebar-search.tsx` | Search control shared by the main and Settings sidebars. |
 | `apps/desktop/src/renderer/screens/workspace-settings.tsx` | Existing settings bindings, authorized connection providers, section selection and availability. |
 
 ## How it works
@@ -40,6 +41,13 @@ accents; all query words must occur. Exact labels rank above prefixes,
 substrings and other metadata. It does not fetch remote indexes or mount
 inactive pages. Results replace navigation while the query is non-empty;
 typing does not change the active page.
+
+Both sidebars render `SidebarSearch` with the same sizing, typography, icon and
+focus treatment. The main window uses its button mode to open workspace search;
+Settings uses its input mode with the local settings index and keyboard handlers.
+The Settings sidebar also shares the main sidebar's canvas, border, idle text,
+hover and selected-row color rules. These apply to child navigation entries and
+search results; a selected section keeps its selected fill while hovered.
 
 Selecting a result sets its section and, when applicable, connection selection.
 The existing pane performs its normal read. An observer waits for the inert
@@ -101,6 +109,28 @@ authorization. Real Electron checks cover positioning, keyboard navigation,
 scrolling and both appearances.
 
 ## Changelog
+
+### 2026-09-07 — Preserve the theme guard across grouped selectors
+
+The navigation-painter invariant now allows the separate Settings panel and
+checks every selector in a grouped rule. Reading only the final selector could
+hide a nested painter behind an allowed panel. Search input props now stay on
+the input, and its wrapper focus rule is separate from the global focus rule.
+
+### 2026-09-07 — Match sidebar interaction colors
+
+Settings navigation and search results now share the main sidebar's color
+rules, including its canvas and border. Separate neutral and raised-surface
+tokens made Settings hover and selected states look different. Grouped selectors
+keep the main window authoritative instead of maintaining a second palette.
+
+### 2026-09-07 — Share the sidebar search control
+
+Settings now uses the main sidebar's search component and visual treatment.
+The separate Settings input had drifted in height, border and typography;
+sharing the component prevents that drift while preserving local settings
+discovery. Copying the main sidebar's styles into a second control was rejected
+because later appearance changes would still have to be made twice.
 
 ### 2026-09-05 — Verify review findings before merging (#557)
 
