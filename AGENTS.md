@@ -13,6 +13,14 @@ still appears throughout the tree; what it is coupled to, and what is
 deliberately not being renamed, is in
 [`docs/rally-rebrand-inventory.md`](docs/rally-rebrand-inventory.md).
 
+## How we build
+
+**We design using a platform mindset**. We build simple & generic re-usable building blocks that are combined into complex and emergent behavior. For example: Lego Blocks are simple in that they have a set number of modular sizes but these simple shapes can be combined to build anything as they are modular.
+
+Before you begin see if there is one or more individual primitives that can be built that can be combined to expose the more complex final behavior. Investigate if current primitives can be re-architected or de-composed into better primitives.
+
+Always have a platform mindset. You can always make a simple thing more complicated but never make a complex thing simpler.
+
 ## Where we are
 
 **Rally is a seed-stage startup iterating quickly, and the right engineering
@@ -31,16 +39,16 @@ on how a decision is made, not as something to engineer around:
 - **Prefer the failure you will notice** over the one that needs tooling we do
   not have in order to find.
 - **A defensive limit is a decision, not a detail.** Adding a cap, a ceiling, a
-  timeout, or a cooldown needs a justification, and its *number* is the team's to
+  timeout, or a cooldown needs a justification, and its _number_ is the team's to
   set rather than yours to guess — write the guard open and hand the number back.
   [`docs/adding-security-defensive-and-other-limits.md`](docs/adding-security-defensive-and-other-limits.md)
   is the rule, and it applies to any limit you are about to type.
 
 **None of this is licence to skip the rules below.** Speed at this size comes
 from not paying for the same thing twice: the quality gates take minutes, a flaky
-test left alone costs somebody a day, and a change whose *why* was never written
+test left alone costs somebody a day, and a change whose _why_ was never written
 down gets relitigated by whoever touches it next — which, on a team this small,
-is soon, and is probably you. Move fast on *what* gets built. Do not move fast on
+is soon, and is probably you. Move fast on _what_ gets built. Do not move fast on
 whether it works, or on whether the next person can follow it.
 
 ## Environment
@@ -93,7 +101,7 @@ locally and the name of the other gate will suggest they did.
 
 Both gates cache; warm runs take seconds. **After changing a rule in
 `scripts/eslint-rules/`, run `pnpm lint:fresh`** — ESLint's cache keys on file
-contents alone, so it clears the rest of the tree against the *old* rule. CI
+contents alone, so it clears the rest of the tree against the _old_ rule. CI
 runs cold; limits in
 [`docs/dev-environment.md`](docs/dev-environment.md#quality-gate-caches).
 
@@ -112,7 +120,7 @@ read [`docs/durable-object-sqlite.md`](docs/durable-object-sqlite.md).
   schema, so a test there declares the tables it needs; a query or a constraint
   is proved in the Node suite instead, which applies the checked-in migrations
   rather than stubbing a database. A double stands in for something that
-  *cannot* run here — Workers AI, Vectorize, Flagship, a provider's API — never
+  _cannot_ run here — Workers AI, Vectorize, Flagship, a provider's API — never
   for setup that was inconvenient.
 - **Prove every integration test can fail.** For a `test-workers/` test, a Node
   test exercising a query, schema, route, service, or object against the real
@@ -156,6 +164,7 @@ resolution here.
   often the flake fires. Add `--sequence.shuffle` to catch a test that depends
   on another in the same file having run first; cross-file interference only
   appears in a suite-wide rerun, where `--no-file-parallelism` isolates it.
+
 - Confirm the fix by looping the test again, then run the full `pnpm test` once
   more before calling the change done. This is the deliberate exception to
   [how much to run](docs/testing.md#how-much-to-run): cross-file interference is
@@ -207,7 +216,7 @@ own document in `docs/`, written to the shape in
 or editing one. It defines the threshold for what needs a document, the required
 sections, and the one thing that is non-negotiable: each such document ends with
 a **running changelog**, newest entry first, appended **in the same change as the
-code**. An entry records what changed *and why it changed* — the pressure that
+code**. An entry records what changed _and why it changed_ — the pressure that
 forced it, the alternative that was rejected, and what a future change has to
 respect. The code says what the module does and the diff says what moved; only
 that section says why, and it is written for whoever changes this module a year
