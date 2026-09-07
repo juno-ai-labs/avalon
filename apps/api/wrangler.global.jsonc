@@ -273,11 +273,11 @@
     "consumers": [
       {
         "queue": "avalon-global-activities",
-        "max_batch_size": 10,
-        // Control effects run independently. Search references use a sequential
-        // lane per delivery and share one tokenizer per Worker isolate.
-        // Retain the existing batch size and one-second burst grouping so Slack
-        // unfurls do not regain the former five-second admission delay.
+        "max_batch_size": 1,
+        // Approved by the team on 2026-09-06: one message per delivery.
+        // One Queue message per invocation gives each source plan its own CPU
+        // budget. An embedding message still contains up to 64 chunk ranges.
+        // This also changes delivery grouping for shared activity consumers.
         "max_batch_timeout": 1,
         "max_retries": 5,
         "dead_letter_queue": "avalon-global-activities-dead-letter"
