@@ -243,14 +243,12 @@ export function WorkspaceAccountMenu({
             side="top"
             sideOffset={8}
           >
-            {presentation === 'grok' ? (
-              <>
-                <DropdownMenu.Item className="menu-item account-menu-item" onSelect={onOpenSettings}>
-                  <Settings aria-hidden="true" />
-                  <span>Settings</span>
-                </DropdownMenu.Item>
-              </>
-            ) : null}
+            {presentation === 'grok' && (
+              <DropdownMenu.Item className="menu-item account-menu-item" onSelect={onOpenSettings}>
+                <Settings aria-hidden="true" />
+                <span>Settings</span>
+              </DropdownMenu.Item>
+            )}
             {enabled && (
               <>
                 <DropdownMenu.Label className="menu-label workspace-menu-section">Workspaces</DropdownMenu.Label>
