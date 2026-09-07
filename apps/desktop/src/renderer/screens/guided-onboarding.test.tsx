@@ -31,7 +31,7 @@ beforeEach(() => {
   state.getAccount.mockResolvedValue(state.account);
   state.invitations.mockResolvedValue([]);
   state.members.mockResolvedValue([]); state.connections.mockResolvedValue([]); state.connectors.mockResolvedValue(['google']);
-  state.journey.mockResolvedValue({ path: 'member', stage: 'profile', revision: 0, starterWorkstreamId: null, starterMessageId: 'message-1', connectorIds: [] });
+  state.journey.mockResolvedValue({ path: 'member', stage: 'profile', revision: 0, connectorIds: [] });
 });
 describe('new-account learning paths', () => {
   it('introduces the platform before offering sign-in without fetching private account data', async () => {
@@ -49,7 +49,7 @@ describe('new-account learning paths', () => {
   });
   it('sends members directly to personal setup and saves their chosen appearance before opening New', async () => {
     state.saveAccount.mockResolvedValue({ ...state.account, revision: 1, presentation: { color: 'rose', avatar: 'circle', revision: 1 } });
-    state.updateJourney.mockResolvedValue({ path: 'member', stage: 'complete', revision: 1, starterWorkstreamId: null, starterMessageId: 'message-1', connectorIds: [] });
+    state.updateJourney.mockResolvedValue({ path: 'member', stage: 'complete', revision: 1, connectorIds: [] });
     show(); await screen.findByRole('heading', { name: 'This is you in Rally' });
     expect(screen.queryByText('Bring context for your first task')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'rose' }));
@@ -66,8 +66,8 @@ describe('new-account learning paths', () => {
     expect(state.updateJourney).not.toHaveBeenCalled();
   });
   it('starts creators at connectors and offers a skip', async () => {
-    state.journey.mockResolvedValue({ path: 'creator', stage: 'connectors', revision: 0, starterWorkstreamId: null, starterMessageId: 'message-1', connectorIds: [] });
-    state.updateJourney.mockResolvedValue({ path: 'creator', stage: 'profile', revision: 1, starterWorkstreamId: null, starterMessageId: 'message-1', connectorIds: [] });
+    state.journey.mockResolvedValue({ path: 'creator', stage: 'connectors', revision: 0, connectorIds: [] });
+    state.updateJourney.mockResolvedValue({ path: 'creator', stage: 'profile', revision: 1, connectorIds: [] });
     show(); await screen.findByRole('heading', { name: 'Connect tools for your workspace' });
     fireEvent.click(screen.getByRole('button', { name: 'Skip for now' }));
     await screen.findByRole('heading', { name: 'Connect your personal tools' });
@@ -94,7 +94,7 @@ describe('new-account learning paths', () => {
   });
 
   it('retains workspace selections and unsaved personal selections across refetches', async () => {
-    const journey = { path: 'creator', stage: 'connectors', revision: 0, starterWorkstreamId: null, starterMessageId: 'message-1', connectorIds: [] };
+    const journey = { path: 'creator', stage: 'connectors', revision: 0, connectorIds: [] };
     state.journey.mockResolvedValue(journey);
     state.updateJourney.mockImplementation(async (update) => ({ ...journey, ...update, revision: update.expectedRevision + 1 }));
     const client = show();
@@ -116,9 +116,9 @@ describe('new-account learning paths', () => {
       connectorIds: ['workspace:google-drive-workspace', 'you:google-mail-calendar'] }));
   });
   it('reconciles invitations after a lost response and retries only undelivered addresses', async () => {
-    state.journey.mockResolvedValue({ path: 'creator', stage: 'people', revision: 2, starterWorkstreamId: null, starterMessageId: 'message-1', connectorIds: [] });
+    state.journey.mockResolvedValue({ path: 'creator', stage: 'people', revision: 2, connectorIds: [] });
     state.invite.mockRejectedValueOnce(new Error('Response lost'));
-    state.updateJourney.mockResolvedValue({ path: 'creator', stage: 'complete', revision: 3, starterWorkstreamId: null, starterMessageId: 'message-1', connectorIds: [] });
+    state.updateJourney.mockResolvedValue({ path: 'creator', stage: 'complete', revision: 3, connectorIds: [] });
     show();
     const field = await screen.findByLabelText('Email addresses');
     fireEvent.change(field, { target: { value: 'aspen@example.com' } });

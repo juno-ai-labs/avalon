@@ -101,5 +101,5 @@ workspaceRoutes.post("/invitations/accept", zValidator("json", AcceptWorkspaceIn
 });
 
 workspaceRoutes.get('/onboarding', async (c) => c.json(OnboardingJourneySchema.parse(await new OnboardingJourneyService(c.env, getAuth(c)).get())));
-workspaceRoutes.patch('/onboarding', zValidator('json', UpdateOnboardingJourneySchema.omit({ starterWorkstreamId: true })), async (c) =>
+workspaceRoutes.patch('/onboarding', zValidator('json', UpdateOnboardingJourneySchema), async (c) =>
   c.json(OnboardingJourneySchema.parse(await new OnboardingJourneyService(c.env, getAuth(c)).get(c.req.valid('json')))));

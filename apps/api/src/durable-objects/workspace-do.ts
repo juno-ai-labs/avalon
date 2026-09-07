@@ -2634,12 +2634,8 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   statements: RESOURCE_SEARCH_MIGRATION_STATEMENTS,
 }, {
   version: 34,
-  description: 'resumable new-user onboarding and one durable starter request',
+  description: 'resumable new-user onboarding with scoped connector selections',
   statements: [ONBOARDING_JOURNEY_SQL],
-}, {
-  version: 35,
-  description: 'retain confirmed onboarding connector selections',
-  statements: ["ALTER TABLE onboarding_journeys ADD COLUMN connector_ids TEXT NOT NULL DEFAULT '[]'"],
 }];
 
 interface AutomationDirectoryRow extends Record<string, SqlStorageValue> {

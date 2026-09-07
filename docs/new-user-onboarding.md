@@ -41,14 +41,13 @@ focus also refreshes the account. Theme accents derive from the existing semanti
 palette. Settings exposes the same appearance editor.
 
 WorkspaceDO migration 34 adds `onboarding_journeys`, keyed by regional user ID.
-Migration 35 adds the persisted connector selection. Deploy the identity migration
+This migration includes the persisted scoped connector selection. Deploy the identity migration
 and API before releasing the desktop client; existing accounts are exempted by
 the identity migration, with no feature flag.
 The journey owns setup stage and revision. Creators proceed through connectors,
 personal appearance, then invitations; members finish after personal appearance.
 Finishing saves `complete` before opening `/workstreams/new`. No workstream or
-agent run is created by onboarding. Legacy `example` and `skipped` journeys are
-completed when read; old starter columns remain for stored-data compatibility.
+agent run is created by onboarding. The unshipped starter columns and removed first-task stages are not part of the schema.
 
 The invite page uses manual email chips separated by spaces, commas or semicolons.
 Before sending, it reconciles pending invitations and active members so retrying a
@@ -62,7 +61,7 @@ editable. Onboarding has no teammate discovery API.
 - Existing accounts have explicit eligibility false; absence of a journey never
   forces them through a new flow.
 - The workspace object owns progress. Generic SQL cannot address its typed-only
-  onboarding table, and the public API cannot assign a starter workstream ID.
+  onboarding table.
 - Finishing onboarding saves completion before opening New; it never creates a workstream or sends an agent prompt.
 - The visible email list and invitation action authorize sending through the existing workspace service.
 
@@ -103,6 +102,13 @@ inventory is [the PRD motion audit](PRDs/2026-09-05_new-user-onboarding/motion-r
 Real external OAuth requires configured provider credentials; onboarding no longer starts an agent run.
 
 ## Changelog
+
+### 2026-09-07 — Remove unshipped starter storage
+
+The first-task design was removed before release, so no production journey needs
+its starter IDs, prompt or example/skipped stages. Removed those fields and
+collapsed the two unshipped migrations into version 34. Keeping compatibility
+for a design that never shipped would permanently enlarge the storage contract.
 
 ### 2026-09-07 — Address review findings
 
