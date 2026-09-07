@@ -76,7 +76,7 @@ import { AutomationGlyph, WorkstreamGlyph } from './workstream-glyph';
 
 interface SidebarProps {
   onOpenSearch?: () => void;
-  /** GrokBot-style shell: work streams and personal automation shortcuts. */
+  /** GrokBot-style shell: work streams and personal/workspace automation shortcuts. */
   conversationOnly?: boolean;
   /** The responsive or manually selected GrokBot icon rail. */
   compact?: boolean;
@@ -418,17 +418,18 @@ function AutomationRow({
 }): React.JSX.Element {
   const isDraft = automation.status === 'draft';
   const draftActive = useOpenDraftId() === automation.id;
+  const scopeDescription = automation.scope === 'workspace' ? ' · Workspace' : '';
   return (
     <ContextMenu.Root>
-      <ContextMenu.Trigger asChild>
+      <ContextMenu.Trigger asChild disabled={tile && automation.scope === 'workspace'}>
         <div className="sidebar-context-target">
           {/* One durable route for a draft and an accepted automation: the
               screen behind it is the automation's own conversation, with its
               lifecycle in the header. */}
           <NavLink
             className={({ isActive }) => clsx('sidebar-row automation-row', tile && 'automation-tile', (isDraft ? draftActive : isActive) && 'is-active', isDraft && 'is-draft')}
-            aria-label={tile ? `${automation.name}, ${automationStatusLabels[automation.status]}` : undefined}
-            title={tile ? `${automation.name} · ${automationStatusLabels[automation.status]}` : undefined}
+            aria-label={tile ? `${automation.name}, ${automationStatusLabels[automation.status]}${scopeDescription}` : undefined}
+            title={tile ? `${automation.name} · ${automationStatusLabels[automation.status]}${scopeDescription}` : undefined}
             onClick={() => markSurfaceEntrypoint('sidebar_automation')}
             to={`/automations/${automation.id}`}
           >
@@ -1152,8 +1153,8 @@ export function Sidebar({
   };
   const visibleWorkstreams = workstreams;
   const visibleNotes = useMemo(() => conversationOnly ? [] : notes, [conversationOnly, notes]);
-  const personalAutomations = useMemo(() => automations.filter((automation) => automation.scope === 'you'), [automations]);
-  const visibleAutomations = useMemo(() => conversationOnly ? [] : automations.filter((automation) => automation.scope !== 'you'), [conversationOnly, automations]);
+  const standaloneAutomations = useMemo(() => automations.filter((automation) => automation.scope !== 'workstream'), [automations]);
+  const visibleAutomations = useMemo(() => conversationOnly ? [] : automations.filter((automation) => automation.scope === 'workstream'), [conversationOnly, automations]);
   // Drafts are listed with the rest: a draft is a conversation in progress on
   // the automation's own screen, which is where its row leads.
   const orderedAutomations = visibleAutomations;
@@ -1773,7 +1774,7 @@ export function Sidebar({
             />
           )}
 
-          {!conversationOnly && (visibleAutomations.length > 0 || personalAutomations.length === 0) && <section className="sidebar-section" aria-labelledby="automations-heading">
+          {!conversationOnly && (visibleAutomations.length > 0 || standaloneAutomations.length === 0) && <section className="sidebar-section" aria-labelledby="automations-heading">
             <div className="sidebar-section-heading">
               <h2 id="automations-heading">Automations</h2>
             </div>
@@ -1983,9 +1984,9 @@ export function Sidebar({
         */}
         {/* <OnboardingChecklist /> */}
 
-        {personalAutomations.length > 0 && (
-          <section className="sidebar-automation-strip" aria-label="Personal automations" onClick={() => setSidebarOpen(false)}>
-            {personalAutomations.map((automation) => (
+        {standaloneAutomations.length > 0 && (
+          <section className="sidebar-automation-strip" aria-label="Automation shortcuts" onClick={() => setSidebarOpen(false)}>
+            {standaloneAutomations.map((automation) => (
               <AutomationRow
                 automation={automation}
                 debugEnabled={debugEnabled}
