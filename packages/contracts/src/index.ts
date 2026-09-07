@@ -1,3 +1,5 @@
+import { PersonalPresentationSchema } from './onboarding';
+export * from './onboarding';
 import { z } from "zod";
 import { AutomationLifecycleStateSchema,
   AutomationRunReferenceV1Schema,
@@ -291,6 +293,7 @@ export const IanaTimezoneSchema = z.string().trim().min(1).max(100).refine((valu
 }, "Timezone must be a supported IANA timezone");
 
 export const UserSchema = z.object({
+  presentation: PersonalPresentationSchema.nullable().optional(),
   id: IdSchema,
   email: z.string().email(),
   name: z.string().min(1),

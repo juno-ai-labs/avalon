@@ -218,7 +218,7 @@ function ResourceChip({ label, resource, onOpen }: {
  * compact icon, filename, and kind row used for attached files; a generated site
  * or audio file must not fall back to a tall card with an empty middle.
  */
-function ResourceEmbedCard({ label, resource, onOpen, onPreview, preview }: {
+export function ResourceEmbedCard({ label, resource, onOpen, onPreview, preview }: {
   label: React.ReactNode;
   resource: CitationResource;
   onOpen: () => void;

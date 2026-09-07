@@ -26,6 +26,10 @@ switching, background attention, leaving, or abandonment.
 
 ## How it works
 
+New-user learning and account appearance are described in
+[new-user onboarding](new-user-onboarding.md). The identity bridge carries that
+narrow revisioned profile into each region; workspace content remains regional.
+
 ### Authority and data flow
 
 Google sign-in produces an identity-only session at the Global endpoint. Global
@@ -424,6 +428,12 @@ Review also exposed that moving Log out below an unbounded list could make it
 unreachable, so the popup now shares the legacy menu's available-height scroll
 behavior. Future changes must preserve switching, invitations, and reachable
 account actions in the compact presentation.
+### 2026-09-05 — Project account appearance
+
+The identity bridge now carries revisioned new-account eligibility and appearance
+so a person sees the same avatar and color when activating either region. Global
+remains the writer; regional copies cannot overwrite a newer revision.
+
 
 ### 2026-09-04 — Keep workspace capabilities in the compact account presentation
 

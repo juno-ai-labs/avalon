@@ -1,4 +1,6 @@
 import { SearchResponseSchema, type SearchRequest, type SearchResponse } from '@rally/contracts/search';
+import { OnboardingTeammatesSchema, type DiscoverOnboardingTeammates } from '@rally/contracts';
+import { OnboardingJourneySchema, type UpdateOnboardingJourney } from '@rally/contracts';
 import { RALLY_HEADERS } from '@rally/contracts/http-headers';
 import { MutatePrivateChildParticipantResultSchema } from '@rally/contracts/conversation-parent';
 import { SubstreamPreparationPreviewSchema, type SubstreamPreparationPreview } from '@rally/contracts/substream-creation';
@@ -249,6 +251,7 @@ export function normalizeHarnessStatus(status: WireWorkstream['harnessStatus']):
 
 function mapUser(user: WireUser): WorkspaceMember {
   return {
+    presentation: user.presentation,
     id: user.id,
     email: user.email,
     name: user.name,
@@ -738,6 +741,17 @@ export class RallyApi {
       throw new ApiError('The speech service returned an unsupported audio format.', 502, 'invalid_response');
     }
     return response.body;
+  }
+
+  discoverOnboardingTeammates(input: DiscoverOnboardingTeammates) {
+    return this.request('/workspace/onboarding/teammates', { schema: OnboardingTeammatesSchema, method: 'POST', body: input });
+  }
+  getOnboardingJourney() {
+    return this.request('/workspace/onboarding', { schema: OnboardingJourneySchema });
+  }
+
+  updateOnboardingJourney(input: UpdateOnboardingJourney) {
+    return this.request('/workspace/onboarding', { method: 'PATCH', body: input, schema: OnboardingJourneySchema });
   }
 
   async getWorkspace(signal?: AbortSignal): Promise<Workspace> {
