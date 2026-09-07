@@ -131,7 +131,7 @@ export function WorkspaceOnboardingJourney({ workspace, children }: { workspace:
   const [emailDraft, setEmailDraft] = useState('');
   const [sent, setSent] = useState<string[]>([]);
   const connectors = useQuery({ queryKey: ['connector-catalog'], queryFn: () => api!.getAvailableConnectorTypes(), enabled: Boolean(api && journey.data?.stage === 'connectors') });
-  const connections = useQuery({ queryKey: ['connections'], queryFn: () => api!.getConnections(), enabled: Boolean(api && ['connectors', 'people', 'example'].includes(journey.data?.stage ?? '')), refetchOnWindowFocus: 'always' });
+  const connections = useQuery({ queryKey: ['connections'], queryFn: () => api!.getConnections(), enabled: Boolean(api && ['connectors'].includes(journey.data?.stage ?? '')), refetchOnWindowFocus: 'always' });
   const advance = async (stage: OnboardingJourney['stage']) => {
     if (!journey.data) return;
     const updated = await api!.updateOnboardingJourney({ expectedRevision: journey.data.revision, stage });
