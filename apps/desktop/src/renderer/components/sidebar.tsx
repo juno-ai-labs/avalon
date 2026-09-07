@@ -72,11 +72,11 @@ import { Avatar, Badge, Button, IconButton, InlineError, Modal, StatusDot, Title
 import { ProjectIcon, ProjectSidebarSection } from './project-sidebar-section';
 import { SidebarSkeletonGroup, SidebarSkeletonRows } from './sidebar-skeleton';
 import { ContextNestedMenu } from './nested-menu';
-import { WorkstreamGlyph } from './workstream-glyph';
+import { WorkstreamGlyph, WorkstreamSymbol, workstreamAppearance } from './workstream-glyph';
 
 interface SidebarProps {
   onOpenSearch?: () => void;
-  /** GrokBot-style shell: navigation is work streams only. */
+  /** GrokBot-style shell: work streams and personal automation shortcuts. */
   conversationOnly?: boolean;
   /** The responsive or manually selected GrokBot icon rail. */
   compact?: boolean;
@@ -402,8 +402,10 @@ function AutomationRow({
   debugEnabled,
   onDelete,
   onRunNow,
+  tile = false,
 }: {
   automation: AutomationSummary;
+  tile?: boolean;
   debugEnabled: boolean;
   onDelete: (automation: AutomationSummary) => void;
   onRunNow: (automation: AutomationSummary) => void;
@@ -418,22 +420,41 @@ function AutomationRow({
               screen behind it is the automation's own conversation, with its
               lifecycle in the header. */}
           <NavLink
-            className={({ isActive }) => clsx('sidebar-row automation-row', (isDraft ? draftActive : isActive) && 'is-active', isDraft && 'is-draft')}
+            className={({ isActive }) => clsx('sidebar-row automation-row', tile && 'automation-tile', (isDraft ? draftActive : isActive) && 'is-active', isDraft && 'is-draft')}
+            title={tile ? `${automation.name} · ${automation.status}` : undefined}
             onClick={() => markSurfaceEntrypoint('sidebar_automation')}
             to={`/automations/${automation.id}`}
           >
-            <span className="sidebar-row-icon" aria-hidden="true">
-              {automation.status === 'paused'
-                ? <CirclePause size={13} />
-                : <span className={clsx('mini-state', automation.status)} />}
-            </span>
-            <span className="sidebar-row-main">
-              <span className="sidebar-row-title">{automation.name}</span>
-              {isDraft
-                ? <span className="sidebar-row-hint">Draft</span>
-                : automation.nextRunAt && <span className="sidebar-row-hint">Next {formatRelative(automation.nextRunAt)}</span>}
-            </span>
-            <Badge className="scope-badge">{automationScopeLabel(automation.scope)}</Badge>
+            {tile ? (
+              <>
+                <span className="automation-tile-glyph" aria-hidden="true">
+                  <svg viewBox="0 0 100 100" fill="none">
+                    <path d="M43 6C47 3 52 3 57 6L86 23C91 26 94 30 94 36L94 66C94 72 91 76 86 79L57 95C52 98 47 98 42 95L14 78C9 75 6 71 6 65L6 35C6 29 9 25 14 22Z" fill={`var(--av-sys-color-project-${workstreamAppearance(automation.id).color})`} />
+                  </svg>
+                  <WorkstreamSymbol id={automation.id} size={30} className="automation-tile-icon" />
+                  <span className={clsx('automation-tile-state', automation.status)}>
+                    <span className="status-dot" />
+                  </span>
+                </span>
+                <span className="automation-tile-name">{automation.name}</span>
+                <span className="sr-only">{automation.status}</span>
+              </>
+            ) : (
+              <>
+                <span className="sidebar-row-icon" aria-hidden="true">
+                  {automation.status === 'paused'
+                    ? <CirclePause size={13} />
+                    : <span className={clsx('mini-state', automation.status)} />}
+                </span>
+                <span className="sidebar-row-main">
+                  <span className="sidebar-row-title">{automation.name}</span>
+                  {isDraft
+                    ? <span className="sidebar-row-hint">Draft</span>
+                    : automation.nextRunAt && <span className="sidebar-row-hint">Next {formatRelative(automation.nextRunAt)}</span>}
+                </span>
+                <Badge className="scope-badge">{automationScopeLabel(automation.scope)}</Badge>
+              </>
+            )}
           </NavLink>
         </div>
       </ContextMenu.Trigger>
@@ -1116,7 +1137,8 @@ export function Sidebar({
   const [deleteTarget, setDeleteTarget] = useState<AutomationSummary | null>(null);
   const visibleWorkstreams = workstreams;
   const visibleNotes = useMemo(() => conversationOnly ? [] : notes, [conversationOnly, notes]);
-  const visibleAutomations = useMemo(() => conversationOnly ? [] : automations, [conversationOnly, automations]);
+  const personalAutomations = useMemo(() => automations.filter((automation) => automation.scope === 'you'), [automations]);
+  const visibleAutomations = useMemo(() => conversationOnly ? [] : automations.filter((automation) => automation.scope !== 'you'), [conversationOnly, automations]);
   // Drafts are listed with the rest: a draft is a conversation in progress on
   // the automation's own screen, which is where its row leads.
   const orderedAutomations = visibleAutomations;
@@ -1944,6 +1966,21 @@ export function Sidebar({
           >
             <Plus aria-hidden="true" size={19} strokeWidth={1.6} />
           </NavLink>
+        )}
+
+        {personalAutomations.length > 0 && (
+          <section className="sidebar-automation-strip" aria-label="Personal automations" onClick={() => setSidebarOpen(false)}>
+            {personalAutomations.map((automation) => (
+              <AutomationRow
+                automation={automation}
+                debugEnabled={debugEnabled}
+                key={automation.id}
+                tile
+                onDelete={setDeleteTarget}
+                onRunNow={(target) => { void onRunAutomation(target).catch(() => undefined); }}
+              />
+            ))}
+          </section>
         )}
 
         {accountMenu ?? <DropdownMenu.Root>

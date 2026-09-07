@@ -97,6 +97,27 @@ included. Scope is chosen in the automation's own chat, between `personal` and
 `workspace`, and only while the automation is still a draft; a room's
 automation is the room's from the start and stays so.
 
+Personal automations render as a horizontal scrolling strip at the bottom of the sidebar above the user menu,
+including in the conversation-only shell. The strip is absent when no personal
+automations exist. Each tile uses a rounded hexagon with flat left and right sides without eyes, a stable identity
+color, a centered symbol from the shared stream icon family, and a bottom-right square lifecycle marker (active, paused, or draft). It opens
+the existing automation route and retains Run now and Delete context actions.
+Workspace automations stay in the full sidebar list; room-owned automations
+stay in their room rail.
+
+The strip follows the installed Grok Bot 0.44.0 pinned layout, inspected on
+2026-09-07 in `Contents/Resources/app.asar`: `index-C6zjACOA.js` and
+`index-DfPT5G9o.css`. Its 80px tiles are centered with an 8px gap, 60px
+artwork, 6px artwork-to-caption gap, 6px/4px top/bottom tile padding,
+4px horizontal tile padding, and 10px corners. Captions use 11px type,
+16px line height, and .005em tracking. Hover and selected fills are
+`#77777717` and `#7777772b`. The outer 8px/12px plus inner 6px block
+padding becomes 14px/18px on our strip. One tile can grow to fit a caption
+up to 92px. The deliberate differences are one horizontally scrolling row
+(the reference wraps an auto-fit grid), lifecycle state instead of message
+state, and the square indicator at bottom right as requested.
+
+
 ### Drafting in the conversation
 
 The conversation is an ordinary `SubstreamAgent` under the automation, with the
@@ -549,6 +570,22 @@ was paused or deleted after admission. [`runbook.md`](runbook.md) has the
 production inspection paths.
 
 ## Changelog
+
+### 2026-09-07 — Personal automations in the sidebar
+
+Personal automations now appear above the user menu as horizontally scrolling icon
+tiles so they remain directly reachable in the conversation-only shell. Reusing
+the existing row actions preserves navigation and deletion behavior. The strip
+renders only with personal entries; workspace and room-owned entries retain
+their existing homes. Lifecycle indicators use the stream marker’s 8px square, shared radius and
+glow tokens, and 14px background at bottom right, as requested. A follow-up
+inspection of Grok Bot 0.44.0 replaced estimated sizes and left alignment with
+the packaged pinned-tile metrics and centered alignment. Horizontal overflow
+remains intentional rather than adopting the reference wrapping grid. The final
+placement is outside the scrolling conversation list above the user menu, with
+hexagons with flat left and right sides and no eyes, following the revised design request. Centered icons reuse the stream identity
+symbol component and deterministic ID selection rather than a separate icon set.
+
 
 ### 2026-09-04: A replayed create provisions the conversation it skipped
 
