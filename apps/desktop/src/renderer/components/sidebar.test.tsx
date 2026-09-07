@@ -177,7 +177,16 @@ describe('Sidebar work-stream markers', () => {
     });
   });
 
-  it('reduces the GrokBot shell navigation to work streams', () => {
+  it.each([false, true].flatMap((conversationOnly) => [
+    { label: 'empty', conversationOnly, automations: [] },
+    { label: 'workspace', conversationOnly, automations: [{ ...automation, scope: 'workspace' as const }] },
+    { label: 'workstream', conversationOnly, automations: [{ ...automation, scope: 'workstream' as const }] },
+  ]))('omits the personal strip for $label entries (conversationOnly=$conversationOnly)', ({ automations, conversationOnly }) => {
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} conversationOnly={conversationOnly} automations={automations} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
+    expect(screen.queryByRole('region', { name: 'Personal automations' })).not.toBeInTheDocument();
+  });
+
+  it('shows personal automations above the user menu in the GrokBot shell', () => {
     render(
       <MemoryRouter>
         <Tooltip.Provider>
@@ -195,7 +204,10 @@ describe('Sidebar work-stream markers', () => {
     );
 
     expect(screen.getByText('Customer launch')).toBeInTheDocument();
-    expect(screen.queryByText('Daily product brief')).not.toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Personal automations' })).toContainElement(screen.getByText('Daily product brief'));
+    const strip = screen.getByRole('region', { name: 'Personal automations' });
+    expect(strip.closest('.sidebar-scroll')).toBeNull();
+    expect(strip.nextElementSibling).toBe(screen.getByRole('button', { name: 'Open account menu' }));
     expect(screen.queryByText('Meeting notes')).not.toBeInTheDocument();
     expect(screen.queryByText('New automation')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Search workspace' })).toBeInTheDocument();
@@ -1064,7 +1076,7 @@ describe('Sidebar work-stream markers', () => {
     }
   });
 
-  it('gives automation rows the same sidebar-row chrome as work streams', () => {
+  it('renders personal automation tiles without a contradictory empty list', () => {
     render(
       <MemoryRouter>
         <Tooltip.Provider>
@@ -1081,7 +1093,38 @@ describe('Sidebar work-stream markers', () => {
 
     const row = screen.getByRole('link', { name: /Daily product brief/u });
     expect(row).toHaveClass('sidebar-row', 'automation-row');
-    expect(row.querySelector('.scope-badge')).toHaveTextContent('You');
+    expect(row).toHaveClass('automation-tile');
+    expect(screen.queryByText('No automations')).not.toBeInTheDocument();
+    expect(row).toHaveTextContent('Active');
+  });
+
+  it('keeps compact search and creation above the scrolling streams', () => {
+    const onOpenSearch = vi.fn();
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} compact conversationOnly automations={[]} onOpenSearch={onOpenSearch} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
+    const search = screen.getByRole('button', { name: 'Search workspace' });
+    const create = screen.getByRole('link', { name: 'New chat' });
+    const navigation = screen.getByRole('navigation');
+    expect(search.closest('.sidebar-scroll')).toBeNull();
+    expect(create.closest('.sidebar-scroll')).toBeNull();
+    expect(search.compareDocumentPosition(navigation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(create.compareDocumentPosition(navigation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(search);
+    expect(onOpenSearch).toHaveBeenCalledOnce();
+    expect(create).toHaveAttribute('href', '/workstreams/new');
+  });
+
+  it('keeps compact automation links named when captions are hidden', () => {
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} compact conversationOnly automations={[automation]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
+    const caption = screen.getByText(automation.name);
+    caption.style.display = 'none';
+    expect(screen.getByRole('link', { name: 'Daily product brief, Active' })).toHaveAttribute('href', '/automations/automation-1');
+  });
+
+  it('reports a failed manual automation run', async () => {
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={[automation]} onRunAutomation={async () => { throw new Error('Service unavailable'); }} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Daily product brief/u }), { clientX: 120, clientY: 90 });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Run now' }));
+    expect(await screen.findByRole('dialog', { name: 'Automation could not run' })).toHaveTextContent('Service unavailable');
   });
 
   it('offers New automation beside New work stream, leading to the create route', () => {
@@ -1179,15 +1222,15 @@ describe('Sidebar work-stream markers', () => {
     );
 
     // A draft is a conversation in progress on the automation's own screen,
-    // which is where its row leads; the hint says it is not running yet.
-    const section = screen.getByRole('region', { name: 'Automations' });
-    expect([...section.querySelectorAll('.sidebar-row-title')].map((row) => row.textContent))
+    // which is where its tile leads; its accessible label identifies the draft.
+    const section = screen.getByRole('region', { name: 'Personal automations' });
+    expect([...section.querySelectorAll('.automation-tile-name')].map((row) => row.textContent))
       .toEqual(['Ad hoc competitor scan', 'Daily product brief']);
     const row = screen.getByRole('link', { name: /Ad hoc competitor scan/u });
     expect(row).toHaveClass('is-draft');
     expect(row).toHaveAttribute('href', '/automations/automation-2');
-    expect(within(row).getByText('Draft')).toBeVisible();
-    expect(screen.queryByText('No automations')).toBeNull();
+    expect(within(row).getByText('Draft')).toBeInTheDocument();
+    expect(section).not.toHaveTextContent('No automations');
   });
 
   it('deletes an automation only after the confirmation dialog', async () => {

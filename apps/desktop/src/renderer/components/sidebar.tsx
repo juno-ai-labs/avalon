@@ -72,11 +72,11 @@ import { Avatar, Badge, Button, IconButton, InlineError, Modal, StatusDot, Title
 import { ProjectIcon, ProjectSidebarSection } from './project-sidebar-section';
 import { SidebarSkeletonGroup, SidebarSkeletonRows } from './sidebar-skeleton';
 import { ContextNestedMenu } from './nested-menu';
-import { WorkstreamGlyph } from './workstream-glyph';
+import { AutomationGlyph, WorkstreamGlyph } from './workstream-glyph';
 
 interface SidebarProps {
   onOpenSearch?: () => void;
-  /** GrokBot-style shell: navigation is work streams only. */
+  /** GrokBot-style shell: work streams and personal automation shortcuts. */
   conversationOnly?: boolean;
   /** The responsive or manually selected GrokBot icon rail. */
   compact?: boolean;
@@ -390,6 +390,12 @@ function automationScopeLabel(scope: AutomationSummary['scope']): string {
   return scope === 'you' ? 'You' : scope === 'workspace' ? 'Workspace' : 'Work stream';
 }
 
+const automationStatusLabels: Record<AutomationSummary['status'], string> = {
+  active: 'Active',
+  paused: 'Paused',
+  draft: 'Draft',
+};
+
 /** The durable automation route currently open, excluding the new route. */
 function useOpenDraftId(): string | null {
   const location = useLocation();
@@ -402,8 +408,10 @@ function AutomationRow({
   debugEnabled,
   onDelete,
   onRunNow,
+  tile = false,
 }: {
   automation: AutomationSummary;
+  tile?: boolean;
   debugEnabled: boolean;
   onDelete: (automation: AutomationSummary) => void;
   onRunNow: (automation: AutomationSummary) => void;
@@ -418,22 +426,39 @@ function AutomationRow({
               screen behind it is the automation's own conversation, with its
               lifecycle in the header. */}
           <NavLink
-            className={({ isActive }) => clsx('sidebar-row automation-row', (isDraft ? draftActive : isActive) && 'is-active', isDraft && 'is-draft')}
+            className={({ isActive }) => clsx('sidebar-row automation-row', tile && 'automation-tile', (isDraft ? draftActive : isActive) && 'is-active', isDraft && 'is-draft')}
+            aria-label={tile ? `${automation.name}, ${automationStatusLabels[automation.status]}` : undefined}
+            title={tile ? `${automation.name} · ${automationStatusLabels[automation.status]}` : undefined}
             onClick={() => markSurfaceEntrypoint('sidebar_automation')}
             to={`/automations/${automation.id}`}
           >
-            <span className="sidebar-row-icon" aria-hidden="true">
-              {automation.status === 'paused'
-                ? <CirclePause size={13} />
-                : <span className={clsx('mini-state', automation.status)} />}
-            </span>
-            <span className="sidebar-row-main">
-              <span className="sidebar-row-title">{automation.name}</span>
-              {isDraft
-                ? <span className="sidebar-row-hint">Draft</span>
-                : automation.nextRunAt && <span className="sidebar-row-hint">Next {formatRelative(automation.nextRunAt)}</span>}
-            </span>
-            <Badge className="scope-badge">{automationScopeLabel(automation.scope)}</Badge>
+            {tile ? (
+              <>
+                <span className="automation-tile-glyph" aria-hidden="true">
+                  <AutomationGlyph id={automation.id} />
+                  <span className={clsx('automation-tile-state', automation.status)}>
+                    <span className="status-dot" />
+                  </span>
+                </span>
+                <span className="automation-tile-name">{automation.name}</span>
+                <span className="sr-only">{automationStatusLabels[automation.status]}</span>
+              </>
+            ) : (
+              <>
+                <span className="sidebar-row-icon" aria-hidden="true">
+                  {automation.status === 'paused'
+                    ? <CirclePause size={13} />
+                    : <span className={clsx('mini-state', automation.status)} />}
+                </span>
+                <span className="sidebar-row-main">
+                  <span className="sidebar-row-title">{automation.name}</span>
+                  {isDraft
+                    ? <span className="sidebar-row-hint">Draft</span>
+                    : automation.nextRunAt && <span className="sidebar-row-hint">Next {formatRelative(automation.nextRunAt)}</span>}
+                </span>
+                <Badge className="scope-badge">{automationScopeLabel(automation.scope)}</Badge>
+              </>
+            )}
           </NavLink>
         </div>
       </ContextMenu.Trigger>
@@ -1114,9 +1139,21 @@ export function Sidebar({
   const [batchPreviewFailed, setBatchPreviewFailed] = useState(false);
   const batchPreviewGeneration = useRef(0);
   const [deleteTarget, setDeleteTarget] = useState<AutomationSummary | null>(null);
+  const runAutomation = async (automation: AutomationSummary): Promise<void> => {
+    try {
+      await onRunAutomation(automation);
+    } catch (error) {
+      setMenuError({
+        title: 'Automation could not run',
+        copy: `Open ${automation.name} to check its run history before trying again.`,
+        message: error instanceof Error ? error.message : 'The run request could not be completed.',
+      });
+    }
+  };
   const visibleWorkstreams = workstreams;
   const visibleNotes = useMemo(() => conversationOnly ? [] : notes, [conversationOnly, notes]);
-  const visibleAutomations = useMemo(() => conversationOnly ? [] : automations, [conversationOnly, automations]);
+  const personalAutomations = useMemo(() => automations.filter((automation) => automation.scope === 'you'), [automations]);
+  const visibleAutomations = useMemo(() => conversationOnly ? [] : automations.filter((automation) => automation.scope !== 'you'), [conversationOnly, automations]);
   // Drafts are listed with the rest: a draft is a conversation in progress on
   // the automation's own screen, which is where its row leads.
   const orderedAutomations = visibleAutomations;
@@ -1651,7 +1688,7 @@ export function Sidebar({
           <IconButton className="window-no-drag mobile-only" label="Close navigation" onClick={() => setSidebarOpen(false)}>
             <ChevronsLeft size={16} />
           </IconButton>
-          <NavLink
+          {!compact && <NavLink
             aria-label="New chat"
             className={({ isActive }) => clsx('sidebar-new-button window-no-drag', isActive && 'is-active')}
             onClick={() => markSurfaceEntrypoint('sidebar_new')}
@@ -1659,8 +1696,23 @@ export function Sidebar({
             to="/workstreams/new"
           >
             <Plus aria-hidden="true" size={16} />
-          </NavLink>
+          </NavLink>}
         </div>
+
+        {compact && (
+          <div className="sidebar-rail-actions window-no-drag">
+            <SidebarSearch mode="button" onClick={onOpenSearch} disabled={!onOpenSearch} aria-label="Search workspace" />
+            <NavLink
+              aria-label="New chat"
+              className={({ isActive }) => clsx('sidebar-new-button sidebar-rail-new-button window-no-drag', isActive && 'is-active')}
+              onClick={() => markSurfaceEntrypoint('sidebar_new')}
+              state={location.pathname === '/workstreams/new' ? undefined : { returnTo: location.pathname }}
+              to="/workstreams/new"
+            >
+              <Plus aria-hidden="true" size={19} strokeWidth={1.6} />
+            </NavLink>
+          </div>
+        )}
 
         <nav
           className="sidebar-scroll"
@@ -1668,9 +1720,9 @@ export function Sidebar({
           onScroll={loadMoreWhenNearBottom}
           ref={scrollRef}
         >
-          <div className="sidebar-commandbar window-no-drag">
+          {!compact && <div className="sidebar-commandbar window-no-drag">
             <SidebarSearch mode="button" onClick={onOpenSearch} disabled={!onOpenSearch} aria-label="Search workspace" />
-          </div>
+          </div>}
           {conversationOnly && location.pathname === '/workstreams/new' && (
             <div aria-current="page" aria-label="New chat draft" className="sidebar-new-chat-draft">
               <span aria-hidden="true" className="sidebar-new-chat-draft-icon">
@@ -1721,7 +1773,7 @@ export function Sidebar({
             />
           )}
 
-          {!conversationOnly && <section className="sidebar-section" aria-labelledby="automations-heading">
+          {!conversationOnly && (visibleAutomations.length > 0 || personalAutomations.length === 0) && <section className="sidebar-section" aria-labelledby="automations-heading">
             <div className="sidebar-section-heading">
               <h2 id="automations-heading">Automations</h2>
             </div>
@@ -1737,10 +1789,7 @@ export function Sidebar({
                     debugEnabled={debugEnabled}
                     key={automation.id}
                     onDelete={setDeleteTarget}
-                    onRunNow={(target) => {
-                      void onRunAutomation(target)
-                        .catch(() => undefined);
-                    }}
+                    onRunNow={(target) => { void runAutomation(target); }}
                   />
                 ))}
               </div>
@@ -1934,16 +1983,19 @@ export function Sidebar({
         */}
         {/* <OnboardingChecklist /> */}
 
-        {compact && (
-          <NavLink
-            aria-label="New chat"
-            className={({ isActive }) => clsx('sidebar-new-button sidebar-rail-new-button window-no-drag', isActive && 'is-active')}
-            onClick={() => markSurfaceEntrypoint('sidebar_new')}
-            state={location.pathname === '/workstreams/new' ? undefined : { returnTo: location.pathname }}
-            to="/workstreams/new"
-          >
-            <Plus aria-hidden="true" size={19} strokeWidth={1.6} />
-          </NavLink>
+        {personalAutomations.length > 0 && (
+          <section className="sidebar-automation-strip" aria-label="Personal automations" onClick={() => setSidebarOpen(false)}>
+            {personalAutomations.map((automation) => (
+              <AutomationRow
+                automation={automation}
+                debugEnabled={debugEnabled}
+                key={automation.id}
+                tile
+                onDelete={setDeleteTarget}
+                onRunNow={(target) => { void runAutomation(target); }}
+              />
+            ))}
+          </section>
         )}
 
         {accountMenu ?? <DropdownMenu.Root>
