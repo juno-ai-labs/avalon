@@ -4445,7 +4445,16 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   }
 
   /** Internal Queue consumer entrypoint; never mounted on the public API. */
-  async prepareSearchTurn(input: unknown, captureLinks = true, documentId?: string) {
+  async prepareSearchTurn(input: unknown, captureLinks = true) {
+    return this.prepareSearchTurnSource(input, captureLinks);
+  }
+
+  /** A distinct RPC makes old instances fail/retry instead of ignoring a target. */
+  async prepareSearchTurnDocument(input: unknown, documentId: unknown, captureLinks = true) {
+    return this.prepareSearchTurnSource(input, captureLinks, z.string().min(1).parse(documentId));
+  }
+
+  private async prepareSearchTurnSource(input: unknown, captureLinks: boolean, documentId?: string) {
     await this.storageReady;
     const request = SearchProjectionMessageSchema.parse(input);
     const identity = this.objectStore.identity();

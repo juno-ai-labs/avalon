@@ -3110,7 +3110,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return resourceSearchRevision(this.state.storage.sql, request.resourceId);
   }
 
-  async prepareResourceSearch(input: unknown, documentId?: string) {
+  async prepareResourceSearch(input: unknown) {
+    return this.prepareResourceSearchSource(input);
+  }
+
+  /** Fail/retry on an old instance instead of silently reading every category. */
+  async prepareResourceSearchDocument(input: unknown, documentId: unknown) {
+    return this.prepareResourceSearchSource(input, z.string().min(1).parse(documentId));
+  }
+
+  private async prepareResourceSearchSource(input: unknown, documentId?: string) {
     await this.initialized;
     const request = ResourceSearchProjectionSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
