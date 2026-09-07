@@ -94,6 +94,13 @@ does not serve workspace product state or transcripts after cutover.
 
 Transcript writes commit a coalesced search intent through SQLite triggers. SubstreamAgent alarms publish references to the regional activity Queue; its internal preparation RPC reloads canonical text and captures links. The Queue Worker alone performs lexical indexing, shared chunking, embedding, and generation cleanup. WorkspaceDO uses retained resource revision watermarks and the same Queue. Captured link Markdown stays in the originating substream and canonical search reads enforce current parent and child access. See [text search](text-search.md) for migration and failure behavior.
 
+WorkspaceDO `searchableWorkstreamIds` is a search-readability projection, separate
+from sidebar visibility and batch actions. It includes archived/system rows and
+requires workspace scope or a participant viewer row at the matching authority
+generation. Its complete-list response has no inherited 100-ID batch cap. The
+search loader still checks current parent and private-child authority before
+returning content; the projection itself never grants access.
+
 ### Ordered transcript authority
 
 Main `SubstreamAgent("0")` owns one canonical transcript substrate. Semantic
@@ -1615,6 +1622,14 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-09-07 — Search directory readability
+
+Recorded the separate search reader because reusing sidebar visibility would
+hide archived/system conversation text, while reusing the bounded lookup schema
+made searches fail above 100 scopes. The reader preserves the participant and
+authority-generation predicate; canonical conversation checks remain decisive.
+Shipped in #576.
 
 ### 2026-09-05 — Durable search delivery
 

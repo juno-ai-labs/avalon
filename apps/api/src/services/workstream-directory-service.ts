@@ -13,6 +13,7 @@ import {
   WorkspaceDirectoryBatchTargetsResultSchema,
   WorkspaceDirectoryPageSchema,
   WorkspaceDirectoryReadableIdsResultSchema,
+  WorkspaceDirectorySearchableIdsResultSchema,
 } from "../durable-objects/workspace-directory-protocol";
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
@@ -42,6 +43,12 @@ export class WorkstreamDirectoryService {
       userId: this.auth.userId,
       workstreamId,
     });
+  }
+
+  async searchableIds(): Promise<string[]> {
+    return WorkspaceDirectorySearchableIdsResultSchema.parse(await (await this.workspace()).searchableWorkstreamIds({
+      workspaceId: this.auth.workspaceId, userId: this.auth.userId,
+    })).items;
   }
 
   async readableIds(workstreamIds: string[]): Promise<string[]> {
