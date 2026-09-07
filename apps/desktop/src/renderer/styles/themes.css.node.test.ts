@@ -138,14 +138,15 @@ describe('no colour is written into app.css', () => {
       .replace(/\/\*[\s\S]*?\*\//gu, ' ')
       .split('}')
       .filter((block) => /background(-color)?\s*:\s*var\(--av-cmp-sidebar-background\)/u.test(block))
-      .map((block) => (block.split('{')[0] ?? '').trim().split('\n').pop() ?? '')
+      .flatMap((block) => (block.split('{').at(-2) ?? '').split(',').map((selector) => selector.trim()))
       // The context sidebar is a separate panel, never nested inside the
       // global navigation: both paint the tint once over the shell canvas.
+      // Settings is another separate window's panel, not a nested painter.
       // The Settings preview is another legitimate painter: it
       // composites the tint over the offered theme's own `--av-sys-color-surface-canvas`, which is
       // what the real navigation does over the shell, rather than over a
       // surface already carrying it.
-      .filter((selector) => selector !== '.sidebar' && selector !== '.workstream-context-sidebar' && selector !== '.settings-theme-swatch-sidebar');
+      .filter((selector) => selector !== '.sidebar' && selector !== '.settings-sidebar' && selector !== '.workstream-context-sidebar' && selector !== '.settings-theme-swatch-sidebar');
 
     expect(offenders).toEqual([]);
   });
