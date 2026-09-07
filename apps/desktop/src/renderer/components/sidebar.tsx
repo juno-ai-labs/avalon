@@ -1152,8 +1152,8 @@ export function Sidebar({
   };
   const visibleWorkstreams = workstreams;
   const visibleNotes = useMemo(() => conversationOnly ? [] : notes, [conversationOnly, notes]);
-  const personalAutomations = useMemo(() => automations.filter((automation) => automation.scope === 'you'), [automations]);
-  const visibleAutomations = useMemo(() => conversationOnly ? [] : automations.filter((automation) => automation.scope !== 'you'), [conversationOnly, automations]);
+  const standaloneAutomations = useMemo(() => automations.filter((automation) => automation.scope !== 'workstream'), [automations]);
+  const visibleAutomations = useMemo(() => conversationOnly ? [] : automations.filter((automation) => automation.scope === 'workstream'), [conversationOnly, automations]);
   // Drafts are listed with the rest: a draft is a conversation in progress on
   // the automation's own screen, which is where its row leads.
   const orderedAutomations = visibleAutomations;
@@ -1773,7 +1773,7 @@ export function Sidebar({
             />
           )}
 
-          {!conversationOnly && (visibleAutomations.length > 0 || personalAutomations.length === 0) && <section className="sidebar-section" aria-labelledby="automations-heading">
+          {!conversationOnly && (visibleAutomations.length > 0 || standaloneAutomations.length === 0) && <section className="sidebar-section" aria-labelledby="automations-heading">
             <div className="sidebar-section-heading">
               <h2 id="automations-heading">Automations</h2>
             </div>
@@ -1983,9 +1983,9 @@ export function Sidebar({
         */}
         {/* <OnboardingChecklist /> */}
 
-        {personalAutomations.length > 0 && (
-          <section className="sidebar-automation-strip" aria-label="Personal automations" onClick={() => setSidebarOpen(false)}>
-            {personalAutomations.map((automation) => (
+        {standaloneAutomations.length > 0 && (
+          <section className="sidebar-automation-strip" aria-label="Automation shortcuts" onClick={() => setSidebarOpen(false)}>
+            {standaloneAutomations.map((automation) => (
               <AutomationRow
                 automation={automation}
                 debugEnabled={debugEnabled}
