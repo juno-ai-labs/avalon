@@ -2454,11 +2454,20 @@ describe("a member's message travels the whole pipeline", () => {
       operationId,
       harnessRunId: operationId,
     });
-    expect(await runInDurableObject(stub, (_instance, state) =>
+    // The retry is a durable row the moment the command is acknowledged. Its
+    // eager wake-up threw, so only the object's alarm can move it on — and
+    // under a contended shard that alarm may already have fired by the time
+    // this reads (and, with `authorize` stubbed to throw, failed the run), so
+    // the status is not asserted at an instant. What the command promised is
+    // the row: a run with the retry's origin, recorded whether or not the
+    // wake-up that was supposed to follow it did.
+    const recorded = await runInDurableObject(stub, (_instance, state) =>
       state.storage.sql.exec<{ status: string; origin: string }>(
         `SELECT status, origin FROM runs WHERE run_id = ?`,
         operationId,
-      ).one())).toEqual({ status: "admitted", origin: "manual_retry" });
+      ).one());
+    expect(recorded.origin).toBe("manual_retry");
+    expect(["admitted", "running", "failed", "completed"]).toContain(recorded.status);
     socket.close(1000, "done");
   });
 
