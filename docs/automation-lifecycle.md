@@ -41,7 +41,7 @@ effect pipeline its children use are owned by
 | `apps/api/src/services/resend-inbound-email-service.ts` | `ingestAutomation`: resolves the sender, stores the message, and calls `admitInboundEmail` once. |
 | `apps/api/src/services/memory-service.ts` | `resolveMemoryAccess`: a conversation whose parent is an automation resolves the workspace scope and the automation's own `automation` scope. |
 | `apps/desktop/src/renderer/screens/automation.tsx`, `components/automation-header.tsx`, `screens/conversation-surface.tsx` | `/automations/new` calls `POST /automations` and replaces itself with `/automations/:id`; that route renders the header (lifecycle badge, scope, email address, Create or Apply changes, Pause, Resume, Delete, Run now, the run list from `GET /automations/:id/runs`) over the shared conversation surface with `parentKind: "automation"` and `substreamId: "0"`. |
-| `apps/desktop/src/renderer/components/sidebar.tsx`, `components/inspector-rail.tsx` | The sidebar's personal automation strip above the user menu, legacy non-personal automation rows, and **New automation** action and the room rail's automation grouping from `GET /automations/workstream/:workstreamId`; an automation's own conversation shows no such grouping. |
+| `apps/desktop/src/renderer/components/sidebar.tsx`, `components/inspector-rail.tsx` | The sidebar's personal and workspace automation strip above the user menu, legacy room-owned automation rows, and **New automation** action and the room rail's automation grouping from `GET /automations/workstream/:workstreamId`; an automation's own conversation shows no such grouping. |
 
 ## How it works
 
@@ -97,15 +97,17 @@ included. Scope is chosen in the automation's own chat, between `personal` and
 `workspace`, and only while the automation is still a draft; a room's
 automation is the room's from the start and stays so.
 
-Personal automations render as a horizontal scrolling strip at the bottom of the sidebar above the user menu,
-including in the conversation-only shell. The strip is absent when no personal
+Personal and workspace automations render as a horizontal scrolling strip at the bottom of the sidebar above the user menu,
+including in the conversation-only shell. The strip is absent when neither personal nor workspace
 automations exist. Each tile uses a rounded hexagon with flat left and right sides without eyes, a stable identity
 color, a centered symbol from the shared stream icon family, and a bottom-right square lifecycle marker (active, paused, or draft). It opens
-the existing automation route and retains Run now and Delete context actions.
-The legacy full-sidebar mode retains workspace automation rows. The production
-conversation-only shell does not render that list; room-owned automations remain
-in their room rail. Compact mode keeps Search and New chat above the scrolling
-streams, while personal automation tiles remain above the account menu.
+the existing automation route. Personal tiles retain Run now and Delete context
+actions; workspace tiles are navigation-only because directory summaries lack
+management capabilities. Their tooltip and accessible name identify Workspace
+scope. Management remains on the automation page.
+Room-owned automations remain in their room rail. The sidebar directory excludes
+them at the server; the legacy row renderer still accepts room-owned fixtures. Compact mode keeps Search and New chat above the scrolling
+streams, while automation tiles remain above the account menu.
 
 The strip follows the installed Grok Bot 0.44.0 pinned layout, inspected on
 2026-09-07 in `Contents/Resources/app.asar`: `index-C6zjACOA.js` and
@@ -573,6 +575,25 @@ was paused or deleted after admission. [`runbook.md`](runbook.md) has the
 production inspection paths.
 
 ## Changelog
+
+### 2026-09-07 — Include workspace automations in the strip
+
+**What changed:** The shared sidebar strip includes both personal and workspace
+scopes, and its accessible name is now Automation shortcuts. Legacy rows exclude both
+scopes so each automation appears once.
+
+**Why:** Workspace automations need the same direct access as personal ones in
+the production conversation-only sidebar.
+
+**Considered and rejected:** A separate workspace list would duplicate navigation
+and require different behavior between expanded and compact modes.
+
+**Consequences:** Room-owned automations stay in their existing room navigation.
+The strip is absent only when neither standalone scope has entries. Workspace
+tiles omit management menus until authoritative capabilities are available, rather
+than offering actions that viewer-only members cannot perform. The strip keeps the
+server directory order and horizontal overflow for the combined population; it
+does not add a separate cap or reorder by recent use.
 
 ### 2026-09-07 — Personal automations in the sidebar
 
