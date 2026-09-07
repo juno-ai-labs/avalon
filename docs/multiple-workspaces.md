@@ -286,6 +286,11 @@ reported but cannot restore local authority.
 
 ### Desktop behavior
 
+The bottom-bar account popup shows Settings, the enabled workspace and invitation
+rows, and Log out last, separated by a divider above it. It omits About, Help
+Center, Send Feedback, workspace creation, and a trailing divider. The legacy workspace presentation retains its
+creation action.
+
 `multiple-workspaces-enabled` controls presentation only. When off, the account
 menu keeps its previous one-workspace anatomy; plural membership, credential
 storage, lifecycle fences, and singular onboarding compatibility remain active.
@@ -398,6 +403,17 @@ encrypts the complete account set, while sign-out erases it locally before
 best-effort remote revocation.
 
 ## Changelog
+
+### 2026-09-07 — Simplify the bottom-bar account popup
+
+The compact popup now keeps Settings, workspace switching, invitations, and
+Log out as its final action. About, support links, workspace creation, and the
+trailing divider were removed at the product request to shorten this menu.
+A divider above Log out separates it from the workspace and invitation actions.
+All popup rows share side padding, icon spacing, and minimum height so Settings
+and Log out align with workspace and invitation entries.
+The legacy workspace presentation retains creation; future changes should
+preserve switching and invitation access in the compact presentation.
 
 ### 2026-09-04 — Keep workspace capabilities in the compact account presentation
 
