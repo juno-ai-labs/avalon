@@ -56,6 +56,43 @@ Substrings escape glob operators rather than interpret user text as patterns.
 Lexical queries search parent documents, so substring matches are not interrupted
 by semantic chunk boundaries. Semantic queries search only chunk records.
 
+### Interactive response latency
+
+The desktop requests seven candidates initially: the 360px results list minus
+16px padding shows six complete 52px two-line rows and part of the seventh,
+with 2px gaps. Additional pages load
+at the bottom of the list or through the keyboard-accessible Load more control.
+The server follows fully rejected candidate pages until a current result is found
+or retrieval is exhausted; rejected candidate IDs never become public cursors. Existing rows stay visible while fetching another page;
+a transient continuation failure offers retry, while a failed reauthorization hides them. Query and category changes discard old pages.
+
+Requests opt into pagination with `pageSize` and continue with the returned
+`nextCursor`. The cursor is the last authorized Turbopuffer id boundary (stable
+hash order, not relevance or recency), never an authorization
+grant. Each page obtains current readable conversation scopes from WorkspaceDO
+(including archived/system conversations), filters retrieval by those scopes,
+and reauthorizes canonical results. Resource sources remain workspace-scoped and
+apply resource/attachment authority while loading. Conversation messages and links
+are grouped by parent/substream; link groups use one batched read. Independent
+groups and resources load concurrently within the existing candidate page bound.
+
+Older clients omit `pageSize` and retain the 50-result response shape. They do
+not receive new pagination or timing fields. The 250ms typing debounce, REST,
+and final workspace membership check remain unchanged. No search-result cache
+or permission cache is introduced.
+
+The user-facing targets are p50 <= 500ms and p90 <= 1000ms from the last
+keystroke to painted results, including debounce. `renderer_perf_flow` with
+`flow=workspace_search` measures debounce, request, and paint through the existing
+regional telemetry path. Optional paginated response timings expose scope,
+Turbopuffer retrieval, canonical hydration, and server duration; the backend also
+logs content-free `search_response_timing`. Request duration minus server duration
+is an approximate transport/client overhead, not a pure network measurement.
+Neither telemetry stream includes the query, result text, URLs, or resource names.
+Evaluate completed first-result flows separately from failed/superseded flows and
+continuation requests. Exercise cold and warm Workers, common/rare terms, and
+private conversations before claiming the percentile targets are met.
+
 ### One Queue pipeline
 
 Source deliveries discover canonical document IDs without loading bodies and
@@ -235,6 +272,10 @@ from those loaders, never from the index.
 
 ## Invariants
 
+- Search scope enumeration includes archived and system conversations and has its own complete-list contract. Sidebar visibility is not search readability.
+- Scope prefilters are an optimization, never authority. Current canonical authorization decides every returned result.
+- Public cursors refer only to authorized result IDs and never grant access. Fully rejected candidate pages remain internal.
+
 - One tokenizer is retained per isolate (about 26 MiB after releasing construction
   tables in a local Node 22 heap measurement). Its model stays closure-private; only the policy wrapper is
   frozen. Input fragments must be cleared before every count returns or throws.
@@ -288,9 +329,11 @@ namespace. Callers must retain failed projection work for retry. The service doe
 not invent retry limits or result caps; the caller supplies its product limit.
 
 Substring retrieval advances an ID cursor when canonical filtering removes
-results, continuing until the requested page is filled or the index is exhausted.
+results, continuing until the legacy requested page is filled, or a paginated
+request finds an authorized candidate page, or the index is exhausted.
 BM25 and semantic retrieval currently return one candidate page and may return
-fewer canonical matches. The desktop does not yet expose subsequent pages.
+fewer canonical matches. The desktop exposes substring continuation through
+scroll and its pagination footer.
 The cursor follows [Turbopuffer attribute pagination](https://turbopuffer.com/docs/query#pagination).
 
 ## Testing
@@ -400,6 +443,31 @@ through Queue failure rather than silent truncation. Document-size and capture
 budgets require team policy; no arbitrary new caps are introduced here.
 
 ## Changelog
+
+### 2026-09-07 — Search review corrections
+
+Search review fixes keep the complete scope prefilter independent of the 100-ID directory batch contract, authorize conversations after asynchronous content validation, and allow transient continuation retries without hiding already visible rows. Authorization denials still clear results; pagination controls sit outside the ARIA listbox.
+
+### 2026-09-07 — Remove serial candidate hydration from interactive search
+
+**What changed:** Paginated desktop searches filter readable conversation scopes,
+batch conversation reads, hydrate independent groups concurrently, and return a
+visible-sized first page. Content-free phase timing covers typing through paint.
+
+**Why:** A real desktop query remained on Searching for more than five seconds
+before returning results. Each candidate previously paid a serial chain of source
+and authorization reads, and the UI waited for 50 results before showing any.
+
+**Considered and rejected:** A socket or result cache would not remove those
+serial reads and would add authorization invalidation work. Changing debounce
+before measuring backend work would spend more requests without fixing the cause.
+
+**Consequences:** Final canonical and membership checks remain mandatory. Scope
+prefiltering follows the directory projection, so a newly granted scope can wait
+for that projection; it never allows stale grants to bypass final authority.
+Seven is a layout-derived page size, not a truncation of searchable content.
+Latency targets still require production measurement after deployment.
+
 
 ### 2026-09-06 — Plan and capture each document independently
 

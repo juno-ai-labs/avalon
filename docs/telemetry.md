@@ -50,6 +50,14 @@ For the implementation checklist, see
 
 ## How it works
 
+Interactive search uses the existing `renderer_perf_flow` diagnostic event with
+`flow=workspace_search`. Its duration runs from the last query-changing keystroke
+through painted authorized results. The optional search timing fields separate
+debounce, request, paint, scope resolution, retrieval, hydration, and server work.
+Queries and result contents are never event properties. `text-search.md` owns the
+pagination contract and p50/p90 acceptance targets.
+
+
 ### Contract and producers
 
 `TELEMETRY_EVENTS` is the only event registry. Each entry fixes its sources,
@@ -692,6 +700,27 @@ the dry-run evidence; change batching or sampling only after measuring those
 signals, never by weakening policy or deadline tests.
 
 ## Changelog
+
+### 2026-09-07 — Search review corrections
+
+Search emits a flow only for an issued request, retaining its original keystroke timestamp. This avoids counting canceled debounce inputs as searches while preserving the complete user-visible latency.
+
+### 2026-09-07 — Measure search from typing through painted results
+
+**What changed:** The existing `renderer_perf_flow` contract accepts
+`workspace_search` with debounce, request, paint, scope-resolution, retrieval,
+canonical-hydration, and server timing fields. Search uses the same regional
+main-owned delivery path and records no query or result contents.
+
+**Why:** Search appeared empty while serial source authorization was still running.
+The p50 500ms / p90 1000ms target includes client delay and rendering, which server
+logs alone cannot measure. Reusing the governed flow avoids a separate exporter.
+
+**Consequences:** Percentiles should use completed first-result search flows;
+failed and superseded searches remain separately visible. Backend timing fields
+are optional and do not change legacy search responses. See `text-search.md` for
+the retrieval and pagination contracts.
+
 
 ### 2026-09-06 — Retain historical application icon identifiers
 

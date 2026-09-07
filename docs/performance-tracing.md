@@ -44,6 +44,14 @@ necessarily keeps apart.
 
 ## How it works
 
+Interactive search uses the existing `renderer_perf_flow` diagnostic event with
+`flow=workspace_search`. Its duration runs from the last query-changing keystroke
+through painted authorized results. The optional search timing fields separate
+debounce, request, paint, scope resolution, retrieval, hydration, and server work.
+Queries and result contents are never event properties. `text-search.md` owns the
+pagination contract and p50/p90 acceptance targets.
+
+
 ### A custom span is a callback
 
 ```ts
@@ -453,7 +461,8 @@ and the backoff explains it.
 
 ## Boundary
 
-This module owns latency diagnosis for the three named flows and nothing else.
+This module owns latency diagnosis for the named product flows, including
+workspace search and the work-stream flows described here.
 
 - **Its exported projection is diagnostic telemetry, not a product outcome.**
   [`telemetry.md`](telemetry.md) owns its regional routing, closed schema,
@@ -473,7 +482,7 @@ This module owns latency diagnosis for the three named flows and nothing else.
   `observability` in the Wrangler configs plus the account's OTLP destination,
   and neither is decided here.
 - Callers are the routes, services, and Durable Objects listed above. New spans
-  are welcome inside the three flows; a fourth flow means adding a name to
+  are welcome inside the documented flows; another flow means adding a name to
   `PerfFlow` and a section here.
 
 ## Failure modes and limits
@@ -678,6 +687,27 @@ a new recorded decision. But what enforces it is the absence of a line in
 both signals rather than trusting the comment there to survive.
 
 ## Changelog
+
+### 2026-09-07 — Search review corrections
+
+Search traces are admitted when a request starts, retaining the last interaction clock for debounce measurement. Superseded keystrokes that never issue work produce no event. Closing search is distinct from unmounting; cumulative request time includes rejected pages.
+
+### 2026-09-07 — Measure search from typing through painted results
+
+**What changed:** The existing `renderer_perf_flow` contract accepts
+`workspace_search` with debounce, request, paint, scope-resolution, retrieval,
+canonical-hydration, and server timing fields. Search uses the same regional
+main-owned delivery path and records no query or result contents.
+
+**Why:** Search appeared empty while serial source authorization was still running.
+The p50 500ms / p90 1000ms target includes client delay and rendering, which server
+logs alone cannot measure. Reusing the governed flow avoids a separate exporter.
+
+**Consequences:** Percentiles should use completed first-result search flows;
+failed and superseded searches remain separately visible. Backend timing fields
+are optional and do not change legacy search responses. See `text-search.md` for
+the retrieval and pagination contracts.
+
 
 ### 2026-09-05 — Keep preview timings out of creation percentiles
 
