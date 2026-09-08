@@ -79,6 +79,7 @@ export const WorkstreamDirectoryUserEffectSchema = z.strictObject({
  */
 export const AutomationDirectoryEffectSchema = z.strictObject({
   kind: z.literal("directory_automation"),
+  loadable: z.boolean().optional(),
   automationId: IdSchema,
   authorUserId: IdSchema,
   lifecycle: z.enum(["draft", "active", "paused", "deleted"]),

@@ -1176,6 +1176,7 @@ export const WorkstreamContextSchema = z.object({
 
 export const TriggerDefinitionSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("manual") }),
+  z.object({ type: z.literal("inbound_email") }),
   z.object({
     type: z.literal("calendar"),
     rrule: z.string().min(1),
@@ -1262,7 +1263,9 @@ export const AutomationDraftSchema = z.object({
   description: z.string().min(1).max(1200),
   overview: z.string().min(1).max(3000),
   instructions: z.string().min(1).max(12000),
-  triggers: z.array(TriggerDefinitionSchema).min(1),
+  triggers: z.array(TriggerDefinitionSchema),
+  definitionVersion: z.literal(2).optional(),
+  whenToUse: z.string().optional(),
   requiredCapabilities: z.array(z.string()).default([]),
   expectedOutputs: z.array(z.string()).default([]),
   defaultBehavior: z.record(z.string(), z.unknown()).default({}),
@@ -1484,6 +1487,7 @@ export const AutomationRunStatusSchema = z.enum([
 ]);
 
 export const AutomationSummarySchema = z.object({
+  loadable: z.boolean().default(false),
   id: IdSchema,
   name: z.string(),
   description: z.string(),
@@ -1544,6 +1548,8 @@ export const AutomationDetailSchema = AutomationSummarySchema.extend({
   currentDefinitionRevision: z.number().int().nonnegative(),
   /** The revision that is running, or null while still a draft. */
   acceptedDefinitionRevision: z.number().int().positive().nullable(),
+  /** Dedicated execution eligibility, independent of loading policy. */
+  runnable: z.boolean().default(false),
   connectorBindings: z.record(z.string(), z.string()),
   recentRuns: z.array(AutomationRunSchema),
 });
@@ -3743,3 +3749,44 @@ export function readStructuredFailure(error: unknown): StructuredFailureDetail |
     ? { code }
     : { code, details };
 }
+
+/** Stored capability policy. Consumers read the persisted value, never derive it. */
+export function sidekickLoadable(definition: Pick<AutomationDraft, "triggers" | "definitionVersion">): boolean {
+  // Legacy accepted definitions include implicit email trigger configuration.
+  return definition.definitionVersion === 2 && definition.triggers.length === 0;
+}
+
+/** Legacy definitions implicitly enabled inbound email when accepted. */
+export function sidekickReceivesEmail(definition: AutomationDraft): boolean {
+  return definition.definitionVersion !== 2
+    || definition.triggers.some((trigger) => trigger.type === "inbound_email");
+}
+
+export const SidekickDefinitionSchema = AutomationDraftSchema;
+export const SidekickSummarySchema = AutomationSummarySchema;
+export const SidekickDetailSchema = AutomationDetailSchema;
+export type SidekickDetail = AutomationDetail;
+export type SidekickDefinition = AutomationDraft;
+export type SidekickSummary = AutomationSummary;
+
+export const SidekickSkillSourceSchema = z.object({
+  id: IdSchema,
+  revision: z.number().int().positive(),
+  loadable: z.boolean(),
+  name: z.string(),
+  description: z.string(),
+  whenToUse: z.string(),
+  instructions: z.string(),
+});
+export type SidekickSkillSource = z.infer<typeof SidekickSkillSourceSchema>;
+export const SidekickSkillSnapshotSchema = z.object({
+  sources: z.array(SidekickSkillSourceSchema),
+  activeRefs: z.array(z.string()),
+});
+export type SidekickSkillSnapshot = z.infer<typeof SidekickSkillSnapshotSchema>;
+
+export const SidekickAttachmentSchema = z.object({
+  id: IdSchema, name: z.string(), description: z.string(), available: z.boolean(),
+});
+export type SidekickAttachment = z.infer<typeof SidekickAttachmentSchema>;
+export const SidekickAttachmentsSchema = z.object({ items: z.array(SidekickAttachmentSchema) });

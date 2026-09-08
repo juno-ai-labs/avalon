@@ -280,6 +280,7 @@ class ToolSelectionStatement {
 
   async first<T>(): Promise<T | null> {
     const sql = this.sql.replace(/\s+/gu, " ").trim();
+    if (sql.includes("SELECT role FROM workspace_members")) return { role: "member" } as T;
     if (sql.includes("FROM workspace_members wm")) {
       expect(this.values).toEqual([WORKSPACE_ID, USER_ID]);
       return { status: this.database.memberStatus } as T;
@@ -356,7 +357,7 @@ function env(database: ToolSelectionDatabase): Env {
           database.createdAutomations.push(request);
           return { created: false };
         }),
-        submitDefinition: vi.fn(async (request: Record<string, unknown>) => {
+        saveDefinition: vi.fn(async (request: Record<string, unknown>) => {
           database.submittedDefinitions.push(request);
           return { definitionRevision: 1 };
         }),
@@ -478,6 +479,8 @@ function automationDetail(
 ): AutomationDetail {
   return {
     id: automationId,
+    loadable: false,
+    runnable: true,
     name,
     description: `${name}, on request.`,
     emailAddress: null,
@@ -1104,7 +1107,7 @@ describe("connector tools selected for harness runs", () => {
       automationId: HARNESS_RUN_ID,
       evaluatorRules,
     });
-    expect(database.proposedDraftCards).toHaveLength(1);
+    expect(database.proposedDraftCards).toHaveLength(0);
 
     __integrationTesting.forgetCredentialPluginActivation(
       { name: `connection:${WORKSPACE_CONNECTION_ID}`, reason: "socket_closed" },
@@ -1134,7 +1137,7 @@ describe("connector tools selected for harness runs", () => {
     )).resolves.toMatchObject({ output: { accepted: true } });
     expect(database.submittedDefinitions.map((draft) => draft.automationId))
       .toEqual([HARNESS_RUN_ID, HARNESS_RUN_ID]);
-    expect(database.proposedDraftCards).toHaveLength(2);
+    expect(database.proposedDraftCards).toHaveLength(0);
   });
 
   it("drops a replayed rule's sentinel resourceId before it can reach the next revision", async () => {
@@ -1801,11 +1804,7 @@ describe("editing an automation a conversation already owns", () => {
     // edit that quietly created one instead would submit under that name.
     expect(database.submittedDefinitions[0]).not.toMatchObject({ automationId: HARNESS_RUN_ID });
     expect(database.createdAutomations).toEqual([]);
-    expect(database.proposedDraftCards).toHaveLength(1);
-    expect(database.proposedDraftCards[0]).toMatchObject({
-      workstreamId: WORKSTREAM_ID,
-      card: { automationId: OWNED_AUTOMATION_ID, automationName: "Weekly digest" },
-    });
+    expect(database.proposedDraftCards).toEqual([]);
   });
 
   it("refuses an automation another room owns, and submits nothing", async () => {
@@ -1881,7 +1880,7 @@ describe("editing an automation a conversation already owns", () => {
               scope: "workstream",
               currentDefinitionRevision: 3,
               acceptedDefinitionRevision: 2,
-              currentDefinition: { name: "Weekly digest", triggers: [{ type: "manual" }] },
+              currentDefinition: { name: "Weekly digest", definitionVersion: 2, triggers: [{ type: "manual" }, { type: "inbound_email" }] },
             },
             {
               automationId: SECOND_OWNED_AUTOMATION_ID,

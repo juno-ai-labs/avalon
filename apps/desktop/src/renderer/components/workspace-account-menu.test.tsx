@@ -72,12 +72,13 @@ describe('workspace account menu', () => {
     openMenu();
     const menu = screen.getByRole('menu');
     const items = within(menu).getAllByRole('menuitem');
-    expect(items).toHaveLength(enabled ? 5 : 2);
-    expect(items[0]).toHaveAccessibleName('Settings');
+    expect(items).toHaveLength(enabled ? 6 : 3);
+    expect(items[0]).toHaveAccessibleName('Sidekicks');
+    expect(items[1]).toHaveAccessibleName('Settings');
     if (enabled) {
-      expect(items[1]).toHaveAccessibleName(/Global Studio.*Current/u);
-      expect(items[2]).toHaveAccessibleName(/Europe Studio/u);
-      expect(items[3]).toHaveAccessibleName(/Join Invited Studio.*Grace/u);
+      expect(items[2]).toHaveAccessibleName(/Global Studio.*Current/u);
+      expect(items[3]).toHaveAccessibleName(/Europe Studio/u);
+      expect(items[4]).toHaveAccessibleName(/Join Invited Studio.*Grace/u);
     }
     const logout = within(menu).getByRole('menuitem', { name: 'Log out' });
     expect(items.at(-1)).toBe(logout);

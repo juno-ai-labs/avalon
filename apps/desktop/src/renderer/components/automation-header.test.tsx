@@ -2,7 +2,7 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { AutomationDetail } from '../lib/types';
-import { AutomationHeader, automationApplyEnabled } from './automation-header';
+import { AutomationHeader } from './automation-header';
 
 const definition: NonNullable<AutomationDetail['currentDefinition']> = {
   name: 'Weekly changelog',
@@ -41,7 +41,6 @@ const draft: AutomationDetail = {
 
 function actions() {
   return {
-    onApply: vi.fn<() => void>(),
     onPause: vi.fn<() => void>(),
     onResume: vi.fn<() => void>(),
     onDelete: vi.fn<() => Promise<void>>(async () => undefined),
@@ -59,56 +58,19 @@ function renderHeader(automation: AutomationDetail, overrides: Partial<React.Com
   return handlers;
 }
 
-describe('automationApplyEnabled', () => {
-  it('is off before the conversation has submitted a definition', () => {
-    expect(automationApplyEnabled(draft)).toBe(false);
-  });
-
-  it('is off while the submitted definition still has an open question', () => {
-    expect(automationApplyEnabled({
-      ...draft,
-      currentDefinition: { ...definition, ready: false },
-      currentDefinitionRevision: 1,
-    })).toBe(false);
-  });
-
-  it('is on for a ready revision that is not the one running', () => {
-    expect(automationApplyEnabled({
-      ...draft,
-      currentDefinition: definition,
-      currentDefinitionRevision: 1,
-    })).toBe(true);
-    expect(automationApplyEnabled({
-      ...draft,
-      currentDefinition: definition,
-      currentDefinitionRevision: 2,
-      acceptedDefinitionRevision: 1,
-    })).toBe(true);
-  });
-
-  it('is off once the running revision is the current one', () => {
-    expect(automationApplyEnabled({
-      ...draft,
-      currentDefinition: definition,
-      currentDefinitionRevision: 1,
-      acceptedDefinitionRevision: 1,
-    })).toBe(false);
-  });
-});
-
 describe('AutomationHeader', () => {
-  it('shows a draft as one, with Create disabled until the chat submits a ready definition', () => {
+  it('shows the conversational draft without an activation button', () => {
     renderHeader(draft);
 
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('New automation');
     expect(screen.getByText('Draft')).toBeInTheDocument();
     expect(screen.getByText('Only you')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Create' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'Create' })).toBeNull();
     expect(screen.queryByRole('button', { name: /Pause/ })).toBeNull();
   });
 
-  it('enables Create for a ready draft and applies it through the caller', () => {
-    const handlers = renderHeader({
+  it('shows the generated description and triggers without manual publication', () => {
+    renderHeader({
       ...draft,
       currentDefinition: definition,
       currentDefinitionRevision: 1,
@@ -119,13 +81,10 @@ describe('AutomationHeader', () => {
     // object was created with, and lists the triggers rather than describing them.
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Weekly changelog');
     expect(screen.getByRole('list', { name: 'Triggers' })).toHaveTextContent('Every Monday at 9:00 AM');
-    const create = screen.getByRole('button', { name: 'Create' });
-    expect(create).toBeEnabled();
-    fireEvent.click(create);
-    expect(handlers.onApply).toHaveBeenCalledOnce();
+    expect(screen.queryByRole('button', { name: 'Create' })).toBeNull();
   });
 
-  it('reads Apply changes on an active automation, enabled only for a newer ready revision', () => {
+  it('shows saved state and never offers Apply changes', () => {
     const active: AutomationDetail = {
       ...draft,
       status: 'active',
@@ -138,16 +97,13 @@ describe('AutomationHeader', () => {
     const { unmount } = render(
       <Tooltip.Provider><AutomationHeader automation={active} {...actions()} /></Tooltip.Provider>,
     );
-    expect(screen.getByRole('button', { name: 'Apply changes' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'Apply changes' })).toBeNull();
     expect(screen.getByText('Active')).toBeInTheDocument();
     expect(screen.getByText('weekly-changelog@automation.rallywith.ai')).toBeInTheDocument();
     unmount();
 
-    const handlers = renderHeader({ ...active, currentDefinitionRevision: 2 });
-    const apply = screen.getByRole('button', { name: 'Apply changes' });
-    expect(apply).toBeEnabled();
-    fireEvent.click(apply);
-    expect(handlers.onApply).toHaveBeenCalledOnce();
+    renderHeader({ ...active, currentDefinitionRevision: 2 });
+    expect(screen.queryByRole('button', { name: 'Apply changes' })).toBeNull();
   });
 
   it('offers Pause on an active automation and Resume on a paused one', () => {
@@ -176,18 +132,10 @@ describe('AutomationHeader', () => {
     // A newer ready revision on a paused automation: Apply used to light up
     // and the object answered 409 automation_not_active; Run now was offered
     // and answered the same. Resume is the one thing to do here.
-    const apply = screen.getByRole('button', { name: 'Apply changes' });
-    expect(apply).toBeDisabled();
-    expect(apply).toHaveAttribute('title', 'Resume the automation before applying a change.');
-    fireEvent.pointerDown(screen.getByRole('button', { name: 'More automation actions' }), { button: 0, ctrlKey: false });
+    expect(screen.queryByRole('button', { name: 'Apply changes' })).toBeNull();
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'More Sidekick actions' }), { button: 0, ctrlKey: false });
     expect(await screen.findByRole('menuitem', { name: 'Run now' })).toHaveAttribute('aria-disabled', 'true');
     expect(paused.onRunNow).not.toHaveBeenCalled();
-    expect(automationApplyEnabled({
-      lifecycle: 'active',
-      currentDefinition: definition,
-      currentDefinitionRevision: 2,
-      acceptedDefinitionRevision: 1,
-    })).toBe(true);
   });
 
   it('deletes only after the confirmation dialog, and keeps a failure in it', async () => {
@@ -203,9 +151,9 @@ describe('AutomationHeader', () => {
 
     // The sidebar always asked; the header fired the tombstone from a menu
     // item with no question. Same dialog, same copy, on both.
-    fireEvent.pointerDown(screen.getByRole('button', { name: 'More automation actions' }), { button: 0, ctrlKey: false });
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete automation' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Delete automation' });
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'More Sidekick actions' }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete Sidekick' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Delete Sidekick' });
     expect(within(dialog).getByText('Weekly changelog')).toBeVisible();
     expect(handlers.onDelete).not.toHaveBeenCalled();
 
@@ -214,7 +162,7 @@ describe('AutomationHeader', () => {
     expect(handlers.onDelete).toHaveBeenCalledOnce();
 
     fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Delete automation' })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Delete Sidekick' })).not.toBeInTheDocument());
     expect(handlers.onDelete).toHaveBeenCalledTimes(2);
   });
 

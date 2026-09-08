@@ -1,3 +1,5 @@
+import { SidekickSkillSnapshotSchema } from "@rally/contracts";
+import { sidekickSkillRef } from "../services/sidekick-skills";
 import { searchIndexingConfigured } from '../services/search-embedding';
 import { conversationSearchDocumentIds, prepareConversationLinks, readConversationSearchLink } from './conversation-link-search';
 import { drainSearchProjectionOutbox, nextSearchProjectionDueAt, SearchProjectionMessageSchema } from './search-projection-outbox';
@@ -1896,6 +1898,17 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   }
 
   /** Authoritative current readers for privacy decisions made outside this object. */
+  async sidekickAttachments(input: { workspaceId: string; workstreamId: string; removeId?: string }): Promise<string[]> {
+    await this.initialized;
+    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, workstreamId: IdSchema, removeId: IdSchema.optional() }).parse(input);
+    const identity = this.objectStore.identity();
+    if (!identity || identity.workspaceId !== request.workspaceId || identity.parentId !== request.workstreamId || this.externalSubstreamId() !== "0") {
+      throw new Error("sidekick_attachment_identity_mismatch");
+    }
+    if (request.removeId) this.state.storage.sql.exec(`DELETE FROM sidekick_attachments WHERE sidekick_id = ?`, request.removeId);
+    return this.state.storage.sql.exec<{ sidekick_id: string }>(`SELECT sidekick_id FROM sidekick_attachments ORDER BY attached_at, sidekick_id`).toArray().map((row) => row.sidekick_id);
+  }
+
   async readerAudience(input: z.input<typeof RuntimeReaderAudienceRequestSchema>): Promise<WorkstreamReaderAudience | null> {
     await this.initialized;
     const request = RuntimeReaderAudienceRequestSchema.parse(input);
@@ -3957,6 +3970,34 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       return loop;
     };
     return {
+      readSidekickSkills: () => {
+        fence();
+        const row = this.state.storage.sql.exec<{ snapshot_json: string }>(
+          `SELECT snapshot_json FROM sidekick_execution_skills WHERE execution_id = ?`, execution.runId,
+        ).toArray()[0];
+        return row ? SidekickSkillSnapshotSchema.parse(JSON.parse(row.snapshot_json)) : null;
+      },
+      attachedSidekickIds: () => this.externalSubstreamId() === "0"
+        ? this.state.storage.sql.exec<{ sidekick_id: string }>(`SELECT sidekick_id FROM sidekick_attachments ORDER BY attached_at, sidekick_id`).toArray().map((row) => row.sidekick_id)
+        : [],
+      saveSidekickSkills: (snapshot) => {
+        fence();
+        this.state.storage.sql.exec(`INSERT OR IGNORE INTO sidekick_execution_skills (execution_id, snapshot_json) VALUES (?, ?)`,
+          execution.runId, JSON.stringify(SidekickSkillSnapshotSchema.parse(snapshot)));
+      },
+      activateSidekickSkill: (ref) => {
+        fence();
+        this.state.storage.transactionSync(() => {
+          const row = this.state.storage.sql.exec<{ snapshot_json: string }>(`SELECT snapshot_json FROM sidekick_execution_skills WHERE execution_id = ?`, execution.runId).one();
+          const snapshot = SidekickSkillSnapshotSchema.parse(JSON.parse(row.snapshot_json));
+          if (!snapshot.activeRefs.includes(ref)) snapshot.activeRefs.push(ref);
+          this.state.storage.sql.exec(`UPDATE sidekick_execution_skills SET snapshot_json = ? WHERE execution_id = ?`, JSON.stringify(snapshot), execution.runId);
+          const source = snapshot.sources.find((entry) => sidekickSkillRef(entry.id) === ref);
+          if (source && this.externalSubstreamId() === "0" && this.objectStore.identity()?.parentKind === "workstream") {
+            this.state.storage.sql.exec(`INSERT OR IGNORE INTO sidekick_attachments (sidekick_id, attached_at) VALUES (?, ?)`, source.id, Date.now());
+          }
+        });
+      },
       projection: this.transcript.readBindProjection(input.loopId),
       modelIterationsUsed: this.loop.assistantTurnCountForExecution(execution.runId),
       transcriptThrough: this.transcript.transcriptThrough(),

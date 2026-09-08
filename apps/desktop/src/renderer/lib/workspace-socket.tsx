@@ -126,8 +126,8 @@ function invalidateTopic(
     terminal_policy: [['terminal-workspace-settings']],
     digest_schedule: [['digest-schedule']],
     // The lists themselves are pushed whole by WorkspaceDO, so the topic no
-    // longer names them — it carries the detail surfaces REST still serves.
-    automations: [['automation'], ['automation-draft']],
+    // longer names them — it carries REST details and the broader Sidekick library.
+    automations: [['automation'], ['automation-draft'], ['sidekicks-library'], ['attached-sidekicks']],
     notes: [['note']],
     // Project state is carried by the connect snapshot and every later project
     // push. This legacy topic can arrive during rolling deployment, but it must
@@ -510,6 +510,8 @@ export function WorkspaceSocketProvider({
               // and the detail surfaces it feeds refetch on it.
               void queryClient.invalidateQueries({ queryKey: ['automation'] });
               void queryClient.invalidateQueries({ queryKey: ['automation-runs'] });
+              void queryClient.invalidateQueries({ queryKey: ['sidekicks-library'] });
+              void queryClient.invalidateQueries({ queryKey: ['attached-sidekicks'] });
             } else {
               applyVersionedNotePage(
                 queryClient,

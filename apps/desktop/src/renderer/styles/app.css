@@ -6646,3 +6646,20 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 .grokbot-shell .sidebar-rail-actions .sidebar-search > span { display: none; }
 .grokbot-shell .sidebar-rail-actions .sidebar-search > svg { width: 19px; height: 19px; }
 .grokbot-shell .sidebar-rail-actions .sidebar-search:hover { background: var(--av-cmp-row-background-hover); }
+/* Sidekicks share the application's existing surface and typography tokens. */
+.sidekicks-library { padding: 56px 32px 32px; height: 100%; overflow: auto; }
+.sidekicks-library header h1 { margin: 0; }
+.sidekicks-library header p { opacity: .7; }
+.sidekicks-library-controls { display: flex; align-items: center; gap: 12px; margin: 24px 0; }
+.sidekicks-library-controls input { flex: 1; min-width: 0; }
+.sidekicks-library-controls input, .sidekicks-library-controls select { padding: 10px 12px; border-radius: 8px; background: transparent; color: inherit; border: 1px solid currentColor; }
+.sidekicks-library-list { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+.sidekicks-library-list a { display: block; height: 100%; padding: 20px; border: 1px solid var(--av-sys-color-border-subtle); border-radius: 12px; color: inherit; text-decoration: none; }
+.sidekicks-library-list h2 { font-size: 16px; margin: 0 0 10px; }
+.sidekicks-library-list p { line-height: 1.5; }
+.sidekick-back { display: block; padding: 44px 24px 12px; color: inherit; }
+
+.sidekick-attachments-list { list-style: none; margin: 0; padding: 0; }
+.sidekick-attachments-list > li { padding-bottom: 8px; }
+.sidekick-attachments-list > li > small { display: block; color: var(--av-sys-color-text-muted); padding-inline: 8px; }
+.sidekick-attachments-list > li > .sidekick-attachment-remove { font-size: 11px; color: var(--av-sys-color-text-muted); margin-left: 8px; }
