@@ -393,6 +393,14 @@ to work streams without copying their content into Rally. Issue-dependency and
 sub-issue deliveries add both sides of the relationship, including
 cross-repository issues, while retaining one normalized activity per delivery.
 
+WorkspaceDO discovery upserts write only when type, title, effective canonical
+URL, or merged resource metadata changes. A missing URL retains the stored URL;
+metadata keeps JSON merge-patch semantics, including explicit-null deletion.
+`discoveredDeliveryId` and `discoveredEventType` alone do not count as resource
+changes: those fields and `updated_at` describe the last meaningful discovery
+change, not a last-seen heartbeat. Delivery receipts retain delivery processing
+semantics. Real workerd coverage lives in `resource-update-cost.test.ts`.
+
 ### Linear
 
 Linear is a composable connector with both `resource` and `native_agent` surfaces. One public OAuth app supports two identities through PKCE: personal connections use `actor=user` and remain private to their Rally owner; workspace connections use `actor=app` and roll their tools down to every member. The native surface is bound explicitly to the workspace-only, non-tool `linear.agent` capability. It grants `app:assignable` and `app:mentionable` for activation plus `write` for the deterministic source-comment acknowledgement; resource tools independently grant `read`, `issues:create`, `comments:create`, and `write`. The resource agent can search/read issues and projects, list teams and workflow states, create/update issues, and create comments.
@@ -907,6 +915,20 @@ one to a fixture list to make a new adapter pass — declare the exemption in th
 fixture table instead, where it is reviewable.
 
 ## Changelog
+
+### 2026-09-08 — Skip unchanged discovered resources
+
+**What changed:** Discovery upserts compare the effective merged values before
+writing, excluding delivery provenance from that comparison.
+
+**Why:** Repeated webhooks rediscover the same resources with new delivery IDs,
+turning otherwise identical observations into resource writes and indexing work.
+
+**Considered and rejected:** Comparing all metadata would still write on every
+new delivery ID; discarding all metadata differences would lose real changes.
+
+**Consequences:** No-op observations preserve resource timestamps and provenance.
+Actual changes retain URL fallback and recursive JSON merge-patch behavior.
 
 ### 2026-09-08 — Resolve event relationships with indexed identity seeks
 

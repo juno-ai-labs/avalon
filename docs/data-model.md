@@ -74,6 +74,11 @@ and pending search revisions (`resource_search_pending_due_idx`). They bound
 these reads to pending work rather than the entire retained resource inventory;
 completed search watermarks remain durable. No table or authority is replaced.
 
+WorkspaceDO migration 43 replaces the resource search update trigger with a
+comparison of search content/category inputs. Non-search metadata and bookkeeping
+updates preserve the revision and pending/retry state; insert/delete triggers
+remain unchanged. `resource-update-cost.test.ts` verifies a populated v40 upgrade.
+
 ### Identity and tenancy
 
 Account presentation and new-user eligibility are added by migration 0099.
@@ -935,6 +940,18 @@ perform the regional audit/control write explicitly through
 
 ## Changelog
 
+### 2026-09-08 — Preserve search revisions across non-content updates
+
+**What changed:** WorkspaceDO migration 43 replaces only the resource update
+trigger, leaving existing rows, pending work, and deletion watermarks intact.
+
+**Why:** Broad update invalidation amplified routine resource bookkeeping into
+indexing reads and requests. Editing migration 33 would not upgrade deployed
+objects and would violate the migration ledger.
+
+**Consequences:** Search extraction changes must update the trigger in a new
+migration; no-op discovery leaves `updated_at` at the last meaningful change.
+
 ### 2026-09-08 — Index pending WorkspaceDO resource work
 
 Migration 39 adds partial indexes for expired upload drafts, missing resource
@@ -1025,7 +1042,7 @@ column to what its scan covered, never to its own turn. Owned by
 
 **What changed:** WorkstreamDO migration 7 adds child readiness/title fields,
 retryable preparation receipts, the authoritative per-child roster, and its
-durable membership-effect outbox. SubstreamAgent migration 41 adds the
+durable membership-effect outbox. SubstreamAgent migration 43 adds the
 per-user/version membership mirror used for socket and command admission.
 
 **Why:** A private non-main conversation needs an authority distinct from both

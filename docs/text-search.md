@@ -130,6 +130,16 @@ source, source ID, scope, stable document ID, revision, and text (null for delet
 Adapters extract text and preserve authority; they cannot choose chunk sizes,
 embedding models, normalization, or indexing behavior. No adapter writes Turbopuffer.
 
+Resource updates invalidate search only when category or text inputs change:
+provider, title, canonical URL, original/derivative MIME types, content references
+and hashes, or the string description in metadata. WorkspaceDO migration 43
+replaces only the update trigger; insert/delete watermarks and pending retries
+survive unchanged. Bookkeeping, hydration status, slug, and unrelated metadata
+edits do not publish indexing work. Keep the trigger aligned with
+`resourceSearchCategory` and `resourceSearchText` when extending extraction.
+`test-workers/resource-update-cost.test.ts` proves the upgrade and invalidation
+contract against real workerd storage.
+
 `createSearchIndexingPipeline` is the single processing path. It writes the full,
 lossless canonical text for BM25/substring search, then runs the same chunker and
 embedding integration for every live document. Preserving full lexical documents
@@ -462,6 +472,20 @@ through Queue failure rather than silent truncation. Document-size and capture
 budgets require team policy; no arbitrary new caps are introduced here.
 
 ## Changelog
+
+### 2026-09-08 — Index resource content changes, not bookkeeping
+
+**What changed:** A forward migration narrows the resource update trigger to
+search inputs, including body hashes. Insert/delete and revision fencing remain.
+
+**Why:** Every resource update previously queued indexing, including webhook
+provenance and processing state, causing unnecessary storage and Queue/RPC work.
+
+**Considered and rejected:** Filtering only webhook writers would leave other
+canonical writers producing the same redundant indexing jobs.
+
+**Consequences:** New extraction inputs must extend the trigger through another
+forward migration. Existing pending work is retained, with no forced backfill.
 
 ### 2026-09-08 — Validate snapshot revisions and reconcile older search contracts
 
