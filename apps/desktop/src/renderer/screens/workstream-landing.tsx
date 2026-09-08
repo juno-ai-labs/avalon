@@ -1,7 +1,7 @@
 import { Navigate } from 'react-router-dom';
 import { InlineError, LoadingState } from '../components/primitives';
 import { orderPinnedWorkstreams } from '../components/sidebar';
-import { groupWorkstreams } from '../lib/format';
+import { compareWorkstreamRecency } from '../lib/format';
 import { useWorkspaceSocket } from '../lib/workspace-socket';
 import { useWorkstreamsQuery } from '../lib/use-workstreams-query';
 
@@ -17,6 +17,6 @@ export function WorkstreamLandingScreen(): React.JSX.Element {
     return <LoadingState label="Opening work streams…" />;
   }
   const first = orderPinnedWorkstreams(workstreams.data, null)[0]
-    ?? groupWorkstreams(workstreams.data)[0]?.streams[0];
+    ?? [...workstreams.data].sort(compareWorkstreamRecency)[0];
   return <Navigate replace to={first ? `/workstreams/${encodeURIComponent(first.id)}` : '/workstreams/new'} />;
 }
