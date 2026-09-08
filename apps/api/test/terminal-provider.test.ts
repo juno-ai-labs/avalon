@@ -887,4 +887,34 @@ describe("Daytona Terminal provider", () => {
     expect(del).toHaveBeenCalledOnce();
   });
 
+  it("still fails revocation when the read secrets cannot be listed", async () => {
+    // The listing tolerance exists for teardown, where an undeleted sandbox
+    // costs more than a leftover secret. Revocation is the opposite trade: a
+    // caller clearing read access must know the secrets are gone, so the same
+    // failure propagates here rather than reporting a revocation that did not
+    // happen.
+    const updateSecrets = vi.fn(async () => undefined);
+    const sandbox = { id: "sandbox-1", name: "avalon-ws-stream", state: "started", updateSecrets };
+    const list = vi.fn(async (): Promise<{
+      items: Array<{ id: string; name: string }>; total: number; nextCursor: string | null;
+    }> => { throw new Error("Access denied"); });
+    const provider = createDaytonaTerminalProvider({
+      capability: "supported", apiKey: "secret", apiUrl: "https://app.daytona.io/api",
+      target: "us", snapshot: "rally-terminal-1", emergencyDisabled: false,
+    }, () => ({
+      create: vi.fn(),
+      get: vi.fn(async () => sandbox),
+      secret: {
+        list,
+        create: vi.fn(async () => ({ id: "secret-1", name: "AVALON_READ_x" })),
+        update: vi.fn(async () => ({ id: "secret-1", name: "AVALON_READ_x" })),
+        delete: vi.fn(async () => undefined),
+      },
+    }));
+
+    await expect(provider.clearGitHubReadAccess("sandbox-1")).rejects.toThrow("Access denied");
+    expect(updateSecrets).toHaveBeenCalledWith({});
+    expect(list).toHaveBeenCalledOnce();
+  });
+
 });

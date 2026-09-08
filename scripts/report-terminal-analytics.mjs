@@ -194,7 +194,7 @@ export function formatTerminalAnalyticsReport(options, results) {
     } else if (installP95 > 10_000) {
       lines.push(`  ${cohort}: Benchmark a prebuilt Avalon snapshot; compatibility installation p95 is ${formatDuration(installP95)} across ${formatCount(successfulBootstraps)} bootstraps.`);
     } else {
-      lines.push(`  ${cohort}: Keep daytona-small for now; compatibility installation p95 is ${formatDuration(installP95)} across ${formatCount(successfulBootstraps)} bootstraps.`);
+      lines.push(`  ${cohort}: Keep the current snapshot for now; compatibility installation p95 is ${formatDuration(installP95)} across ${formatCount(successfulBootstraps)} bootstraps.`);
     }
   }
 

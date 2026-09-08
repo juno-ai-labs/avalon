@@ -32,12 +32,18 @@ provider API, and a sandbox is allocated only when one of those tools executes.
 
 ### Loading and allocation
 
-`rally:terminal` is a built-in deferred plugin. Bind can discover and load it,
-which exposes all nine tools and the language guidance but performs no provider
-operation. The first tool execution asks `TerminalSandboxCoordinator` for the
-work stream's exclusive Terminal mutation lease. It creates, starts, or restores
-the stable private sandbox and records the provider result in the owning
-SubstreamAgent. That successful acquisition, authority/policy decision, and
+`rally:terminal` is a built-in deferred plugin. Bind can discover it without
+any provider operation. An explicit load exposes all nine tools and the language
+guidance and starts the sandbox acquisition in the background: activation
+registers the shared per-run acquisition promise and returns without holding
+the model, so the sandbox is built while the model does work that needs no
+sandbox. The first Terminal tool awaits that same promise, collecting the work
+in flight rather than starting it, and it — not activation — is where a
+provider failure reaches the model, with the coordinator's own guidance. The
+acquisition asks `TerminalSandboxCoordinator` for the work stream's exclusive
+Terminal mutation lease. It creates, starts, or restores the stable private
+sandbox and records the provider result in the owning SubstreamAgent. That
+successful acquisition, authority/policy decision, and
 repository preparation are reused for later tools in the same harness run.
 Repository checkout explicitly invalidates the run-local acquisition because it
 can replace the sandbox generation; a later tool then acquires and prepares the
@@ -246,9 +252,15 @@ personless; it is not duplicated into these product events.
   republish mints a sibling instead of updating it, silently and with no failing
   test, because a test that publishes and republishes within one run sees only
   one derivation. Widen it only with a migration of the stored identities.
-- **Loading Terminal never allocates provider compute.** Discovery is common
-  and execution is exceptional; allocating at load would turn model routing
-  mistakes into cost and persistent state.
+- **Discovering Terminal never allocates provider compute; only an explicit
+  load does, and it never holds the model.** Discovery is common and execution
+  is exceptional. An explicit `load_plugin` is a stated intent to use a
+  sandbox, so activation starts the acquisition in the background and returns;
+  a restored durable activation stays lazy so an unrelated later run does not
+  allocate because an earlier one used Terminal. Anything added to the
+  activation path must fail the shared acquisition rather than clean up after
+  it: a later tool may already be awaiting that promise, and an eviction after
+  it resolves never reaches that waiter.
 - **Every mutation is serialized through the coordinator and every command has
   one durable task receipt.** Parallel file operations or automatic retry after
   an ambiguous write could corrupt the sandbox or repeat a side effect.
@@ -294,6 +306,17 @@ network proxy, or a general GitHub administration surface.
   probe. The emergency switch keeps the plugin and its complete tool family
   discoverable, but new executions fail closed with `sandbox_unavailable` while
   retained work remains available for lifecycle reconciliation.
+- Activation never fails the model. A provider failure during the background
+  acquisition is a `terminal_plugin_activation_finished` row at `warn` and
+  reaches the model on the first Terminal tool, which reacquires and reports
+  with the coordinator's guidance; a run that never reaches a Terminal tool
+  leaves only the row, and nothing posts to operators from here. An
+  acquisition abandoned when its run ends can leave a sandbox reserved before
+  its provider id was recorded; the expiry sweep does not resolve such a row
+  by stable name, so it cannot reclaim that sandbox, and the next acquisition
+  for the work stream adopts it by name instead. That is an accepted gap, not a
+  design: the started/finished pair shows whether it happens, and a sweep by
+  stable name is the fix if it does.
 - A republish that loses the content compare-and-swap to a concurrent one
   releases the bytes it wrote to asynchronous cleanup and reports what the
   document now holds, rather than clobbering the winner. A failed WorkspaceDO
@@ -464,7 +487,9 @@ report; a deadline the pass finds nothing to do for does.
 
 See [`runbook.md`](runbook.md#terminal-provider-activation-and-recovery) for
 activation and recovery. Structured events are
-`terminal_plugin_activation_finished`, `terminal_tool_finished`,
+`terminal_plugin_activation_started` and `terminal_plugin_activation_finished`
+(a started row with no finished row for the same `tool_call_id` is an
+activation whose sandbox work was abandoned in flight), `terminal_tool_finished`,
 `terminal_sandbox_lifecycle_transition`, and `terminal_sandbox_lifecycle_failed`, plus
 `terminal_operation_commit_failed` and
 `terminal_operation_alarm_schedule_failed` for the typed object-port boundary,
@@ -487,10 +512,46 @@ or egress failure; it prevents new leases and publication starts while the
 plugin stays discoverable and retained rows remain available for
 reconciliation.
 
+### The owned snapshot and its weekly rebuild
+
+Both regions create sandboxes from `rally-terminal-1`, built by
+`pnpm --filter @rally/api terminal:build-snapshot` from the base image pinned
+as `TERMINAL_SNAPSHOT_BASE_IMAGE` in `snapshot-manifest.ts`
+(`daytonaio/sandbox:0.9.0`; the environment variable of the same name
+overrides it for a one-off build) on the Juno AI Labs Daytona organization. Owning the image means Daytona's base fixes stop arriving
+on their own, and the manifest cannot see a stale-but-working base, so
+`.github/workflows/rebuild-terminal-snapshot.yml` rebuilds every Monday at
+06:00 UTC and on dispatch: it builds a minute-stamped `rally-terminal-<date>`,
+runs `terminal:verify-provider` against it, and opens a pull request labelled
+`daytona-snapshot-upgrade` that points both Wrangler configs at the result.
+Adoption is that merge, rollback is its revert, and existing sandboxes are
+untouched either way. A red Monday job means the current snapshot keeps serving
+and the gap to Daytona's base widens by a week; an unmerged adoption pull
+request means the same. Each build stamps its Dockerfile with a build time so
+Daytona cannot hand back a cached image, and the stamp is readable inside every
+sandbox as `RALLY_TERMINAL_SNAPSHOT_BUILT_AT`; a build that finishes in seconds
+is a reused image, not a rebuild.
+
+The workflow reads its configuration from the `api-production` GitHub
+environment: the `DAYTONA_API_KEY` secret and the `DAYTONA_API_URL`,
+`DAYTONA_TARGET`, `TERMINAL_PROBE_REDIRECT_URL`, and
+`TERMINAL_PROBE_PRIVATE_DNS_URL` variables, plus the optional
+`TERMINAL_SNAPSHOT_PR_TOKEN` (a fine-grained token with contents and
+pull-requests write) without which the adoption pull request opens but runs no
+CI, because GitHub starts no workflows for events raised with `GITHUB_TOKEN`.
+The gate's two probe endpoints are Rally's own, on `rallywith.ai`:
+`probe-redirect` is a proxied record with a Cloudflare redirect rule answering
+302 to `https://example.org/`, and `probe-private` is an unproxied A record to
+`10.0.0.1`. The [runbook](runbook.md#terminal-provider-activation-and-recovery)
+holds the operator steps.
+
 ## Performance and cost
 
 An explicit Terminal `load_plugin` starts and initializes the sandbox because
-the next model action is overwhelmingly likely to use one of its tools. A
+the next model action is overwhelmingly likely to use one of its tools — in
+the background, so the model is not held behind it: measured across runs that
+use Terminal, the median run does 16.5s of unrelated work between activation
+and its first Terminal tool, against an ~18s median cold start. A
 restored durable activation remains lazy so an unrelated later run does not
 allocate merely because an earlier run used Terminal. Reuse is scoped to one
 work stream. Five-minute warm stop reduces compute time, sixty-minute archive
@@ -597,45 +658,76 @@ update lag before changing the default.
 regional Wrangler configs. The snapshot was built by `terminal:build-snapshot`
 from `daytonaio/sandbox:0.9.0` on the Juno AI Labs Daytona organization
 (created 2026-09-07T15:27:23Z, region `us`), and `terminal:verify-provider`
-passed against it the same day. The `sandbox_bootstrap` measurement from that
-run was `install=225ms verify=1782ms installed=none`: the bootstrap found all
-four managed capabilities present and installed nothing, against ~14.4s when
-they are missing.
+passed against it the same day; its `sandbox_bootstrap` measurement was
+`install=225ms verify=1782ms installed=none`, the bootstrap finding all four
+managed capabilities present and installing nothing, against ~14.4s when they
+are missing. Review of the adopting pull request (#597) changed seven more
+things in the same change: the per-run operator notice on activation failure
+and its unset rate limit are gone; the manifest ids a failed verification names
+now travel on the `sandbox_bootstrap` measurement as `missing_capabilities`;
+the `git-ca` probe is required rather than optional for a sandbox created with
+a domain allow list; `checkout_repository` lets an in-flight activation
+acquisition settle before replacing the generation it is preparing;
+`discardPreparation` is deleted; the base image is pinned in
+`snapshot-manifest.ts` with `TERMINAL_SNAPSHOT_BASE_IMAGE` demoted to an
+override; and the rebuild workflow reads its dispatch input through the
+environment, validates the name, commits the two configs by path,
+minute-stamps its default name, and opens its pull request with
+`TERMINAL_SNAPSHOT_PR_TOKEN` when one is configured. The build stamps each
+Dockerfile with a build time.
 
 **Why:** This reinstates the adoption that "Stay on daytona-small until a
 snapshot can pass the acceptance gate" reverted on 2026-09-05, now with the
-evidence that revert said was missing. Two things changed since. The gate had
-only ever been run against a personal Daytona account on a tier that rejects
-every post-creation network update, so its policy-update step failed on every
-snapshot; the Juno organization accepts them, and the gate's
-stop → update → read-back → start sequence passed. And the `git-ca` probe (the
-entry below) no longer fails full-internet sandboxes, which had hidden the
-earlier custom snapshots' real state.
+evidence that revert said was missing. The gate had only ever been run against
+a personal Daytona account on a tier that rejects every post-creation network
+update, so its policy-update step failed on every snapshot; the Juno
+organization accepts them, and the gate's stop → update → read-back → start
+sequence passed. The `git-ca` probe (the entry below) no longer fails
+full-internet sandboxes, which had hidden the earlier custom snapshots' real
+state. Each review change closes a gap the diff had opened. The notice would
+have posted once per failing run for the length of a provider outage, against
+[`ops-alerting.md`](ops-alerting.md)'s one-notice-per-episode rule, and a
+module-level gate in a per-work-stream object cannot dedupe across runs
+anyway. The failed-capability list was discarded by the coordinator's catch,
+so a snapshot that lost `gh` still reported only that verification failed. A
+Trusted-only sandbox without its advertised CA passed the optional probe and
+would have failed at its first Git operation. With activation no longer
+blocking, the model's first tool can be `checkout_repository` while
+activation's own repository bootstrap is still cloning into the same sandbox;
+evicting the cached acquisition and replacing the generation at that moment is
+two operations on one sandbox, which the blocking version could never produce.
+The workflow interpolated a
+dispatch input into shell in a job holding the Daytona key, and a pull request
+opened with `GITHUB_TOKEN` runs no CI, which for the one automated change to
+both regions' production config meant merging ungated.
 
 **Considered and rejected:** Landing the branch first and letting the weekly
-rebuild open the adoption pull request. That is two merges for one outcome, and
-the workflow only exists once this branch is on `main`. Adopting the
-date-stamped name the workflow will produce instead of `rally-terminal-1`: the
-verified artifact is this one, and the next Monday rebuild replaces it through
-its own pull request.
+rebuild open the adoption pull request: two merges for one outcome, and the
+workflow only exists once this branch is on `main`. Adopting the date-stamped
+name the workflow will produce instead of `rally-terminal-1`: the verified
+artifact is this one, and the next Monday rebuild replaces it through its own
+pull request. Keeping the operator notice behind a durable once-per-episode
+gate: no call site needs that table yet and the first Terminal tool already
+carries the failure to the model; add the gate if the warn rows show outages
+nobody noticed. Making the expiry sweep reclaim a sandbox reserved before its
+id was recorded, the shape an acquisition abandoned at run end leaves: the
+started/finished pair shows whether it happens and the next acquisition adopts
+the sandbox by stable name, so the sweep waits for evidence.
 
-**Consequences:** Daytona appears to key built images by Dockerfile content.
-The snapshot's image reference is the SHA-256 of the Dockerfile the build
-sends, the build returned `active` in one second with an empty build log, and
-the image's reported size is roughly double the base's — an image built earlier
-from the identical Dockerfile was reused. A rebuild with an unchanged Dockerfile
-may therefore hand back the same cached image rather than a fresh build against
-Daytona's current base, which is the drift the weekly rebuild exists to bound.
-Until Daytona confirms otherwise, treat a one-second "build" from the workflow
-as a reused image, and vary the Dockerfile (a build-date label, say) when a
-fresh base is required. The acceptance gate's probe endpoints now live on
-`rallywith.ai` — `probe-redirect`, a Cloudflare redirect rule to `example.org`,
-and `probe-private`, an unproxied A record to `10.0.0.1` — and are configured
-in the `api-production` GitHub environment with the Daytona credentials, so the
-workflow can run. The two production paths the 2026-09-05 revert flagged as
-failing under the rejecting tier — `reconcileNetworkPolicy` on acquisition and
-the settings rollback — succeed on the Juno organization and were not changed in
-code; a return to a rejecting tier would surface them again.
+**Consequences:** Daytona keys built images by Dockerfile content: the first
+build's image reference was the SHA-256 of the Dockerfile, it returned
+`active` in one second with an empty build log, and its reported size was
+roughly double the base's, so an image built earlier from the identical
+Dockerfile was reused. The build-time stamp forces a real build each time;
+whether Daytona's builder re-pulls a moved base tag on that build is
+unconfirmed, and a rebuild that finishes in seconds should be read as a reused
+image. The operational configuration the rebuild needs is under Operations.
+Adding a manifest probe now has to hold for both network modes, and a
+Trusted-only sandbox whose CA Daytona did not advertise fails closed at
+creation rather than at `git clone`. The two production paths the 2026-09-05
+revert flagged as failing under the rejecting tier — `reconcileNetworkPolicy`
+on acquisition and the settings rollback — succeed on the Juno organization
+and were not changed; a return to a rejecting tier would surface them again.
 
 ### 2026-09-03 — The Git CA probe stops requiring what Daytona only sometimes gives
 
@@ -783,7 +875,7 @@ ships a sandbox missing a runtime the prompt promises the model.
 adding a capability means editing the bootstrap and rebuilding, not editing two
 lists. The runtime bootstrap stays on the create path unchanged and still
 verifies the manifest, so a snapshot that silently loses a capability is still
-caught. **This script has not been executed against Daytona** — this environment
+caught. **This script had not been executed against Daytona when this was written** (it was on 2026-09-07; see the 2026-09-08 entry) — this environment
 has no `DAYTONA_API_KEY` — so the base image, the build, and the resulting
 snapshot are unverified; the acceptance probe is what must establish them.
 

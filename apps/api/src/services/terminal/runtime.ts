@@ -163,8 +163,6 @@ export interface DaytonaTerminalRuntime extends TerminalRuntime {
     context: HarnessToolContext,
     preparation?: TerminalSandboxPreparation,
   ): Promise<AcquiredTerminalSandbox>;
-  /** Require the next ordinary tool to reacquire and rerun repository preparation. */
-  discardPreparation(context: Pick<HarnessToolContext, "harnessRunId">): void;
 }
 
 /**
@@ -302,7 +300,7 @@ function parsePatch(patch: string): TerminalPatchOutput {
 
 export function createDaytonaTerminalRuntime(
   terminalPort: TerminalPortFactory,
-  coordinator: TerminalSandboxCoordinator,
+  coordinator: Pick<TerminalSandboxCoordinator, "acquire">,
   provider: TerminalSandboxProvider,
   resources: TerminalResourceBridge,
   publisher: TerminalRepositoryPublisher,
@@ -625,13 +623,17 @@ export function createDaytonaTerminalRuntime(
 
   return {
     prepare: acquire,
-    discardPreparation(context) {
-      acquiredByRun.delete(context.harnessRunId);
-    },
     async checkoutRepository(context, input) {
       if (!selector) {
         throw new TerminalToolError("repository_checkout_unavailable", "Repository checkout is unavailable in this Terminal runtime.");
       }
+      // Activation may still be preparing this run's sandbox in the background.
+      // Let that settle before replacing the generation underneath it: the
+      // bootstrap's clone and the checkout's replacement would otherwise run
+      // against one sandbox at once. A rejected acquisition is exactly what a
+      // checkout repairs, so only its end matters here, not its outcome.
+      const inFlight = acquiredByRun.get(context.harnessRunId);
+      if (inFlight) await inFlight.then(() => undefined, () => undefined);
       acquiredByRun.delete(context.harnessRunId);
       const selected = await selector.checkout(context, input);
       acquiredByRun.delete(context.harnessRunId);

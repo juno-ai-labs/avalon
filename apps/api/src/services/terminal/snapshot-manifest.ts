@@ -7,6 +7,14 @@ export interface TerminalSnapshotProbe {
  * Executable contract for the pinned Daytona snapshot. Adding a runtime or
  * manager to the model prompt requires adding a functional probe here first.
  */
+/**
+ * The Daytona base image the Rally-owned snapshot is built from. Checked in so
+ * that changing what every sandbox runs on is a reviewable diff, not a GitHub
+ * variable nobody sees move; `TERMINAL_SNAPSHOT_BASE_IMAGE` in the environment
+ * overrides it for a one-off build.
+ */
+export const TERMINAL_SNAPSHOT_BASE_IMAGE = "daytonaio/sandbox:0.9.0";
+
 export const TERMINAL_SNAPSHOT_PROBES: readonly TerminalSnapshotProbe[] = [
   { id: "bash", command: "bash -c 'set -euo pipefail; test \"$(printf avalon)\" = avalon'" },
   { id: "python", command: "python3 -c 'import json; assert json.loads(\"{\\\"ok\\\": true}\")[\"ok\"]'" },
@@ -100,15 +108,47 @@ export function terminalSnapshotImageBuildCommand(): string {
  * missing capability rather than only the first also makes a breaking managed
  * image update one diagnostic instead of one per redeploy.
  */
-export function terminalSnapshotProbeCommand(): string {
-  const ids = TERMINAL_SNAPSHOT_PROBES.map((probe) => probe.id);
+export interface TerminalSnapshotProbeOptions {
+  /**
+   * Require the advertised Git CA bundle instead of verifying it only when
+   * advertised. Daytona advertises its proxy CA to sandboxes created with a
+   * domain allow list, so a Trusted-only sandbox that lacks one would pass the
+   * optional probe and fail at its first Git operation through the intercepting
+   * proxy. `prepareSandbox` knows the allow list and sets this; the
+   * full-internet acceptance probes leave it unset.
+   */
+  requireGitCa?: boolean;
+}
+
+const GIT_CA_REQUIRED_PROBE_COMMAND =
+  "test -n \"${CURL_CA_BUNDLE:-}\" && test -f \"$CURL_CA_BUNDLE\" && test -s \"$CURL_CA_BUNDLE\" && test -r \"$CURL_CA_BUNDLE\"";
+
+export function terminalSnapshotProbeCommand(options: TerminalSnapshotProbeOptions = {}): string {
+  const probes = TERMINAL_SNAPSHOT_PROBES.map((probe) => (
+    probe.id === "git-ca" && options.requireGitCa
+      ? { id: probe.id, command: GIT_CA_REQUIRED_PROBE_COMMAND }
+      : probe
+  ));
+  return terminalProbeRunnerCommand(probes, "/workspace");
+}
+
+/**
+ * The runner itself, over any probe list and workspace root, so a test can
+ * execute it against a temporary directory and prove the sweep fails closed
+ * rather than matching the script's text.
+ */
+export function terminalProbeRunnerCommand(
+  probes: readonly { id: string; command: string }[],
+  workspaceRoot: string,
+): string {
+  const ids = probes.map((probe) => probe.id);
   return [
     "set -euo pipefail",
-    "test -d /workspace/.rally/tmp",
-    "test -d /workspace/.rally-output",
-    "probe_results=\"$(mktemp -d /workspace/.rally/tmp/probe.XXXXXX)\"",
+    `test -d ${workspaceRoot}/.rally/tmp`,
+    `test -d ${workspaceRoot}/.rally-output`,
+    `probe_results="$(mktemp -d ${workspaceRoot}/.rally/tmp/probe.XXXXXX)"`,
     "trap 'rm -rf -- \"$probe_results\"' EXIT",
-    ...TERMINAL_SNAPSHOT_PROBES.map((probe) => (
+    ...probes.map((probe) => (
       `{ ${probe.command} ; } >/dev/null 2>&1 && printf '%s\\n' '${probe.id}:ok' >"$probe_results/${probe.id}" &`
     )),
     "wait",
