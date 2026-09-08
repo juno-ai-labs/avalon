@@ -21,7 +21,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 44;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 45;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -2873,6 +2873,30 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
     version: 44,
     description: 'durable authorization location discovery and membership refresh intent',
     statements: AUTHORIZATION_PROJECTION_MIGRATION,
+  }, {
+    version: 45,
+    description: "the loop records how far into the transcript its projection has looked",
+    statements: [
+      // A human message that starts no run is a canonical turn and nothing
+      // else: the model's conversation is appended one admission at a time,
+      // never re-read from the transcript, so the turn rendered for every
+      // member and was invisible to the agent forever. The loop now records
+      // the highest transcript sequence its projection has considered, and
+      // the next admission appends every conversation turn between that mark
+      // and its own before appending itself.
+      `ALTER TABLE substream_loops ADD COLUMN transcript_projected_through INTEGER NOT NULL DEFAULT 0
+         CHECK (transcript_projected_through >= 0)`,
+      // Existing rooms start "seen through now". The alternative — starting at
+      // zero — would surface every side conversation a room has ever had into
+      // the model's context on its next activation, all at once, which is a
+      // behaviour change nobody in that room asked for and a burst the first
+      // activation after deploy would pay.
+      `UPDATE substream_loops
+          SET transcript_projected_through = (
+            SELECT next_transcript_sequence - 1 FROM transcript_counters WHERE id = 1
+          )
+        WHERE EXISTS (SELECT 1 FROM transcript_counters WHERE id = 1)`,
+    ],
   },
 ];
 

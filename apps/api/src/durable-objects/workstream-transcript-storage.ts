@@ -37,6 +37,7 @@ import {
   type HarnessActivationInput,
 } from "@rally/agent-harness";
 import { uuidV7 } from "../lib/uuid-v7";
+import { projectParticipantTextMessage } from "../services/workstream-participant-model-message";
 import { boundParameterChunks } from "./bound-parameters";
 import {
   SubstreamLoopStorage,
@@ -295,6 +296,12 @@ interface PreparedPendingBindAppend {
   material: ParsedPendingInputMaterial;
   steps: PreparedPendingBindStep[];
   next: BindLoopProjectionState;
+  /**
+   * The transcript high-water the gap-fill scanned before this input, and so
+   * the sequence the persisted mark may advance to when it commits. `null` for
+   * an elicitation answer, which scans nothing and advances nothing.
+   */
+  projectedThrough: number | null;
 }
 
 interface PreparedPendingBindStep {
@@ -418,6 +425,19 @@ export class WorkstreamTranscriptStorage {
 
   private get sql(): SqlStorage {
     return this.storage.sql;
+  }
+
+  /**
+   * The highest transcript sequence the model's conversation has considered.
+   *
+   * Distinct from {@link transcriptThrough}, and the distinction is the point:
+   * a human turn can land in the transcript without ever entering the
+   * projection, and this is the mark that says which ones have. Read by the
+   * run to record what a compaction checkpoint actually covers — the
+   * high-water mark would claim turns the model never saw.
+   */
+  transcriptProjectedThrough(): number {
+    return new SubstreamLoopStorage(this.storage).loop()?.transcript_projected_through ?? 0;
   }
 
   /** Highest canonical sequence currently owned by this transcript. */
@@ -1352,6 +1372,7 @@ export class WorkstreamTranscriptStorage {
 
       const turns: TranscriptTurn[] = [];
       const deliveryEffects: PendingInputDeliveryEffectInput[] = [];
+      let projectedThrough = 0;
       for (let index = 0; index < committedPrepared.length; index += 1) {
         const append = committedPrepared[index]!;
         const delivered = this.promotePendingInputInTransaction(
@@ -1359,6 +1380,12 @@ export class WorkstreamTranscriptStorage {
           append.material,
           now,
         );
+        // What the gap-fill scanned, never the promoted turn's own sequence:
+        // that sequence is allocated here, after the scan, and a turn written
+        // between the two would sit below the mark without ever having been
+        // looked at. The promoted turn is re-scanned on the next pass and
+        // skipped by its provenance.
+        projectedThrough = Math.max(projectedThrough, append.projectedThrough ?? 0);
         for (const step of append.steps) {
           this.assertExpectedHead(step.previous, step.transition);
           for (const fact of step.facts.materials) this.insertFact(fact, now);
@@ -1388,6 +1415,7 @@ export class WorkstreamTranscriptStorage {
         } & Record<string, SqlStorageValue>>(
           `UPDATE substream_loops
               SET step_ordinal = step_ordinal + 1, bind_state_revision = ?,
+                  transcript_projected_through = MAX(transcript_projected_through, ?),
                   revision = revision + 1, updated_at = ?
             WHERE id = 1 AND revision = ? AND status = 'executing'
               AND active_execution_id = ? AND active_execution_epoch = ?
@@ -1395,6 +1423,7 @@ export class WorkstreamTranscriptStorage {
               AND bind_state_revision = ?
             RETURNING loop_id, revision`,
           nextBindStateRevision,
+          projectedThrough,
           now,
           loop.revision,
           input.executionId,
@@ -1561,6 +1590,7 @@ export class WorkstreamTranscriptStorage {
                 bind_state_revision = ?, active_execution_id = ?,
                 active_execution_epoch = ?, lease_owner = ?, lease_expires_at = ?,
                 next_execution_sequence = next_execution_sequence + 1,
+                transcript_projected_through = MAX(transcript_projected_through, ?),
                 revision = revision + 1, updated_at = ?
           WHERE id = 1 AND revision = ? AND status = 'idle'
             AND bind_state_revision = ?
@@ -1571,6 +1601,14 @@ export class WorkstreamTranscriptStorage {
         input.receipt.executionEpoch,
         input.receipt.leaseOwner,
         input.receipt.leaseExpiresAt,
+        // On a bootstrap the run reads the whole transcript up to the
+        // activated turn, so the mark is that turn. Otherwise it is what the
+        // gap-fill scanned before the input — never the input's own sequence,
+        // which is allocated after the scan and would put a turn written in
+        // between below the mark unseen.
+        initializesFromCanonicalHistory
+          ? delivered.transcriptSequence
+          : prepared?.projectedThrough ?? 0,
         now,
         input.expectedLoopRevision,
         input.expectedBindStateRevision,
@@ -2675,7 +2713,7 @@ export class WorkstreamTranscriptStorage {
 
   private turnsInRange(startInclusive: number, endExclusive: number): TranscriptTurn[] {
     if (endExclusive <= startInclusive) return [];
-    const turns = this.sql.exec<TurnRow>(
+    return this.hydrateTurnRows(this.sql.exec<TurnRow>(
       `SELECT turn.transcript_sequence, turn.turn_id, turn.entry_kind, turn.actor,
               turn.author_user_id, turn.author_name_snapshot, turn.author_avatar_url_snapshot,
               turn.client_message_id, turn.external_actor_json,
@@ -2685,10 +2723,42 @@ export class WorkstreamTranscriptStorage {
         ORDER BY turn.transcript_sequence`,
       startInclusive,
       endExclusive,
-    ).toArray();
+    ).toArray());
+  }
+
+  /**
+   * The human and external text turns in `[startInclusive, endExclusive)` —
+   * what the gap-fill considers. Filtered here so a wide range hydrates only
+   * what it will use.
+   */
+  private conversationTurnsInRange(startInclusive: number, endExclusive: number): TranscriptTurn[] {
+    if (endExclusive <= startInclusive) return [];
+    return this.hydrateTurnRows(this.sql.exec<TurnRow>(
+      `SELECT turn.transcript_sequence, turn.turn_id, turn.entry_kind, turn.actor,
+              turn.author_user_id, turn.author_name_snapshot, turn.author_avatar_url_snapshot,
+              turn.client_message_id, turn.external_actor_json,
+              turn.activity_id, turn.attention_ordinal, turn.revision, turn.created_at
+         FROM participant_transcript_turns AS turn INDEXED BY participant_transcript_sequence_idx
+        WHERE turn.transcript_sequence >= ? AND turn.transcript_sequence < ?
+          AND turn.entry_kind = 'conversation'
+          AND turn.actor IN ('human', 'external')
+          AND turn.message_type = 'text'
+        ORDER BY turn.transcript_sequence`,
+      startInclusive,
+      endExclusive,
+    ).toArray());
+  }
+
+  /**
+   * Blocks, mentions and attachments for a set of turn rows. Each `IN` list is
+   * chunked under the engine's bound-parameter ceiling, so a range of any
+   * width hydrates; a turn's own rows always fall in one chunk, so their order
+   * within the turn is kept.
+   */
+  private hydrateTurnRows(turns: TurnRow[]): TranscriptTurn[] {
     if (turns.length === 0) return [];
-    const placeholders = turns.map(() => "?").join(", ");
-    const blocks = this.sql.exec<BlockRow>(
+    const chunks = boundParameterChunks(turns.map((turn) => turn.turn_id));
+    const blocks = chunks.flatMap((ids) => this.sql.exec<BlockRow>(
       `SELECT block.turn_id, block.block_id, block.block_index, block.block_kind,
               payload.payload_json, block.tool_call_id, block.plugin_id,
               block.tool_name, block.call_index, block.lifecycle_state, block.activity_id,
@@ -2697,25 +2767,25 @@ export class WorkstreamTranscriptStorage {
          JOIN participant_transcript_turns turn ON turn.turn_id = block.turn_id
          JOIN transcript_facts fact ON fact.fact_id = block.fact_id
          JOIN transcript_payloads payload ON payload.payload_id = fact.payload_id
-        WHERE block.turn_id IN (${placeholders})
+        WHERE block.turn_id IN (${ids.map(() => "?").join(", ")})
         ORDER BY block.turn_id, block.block_index`,
-      ...turns.map((turn) => turn.turn_id),
-    ).toArray();
-    const mentions = this.sql.exec<TranscriptMentionRow>(
+      ...ids,
+    ).toArray());
+    const mentions = chunks.flatMap((ids) => this.sql.exec<TranscriptMentionRow>(
       `SELECT turn_id AS part_id, mention_kind, target_user_id, connector_type,
               start_offset, end_offset
          FROM participant_transcript_mentions
-        WHERE turn_id IN (${placeholders})
+        WHERE turn_id IN (${ids.map(() => "?").join(", ")})
         ORDER BY turn_id, mention_index`,
-      ...turns.map((turn) => turn.turn_id),
-    ).toArray();
+      ...ids,
+    ).toArray());
     const mentionsByTurn = new Map<string, TranscriptMentionRow[]>();
     for (const mention of mentions) {
       const current = mentionsByTurn.get(mention.part_id) ?? [];
       current.push(mention);
       mentionsByTurn.set(mention.part_id, current);
     }
-    const attachments = this.sql.exec<TranscriptAttachmentRow>(
+    const attachments = chunks.flatMap((ids) => this.sql.exec<TranscriptAttachmentRow>(
       `SELECT attachment.turn_id AS part_id, attachment.resource_id, attachment.position,
               json_extract(link.resource_json, '$.title') AS title,
               json_extract(link.resource_json, '$.mimeType') AS mime_type,
@@ -2724,10 +2794,10 @@ export class WorkstreamTranscriptStorage {
               attachment.attachment_json, link.attached_at
          FROM participant_transcript_attachments attachment
          JOIN workstream_resource_links link ON link.resource_id = attachment.resource_id
-        WHERE attachment.turn_id IN (${placeholders})
+        WHERE attachment.turn_id IN (${ids.map(() => "?").join(", ")})
         ORDER BY attachment.turn_id, attachment.position`,
-      ...turns.map((turn) => turn.turn_id),
-    ).toArray();
+      ...ids,
+    ).toArray());
     const attachmentsByTurn = new Map<string, TranscriptAttachmentRow[]>();
     for (const attachment of attachments) {
       const current = attachmentsByTurn.get(attachment.part_id) ?? [];
@@ -3461,6 +3531,20 @@ export class WorkstreamTranscriptStorage {
   ): Promise<PreparedPendingBindAppend[]> {
     const prepared: PreparedPendingBindAppend[] = [];
     let projection = previous;
+    // Where the projection has looked so far. Every text input below first
+    // appends the conversation turns between this mark and its own admission,
+    // then itself, so the model reads the room in the order the room happened.
+    let projectedThrough = new SubstreamLoopStorage(this.storage).loop()
+      ?.transcript_projected_through ?? 0;
+    // Everything the transcript holds at this instant, read once for the pass.
+    // Not each input's admission fence: that is the high-water at reservation,
+    // and a turn written between reservation and this drain — someone talking
+    // while a steer waits for the next safe step, or while an activation's
+    // alarm is on its way — sits above it. Scanning to the live mark takes
+    // every such turn, and takes them in transcript order ahead of every input
+    // in the pass, which is also the order the room saw them in.
+    const scanThrough = this.transcriptThrough();
+    const appendedInThisPass = new Set<string>();
     for (const pending of pendingInputs) {
       const material = parsePendingInputMaterial(pending);
       // The transition below appends `bindPayload`, which is always the user
@@ -3487,9 +3571,27 @@ export class WorkstreamTranscriptStorage {
         // participant turn is still promoted below for the shared UI, but
         // appending its model derivative as a user message would tell the model
         // the same answer twice and change the semantics of a suspended tool.
-        prepared.push({ pending, material, steps, next: projection });
+        // It scans nothing and advances nothing: a tool result has to follow
+        // its call directly, so a turn written while the question was open
+        // waits for the next text input, which appends it after this result.
+        prepared.push({ pending, material, steps, next: projection, projectedThrough: null });
         continue;
       }
+      // The turns nobody admitted. A message that started no run is a
+      // canonical turn and nothing else, and until now it stayed that way:
+      // visible to every member, invisible to the model. Appended here, in
+      // transcript order, ahead of the input that follows them — an aside
+      // between two questions reads as an aside, not as an afterthought.
+      for (const gap of await this.unprojectedConversationTurnSteps(
+        projection,
+        projectedThrough,
+        scanThrough,
+        appendedInThisPass,
+      )) {
+        steps.push(gap);
+        projection = gap.next;
+      }
+      projectedThrough = Math.max(projectedThrough, scanThrough);
       const transition: ProtocolUserTransition = {
         kind: "protocol_user_appended",
         loopId: previous.loopId,
@@ -3512,10 +3614,103 @@ export class WorkstreamTranscriptStorage {
         throw new Error("bind_loop_projection_delta_invalid");
       }
       steps.push({ previous: projection, transition, next, facts });
-      prepared.push({ pending, material, steps, next });
+      prepared.push({ pending, material, steps, next, projectedThrough });
       projection = next;
     }
     return prepared;
+  }
+
+  /**
+   * The conversation turns in `(fromExclusive, toInclusive]` the projection has
+   * never seen, each as the transition that appends it.
+   *
+   * Only human and external text turns qualify, and the query says so rather
+   * than hydrating every turn in the range and discarding most of them: the
+   * range spans everything since the last admission, a long run's tool rows
+   * included. Assistant turns are produced by the projection itself; status
+   * rows are not conversation; an elicitation answer is a pending input by
+   * construction and carries no text of its own. A turn that *was* a pending
+   * input is already here under exactly the provenance built below, which is
+   * why that provenance is copied from the admission path rather than invented
+   * — the same key is what lets `currentBindProvenanceKeys` say "already
+   * projected" and skip it. Those keys are looked up for the whole range at
+   * once.
+   *
+   * A turn appended here is rendered as what it is: something said to the
+   * room, by a named author, that nobody asked Rally about. The admission path
+   * renders a request; this path renders the conversation around it, and the
+   * model is told which is which. A mention inside such a turn carries the
+   * person's id and no display name — the object holds no roster, and the
+   * canonical text already carries the name the author typed.
+   */
+  private async unprojectedConversationTurnSteps(
+    previous: BindLoopProjectionState,
+    fromExclusive: number,
+    toInclusive: number,
+    appendedInThisPass: Set<string>,
+  ): Promise<PreparedPendingBindStep[]> {
+    if (toInclusive <= fromExclusive) return [];
+    const candidates = this.conversationTurnsInRange(fromExclusive + 1, toInclusive + 1)
+      .flatMap((turn) => {
+        const text = turn.blocks.find((block) => block.type === "text");
+        if (!text || text.type !== "text") return [];
+        const provenance: BindLoopMessageOrigin = {
+          originKind: "derived",
+          sourceKind: "participant_turn",
+          sourceId: turn.turnId,
+          sourceRevision: 1,
+        };
+        return [{ turn, text, provenance, key: bindProvenanceKey(provenance) }];
+      });
+    const alreadyProjected = new Set(this.currentBindProvenanceKeys(
+      previous.loopId,
+      candidates.map((candidate) => candidate.provenance),
+    ));
+    const steps: PreparedPendingBindStep[] = [];
+    let projection = previous;
+    for (const { turn, text, provenance, key } of candidates) {
+      if (appendedInThisPass.has(key) || alreadyProjected.has(key)) continue;
+      const message = projectParticipantTextMessage({
+        author: turn.actor === "external" && turn.externalActor
+          ? {
+              type: "external",
+              actor: {
+                provider: turn.externalActor.provider,
+                displayName: turn.externalActor.displayName,
+                providerUserId: turn.externalActor.providerUserId,
+              },
+            }
+          : { type: "human" },
+        text: text.text,
+        mentions: (text.mentions ?? []).map((mention) => ({
+          type: mention.type,
+          userId: mention.userId,
+          displayName: null,
+        })),
+        overheard: { authorDisplayName: turn.authorSnapshot?.displayName ?? null },
+      });
+      if (!message) continue;
+      const transition: ProtocolUserTransition = {
+        kind: "protocol_user_appended",
+        loopId: previous.loopId,
+        generation: projection.generation,
+        stateRevision: projection.stateRevision + 1,
+        message: modelMessageWithoutProvenance(message),
+        provenance,
+        activationInputId: null,
+      };
+      const next = applyBindLoopTransition(projection, transition);
+      const facts = await this.materializeProjectionFacts(transition, projection, next);
+      const appended = facts.messageFacts[0];
+      if (!appended
+        || appended.position !== bindLoopNonSystemMessageCount(projection) + 1) {
+        throw new Error("bind_loop_projection_delta_invalid");
+      }
+      steps.push({ previous: projection, transition, next, facts });
+      appendedInThisPass.add(key);
+      projection = next;
+    }
+    return steps;
   }
 
   private async prepareElicitationAnswerToolResult(
