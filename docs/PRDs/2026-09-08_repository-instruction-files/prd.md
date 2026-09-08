@@ -80,10 +80,13 @@ context.
 
 ## Goals
 
-1. A substream whose Terminal work space holds an `AGENTS.md` at `/workspace`
-   has received it as a user-role message before the model's next turn after
-   the first Terminal tool call of the run, with no instruction from a
-   participant and no decision by the model.
+1. When a repository is cloned into, or restored in, the Terminal work
+   space, its root `AGENTS.md` is checked for as part of that same
+   bootstrap and, if present, delivered as a user-role message at the next
+   settled step, whether the clone was started by plugin activation in the
+   background or by `terminal_checkout_repository`. No instruction from a
+   participant and no decision by the model is involved, and the model is
+   never held waiting for it.
 2. When a Terminal tool touches a file or directory, every `AGENTS.md` on the
    path from the work-space root down to that file's directory has been
    delivered before the model's next turn, each one exactly once per content
@@ -157,18 +160,29 @@ State by state:
 - **No `AGENTS.md` anywhere on the touched paths.** Behavior is unchanged.
   No message is appended and the ledger stays empty, so a repository without
   the file costs nothing.
-- **Root `AGENTS.md` present, first Terminal tool call of the run.** After
-  that call's batch settles, one user-role message carries the root file.
-  Later calls append nothing while that content is in context.
+- **Repository cloned or restored.** The bootstrap that clones or restores
+  the checkout probes `/workspace/AGENTS.md` in the same sandbox command.
+  If it exists, one user-role message carries it at the next settled step.
+  When the bootstrap ran in the background at plugin activation, that is
+  the first step to settle after it finishes, typically before the model
+  has touched a file. Later calls append nothing while that content is in
+  context.
+- **Root `AGENTS.md` present without a repository bootstrap** (a tree the
+  model cloned with `git` itself, imported, or wrote). The first Terminal
+  tool call touching any path delivers it, because the root is the first
+  candidate of every chain.
 - **Nested `AGENTS.md`.** The first tool call whose target lies beneath that
   directory is followed by its message, after any ancestors not yet
   delivered, root to leaf, one message per file.
 - **`AGENTS.md` edited during the run**, by the model or by a command. The
   next touch beneath it delivers the new content; the standing sentence
   says the newer copy supersedes the older.
-- **Work space replaced** by `terminal_checkout_repository`. The ledger's
-  entries for the old sandbox generation are retired, so the new checkout's
-  root file arrives with the checkout call's settled step.
+- **Work space replaced** by `terminal_checkout_repository`. The tool
+  records the selection and drops the old sandbox; the clone itself runs on
+  the next acquisition. The ledger's entries for the old sandbox generation
+  are retired when the selection is recorded, and the new checkout's root
+  file arrives at the first settled step after that clone completes, which
+  is the step of the first Terminal tool the model calls next.
 - **Context compaction.** The delivered messages are gone with the rest of
   the transcript. Every ledger entry that was in the transcript moves to the
   system prompt with a residency of two further compactions. The compacted
@@ -254,10 +268,10 @@ None yet.
 
    Why not the activation boundary: a run's activation inputs are frozen
    before the first inference, and the root file is not known until the
-   first sandbox command of the run has run. A run that starts with a
-   repository already checked out could deliver the root file at activation
-   from the ledger without touching the sandbox; that is an optimisation
-   left to the build, since the settled-step path covers it one step later.
+   first sandbox command of the run has run. The settled-step boundary
+   accepts a pending derived input whenever it was written, so a message
+   enqueued by a background bootstrap is delivered at the first step to
+   settle afterwards without anyone waiting for it.
 
    Cache position: the message is appended at the transcript tail, after the
    tool batch. Rally's providers cache an exact token prefix automatically
@@ -317,7 +331,35 @@ None yet.
    This is the same division the skill and plugin catalogs use: the harness
    renders what the host hands it, in a stable order.
 
-6. **Nested discovery is bounded by the touched path, never by the tree.** For
+6. **The root auto-load is attached to the clone, not to a tool.**
+   `terminal_checkout_repository` does not clone; it records the selection
+   and deletes the old sandbox, and `bootstrapTerminalRepository` performs
+   the clone or restore later, as the sandbox preparation inside the shared
+   per-run acquisition, in one `repository.bootstrap` utility command with
+   `cwd: /workspace`. That command is the moment a checkout exists, so the
+   root probe is appended to it: after the checkout succeeds, the fragment
+   reports whether `/workspace/AGENTS.md` exists, its SHA-256, and its
+   bounded content as a JSON trailer, and the bootstrap writes the ledger
+   row and enqueues the derived pending input before it returns. It runs for
+   both bootstrap outcomes, `cloned` and `refreshed`, so a run that starts
+   with an existing checkout also gets the root file, deduplicated by the
+   ledger if that content is still in context.
+
+   The probe is best-effort inside the bootstrap. The Terminal activation
+   invariant says anything added to the activation path must fail the
+   shared acquisition rather than clean up after it; a failed probe or
+   ledger write does neither. It logs, leaves the checkout usable, and
+   leaves the root file to be discovered by the first touch, which is the
+   path every non-bootstrap tree already takes. Only the clone's own exit
+   code decides the bootstrap's outcome.
+
+   Rejected: making `terminal_checkout_repository` acquire the new sandbox
+   and clone before returning so its own result could carry the root file.
+   That would hold the model for the clone inside the tool's timeout, which
+   the non-blocking activation design was introduced to avoid, and it would
+   still leave the activation-time bootstrap uncovered.
+
+7. **Nested discovery is bounded by the touched path, never by the tree.** For
    a touched path of depth *d*, the chain has at most *d* + 1 candidates, and
    `apply_patch` unions the chains of its files (at most 100). Because the
    probe rides the tool's own sandbox command, it adds no provider round
@@ -327,12 +369,12 @@ None yet.
    makes the feature not free is the ledger and its transitions, and that
    cost is the same for the root file alone.
 
-7. **Content-addressed, not path-addressed.** The ledger keys on
+8. **Content-addressed, not path-addressed.** The ledger keys on
    `(path, sha256)`. An unchanged file is delivered once per residency
    cycle; an edited file is delivered once more; a replaced sandbox retires
    the generation's entries. Goals 4, 6, 7, and 8 hold with one mechanism.
 
-8. **Limits are defined open.** Per
+9. **Limits are defined open.** Per
    [adding limits](../../adding-security-defensive-and-other-limits.md),
    the change defines and wires two bounds and hands their numbers back:
    the maximum bytes of one delivered instruction file's content, and the
@@ -383,7 +425,7 @@ is not touched, since this table is object-local state rather than transcript.
   the participant win; they never grant a permission.
 - **The prefix now carries repository content after a compaction.** This is
   the one boundary the design moves, taken knowingly in decision 3. It is
-  bounded in size by decision 8 and in time by decision 4, and it carries
+  bounded in size by decision 9 and in time by decision 4, and it carries
   only content the model had already been shown as a user message.
 - **Path containment is unchanged.** Candidates are built from paths that
   already passed `safeRelativePath`, and the probe runs after the same
@@ -452,14 +494,19 @@ AGENTS.md added from apps/api/AGENTS.md:
 The heading text is fixed; the entries are sorted by path; the whole section
 is omitted, not emptied, when there is nothing to render.
 
-**Sequencing.** The model does nothing to receive either. The tools whose
-paths feed discovery are `read_file`, `edit_file`, `write_file`,
-`apply_patch` (each file), `run_command` (its `cwd`), `import_resource` (its
-destination), and `checkout_repository` (the root).
+**Sequencing.** The model does nothing to receive either. The root file is
+probed by the repository bootstrap that clones or restores the checkout,
+whether that bootstrap ran in the background at plugin activation or on the
+first acquisition after `checkout_repository`. The tools whose paths feed
+ancestor discovery are `read_file`, `edit_file`, `write_file`, `apply_patch`
+(each file), `run_command` (its `cwd`), and `import_resource` (its
+destination); every chain begins at the root, so a tree that arrived without
+a bootstrap has its root file delivered by the first touch.
 
-**Failure and self-healing.** Probe failure is never a tool failure: if the
-probe fragment errors, the tool's own result is returned unchanged and no
-ledger row is written, so the next call retries discovery. A probe that
+**Failure and self-healing.** Probe failure is never a tool or bootstrap
+failure: if the probe fragment errors, the tool's own result or the clone's
+own outcome stands unchanged and no ledger row is written, so the next touch
+retries discovery. A probe that
 cannot complete within the tool's timeout is abandoned with the tool. A
 ledger write that fails is a run-state persistence failure and fails the
 step the way a lost steer would, rather than telling the model it has
@@ -492,9 +539,10 @@ instructions it will not see on resume.
 
 1. In a work stream with this repository checked out, ask Rally to make a
    small change. The raw inference record shows a user-role message
-   `AGENTS.md added from AGENTS.md:` immediately after the first Terminal
-   tool batch; the run runs `pnpm lint` and `pnpm typecheck` without being
-   told to, and its pull-request description follows `docs/pull-requests.md`.
+   `AGENTS.md added from AGENTS.md:` at the first step to settle after the
+   background bootstrap finished, before any file was read; the run runs
+   `pnpm lint` and `pnpm typecheck` without being told to, and its
+   pull-request description follows `docs/pull-requests.md`.
 2. Ask it to edit a file under a directory that has its own `AGENTS.md`.
    That file's message follows the edit's batch and not before; the root
    file is not sent again.
@@ -507,7 +555,9 @@ instructions it will not see on resume.
    Touch a file: the message returns and the ledger row is back in
    `transcript` residency.
 5. Check out a different repository mid-run. The old checkout's rows are
-   `none`; the new root file's message follows the checkout's batch.
+   `none` once the selection is recorded; the new root file's message
+   follows the first Terminal tool batch after the checkout, which is the
+   acquisition that performed the clone.
 6. A repository with no `AGENTS.md`: no message is appended, the ledger is
    empty, and the request bytes to the provider differ from before this
    change only by the standing sentence.
@@ -535,10 +585,5 @@ instructions it will not see on resume.
    purposes, or accept the gap because the cap is reached only in
    transcripts that compaction would have handled first. Blocks phase 2
    only.
-4. **Deliver from the ledger at activation for a run that starts with a
-   checkout already present?** Saves one step of latency before the model
-   sees the root file; costs an activation-boundary input whose content
-   comes from the ledger rather than the sandbox. Proposed: not in the first
-   build; the settled-step path covers it one step later. Blocks nothing.
-5. **The two limit numbers** (per file, per section), per key design
-   decision 8. Blocks nothing; the change ships them open.
+4. **The two limit numbers** (per file, per section), per key design
+   decision 9. Blocks nothing; the change ships them open.
