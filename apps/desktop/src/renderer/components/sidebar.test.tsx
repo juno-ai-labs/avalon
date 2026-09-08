@@ -245,6 +245,35 @@ describe('Sidebar work-stream markers', () => {
     expect(resizer).toHaveAttribute('aria-valuenow', '300');
   });
 
+  it('preserves the expanded preference while navigation is forced compact', () => {
+    useUiStore.getState().setSidebarCollapsed(false);
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} compact conversationOnly automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
+    const toggle = screen.getByRole('button', { name: 'Expand navigation' });
+    expect(toggle).toBeDisabled();
+    fireEvent.click(toggle);
+    fireEvent.doubleClick(screen.getByRole('separator', { name: 'Resize navigation' }));
+    expect(useUiStore.getState().sidebarCollapsed).toBe(false);
+    expect(localStorage.getItem('rally.sidebar-collapsed')).toBe('false');
+  });
+
+  it('toggles the saved navigation preference from the footer and right edge', () => {
+    useUiStore.getState().setSidebarCollapsed(false);
+    function Navigation() {
+      const compact = useUiStore((state) => state.sidebarCollapsed);
+      return <Sidebar {...defaultActions} compact={compact} conversationOnly automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} />;
+    }
+    render(<MemoryRouter><Tooltip.Provider><Navigation /></Tooltip.Provider></MemoryRouter>);
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse navigation' }));
+    expect(useUiStore.getState().sidebarCollapsed).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Expand navigation' }));
+    expect(useUiStore.getState().sidebarCollapsed).toBe(false);
+    const edge = screen.getByRole('separator', { name: 'Resize navigation' });
+    fireEvent.doubleClick(edge);
+    expect(useUiStore.getState().sidebarCollapsed).toBe(true);
+    fireEvent.doubleClick(edge);
+    expect(useUiStore.getState().sidebarCollapsed).toBe(false);
+  });
+
   it('names compact links and connects their hover descriptions to the link', async () => {
     const item = workstream('compact-preview', 'Named compact destination', 'completed');
     render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} compact conversationOnly automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[item]} /></Tooltip.Provider></MemoryRouter>);
@@ -445,13 +474,16 @@ describe('Sidebar work-stream markers', () => {
     resizer.setPointerCapture = vi.fn();
 
     fireEvent.pointerDown(resizer, { clientX: 318, pointerId: 3 });
+    expect(resizer).toHaveFocus();
     fireEvent.pointerMove(window, { clientX: 318, pointerId: 3 });
+    expect(document.querySelector('.sidebar-drag-guide')).not.toBeNull();
     expect(resizer).toHaveAttribute('aria-valuenow', '300');
 
     fireEvent.pointerMove(window, { clientX: 358, pointerId: 3 });
     expect(resizer).toHaveAttribute('aria-valuenow', '340');
 
     fireEvent.pointerUp(window, { pointerId: 3 });
+    expect(document.querySelector('.sidebar-drag-guide')).toBeNull();
     fireEvent.pointerMove(window, { clientX: 400, pointerId: 3 });
     expect(resizer).toHaveAttribute('aria-valuenow', '340');
   });
@@ -1093,16 +1125,15 @@ describe('Sidebar work-stream markers', () => {
     }
   });
 
-  it('keeps compact search and creation above the scrolling streams', () => {
+  it('scrolls compact search and creation with the stream icons', () => {
     const onOpenSearch = vi.fn();
     render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} compact conversationOnly automations={[]} onOpenSearch={onOpenSearch} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
     const search = screen.getByRole('button', { name: 'Search workspace' });
     const create = screen.getByRole('link', { name: 'New chat' });
     const navigation = screen.getByRole('navigation');
-    expect(search.closest('.sidebar-scroll')).toBeNull();
-    expect(create.closest('.sidebar-scroll')).toBeNull();
-    expect(search.compareDocumentPosition(navigation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(create.compareDocumentPosition(navigation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(navigation).toContainElement(search);
+    expect(navigation).toContainElement(create);
+    expect(search.compareDocumentPosition(create) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     fireEvent.click(search);
     expect(onOpenSearch).toHaveBeenCalledOnce();
     expect(create).toHaveAttribute('href', '/workstreams/new');
@@ -1117,8 +1148,12 @@ describe('Sidebar work-stream markers', () => {
     ];
     render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} compact={compact} conversationOnly automations={[{ ...automation, loadable: true }, shared, ...excluded]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
     const strip = screen.getByRole('region', { name: 'Sidekick shortcuts' });
-    expect(strip.closest('.sidebar-scroll')).toBeNull();
-    expect(strip.nextElementSibling).toBe(screen.getByRole('button', { name: 'Open account menu' }));
+    if (compact) {
+      expect(screen.getByRole('navigation')).toContainElement(strip);
+    } else {
+      expect(strip.closest('.sidebar-scroll')).toBeNull();
+      expect(strip.nextElementSibling).toContainElement(screen.getByRole('button', { name: 'Open account menu' }));
+    }
     expect(within(strip).getAllByRole('button')).toHaveLength(2);
     for (const item of excluded) expect(screen.queryByText(item.name)).toBeNull();
     fireEvent.click(within(strip).getByRole('button', { name: 'Team brief, Active · Workspace' }));
@@ -1720,14 +1755,16 @@ describe('private work streams', () => {
     expect(row.querySelector('.sidebar-workstream-facepile')).toBeNull();
   });
 
-  it('explains a public work stream on hover', async () => {
+  it('keeps the public badge labeled while the row owns the only hover preview', async () => {
     renderWith([workstream('00000000-4000-4000-8000-00000000002f', 'Launch', 'completed')]);
-
-    const globe = screen.getByRole('link', { name: /Launch/u }).querySelector('.sidebar-workstream-public');
-    if (!globe) throw new Error('the workspace-scoped row rendered no public marker');
+    const row = screen.getByRole('link', { name: 'Launch' });
+    expect(row).toHaveAccessibleDescription('Public work stream');
+    const globe = within(row).getByRole('img', { name: 'Public work stream' });
+    fireEvent.pointerEnter(row.closest('[data-workstream-id]')!);
+    await waitFor(() => expect(screen.getByRole('tooltip')).toHaveTextContent('Launch'), { timeout: 5_000 });
     fireEvent.pointerMove(globe, { pointerType: 'mouse' });
-
-    expect(await screen.findByRole('tooltip')).toHaveTextContent('This is a public work stream');
+    expect(globe).not.toHaveAttribute('data-state');
+    expect(screen.getAllByRole('tooltip')).toHaveLength(1);
   });
 
   it('marks a workspace-scoped work stream as public', () => {
