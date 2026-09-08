@@ -149,6 +149,10 @@ email is explicit. There is no instruction editor, type selector, or Create/Appl
 button. Incomplete submissions remain in authoring history without replacing the
 accepted revision. The legacy acceptance route remains callable for compatibility.
 
+Submission returns to the conversation loop so the agent can acknowledge the save
+or ask about missing details. It does not halt the run: successful conversational
+completion still requires a persisted final assistant turn.
+
 Instruction-only definitions bypass connector binding, schedule preparation,
 email reservation and memory-table creation. Triggered definitions reuse the
 existing validation and execution setup: bindings resolve against WorkspaceDO,
@@ -549,6 +553,16 @@ was paused or deleted after admission. [`runbook.md`](runbook.md) has the
 production inspection paths.
 
 ## Changelog
+
+### 2026-09-08 — Finish authoring conversations after publication
+
+Ready submissions now return to the model for an acknowledgement instead of
+halting the harness. Production validation found that publication committed, but
+the authoring run then failed with `final_turn_required`: the old compiler-style
+tool halt bypassed the conversational final response. Weakening the runtime's
+durable-final-turn check was rejected because saving a definition does not replace
+the conversation's reply. A real workerd regression drives the authoring tool,
+checks publication, and requires a completed run with a persisted final turn.
 
 ### 2026-09-08 — Retire the temporary Worker class export after the rename
 
