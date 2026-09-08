@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { focusManager, QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { SearchResult } from '@rally/contracts/search';
 import { ApiError } from '../lib/api';
 import { SearchModal } from './search-modal';
@@ -23,6 +23,7 @@ function setup(search: React.ComponentProps<typeof SearchModal>['search']) {
   return { onSelect, onOpenChange, client };
 }
 describe('workspace search modal', () => {
+  afterEach(() => { focusManager.setFocused(undefined); });
   it('keeps verified results visible, marks an incomplete page and retries it', async () => {
     const search = vi.fn().mockResolvedValueOnce({ results: [result], complete: false })
       .mockResolvedValue({ results: [result], complete: true });
@@ -77,7 +78,7 @@ describe('workspace search modal', () => {
       await screen.findByRole('option');
       expect(search).toHaveBeenLastCalledWith({ query: 'danil', category: 'all', pageSize: 7, cursor: 'next' }, expect.any(AbortSignal));
       await waitFor(() => expect(end).toHaveBeenCalledWith({ outcome: 'completed' }));
-    } finally { focusManager.setFocused(undefined); trace.mockRestore(); }
+    } finally { trace.mockRestore(); }
   });
 
   it('keeps the first page visible while loading a continuation and preserves result order', async () => {
