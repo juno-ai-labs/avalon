@@ -304,6 +304,14 @@ for Azure-bound models in its route plan.
 
 ## Changelog
 
+### 2026-09-08 — Retire the temporary Worker class export after the rename
+
+The final rollout stage removes the Worker entrypoint's AutomationDO alias and
+uses SidekickDO in binding types. It requires verified renamed namespaces in both
+regions. The old source-import shim, automation_do schema component, lookup-key
+bytes, routes, and queued-command adapter remain compatibility contracts; none
+are new Cloudflare exports or namespaces.
+
 ### 2026-09-08 — Stage the Sidekick namespace rename with operational compatibility
 
 Append the class rename only after the dual-export release is verified. Keep
