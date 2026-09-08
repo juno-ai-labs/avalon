@@ -362,10 +362,11 @@ export function ProjectSpaceScreen(): React.JSX.Element {
         open={resourcePickerOpen}
         title="Add resources"
       >
+        {resources.data?.complete === false && <div role="status">Some resources are unavailable. <Button onClick={() => { void resources.refetch(); }}>Retry</Button></div>}
         {resources.data === undefined
           ? <LoadingState label="Loading resources…" />
           : resources.data.items.filter((resource) => !project.defaultResourceIds.includes(resource.id)).length === 0
-          ? <EmptyState title="No resources to add" description="Every available resource is already a project default." />
+          ? <EmptyState title={resources.data.complete === false ? "No verified resources to add" : "No resources to add"} description={resources.data.complete === false ? "Retry to check for more resources." : "Every available resource is already a project default."} />
           : <div className="member-picker-list" role="group" aria-label="Resources">
               {resources.data.items.filter((resource) => !project.defaultResourceIds.includes(resource.id)).map((resource) => (
                 <label className="member-picker-row" key={resource.id}>

@@ -113,18 +113,12 @@ export interface AuthorizationResolver {
   checkMany(subject: AuthorizationSubject, resources: readonly AuthorizationResource[]): Promise<AuthorizationDecision[]>;
 }
 
-/** Trusted server context. It carries restrictions, never accepts asserted permission IDs. */
+/** Trusted server context; the resolver establishes authority for each exact address. */
 export class AccessContext {
   constructor(
     readonly subject: AuthorizationSubject,
     private readonly resolver: AuthorizationResolver,
-    private readonly restrictions: readonly ReadonlySet<string>[] = [],
   ) {}
-
-  within(resources: readonly AuthorizationResource[]): AccessContext {
-    return new AccessContext(this.subject, this.resolver,
-      [...this.restrictions, new Set(resources.map(authorizationResourceKey))]);
-  }
 
   async check(resource: AuthorizationResource): Promise<AuthorizationDecision> {
     const [decision] = await this.checkMany([resource]);
@@ -139,8 +133,6 @@ export class AccessContext {
     resources.forEach((resource, index) => {
       if (resource.workspaceId !== this.subject.workspaceId) {
         results[index] = { status: 'denied', reason: 'workspace_mismatch', evidence: [] };
-      } else if (!this.restrictions.every((set) => set.has(authorizationResourceKey(resource)))) {
-        results[index] = { status: 'denied', reason: 'outside_delegation', evidence: [] };
       } else { admitted.push(resource); indices.push(index); }
     });
     if (admitted.length) {
@@ -164,18 +156,5 @@ export class AccessContext {
     return { complete: decisions.every((decision) => decision.status !== 'unavailable'),
       items: resources.flatMap((resource, index) => decisions[index]?.status === 'allowed' ? [resource] : []),
       decisions };
-  }
-}
-
-/** Source composition retains one access context and admits each returned resource separately. */
-export class AuthorizedView<T> {
-  constructor(private readonly access: AccessContext,
-    private readonly sources: readonly (() => Promise<readonly { resource: AuthorizationResource; value: T }[]>)[]) {}
-
-  async read() {
-    const candidates = (await Promise.all(this.sources.map((source) => source()))).flat();
-    const result = await this.access.readableScopes(candidates.map((candidate) => candidate.resource));
-    return { complete: result.complete, decisions: result.decisions,
-      items: candidates.flatMap((candidate, index) => result.decisions[index]?.status === 'allowed' ? [candidate.value] : []) };
   }
 }

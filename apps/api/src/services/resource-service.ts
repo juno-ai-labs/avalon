@@ -164,7 +164,6 @@ export class ResourceService {
       kind: 'resource', workspaceId: this.auth.workspaceId, resourceId: IdSchema.parse(row.id),
     })));
     decisions.forEach((decision, index) => {
-      if (decision.status === 'unavailable') requireAuthorizedRead(decision);
       const row = consumed[index];
       if (decision.status === 'allowed' && row) rows.push(row);
     });
@@ -173,6 +172,7 @@ export class ResourceService {
     const last = consumed.at(-1);
     return {
       items,
+      complete: decisions.every((decision) => decision.status !== 'unavailable'),
       nextCursor: hasMore && last
         ? encodeResourceCursor({ updatedAt: String(last.updated_at), id: String(last.id) })
         : null,

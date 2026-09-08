@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { asSubstreamId, asUserId, asWorkspaceId } from '@rally/contracts';
-import { AccessContext, AUTHORIZATION_FRESHNESS_MS, AuthorizedView, decisionIsFresh, evaluateReadPolicy,
+import { AccessContext, AUTHORIZATION_FRESHNESS_MS, decisionIsFresh, evaluateReadPolicy,
   type ReadPolicy, type AuthorizationResource } from '../src/services/authorization-policy';
 
 const workspaceId = asWorkspaceId('00000000-0000-7000-8000-000000000001');
@@ -35,17 +35,12 @@ describe('authorization read policy', () => {
     expect(evaluateReadPolicy({ kind: 'all', policies: [] }, 2000)).toMatchObject({ status: 'unavailable' });
   });
 
-  it('narrowing and source composition cannot expand authority', async () => {
-    const second = { ...resource, parentId: '00000000-0000-7000-8000-000000000004' };
-    const now = Date.now();
+  it('refuses a different workspace before consulting the resolver', async () => {
     const context = new AccessContext({ workspaceId, userId, delegation: null }, {
-      checkMany: async (_subject, resources) => resources.map(() => evaluateReadPolicy(granted(true, now), now)),
-    }).within([resource]);
-    expect(await context.within([second]).check(second)).toMatchObject({ status: 'denied', reason: 'outside_delegation' });
-    expect(await context.check({ ...resource, workspaceId: asWorkspaceId('00000000-0000-7000-8000-000000000005') })).toMatchObject({ status: 'denied', reason: 'workspace_mismatch' });
-    const view = new AuthorizedView(context, [async () => [{ resource, value: 'first' }], async () => [{ resource: second, value: 'second' }]]);
-    expect((await view.read()).items).toEqual(['first']);
-    expect((await context.readableScopes([resource, second])).decisions).toEqual(await context.checkMany([resource, second]));
+      checkMany: async () => { throw new Error('must not read another workspace'); },
+    });
+    expect(await context.check({ ...resource, workspaceId: asWorkspaceId('00000000-0000-7000-8000-000000000005') }))
+      .toMatchObject({ status: 'denied', reason: 'workspace_mismatch' });
   });
 
   it('rejects a grant that expired while the resolver was completing its batch', async () => {

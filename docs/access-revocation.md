@@ -16,8 +16,9 @@ Ordinary member search and resource reads use the [authorization primitive](auth
 a canonical read proof can remain valid for up to five minutes after a permission
 change. New requests still pass session and workspace-membership middleware.
 This bounded read policy does not relax mutation checks, socket admission, or
-local socket visibility/revocation. Expired or unavailable evidence returns a
-retryable failure, never an implicit grant.
+local socket visibility/revocation. Expired or unavailable evidence never grants access. Direct reads return a
+retryable failure; search and resource lists return verified rows with explicit
+incomplete status when some candidates cannot be authorized.
 
 ## Where the code lives
 

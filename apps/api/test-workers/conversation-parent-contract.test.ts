@@ -525,11 +525,13 @@ describe("conversation parent contract", () => {
     const searchEnv: Env = { ...TEST_ENV, TURBO_PUFFER_DEV_API_KEY: 'test-only' };
     let resourceRevision = await workspaceStub().resourceSearchRevision({ workspaceId: WORKSPACE_ID, resourceId: searchResourceId });
     let source = 'messages';
+    let includeVerifiedMessage = false;
     let generation: string | undefined;
     externalFetch.mockImplementation(async () => Response.json({ rows: [{ id: 'search-candidate', source, generation,
       scope_id: source === 'artifacts' ? WORKSPACE_ID : PERSONAL_ROOM_ID,
       source_id: source === 'messages' ? `${reserved.substreamId}/search-private-turn` : source === 'conversation_links' ? `${reserved.substreamId}/search-private-turn/${privateLinkId}` : searchResourceId,
-      revision: source === 'artifacts' ? resourceRevision : 1 }] }));
+      revision: source === 'artifacts' ? resourceRevision : 1 }, ...(includeVerifiedMessage ? [{ id: 'verified-message', source: 'messages', scope_id: PERSONAL_ROOM_ID,
+        source_id: `${reserved.substreamId}/search-private-turn`, revision: 1 }] : [])] }));
     try {
       expect(await searchWorkspace(searchEnv, AUTH, { query: 'private search', category: 'messages' }))
         .toMatchObject([{ excerpt: `private search phrase ${privateUrl}` }]);
@@ -551,16 +553,26 @@ describe("conversation parent contract", () => {
         { query: 'private search', category: 'links' })).toEqual([]);
       source = 'artifacts';
       // Deployment enables checks without activation; incomplete inventory is retryable and starts discovery.
-      await expect(searchWorkspace(searchEnv, AUTH, { query: 'private search', category: 'artifacts' }))
-        .rejects.toMatchObject({ status: 503, code: 'authorization_unavailable' });
+      await expect(searchWorkspacePage(searchEnv, AUTH, { query: 'private search', category: 'artifacts' }))
+        .resolves.toMatchObject({ results: [], complete: false });
+      includeVerifiedMessage = true;
+      const mixedPage = await searchWorkspacePage(searchEnv, AUTH, { query: 'private search', category: 'all' });
+      expect(mixedPage).toMatchObject({ complete: false, results: [{ id: 'verified-message' }] });
+      includeVerifiedMessage = false;
+      const visibleResourceId = crypto.randomUUID();
+      await runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec(`INSERT INTO resources
+        (id, workspace_id, resource_type, provider, title, metadata_json, attachment_status, created_at, updated_at)
+        VALUES (?, ?, 'document', 'fixture', 'private search visible', '{}', 'attached', ?, ?)`, visibleResourceId, WORKSPACE_ID, NOW, NOW).toArray());
+      const resourcePage = await new ResourceService(TEST_ENV, AUTH).list({ query: 'private search', limit: 10 });
+      expect(resourcePage).toMatchObject({ complete: false, items: [{ id: visibleResourceId }] });
       const initialProjection = { type: 'authorization_projection_v1' as const, region: 'global' as const,
         workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID };
       await projectAuthorization(TEST_ENV, initialProjection);
       await projectAuthorization(TEST_ENV, { ...initialProjection, substreamId: asSubstreamId('0') });
       const partial = await workspaceStub().authorizationBackfillStatus({ workspaceId: WORKSPACE_ID });
       expect(partial).toMatchObject({ pendingParents: 0, pendingChildren: 1, complete: false });
-      await expect(searchWorkspace(searchEnv, AUTH, { query: 'private search', category: 'artifacts' }))
-        .rejects.toMatchObject({ status: 503, code: 'authorization_unavailable' });
+      await expect(searchWorkspacePage(searchEnv, AUTH, { query: 'private search', category: 'artifacts' }))
+        .resolves.toMatchObject({ results: [], complete: false });
       expect(await workspaceStub().authorizationBackfillStatus({ workspaceId: WORKSPACE_ID })).toEqual(partial);
       await projectAuthorization(TEST_ENV, { ...initialProjection, substreamId: reserved.substreamId });
       resourceRevision = await workspaceStub().resourceSearchRevision({ workspaceId: WORKSPACE_ID, resourceId: searchResourceId });
