@@ -33,22 +33,19 @@ the message cursor's `receivedText`. The transcript keeps the message's
 *revealed prefix* as its `text`; a wire frame that changes nothing visible
 returns the cache untouched, so the wire's cadence stops costing commits.
 
-Each frame the loop runs, every uncompleted cursor with a backlog reveals
-`revealBudget(backlog, elapsed)` more characters:
-`backlog × elapsed / STREAM_REVEAL_DRAIN_MS`, floored at one character, capped
-at the backlog, and nudged past a surrogate pair rather than ever splitting
-one (`alignRevealBoundary` — an emoji streams in whole, not as a
-replacement-glyph frame). Because each frame's budget is a share of the
-*remaining* backlog, the backlog decays exponentially — about 6% per 60Hz
-frame, halving every ~190ms — which is the governor: a steady stream settles
-into a near-constant few characters per frame, an outsized burst (a
-2,048-character frame, a stalled tab catching up) is substantially caught up
-within half a second and within a few characters inside ~1.5s, and an empty
-buffer simply stops the loop (the caret sits, exactly as it did during a tool
-call before pacing). Proportionality to elapsed time is what makes sharing
-safe: the foreground screen and the shell's background subscriber for the
-same work stream share one cursor map, and a second loop ticking in the same
-frame sees near-zero elapsed time and reveals almost nothing extra.
+Accepted nonempty deltas record their arrival time and UTF-16 length in the
+shared cursor. A time-weighted estimate tracks characters per millisecond and
+packet cadence. The first packet uses the existing wire batcher's 100ms cadence;
+subsequent observations adapt it. Same-timestamp packets accumulate until the
+next measurable interval rather than dividing by zero.
+
+Each arrival sets the draw rate to the greater of the measured incoming rate
+and the rate needed to drain the backlog in one estimated packet interval.
+The animation loop integrates that rate over elapsed time, carrying fractional
+characters between frames. Catch-up stays linear between arrivals, so the tail
+does not slow exponentially. Duplicate subscriber ticks at the same timestamp
+reveal nothing extra. Surrogate pairs remain whole, with the extra unit charged
+against the next frame's credit.
 
 The loop arms itself only when a stream event leaves a backlog, re-arms only
 while one remains, and one frame is in flight per hook instance at a time. An
@@ -116,28 +113,15 @@ narration through a different surface and is deliberately not paced by this.
 
 ## Failure modes and limits
 
-- **`STREAM_REVEAL_DRAIN_MS` is 270ms**, the smoothing window. It is derived,
-  not guessed: the work-stream batcher holds text up to 100ms (`maxDelayMs`),
-  the measured inter-arrival p95 at the renderer was 133ms, and a drain window
-  that the gap between frames can outlast makes the reveal stall-then-burst —
-  the exact cadence this exists to remove. Twice the measured p95, rounded,
-  holds through ordinary jitter. Under a steady stream the visible text lags
-  the wire by about one window's worth; after an outsized burst the lag is
-  transiently larger, because the drain is exponential (each frame reveals a
-  share of what *remains*), decaying to a few characters within ~1.5s of a
-  2,048-character frame. Raising `maxDelayMs` on the wire without raising this
-  proportionally brings the stall back.
-- **A wire stall longer than the drain window** (a tool call, a provider
-  pause) drains the buffer and parks the caret. That is the same visual as
-  before pacing, and it is correct: inventing a slower crawl to bridge an
-  unknown-length gap would misrepresent the stream.
-- **A hidden window reveals everything at once** on the next frame, via the
-  hidden-flush. The reader returning mid-turn sees the text already caught up,
-  not an animation replaying what they missed.
-- **The floor of one character per frame** means a near-empty buffer reveals
-  at the display rate, ~60 characters a second, even when the model is slower.
-  A model slower than that is revealed at its own rate, one wire frame per
-  token, buffered briefly.
+- **The initial cadence is 100ms**, matching the wire batcher's existing delay.
+  It is an initial estimate, not a speed ceiling or a timeout. Observed arrivals
+  replace it; there is no backend dependency or tokenizer assumption.
+- **A provider pause** drains the received text at the last draw rate, then parks
+  the caret. A resumed packet updates the estimate and backlog catch-up rate.
+- **Hidden windows and completion** flush immediately. Checkpoints show their
+  accumulated text immediately and begin estimating with fresh live deltas.
+- **Fractional credit** avoids refresh-rate-dependent rounding and is discarded
+  when the buffer drains. Retry resets discard the prior arrival estimate.
 
 ## Testing
 
@@ -177,6 +161,24 @@ sort, a segment key that churns, a `mentions` default that mints a new array per
 render — multiplies at 60 commits a second, not 8.
 
 ## Changelog
+
+### 2026-09-07 — Drawing follows frontend text arrival speed
+
+**What changed:** Accepted deltas now estimate text rate and packet cadence on the
+frontend. Frames integrate that rate with fractional credit and linear backlog
+catch-up; replay ordering, completion, checkpoints, and hidden flushes remain.
+
+**Why:** The previous 270ms backlog governor intentionally delayed steady output
+and slowed the last part of each burst. The drawing felt behind generation.
+
+**Considered and rejected:** Merely shortening the exponential window retains
+its slowing tail. Backend token telemetry adds protocol work and still needs a
+text-length conversion; received characters measure what must actually be drawn.
+
+**Consequences:** Timing state belongs to the shared cursor and must survive
+subscriber handoffs. Only accepted nonempty deltas train it; attempts reset it.
+The existing 100ms batching cadence seeds the estimate without a new speed cap.
+
 
 ### 2026-08-28 — The reveal layer follows the persistent-loop cutover
 
