@@ -6,6 +6,7 @@ import {
   issueSocketTicket,
   issueWorkstreamControlSocketTicket,
   issueWorkspaceSocketTicket,
+  roomUpgradeDiagnostics,
   SocketService,
   socketTicketFromRequest,
   verifySocketTicket,
@@ -21,6 +22,7 @@ import {
   createTestDurableObjectId,
   createTestEnv,
 } from "./helpers/cloudflare-test";
+import { recordedSpans, resetRecordedSpans } from "./helpers/cloudflare-workers";
 
 // Shaped like the compact JWS a ticket really is — dot-separated base64url —
 // but without the `eyJ` header that makes a secret scanner read a fixture as a
@@ -51,7 +53,12 @@ function upgradeResponse(): Response {
   }) as unknown as Response;
 }
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+  resetRecordedSpans();
+});
 
 function upgradeRequest(protocols?: string[]): Request {
   const headers = new Headers({ Origin: "app://avalon", Upgrade: "websocket" });
@@ -180,6 +187,94 @@ describe("socket ticket transport", () => {
 
     expect(response.status).toBe(401);
     expect(roomFetch).toHaveBeenCalledOnce();
+  });
+
+  it("names the platform's activation of the room beside the room's own accept, and keeps both off the handshake", async () => {
+    // The edge's wait for the room is the whole `room_upgrade` step. What the
+    // room reports of its own accept is the part Rally code ran; the rest is
+    // the platform waking a cold object before its constructor — 8–12 s in
+    // production on opens whose accept ran under 220 ms. Fake timers stand in
+    // for workerd's pinned clock: `Date.now()` moves only where the room's
+    // fetch advances it, however many times the flow reads it.
+    vi.useFakeTimers({ now: 1_757_000_000_000 });
+    vi.stubGlobal("Response", FakeResponse);
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const sessionId = "00000000-0000-7000-8000-000000000751";
+    const userId = asUserId("00000000-0000-7000-8000-000000000752");
+    const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000753");
+    const workstreamId = "00000000-0000-7000-8000-000000000754";
+    const roomFetch = vi.fn(async () => {
+      vi.advanceTimersByTime(11_508);
+      return new FakeResponse(null, {
+        status: 101,
+        webSocket: {} as unknown as WebSocket,
+        headers: {
+          "x-rally-room-accept-ms": "214",
+          "x-rally-room-instance-age-ms": "0",
+        },
+      }) as unknown as Response;
+    });
+    const env = createTestEnv({
+      APP_ENV: "test",
+      AVALON_REGION: "global",
+      ALLOWED_ORIGINS: "app://avalon",
+      SESSION_SIGNING_KEY: "socket-ticket-test-signing-key",
+      SUBSTREAM_AGENTS: createCloudflareTestBinding<DurableObjectNamespace>({
+        idFromName: () => createTestDurableObjectId("room-id"),
+        get: () => ({ fetch: roomFetch }),
+      }),
+    });
+    const ticket = await issueSocketTicket(env, {
+      sessionId,
+      userId,
+      workspaceId,
+      region: "global",
+      role: "member",
+    }, { kind: "workstream", id: workstreamId });
+    const request = new Request(`https://api.avalon.test/workstreams/${workstreamId}/socket`, {
+      headers: {
+        Origin: "app://avalon",
+        Upgrade: "websocket",
+        "Sec-WebSocket-Protocol": socketTicketProtocols(ticket).join(", "),
+      },
+    });
+
+    const response = await new SocketService(env).upgrade(workstreamId, "0", undefined, request);
+
+    expect(response.status).toBe(101);
+    expect(response.headers.get("sec-websocket-protocol")).toBe(SOCKET_TICKET_SUBPROTOCOL);
+    expect(response.headers.get("x-rally-room-accept-ms")).toBeNull();
+    expect(response.headers.get("x-rally-room-instance-age-ms")).toBeNull();
+    expect(recordedSpans().find((span) => span.name === "workstream.socket.upgrade")?.attributes)
+      .toMatchObject({
+        "rally.socket.room_accept_ms": 214,
+        "rally.socket.room_activation_ms": 11_294,
+        "rally.socket.room_instance_age_ms": 0,
+      });
+    // The same three land on the flow row, beside the step that used to be the
+    // only number: `slowest_step` still names the room, and the row now says
+    // how much of that the room actually saw.
+    expect(info.mock.calls.map((call) => call[0]).find((row) =>
+      (row as { event?: string }).event === "perf_flow")).toMatchObject({
+      component: "api_socket",
+      slowest_step: "workstream.socket.room_upgrade",
+      slowest_step_ms: 11_508,
+      "rally.socket.room_accept_ms": 214,
+      "rally.socket.room_activation_ms": 11_294,
+      "rally.socket.room_instance_age_ms": 0,
+    });
+  });
+
+  it("records nothing about activation from a room rejection, and does not rebuild it", async () => {
+    vi.stubGlobal("Response", FakeResponse);
+    const rejection = new FakeResponse(JSON.stringify({ error: "socket_ticket_replayed" }), {
+      status: 401,
+    }) as unknown as Response;
+
+    const { attributes, response } = roomUpgradeDiagnostics(rejection, 11_508);
+
+    expect(attributes).toEqual({});
+    expect(response).toBe(rejection);
   });
 
   it.each(["connector", "demo_seed"] as const)("refuses to mint any socket ticket for a %s principal", async (principal) => {
