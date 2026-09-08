@@ -525,7 +525,6 @@ with canonical checks along known child paths, retaining source text validation
 and a five-minute bound on permission evidence. See [authorization](authorization.md)
 for rollout controls and the distinction between denial and unavailable authority.
 
-
 ### 2026-09-07 — Search review corrections
 
 Search review fixes keep the complete scope prefilter independent of the 100-ID directory batch contract, authorize conversations after asynchronous content validation, and allow transient continuation retries without hiding already visible rows. Authorization denials still clear results; pagination controls sit outside the ARIA listbox.

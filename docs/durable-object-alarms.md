@@ -209,6 +209,13 @@ post-drain refresh reconcile all four kinds:
 | `maintenance` | task name | the oldest row of whichever tables that task still owes work on |
 | `terminal` | work-stream id | `workspace_workstream_directory.next_terminal_action_at` |
 
+Runtime writes map `schedules` to `schedule`, `resource_watches` to `watch`,
+and `resources` to both `maintenance` and `watch` (deletion cascades).
+Resource versions and cleanup, note, memory, and Slack outboxes map to
+`maintenance`. Digest RPCs select `schedule`; directory effects repair
+`terminal` on first application and replay. The source map next to schedule
+derivation is the registry for compatibility-port writes.
+
 A fifth kind, `product`, is scheduled directly rather than reconciled: the
 opportunity and ranking pass wants its instant computed differently depending on
 the caller (an enqueue wants a past-due instant honoured; the alarm that
@@ -237,6 +244,14 @@ and re-arms before it returns. The outbox lane is the shared parent drain
 automation's sidebar row from reaching the workspace.
 
 ## Invariants
+
+- A scoped reconcile receives the complete authoritative target set for every
+  selected kind; it must not delete or reset another kind's entries.
+- Compatibility-port writers declare every affected kind in
+  `WORKSPACE_ALARM_SOURCE_KINDS`, including foreign-key cascades. There is no
+  default kind. Typed writers explicitly select their own kinds.
+- An exact directory replay repairs Terminal arming after a post-commit failure,
+  even when applying the directory row reports no change.
 
 - **An object never derives its alarm outside this base.** A second derivation
   of "the earliest thing" will disagree with the base's, and the disagreement
@@ -477,6 +492,15 @@ emitted, and `$workers.durableObjectId` is the platform-owned correlation
 field.
 
 ## Changelog
+
+### 2026-09-08 — Preserve Terminal replay repair and explicit source kinds
+
+Directory effects now repair Terminal alarms on exact replay: a prior attempt
+can commit its deadline and fail before arming it. Gating arming on a changed
+row strands that deadline. Re-reading the current directory on replay preserves
+recovery without restoring unrelated schedule scans. Source tables now declare
+all affected kinds in one map, and query kinds come from TypeScript metadata
+rather than a second SQL literal, removing silent defaults and disagreement.
 
 ### 2026-09-08 — Index pending resources and reconcile only affected alarm kinds
 

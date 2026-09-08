@@ -104,6 +104,8 @@ import {
   recordWorkspaceScheduleFailure,
   runWorkspaceScheduleTarget,
   workspaceScheduleTargets,
+  WORKSPACE_ALARM_SOURCE_KINDS,
+  WORKSPACE_SCHEDULE_ALARM_KINDS,
   type WorkspaceScheduleContext,
   type WorkspaceScheduleTargetKind,
 } from "../services/workspace-schedule-execution";
@@ -820,22 +822,6 @@ import {
   type WorkspaceRuntimeSqlResult,
 } from "./workspace-runtime-sql";
 
-const WORKSPACE_ALARM_SOURCE_TABLES = new Set([
-  "schedules",
-  "resource_watches",
-  "resources",
-  "resource_versions",
-  "resource_object_deletion_outbox",
-  "note_resource_deletion_outbox",
-  "note_privacy_change_outbox",
-  "memory_index_outbox",
-  "slack_ingress_jobs",
-  "slack_agent_thread_claims",
-  "slack_agent_pending_prompts",
-  "slack_link_challenges",
-  "slack_unfurled_links",
-]);
-
 const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
   ...AUTHORIZATION_STORAGE_TABLES,
   "resource_search_versions",
@@ -1018,12 +1004,7 @@ const PRODUCT_ALARM_KEY = "workspace";
 /** The one-shot entry a migrating object uses to reconcile itself once. */
 const SCHEDULE_BOOTSTRAP_ALARM_KIND = "schedule_bootstrap";
 /** The kinds `refreshSchedule` reconciles, each dispatched to the schedule runner. */
-const WORKSPACE_SCHEDULE_ALARM_KINDS: readonly WorkspaceScheduleTargetKind[] = [
-  "schedule",
-  "watch",
-  "maintenance",
-  "terminal",
-];
+
 
 function isWorkspaceScheduleAlarmKind(kind: string): kind is WorkspaceScheduleTargetKind {
   return (WORKSPACE_SCHEDULE_ALARM_KINDS as readonly string[]).includes(kind);
@@ -3211,10 +3192,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       const kinds = new Set<WorkspaceScheduleTargetKind>();
       for (const statement of request.statements) {
         const target = workspaceMutationTarget(statement.sql);
-        if (target === null || !WORKSPACE_ALARM_SOURCE_TABLES.has(target)) continue;
-        kinds.add(target === "schedules" ? "schedule" : target === "resource_watches" ? "watch" : "maintenance");
-        // Resource deletion cascades to its watches in the same transaction.
-        if (target === "resources") kinds.add("watch");
+        for (const kind of target === null ? [] : WORKSPACE_ALARM_SOURCE_KINDS.get(target) ?? []) {
+          kinds.add(kind);
+        }
       }
       if (kinds.size > 0) {
         this.state.waitUntil(this.refreshScheduleKinds(request.workspaceId, [...kinds]).catch((error: unknown) => {
@@ -6038,7 +6018,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // cannot be reached is the only one that falls behind, and its next
     // occurrence finds the room archived through `authority` anyway.
     if (archivalChanges.size > 0) await this.notifyOwningRoomArchival(request.workspaceId, [...archivalChanges]);
-    if (commonChanges.size > 0) {
+    if (commonChanges.size > 0 || request.envelopes.some((envelope) => envelope.effect.kind === "directory_common")) {
+      // Replays repair an arm lost after the directory commit, even when no
+      // directory row changes this time. Always derive from current rows.
       // A `directory_common` effect is the only writer of
       // `next_terminal_action_at`, and it arrives outside any alarm — off the
       // Queue — so a sandbox deadline created or moved here would otherwise
@@ -7738,7 +7720,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * Re-derive the workspace alarm after a memory write left an embedding
    * intent in `memory_index_outbox`.
    *
-   * `memory_index_outbox` is on `WORKSPACE_ALARM_SOURCE_TABLES`, so while
+   * `memory_index_outbox` is on `WORKSPACE_ALARM_SOURCE_KINDS`, so while
    * these writes were generic statements `executeRuntimeSql` armed the
    * `memory_index` maintenance target for them. A typed method gets no such
    * thing for free, and without this a memory written into a quiet workspace
