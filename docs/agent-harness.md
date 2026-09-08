@@ -1296,7 +1296,7 @@ would change what the model already saw.
 **Consequences:** The model's conversation now interleaves side conversation
 with the turns that address it, so a question about what two people said is
 answerable. Existing rooms start with the mark at the transcript's high-water
-mark (v43 backfills it), so nothing historical surfaces on upgrade; only turns
+mark (v45 backfills it), so nothing historical surfaces on upgrade; only turns
 from then on are carried. A compaction checkpoint's `compactedThroughSequence`
 is the projection's mark, which a later bootstrap may replay slightly more from
 than before rather than lose turns the model never saw.
