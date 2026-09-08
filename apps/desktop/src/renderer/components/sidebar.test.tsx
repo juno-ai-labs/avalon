@@ -179,6 +179,19 @@ describe('Sidebar work-stream markers', () => {
     });
   });
 
+  it('orders visits ahead of shared activity and keeps unvisited rows at creation time', () => {
+    const visited = { ...workstream('visited', 'Last visited', 'completed', '2026-07-01T00:00:00.000Z'),
+      createdAt: '2026-07-01T00:00:00.000Z', lastAccessedAt: '2026-08-02T00:00:00.000Z' };
+    const noisy = { ...workstream('noisy', 'New shared activity', 'completed', '2099-01-01T00:00:00.000Z'),
+      createdAt: '2026-07-20T00:00:00.000Z', lastAccessedAt: null };
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions}
+      automations={[]} notes={[]} onSignOut={vi.fn()} workspace={workspace}
+      workstreams={[noisy, visited]} /></Tooltip.Provider></MemoryRouter>);
+    const links = screen.getAllByRole('link').map((link) => link.textContent);
+    expect(links.findIndex((text) => text?.includes('Last visited')))
+      .toBeLessThan(links.findIndex((text) => text?.includes('New shared activity')));
+  });
+
   it('reduces the GrokBot shell navigation to work streams', () => {
     render(
       <MemoryRouter>

@@ -4,6 +4,7 @@ import {
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   WorkspaceProjectSnapshotEventSchema,
   WorkspaceSidebarListEventSchema,
+  WorkspaceWorkstreamRecencyEventSchema,
   WorkspaceFeatureFlagsEventSchema,
   WorkspacePresenceEventSchema,
   WorkspaceSocketSyncEventSchema,
@@ -169,6 +170,7 @@ function applyDirectoryPage(
     });
     applyWorkspaceWorkstreamFields(queryClient, workstream.id, {
       pinPosition: workstream.pinPosition,
+      lastAccessedAt: workstream.lastAccessedAt,
     }, page.directoryWaterline);
     return queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)
       ?.find((item) => item.id === workstream.id) ?? workstream;
@@ -456,6 +458,11 @@ export function WorkspaceSocketProvider({
           if (featureFlags.success) {
             queryClient.setQueryData(CLIENT_FEATURE_FLAGS_QUERY_KEY, featureFlags.data.flags);
             void desktopBridge().observeClientFeatureFlags(featureFlags.data.flags).catch(() => undefined);
+            return;
+          }
+          const recency = WorkspaceWorkstreamRecencyEventSchema.safeParse(decoded);
+          if (recency.success) {
+            mergeCachedWorkstreamPage(queryClient, applyDirectoryPage(queryClient, recency.data).items);
             return;
           }
           const workstreamPage = WorkspaceWorkstreamPageEventSchema.safeParse(decoded);

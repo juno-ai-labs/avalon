@@ -648,6 +648,8 @@ export const WorkstreamSchema = z.object({
    * relative to the reader's other pins and changes whenever they rearrange
    * them. Sort by it; do not store it as an identity.
    */
+  /** Workspace-owned visit time for this viewer; absent on older servers. */
+  lastAccessedAt: TimestampSchema.nullable().optional(),
   pinPosition: z.number().int().nonnegative().nullable().default(null),
   /**
    * People in a personal work stream, for the sidebar facepile. At most
@@ -1751,6 +1753,8 @@ export const UpdateWorkstreamRequestSchema = z.object({
  * selects none and `includeSystem` does not reach them.
  */
 export const WorkstreamBatchFilterSchema = z.strictObject({
+  /** Which timestamp the range selects; access falls back to creation for unvisited work streams. */
+  recency: z.enum(["activity", "access"]).optional(),
   lastActivityAt: z.strictObject({
     atOrAfter: TimestampSchema.optional(),
     before: TimestampSchema.optional(),
@@ -2229,6 +2233,11 @@ function refineWorkstreamPagePairing(
 export const WorkspaceWorkstreamPageEventSchema = z.strictObject({
   type: z.literal("workspace_workstream_page"),
   requestId: IdSchema,
+  ...workspaceWorkstreamPageFields,
+}).superRefine(refineWorkstreamPagePairing);
+
+export const WorkspaceWorkstreamRecencyEventSchema = z.strictObject({
+  type: z.literal("workspace_workstream_recency"),
   ...workspaceWorkstreamPageFields,
 }).superRefine(refineWorkstreamPagePairing);
 

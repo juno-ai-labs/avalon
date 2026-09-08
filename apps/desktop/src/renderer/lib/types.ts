@@ -136,6 +136,7 @@ export interface AutomationSummary {
 export type WorkstreamAutomationSummary = Omit<AutomationSummary, 'scope' | 'owningWorkstreamId'>;
 
 export interface WorkstreamSummary {
+  lastAccessedAt?: string | null;
   id: string;
   title: string;
   /** `naming` while Rally is choosing the title; the title is a placeholder. */
