@@ -223,6 +223,20 @@ disableable with `observability.logs.invocation_logs = false`. Rally leaves it
 on; it is what carries the request and response metadata the `http_request` row
 does not.
 
+*Observed 8 September 2026, on the Global Worker's invocation logs.* For a
+Durable Object, the invocation log's `$workers.wallTimeMs` starts when the
+platform accepts the invocation for the object, **not** when the object's
+handler runs: a call that has to wake a cold object spends the activation —
+routing, storage, and the constructor — inside its wall time, at
+`cpuTimeMs` near zero, and every invocation that arrives during that activation
+ends together once the constructor's own rows appear. An RPC session opened
+before the instance existed is logged as `jsrpc` with
+`$workers.event.rpcCallCount: 0` even though its method ran, so a zero-call
+session of several seconds is the signature of a caller that waited for
+activation rather than one that called nothing. Read
+[`performance-tracing.md`](performance-tracing.md#what-room_upgrade-contains)
+for what that does to a step that wraps a Durable Object call.
+
 Limits worth knowing: **7 days retention** (3 on the Free plan); **256 KB per
 log**, with anything larger truncated and `$cloudflare.truncated` set — which is
 what a very large redacted payload would hit; and **5 billion logs per account
@@ -313,6 +327,23 @@ depending on real nesting or export belongs in `apps/api/test-workers/` — see
 [`testing.md`](testing.md).
 
 ## Changelog
+
+### 2026-09-08 — A Durable Object invocation's wall time includes its activation
+
+**What changed:** Recorded, dated, that a Durable Object invocation log's
+`wallTimeMs` covers the platform's activation of a cold object before the
+constructor runs, at near-zero CPU, and that an RPC session opened during that
+wait is logged with `rpcCallCount: 0`.
+
+**Why:** Three slow work-stream opens read as a slow room for as long as the
+only numbers were the edge's step and the room's own phases; the invocation
+logs were what separated the platform's seconds from Rally's milliseconds, and
+nothing here said how to read them. The zero-call session in particular reads
+as "the caller called nothing" until it is known to mean "the caller waited".
+
+**Consequences:** A slow binding span or `room_upgrade` step on a cold object
+is not attributable to the object's code until the invocation log's CPU and
+the constructor's timing rows have been read beside it.
 
 ### 2026-08-20 — The per-Worker opt-in is what makes a one-region export possible
 

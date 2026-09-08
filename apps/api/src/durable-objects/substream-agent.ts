@@ -5944,6 +5944,14 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   }
 
   private async acceptSocketInSpan(request: Request, url: URL, span: FlowSpan): Promise<Response> {
+    // Read first, before anything here can yield: the edge subtracts this
+    // accept's own duration from the time it waited for the room, and the
+    // difference is the platform activating a cold object — work that happened
+    // before this constructor ran and that no span in this object can cover.
+    // The instance age says whether this upgrade is the call that woke it.
+    const acceptStartedAt = Date.now();
+    const instanceAgeMs = this.instanceAgeMs();
+    span.setAttributes({ "rally.room.instance_age_ms": instanceAgeMs });
     // The authority control is read once, below, after the identity is parsed.
     // It used to be read here as well, to refuse a socket during maintenance
     // before parsing anything — but the read is an uncached D1 round trip and
@@ -6154,7 +6162,18 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       "rally.socket.outcome": "accepted",
       "rally.socket.connection_id": attachment.connectionId,
     });
-    return new Response(null, { status: 101, webSocket: client });
+    // Only the accepted upgrade carries these: a rejection is already a
+    // readable JSON status, and the edge strips both before the 101 reaches a
+    // client. `withNegotiatedSubprotocol` in `socket-service.ts` rebuilds the
+    // response anyway, so the headers cost no second construction there.
+    return new Response(null, {
+      status: 101,
+      webSocket: client,
+      headers: {
+        [RALLY_HEADERS.ROOM_ACCEPT_MS]: String(Math.max(0, Date.now() - acceptStartedAt)),
+        [RALLY_HEADERS.ROOM_INSTANCE_AGE_MS]: String(instanceAgeMs),
+      },
+    });
   }
 
   private async acceptEvent(request: Request): Promise<Response> {

@@ -54,6 +54,17 @@ export const RALLY_HEADERS = Object.freeze({
   PARENT_KIND: "x-rally-parent-kind",
   PLACEMENT_AFFINITY: "x-rally-placement-affinity",
   REGION: "x-rally-region",
+  /**
+   * What a conversation object reports on the 101 it answers a feed upgrade
+   * with: how long its own accept ran, and how old the object instance that
+   * ran it was. The edge subtracts the first from the time it waited for the
+   * room, which names the part of a slow upgrade the room never saw — the
+   * platform waking a cold object before its constructor ran — and strips both
+   * before the handshake reaches a client. Internal, object-to-Worker only;
+   * `docs/performance-tracing.md` owns the attributes they become.
+   */
+  ROOM_ACCEPT_MS: "x-rally-room-accept-ms",
+  ROOM_INSTANCE_AGE_MS: "x-rally-room-instance-age-ms",
   SESSION_ID: "x-rally-session-id",
   SIGNATURE: "x-rally-signature",
   SOCKET_ADMISSION_AUTHORITY_GENERATION: "x-rally-socket-admission-authority-generation",

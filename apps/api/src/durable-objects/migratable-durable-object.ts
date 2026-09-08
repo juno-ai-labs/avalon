@@ -128,6 +128,20 @@ export abstract class MigratableDurableObject<TEnv extends Env = Env>
   }
 
   /**
+   * Milliseconds since this instance's constructor began.
+   *
+   * Measured on workerd's pinned clock, so it counts I/O the instance has
+   * waited through, not CPU it has spent. An entry point that reports it
+   * beside its own duration lets the caller tell an object that was already
+   * running from one this very call woke — a distinction the caller's own
+   * clock cannot make, because the platform's activation of a cold object
+   * happens before the constructor and is charged to the call that waited.
+   */
+  protected instanceAgeMs(): number {
+    return Math.max(0, Date.now() - this.constructorStartedAt);
+  }
+
+  /**
    * Apply this object's schema and tell the tracker what happened.
    *
    * The one call every constructor makes, in place of its own
