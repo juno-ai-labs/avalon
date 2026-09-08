@@ -13,6 +13,10 @@ it. The extracted pieces below are still worth their seams (they are what a
 feed is made of), but a change to them has one caller, and a second surface is
 a thing to argue for rather than a thing to preserve.
 
+## Sidekick conversations and attachments
+
+Sidekick authoring uses the shared conversation surface in a separate library window. Generated descriptions summarize instructions; ready submissions save immediately. The center workstream sidebar replaces participant rows with a facepile and lists actually attached Sidekicks, with access-checked removal affecting future executions.
+
 ## Where the code lives
 
 - `apps/desktop/src/renderer/components/conversation-follow.tsx` owns the
@@ -107,6 +111,13 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-07 — Sidekick conversations and attachments
+
+Sidekick authoring uses the shared conversation surface in a separate library window. Generated descriptions summarize instructions; ready submissions save immediately. The center workstream sidebar replaces participant rows with a facepile and lists actually attached Sidekicks, with access-checked removal affecting future executions.
+
+This composes knowledge with existing execution machinery while keeping one Sidekick identity and preserving authorization boundaries.
+
 
 ### 2026-09-05 — Correct row identity and retained animation lifecycle
 

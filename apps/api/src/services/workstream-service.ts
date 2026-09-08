@@ -1,3 +1,5 @@
+import { AutomationService } from "./automation-service";
+import type { SidekickAttachment } from "@rally/contracts";
 import { newId, nowIso } from "@rally/db";
 import { memberSafeHarnessFailureMessage } from "@rally/agent-harness";
 import { HarnessFailureCodeSchema, asHarnessRunId, asWorkspaceId, asWorkstreamId, type WorkspaceId, type WorkstreamId } from "@rally/contracts";
@@ -18,7 +20,7 @@ import type { AuthContext, Env } from "../env";
 import { conversationObjectName } from "../durable-objects/substream-agent";
 import { substreamLoopId, workspaceDOName } from "../durable-objects/names";
 import { WorkspaceOpportunityOriginEventsResultSchema } from "../durable-objects/workspace-opportunity-protocol";
-import { ApiError } from "../lib/api-error";
+import { ApiError, asApiError } from "../lib/api-error";
 import { publishAccessRevocation } from "./access-revocation";
 import { loopActivationWasRecorded } from "../lib/loop-activation-signal";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
@@ -642,6 +644,30 @@ export class WorkstreamService {
       originResourceIds,
       reason: "work_opportunity",
     });
+  }
+
+  async sidekickAttachments(id: string, removeId?: string): Promise<{ items: SidekickAttachment[] }> {
+    const detail = await this.get(id);
+    if (removeId && !detail.participants.some((person) => person.user.id === this.auth.userId)) {
+      throw new ApiError(403, "sidekick_attachment_forbidden", "Only participants can remove a Sidekick");
+    }
+    const agent = await durableObjectStubForWorkspace(this.env, this.env.SUBSTREAM_AGENTS,
+      asWorkspaceId(this.auth.workspaceId), conversationObjectName(this.env.AVALON_REGION, asWorkspaceId(this.auth.workspaceId), id));
+    const ids = await agent.sidekickAttachments({ workspaceId: this.auth.workspaceId, workstreamId: id, ...(removeId ? { removeId } : {}) });
+    const items: SidekickAttachment[] = [];
+    const service = new AutomationService(this.env, this.auth);
+    for (const sidekickId of ids) {
+      try {
+        const sidekick = await service.detail(sidekickId);
+        items.push({ id: sidekick.id, name: sidekick.name, description: sidekick.description,
+          available: sidekick.loadable && sidekick.lifecycle === "active" });
+      } catch (error) {
+        const apiError = asApiError(error);
+        if (apiError && (apiError.status === 403 || apiError.status === 404)) continue;
+        throw error;
+      }
+    }
+    return { items };
   }
 
   async get(id: string): Promise<WorkstreamDetail> {

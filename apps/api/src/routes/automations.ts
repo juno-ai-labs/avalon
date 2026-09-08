@@ -27,7 +27,7 @@ const StartedRunSchema = z.object({ runId: IdSchema, reused: z.boolean() });
 
 export const automationRoutes = new Hono<HonoAppEnv>();
 automationRoutes.get("/", async (c) =>
-  c.json(AutomationPageSchema.parse(await new AutomationService(c.env, getAuth(c)).list())));
+  c.json(AutomationPageSchema.parse(await new AutomationService(c.env, getAuth(c))[c.req.path.includes("/sidekicks") ? "listSidekicks" : "list"]())));
 // "New automation": the object and its conversation, and nothing else. The
 // draft is written in that conversation, so there is no body.
 automationRoutes.post("/", async (c) =>

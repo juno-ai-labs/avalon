@@ -46,7 +46,7 @@ describe('WorkstreamSidebar', () => {
     const sidebar = screen.getByRole('complementary', { name: 'Work-stream sidebar' });
     const buttons = within(sidebar).getAllByRole('button');
     expect(buttons.map((button) => button.getAttribute('aria-label'))).toEqual([
-      'Collapse work-stream sidebar', 'Go to conversation: Launch preparation', 'Open Launch draft.md', 'Manage participants: Ada Lovelace, viewing now', 'Manage work-stream participants',
+      'Collapse work-stream sidebar', 'Go to conversation: Launch preparation', 'Open Launch draft.md', 'Manage work-stream participants',
     ]);
     expect(screen.queryByText('Source ticket')).not.toBeInTheDocument();
     expect(screen.queryByText('Substreams')).not.toBeInTheDocument();
@@ -66,7 +66,7 @@ describe('WorkstreamSidebar', () => {
     const { onParticipants, onFocusTranscript } = setup();
     fireEvent.click(screen.getByRole('button', { name: 'Go to conversation: Launch preparation' }));
     expect(onFocusTranscript).toHaveBeenCalledOnce();
-    fireEvent.click(screen.getByRole('button', { name: 'Manage participants: Ada Lovelace, viewing now' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Manage work-stream participants' }));
     expect(onParticipants).toHaveBeenCalledTimes(1);
   });
 

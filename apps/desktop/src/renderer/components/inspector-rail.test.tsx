@@ -6,7 +6,6 @@ import { ATTACHMENT_CONVERTER_TIMEOUT_MS, ATTACHMENT_PROCESSING_LEASE_MS } from 
 import type { DesktopApplicationSettings } from '../../common/desktop';
 import type {
   ResourceVersion,
-  WorkstreamAutomationSummary,
   WorkstreamDetail,
   WorkstreamResource,
 } from '../lib/types';
@@ -1107,92 +1106,28 @@ describe('resource detail content preview', () => {
   });
 });
 
-describe("a work stream's own automations in the rail", () => {
-  const automation: WorkstreamAutomationSummary = {
-    id: 'automation-1',
-    name: 'Weekly changelog',
-    description: 'What shipped this week.',
-    status: 'active',
-    updatedAt: '2026-09-01T09:00:00.000Z',
-  };
-
+describe('attached Sidekicks in the main workstream rail', () => {
   beforeEach(() => {
-    useUiStore.setState({
-      railOpen: true,
-      railVariant: 'context',
-      railWidth: 360,
-      inspector: null,
-    });
+    useUiStore.setState({ railOpen: true, railVariant: 'context', railWidth: 360, inspector: null });
   });
-
-  function renderRail(props: Partial<React.ComponentProps<typeof InspectorRail>> = {}): void {
-    render(
-      <Tooltip.Provider>
-        <InspectorRail workstream={workstream} {...props} />
-      </Tooltip.Provider>,
-    );
-  }
-
-  it('sits between Artifacts and Details, where the rest of the room context is', () => {
-    renderRail({ workstreamAutomations: [automation] });
-
-    const headings = screen.getAllByRole('heading', { level: 3 }).map((node) => node.textContent);
-    expect(headings).toContain('Automations');
-    expect(headings.indexOf('Automations')).toBeGreaterThan(headings.indexOf('Artifacts'));
-    expect(headings.indexOf('Automations')).toBeLessThan(headings.indexOf('Details'));
+  it('hides the section when no Sidekick has been attached', () => {
+    render(<Tooltip.Provider><InspectorRail workstream={workstream} attachedSidekicks={[]} /></Tooltip.Provider>);
+    expect(screen.queryByRole('heading', { name: 'Sidekicks' })).toBeNull();
   });
-
-  it('opens the automation it names', () => {
-    const onOpenWorkstreamAutomation = vi.fn();
-    renderRail({ workstreamAutomations: [automation], onOpenWorkstreamAutomation });
-
-    fireEvent.click(screen.getByRole('button', { name: /Weekly changelog/ }));
-
-    expect(onOpenWorkstreamAutomation).toHaveBeenCalledWith('automation-1');
+  it('shows actual attachments and removes the selected one', () => {
+    const onRemoveSidekick = vi.fn();
+    render(<Tooltip.Provider><InspectorRail workstream={workstream} attachedSidekicks={[
+      { id: 'sidekick-1', name: 'Editorial guidance', description: 'Write clearly.', available: true },
+    ]} onRemoveSidekick={onRemoveSidekick} /></Tooltip.Provider>);
+    expect(screen.getByRole('heading', { name: 'Sidekicks' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Editorial guidance' })).toHaveAttribute('title', 'Write clearly.');
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Editorial guidance' }));
+    expect(onRemoveSidekick).toHaveBeenCalledWith('sidekick-1');
   });
-
-  it('keeps loading, failed and genuinely-none apart', () => {
-    // A room's automations are listed here and nowhere else, so "No
-    // automations" is a claim about the room. Saying it while the fetch is in
-    // flight, or after one failed, tells somebody their automations are gone.
-    const { unmount } = render(
-      <Tooltip.Provider><InspectorRail workstream={workstream} /></Tooltip.Provider>,
-    );
-    expect(screen.getByText('Loading automations…')).toBeInTheDocument();
-    expect(screen.queryByText('No automations')).not.toBeInTheDocument();
-    unmount();
-
-    const failed = render(
-      <Tooltip.Provider>
-        <InspectorRail workstream={workstream} workstreamAutomationsError="offline" />
-      </Tooltip.Provider>,
-    );
-    expect(screen.getByText('Could not load automations')).toBeInTheDocument();
-    expect(screen.queryByText('No automations')).not.toBeInTheDocument();
-    failed.unmount();
-
-    renderRail({ workstreamAutomations: [] });
-    expect(screen.getByText('No automations')).toBeInTheDocument();
-  });
-
-  it('labels a draft as one, and still opens it', () => {
-    // A draft is listed so the room can find the conversation it is being
-    // written in; the label keeps it from reading as something that runs.
-    const onOpenWorkstreamAutomation = vi.fn();
-    renderRail({
-      workstreamAutomations: [{ ...automation, status: 'draft' }],
-      onOpenWorkstreamAutomation,
-    });
-
-    expect(screen.getByText('Draft')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /Weekly changelog/ }));
-    expect(onOpenWorkstreamAutomation).toHaveBeenCalledWith('automation-1');
-  });
-
-  it('shows no automations section on a parent that cannot own any', () => {
-    renderRail({ automationsSection: false, workstreamAutomations: [] });
-
-    expect(screen.queryByRole('heading', { level: 3, name: 'Automations' })).toBeNull();
-    expect(screen.queryByText('No automations')).toBeNull();
+  it('keeps an authorized unavailable attachment visible', () => {
+    render(<Tooltip.Provider><InspectorRail workstream={workstream} attachedSidekicks={[
+      { id: 'sidekick-1', name: 'Editorial guidance', description: 'Write clearly.', available: false },
+    ]} /></Tooltip.Provider>);
+    expect(screen.getByText('Unavailable')).toBeVisible();
   });
 });

@@ -515,6 +515,9 @@ export function WorkstreamScreen(): React.JSX.Element {
       onStartSubstream={startCreation}
       renderSidebar={(context) => (
         <WorkstreamSidebar
+          attachedSidekicks={context.attachedSidekicks}
+          attachedSidekicksError={context.attachedSidekicksError}
+          onRemoveSidekick={context.removeSidekick}
           workstream={{ ...context.detail, title: parent.data?.title ?? context.detail.title, privateChildren: children.data?.privateChildren }}
           presentUserIds={context.presentUserIds}
           selectedSubstreamId={selectedSubstreamId}

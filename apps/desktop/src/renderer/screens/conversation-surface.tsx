@@ -18,6 +18,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   MESSAGE_MAX_CHARACTERS,
   MESSAGE_TOO_LONG_MESSAGE,
+  type SidekickAttachment,
   type TranscriptActivity,
   type TranscriptTurn,
   type WorkstreamMessageDeliveryState,
@@ -455,7 +456,7 @@ export function WorkstreamErrorState({
       <EmptyState
         action={<Button onClick={onRetry}><RefreshCcw size={14} /> Try again</Button>}
         description={description}
-        title={`${parentNoun === 'automation' ? 'Automation' : 'Work stream'} could not be opened`}
+        title={`${parentNoun === 'automation' ? 'Sidekick' : 'Work stream'} could not be opened`}
       />
     </div>
   );
@@ -566,6 +567,9 @@ export interface ConversationSurfaceProps {
   onStartSubstream?: (throughTurnId: string) => void;
   renderHeader?: (context: ConversationHeaderContext) => React.ReactNode;
   renderSidebar?: (context: ConversationHeaderContext & {
+    attachedSidekicks: SidekickAttachment[] | undefined;
+    attachedSidekicksError: string | undefined;
+    removeSidekick: ((id: string) => void) | undefined;
     focusTranscript: () => void;
     openArtifact: (id: string, returnFocus: HTMLElement) => void;
   }) => React.ReactNode;
@@ -1420,11 +1424,24 @@ export function ConversationSurface({
   // the rail being open for the same reason the versions query is: a closed
   // panel refetching is work nobody can see. Only a work stream owns
   // automations; an automation's own conversation has no such list.
-  const workstreamAutomations = useQuery({
-    queryKey: ['workstream-automations', id],
-    queryFn: ({ signal }) => api!.getWorkstreamAutomations(id!, signal),
-    enabled: Boolean(api && id && railOpen && parentKind === 'workstream'),
+  const attachedSidekicks = useQuery({
+    queryKey: ['attached-sidekicks', id],
+    queryFn: ({ signal }) => api!.getAttachedSidekicks(id!, signal),
+    enabled: Boolean(api && id && parentKind === 'workstream'),
   });
+  const removeSidekick = useMutation({
+    mutationFn: (sidekickId: string) => api!.removeAttachedSidekick(id!, sidekickId),
+    onSuccess: (items) => queryClient.setQueryData(['attached-sidekicks', id], items),
+  });
+  const sidekickRefreshSequence = orderedTranscript.data?.eventSequence;
+  useEffect(() => {
+    if (parentKind === 'automation') {
+      void queryClient.invalidateQueries({ queryKey: ['automation', id] });
+      void queryClient.invalidateQueries({ queryKey: ['sidekicks-library'] });
+    } else {
+      void queryClient.invalidateQueries({ queryKey: ['attached-sidekicks', id] });
+    }
+  }, [id, parentKind, queryClient, sidekickRefreshSequence]);
 
   const refreshResource = useMutation({
     mutationFn: (resource: WorkstreamResource) => api!.refreshResource(resource.id),
@@ -1791,14 +1808,14 @@ export function ConversationSurface({
           description={socketConnection.openingError
             ?? (socketConnection.state === 'reconnecting'
               ? 'The live connection could not be opened. Try again while Rally reconnects.'
-              : `This ${parentNoun} is unavailable.`)}
+              : `This ${parentKind === 'automation' ? 'Sidekick' : parentNoun} is unavailable.`)}
           onRetry={socketConnection.retryOpening}
           parentNoun={parentNoun}
           workstreamId={id}
         />
       );
     }
-    return <OpeningState label={`Opening ${parentNoun}…`} />;
+    return <OpeningState label={`Opening ${parentKind === 'automation' ? 'Sidekick' : parentNoun}…`} />;
   }
 
   const detail = routedDetail;
@@ -1835,6 +1852,9 @@ export function ConversationSurface({
     <ConnectorConnectionsProvider connections={connections.data}>
     <div className="conversation-layout">
       {renderSidebar?.({
+        attachedSidekicks: attachedSidekicks.data,
+        attachedSidekicksError: attachedSidekicks.error?.message ?? removeSidekick.error?.message,
+        removeSidekick: sidebarDetail.participants.some((person) => person.id === session?.user.id) ? (sidekickId) => removeSidekick.mutate(sidekickId) : undefined,
         detail: sidebarDetail,
         socketState,
         presentUserIds: presenceUserIdsByWorkstream[id] ?? [],
@@ -1931,7 +1951,7 @@ export function ConversationSurface({
             <EmptyState
               title="Ready to begin"
               description={parentKind === 'automation'
-                ? 'Describe what this automation should do, and Rally will draft it with you.'
+                ? 'What would you like to delegate? Teach your Sidekick what it should know or do.'
                 : 'Send a message to start work in this stream.'}
             />
           ) : (
@@ -1985,7 +2005,7 @@ export function ConversationSurface({
         <div className="composer-stack">
           <WorkstreamComposer
             api={api ?? undefined}
-            placeholder={parentKind === 'automation' ? 'Describe this automation…' : 'Message the work stream…'}
+            placeholder={parentKind === 'automation' ? 'Teach your Sidekick…' : 'Message the work stream…'}
             attachments={attachmentDraft.attachments}
             error={sendError ?? attachmentDraft.error ?? attachResource.error?.message ?? stop.error?.message ?? retry.error?.message}
             fileInputRef={fileInputRef}
@@ -2039,8 +2059,9 @@ export function ConversationSurface({
         resourceVersionsError={resourceVersions.error?.message}
         {...(siteArtifacts ? { siteArtifacts } : {})}
         workstream={resourceManagementDetail}
-        workstreamAutomations={workstreamAutomations.data}
-        workstreamAutomationsError={workstreamAutomations.error?.message}
+        attachedSidekicks={attachedSidekicks.data}
+        onRemoveSidekick={sidebarDetail.participants.some((person) => person.id === session?.user.id) ? (sidekickId) => removeSidekick.mutate(sidekickId) : undefined}
+        attachedSidekicksError={attachedSidekicks.error?.message ?? removeSidekick.error?.message}
       />}
 
       <AddParticipantDialog

@@ -506,6 +506,7 @@ export interface RallyDesktopBridge {
   closeArtifactPreview: () => Promise<void>;
   /** Open the same artifact in its own window, sharing the preview's session. */
   popOutArtifact: (request: DesktopArtifactWindowRequest) => Promise<void>;
+  openSidekicks: (sidekickId?: string) => Promise<void>;
   openSettings: (section?: DesktopSettingsSection) => Promise<void>;
   openMeetingNotes: (noteId?: string) => Promise<void>;
   /**
