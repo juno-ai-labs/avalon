@@ -22,6 +22,16 @@ export interface StreamCursor {
    * cursor replacements the socket events perform.
    */
   revealed: number;
+  /** Mutable frontend arrival estimate and fractional draw credit, shared across subscribers. */
+  pacing?: {
+    /** Null while drained: provider idle time must not train the estimator. */
+    lastArrivalAt: number | null;
+    cadenceMs: number;
+    rate: number;
+    drawRate: number;
+    pendingCharacters: number;
+    credit: number;
+  };
   /** When the reveal loop last advanced this message, for rate integration. */
   lastRevealAt: number | null;
 }
