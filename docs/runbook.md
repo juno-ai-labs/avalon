@@ -104,7 +104,11 @@ Set these shared Worker secrets separately in each regional deployment:
 - `CONNECTOR_CREDENTIALS_KEY`
 - `CONNECTOR_CREDENTIALS_KEYS_JSON` during credential-key rotation; a JSON object mapping old numeric versions to their regional keys
 - `TELEMETRY_OPERATORS_JSON`; a JSON map from opaque bearer token to the fixed
-  principal accepted by that region's restricted telemetry operator surface
+  principal accepted by that region's restricted telemetry operator surface —
+  and, for a principal in the `demos` role, by the workspace retirement route
+  Ace calls instead. The `demos` token is per region: Global's is what Ace
+  holds as `RALLY_OPERATOR_TOKEN`, EU's as `RALLY_EU_OPERATOR_TOKEN`, and
+  neither value appears in the other region's map
 - `OPS_SLACK_BOT_TOKEN` and `OPS_SLACK_CHANNEL_ID`; optional, as a pair — the
   internal Slack app operator notifications are posted with, and the channel
   they go to ([`ops-alerting.md`](ops-alerting.md)). Either absent, the Worker
