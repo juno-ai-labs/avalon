@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 
-import { act } from 'react';
+import { act, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { WorkspacesView } from '../src/client/workspaces';
+import { WorkspacesView, type RetiredWorkspace } from '../src/client/workspaces';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -11,6 +11,15 @@ let container: HTMLDivElement;
 let root: Root;
 
 const WORKSPACE_ID = '00000000-0000-7000-8000-0000000000f1';
+const OTHER_ID = '00000000-0000-7000-8000-0000000000f2';
+const ROW = { id: WORKSPACE_ID, name: 'Alto Capital-demo', slug: 'alto-capital-demo', region: 'eu' as const };
+const OTHER_ROW = { id: OTHER_ID, name: 'Birch Partners', slug: 'birch', region: 'global' as const };
+
+/** The app holds the retired marks; the tab reports into it. */
+function Harness(): React.JSX.Element {
+  const [retired, setRetired] = useState<ReadonlyMap<string, RetiredWorkspace>>(new Map());
+  return <WorkspacesView onRetired={(record) => setRetired((current) => new Map(current).set(record.workspace.id, record))} retired={retired} />;
+}
 
 function type(input: HTMLInputElement, value: string): void {
   Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value);
@@ -21,6 +30,11 @@ function buttonContaining(text: string): HTMLButtonElement {
   const button = Array.from(container.querySelectorAll('button')).find((candidate) => candidate.textContent?.includes(text));
   if (!button) throw new Error(`no button containing ${text}`);
   return button;
+}
+
+async function search(text: string): Promise<void> {
+  await act(async () => { type(container.querySelector<HTMLInputElement>('input[placeholder="Name, slug or workspace id"]')!, text); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(250); });
 }
 
 describe('the workspaces tab', () => {
@@ -39,19 +53,15 @@ describe('the workspaces tab', () => {
   });
 
   it('retires only once the operator has typed the workspace id, in the region that owns it, and shows what closed', async () => {
-    const receipt = { workspaceId: WORKSPACE_ID, complete: true, remaining: 0, retiredParents: 3, retiredChildren: 4, retainedOutbox: 1, failed: [] };
+    const receipt = { workspaceId: WORKSPACE_ID, complete: true, remaining: 0, parents: 3, retiredParents: 3, retiredChildren: 4, retainedOutbox: 1, failed: [] };
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
       const url = String(input instanceof Request ? input.url : input);
-      if (url.includes('/api/directory/workspaces')) {
-        return Response.json({ results: [{ id: WORKSPACE_ID, name: 'Alto Capital-demo', slug: 'alto-capital-demo', region: 'eu' }] });
-      }
+      if (url.includes('/api/directory/workspaces')) return Response.json({ results: [ROW], unavailableRegions: [] });
       if (url.endsWith('/retire') && init?.method === 'POST') return Response.json(receipt);
       return Response.json({ error: 'not_found' }, { status: 404 });
     });
-    await act(async () => { root.render(<WorkspacesView />); });
-
-    await act(async () => { type(container.querySelector<HTMLInputElement>('input[placeholder="Alto Capital-demo"]')!, 'Alto'); });
-    await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+    await act(async () => { root.render(<Harness />); });
+    await search('Alto');
     await act(async () => { buttonContaining('Alto Capital-demo').click(); });
 
     const retire = buttonContaining('Retire workspace');
@@ -73,20 +83,66 @@ describe('the workspaces tab', () => {
     expect(JSON.parse(String(call?.[1]?.body))).toEqual({ region: 'eu', confirmWorkspaceId: WORKSPACE_ID });
     // The aftermath names what closed, the form is gone, and the row is marked.
     expect(container.textContent).toContain('Retired');
-    expect(container.textContent).toContain('Closed 3 work streams and automations and 4 conversations under them. 1 queued effect will never publish.');
-    expect(container.querySelector('.demo-receipt')?.textContent).toContain(WORKSPACE_ID);
+    expect(container.textContent).toContain('All 3 work streams and automations in the EU workspace are closed; this pass closed 3 of them, with 4 conversations under them. 1 queued effect will never publish.');
+    expect(container.querySelector('.retire-receipt')?.textContent).toContain(WORKSPACE_ID);
     expect(Array.from(container.querySelectorAll('button')).some((button) => button.textContent?.includes('Retire workspace'))).toBe(false);
     expect(container.querySelector('.workspaces > button.retired')).not.toBeNull();
+    // The receipt is a result, so it takes focus rather than dropping it.
+    expect(document.activeElement).toBe(container.querySelector('.retire-receipt'));
+  });
+
+  it('keeps the confirmation armed after an incomplete pass, with what remains, and scopes it to that workspace', async () => {
+    const partial = {
+      workspaceId: WORKSPACE_ID, complete: false, remaining: 1, parents: 3, retiredParents: 2, retiredChildren: 2, retainedOutbox: 0,
+      failed: [{ parentKind: 'workstream', parentId: OTHER_ID, error: 'conversation_parent_identity_mismatch' }],
+    };
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (url.includes('/api/directory/workspaces')) return Response.json({ results: [ROW, OTHER_ROW], unavailableRegions: [] });
+      if (url.endsWith('/retire') && init?.method === 'POST') return Response.json(partial);
+      return Response.json({ error: 'not_found' }, { status: 404 });
+    });
+    await act(async () => { root.render(<Harness />); });
+    await search('a');
+    await search('al');
+    await act(async () => { buttonContaining('Alto Capital-demo').click(); });
+    await act(async () => { type(container.querySelector<HTMLInputElement>('input[placeholder="Paste the workspace id"]')!, WORKSPACE_ID); });
+    await act(async () => { buttonContaining('Retire workspace').click(); });
+    await act(async () => { await Promise.resolve(); });
+
+    // Not retired: no receipt, no mark. The pass is reported with its counts
+    // and the failed node, the id stays typed, and the button asks again.
+    expect(container.querySelector('.retire-receipt')).toBeNull();
+    expect(container.querySelector('.workspaces > button.retired')).toBeNull();
+    expect(container.querySelector('.retire-incomplete')?.textContent).toContain('1 of 3 work streams and automations is still open');
+    expect(container.querySelector('.retire-incomplete')?.textContent).toContain('closed 2 of them and 2 conversations under them');
+    expect(container.querySelector('.retire-incomplete')?.textContent).toContain(OTHER_ID);
+    expect(container.querySelector<HTMLInputElement>('input[placeholder="Paste the workspace id"]')!.value).toBe(WORKSPACE_ID);
+    expect(buttonContaining('Retire again').disabled).toBe(false);
+
+    // Selecting another workspace shows nothing of the first one's pass.
+    await act(async () => { buttonContaining('Birch Partners').click(); });
+    expect(container.querySelector('.retire-incomplete')).toBeNull();
+    expect(buttonContaining('Retire workspace').disabled).toBe(true);
   });
 
   it('shows a failed search as a failure, never as no matches', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async () => Response.json({ error: 'directory_unavailable', message: 'The EU directory did not answer' }, { status: 502 }));
-    await act(async () => { root.render(<WorkspacesView />); });
-    await act(async () => { type(container.querySelector<HTMLInputElement>('input[placeholder="Alto Capital-demo"]')!, 'Alto'); });
-    await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+    await act(async () => { root.render(<Harness />); });
+    await search('Alto');
     expect(container.textContent).toContain('The EU directory did not answer');
     expect(container.textContent).toContain('Directory search failed');
     expect(container.textContent).not.toContain('No workspaces match');
+    expect(container.textContent).not.toContain('Both regions searched');
+  });
+
+  it('says which region was not searched when only one directory answered', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => Response.json({ results: [OTHER_ROW], unavailableRegions: ['eu'] }));
+    await act(async () => { root.render(<Harness />); });
+    await search('bi');
+    expect(container.textContent).toContain('Birch Partners');
+    expect(container.textContent).toContain('The EU directory did not answer, so a workspace there would not be listed.');
+    expect(container.textContent).toContain('EU directory did not answer');
     expect(container.textContent).not.toContain('Both regions searched');
   });
 });
