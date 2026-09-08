@@ -2790,7 +2790,9 @@ describe("a member's message travels the whole pipeline", () => {
         operationId,
       ).one());
     expect(recorded.origin).toBe("manual_retry");
-    expect(["admitted", "running", "failed", "completed"]).toContain(recorded.status);
+    // `authorize` is stubbed to throw, so a run the alarm reached fails; it
+    // cannot complete. Anything outside this set is a regression, not timing.
+    expect(["admitted", "running", "failed"]).toContain(recorded.status);
     socket.close(1000, "done");
   });
 
