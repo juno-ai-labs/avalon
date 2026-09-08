@@ -156,9 +156,10 @@ class AuthorizationBatch {
     const policies = [fact(facts.scope === 'workspace' || facts.author || facts.executor, 'not_participant', evidence)];
     if (facts.scope === 'workstream' && facts.owningWorkstreamId) {
       const owningWorkstreamId = facts.owningWorkstreamId;
+      const userId = subject.userId;
       const owner = await ownerEvidence(this.identities, JSON.stringify([subject, owningWorkstreamId]),
         () => createIdentityObjectPort(this.env, subject.workspaceId, owningWorkstreamId)
-          .readAuthorizationFacts({ userId: subject.userId! }));
+          .readAuthorizationFacts({ userId }));
       policies.push(fact(owner.exists && !owner.archived && owner.participant, 'not_participant', {
         owner: `${facts.owningWorkstreamId}/0`, revision: owner.revision, validatedAt: owner.validatedAt,
       }));
