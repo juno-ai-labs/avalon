@@ -501,9 +501,9 @@ Queue still redelivers to it; acceptable for a demo, and still an option if
 **Consequences:** `retireWorkspaceGraph` takes no `completedAt` and writes no
 D1 row; a feature that wants a regional record of a closed workspace writes
 it after the receipt reports complete. The tombstone is conversation-object
-schema v46 (the loop's mark, v45, lands first), WorkspaceDO 39 with the graph
-at 40, WorkstreamDO 8, and Sidekick 5 — renumbered once on rebase after `main`
-took the earlier numbers.
+schema v46 (the loop's mark, v45, lands first), WorkspaceDO 40 with the graph
+at 41, WorkstreamDO 8, and Sidekick 5 — renumbered twice on rebase, after `main`
+took the earlier numbers and then WorkspaceDO 39.
 
 ### 2026-09-07 — Review: the door checks the region, and every router names its roles
 
