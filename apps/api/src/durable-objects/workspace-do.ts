@@ -1,4 +1,5 @@
 import { resolveWorkspaceEventResources } from "./workspace-event-resources";
+import { WorkstreamAppearanceSchema } from "@rally/contracts";
 import { RESOURCE_SEARCH_MIGRATION_STATEMENTS, ResourceSearchProjectionSchema, ResourceSearchRevisionRequestSchema,
   resourceSearchRevision, nextResourceSearchDueAt, publishResourceSearch, prepareResourceSearch } from './resource-search-projection';
 import { ONBOARDING_JOURNEY_SQL, OnboardingJourneyStore } from './onboarding-journey';
@@ -932,6 +933,7 @@ interface WorkspaceDirectoryRow extends Record<string, SqlStorageValue> {
   email_address: string | null;
   created_by_user_id: string | null;
   title_status: "naming" | "automatic" | "settled";
+  appearance_json: string | null;
   latest_attention_ordinal: number;
   unread_tracking_start_ordinal: number;
   next_wakeup_due_at: number | null;
@@ -2662,7 +2664,9 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
     `CREATE INDEX resource_search_pending_due_idx ON resource_search_versions(not_before, resource_id)
       WHERE pending = 1`,
   ],
-}];
+}, { version: 40, description: "project shared workstream appearance", statements: [
+  `ALTER TABLE workspace_workstream_directory ADD COLUMN appearance_json TEXT CHECK (appearance_json IS NULL OR json_valid(appearance_json))`,
+] }];
 
 interface AutomationDirectoryRow extends Record<string, SqlStorageValue> {
   loadable: number | null;
@@ -2948,6 +2952,7 @@ function directoryWorkstream(
     workspaceId,
     title: truncateUtf16Safe(row.title, 180),
     titleStatus,
+    appearance: row.appearance_json ? WorkstreamAppearanceSchema.parse(JSON.parse(row.appearance_json)) : undefined,
     objective: truncateUtf16Safe(row.description, WORKSTREAM_DESCRIPTION_MAX_CHARACTERS),
     emailAddress: row.email_address,
     createdByUserId: row.created_by_user_id,
@@ -3023,7 +3028,7 @@ const SELECT_WORKSPACE_DIRECTORY = `SELECT directory.workstream_id,
     directory.description, directory.scope, directory.exact_state,
     directory.system_kind, directory.last_activity_at, directory.completed_at,
     directory.archived_at, directory.email_address, directory.created_by_user_id,
-    directory.title_status,
+    directory.title_status, directory.appearance_json,
     directory.latest_attention_ordinal, directory.unread_tracking_start_ordinal,
     directory.next_wakeup_due_at, directory.next_wakeup_prompt,
     directory.source_created_at, directory.source_updated_at,
@@ -8770,6 +8775,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
             epoch(effect.updatedAt ?? effect.lastActivityAt),
             now,
           );
+          this.state.storage.sql.exec(`UPDATE workspace_workstream_directory SET appearance_json = ? WHERE workstream_id = ?`, effect.appearance ? JSON.stringify(effect.appearance) : null, envelope.parentId);
           this.state.storage.sql.exec(
             `DELETE FROM workspace_workstream_resource_links WHERE workstream_id = ?`,
             envelope.parentId,

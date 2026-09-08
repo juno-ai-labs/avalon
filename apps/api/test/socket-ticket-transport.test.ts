@@ -260,12 +260,13 @@ describe("socket ticket transport", () => {
     });
   });
 
-  it("routes a separately scoped metadata ticket to WorkstreamDO", async () => {
+  it.each([false, true])("routes a separately scoped metadata ticket to WorkstreamDO (appearance support: %s)", async (supportsAppearance) => {
     const sessionId = "00000000-0000-7000-8000-000000000721";
     const userId = asUserId("00000000-0000-7000-8000-000000000722");
     const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000723");
     const workstreamId = "00000000-0000-7000-8000-000000000724";
     const workstreamFetch = vi.fn(async (request: Request) => {
+      expect(new URL(request.url).searchParams.get("workstreamAppearance")).toBe(supportsAppearance ? "1" : null);
       expect(request.headers.get("x-rally-workspace-id")).toBe(workspaceId);
       expect(request.headers.get("x-rally-workstream-id")).toBe(workstreamId);
       expect(request.headers.get("x-rally-session-id")).toBe(sessionId);
@@ -284,7 +285,7 @@ describe("socket ticket transport", () => {
     });
     const auth = { sessionId, userId, workspaceId, region: "global", role: "member" } as const;
     const ticket = await issueWorkstreamControlSocketTicket(env, auth, workstreamId);
-    const request = new Request(`https://api.avalon.test/workstreams/${workstreamId}`, {
+    const request = new Request(`https://api.avalon.test/workstreams/${workstreamId}${supportsAppearance ? "?workstreamAppearance=1" : ""}`, {
       headers: {
         Origin: "app://avalon",
         Upgrade: "websocket",

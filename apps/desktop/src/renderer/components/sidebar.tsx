@@ -441,7 +441,7 @@ function WorkstreamHoverPreview({
     <div className="sidebar-workstream-preview">
       <div className="sidebar-workstream-preview-header">
         <span className="sidebar-workstream-preview-identity">
-          <WorkstreamGlyph id={workstream.id} size={16} />
+          <WorkstreamGlyph appearance={workstream.appearance} id={workstream.id} size={16} />
           <span className="sidebar-workstream-preview-name">{workstream.title}</span>
         </span>
         {workstream.hasUnread && <time dateTime={workstream.lastActivityAt}>
@@ -652,7 +652,7 @@ function WorkstreamRow({
             to={`/workstreams/${workstream.id}`}
           >
             <span className="sidebar-row-icon">
-              <WorkstreamGlyph id={workstream.id} size={36} />
+              <WorkstreamGlyph appearance={workstream.appearance} id={workstream.id} size={36} />
               {workstream.scope === 'workspace' && <PublicMarker />}
               {/* Personal attention markers on completed runs must remain visible. */}
               {markerStatus !== 'completed' && (
