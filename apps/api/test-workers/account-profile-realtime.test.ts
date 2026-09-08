@@ -25,6 +25,8 @@ it('streams committed profile changes to another member even when EU discovery f
     env.DB.prepare(`INSERT INTO workspaces VALUES (?, 'global', 'wnam', NULL, NULL)`).bind(workspaceId),
     env.DB.prepare(`CREATE TABLE workspace_members (workspace_id TEXT, user_id TEXT, role TEXT, status TEXT, last_seen_at TEXT)`),
     env.DB.prepare(`INSERT INTO workspace_members VALUES (?, ?, 'owner', 'active', NULL), (?, ?, 'member', 'active', NULL)`).bind(workspaceId, userId, workspaceId, peerId),
+    env.DB.prepare(`INSERT INTO workspaces VALUES ('abandoned', 'global', 'invalid', NULL, '2026-09-08'), ('foreign', 'eu', 'invalid', NULL, NULL)`),
+    env.DB.prepare(`INSERT INTO workspace_members VALUES ('abandoned', ?, 'owner', 'active', NULL), ('foreign', ?, 'owner', 'active', NULL)`).bind(userId, userId),
     env.DB.prepare(`CREATE TABLE sessions (id TEXT PRIMARY KEY, user_id TEXT, workspace_id TEXT, region TEXT, revoked_at TEXT, expires_at TEXT)`),
     env.DB.prepare(`INSERT INTO sessions VALUES ('peer-session', ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`).bind(peerId, workspaceId),
   ]);
@@ -62,7 +64,7 @@ it('streams committed profile changes to another member even when EU discovery f
     expect(result.status).toBe(200);
     expect(await result.json()).toMatchObject({ revision: 1, presentation: { displayName: 'Alex Rivera', initials: 'AR', color: 'violet' } });
     await Promise.all(tasks);
-    expect(failures.length).toBeGreaterThan(0);
+    expect(failures).toHaveLength(1);
     expect(euRequested).toBe(true);
     // The queue may deliver the WS frame just after publishSync resolves.
     await vi.waitFor(() => expect(messages).toContainEqual(expect.objectContaining({ type: 'workspace_sync', topics: ['workspace_profile', 'member_directory'] })), { timeout: 5_000 });
