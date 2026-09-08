@@ -1797,7 +1797,7 @@ export class RallyApi {
   }
 
   getWorkstreamControlSocketTicket(id: string, requestId?: string): Promise<SocketTicket> {
-    return this.request(`/workstreams/${encodeURIComponent(id)}/control-socket`, {
+    return this.request(`/workstreams/${encodeURIComponent(id)}/control-socket?workstreamAppearance=1`, {
       schema: socketTicketSchema,
       ...(requestId ? { requestId } : {}),
     });
