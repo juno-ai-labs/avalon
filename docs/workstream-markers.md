@@ -1,6 +1,6 @@
 # Work-stream markers
 
-Every work stream shows each person one coloured dot, and this is what decides
+Each work stream can show a person one coloured dot, and this is what decides
 which colour it is. Eight states compete for that dot: five belong to the run
 (`running`, `needs_input`, `completed`, `stopped`, `failed`) and three belong
 to the reader alone — **unread**, **mentioned**, and **unseen**, a
@@ -20,7 +20,7 @@ which state wins.
 | --- | --- |
 | `apps/desktop/src/renderer/lib/format.ts` | `WorkstreamMarkerStatus`, the labels and descriptions, `MARKER_PRECEDENCE`, `workstreamMarkerStatus`, and `workstreamNeedsAttention`. The ranking exists here and nowhere else. |
 | `apps/desktop/src/renderer/components/primitives.tsx` | `StatusDot` — the one component that draws a marker, for every surface. |
-| `apps/desktop/src/renderer/components/sidebar.tsx` | The sidebar row's compact dot. |
+| `apps/desktop/src/renderer/components/sidebar.tsx` | The sidebar row's compact dot and completed-marker suppression. |
 | `apps/desktop/src/renderer/screens/new-workstream.tsx` | The home screen's **Needs attention** section and its rows. |
 | `config/design-tokens/registry.json` | The `sys.color.workstream` group: one token per state. |
 | `apps/desktop/src/renderer/styles/app.css` | `.status-<state> .status-dot` — one rule per state, each naming its token. |
@@ -101,6 +101,12 @@ instead, that is one line: move `failed` above `unread` in `MARKER_PRECEDENCE`
 and update `workstreamNeedsAttention`, which today lists a failed run only when
 a mention or an unseen membership puts it there.
 
+### Sidebar
+
+The sidebar omits the dot and its tooltip when the ranked marker is `completed`.
+Unread, mentioned, and unseen markers still appear on completed work streams
+when those personal states win the ranking.
+
 ### Needs attention
 
 The home screen's **Needs attention** section holds the work streams that name
@@ -126,7 +132,7 @@ own state — so `app.css` carries a colour for those three and nothing else.
 
 ## Invariants
 
-- **One marker per work stream per person.** Every surface calls
+- **At most one marker per work stream per person.** Every surface calls
   `workstreamMarkerStatus`; nothing reads `harnessStatus` to colour a dot. A
   surface that decided for itself would show one work stream two different
   colours on two screens, which reads as a bug in the data.
@@ -204,7 +210,7 @@ own:
 | Suite | What it proves | How to run |
 | --- | --- | --- |
 | `apps/desktop/src/renderer/lib/format.test.ts` | The ranking, pair by pair, and the **Needs attention** membership rule. | `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/format.test.ts` |
-| `apps/desktop/src/renderer/components/sidebar.test.tsx` | The sidebar row draws the ranked marker, and its tooltip explains it. | `pnpm --filter @rally/desktop exec vitest run src/renderer/components/sidebar.test.tsx` |
+| `apps/desktop/src/renderer/components/sidebar.test.tsx` | The sidebar omits completed markers while preserving personal attention markers and their tooltips. | `pnpm --filter @rally/desktop exec vitest run src/renderer/components/sidebar.test.tsx` |
 | `apps/desktop/src/renderer/screens/new-workstream.test.tsx` | **Needs attention** holds the three addressed states, omits a merely unread work stream, and orders rows by recency. | `pnpm --filter @rally/desktop exec vitest run src/renderer/screens/new-workstream.test.tsx` |
 | `apps/api/test-workers/unseen-workstream-state.test.ts` | On real workerd: added at creation, added later, cleared by the first open, unchanged by a duplicate add, set again by a re-add. | `pnpm --filter @rally/api test:workers` |
 | `apps/api/test-workers/workspace-directory-reads.test.ts` | The flag survives the workspace projection as the viewer's rather than the row's. | as above |
@@ -246,6 +252,23 @@ the requested first-stream landing; skipping unseen or unread rooms would select
 different destination from the sidebar. Explicit deep links retain an inert
 intermediate route while resolving, to avoid opening an unrelated conversation.
 
+### 2026-09-07 — Omit completed markers in the sidebar
+
+**What changed:** The sidebar omits the completed marker and its tooltip.
+
+**Why:** Completion alone should no longer produce a sidebar indicator. A read,
+completed work stream needs no completion badge; personal attention still needs
+its own marker when present.
+
+**Considered and rejected:** Filtering by raw run status would also hide unread,
+mentioned, and unseen markers on completed work streams. Changing the shared
+ranking would extend this sidebar request to other surfaces.
+
+**Consequences:** Suppression must use the ranked `workstreamMarkerStatus`
+result. Other surfaces retain completion status, and the sidebar still renders
+personal attention on completed runs.
+
+Shipped in #585.
 
 ### 2026-08-24 — Needs attention drops plain unread
 
