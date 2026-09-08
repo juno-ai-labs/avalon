@@ -19,6 +19,7 @@ import {
 export * from "./workstream-transcript";
 import { ConnectorOAuthProviders } from "./connector-oauth-providers";
 import { HttpsUrlSchema, HttpUrlSchema, httpUrlSchema } from "./url-schemas";
+export * from "./workspace-retirement";
 import { AttachmentKindSchema, ResourceSlugSchema, SuggestedAttachmentToolCallSchema } from "./attachment-contracts";
 import {
   ResourceDirectionSchema,

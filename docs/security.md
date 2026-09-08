@@ -202,9 +202,14 @@ are canonical storage services, not authorization layers.
   This is the only safe point to enforce opt-out, region, and the local deadline.
 - Restricted telemetry operations use a separate per-region bearer credential,
   not a desktop session or request-supplied role. The Worker resolves the fixed
-  operator UUID and `support`/`security` role from `TELEMETRY_OPERATORS_JSON` with
-  timing-safe token comparison. Raw access and replay derive audit identity from
-  that principal; neither endpoint accepts an operator ID or role in its body.
+  operator UUID and `support`/`security`/`demos` role from `TELEMETRY_OPERATORS_JSON`
+  with timing-safe token comparison; every operator router names the roles it
+  admits, so the `demos` role reaches only the workspace retirement route Ace
+  calls ([`workspace-retirement.md`](workspace-retirement.md#the-operator-door)),
+  and neither telemetry role reaches it. Ace holds one `demos` token per region,
+  each known to that region alone. Raw access and replay derive audit identity
+  from that principal; neither endpoint accepts an operator ID or role in its
+  body.
 
 ### macOS distribution and updates
 

@@ -4,9 +4,23 @@ import type { HonoAppEnv } from '../env';
 import { ApiError } from '../lib/api-error';
 import { timingSafeEqualText } from '../lib/crypto';
 
+/**
+ * Every operator credential the regional API accepts, by role.
+ *
+ * `support` and `security` are the telemetry roles. `demos` is Ace's: it may
+ * retire a workspace and nothing else, which is why it is a role of its own
+ * rather than a widening of `security`. The configuration is
+ * still `TELEMETRY_OPERATORS_JSON` — one secret holding every operator token —
+ * because a second secret with the same shape is a second thing to rotate for
+ * no isolation gained: the role is what isolates, and only if every surface
+ * names the roles it admits. `requireTelemetryOperator` verifies the
+ * credential; it admits nothing by itself. Each router narrows to its roles
+ * with `requireOperatorRole`, so a role added to this enum reaches no surface
+ * until a router names it.
+ */
 const OperatorPrincipalSchema = z.strictObject({
   operatorId: z.string().uuid(),
-  role: z.enum(['support', 'security']),
+  role: z.enum(['support', 'security', 'demos']),
 });
 
 const OperatorConfigurationSchema = z.record(
@@ -35,6 +49,18 @@ export const requireTelemetryOperator: MiddlewareHandler<HonoAppEnv> = async (c,
   c.set('telemetryOperator', matched[1]);
   await next();
 };
+
+/** Refuse every operator whose role is not one the router is for. */
+export function requireOperatorRole(
+  ...roles: readonly [TelemetryOperatorPrincipal['role'], ...TelemetryOperatorPrincipal['role'][]]
+): MiddlewareHandler<HonoAppEnv> {
+  return async (c, next) => {
+    if (!roles.includes(getTelemetryOperator(c).role)) {
+      throw new ApiError(403, 'operator_role_forbidden', 'This operator role cannot use this surface');
+    }
+    await next();
+  };
+}
 
 export function getTelemetryOperator(c: Parameters<MiddlewareHandler<HonoAppEnv>>[0]): TelemetryOperatorPrincipal {
   const principal = c.get('telemetryOperator');

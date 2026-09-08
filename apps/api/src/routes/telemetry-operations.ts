@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { HonoAppEnv } from '../env';
 import { ApiError } from '../lib/api-error';
 import { zValidator } from '../middleware/validation';
-import { getTelemetryOperator, requireTelemetryOperator } from '../telemetry/operator-auth';
+import { getTelemetryOperator, requireOperatorRole, requireTelemetryOperator } from '../telemetry/operator-auth';
 import { readTelemetryOperationalSnapshot } from '../telemetry/operations';
 import { replayTelemetryEvent } from '../telemetry/replay';
 import {
@@ -78,7 +78,9 @@ const EuCrashFreeResponseSchema = z.strictObject({
 });
 
 export const telemetryOperatorRoutes = new Hono<HonoAppEnv>();
-telemetryOperatorRoutes.use('*', requireTelemetryOperator);
+// The telemetry roles only: the `demos` role Ace holds is refused here at the
+// router, not per route, so a route added later is fenced by default.
+telemetryOperatorRoutes.use('*', requireTelemetryOperator, requireOperatorRole('support', 'security'));
 
 telemetryOperatorRoutes.get('/status', async (c) => {
   c.header('Cache-Control', 'no-store');
