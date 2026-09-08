@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { IdSchema, SubstreamIdSchema, WorkspaceIdSchema } from '@rally/contracts';
-import { AUTHORIZATION_FRESHNESS_MS, AuthorizationSnapshotSchema, authorizationResourceKey, decisionIsFresh,
-  type AuthorizationSnapshot, type AuthorizationResource, type AuthorizationSubject } from '../services/authorization-policy';
+import { authorizationResourceKey,
+  type AuthorizationResource, type AuthorizationSubject } from '../services/authorization-policy';
 
 export const AuthorizationLocationSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema, parentId: IdSchema, substreamId: SubstreamIdSchema,
@@ -11,7 +11,7 @@ export const AuthorizationLocationSchema = z.strictObject({
 });
 export type AuthorizationLocation = z.infer<typeof AuthorizationLocationSchema>;
 
-/** Routed only to typed WorkspaceDO methods, never to regional SQL or generic writes. */
+/** Typed-table guard includes inert snapshots until a later migration drops them. */
 export const AUTHORIZATION_STORAGE_TABLES = [
   'authorization_snapshots', 'authorization_locations', 'authorization_inventories',
   'authorization_backfill', 'authorization_backfill_children', 'authorization_delivery',
@@ -36,31 +36,9 @@ export function authorizationSnapshotKey(subject: AuthorizationSubject, resource
   return JSON.stringify([subject.workspaceId, subject.userId, subject.delegation, authorizationResourceKey(resource)]);
 }
 
-/** SQLite owns snapshot publication ordering; cache delivery can never renew evidence. */
+/** SQLite owns inventory revision ordering; delayed delivery cannot resurrect removed links. */
 export class AuthorizationStorage {
   constructor(private readonly storage: DurableObjectStorage) {}
-
-  read(subject: AuthorizationSubject, resource: AuthorizationResource, now: number): AuthorizationSnapshot | null {
-    const row = this.storage.sql.exec<{ snapshot_json: string }>(
-      'SELECT snapshot_json FROM authorization_snapshots WHERE cache_key = ?', authorizationSnapshotKey(subject, resource),
-    ).toArray()[0];
-    if (!row) return null;
-    const parsed = AuthorizationSnapshotSchema.safeParse(JSON.parse(row.snapshot_json));
-    return parsed.success && decisionIsFresh(parsed.data.decision, now) ? parsed.data : null;
-  }
-
-  pruneExpired(now: number): void {
-    this.storage.sql.exec('DELETE FROM authorization_snapshots WHERE validated_at <= ?', now - AUTHORIZATION_FRESHNESS_MS);
-  }
-
-  write(snapshot: AuthorizationSnapshot): void {
-    if (!decisionIsFresh(snapshot.decision, Date.now()) || snapshot.decision.status === 'unavailable') return;
-    const validatedAt = Math.min(...snapshot.decision.evidence.map((evidence) => evidence.validatedAt));
-    this.storage.sql.exec(`INSERT INTO authorization_snapshots(cache_key, snapshot_json, validated_at) VALUES (?, ?, ?)
-      ON CONFLICT(cache_key) DO UPDATE SET snapshot_json = excluded.snapshot_json, validated_at = excluded.validated_at
-      WHERE excluded.validated_at > authorization_snapshots.validated_at`,
-    authorizationSnapshotKey(snapshot.subject, snapshot.resource), JSON.stringify(snapshot), validatedAt);
-  }
 
   replaceLocations(input: AuthorizationLocation): void {
     this.storage.transactionSync(() => {

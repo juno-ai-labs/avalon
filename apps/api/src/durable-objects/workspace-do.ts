@@ -8447,10 +8447,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = z.strictObject({ subject: AuthorizationSubjectSchema, resources: z.array(AuthorizationResourceSchema) }).parse(input);
     this.assertWorkspace(request.subject.workspaceId);
-    const storage = new AuthorizationStorage(this.state.storage);
     return request.resources.map((resource) => {
       this.assertWorkspace(resource.workspaceId);
-      return storage.read(request.subject, resource, Date.now());
+      // Legacy RPC: old snapshots have no mutation invalidation and cannot authorize reads.
+      return null;
     });
   }
 
@@ -8461,11 +8461,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       this.assertWorkspace(snapshot.subject.workspaceId);
       this.assertWorkspace(snapshot.resource.workspaceId);
     }
-    this.state.storage.transactionSync(() => {
-      const storage = new AuthorizationStorage(this.state.storage);
-      storage.pruneExpired(Date.now());
-      for (const snapshot of snapshots) storage.write(snapshot);
-    });
+    // Compatibility during rollout: accept the old wire shape without persisting grants.
   }
 
   async applyAuthorizationLocations(input: unknown) {
@@ -8505,22 +8501,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.state.storage.sql.exec(`INSERT INTO authorization_delivery(job_key, payload_json, not_before) VALUES (?, ?, 0)
       ON CONFLICT(job_key) DO UPDATE SET payload_json = excluded.payload_json, revision = authorization_delivery.revision + 1`,
     JSON.stringify([job.parentId, job.substreamId ?? null]), JSON.stringify(job));
-  }
-
-  async authorizationDiscoveryInventory(input: { workspaceId: string; parentId: string }) {
-    await this.initialized;
-    this.assertWorkspace(WorkspaceIdSchema.parse(input.workspaceId));
-    return this.state.storage.sql.exec<{ substream_id: string }>(
-      'SELECT substream_id FROM authorization_backfill_children WHERE parent_id = ?', IdSchema.parse(input.parentId),
-    ).toArray().map((row) => row.substream_id);
-  }
-
-  async authorizationDiscoveryParents(input: { workspaceId: string }) {
-    await this.initialized;
-    this.assertWorkspace(WorkspaceIdSchema.parse(input.workspaceId));
-    return this.state.storage.sql.exec<{ parentId: string }>(`
-      SELECT workstream_id AS parentId FROM workspace_workstream_directory
-      UNION SELECT automation_id AS parentId FROM automation_directory`).toArray();
   }
 
   async registerAuthorizationChildren(input: { workspaceId: string; parentId: string; substreamIds: string[]; refreshExisting?: boolean }) {
