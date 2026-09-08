@@ -19,6 +19,12 @@ positive result still requires its canonical grant. New requests pass session an
 workspace-membership middleware. This does not relax mutation checks, socket
 admission, or local socket visibility/revocation. Missing authority remains a
 retryable failure for direct reads and explicit partial status for search/lists.
+Member search candidate pagination exposes matching-index continuation even when
+no candidate on a page is admitted. Repeated substring queries and correlation
+with known source IDs can reveal content matches; this API does not promise
+concealment of that inference. Canonical admission still controls returned content.
+The operation-level and pagination contracts are detailed in [authorization](authorization.md).
+
 
 ## Sidekick authoring and loading
 
@@ -796,6 +802,12 @@ EU rotate independently. [`runbook.md`](runbook.md) owns the procedure and the
 incident response that may prompt it.
 
 ## Changelog
+
+### 2026-09-08 — Locate the member search metadata contract
+
+Recorded the observable substring/continuation inference in this overview as well
+as the owning authorization document, so the security summary does not imply a
+stronger concealment property than the approved member search API provides.
 
 ### 2026-09-08 — Remove the authorization freshness deadline
 
