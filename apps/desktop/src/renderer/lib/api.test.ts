@@ -202,6 +202,20 @@ describe('Rally API wire adapter', () => {
     expect(mapWorkstreamSummary(WorkstreamSchema.parse({ ...detail, lastAccessedAt: null })))
       .toHaveProperty('lastAccessedAt', null);
   });
+  it('describes external triggers without exposing event identifiers', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => json({
+      ...wireAutomationDetail,
+      currentDefinition: { ...wireAutomationDetail.currentDefinition, ready: false, triggers: [
+        { type: 'connector_activity', connectorType: 'github', eventTypes: ['pull_request.opened'], deterministicFilters: {} },
+        { type: 'webhook', eventTypes: ['build.finished'] },
+      ] },
+    })));
+    const api = new RallyApi('https://api.rally.test', session);
+    expect((await api.getAutomation(automationId)).triggerSummaries).toEqual([
+      'When there is matching activity in github', 'When an external service sends an update',
+    ]);
+  });
+
   it('maps an automation detail: scope, lifecycle, revisions, trigger lines and runs', async () => {
     // The header reads the two revisions to decide whether Create may be
     // pressed, so both have to survive the mapping exactly as the wire says
