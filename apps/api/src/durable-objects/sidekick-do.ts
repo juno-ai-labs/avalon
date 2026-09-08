@@ -113,8 +113,7 @@ import {
 } from "./sqlite-migrations";
 
 /**
- * `AutomationDO` is the parent of an automation's conversations and the
- * automation itself.
+ * `SidekickDO` owns a Sidekick and its authoring and run conversations.
  *
  * Substream `0` is the automation's conversation for its whole life: drafting,
  * Create, and every later edit happen there, with the `rally:automations`
@@ -1921,5 +1920,3 @@ export class SidekickDO extends ConversationParentDurableObject {
     this.enqueueProjection("automation", effect, now);
   }
 }
-
-/** Compatibility export during the staged Cloudflare class rename. */
