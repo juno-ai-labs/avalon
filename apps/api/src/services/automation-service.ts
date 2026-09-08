@@ -64,8 +64,8 @@ export async function createAutomation(env: Env, input: {
   await provisionWorkstreamObject(env, {
     workspaceId,
     workstreamId: automationId,
-    title: "New automation",
-    objective: "Describe what this automation should do, when it should run, and who it is for.",
+    title: "New Sidekick",
+    objective: "What would you like to delegate? Teach this Sidekick what it should know or do and who it is for.",
     scope: "personal",
     createdByUserId: input.authorUserId,
     participantUserIds: [input.authorUserId],
@@ -95,6 +95,10 @@ export class AutomationService {
       owningWorkstreamId: null,
     });
     return { automationId };
+  }
+
+  async listSidekicks(): Promise<{ items: AutomationSummary[] }> {
+    return (await this.workspace()).listSidekickDirectory({ workspaceId: this.auth.workspaceId, userId: this.auth.userId });
   }
 
   async list(): Promise<{ items: AutomationSummary[] }> {

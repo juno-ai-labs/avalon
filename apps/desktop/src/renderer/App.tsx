@@ -1,4 +1,5 @@
 import { AccountOnboardingGate, WorkspaceOnboardingJourney } from './screens/guided-onboarding';
+import { SidekicksLibraryScreen } from './screens/sidekicks-library';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { AlertTriangle, Cable, RefreshCcw } from 'lucide-react';
@@ -218,6 +219,23 @@ function WorkspaceApp(): React.JSX.Element {
     );
   }
 
+  if (new URLSearchParams(window.location.search).get('surface') === 'sidekicks') {
+    return (
+      <WorkspaceSocketProvider api={api!} onAccessRevoked={surrenderActiveWorkspace} workspaceId={workspace.data.id}>
+        <SpeechPlaybackProvider api={api!}>
+          <HashRouter useTransitions={false}>
+            <Routes>
+              <Route element={<SidekicksLibraryScreen />} path="/sidekicks" />
+              <Route element={<AutomationScreen />} path="/sidekicks/:id" />
+              <Route element={<AutomationScreen />} path="/automations/:id" />
+              <Route element={<Navigate replace to="/sidekicks" />} path="*" />
+            </Routes>
+          </HashRouter>
+        </SpeechPlaybackProvider>
+      </WorkspaceSocketProvider>
+    );
+  }
+
   const meetingSurface = new URLSearchParams(window.location.search).get('surface') === 'meeting';
   if (meetingSurface) {
     return (
@@ -259,6 +277,7 @@ function WorkspaceApp(): React.JSX.Element {
                 <Route element={<WorkstreamScreen />} path="/workstreams/:id" />
                 <Route element={<NoteDetailScreen />} path="/notes/:id" />
                 <Route element={<AutomationScreen />} path="/automations/:id" />
+                <Route element={<AutomationScreen />} path="/sidekicks/:id" />
                 <Route element={<WorkspaceSettingsScreen workspace={workspace.data} />} path="/settings" />
                 <Route element={<NotFoundScreen />} path="*" />
               </Routes>

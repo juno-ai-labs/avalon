@@ -193,16 +193,14 @@ describe("the automations plugin", () => {
     expect(systemMessage).toContain("never deliver into a different work stream");
   });
 
-  it("never activates anything on its own", () => {
-    // Every tool here drafts or researches. Acceptance is a person's act, and
-    // an agent that could accept its own proposal would make the card a
-    // formality.
+  it("publishes ready submissions without a separate activation tool", () => {
+    // Publication belongs to the authorized host submission boundary.
     const modes = createAutomationsPlugin(host()).tools
       .map((tool) => tool.definition.name);
     expect(modes).not.toContain("accept_draft");
     expect(modes).not.toContain("activate");
     expect(createAutomationsPlugin(host()).systemMessage)
-      .toContain("you never activate one");
+      .toContain("A ready submission saves and activates immediately");
   });
 });
 

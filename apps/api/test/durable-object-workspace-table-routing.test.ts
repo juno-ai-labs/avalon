@@ -62,12 +62,12 @@ describe("Durable Object workspace-table routing", () => {
     // Guards the guard: a rename of the directory, or a regex that stops
     // matching, would otherwise leave this file passing over nothing at all.
     const sources = durableObjectSources();
-    expect(sources).toContain("automation-do.ts");
+    expect(sources).toContain("sidekick-do.ts");
     expect(sources).toContain("workspace-do.ts");
     expect(WORKSPACE_LOCAL_TABLES).toContain("connector_connections");
     expect(WORKSPACE_LOCAL_TABLES).toContain("slack_user_links");
     expect(
-      [...readFileSync(`${DURABLE_OBJECT_DIRECTORY}/automation-do.ts`, "utf8")
+      [...readFileSync(`${DURABLE_OBJECT_DIRECTORY}/sidekick-do.ts`, "utf8")
         .matchAll(REGIONAL_STATEMENT)],
     ).not.toHaveLength(0);
   });

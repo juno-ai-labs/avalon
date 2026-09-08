@@ -1,3 +1,4 @@
+import { SidekickAttachmentsSchema, type SidekickAttachment } from '@rally/contracts';
 import { SearchResponseSchema, type SearchRequest, type SearchResponse } from '@rally/contracts/search';
 import { OnboardingJourneySchema, type UpdateOnboardingJourney } from '@rally/contracts';
 import { RALLY_HEADERS } from '@rally/contracts/http-headers';
@@ -439,6 +440,7 @@ export function mapWorkstreamDetail(workstream: WireWorkstreamDetail): Workstrea
 function triggerSummary(trigger: WireAutomationDraft['triggers'][number]): string {
   switch (trigger.type) {
     case 'manual': return 'Manual';
+    case 'inbound_email': return 'When an email arrives';
     case 'calendar': return trigger.summary;
     case 'interval': return trigger.summary;
     case 'connector_activity': return `${trigger.connectorType}: ${trigger.eventTypes.join(', ')}`;
@@ -473,6 +475,7 @@ function mapAutomationScope(scope: z.infer<typeof WireAutomationSummarySchema>['
 export function mapAutomationSummary(automation: z.infer<typeof WireAutomationSummarySchema>): AutomationSummary {
   return {
     id: automation.id,
+    loadable: automation.loadable,
     name: automation.name,
     description: automation.description,
     ...(automation.emailAddress ? { emailAddress: automation.emailAddress } : {}),
@@ -516,6 +519,7 @@ function mapAutomationDetail(detail: z.infer<typeof WireAutomationDetailSchema>)
     currentDefinition: detail.currentDefinition,
     currentDefinitionRevision: detail.currentDefinitionRevision,
     acceptedDefinitionRevision: detail.acceptedDefinitionRevision,
+    runnable: detail.runnable,
     connectorBindings: { ...detail.connectorBindings },
     triggerSummaries: (detail.currentDefinition?.triggers ?? []).map(triggerSummary),
     recentRuns: detail.recentRuns.map(mapAutomationRun),
@@ -892,6 +896,19 @@ export class RallyApi {
 
   async declinePendingWorkspaceInvitation(id: string): Promise<void> {
     await this.requestVoid(`/onboarding/invitations/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  }
+
+  async getAttachedSidekicks(workstreamId: string, signal?: AbortSignal): Promise<SidekickAttachment[]> {
+    return (await this.request(`/workstreams/${encodeURIComponent(workstreamId)}/sidekicks`, { signal, schema: SidekickAttachmentsSchema })).items;
+  }
+
+  async removeAttachedSidekick(workstreamId: string, sidekickId: string): Promise<SidekickAttachment[]> {
+    return (await this.request(`/workstreams/${encodeURIComponent(workstreamId)}/sidekicks/${encodeURIComponent(sidekickId)}`, { method: 'DELETE', schema: SidekickAttachmentsSchema })).items;
+  }
+
+  async getSidekicks(signal?: AbortSignal): Promise<AutomationSummary[]> {
+    const result = await this.request('/sidekicks', { signal, schema: wireAutomationPageSchema });
+    return result.items.map(mapAutomationSummary);
   }
 
   async getAutomations(signal?: AbortSignal): Promise<AutomationSummary[]> {

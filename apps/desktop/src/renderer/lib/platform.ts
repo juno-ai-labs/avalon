@@ -475,6 +475,12 @@ const browserBridge: RallyDesktopBridge = {
   async popOutArtifact(request) {
     window.open(request.url, '_blank', 'noopener,noreferrer');
   },
+  async openSidekicks(sidekickId) {
+    const target = new URL(window.location.href);
+    target.searchParams.set('surface', 'sidekicks');
+    target.hash = sidekickId ? `/sidekicks/${encodeURIComponent(sidekickId)}` : '/sidekicks';
+    window.open(target.toString(), 'rally-sidekicks', 'noopener,noreferrer');
+  },
   async openSettings(section) {
     const target = section ? `/settings?section=${encodeURIComponent(section)}` : '/settings';
     window.location.hash = `#${target}`;

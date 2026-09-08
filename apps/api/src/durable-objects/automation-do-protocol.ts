@@ -105,3 +105,13 @@ export type AutomationRunRequest = z.infer<typeof AutomationRunRequestSchema>;
 
 export const AUTOMATION_SCHEDULE_ALARM_KIND = "automation_schedule";
 export const AUTOMATION_RUN_ALARM_KIND = "automation_run";
+
+export const SidekickSkillReadRequestSchema = z.strictObject({
+  ...Addressed,
+  principalUserId: UserIdSchema.nullable(),
+  conversationParentId: IdSchema,
+  audienceScope: z.enum(["personal", "workspace"]),
+  audienceUserIds: z.array(UserIdSchema),
+  existingExecution: z.boolean().optional(),
+});
+export type SidekickSkillReadRequest = z.infer<typeof SidekickSkillReadRequestSchema>;

@@ -353,7 +353,7 @@ describe('socket-first work-stream open', () => {
       cache.setQueryData(['substream-ordered-transcript', workstreamId, childId], child.transcript);
     }, childId);
 
-    expect(await screen.findByRole('button', { name: 'Manage participants: Parent member' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Manage work-stream participants' })).toHaveAccessibleDescription('Parent member');
     expect(screen.queryByRole('button', { name: 'Manage resources' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Open Parent artifact' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Open Child artifact' })).not.toBeInTheDocument();
@@ -361,7 +361,7 @@ describe('socket-first work-stream open', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Manage work-stream participants' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Add New member to work stream' }));
     await waitFor(() => expect(api.addParticipant).toHaveBeenCalledWith(workstreamId, newcomer.id));
-    expect(await screen.findByRole('button', { name: 'Manage participants: New member' })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Manage work-stream participants' })).toHaveAccessibleDescription('Parent member, New member'));
     expect(client.getQueryData<WorkstreamDetail>(['substream-workstream', workstreamId, childId])?.participants).toEqual([]);
   });
 

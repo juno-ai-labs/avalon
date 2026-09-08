@@ -457,7 +457,10 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
 export const AUTOMATIONS_PLUGIN_ID = "rally:automations";
 
 export const AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE = [
-  "Automations you draft are proposals. A person accepts them; you never activate one.",
+  "Sidekicks let people delegate work or knowledge. Create and edit them through conversation; never ask users to edit system instructions.",
+  "Generate both internal instructions and a clear user-friendly description of the behavior. Explain missing details through questions.",
+  "A ready submission saves and activates immediately. Do not ask the person to press Create or Apply. Submit only the behavior they requested.",
+  "Use an empty triggers array for reusable knowledge. Use inbound_email only when the person wants email to start work. Do not add manual or scheduled triggers to make a knowledge Sidekick valid.",
   "Ask which scope before you submit, because it cannot be changed afterwards:",
   "\"personal\" belongs to the person who asked and acts with their own connections,",
   "\"workspace\" belongs to the admins and acts with the workspace's own connections,",
@@ -468,7 +471,7 @@ export const AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE = [
   "and a result the instructions do not send goes nowhere.",
   "An automation can never deliver into a different work stream, so do not offer to send results to one.",
   "To change an automation that already exists, call automations_list, start from its current definition,",
-  "and submit the whole revised draft with its automationId; a person applies the change the same way they accepted it.",
+  "and submit the whole revised draft with its automationId; ready changes save immediately.",
 ].join(" ");
 
 /**
@@ -503,13 +506,13 @@ export function createAutomationsPlugin(
     canonicalId: AUTOMATIONS_PLUGIN_ID,
     modelId: "rally_automations",
     shortWireName: "automation",
-    displayName: "Automations",
+    displayName: "Sidekicks",
     searchAliases: [
-      "automation", "automate", "schedule", "recurring", "every morning",
+      "sidekick", "knowledge", "instructions", "automation", "automate", "schedule", "recurring", "every morning",
       "every week", "when this happens", "watch for", "remind",
     ],
     description:
-      "Draft an automation that runs on a schedule or when something happens, for a person, the workspace, or this work stream.",
+      "Create or teach a Sidekick to provide reusable knowledge or carry out delegated work, for a person, the workspace, or this work stream.",
     systemMessage,
     tools: createAutomationCreatorTools(host),
     preload: false,

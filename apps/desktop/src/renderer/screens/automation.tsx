@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { AutomationHeader, type AutomationHeaderAction } from '../components/automation-header';
 import { Button, EmptyState, OpeningState } from '../components/primitives';
 import { useAppSession } from '../lib/app-session';
@@ -36,7 +36,7 @@ function NewAutomationScreen(): React.JSX.Element {
     creation.current ??= api.createAutomation();
     creation.current
       .then(({ automationId }) => {
-        if (mounted) void navigate(`/automations/${automationId}`, { replace: true });
+        if (mounted) void navigate(`/sidekicks/${automationId}`, { replace: true });
       })
       .catch((cause: unknown) => {
         if (!mounted) return;
@@ -53,12 +53,12 @@ function NewAutomationScreen(): React.JSX.Element {
         <EmptyState
           action={<Button onClick={() => { creation.current = null; setError(null); }}>Try again</Button>}
           description={error}
-          title="Automation could not be created"
+          title="Sidekick could not be created"
         />
       </div>
     );
   }
-  return <OpeningState label="Creating automation…" />;
+  return <OpeningState label="Creating Sidekick…" />;
 }
 
 function AutomationDetailScreen({ id }: { id: string }): React.JSX.Element {
@@ -96,7 +96,7 @@ function AutomationDetailScreen({ id }: { id: string }): React.JSX.Element {
         // Replacing rather than pushing, so Back cannot return to an
         // automation that is no longer served.
         queryClient.removeQueries({ queryKey: ['automation', id] });
-        void navigate('/workstreams/new', { replace: true });
+        void navigate('/sidekicks', { replace: true });
         return;
       }
       refresh();
@@ -109,19 +109,19 @@ function AutomationDetailScreen({ id }: { id: string }): React.JSX.Element {
         <EmptyState
           action={<Button onClick={() => void automation.refetch()}>Try again</Button>}
           description={automation.error.message}
-          title="Automation could not be opened"
+          title="Sidekick could not be opened"
         />
       </div>
     );
   }
-  if (!automation.data) return <OpeningState label="Opening automation…" />;
+  if (!automation.data) return <OpeningState label="Opening Sidekick…" />;
   const detail = automation.data;
   return (
     <ConversationSurface
       parentId={id}
       parentKind="automation"
       renderHeader={() => (
-        <AutomationHeader
+        <div className="sidekick-detail-heading"><Link className="sidekick-back" to="/sidekicks">← Sidekicks</Link><AutomationHeader
           automation={detail}
           error={act.error?.message}
           onApply={() => act.mutate('apply')}
@@ -132,7 +132,7 @@ function AutomationDetailScreen({ id }: { id: string }): React.JSX.Element {
           pending={act.isPending ? act.variables : null}
           runs={runs.data}
           runsError={runs.error?.message}
-        />
+        /></div>
       )}
       substreamId="0"
     />
