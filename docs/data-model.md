@@ -176,7 +176,7 @@ archive/system marker, or schedule rather than accidentally retain it.
 `SubstreamAgent` continues to own ordered parts, active output, and replay; token
 frames are never database joins or metadata patches.
 
-Each `SubstreamAgent` owns one stable `substream_loops` row (which, since v43,
+Each `SubstreamAgent` owns one stable `substream_loops` row (which, since v45,
 carries `transcript_projected_through` — the highest transcript sequence the
 model's conversation has considered, so a turn that started no run is appended
 at the next admission rather than lost),
@@ -948,7 +948,7 @@ work uses ordinary workstream creation and the existing durable agent loop.
 
 ### 2026-09-05 — The loop remembers how far it has read
 
-**What changed:** Conversation-object schema v43 adds
+**What changed:** Conversation-object schema v45 adds
 `substream_loops.transcript_projected_through`, backfilled to the transcript's
 high-water mark.
 
