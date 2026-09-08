@@ -446,10 +446,10 @@ function triggerSummary(trigger: WireAutomationDraft['triggers'][number]): strin
     case 'inbound_email': return 'When an email arrives';
     case 'calendar': return trigger.summary;
     case 'interval': return trigger.summary;
-    case 'connector_activity': return `${trigger.connectorType}: ${trigger.eventTypes.join(', ')}`;
+    case 'connector_activity': return `When there is matching activity in ${trigger.connectorType.replaceAll('_', ' ')}`;
     case 'semantic_activity': return trigger.condition;
     case 'resource_watch': return 'When the attached resource changes';
-    case 'webhook': return `Webhook: ${trigger.eventTypes.join(', ')}`;
+    case 'webhook': return 'When an external service sends an update';
   }
 }
 
