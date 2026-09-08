@@ -440,11 +440,16 @@ than replaying stale content.
 ### Terminal sandbox boundary
 
 The model may run bounded code only inside the private Daytona sandbox described
-in [`terminal-workspaces.md`](terminal-workspaces.md). Loading the plugin performs
-no provider operation. On first execution Rally freezes the execution principal,
-visible-resource authority, selected immutable GitHub repository identity, and
-connection into a sandbox-generation fingerprint; narrowing or revocation
-destroys that generation before another tool can observe its filesystem.
+in [`terminal-workspaces.md`](terminal-workspaces.md). Discovering the plugin
+performs no provider operation; an explicit load starts the sandbox acquisition
+in the background and returns, so the model is never held behind provider work
+and a provider failure surfaces on the first Terminal tool rather than at load.
+That acquisition freezes the execution principal, visible-resource authority,
+selected immutable GitHub repository identity, and connection into a
+sandbox-generation fingerprint; narrowing or revocation destroys that
+generation before another tool can observe its filesystem, and a repository
+that fails revalidation rejects the shared acquisition every waiting tool holds
+rather than being cleaned up after one of them has already proceeded.
 The GitHub connector policy is checked before selection, sandbox bootstrap, and
 remote publication. An explicitly configured repository is bound to its
 immutable provider ID, not just its reusable `owner/name`. Read-only policy is a

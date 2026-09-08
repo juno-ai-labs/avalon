@@ -223,7 +223,7 @@ mechanism: retain stale valid pricing during an upstream outage.
 ### Terminal provider activation and recovery
 
 Terminal is fail-closed per region. Global and EU are both enabled against the
-same Daytona environment: `DAYTONA_TARGET=us` and `daytona-small`. Rally does
+same Daytona environment: `DAYTONA_TARGET=us` and `rally-terminal-1`. Rally does
 not run a separate EU Daytona fleet. Presence of provider values never implies
 availability: a region whose `TERMINAL_REGION_CAPABILITY` is `unsupported`, or
 whose Daytona values are incomplete, omits the plugin. Leave any unverified
@@ -238,12 +238,26 @@ An activated region requires:
 - `TERMINAL_REGION_CAPABILITY=supported` and
   `TERMINAL_EMERGENCY_DISABLED=false`;
 - `DAYTONA_API_URL`, `DAYTONA_TARGET`, and
-  `DAYTONA_TERMINAL_SNAPSHOT=daytona-small`; and
+  `DAYTONA_TERMINAL_SNAPSHOT=rally-terminal-1`; and
 - `DAYTONA_API_KEY` as a regional Worker secret. EU reuses the same Daytona
   project key already on Global: put that exact value on the EU Worker. Cloudflare
   cannot copy a secret between Workers, so this is a second `secret put`, not a
   shared binding. Never put the Daytona project credential in a `VITE_`
   variable, D1, a sandbox environment value, or a checked-in Wrangler file.
+
+The weekly snapshot rebuild (`.github/workflows/rebuild-terminal-snapshot.yml`)
+reads the same provider values from the `api-production` GitHub environment
+rather than from the Workers: `DAYTONA_API_KEY` as an environment secret, and
+`DAYTONA_API_URL`, `DAYTONA_TARGET`, `TERMINAL_PROBE_REDIRECT_URL`, and
+`TERMINAL_PROBE_PRIVATE_DNS_URL` as environment variables; the job fails at its
+first step naming whichever is absent. The base image is pinned in
+`apps/api/src/services/terminal/snapshot-manifest.ts`; a
+`TERMINAL_SNAPSHOT_BASE_IMAGE` variable overrides it for a one-off build. Add `TERMINAL_SNAPSHOT_PR_TOKEN`, a fine-grained token with contents
+and pull-requests write on this repository, so the adoption pull request it
+opens runs CI; without it GitHub starts no workflows for that pull request and
+the step summary says so. The two probe endpoints are Rally's own on
+`rallywith.ai` (`probe-redirect`, a proxied record with a redirect rule to
+`https://example.org/`; `probe-private`, an unproxied A record to `10.0.0.1`).
 
 If any required Daytona value is absent, Rally treats that region as
 `unsupported` and continues starting without the Terminal plugin. This is the
@@ -303,7 +317,7 @@ Once enabled, query the durable aggregate measurements with:
 
 ```text
 pnpm terminal:analytics -- --days 7
-pnpm terminal:analytics -- --days 30 --region eu --snapshot daytona-small
+pnpm terminal:analytics -- --days 30 --region eu --snapshot rally-terminal-1
 ```
 
 The command uses `CLOUDFLARE_ACCOUNT_ID` and a `CLOUDFLARE_API_TOKEN` restricted
@@ -311,7 +325,8 @@ to **Account Analytics: Read**. Its start/end line is the actual first and last
 Analytics Engine observation in the requested window, not merely the requested
 date boundary.
 
-Use the structured events `terminal_plugin_activation_finished`,
+Use the structured events `terminal_plugin_activation_started`,
+`terminal_plugin_activation_finished`,
 `terminal_provider_request_finished`, `terminal_tool_finished`,
 `terminal_sandbox_lifecycle_transition`, and
 `terminal_sandbox_lifecycle_failed`. Commands and output are deliberately absent.

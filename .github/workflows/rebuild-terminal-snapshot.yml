@@ -1,0 +1,201 @@
+# Rebuilds the Rally-owned Terminal snapshot against Daytona's current managed
+# base image, and proves the rebuild with the real-provider acceptance gate.
+#
+# Owning a snapshot means Daytona's OS and system-package fixes stop reaching us
+# automatically: we are pinned to whatever their base looked like when we last
+# built. Nothing detects that. The snapshot manifest fails closed when a
+# capability is missing or broken, but a stale-yet-working base passes every
+# probe, so drift is silent — a rotated CA baked into the managed image is the
+# concrete case, where the probe stays green and Git operations start failing.
+#
+# A weekly rebuild bounds that staleness to a week. It is the condition on which
+# owning the snapshot was judged safe enough; without it, do not adopt one.
+name: Rebuild Terminal snapshot
+
+on:
+  schedule:
+    # Mondays, early UTC — a failure is then in front of someone on Monday
+    # morning rather than discovered by a work stream at the weekend.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      snapshot_name:
+        description: Snapshot name to build. Defaults to a date-stamped candidate.
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: rebuild-terminal-snapshot
+  cancel-in-progress: false
+
+jobs:
+  rebuild:
+    name: build and verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: api-production
+    env:
+      DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+      DAYTONA_API_URL: ${{ vars.DAYTONA_API_URL }}
+      DAYTONA_TARGET: ${{ vars.DAYTONA_TARGET }}
+      TERMINAL_SNAPSHOT_BASE_IMAGE: ${{ vars.TERMINAL_SNAPSHOT_BASE_IMAGE }}
+      TERMINAL_PROBE_REDIRECT_URL: ${{ vars.TERMINAL_PROBE_REDIRECT_URL }}
+      TERMINAL_PROBE_PRIVATE_DNS_URL: ${{ vars.TERMINAL_PROBE_PRIVATE_DNS_URL }}
+      TERMINAL_REGION_CAPABILITY: supported
+
+    steps:
+      - name: Check out the revision
+        uses: actions/checkout@v5
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.13.0
+          run_install: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Require Daytona build credentials
+        run: |
+          set -euo pipefail
+          for name in DAYTONA_API_KEY DAYTONA_API_URL DAYTONA_TARGET \
+            TERMINAL_PROBE_REDIRECT_URL TERMINAL_PROBE_PRIVATE_DNS_URL; do
+            if [ -z "${!name:-}" ]; then
+              echo "$name is not configured for this environment" >&2
+              exit 1
+            fi
+          done
+
+      # The dispatch input reaches the shell through the environment, never by
+      # expression interpolation into the script: an interpolated input is
+      # shell-injectable, in a job that holds the Daytona key. The name is also
+      # held to the character set a snapshot, a branch, and the config value can
+      # carry, which keeps the perl rewrite below from writing anything but a
+      # name into both regions' production configs.
+      - name: Name this week's snapshot
+        id: snapshot
+        env:
+          REQUESTED_NAME: ${{ inputs.snapshot_name }}
+        run: |
+          set -euo pipefail
+          name="${REQUESTED_NAME:-}"
+          if [ -z "$name" ]; then
+            # Minute-stamped so a same-day re-run after a transient failure does
+            # not collide with a snapshot, branch, or pull request that exists.
+            name="rally-terminal-$(date -u +%Y%m%d-%H%M)"
+          fi
+          if ! printf '%s' "$name" | grep -Eq '^[a-z0-9][a-z0-9._-]{0,62}$'; then
+            echo "snapshot_name must match ^[a-z0-9][a-z0-9._-]{0,62}$" >&2
+            exit 1
+          fi
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "Building $name"
+
+      # Builds by applying the runtime's own bootstrap command as the image
+      # build step, so the snapshot cannot drift from what the runtime expects.
+      - name: Build the snapshot
+        env:
+          DAYTONA_TERMINAL_SNAPSHOT: ${{ steps.snapshot.outputs.name }}
+        run: pnpm --filter @rally/api terminal:build-snapshot
+
+      # The gate that decides whether this rebuild is usable at all. It creates
+      # a real private sandbox, round-trips a binary file, runs the snapshot
+      # manifest and the Trusted-only escape cases, exercises
+      # stop/restart/archive/restore, then deletes it and confirms absence.
+      - name: Verify the snapshot against the real provider
+        env:
+          DAYTONA_TERMINAL_SNAPSHOT: ${{ steps.snapshot.outputs.name }}
+        run: pnpm --filter @rally/api terminal:verify-provider
+
+      # A verified snapshot nobody adopts is the failure mode this workflow is
+      # most likely to have: the job goes green every Monday, the rebuild sits
+      # unused, and production keeps running an image that ages anyway. A step
+      # summary would not be read. A pull request lands in the review queue the
+      # team already works, so adoption is one merge and a rollback is one
+      # revert — while still keeping a human between a rebuilt image and every
+      # new work-stream sandbox.
+      # A pull request opened with `GITHUB_TOKEN` starts no workflows, so it
+      # would get no CI — and it is the one automated change to both regions'
+      # production config, which `deploy-api.yml` ships on merge. A fine-grained
+      # token with contents and pull-requests write on this repository, stored
+      # as `TERMINAL_SNAPSHOT_PR_TOKEN` in the `api-production` environment,
+      # makes the opened pull request run CI like any other. Without it the job
+      # still opens the pull request and says so in the step summary.
+      - name: Open the adoption pull request
+        env:
+          GH_TOKEN: ${{ secrets.TERMINAL_SNAPSHOT_PR_TOKEN || secrets.GITHUB_TOKEN }}
+          PR_TOKEN_CONFIGURED: ${{ secrets.TERMINAL_SNAPSHOT_PR_TOKEN != '' }}
+          SNAPSHOT: ${{ steps.snapshot.outputs.name }}
+        run: |
+          set -euo pipefail
+          for config in apps/api/wrangler.global.jsonc apps/api/wrangler.eu.jsonc; do
+            perl -pi -e \
+              's/("DAYTONA_TERMINAL_SNAPSHOT":\s*)"[^"]*"/$1 . chr(34) . $ENV{SNAPSHOT} . chr(34)/e' \
+              "$config"
+            # A rewrite the regex silently missed would look like "nothing to
+            # adopt" below and leave production on the old image with a green
+            # job; the config has to carry the name before the diff is judged.
+            if ! grep -qF "\"DAYTONA_TERMINAL_SNAPSHOT\": \"$SNAPSHOT\"" "$config"; then
+              echo "$config does not name $SNAPSHOT after the rewrite; the config's shape changed" >&2
+              exit 1
+            fi
+          done
+          if git diff --quiet -- apps/api/wrangler.global.jsonc apps/api/wrangler.eu.jsonc; then
+            echo "Both regions already run \`$SNAPSHOT\`; nothing to adopt." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          branch="daytona-snapshot-upgrade/$SNAPSHOT"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          # By path: `-a` would sweep anything the build or the gate left in the
+          # tree into a production-config pull request.
+          git add apps/api/wrangler.global.jsonc apps/api/wrangler.eu.jsonc
+          git commit -qm "Daytona Snapshot Upgrade: adopt $SNAPSHOT"
+          git push -u origin "$branch"
+
+          # The label is what makes these findable as a series rather than one
+          # more weekly PR; creating it here keeps the workflow self-contained.
+          gh label create daytona-snapshot-upgrade \
+            --color BFD4F2 \
+            --description "Weekly Terminal sandbox image rebuild, verified against the provider" \
+            || true
+
+          gh pr create \
+            --title "Daytona Snapshot Upgrade — $SNAPSHOT" \
+            --label daytona-snapshot-upgrade \
+            --body "$(cat <<BODY
+          This week's Terminal sandbox image, rebuilt against Daytona's current
+          managed base and verified with \`terminal:verify-provider\` before this
+          pull request was opened.
+
+          **Why this exists.** Rally owns its Terminal snapshot, so Daytona's OS
+          and system-package fixes no longer reach us on their own, and nothing
+          detects that drift — the snapshot manifest fails closed on a capability
+          that is missing or broken, not on one that is merely stale. Merging
+          weekly is what bounds how far behind the image can get.
+
+          **What merging does.** Points both regions at \`$SNAPSHOT\`. It applies
+          only when a sandbox is created, so existing sandboxes are unaffected
+          and a rollback is reverting this commit.
+
+          **If you do not merge it**, production keeps running the previous
+          image. Nothing breaks today; the gap to Daytona's base just widens.
+          BODY
+          )"
+          echo "Opened the adoption pull request for \`$SNAPSHOT\`." >> "$GITHUB_STEP_SUMMARY"
+          if [ "$PR_TOKEN_CONFIGURED" != "true" ]; then
+            echo "It was opened with GITHUB_TOKEN, so CI did not start on it: push an empty commit or close and reopen it to run the checks. Set TERMINAL_SNAPSHOT_PR_TOKEN in the api-production environment to avoid this." >> "$GITHUB_STEP_SUMMARY"
+          fi

@@ -20,6 +20,8 @@ provider API, and a sandbox is allocated only when one of those tools executes.
 | `apps/api/src/services/terminal/network-policy.ts`, `settings.ts` | Trusted-only policy compiler and preview/confirm workspace settings transition. |
 | `apps/api/src/services/terminal/lifecycle.ts`, `apps/api/src/services/workspace-schedule-execution.ts` | Stop, archive, expiry, final-diff preservation, claims, retries, and the `terminal` alarm target WorkspaceDO drains. |
 | `apps/api/src/services/terminal/snapshot-manifest.ts`, `apps/api/scripts/verify-terminal-provider.ts` | Executable snapshot contract and real-provider acceptance probe. |
+| `apps/api/scripts/build-terminal-snapshot.ts` | Builds the Rally-owned snapshot by baking the runtime bootstrap into the image, so the four managed capabilities are preinstalled rather than installed per sandbox. Does not adopt it; the acceptance probe above is still the gate. |
+| `.github/workflows/rebuild-terminal-snapshot.yml` | The weekly rebuild that bounds how stale an owned snapshot may become against Daytona's managed base, proves each rebuild with the acceptance probe, and opens the labelled adoption pull request. Owning a snapshot is only safe with this running. |
 | `apps/api/src/observability/terminal-platform-observability.ts`, `scripts/report-terminal-analytics.mjs` | Content-free Daytona phase measurements in Analytics Engine and their human-readable decision report. |
 | `apps/desktop/src/renderer/screens/workspace-settings.tsx`, `components/inspector-rail.tsx` | Workspace network and GitHub connector policy controls plus participant-visible work-stream state. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | Authoritative per-work-stream Terminal tables. Migration `0075_terminal_workspaces.sql` is the frozen pre-cutover D1 source. |
@@ -30,24 +32,33 @@ provider API, and a sandbox is allocated only when one of those tools executes.
 
 ### Loading and allocation
 
-`rally:terminal` is a built-in deferred plugin. Bind can discover and load it,
-which exposes all nine tools and the language guidance but performs no provider
-operation. The first tool execution asks `TerminalSandboxCoordinator` for the
-work stream's exclusive Terminal mutation lease. It creates, starts, or restores
-the stable private sandbox and records the provider result in the owning
-SubstreamAgent. That successful acquisition, authority/policy decision, and
+`rally:terminal` is a built-in deferred plugin. Bind can discover it without
+any provider operation. An explicit load exposes all nine tools and the language
+guidance and starts the sandbox acquisition in the background: activation
+registers the shared per-run acquisition promise and returns without holding
+the model, so the sandbox is built while the model does work that needs no
+sandbox. The first Terminal tool awaits that same promise, collecting the work
+in flight rather than starting it, and it — not activation — is where a
+provider failure reaches the model, with the coordinator's own guidance. The
+acquisition asks `TerminalSandboxCoordinator` for the work stream's exclusive
+Terminal mutation lease. It creates, starts, or restores the stable private
+sandbox and records the provider result in the owning SubstreamAgent. That
+successful acquisition, authority/policy decision, and
 repository preparation are reused for later tools in the same harness run.
 Repository checkout explicitly invalidates the run-local acquisition because it
 can replace the sandbox generation; a later tool then acquires and prepares the
 replacement once. A new harness run performs its own acquisition.
 
-Rally uses Daytona's managed `daytona-small` container snapshot. On first
-creation an idempotent compatibility bootstrap creates the owned `/workspace`,
-installs only missing SQLite/`gh`/pnpm/`tsx` capabilities through the compiled
-Trusted-only apt/npm hosts, and then executes the complete manifest. That
-manifest probes Bash, Python, JavaScript/Node.js, TypeScript, SQLite, apt/dpkg,
-pip/uv, npm/pnpm, Git, `gh`, and passwordless sudo. A compatible Daytona update
-is adopted automatically; a breaking update fails creation closed. The plugin prompt tells the model to use those languages when code is
+Rally creates sandboxes from its own `rally-terminal-1` snapshot: Daytona's
+managed `daytonaio/sandbox:0.9.0` base with SQLite, `gh`, pnpm, and `tsx`
+preinstalled by `terminal:build-snapshot`. On first creation an idempotent
+compatibility bootstrap creates the owned `/workspace`, installs only missing
+SQLite/`gh`/pnpm/`tsx` capabilities through the compiled Trusted-only apt/npm
+hosts — a no-op against the owned snapshot — and then executes the complete
+manifest. That manifest probes Bash, Python, JavaScript/Node.js, TypeScript,
+SQLite, apt/dpkg, pip/uv, npm/pnpm, Git, `gh`, and passwordless sudo. Daytona's
+base-image updates reach the snapshot only through the weekly rebuild described
+under Operations; a breaking update fails creation closed at the manifest. The plugin prompt tells the model to use those languages when code is
 the clearest way to calculate, transform data, analyze files, validate a
 repository, or create a graph, image, dataset, report, or archive. It tells the
 model not to install another runtime or manager.
@@ -241,9 +252,15 @@ personless; it is not duplicated into these product events.
   republish mints a sibling instead of updating it, silently and with no failing
   test, because a test that publishes and republishes within one run sees only
   one derivation. Widen it only with a migration of the stored identities.
-- **Loading Terminal never allocates provider compute.** Discovery is common
-  and execution is exceptional; allocating at load would turn model routing
-  mistakes into cost and persistent state.
+- **Discovering Terminal never allocates provider compute; only an explicit
+  load does, and it never holds the model.** Discovery is common and execution
+  is exceptional. An explicit `load_plugin` is a stated intent to use a
+  sandbox, so activation starts the acquisition in the background and returns;
+  a restored durable activation stays lazy so an unrelated later run does not
+  allocate because an earlier one used Terminal. Anything added to the
+  activation path must fail the shared acquisition rather than clean up after
+  it: a later tool may already be awaiting that promise, and an eviction after
+  it resolves never reaches that waiter.
 - **Every mutation is serialized through the coordinator and every command has
   one durable task receipt.** Parallel file operations or automatic retry after
   an ambiguous write could corrupt the sandbox or repeat a side effect.
@@ -289,6 +306,17 @@ network proxy, or a general GitHub administration surface.
   probe. The emergency switch keeps the plugin and its complete tool family
   discoverable, but new executions fail closed with `sandbox_unavailable` while
   retained work remains available for lifecycle reconciliation.
+- Activation never fails the model. A provider failure during the background
+  acquisition is a `terminal_plugin_activation_finished` row at `warn` and
+  reaches the model on the first Terminal tool, which reacquires and reports
+  with the coordinator's guidance; a run that never reaches a Terminal tool
+  leaves only the row, and nothing posts to operators from here. An
+  acquisition abandoned when its run ends can leave a sandbox reserved before
+  its provider id was recorded; the expiry sweep does not resolve such a row
+  by stable name, so it cannot reclaim that sandbox, and the next acquisition
+  for the work stream adopts it by name instead. That is an accepted gap, not a
+  design: the started/finished pair shows whether it happens, and a sweep by
+  stable name is the fix if it does.
 - A republish that loses the content compare-and-swap to a concurrent one
   releases the bytes it wrote to asynchronous cleanup and reports what the
   document now holds, rather than clobbering the winner. A failed WorkspaceDO
@@ -376,10 +404,11 @@ The regional activation record must separately include controlled DNS-rebinding
 and alternate-host secret-substitution evidence. A region remains `unsupported`
 when any automated or controlled gate cannot run or fails.
 
-Production config sets `DAYTONA_TERMINAL_SNAPSHOT=daytona-small`. The provider
-probe must pass against the current managed revision before a region is enabled;
-the per-sandbox compatibility probe protects the interval between activation
-reviews.
+Production config sets `DAYTONA_TERMINAL_SNAPSHOT=rally-terminal-1` in both
+regions. The provider probe must pass against a snapshot before a region serves
+from it — it passed against `rally-terminal-1` on 2026-09-08 — and the weekly
+rebuild re-proves each replacement; the per-sandbox compatibility probe protects
+the interval between those reviews.
 
 ## Data model
 
@@ -412,7 +441,7 @@ reconciliation facts and never authorize a request.
 All Terminal local rows, regional resource bytes, generated logs/diffs, GitHub App
 installation-token creation, and tool execution records stay in the workspace's
 owning Rally region. Daytona is one shared environment: both the Global and EU
-Workers are `supported` on `DAYTONA_TARGET=us` and the same `daytona-small`
+Workers are `supported` on `DAYTONA_TARGET=us` and the same `rally-terminal-1`
 snapshot. Sandbox files therefore run on that one Daytona fleet regardless of
 the Rally workspace region. That is a subprocessor exception, not a Rally
 cross-region bridge — no Terminal D1, R2, or GitHub-token record falls back to
@@ -458,7 +487,9 @@ report; a deadline the pass finds nothing to do for does.
 
 See [`runbook.md`](runbook.md#terminal-provider-activation-and-recovery) for
 activation and recovery. Structured events are
-`terminal_plugin_activation_finished`, `terminal_tool_finished`,
+`terminal_plugin_activation_started` and `terminal_plugin_activation_finished`
+(a started row with no finished row for the same `tool_call_id` is an
+activation whose sandbox work was abandoned in flight), `terminal_tool_finished`,
 `terminal_sandbox_lifecycle_transition`, and `terminal_sandbox_lifecycle_failed`, plus
 `terminal_operation_commit_failed` and
 `terminal_operation_alarm_schedule_failed` for the typed object-port boundary,
@@ -481,10 +512,46 @@ or egress failure; it prevents new leases and publication starts while the
 plugin stays discoverable and retained rows remain available for
 reconciliation.
 
+### The owned snapshot and its weekly rebuild
+
+Both regions create sandboxes from `rally-terminal-1`, built by
+`pnpm --filter @rally/api terminal:build-snapshot` from the base image pinned
+as `TERMINAL_SNAPSHOT_BASE_IMAGE` in `snapshot-manifest.ts`
+(`daytonaio/sandbox:0.9.0`; the environment variable of the same name
+overrides it for a one-off build) on the Juno AI Labs Daytona organization. Owning the image means Daytona's base fixes stop arriving
+on their own, and the manifest cannot see a stale-but-working base, so
+`.github/workflows/rebuild-terminal-snapshot.yml` rebuilds every Monday at
+06:00 UTC and on dispatch: it builds a minute-stamped `rally-terminal-<date>`,
+runs `terminal:verify-provider` against it, and opens a pull request labelled
+`daytona-snapshot-upgrade` that points both Wrangler configs at the result.
+Adoption is that merge, rollback is its revert, and existing sandboxes are
+untouched either way. A red Monday job means the current snapshot keeps serving
+and the gap to Daytona's base widens by a week; an unmerged adoption pull
+request means the same. Each build stamps its Dockerfile with a build time so
+Daytona cannot hand back a cached image, and the stamp is readable inside every
+sandbox as `RALLY_TERMINAL_SNAPSHOT_BUILT_AT`; a build that finishes in seconds
+is a reused image, not a rebuild.
+
+The workflow reads its configuration from the `api-production` GitHub
+environment: the `DAYTONA_API_KEY` secret and the `DAYTONA_API_URL`,
+`DAYTONA_TARGET`, `TERMINAL_PROBE_REDIRECT_URL`, and
+`TERMINAL_PROBE_PRIVATE_DNS_URL` variables, plus the optional
+`TERMINAL_SNAPSHOT_PR_TOKEN` (a fine-grained token with contents and
+pull-requests write) without which the adoption pull request opens but runs no
+CI, because GitHub starts no workflows for events raised with `GITHUB_TOKEN`.
+The gate's two probe endpoints are Rally's own, on `rallywith.ai`:
+`probe-redirect` is a proxied record with a Cloudflare redirect rule answering
+302 to `https://example.org/`, and `probe-private` is an unproxied A record to
+`10.0.0.1`. The [runbook](runbook.md#terminal-provider-activation-and-recovery)
+holds the operator steps.
+
 ## Performance and cost
 
 An explicit Terminal `load_plugin` starts and initializes the sandbox because
-the next model action is overwhelmingly likely to use one of its tools. A
+the next model action is overwhelmingly likely to use one of its tools — in
+the background, so the model is not held behind it: measured across runs that
+use Terminal, the median run does 16.5s of unrelated work between activation
+and its first Terminal tool, against an ~18s median cold start. A
 restored durable activation remains lazy so an unrelated later run does not
 allocate merely because an earlier run used Terminal. Reuse is scoped to one
 work stream. Five-minute warm stop reduces compute time, sixty-minute archive
@@ -574,7 +641,7 @@ archived restore. It separately prints provider-create, policy-read-back,
 compatibility-install, and manifest-verification percentiles plus how often each
 missing executable was installed. Region and snapshot filters are available.
 
-Do not replace `daytona-small` from a handful of cold starts. The report waits
+Do not replace the default snapshot from a handful of cold starts. The report waits
 for at least 100 successful bootstraps in the selected cohort. When
 compatibility-install p95 then exceeds ten seconds it recommends a controlled
 prebuilt-snapshot benchmark. Verification remains in both variants, because a
@@ -584,6 +651,287 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-09-08 — Both regions create sandboxes from the Rally-owned snapshot
+
+**What changed:** `DAYTONA_TERMINAL_SNAPSHOT` is `rally-terminal-1` in both
+regional Wrangler configs. The snapshot was built by `terminal:build-snapshot`
+from `daytonaio/sandbox:0.9.0` on the Juno AI Labs Daytona organization
+(created 2026-09-07T15:27:23Z, region `us`), and `terminal:verify-provider`
+passed against it the same day; its `sandbox_bootstrap` measurement was
+`install=225ms verify=1782ms installed=none`, the bootstrap finding all four
+managed capabilities present and installing nothing, against ~14.4s when they
+are missing. Review of the adopting pull request (#597) changed seven more
+things in the same change: the per-run operator notice on activation failure
+and its unset rate limit are gone; the manifest ids a failed verification names
+now travel on the `sandbox_bootstrap` measurement as `missing_capabilities`;
+the `git-ca` probe is required rather than optional for a sandbox created with
+a domain allow list; `checkout_repository` lets an in-flight activation
+acquisition settle before replacing the generation it is preparing;
+`discardPreparation` is deleted; the base image is pinned in
+`snapshot-manifest.ts` with `TERMINAL_SNAPSHOT_BASE_IMAGE` demoted to an
+override; and the rebuild workflow reads its dispatch input through the
+environment, validates the name, commits the two configs by path,
+minute-stamps its default name, and opens its pull request with
+`TERMINAL_SNAPSHOT_PR_TOKEN` when one is configured. The build stamps each
+Dockerfile with a build time.
+
+**Why:** This reinstates the adoption that "Stay on daytona-small until a
+snapshot can pass the acceptance gate" reverted on 2026-09-05, now with the
+evidence that revert said was missing. The gate had only ever been run against
+a personal Daytona account on a tier that rejects every post-creation network
+update, so its policy-update step failed on every snapshot; the Juno
+organization accepts them, and the gate's stop → update → read-back → start
+sequence passed. The `git-ca` probe (the entry below) no longer fails
+full-internet sandboxes, which had hidden the earlier custom snapshots' real
+state. Each review change closes a gap the diff had opened. The notice would
+have posted once per failing run for the length of a provider outage, against
+[`ops-alerting.md`](ops-alerting.md)'s one-notice-per-episode rule, and a
+module-level gate in a per-work-stream object cannot dedupe across runs
+anyway. The failed-capability list was discarded by the coordinator's catch,
+so a snapshot that lost `gh` still reported only that verification failed. A
+Trusted-only sandbox without its advertised CA passed the optional probe and
+would have failed at its first Git operation. With activation no longer
+blocking, the model's first tool can be `checkout_repository` while
+activation's own repository bootstrap is still cloning into the same sandbox;
+evicting the cached acquisition and replacing the generation at that moment is
+two operations on one sandbox, which the blocking version could never produce.
+The workflow interpolated a
+dispatch input into shell in a job holding the Daytona key, and a pull request
+opened with `GITHUB_TOKEN` runs no CI, which for the one automated change to
+both regions' production config meant merging ungated.
+
+**Considered and rejected:** Landing the branch first and letting the weekly
+rebuild open the adoption pull request: two merges for one outcome, and the
+workflow only exists once this branch is on `main`. Adopting the date-stamped
+name the workflow will produce instead of `rally-terminal-1`: the verified
+artifact is this one, and the next Monday rebuild replaces it through its own
+pull request. Keeping the operator notice behind a durable once-per-episode
+gate: no call site needs that table yet and the first Terminal tool already
+carries the failure to the model; add the gate if the warn rows show outages
+nobody noticed. Making the expiry sweep reclaim a sandbox reserved before its
+id was recorded, the shape an acquisition abandoned at run end leaves: the
+started/finished pair shows whether it happens and the next acquisition adopts
+the sandbox by stable name, so the sweep waits for evidence.
+
+**Consequences:** Daytona keys built images by Dockerfile content: the first
+build's image reference was the SHA-256 of the Dockerfile, it returned
+`active` in one second with an empty build log, and its reported size was
+roughly double the base's, so an image built earlier from the identical
+Dockerfile was reused. The build-time stamp forces a real build each time;
+whether Daytona's builder re-pulls a moved base tag on that build is
+unconfirmed, and a rebuild that finishes in seconds should be read as a reused
+image. The operational configuration the rebuild needs is under Operations.
+Adding a manifest probe now has to hold for both network modes, and a
+Trusted-only sandbox whose CA Daytona did not advertise fails closed at
+creation rather than at `git clone`. The two production paths the 2026-09-05
+revert flagged as failing under the rejecting tier — `reconcileNetworkPolicy`
+on acquisition and the settings rollback — succeed on the Juno organization
+and were not changed; a return to a rejecting tier would surface them again.
+
+### 2026-09-03 — The Git CA probe stops requiring what Daytona only sometimes gives
+
+**What changed:** The `git-ca` manifest probe now verifies the advertised CA
+bundle only when `CURL_CA_BUNDLE` is set, instead of requiring it. Provider
+failures also name the capabilities that failed, and `clearReadSecrets` no longer
+aborts a sandbox deletion when the credential cannot list secrets.
+
+**Why:** Daytona advertises its proxy CA only to sandboxes created with a domain
+allow list. A full-internet sandbox is not intercepted and needs no extra trust,
+so the unconditional requirement failed every such sandbox — on **every**
+snapshot, the managed `daytona-small` included. Two consequences followed. No
+snapshot could pass the acceptance gate, which is what made a custom snapshot
+look broken for two days; and, more seriously, any workspace on full-internet
+Terminal networking could not create a sandbox at all, because `acquire` passes
+an empty allow list in that mode, the probe rejected the result, and the
+coordinator discarded it.
+
+The probe was stricter than the code it protects:
+`terminalGitCaSetupCommands({ required: false })`, which the repository bootstrap
+actually runs, already wires Git to the bundle when one is advertised and accepts
+its absence otherwise. The probe now matches that contract.
+
+The two provider changes came out of the same investigation. The verification
+failure discarded stdout, so a snapshot that failed reported only that
+initialization failed while the probe had already named every missing capability
+— that diagnostic is what finally identified `git-ca`. And `deleteSandbox` called
+`clearReadSecrets` first, whose unguarded `list` answered 403 for a credential
+without the Secrets scope, so the sandbox was never deleted: a live filesystem
+left accruing cost because tidying its secrets failed.
+
+**Considered and rejected:** Creating the probe sandboxes with a Trusted-only
+allow list so the CA is always present. That would make the gate prove something
+narrower than what runs — full-internet sandboxes are a supported mode, and a
+gate that never exercises them is how this reached production. Removing `git-ca`
+from the manifest entirely: an advertised-but-broken bundle is a real failure and
+still fails closed.
+
+**Consequences:** The manifest now encodes that the CA is conditional on network
+mode, so anything added here must hold for both modes. A full-internet workspace
+can create Terminal sandboxes again. The `required: true` form of
+`terminalGitCaSetupCommands`, used by the trusted publisher, is untouched and
+still demands the bundle — whether publication can succeed from a full-internet
+workspace is a separate question this change does not answer.
+
+### 2026-08-30 — Terminal activation starts the sandbox without holding the model
+
+**What changed:** `onActivate` no longer awaits `runtime.prepare`. It starts the
+acquisition, registers the shared per-run promise every Terminal tool already
+awaits, and returns; the completion log is emitted when that promise settles.
+Activation therefore always succeeds — a provider failure now surfaces on the
+first tool that needs a sandbox rather than as a
+`HarnessPluginActivationError`. A repository that cannot be prepared rejects
+the shared acquisition with its original `TerminalToolError` instead of being
+evicted from the cache afterwards.
+
+**Why:** The sandbox was being built in front of work that did not need it. In
+one recorded run, provisioning finished at 08:27:43 and the first Terminal tool
+did not run until 08:28:54 — the sandbox sat ready and idle for **70 seconds**
+while the model loaded plugins and read GitHub, Linear and Slack. Across all
+runs that use Terminal, the median gap between a run's first tool call and its
+first Terminal tool is **16.5s**, against an ~18s median cold start, so for most
+runs this wait stops being visible at all. It is not free for everyone: in 6 of
+18 runs a Terminal tool *was* the first tool, and those see no overlap and no
+improvement.
+
+**Considered and rejected:** Starting acquisition at run start rather than at
+activation — it would allocate a sandbox for every run including the many that
+never touch Terminal, which is the speculative cost the lazy restored-activation
+rule already exists to avoid. Keeping activation blocking and shrinking the
+bootstrap instead — that is worth doing too, but it is a ~14s problem inside a
+~70s one. Evicting the cached acquisition after preparation fails, as before —
+see below.
+
+Because activation stopped awaiting its own work, the runtime — not Rally —
+decides whether that work survives to settle, and a cancelled continuation
+cannot log its own death. So activation now writes
+`terminal_plugin_activation_started` alongside the existing
+`terminal_plugin_activation_finished`: a started row with no finished row for
+the same `tool_call_id` is the shape of a sandbox abandoned in flight, and the
+pair is the only way to see it. The rejection path also calls `notifyOps`,
+because a failure that used to reach the model as an activation error now
+reaches only a log row.
+
+**Consequences:** The eviction that made a failed repository preparation safe no
+longer works, and this is the subtle part. It was only ever safe because nothing
+else could be awaiting the acquisition while activation blocked. Now a Terminal
+tool from the following turn can already be waiting on that same promise, and an
+eviction after it resolves never reaches an in-flight waiter — which would then
+operate on a sandbox whose checkout is stale or whose repository authorization
+was revoked. Preparation therefore rethrows the original error so the promise
+rejects and there is nothing to observe; rethrowing the original
+`TerminalToolError` rather than a sentinel is what keeps the waiter's error
+actionable (`repository_access_revoked` and friends). Anything added to the
+activation path must preserve that: fail the acquisition, do not clean up after
+it. `HarnessPluginActivationError` is no longer raised from this plugin.
+
+### 2026-08-30 — A Rally-owned snapshot can preinstall the managed capabilities
+
+**What changed:** `apps/api/scripts/build-terminal-snapshot.ts`
+(`pnpm --filter @rally/api terminal:build-snapshot`) builds a named Daytona
+snapshot from a required `TERMINAL_SNAPSHOT_BASE_IMAGE`, applying
+`terminalManagedSnapshotBootstrapCommand()` as the image's build step. Nothing
+adopts it: the operator points `DAYTONA_TERMINAL_SNAPSHOT` at the result and
+runs the existing `terminal:verify-provider` acceptance gate before any region
+serves from it.
+
+**Why:** Daytona's managed default image ships none of `sqlite3`, `gh`, `pnpm`,
+`tsx`, so every new work-stream sandbox installs all four before the
+participant's first Terminal tool can run — inside `prepareSandbox`, inside the
+blocking `load_plugin` activation. Measured on the pinned command text in a
+Linux container: ~14.4s with the capabilities missing against **117ms** with
+them present, since the bootstrap's `command -v` guards then skip every install.
+`apt-get update` alone is 5.7s of that. Production telemetry localises the cost
+the same way: every recorded `restore` acquisition, which skips this phase,
+lands in 1–5s, while no `start`, which runs it, has ever landed under 5s.
+
+The weekly rebuild opens a labelled `Daytona Snapshot Upgrade` pull request
+rather than writing a job summary. A verified snapshot nobody adopts is this
+workflow's most likely failure: the job goes green every Monday, the rebuild
+sits unused, and production runs an image that ages anyway. A pull request lands
+in the queue the team already works, so adoption is one merge and rollback is
+one revert, while a human still sits between a rebuilt image and every new
+sandbox.
+
+The build step is the bootstrap base64-encoded into a single line, not the
+script itself. Daytona renders each build command as one Dockerfile `RUN`, and a
+Dockerfile instruction cannot span raw newlines, so handing it the multi-line
+bootstrap made that script's second line its own instruction and the create call
+failed with `dockerfile parse error on line 3: unknown instruction: sudo`.
+Shell quoting does not help — the parser splits the line before any shell sees
+the quotes. Encoding removes newlines, quotes, and metacharacters together while
+keeping the script byte-identical to the one the runtime would have run.
+
+**Considered and rejected:** A second package list maintained beside the
+bootstrap — it would drift from the runtime, and a snapshot that disagrees with
+the manifest fails closed at acceptance rather than obviously. A
+`SNAPSHOT_PREBUILT` flag letting the runtime skip the bootstrap — the `command
+-v` guards already make it a 117ms no-op, and a flag that lies would skip the
+manifest verification that fails closed on a breaking image update. Defaulting
+the base image — the manifest probes fifteen capabilities and a wrong guess
+ships a sandbox missing a runtime the prompt promises the model.
+
+**Consequences:** The snapshot and the runtime share one source of truth, so
+adding a capability means editing the bootstrap and rebuilding, not editing two
+lists. The runtime bootstrap stays on the create path unchanged and still
+verifies the manifest, so a snapshot that silently loses a capability is still
+caught. **This script had not been executed against Daytona when this was written** (it was on 2026-09-07; see the 2026-09-08 entry) — this environment
+has no `DAYTONA_API_KEY` — so the base image, the build, and the resulting
+snapshot are unverified; the acceptance probe is what must establish them.
+
+Owning a snapshot also gives up what the 2026-08-13 entry below bought
+deliberately: Daytona's managed base updates no longer reach Rally on their own.
+The manifest probe does not close that gap — it fails closed on a capability
+that is *missing or broken*, not on one that is merely stale, so a pinned base
+that is months behind passes every probe. The concrete case is the Netleash CA
+that the managed image bakes into curl's trust store and Rally reads through
+`$CURL_CA_BUNDLE`: rotate it under a pinned snapshot and `git-ca` still passes
+while real Git operations fail. `rebuild-terminal-snapshot.yml` is the mitigation
+and the condition — a weekly rebuild bounds staleness to a week and proves each
+one with the acceptance probe. Do not adopt an owned snapshot without it.
+
+### 2026-08-30 — The managed-snapshot bootstrap stops paying for work it can batch
+
+**What changed:** The two `npm install --global` calls that add `pnpm` and `tsx`
+became one call carrying both, accumulated through a `node_packages` variable in
+the same shape as the `system_packages` branch above it. The fifteen snapshot
+probes now run concurrently against per-probe marker files and are swept after
+`wait`, rather than executing one after another under `set -e`.
+
+**Why:** Both sit on the critical path of a participant's first Terminal tool,
+inside the blocking `load_plugin` activation. Measured in a Linux container on
+the pinned command text: the split `npm` calls cost 3.3s against 1.5s combined,
+because each invocation pays npm's own start-up and registry handshake before
+installing anything; the sequential probe cost 1.3–2.3s, of which `pnpm
+--version` alone is 770ms and `python3 -m pip --version` 250ms — fifteen
+interpreters booting in series. Concurrent probing bounds that phase by its
+slowest single probe, measured at 727ms.
+
+This is the cheap half of a larger finding. The same measurements show the
+bootstrap costs ~14.4s when the snapshot lacks `sqlite3`/`gh`/`pnpm`/`tsx` and
+117ms when it ships them, because the `command -v` guards then skip every
+install. Production telemetry agrees on where that lands: across all recorded
+acquisitions, every `restore` (which skips `prepareSandbox`) completes in 1–5s
+while no `start` (which runs it) has ever completed in under 5s. A Rally-owned
+snapshot carrying those four capabilities is the change that removes the ~13s;
+this entry only removes what could be removed without one.
+
+**Considered and rejected:** Merging install and verify into a single provider
+`executeCommand` to save one round trip — it would collapse the `install` and
+`verify` failure phases that `sandbox_bootstrap` reports separately, trading
+deliberate observability for less than a second. Caching probe results per
+snapshot version across sandboxes — that needs shared state for a 727ms phase.
+Dropping probes from the manifest — the manifest is the fail-closed contract
+against a breaking managed-image update, not overhead.
+
+**Consequences:** The probe reports *every* missing capability as
+`AVALON_PROBE_MISSING=<ids>` rather than failing at the first, so a breaking
+image update is one diagnostic instead of one per redeploy. A probe that fails
+still writes no marker and the sweep still exits non-zero, so the phase remains
+fail-closed; anything added to `TERMINAL_SNAPSHOT_PROBES` must stay independent
+of the others, because they no longer run in a defined order. The probe now
+writes into `/workspace/.rally/tmp`, which the bootstrap already owns and the
+probe already asserts.
 
 ### 2026-08-30 — EU Terminal is a supported regional deployment
 
