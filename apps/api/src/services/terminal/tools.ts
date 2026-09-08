@@ -2,7 +2,12 @@ import type { HarnessToolContext, HarnessToolResult } from "@rally/agent-harness
 import type { AttachmentKind } from "@rally/contracts";
 import type { z } from "zod";
 
-import { TerminalArgumentSchemas, type TerminalToolExecutors } from "./contract";
+import {
+  TERMINAL_OUTPUT_ROOT,
+  TERMINAL_WORKSPACE_ROOT,
+  TerminalArgumentSchemas,
+  type TerminalToolExecutors,
+} from "./contract";
 import type { TerminalCheckoutRepositoryOutput } from "./repository-selection";
 
 const MAX_FILE_BYTES = 10 * 1_048_576;
@@ -245,26 +250,68 @@ export function requireTerminalEffectIntent(
   throw new TerminalToolError("tool_receipt_missing", message, { reason });
 }
 
-function pathOutsideRoot(field: "filePath" | "cwd"): never {
-  throw new TerminalToolError(
-    "path_outside_root",
-    "The path must stay inside the terminal workspace. Use a relative path with `/` separators and no `..`.",
-    { field, reason: "Use a workspace-relative path with / separators." },
-  );
+type TerminalPathField = "filePath" | "cwd" | "destinationPath" | "patch";
+type TerminalPathRoot = "workspace" | "output";
+
+function rootLabel(root: TerminalPathRoot): string {
+  return root === "output"
+    ? `the output directory, \`$AVALON_RESOURCE_DIR\` (\`${TERMINAL_OUTPUT_ROOT}\`)`
+    : `the workspace root (\`${TERMINAL_WORKSPACE_ROOT}\`)`;
 }
 
-function safeRelativePath(value: string, field: "filePath" | "cwd"): string {
+function rootExamples(root: TerminalPathRoot): string {
+  return root === "output" ? "`report.md` or `site`" : "`notes.md` or `out/report.md`";
+}
+
+// The refused value is echoed so the model can see what was wrong: without it,
+// a model that had already used `/` separators and no `..` read the old message
+// as confirmation and sent the same value again — four times, in one recorded
+// run. The value is model-authored. It is cut to the path schema's own 4,096
+// limit (a patch header line has no bound of its own) and passed through the
+// same sanitizer every other Terminal string gets before it reaches the
+// transcript.
+function refusedValue(value: string): string {
+  return sanitizeTerminalOutput(value.slice(0, 4_096));
+}
+
+function pathOutsideRoot(field: TerminalPathField, value: string, root: TerminalPathRoot): never {
+  const refused = refusedValue(value);
+  const message = field === "patch"
+    ? `A path in the patch, \`${refused}\`, leaves ${rootLabel(root)}. Regenerate the patch with paths relative to that root, with no leading \`/\` and no \`..\` segment.`
+    : `\`${field}\` must stay inside ${rootLabel(root)}, and \`${refused}\` does not. Pass a path relative to that root, such as ${rootExamples(root)}, with no leading \`/\` and no \`..\` segment.${field === "cwd" ? " Omit `cwd` to run in the workspace root." : ""}`;
+  throw new TerminalToolError("path_outside_root", message, {
+    field,
+    reason: `Use a path relative to ${root === "output" ? "AVALON_RESOURCE_DIR" : "the workspace root"}, with no leading / and no .. segment.`,
+  });
+}
+
+function safeRelativePath(
+  value: string,
+  field: TerminalPathField,
+  root: TerminalPathRoot = "workspace",
+): string {
   if (
-    !value
-    || value.startsWith("/")
+    value.startsWith("/")
     || value.includes("\\")
     || value.includes("\0")
     || value.split("/").some((segment) => segment === "..")
   ) {
-    return pathOutsideRoot(field);
+    return pathOutsideRoot(field, value, root);
   }
   const normalized = value.split("/").filter((segment) => segment && segment !== ".").join("/");
-  if (!normalized) return pathOutsideRoot(field);
+  if (!normalized) {
+    // `.` and `./` name the root, which is inside the root: a legal working
+    // directory (the runtime's default), but not something to read, write,
+    // import onto, or publish as a whole.
+    if (field === "cwd") return "";
+    throw new TerminalToolError(
+      "invalid_path",
+      field === "patch"
+        ? `A path in the patch names ${rootLabel(root)} itself. Regenerate the patch with file paths beneath that root.`
+        : `\`${field}\` names ${rootLabel(root)} itself. Pass a path beneath it, such as ${rootExamples(root)}.`,
+      { field, reason: "Name a path beneath the root, not the root itself." },
+    );
+  }
   return normalized;
 }
 
@@ -438,7 +485,7 @@ export function createTerminalToolExecutors(runtime: TerminalRuntime): TerminalT
       if (new Set(paths).size > 100) {
         throw new TerminalToolError("limit_exceeded", "The request exceeds this tool’s limit. Reduce the identified range, bytes, output, or file count and try again.", { field: "patch", expected: "at most 100 files" });
       }
-      for (const path of paths) safeRelativePath(path, "filePath");
+      for (const path of paths) safeRelativePath(path, "patch");
       try {
         const output = await runtime.applyPatch(context, input.patch);
         return { output, summary: `Patched ${output.files.length} file${output.files.length === 1 ? "" : "s"}` };
@@ -484,7 +531,7 @@ export function createTerminalToolExecutors(runtime: TerminalRuntime): TerminalT
     async import_resource(rawInput, context): Promise<HarnessToolResult> {
       const input: ImportResourceInput = TerminalArgumentSchemas.import_resource.parse(rawInput);
       const placed = "destinationPath" in input
-        ? { ...input, destinationPath: safeRelativePath(input.destinationPath, "filePath") }
+        ? { ...input, destinationPath: safeRelativePath(input.destinationPath, "destinationPath") }
         : input;
       const output = await runtime.importResource(context, placed);
       return { output, summary: `Imported resource ${input.resourceId}` };
@@ -493,7 +540,7 @@ export function createTerminalToolExecutors(runtime: TerminalRuntime): TerminalT
       const input: PublishResourceInput = TerminalArgumentSchemas.publish_resource.parse(rawInput);
       const output = await runtime.publishResource(context, {
         ...input,
-        filePath: safeRelativePath(input.filePath, "filePath"),
+        filePath: safeRelativePath(input.filePath, "filePath", "output"),
       });
       return { output, summary: `Published ${output.title}` };
     },
