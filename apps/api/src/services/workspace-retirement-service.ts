@@ -60,8 +60,6 @@ export interface WorkspaceRetirementInput {
    * `workspace_retirement_pass` log says which one.
    */
   operatorId?: string;
-  /** ISO instant written to the register once the whole graph is closed. */
-  completedAt: string;
 }
 
 export interface WorkspaceRetirementReceipt {
@@ -227,7 +225,7 @@ export async function retireWorkspaceGraph(
   // closed. It is what lets the Demos page list what is live without waking a
   // retired object to ask it. A workspace this feature never made has no row,
   // and the update is a no-op for it.
-  if (receipt.complete) await markDemoWorkspaceRetired(env.DB, input.workspaceId, input.completedAt);
+  if (receipt.complete) await markDemoWorkspaceRetired(env.DB, input.workspaceId, new Date(input.retiredAt).toISOString());
 
   // The region's own record of who closed this workspace. The tombstone names
   // an operator retirement; this line names the operator, and it is the one
@@ -286,6 +284,5 @@ export async function retireWorkspaceForOperator(
     actorUserId: null,
     reason: "operator_retirement",
     operatorId: operator.operatorId,
-    completedAt: new Date(retiredAt).toISOString(),
   });
 }

@@ -36,6 +36,9 @@ export function preRetirementProductSqliteDatabase(): DatabaseSync {
 }
 
 /** The narrow slice of the D1 surface the services under test use. */
+/** D1's per-statement bound-parameter ceiling — the engine's, not a choice here. */
+const D1_BOUND_PARAMETER_LIMIT = 100;
+
 export function sqliteD1(database: DatabaseSync): D1Database {
   let tail: Promise<void> = Promise.resolve();
   let depth = 0;
@@ -61,6 +64,14 @@ export function sqliteD1(database: DatabaseSync): D1Database {
     let values: unknown[] = [];
     const statement = {
       bind(...next: unknown[]) {
+        // D1 refuses a statement past its bound-parameter ceiling, and
+        // `node:sqlite` does not (its own limit is in the tens of thousands),
+        // so a read that expands an id list into `IN (?, …)` without chunking
+        // passes here and fails in production. Refuse the way D1 does; the
+        // limit is the engine's (`durable-objects/bound-parameters.ts`).
+        if (next.length > D1_BOUND_PARAMETER_LIMIT) {
+          throw new Error(`D1_ERROR: too many SQL variables: ${next.length} bound, ${D1_BOUND_PARAMETER_LIMIT} allowed`);
+        }
         values = next;
         return statement;
       },

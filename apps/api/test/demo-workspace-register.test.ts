@@ -1,16 +1,12 @@
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 
-import {
-  demoWorkspaceByOperation,
-  markDemoWorkspaceReady,
-  markDemoWorkspaceRetired,
-} from "../src/services/demo-workspace-register";
+import { markDemoWorkspaceRetired } from "../src/services/demo-workspace-register";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
 /**
- * The register, read from the operation rows: which workspaces this feature
- * made, which are still being prepared, and which are closed.
+ * The register's one write from outside the operation: the retirement walk's
+ * `retired_at`, on the row of the workspace it closed.
  */
 
 const DEMO_ID = "00000000-0000-7000-8000-0000000000d1";
@@ -47,46 +43,27 @@ function seed(): D1Database {
     INSERT INTO demo_operations
       (operation_id, company_name, presenter_user_id, pack_version, cast_json, workspace_id,
        status, attempt, created_at, updated_at)
-    VALUES ('${OPERATION_ID}', 'Alto Capital', '${PRESENTER_ID}', 'v1', '{}', NULL,
-            'running', 1, '${NOW}', '${NOW}');
+    VALUES ('${OPERATION_ID}', 'Alto Capital', '${PRESENTER_ID}', 'v1', '{}', '${DEMO_ID}',
+            'ready', 1, '${NOW}', '${NOW}');
   `);
   return sqliteD1(database);
 }
 
+async function retiredAt(db: D1Database): Promise<string | null> {
+  return (await db.prepare("SELECT retired_at FROM demo_operations WHERE operation_id = ?").bind(OPERATION_ID)
+    .first<{ retired_at: string | null }>())!.retired_at;
+}
+
 describe("demo workspace register", () => {
-  it("knows a workspace only once the operation has allocated one", async () => {
+  it("closes a demo once, and never touches a workspace it did not make", async () => {
     const db = seed();
-    expect(await demoWorkspaceByOperation(db, OPERATION_ID)).toBeNull();
-
-    // The creating phase writes the id before the workspace row exists; the
-    // register answers from that moment.
-    await db.prepare("UPDATE demo_operations SET workspace_id = ? WHERE operation_id = ?").bind(DEMO_ID, OPERATION_ID).run();
-    expect(await demoWorkspaceByOperation(db, OPERATION_ID)).toMatchObject({
-      workspaceId: DEMO_ID,
-      operationId: OPERATION_ID,
-      companyName: "Alto Capital",
-      readyAt: null,
-      retiredAt: null,
-    });
-  });
-
-  it("publishes once, and closes a demo without touching a workspace it never made", async () => {
-    const db = seed();
-    await db.prepare("UPDATE demo_operations SET workspace_id = ? WHERE operation_id = ?").bind(DEMO_ID, OPERATION_ID).run();
-
-    const ready = await markDemoWorkspaceReady(db, OPERATION_ID, "2026-09-05T12:10:00.000Z");
-    expect(ready?.readyAt).toBe("2026-09-05T12:10:00.000Z");
-
-    // Publishing is terminal; a resumed pass does not move the instant.
-    await markDemoWorkspaceReady(db, OPERATION_ID, "2026-09-05T12:20:00.000Z");
-    expect((await demoWorkspaceByOperation(db, OPERATION_ID))?.readyAt)
-      .toBe("2026-09-05T12:10:00.000Z");
+    expect(await retiredAt(db)).toBeNull();
 
     await markDemoWorkspaceRetired(db, DEMO_ID, "2026-09-05T13:00:00.000Z");
-    expect((await demoWorkspaceByOperation(db, OPERATION_ID))?.retiredAt).toBe("2026-09-05T13:00:00.000Z");
-    // Closing is terminal too.
+    expect(await retiredAt(db)).toBe("2026-09-05T13:00:00.000Z");
+    // Closing is terminal: a resumed walk does not move the instant.
     await markDemoWorkspaceRetired(db, DEMO_ID, "2026-09-05T14:00:00.000Z");
-    expect((await demoWorkspaceByOperation(db, OPERATION_ID))?.retiredAt).toBe("2026-09-05T13:00:00.000Z");
+    expect(await retiredAt(db)).toBe("2026-09-05T13:00:00.000Z");
 
     // A workspace this feature never made has no row, and retiring it through
     // the same call is a no-op rather than an error.

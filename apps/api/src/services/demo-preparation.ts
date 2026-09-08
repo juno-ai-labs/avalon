@@ -24,6 +24,7 @@
  * without a Workflow binding. `docs/demo-workspaces.md` owns the feature.
  */
 import {
+  DEMO_PREPARATION_PHASES,
   DemoOperationStartRequestSchema,
   DemoOperationStatusSchema,
   asWorkspaceId,
@@ -32,12 +33,13 @@ import {
   type DemoPreparationPhase,
 } from "@rally/contracts";
 
+import { boundParameterChunks } from "../durable-objects/bound-parameters";
 import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { uuidV7 } from "../lib/uuid-v7";
 import { logInfo, logWarn } from "../observability/logger";
 import { copyTemplateConnections } from "./demo-connection-copy";
-import { PLACEHOLDER_DEMO_PACK, type DemoPack } from "./demo-pack";
+import { DemoPackSchema, PLACEHOLDER_DEMO_PACK, type DemoPack } from "./demo-pack";
 import { checkDemoReadiness, demoReadinessManifest } from "./demo-readiness";
 import {
   applyDemoSeedAction,
@@ -45,15 +47,22 @@ import {
   openDemoSeedSession,
   settleDemoSeedAction,
 } from "./demo-seeder";
-import { markDemoWorkspaceReady } from "./demo-workspace-register";
 import { DEMO_TEMPLATE_WORKSPACE_ID } from "./demo-workspace-visibility";
 import { RegionalOnboardingService } from "./platform-onboarding-service";
 import { workspaceRuntimeDatabase } from "./workspace-runtime-database";
 import { retireWorkspaceGraph } from "./workspace-retirement-service";
 
-/** The one pack in service. Swapping it is a data change behind the schema. */
+let activePack: DemoPack | null = null;
+
+/**
+ * The one pack in service, checked against the schema the first time a demo
+ * needs it rather than when the Worker's module graph loads. Swapping it is a
+ * source change behind the schema; a pack the schema refuses fails the demo
+ * route that asked, not every route in both regions at boot.
+ */
 export function activeDemoPack(): DemoPack {
-  return PLACEHOLDER_DEMO_PACK;
+  activePack ??= DemoPackSchema.parse(PLACEHOLDER_DEMO_PACK);
+  return activePack;
 }
 
 function nowIso(): string {
@@ -172,22 +181,36 @@ function toStatus(record: OperationRecord, phases: PhaseRecord[], confirmed: num
 async function statusesOf(env: Env, records: OperationRecord[]): Promise<DemoOperationStatus[]> {
   if (records.length === 0) return [];
   const ids = records.map((record) => record.operation_id);
-  const placeholders = ids.map(() => "?").join(", ");
-  const [phases, receipts] = await Promise.all([
-    env.DB.prepare(`${PHASE_SELECT} WHERE operation_id IN (${placeholders}) ORDER BY started_at, phase`)
-      .bind(...ids).all<PhaseRecord>(),
-    env.DB.prepare(
-      `SELECT operation_id, COUNT(*) AS confirmed FROM demo_seed_receipts
-        WHERE operation_id IN (${placeholders}) GROUP BY operation_id`,
-    ).bind(...ids).all<{ operation_id: string; confirmed: number }>(),
-  ]);
   const phasesByOperation = new Map<string, PhaseRecord[]>();
-  for (const phase of phases.results ?? []) {
-    const list = phasesByOperation.get(phase.operation_id) ?? [];
-    list.push(phase);
-    phasesByOperation.set(phase.operation_id, list);
+  const confirmedByOperation = new Map<string, number>();
+  // In runs that fit one statement: every operation ever prepared is listed,
+  // and D1 refuses a statement past its bound parameter ceiling — which would
+  // have taken the whole list, live demos included, down for good once enough
+  // had been prepared.
+  for (const chunk of boundParameterChunks(ids)) {
+    const placeholders = chunk.map(() => "?").join(", ");
+    const [phases, receipts] = await Promise.all([
+      env.DB.prepare(`${PHASE_SELECT} WHERE operation_id IN (${placeholders})`)
+        .bind(...chunk).all<PhaseRecord>(),
+      env.DB.prepare(
+        `SELECT operation_id, COUNT(*) AS confirmed FROM demo_seed_receipts
+          WHERE operation_id IN (${placeholders}) GROUP BY operation_id`,
+      ).bind(...chunk).all<{ operation_id: string; confirmed: number }>(),
+    ]);
+    for (const phase of phases.results ?? []) {
+      const list = phasesByOperation.get(phase.operation_id) ?? [];
+      list.push(phase);
+      phasesByOperation.set(phase.operation_id, list);
+    }
+    for (const row of receipts.results ?? []) confirmedByOperation.set(row.operation_id, Number(row.confirmed));
   }
-  const confirmedByOperation = new Map((receipts.results ?? []).map((row) => [row.operation_id, Number(row.confirmed)]));
+  // In pipeline order, not by clock: a retried attempt re-enters the first
+  // phase with a fresh `started_at` while a stale later phase keeps its old
+  // one, and the page reads the list in order to find where the operation is.
+  const ordinal = new Map(DEMO_PREPARATION_PHASES.map((phase, index) => [phase, index]));
+  for (const list of phasesByOperation.values()) {
+    list.sort((a, b) => (ordinal.get(a.phase) ?? 0) - (ordinal.get(b.phase) ?? 0) || a.attempt - b.attempt);
+  }
   return records.map((record) => toStatus(
     record,
     phasesByOperation.get(record.operation_id) ?? [],
@@ -318,6 +341,7 @@ async function launchAttempt(env: Env, operationId: string, attempt: number): Pr
 export async function startDemoOperation(
   env: Env,
   input: { operationId: string; companyName: string; presenterUserId: string; cast: Record<string, string> },
+  operator: { operatorId: string | null } = { operatorId: null },
 ): Promise<DemoOperationStatus> {
   requireDemoRegion(env);
   requireDriver(env);
@@ -337,7 +361,7 @@ export async function startDemoOperation(
   }
   await assertTemplateCast(env, input.presenterUserId, input.cast);
   const at = nowIso();
-  await env.DB.prepare(
+  const inserted = await env.DB.prepare(
     `INSERT INTO demo_operations
        (operation_id, company_name, presenter_user_id, pack_version, cast_json, workspace_id,
         status, attempt, created_at, updated_at)
@@ -347,11 +371,18 @@ export async function startDemoOperation(
     input.operationId, input.companyName, input.presenterUserId, pack.version,
     JSON.stringify(input.cast), at, at,
   ).run();
-  const record = await operationRecord(env.DB, input.operationId);
-  if (!record) throw new Error("demo_operation_not_recorded");
-  if (record.created_at === at && record.attempt === 1 && record.status === "running") {
+  // The insert's own answer decides who launches: exactly one submission of
+  // an operation id writes the row, and only it starts the driver. Deciding
+  // it from the row's timestamp instead let two submissions in the same
+  // millisecond both launch, and the loser's duplicate instance marked the
+  // operation failed under a driver that was running fine.
+  if (inserted.meta.changes === 1) {
     await launchAttempt(env, input.operationId, 1);
-    logInfo(env, "demo_operation_started", { operation_id: input.operationId, company_name: input.companyName });
+    logInfo(env, "demo_operation_started", {
+      operation_id: input.operationId,
+      company_name: input.companyName,
+      operator_id: operator.operatorId,
+    });
   }
   return (await demoOperationStatus(env, input.operationId))!;
 }
@@ -365,6 +396,9 @@ export async function startDemoOperation(
  */
 export async function retryDemoOperation(env: Env, operationId: string): Promise<DemoOperationStatus> {
   requireDemoRegion(env);
+  // Before the row moves: without the driver, a bumped attempt would sit
+  // `running` with nothing running it and its diagnosis erased.
+  requireDriver(env);
   const record = await operationRecord(env.DB, operationId);
   if (!record) throw new ApiError(404, "demo_operation_not_found", "No such demo preparation");
   if (record.status !== "failed" && record.status !== "running") {
@@ -386,20 +420,30 @@ export async function retryDemoOperation(env: Env, operationId: string): Promise
 }
 
 /**
- * Abandon an unfinished candidate: retire what it made and close the operation.
+ * Abandon an unfinished candidate: close the operation, then retire what it made.
  *
  * A demo that is already published is closed from the workspaces tab like any
  * other workspace; this is for the one that never got there, and it is refused
- * for one that did — by the row's status and by `ready_at`, which a driver
- * writes in the same phase, so neither can say "published" while the other
- * does not. The confirmation names the operation, so the irreversible
- * retirement of its workspace is not made by a page that forgot to ask. A
- * workspace that was allocated but never created has no row to retire.
+ * for one that did — by the row's status and by `ready_at`, which the wait
+ * phase writes in the same fenced statement as `status = 'ready'`, so neither
+ * can say "published" while the other does not.
+ *
+ * The row is claimed first. Claiming it is what stops a live driver: every
+ * phase refuses an operation that is not `running`, so a driver still seeding
+ * the candidate meets that refusal at its next phase rather than writing into
+ * a workspace the walk is closing. And the claim is the check, made in one
+ * statement: a wait phase that publishes between a read and a write would
+ * otherwise have its demo retired anyway, with the row left saying `ready`.
+ * A claimed operation whose walk was interrupted is asked again with the same
+ * call, and returns to what remains.
+ *
+ * The confirmation names the operation, compared with the path as retirement's
+ * is: a consistency check on the request, made in Ace and again here.
  */
 export async function abandonDemoOperation(
   env: Env,
   operationId: string,
-  input: { confirmOperationId: string; actorUserId: string | null },
+  input: { confirmOperationId: string; operatorId?: string | null },
 ): Promise<DemoOperationStatus> {
   requireDemoRegion(env);
   if (input.confirmOperationId !== operationId) {
@@ -407,32 +451,50 @@ export async function abandonDemoOperation(
   }
   const record = await operationRecord(env.DB, operationId);
   if (!record) throw new ApiError(404, "demo_operation_not_found", "No such demo preparation");
-  if (record.status === "abandoned") return (await demoOperationStatus(env, operationId))!;
-  if (record.status === "ready" || record.ready_at !== null) {
-    throw new ApiError(409, "demo_operation_ready", "A published demo is retired from the workspaces tab");
+  const at = nowIso();
+  const claimed = await env.DB.prepare(
+    `UPDATE demo_operations SET status = 'abandoned', updated_at = ?
+      WHERE operation_id = ? AND status IN ('running', 'failed') AND ready_at IS NULL`,
+  ).bind(at, operationId).run();
+  if (claimed.meta.changes === 0) {
+    const current = await operationRecord(env.DB, operationId);
+    // Already abandoned and already closed: nothing left to do.
+    if (current?.status === "abandoned" && (current.retired_at !== null || current.workspace_id === null)) {
+      return (await demoOperationStatus(env, operationId))!;
+    }
+    if (current?.status !== "abandoned") {
+      throw new ApiError(409, "demo_operation_ready", "A published demo is retired from the workspaces tab");
+    }
+    // Abandoned earlier, walk unfinished: fall through and ask again.
   }
   if (record.workspace_id) {
     const created = await env.DB.prepare("SELECT id FROM workspaces WHERE id = ? AND region = ?")
       .bind(record.workspace_id, env.AVALON_REGION).first<{ id: string }>();
     if (created) {
+      // The same D1 fence the operator door writes: a candidate nobody was
+      // ever offered still has its cast seated, and the fence is what keeps
+      // it out of their discovery and their sign-in from here on.
+      await env.DB.prepare(
+        "UPDATE workspaces SET abandoned_at = ?, updated_at = ? WHERE id = ? AND region = ? AND abandoned_at IS NULL",
+      ).bind(at, at, record.workspace_id, env.AVALON_REGION).run();
       const receipt = await retireWorkspaceGraph(env, {
         workspaceId: asWorkspaceId(record.workspace_id),
         retiredAt: Date.now(),
         operationId,
-        actorUserId: input.actorUserId,
+        actorUserId: null,
         reason: "demo_abandoned",
-        completedAt: nowIso(),
+        ...(input.operatorId ? { operatorId: input.operatorId } : {}),
       });
       if (!receipt.complete) {
         throw new ApiError(409, "demo_abandon_incomplete", `${receipt.remaining} objects are still open; ask again`);
       }
     }
   }
-  await env.DB.prepare(
-    `UPDATE demo_operations SET status = 'abandoned', updated_at = ?
-      WHERE operation_id = ? AND status IN ('running', 'failed')`,
-  ).bind(nowIso(), operationId).run();
-  logInfo(env, "demo_operation_abandoned", { operation_id: operationId, workspace_id: record.workspace_id });
+  logInfo(env, "demo_operation_abandoned", {
+    operation_id: operationId,
+    workspace_id: record.workspace_id,
+    operator_id: input.operatorId ?? null,
+  });
   return (await demoOperationStatus(env, operationId))!;
 }
 
@@ -607,11 +669,16 @@ export async function failDemoPreparationDriver(
  * The wait reached the driver's last round without the workspace matching.
  * Fails the phase with the gaps its last round recorded still on the row.
  */
-export async function exhaustDemoProjectionWait(env: Env, operationId: string, attempt: number, rounds: number): Promise<never> {
+export async function exhaustDemoProjectionWait(
+  env: Env,
+  operationId: string,
+  attempt: number,
+  wait: { rounds: number; minutes: number },
+): Promise<never> {
   const error = new ApiError(
     409,
     "demo_projection_wait_exhausted",
-    `The workspace did not match the pack within ${rounds} readiness checks`,
+    `The workspace did not match the pack within ${wait.rounds} readiness checks (about ${wait.minutes} minutes)`,
   );
   return failPhase(env, operationId, "waiting_for_workspace", attempt, error);
 }
@@ -720,14 +787,17 @@ async function phaseBody(
         roles: cast,
       });
       const manifest = demoReadinessManifest(pack, session.cast, await demoSeedReceipts(env.DB, record.operation_id));
-      const report = await checkDemoReadiness(env, { workspaceId, manifest });
+      const report = await checkDemoReadiness(env, { operationId: record.operation_id, workspaceId, manifest });
       if (!report.ready) return { outcome: "waiting", detail: { gaps: report.gaps, checkedAt: report.checkedAt } };
       const at = nowIso();
-      await markDemoWorkspaceReady(env.DB, record.operation_id, at);
+      // Published and `ready` in one fenced statement. `ready_at` is what
+      // discovery reads and `status` is what the page and abandon read; a
+      // driver superseded between the check above and here writes neither,
+      // rather than publishing a workspace whose row still says `running`.
       await env.DB.prepare(
-        `UPDATE demo_operations SET status = 'ready', updated_at = ?
+        `UPDATE demo_operations SET status = 'ready', ready_at = COALESCE(ready_at, ?), updated_at = ?
           WHERE operation_id = ? AND attempt = ? AND status = 'running'`,
-      ).bind(at, record.operation_id, options.attempt).run();
+      ).bind(at, at, record.operation_id, options.attempt).run();
       logInfo(env, "demo_operation_ready", { operation_id: record.operation_id, workspace_id: workspaceId });
       return { outcome: "ready", detail: { checkedAt: report.checkedAt, readyAt: at } };
     }

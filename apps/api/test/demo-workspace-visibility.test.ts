@@ -1,7 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { markDemoWorkspaceReady } from "../src/services/demo-workspace-register";
 import {
   DEMO_TEMPLATE_WORKSPACE_ID,
   demoWorkspaceAdmission,
@@ -26,6 +25,7 @@ import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 const CANDIDATE_ID = "00000000-0000-7000-8000-0000000000d1";
 const PUBLISHED_ID = "00000000-0000-7000-8000-0000000000d2";
 const RETIRED_ID = "00000000-0000-7000-8000-0000000000d3";
+const ABANDONED_ID = "00000000-0000-7000-8000-0000000000d4";
 const CUSTOMER_ID = "00000000-0000-7000-8000-0000000000c1";
 const PRESENTER_ID = "00000000-0000-7000-8000-0000000000a1";
 const NOW = "2026-09-05T12:00:00.000Z";
@@ -48,6 +48,7 @@ async function seed(): Promise<D1Database> {
     [CANDIDATE_ID, "Alto Capital-demo"],
     [PUBLISHED_ID, "Phoenix-demo"],
     [RETIRED_ID, "Cardinal-demo"],
+    [ABANDONED_ID, "Birch-demo"],
     [CUSTOMER_ID, "Acme-demo"],
   ] as const) {
     database.exec(`
@@ -64,10 +65,19 @@ async function seed(): Promise<D1Database> {
        VALUES (?, 'Demo', ?, 'v1', '{}', ?, 'running', 1, ?, ?)`,
     ).bind(`00000000-0000-7000-8000-0000000000f${index}`, PRESENTER_ID, workspaceId, NOW, NOW).run();
   }
-  await markDemoWorkspaceReady(db, "00000000-0000-7000-8000-0000000000f1", NOW);
-  await markDemoWorkspaceReady(db, "00000000-0000-7000-8000-0000000000f2", NOW);
+  // Published the way the wait phase publishes: `ready_at` and `status` together.
+  for (const operationId of ["00000000-0000-7000-8000-0000000000f1", "00000000-0000-7000-8000-0000000000f2"]) {
+    await db.prepare("UPDATE demo_operations SET ready_at = ?, status = 'ready' WHERE operation_id = ?").bind(NOW, operationId).run();
+  }
   await db.prepare("UPDATE demo_operations SET retired_at = ? WHERE workspace_id = ?")
     .bind("2026-09-05T13:00:00.000Z", RETIRED_ID).run();
+  // Abandoned before it was ever published: retired, and never `ready_at`.
+  await db.prepare(
+    `INSERT INTO demo_operations
+       (operation_id, company_name, presenter_user_id, pack_version, cast_json, workspace_id,
+        status, attempt, retired_at, created_at, updated_at)
+     VALUES (?, 'Demo', ?, 'v1', '{}', ?, 'abandoned', 1, ?, ?, ?)`,
+  ).bind("00000000-0000-7000-8000-0000000000f3", PRESENTER_ID, ABANDONED_ID, "2026-09-05T13:00:00.000Z", NOW, NOW).run();
   return db;
 }
 
@@ -80,13 +90,17 @@ describe("demo workspace visibility", () => {
     expect(await demoWorkspaceAdmission(db, DEMO_TEMPLATE_WORKSPACE_ID)).toBe("template");
     expect(await demoWorkspaceAdmission(db, CANDIDATE_ID)).toBe("preparing");
     expect(await demoWorkspaceAdmission(db, PUBLISHED_ID)).toBe("open");
-    // Closed by its tombstone, not by being hidden.
+    // Published, so ordinary from then on: a retired demo is closed the way
+    // any closed workspace is (`abandoned_at`), not by being hidden here.
     expect(await demoWorkspaceAdmission(db, RETIRED_ID)).toBe("open");
+    // Never published: abandoned and retired, and withheld for good. Offering
+    // it would put a half-seeded, tombstoned workspace in the presenter's menu.
+    expect(await demoWorkspaceAdmission(db, ABANDONED_ID)).toBe("preparing");
     // Named like a demo and never published, so this feature has no opinion.
     expect(await demoWorkspaceAdmission(db, CUSTOMER_ID)).toBe("open");
   });
 
-  it("withholds only the template and the unpublished candidate from a member's list", async () => {
+  it("withholds the template and every unpublished candidate from a member's list", async () => {
     const db = await seed();
 
     const withheld = await withheldDemoWorkspaceIds(db, [
@@ -94,17 +108,20 @@ describe("demo workspace visibility", () => {
       CANDIDATE_ID,
       PUBLISHED_ID,
       RETIRED_ID,
+      ABANDONED_ID,
       CUSTOMER_ID,
     ]);
 
-    expect([...withheld].sort()).toEqual([CANDIDATE_ID, DEMO_TEMPLATE_WORKSPACE_ID].sort());
+    expect([...withheld].sort()).toEqual([ABANDONED_ID, CANDIDATE_ID, DEMO_TEMPLATE_WORKSPACE_ID].sort());
   });
 
-  it("asks nothing of the register for a member who is in no demo", async () => {
+  it("withholds nothing from a member who is in no demo, however many workspaces they hold", async () => {
     const db = await seed();
-    // The common case by a wide margin, and the one that must not pay for this
-    // feature: no candidate ids means no query at all.
     expect([...await withheldDemoWorkspaceIds(db, [CUSTOMER_ID])]).toEqual([]);
     expect([...await withheldDemoWorkspaceIds(db, [])]).toEqual([]);
+    // Past D1's bound-parameter ceiling in one statement: the read runs in
+    // chunks rather than failing the member's whole discovery.
+    const many = Array.from({ length: 205 }, (_, index) => `00000000-0000-7000-8000-${String(index).padStart(12, "0")}`);
+    expect([...await withheldDemoWorkspaceIds(db, [...many, CANDIDATE_ID])]).toEqual([CANDIDATE_ID]);
   });
 });

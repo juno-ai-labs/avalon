@@ -1,3 +1,5 @@
+import { boundParameterChunks } from "../durable-objects/bound-parameters";
+
 /**
  * Which workspaces a member is not offered, and why.
  *
@@ -48,14 +50,17 @@ export async function demoWorkspaceAdmission(
 ): Promise<DemoWorkspaceAdmission> {
   if (workspaceId === DEMO_TEMPLATE_WORKSPACE_ID) return "template";
   const row = await db.prepare(
-    "SELECT ready_at, retired_at FROM demo_operations WHERE workspace_id = ?",
-  ).bind(workspaceId).first<{ ready_at: string | null; retired_at: string | null }>();
+    "SELECT ready_at FROM demo_operations WHERE workspace_id = ?",
+  ).bind(workspaceId).first<{ ready_at: string | null }>();
   if (!row) return "open";
-  // A published demo is an ordinary workspace to its presenter, and a retired
-  // one is closed by its tombstone rather than by being hidden — hiding it would
-  // leave somebody who is already in it looking at a workspace that silently
-  // vanished from their switcher while its rooms still answered.
-  return row.ready_at === null && row.retired_at === null ? "preparing" : "open";
+  // A published demo is an ordinary workspace to its presenter from that
+  // moment on, retired or not: retirement closes it the way any closed
+  // workspace is closed (`workspaces.abandoned_at`, which discovery already
+  // fences on), so nothing here has to hide it. A candidate that was never
+  // published stays withheld for good — an abandoned preparation retires a
+  // workspace nobody was ever in, and offering it afterwards would put a
+  // half-seeded, tombstoned workspace in the presenter's account menu.
+  return row.ready_at === null ? "preparing" : "open";
 }
 
 /**
@@ -78,11 +83,16 @@ export async function withheldDemoWorkspaceIds(
     return true;
   });
   if (candidates.length === 0) return withheld;
-  const placeholders = candidates.map(() => "?").join(", ");
-  const rows = await db.prepare(
-    `SELECT workspace_id FROM demo_operations
-      WHERE workspace_id IN (${placeholders}) AND ready_at IS NULL AND retired_at IS NULL`,
-  ).bind(...candidates).all<{ workspace_id: string }>();
-  for (const row of rows.results ?? []) withheld.add(row.workspace_id);
+  // In runs that fit one statement: D1 refuses a statement past its bound
+  // parameter ceiling, and this runs on the discovery path for every member,
+  // whose workspace count is theirs to grow.
+  for (const chunk of boundParameterChunks(candidates)) {
+    const placeholders = chunk.map(() => "?").join(", ");
+    const rows = await db.prepare(
+      `SELECT workspace_id FROM demo_operations
+        WHERE workspace_id IN (${placeholders}) AND ready_at IS NULL`,
+    ).bind(...chunk).all<{ workspace_id: string }>();
+    for (const row of rows.results ?? []) withheld.add(row.workspace_id);
+  }
   return withheld;
 }
