@@ -189,7 +189,7 @@ export function applyVersionedWorkstreamState(
 export function applyWorkspaceWorkstreamFields(
   queryClient: QueryClient,
   workstreamId: string,
-  patch: Pick<WorkstreamSummary, 'pinPosition'>,
+  patch: Pick<WorkstreamSummary, 'pinPosition' | 'lastAccessedAt'>,
   directoryWaterline: number,
 ): boolean {
   const waterlines = queryClient.getQueryData<Record<string, number>>(

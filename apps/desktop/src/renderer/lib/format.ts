@@ -6,6 +6,18 @@ const relativeTime = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' })
 const dateTime = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 const shortTime = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' });
 
+/** Missing metadata means an older server; explicit null means never visited. */
+export function workstreamRecencyAt(workstream: Pick<WorkstreamSummary, 'lastAccessedAt' | 'createdAt' | 'lastActivityAt'>): string {
+  return workstream.lastAccessedAt === undefined
+    ? workstream.lastActivityAt
+    : workstream.lastAccessedAt ?? workstream.createdAt ?? workstream.lastActivityAt;
+}
+
+export function compareWorkstreamRecency(left: WorkstreamSummary, right: WorkstreamSummary): number {
+  return Date.parse(workstreamRecencyAt(right)) - Date.parse(workstreamRecencyAt(left))
+    || left.id.localeCompare(right.id);
+}
+
 export function formatRelative(value: string, now = new Date()): string {
   const date = new Date(value);
   const delta = date.getTime() - now.getTime();

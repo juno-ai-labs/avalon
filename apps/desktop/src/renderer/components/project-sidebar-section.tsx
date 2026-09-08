@@ -1,3 +1,4 @@
+import { compareWorkstreamRecency } from '../lib/format';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { IconLock, IconPlus, IconTriangle } from '@tabler/icons-react';
 import clsx from 'clsx';
@@ -337,10 +338,7 @@ export function ProjectSidebarSection({
                   {isExpanded && (() => {
                     const members = workstreams
                       .filter((workstream) => project.workstreamIds.includes(workstream.id))
-                      .sort((left, right) => (
-                        new Date(right.lastActivityAt).getTime() - new Date(left.lastActivityAt).getTime()
-                        || left.id.localeCompare(right.id)
-                      ));
+                      .sort(compareWorkstreamRecency);
                     const missing = project.workstreamIds.length - members.length;
                     return project.workstreamIds.length === 0
                       ? <p className="project-sidebar-empty">No work streams</p>

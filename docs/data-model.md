@@ -32,6 +32,15 @@ relationally queried.
 Read it before adding a table, a column, or a migration, and before assuming that
 knowing an object's ID is enough to read it — it never is.
 
+## Personal work-stream access history
+
+WorkspaceDO migration 37 adds `workspace_workstream_access`, keyed by user and
+workstream, with an integer server timestamp and cascading deletion from the
+directory row. It is private object state, accessed through the workspace socket
+and directory RPCs, not the generic D1 facade. Foreground visits update it;
+read-watermark and child projection writes do not. See
+[sidebar ordering](workstream-pinning.md#recent-work-streams).
+
 ## Sidekick loading and attachment storage
 
 SidekickDO migration 3 adds automation.loadable, atomically maintained with the accepted revision. WorkspaceDO migration 35 projects this value, using null for unresolved legacy eligibility. Substream migration 43 adds sidekick_attachments and sidekick_execution_skills for conversation ownership and retry-stable instruction snapshots. Existing namespace lookup keys remain unchanged.
@@ -893,6 +902,13 @@ perform the regional audit/control write explicitly through
 `workspaceRegionalDatabase`, with idempotent repair on retry.
 
 ## Changelog
+
+### 2026-09-08 — Store per-user sidebar access history
+
+Migration 37 records visits separately from activity and read state because the
+sidebar must follow one person's access across sessions. The table stays in the
+regional WorkspaceDO and is not exposed through the generic database facade.
+
 
 ### 2026-09-08 — Order Sidekick registration replacement
 

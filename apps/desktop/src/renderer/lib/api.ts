@@ -352,6 +352,9 @@ export function mapWorkstreamSummary(workstream: WireWorkstream): WorkstreamSumm
       ? { ...workstream.nextPendingWakeup }
       : null,
     pinPosition: workstream.pinPosition,
+    // Only WorkspaceDO owns this field. Child responses omit it and must not
+    // erase a newer directory-waterlined visit when callers merge the result.
+    ...(workstream.lastAccessedAt !== undefined ? { lastAccessedAt: workstream.lastAccessedAt } : {}),
     participantUserIds: [...workstream.participantUserIds],
     participantExtraCount: workstream.participantExtraCount,
     preview: workstream.objective,

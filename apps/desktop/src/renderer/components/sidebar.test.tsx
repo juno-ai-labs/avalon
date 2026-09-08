@@ -179,6 +179,19 @@ describe('Sidebar work-stream markers', () => {
     });
   });
 
+  it('orders visits ahead of shared activity and keeps unvisited rows at creation time', () => {
+    const visited = { ...workstream('visited', 'Last visited', 'completed', '2026-07-01T00:00:00.000Z'),
+      createdAt: '2026-07-01T00:00:00.000Z', lastAccessedAt: '2026-08-02T00:00:00.000Z' };
+    const noisy = { ...workstream('noisy', 'New shared activity', 'completed', '2099-01-01T00:00:00.000Z'),
+      createdAt: '2026-07-20T00:00:00.000Z', lastAccessedAt: null };
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions}
+      automations={[]} notes={[]} onSignOut={vi.fn()} workspace={workspace}
+      workstreams={[noisy, visited]} /></Tooltip.Provider></MemoryRouter>);
+    const links = screen.getAllByRole('link').map((link) => link.textContent);
+    expect(links.findIndex((text) => text?.includes('Last visited')))
+      .toBeLessThan(links.findIndex((text) => text?.includes('New shared activity')));
+  });
+
   it('reduces the GrokBot shell navigation to work streams', () => {
     render(
       <MemoryRouter>
@@ -839,14 +852,15 @@ describe('Sidebar work-stream markers', () => {
   });
 
   it.each([
-    ['Mark all as read', 'mark_read', 'marked as read'],
-    ['Archive all', 'archive', 'archived'],
+    ['Mark all as read', 'mark_read', 'marked as read', false],
+    ['Archive all', 'archive', 'archived', true],
   ] as const)('confirms the %s grouping action with the server-side total', async (
     menuLabel,
     updateKind,
     resultCopy,
+    accessSupported,
   ) => {
-    const onPreviewWorkstreamBatch = vi.fn(async () => ({ matchedCount: 20, matchedNoteCount: 0 }));
+    const onPreviewWorkstreamBatch = vi.fn<(filter: unknown) => Promise<{ matchedCount: number; matchedNoteCount: number }>>(async () => ({ matchedCount: 20, matchedNoteCount: 0 }));
     const onApplyWorkstreamBatch = vi.fn(async () => ({ enqueuedCount: 20, archivedNoteCount: 0 }));
     render(
       <MemoryRouter>
@@ -858,7 +872,9 @@ describe('Sidebar work-stream markers', () => {
             onPreviewWorkstreamBatch={onPreviewWorkstreamBatch}
             onSignOut={vi.fn()}
             workspace={workspace}
-            workstreams={[workstream('recent', 'Recent planning', 'completed', new Date().toISOString())]}
+            workstreams={[{ ...workstream('recent', 'Recent planning', 'completed', new Date().toISOString()),
+              ...(accessSupported ? { lastAccessedAt: new Date().toISOString() } : {}),
+            }]}
           />
         </Tooltip.Provider>
       </MemoryRouter>,
@@ -870,6 +886,9 @@ describe('Sidebar work-stream markers', () => {
     });
     fireEvent.click(await screen.findByRole('menuitem', { name: menuLabel }));
 
+    await waitFor(() => expect(onPreviewWorkstreamBatch).toHaveBeenCalled());
+    if (accessSupported) expect(onPreviewWorkstreamBatch.mock.calls[0]?.[0]).toHaveProperty('recency', 'access');
+    else expect(onPreviewWorkstreamBatch.mock.calls[0]?.[0]).not.toHaveProperty('recency');
     const dialog = await screen.findByRole('dialog', { name: menuLabel });
     await waitFor(() => expect(dialog).toHaveTextContent(
       new RegExp(`20 work streams.*will be ${resultCopy}`, 'u'),
