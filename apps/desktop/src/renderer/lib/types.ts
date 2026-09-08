@@ -136,8 +136,9 @@ export interface AutomationSummary {
 export type WorkstreamAutomationSummary = Omit<AutomationSummary, 'scope' | 'owningWorkstreamId'>;
 
 export interface WorkstreamSummary {
-  lastAccessedAt?: string | null;
   id: string;
+  /** Workspace-owned visit; undefined means legacy metadata, null means unvisited. */
+  lastAccessedAt?: string | null;
   title: string;
   /** `naming` while Rally is choosing the title; the title is a placeholder. */
   titleStatus: 'naming' | 'automatic' | 'settled';

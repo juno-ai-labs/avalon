@@ -1,6 +1,7 @@
+import { WorkstreamSchema } from '@rally/contracts';
 import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { RallyApi, mapResource, mapWorkstreamDetail, redactQuery } from './api';
+import { RallyApi, mapWorkstreamSummary, mapResource, mapWorkstreamDetail, redactQuery } from './api';
 import type { ApiError } from './api';
 import type { DesktopSession } from '../../common/desktop';
 
@@ -193,6 +194,14 @@ afterEach(() => {
 });
 
 describe('Rally API wire adapter', () => {
+  it('does not erase a directory visit when a child response is merged', () => {
+    const child = mapWorkstreamSummary(WorkstreamSchema.parse(detail));
+    expect(child).not.toHaveProperty('lastAccessedAt');
+    const cached = { ...child, lastAccessedAt: '2026-09-08T00:00:00.000Z' };
+    expect({ ...cached, ...child }.lastAccessedAt).toBe(cached.lastAccessedAt);
+    expect(mapWorkstreamSummary(WorkstreamSchema.parse({ ...detail, lastAccessedAt: null })))
+      .toHaveProperty('lastAccessedAt', null);
+  });
   it('maps an automation detail: scope, lifecycle, revisions, trigger lines and runs', async () => {
     // The header reads the two revisions to decide whether Create may be
     // pressed, so both have to survive the mapping exactly as the wire says

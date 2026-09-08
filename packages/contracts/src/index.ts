@@ -648,9 +648,9 @@ export const WorkstreamSchema = z.object({
    * relative to the reader's other pins and changes whenever they rearrange
    * them. Sort by it; do not store it as an identity.
    */
-  /** Workspace-owned visit time for this viewer; absent on older servers. */
-  lastAccessedAt: TimestampSchema.nullable().optional(),
   pinPosition: z.number().int().nonnegative().nullable().default(null),
+  /** Workspace-owned visit time; omitted by older servers and child-owned responses. */
+  lastAccessedAt: TimestampSchema.nullable().optional(),
   /**
    * People in a personal work stream, for the sidebar facepile. At most
    * {@link WORKSTREAM_SIDEBAR_FACEPILE_LIMIT} ids, newest first, with
@@ -2238,8 +2238,14 @@ export const WorkspaceWorkstreamPageEventSchema = z.strictObject({
 
 export const WorkspaceWorkstreamRecencyEventSchema = z.strictObject({
   type: z.literal("workspace_workstream_recency"),
-  ...workspaceWorkstreamPageFields,
-}).superRefine(refineWorkstreamPagePairing);
+  directoryWaterline: z.number().int().nonnegative(),
+  workstream: WorkstreamSchema,
+  stateVersion: WorkspaceWorkstreamStateVersionSchema,
+}).superRefine((event, context) => {
+  if (event.workstream.id !== event.stateVersion.workstreamId) {
+    context.addIssue({ code: "custom", path: ["stateVersion"], message: "must identify the work stream" });
+  }
+});
 
 /**
  * Everything the sidebar paints, sent unprompted when a workspace socket

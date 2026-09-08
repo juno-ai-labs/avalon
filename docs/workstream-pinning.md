@@ -1,6 +1,6 @@
 # Work-stream pinning
 
-A pinned work stream leaves the last-accessed sidebar and moves into a
+A pinned work stream leaves the list sorted by last access and moves into a
 **Pinned** section under **Automations**, where it stays until it is unpinned.
 The section is arranged by hand — dragged into order, never sorted — and both the
 pin and the arrangement live on the server, so the same person opening Rally on
@@ -75,11 +75,16 @@ row uses its creation time until the first visit. The timestamp travels as
 `lastAccessedAt`, independently of shared activity and read markers.
 
 The directory page and cursor use the same timestamp, with work-stream ID as the
-tie-breaker. Foreground visits push a `workspace_workstream_recency` page only to
+tie-breaker. Foreground visits push one `workspace_workstream_recency` row only to
 that user's subscribed sessions. Reconnect reconstructs the order from SQL.
 Desktop applies access and pin fields under the directory waterline, separately
 from the child-owned common and viewer waterlines, so delayed activity snapshots
-cannot erase a visit. Project-contained work streams use the same access order.
+cannot erase a visit. Child REST responses omit access metadata; the API mapper
+preserves that omission so ordinary response merges cannot erase a newer visit.
+An absent access field means an older server and retains activity ordering and
+legacy bulk requests; explicit null means an unvisited row on a supporting server.
+A cursor whose timestamp no longer matches its row restarts at page one, covering
+old activity cursors during upgrade and visits made during a paged walk. Project-contained work streams use the same access order.
 
 The recency headings use access time too. Their bulk commands select
 `recency: "access"`; existing activity-based API callers retain their original
@@ -197,11 +202,12 @@ it repairs. Focus resting anywhere real belongs to whoever put it there.
 ## Boundary
 
 This module owns `WorkspaceDO.workspace_workstream_pins`, the three pin endpoints, `pinPosition` on the
-work-stream contract, and the Pinned section of the sidebar. The macOS menu bar
+work-stream contract, `workspace_workstream_access`/`lastAccessedAt`, and the
+Pinned and recent work-stream sections of the sidebar. The macOS menu bar
 item renders a second, read-only view of the same arrangement — its top five —
 and [`menu-bar.md`](menu-bar.md) owns that; it reads `pinPosition` and changes
 nothing. It owns no part of
-what a work stream *is*, who may read it, or how the recent list is sorted.
+what a work stream *is* or who may read it.
 
 It deliberately does not:
 
@@ -274,6 +280,26 @@ collides with itself. Positions are therefore kept unique by how they are
 allocated — `MAX(position) + 1` inside the insert — rather than by the schema.
 
 ## Changelog
+
+### 2026-09-08 — Preserve visit authority across response paths
+
+**What changed:** Visit pushes carry one row, including system rows, instead of
+rebuilding the recent page. Child responses cannot clear workspace-owned visits;
+legacy servers retain activity semantics. One renderer helper owns ordering and
+bulk-route matching, and incompatible cursor anchors restart the directory walk.
+
+**Why:** Review exposed response merges that erased visits, mismatched batch
+cleanup, unnecessary per-focus page work, and rollout compatibility gaps.
+
+**Considered and rejected:** Reading access time into every child response adds a
+cross-object read and still permits an older response to overwrite a newer push.
+Defaulting missing access fields to null would erase the legacy/support distinction.
+Workspace-wide invalidation would notify other members about one user's visit.
+
+**Consequences:** Keep live user-scoped pushes for session synchronization. The
+directory waterline orders workspace-owned fields, including visits; it is not a
+read marker. Unvisited rows intentionally use creation time rather than activity.
+
 
 ### 2026-09-07 — Order recent work streams by the viewer's access
 
