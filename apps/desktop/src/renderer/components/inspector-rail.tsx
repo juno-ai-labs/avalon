@@ -1,9 +1,10 @@
+import type { SidekickAttachment } from '@rally/contracts';
+import { AttachedSidekicks } from './attached-sidekicks';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Dialog from '@radix-ui/react-dialog';
 import {
   Archive,
   ArrowLeft,
-  Bot,
   Check,
   ChevronRight,
   ChevronsRight,
@@ -26,14 +27,13 @@ import { desktopBridge } from '../lib/platform';
 import { reportTelemetryProductIntent } from '../lib/telemetry';
 import type {
   ResourceVersion,
-  WorkstreamAutomationSummary,
   WorkstreamDetail,
   WorkstreamResource,
 } from '../lib/types';
 import { type RailInspector, type RailVariant, useUiStore } from '../lib/ui-store';
 import { useDebugEnabled } from '../lib/use-debug-enabled';
 import { ResourceIcon } from './markdown-citations';
-import { Avatar, Badge, Button, EmptyState, IconButton, InlineError, Modal } from './primitives';
+import { Avatar, AvatarStack, Badge, Button, EmptyState, IconButton, InlineError, Modal } from './primitives';
 import { SiteResourceDetail, type SiteResourceDetailProps } from './site-resource-detail';
 import { MarkdownBody } from './workstream-blocks';
 import { RailSurface } from './rail-surface';
@@ -70,6 +70,9 @@ interface InspectorRailProps {
     surface: SiteResourceDetailProps['surface'];
   };
   workstream?: WorkstreamDetail;
+  attachedSidekicks?: SidekickAttachment[] | undefined;
+  attachedSidekicksError?: string | undefined;
+  onRemoveSidekick?: ((id: string) => void) | undefined;
   /**
    * The automations this work stream owns, newest first.
    *
@@ -78,17 +81,13 @@ interface InspectorRailProps {
    * a pending fetch to `[]` tells somebody the room owns nothing while the
    * answer is still on its way.
    */
-  workstreamAutomations?: WorkstreamAutomationSummary[];
   /** Set when the list could not be loaded, so absence is not read as none. */
-  workstreamAutomationsError?: string | undefined;
   /** Opens one in the automation surface. Absent where there is nowhere to go. */
-  onOpenWorkstreamAutomation?: (automationId: string) => void;
   /**
    * Whether the context lists the automations this parent owns. Only a work
    * stream owns any; an automation's own conversation shows no such section
    * rather than an empty one.
    */
-  automationsSection?: boolean;
   onAddParticipant?: () => void;
   onAddResource?: () => void;
   onDetachResource?: (resource: WorkstreamResource) => void | Promise<void>;
@@ -144,55 +143,6 @@ function Section({ title, action, children }: { title: string; action?: React.Re
  * is a claim about the room rather than about the fetch, and saying it while a
  * request is in flight — or after one failed — is saying something false.
  */
-function WorkstreamAutomations({
-  automations,
-  error,
-  onOpen,
-}: {
-  automations?: WorkstreamAutomationSummary[];
-  error?: string | undefined;
-  onOpen?: (automationId: string) => void;
-}): React.JSX.Element {
-  if (error) return <p className="rail-empty-line">Could not load automations</p>;
-  if (!automations) return <p className="rail-empty-line">Loading automations…</p>;
-  if (automations.length === 0) return <p className="rail-empty-line">No automations</p>;
-  return (
-    <ul aria-label="Automations" className="rail-card-list">
-      {automations.map((automation) => (
-        <li className="rail-card" key={automation.id}>
-          <button
-            className="rail-card-main"
-            disabled={!onOpen}
-            onClick={() => onOpen?.(automation.id)}
-            type="button"
-          >
-            <span className="rail-card-icon"><Bot aria-hidden="true" size={14} /></span>
-            <span>
-              <strong>{automation.name}</strong>
-              <small>{automationStatusLine(automation)}</small>
-            </span>
-          </button>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-/**
- * What this automation is doing, in one line. A draft is labelled as one: it
- * is listed here so the room can find the conversation it is being written
- * in, not because it runs.
- */
-function automationStatusLine(automation: WorkstreamAutomationSummary): string {
-  if (automation.status === 'paused') return 'Paused';
-  if (automation.status === 'draft') return 'Draft';
-  return automation.nextRunAt
-    ? `Next ${new Date(automation.nextRunAt).toLocaleString(undefined, {
-        month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
-      })}`
-    : 'Active';
-}
-
 function ResourceCards({
   resources,
   onToggleWatch,
@@ -246,19 +196,17 @@ function watchLabel(resource: WorkstreamResource): { text: string; name: string 
 
 function ContextContent({
   workstream,
-  workstreamAutomations,
-  workstreamAutomationsError,
-  onOpenWorkstreamAutomation,
-  automationsSection = true,
+  attachedSidekicks,
+  attachedSidekicksError,
+  onRemoveSidekick,
   onAddParticipant,
   onAddResource,
   onToggleWatch,
 }: Pick<InspectorRailProps,
   | 'workstream'
-  | 'workstreamAutomations'
-  | 'workstreamAutomationsError'
-  | 'onOpenWorkstreamAutomation'
-  | 'automationsSection'
+  | 'attachedSidekicks'
+  | 'attachedSidekicksError'
+  | 'onRemoveSidekick'
   | 'onAddParticipant'
   | 'onAddResource'
   | 'onToggleWatch'
@@ -303,15 +251,7 @@ function ContextContent({
         {workstream.participants.length === 0 ? (
           <p className="rail-empty-line">No human participants</p>
         ) : (
-          <ul className="rail-list" aria-label="Participants">
-            {workstream.participants.map((participant) => (
-              <li className="person-row" key={participant.id}>
-                <Avatar member={participant} size="small" />
-                <span><strong>{participant.name}</strong><small>{participant.role ?? participant.email}</small></span>
-                {participant.id === workstream.createdBy?.id && <Badge>Creator</Badge>}
-              </li>
-            ))}
-          </ul>
+          <AvatarStack members={workstream.participants} />
         )}
         {workstream.viewers.length > 0 && (
           <div className="viewing-group">
@@ -339,17 +279,7 @@ function ContextContent({
         )}
       </Section>
 
-      {/* Between Artifacts and Details: what the room owns sits with the rest of
-          its context, above the metadata nobody scrolls to. */}
-      {automationsSection && (
-        <Section title="Automations">
-          <WorkstreamAutomations
-            automations={workstreamAutomations}
-            error={workstreamAutomationsError}
-            {...(onOpenWorkstreamAutomation ? { onOpen: onOpenWorkstreamAutomation } : {})}
-          />
-        </Section>
-      )}
+      <AttachedSidekicks items={attachedSidekicks} error={attachedSidekicksError} onRemove={onRemoveSidekick} />
 
       <Section title="Details">
         <dl className="detail-list">

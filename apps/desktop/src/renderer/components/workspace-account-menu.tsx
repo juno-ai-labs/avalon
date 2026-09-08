@@ -1,5 +1,6 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Tooltip from '@radix-ui/react-tooltip';
+import { desktopBridge } from '../lib/platform';
 import type { WorkspaceAttention } from '@rally/contracts';
 import {
   Check,
@@ -8,6 +9,7 @@ import {
   LogOut,
   Plus,
   Settings,
+  Sparkles,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
@@ -244,10 +246,16 @@ export function WorkspaceAccountMenu({
             sideOffset={8}
           >
             {presentation === 'grok' && (
-              <DropdownMenu.Item className="menu-item account-menu-item" onSelect={onOpenSettings}>
-                <Settings aria-hidden="true" />
-                <span>Settings</span>
-              </DropdownMenu.Item>
+              <>
+                <DropdownMenu.Item className="menu-item account-menu-item" onSelect={() => void desktopBridge().openSidekicks()}>
+                  <Sparkles aria-hidden="true" />
+                  <span>Sidekicks</span>
+                </DropdownMenu.Item>
+                <DropdownMenu.Item className="menu-item account-menu-item" onSelect={onOpenSettings}>
+                  <Settings aria-hidden="true" />
+                  <span>Settings</span>
+                </DropdownMenu.Item>
+              </>
             )}
             {enabled && (
               <>
@@ -366,6 +374,9 @@ export function WorkspaceAccountMenu({
                   <small>{regionLabel(activeWorkspace.region)} workspace</small>
                 </DropdownMenu.Label>
                 <DropdownMenu.Separator className="menu-separator" />
+                <DropdownMenu.Item asChild className="menu-item">
+                  <button onClick={() => void desktopBridge().openSidekicks()} type="button">Sidekicks</button>
+                </DropdownMenu.Item>
                 <DropdownMenu.Item asChild className="menu-item">
                   <button onClick={onOpenSettings} type="button"><Settings size={14} /> Settings…</button>
                 </DropdownMenu.Item>

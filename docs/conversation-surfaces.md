@@ -13,6 +13,22 @@ it. The extracted pieces below are still worth their seams (they are what a
 feed is made of), but a change to them has one caller, and a second surface is
 a thing to argue for rather than a thing to preserve.
 
+## Sidekick navigation and attachments
+
+The main-window `/sidekicks` adapter opens the dedicated library and returns the
+main window to its workstream route. Opening the account item from an existing
+detail navigates the singleton back to the library. The sidebar recognizes both
+legacy automation details and new Sidekick details. Attachment remove buttons
+have their own class so accessibility labels on the row do not apply button-only
+layout. Disabled email triggers hide the displayed address while preserving its
+permanent owner reservation. Workspace automation pushes invalidate the library
+and attachment REST queries in each open window, keeping cross-window authoring
+and availability changes visible without navigation.
+
+## Sidekick conversations and attachments
+
+Sidekick authoring uses the shared conversation surface in a separate library window. Generated descriptions summarize instructions; ready submissions save immediately. The center workstream sidebar replaces participant rows with a facepile and lists actually attached Sidekicks, with access-checked removal affecting future executions.
+
 ## Where the code lives
 
 - `apps/desktop/src/renderer/components/conversation-follow.tsx` owns the
@@ -107,6 +123,29 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-08 — Sidekick navigation and attachments
+
+The main-window `/sidekicks` adapter opens the dedicated library and returns the
+main window to its workstream route. Opening the account item from an existing
+detail navigates the singleton back to the library. The sidebar recognizes both
+legacy automation details and new Sidekick details. Attachment remove buttons
+have their own class so accessibility labels on the row do not apply button-only
+layout. Disabled email triggers hide the displayed address while preserving its
+permanent owner reservation. Workspace automation pushes invalidate the library
+and attachment REST queries in each open window, keeping cross-window authoring
+and availability changes visible without navigation.
+
+This records the review fixes because stale effects, overbroad revocation, and
+implicit compatibility assumptions can break otherwise valid delegated work.
+Future changes must retain the separate ownership and execution boundaries.
+
+### 2026-09-07 — Sidekick conversations and attachments
+
+Sidekick authoring uses the shared conversation surface in a separate library window. Generated descriptions summarize instructions; ready submissions save immediately. The center workstream sidebar replaces participant rows with a facepile and lists actually attached Sidekicks, with access-checked removal affecting future executions.
+
+This composes knowledge with existing execution machinery while keeping one Sidekick identity and preserving authorization boundaries.
+
 
 ### 2026-09-05 — Correct row identity and retained animation lifecycle
 

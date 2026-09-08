@@ -184,6 +184,7 @@ const bridge: RallyDesktopBridge = {
     ipcRenderer.invoke('artifact:set-preview-hidden', hidden) as Promise<void>,
   closeArtifactPreview: () => ipcRenderer.invoke('artifact:close-preview') as Promise<void>,
   popOutArtifact: (request) => ipcRenderer.invoke('artifact:pop-out', request) as Promise<void>,
+  openSidekicks: (sidekickId) => ipcRenderer.invoke('system:open-sidekicks', sidekickId) as Promise<void>,
   openSettings: (section) => ipcRenderer.invoke('system:open-settings', section) as Promise<void>,
   openMeetingNotes: (noteId) => ipcRenderer.invoke('system:open-meeting-notes', noteId) as Promise<void>,
   closeMeetingNotes: (noteId) => ipcRenderer.invoke('system:close-meeting-notes', noteId) as Promise<void>,

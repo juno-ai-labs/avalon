@@ -185,6 +185,7 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   "workspace_batch_dispatches",
   "workspace_directory_state",
   "workspace_external_event_registrations",
+  "external_registration_generations", // Owned by typed registration RPC only.
   "workspace_identity",
   "workspace_project_order",
   "workspace_project_state",

@@ -1,3 +1,6 @@
+import { ApiError } from "../lib/api-error";
+import { resolveSidekickSkills, sidekickHarnessSkill, sidekickSkillRef } from "./sidekick-skills";
+import type { SidekickSkillSnapshot } from "@rally/contracts";
 import { assertSafePublicUrl } from '../lib/public-web-url';
 import {
   AVALON_CURRENT_TIME_TOOL_DEFINITION,
@@ -104,7 +107,7 @@ import {
 } from "@rally/connectors";
 import { z } from "zod";
 import { automationDOName, conversationObjectName, workspaceDOName, workstreamDOName } from "../durable-objects/names";
-import { createAutomation } from "./automation-service";
+import { AutomationService, createAutomation } from "./automation-service";
 import { ResourceService } from "./resource-service";
 import type { TranscriptCompactionContinuation } from "../durable-objects/workstream-transcript-storage";
 import { rpcResultBody } from "../durable-objects/rpc-result";
@@ -1640,17 +1643,6 @@ export async function classifyWorkstreamMessage(
  * one, and a card is the wrong place to learn that a shape it does not know has
  * appeared.
  */
-function automationTriggerLine(trigger: AutomationDraft["triggers"][number]): string {
-  switch (trigger.type) {
-    case "manual": return "Run by hand";
-    case "calendar": return trigger.summary;
-    case "interval": return trigger.summary;
-    case "connector_activity": return `${trigger.connectorType}: ${trigger.eventTypes.join(", ")}`;
-    case "semantic_activity": return trigger.condition;
-    case "resource_watch": return "When the attached resource changes";
-    case "webhook": return `Webhook: ${trigger.eventTypes.join(", ")}`;
-  }
-}
 
 /**
  * The drafting tools, for a work-stream run.
@@ -1873,7 +1865,9 @@ function createAvalonAutomationsPlugin(
             scope: detail.scope,
             currentDefinitionRevision: detail.currentDefinitionRevision,
             acceptedDefinitionRevision: detail.acceptedDefinitionRevision,
-            currentDefinition: detail.currentDefinition,
+            currentDefinition: detail.currentDefinition && detail.currentDefinition.definitionVersion !== 2
+              ? { ...detail.currentDefinition, definitionVersion: 2, triggers: [...detail.currentDefinition.triggers, { type: "inbound_email" }] }
+              : detail.currentDefinition,
           };
         }));
         return { automations };
@@ -1920,41 +1914,24 @@ function createAvalonAutomationsPlugin(
           asWorkspaceId(input.workspaceId),
           automationDOName(env.AVALON_REGION, asWorkspaceId(input.workspaceId), targetId),
         );
-        const submitted = await automation.submitDefinition({
+        const membership = await env.DB.prepare(
+          `SELECT role FROM workspace_members WHERE workspace_id = ? AND user_id = ? AND status = 'active'`,
+        ).bind(input.workspaceId, authorUserId).first<{ role: "owner" | "admin" | "member" }>();
+        if (!membership) throw new Error("automation_draft_author_unavailable");
+        const actorRequest = await new AutomationService(env, {
+          sessionId: `run:${input.harnessRunId}`, userId: asUserId(authorUserId),
+          workspaceId: asWorkspaceId(input.workspaceId), region: input.region,
+          role: membership.role, analyticsWorkspaceId: null,
+        }).actorRequest(targetId);
+        const submitted = await automation.saveDefinition({
           workspaceId: asWorkspaceId(input.workspaceId),
           automationId: targetId,
-          draft,
+          draft: { ...draft, definitionVersion: 2 },
           evaluatorRules: draftState.evaluatorRules,
           submittedByRunId: input.harnessRunId,
+          actor: actorRequest.actor,
         });
-        if (input.parentKind === "automation") return submitted;
-        // The proposal, in the feed where the conversation happened. Posted
-        // after the draft exists so a card can never name an automation the
-        // accept action would not find.
-        const substream = await durableObjectStubForWorkspace(
-          env,
-          env.SUBSTREAM_AGENTS,
-          asWorkspaceId(input.workspaceId),
-          conversationObjectName(env.AVALON_REGION, asWorkspaceId(input.workspaceId), input.parentId),
-        );
-        await substream.appendDraftProposedCard({
-          schemaVersion: 1,
-          workspaceId: input.workspaceId,
-          workstreamId: input.parentId,
-          definitionRevision: submitted.definitionRevision,
-          occurredAt: Date.now(),
-          card: {
-            type: "automation_draft_proposed",
-            schemaVersion: 1,
-            automationId: targetId,
-            automationName: draft.name,
-            description: draft.description,
-            triggerSummaries: draft.triggers.map(automationTriggerLine),
-            suggestedScope: "workstream",
-            ready: draft.ready,
-          },
-        });
-        return submitted;
+        return { ...submitted, saved: draft.ready, description: draft.description };
       },
       // Held until the submission that has somewhere to put them. A draft
       // written here has no automation until its first submission, and the
@@ -2367,6 +2344,10 @@ export async function runWorkstreamHarness(
     runtimeResourceAttacher?: WorkstreamRuntimeResourceAttacher;
     /** Object-local authority for the one persistent loop of this substream. */
     persistentLoop?: {
+      readSidekickSkills(): SidekickSkillSnapshot | null;
+      attachedSidekickIds(): string[];
+      saveSidekickSkills(snapshot: SidekickSkillSnapshot): void;
+      activateSidekickSkill(ref: string): void;
       projection: BindLoopProjectionState | null;
       modelIterationsUsed: number;
       transcriptThrough: number;
@@ -2447,6 +2428,25 @@ export async function runWorkstreamHarness(
     .run({ runId: input.harnessRunId });
   if (!initialRun) return { status: "failed", error: { code: "harness_run_not_found", message: "Harness run not found" } };
   if (initialRun.status === "cancelled") return { status: "stopped" };
+  const storedSidekickSkills = runtime?.persistentLoop?.readSidekickSkills() ?? null;
+  const currentSidekickSources = await resolveSidekickSkills(env, input, storedSidekickSkills?.sources.map((source) => source.id));
+  if (storedSidekickSkills && storedSidekickSkills.sources.some((source) => storedSidekickSkills.activeRefs.includes(sidekickSkillRef(source.id)) && !currentSidekickSources.some((current) => current.id === source.id))) {
+    throw new ApiError(403, "sidekick_access_changed", "A Sidekick is no longer available to this execution");
+  }
+  const attachedSidekickIds = new Set(runtime?.persistentLoop?.attachedSidekickIds() ?? []);
+  const sidekickSnapshot = storedSidekickSkills ?? {
+    sources: currentSidekickSources,
+    activeRefs: currentSidekickSources.filter((source) => attachedSidekickIds.has(source.id)).map((source) => sidekickSkillRef(source.id)),
+  };
+  if (!storedSidekickSkills) runtime?.persistentLoop?.saveSidekickSkills(sidekickSnapshot);
+  const assertSidekickAuthority = async (): Promise<void> => {
+    const active = sidekickSnapshot.sources.filter((source) => sidekickSnapshot.activeRefs.includes(sidekickSkillRef(source.id)));
+    if (active.length === 0) return;
+    const authorized = await resolveSidekickSkills(env, input, active.map((source) => source.id));
+    if (active.some((source) => !authorized.some((current) => current.id === source.id))) {
+      throw new ApiError(403, "sidekick_access_changed", "A Sidekick is no longer available to this execution");
+    }
+  };
   const streamId = input.harnessRunId;
   const persistedHostOutcome = await loadPersistedHarnessHostOutcome(
     createHarnessRunObjectPort(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId),
@@ -3007,7 +3007,17 @@ export async function runWorkstreamHarness(
       // nothing else. What a surface may *do* is settled by the tool loop, so
       // withholding a skill would only hide advice, never authority, and
       // a future general skill would be hidden along with it.
-      skills: [...BUILT_IN_SKILLS],
+      skills: [...BUILT_IN_SKILLS, ...sidekickSnapshot.sources.map(sidekickHarnessSkill)],
+      skillActivationHints: sidekickSnapshot.activeRefs,
+      persistSkillActivation: async (ref) => {
+        const source = sidekickSnapshot.sources.find((entry) => sidekickSkillRef(entry.id) === ref);
+        if (source && !sidekickSnapshot.activeRefs.includes(ref)) {
+          const allowed = await resolveSidekickSkills(env, input, [source.id], false);
+          if (!allowed.some((entry) => entry.id === source.id)) throw new ApiError(403, "sidekick_access_changed", "This Sidekick is no longer available");
+        }
+        if (!sidekickSnapshot.activeRefs.includes(ref)) sidekickSnapshot.activeRefs.push(ref);
+        runtime?.persistentLoop?.activateSidekickSkill(ref);
+      },
       compaction: {
           prepare: async () => {
             await liveness.pulse("compaction_prepare", true);
@@ -3114,6 +3124,7 @@ export async function runWorkstreamHarness(
     beforeToolCall: composeBeforeToolCallHooks(
       async ({ pluginId, toolName }) => {
         await liveness.pulse("before_tool", true);
+        await assertSidekickAuthority();
         await assertRunAuthorityStillValid(env, input, runAuthoritySnapshot);
         const policy = toolPolicyForCall(pluginId, toolName, harnessTools);
         if (!policy) throw new ConnectorError("unauthorized", "Plugin tool is outside this run scope");
@@ -3264,6 +3275,7 @@ export async function runWorkstreamHarness(
     },
     onLiveness: async (stage) => {
       await liveness.pulse(stage, stage === "before_model" || stage === "after_tool");
+      if (stage === "before_model") await assertSidekickAuthority();
       await assertRunAuthorityStillValid(env, input, runAuthoritySnapshot);
     },
     findCompletedToolResult: async (toolCallId, inputHash, policyIdentity) => {

@@ -2051,7 +2051,6 @@ const automationDraftSubmissionJsonSchema = {
     instructions: { type: "string" },
     triggers: {
       type: "array",
-      minItems: 1,
       items: {
         type: "object",
         additionalProperties: false,
@@ -2059,7 +2058,7 @@ const automationDraftSubmissionJsonSchema = {
         properties: {
           type: {
             type: "string",
-            enum: ["manual", "calendar", "interval", "connector_activity", "semantic_activity", "resource_watch", "webhook"]
+            enum: ["manual", "inbound_email", "calendar", "interval", "connector_activity", "semantic_activity", "resource_watch", "webhook"]
           },
           rrule: { type: ["string", "null"] },
           timezone: {

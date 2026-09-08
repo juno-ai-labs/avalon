@@ -1,31 +1,77 @@
-# Durable automation lifecycle
+# Sidekick lifecycle
 
-An automation is one `AutomationDO` Durable Object and one conversation. The
-object is a conversation parent, like `WorkstreamDO`: its substream `0` is the
-automation's own chat, where the automation is drafted, created, and later
-edited, and every run is a child substream under it. The object holds the
-automation itself (lifecycle, immutable definition revisions, schedules, runs,
-inbound-email receipts) and the shared parent tables its conversations report
-into. Draft and active are lifecycle states of one object; applying a revision
-mints no second id and copies no state anywhere.
+A Sidekick lets a person delegate work or knowledge. `SidekickDO` owns its
+identity, authoring conversation, immutable definitions, optional triggers, and
+runs. The deployed automation namespace and object-name bytes remain compatible.
+Substream `0` is the authoring conversation; delegated runs are child substreams.
 
-`WorkspaceDO` keeps a content-free `automation_directory` row per automation,
-published by the object through the same outbox its children's aggregates
-travel through, plus the typed external-event registrations that fan a
-connector event out to it. A directory row can locate an automation; it never
-authorizes reading one.
+## Sidekick publication and loading
 
-Read this before changing automation routes, the drafting plugin, triggers,
-schedules, runs, the result tool, or the sidebar row. The hierarchy an
-`AutomationDO` sits in, the conversation-parent contract it implements, and the
-effect pipeline its children use are owned by
-[`workstream-durable-object.md`](workstream-durable-object.md).
+Authoring is conversational. A ready submission saves through `saveDefinition`,
+which checks management authority before recording and publishing a revision.
+The model generates internal instructions and a user-friendly description. An
+incomplete submission does not replace the accepted revision. Edits preserve a
+person's pause; an archived owning room still refuses publication.
+
+`automation.loadable` is a stored boolean, not a consumer-derived classification.
+The `sidekickLoadable` policy currently returns true for zero configured triggers.
+Publication writes the accepted revision and this value in one transaction;
+drafts start false and draft edits or pause do not change it. Directory effects
+project the stored value. Changing the policy requires recomputing authoritative
+values and republishing projections; readers never infer it from trigger count.
+Legacy accepted definitions implicitly enabled email and remain non-loadable.
+New definitions use `definitionVersion: 2` and an explicit `inbound_email` trigger.
+Disabling email hides the address in details but retains its permanent reservation.
+Legacy `/automations` detail responses adapt empty/email-only triggers to a manual
+placeholder for installed clients; owner execution checks still refuse dedicated
+runs of instruction-only definitions. New clients read `/sidekicks` details.
+
+Instruction-only publication does not bind connectors, reserve an email address,
+or materialize execution memory tables. It cannot start a dedicated manual run.
+Triggered execution retains the existing occurrence-admission and run machinery.
+Publication records a `sidekick_publication` alarm alongside its accepted state,
+so a partial effect tail can reconcile without asking a person to apply again.
+
+The harness host resolves eligible Sidekicks through WorkspaceDO candidates and
+an authorized `readSkillSource` on each owner. A private source's audience must
+contain the entire receiving conversation; workspace sources stay regional and
+room sources stay within their owning room. Loading grants no tool credentials,
+Sidekick memory, authoring history, or run history. The model-visible catalog
+escapes metadata and presents it as data; activated instructions remain subordinate
+to platform policy and the receiving request. Only active sources are reauthorized
+before model/tool boundaries. A new activation separately rechecks eligibility,
+so deleting an unused catalog candidate does not stop unrelated work.
+
+A substream persists its skill snapshots by execution id and records loaded refs.
+Loading a Sidekick in a workstream's main substream also persists a deduplicated
+attachment. Future executions load eligible attachments using their latest
+accepted revision; retries retain the admitted bodies while rechecking access.
+Loads in other substreams stay execution-local. Removing an attachment affects
+future executions. The center sidebar lists attachments, not all owned automations.
+
+The Sidekicks library opens in its own window from the account popup, immediately
+above Settings. It lists accessible personal, workspace, and room Sidekicks.
+The library uses the normal desktop session and workspace boundary. The center
+sidebar renders participants as a facepile and provides attachment removal.
+
+### Class rename deployment
+
+The implementation exports both `SidekickDO` and its historical `AutomationDO`
+alias. This compatibility release keeps both regional configs at v9 and the
+`AUTOMATION_DOS` binding on `AutomationDO`; merging it cannot perform the class
+rename. After verifying both regional deployments against existing objects, a
+separate change must append v10 with `renamed_classes`, update the binding class
+and migration-tracker class reporting/force dispatch together, and verify existing
+identities, schedules, email, and history. Remove the old export only in a later
+change after that verification.
+Keep the existing `:automation:` object-name segment: changing it addresses new
+objects. This checkout alone does not prove the production rename has run.
 
 ## Where the code lives
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/api/src/durable-objects/automation-do.ts` | The object: its v1 schema, `create`, `submitDefinition`, `apply`, `pause`, `resume`, `remove`, `setOwningRoomArchived`, `runNow`, `admitExternalEvent`, `admitInboundEmail`, `readRunDefinition`, `readRunState`, `readDetail`, `listRuns`, `claimExecutionPrincipal`, the parent contract, the schedule and run-provisioning alarms, and the sidebar row it enqueues. |
+| `apps/api/src/durable-objects/sidekick-do.ts` | The object: its v1 schema, `create`, `submitDefinition`, `apply`, `pause`, `resume`, `remove`, `setOwningRoomArchived`, `runNow`, `admitExternalEvent`, `admitInboundEmail`, `readRunDefinition`, `readRunState`, `readDetail`, `listRuns`, `claimExecutionPrincipal`, the parent contract, the schedule and run-provisioning alarms, and the sidebar row it enqueues. |
 | `apps/api/src/durable-objects/automation-do-protocol.ts` | The request schemas the Worker and the Queue consumer send it, and the two alarm kinds `automation_schedule` and `automation_run`. |
 | `apps/api/src/durable-objects/conversation-parent-object.ts` | The parent half it inherits: child registry, projections, receipts, aggregation, the outbox and its drain. See [`workstream-durable-object.md`](workstream-durable-object.md). |
 | `apps/api/src/services/automation-service.ts` | `createAutomation`, the one way an automation comes into existence with its conversation open, used by `POST /automations` and by a room's first draft; and `AutomationService`, the Worker-side access every route goes through, which resolves whether the caller is in the owning room before asking the object. |
@@ -40,74 +86,43 @@ effect pipeline its children use are owned by
 | `apps/api/src/queues/activity-consumer.ts` | Delivers a matched event to `admitExternalEvent`, and a run child's effects to the object through the shared effect leg. |
 | `apps/api/src/services/resend-inbound-email-service.ts` | `ingestAutomation`: resolves the sender, stores the message, and calls `admitInboundEmail` once. |
 | `apps/api/src/services/memory-service.ts` | `resolveMemoryAccess`: a conversation whose parent is an automation resolves the workspace scope and the automation's own `automation` scope. |
-| `apps/desktop/src/renderer/screens/automation.tsx`, `components/automation-header.tsx`, `screens/conversation-surface.tsx` | `/automations/new` calls `POST /automations` and replaces itself with `/automations/:id`; that route renders the header (lifecycle badge, scope, email address, Create or Apply changes, Pause, Resume, Delete, Run now, the run list from `GET /automations/:id/runs`) over the shared conversation surface with `parentKind: "automation"` and `substreamId: "0"`. |
-| `apps/desktop/src/renderer/components/sidebar.tsx`, `components/inspector-rail.tsx` | The sidebar's personal and workspace automation strip above the user menu, legacy room-owned automation rows, and **New automation** action and the room rail's automation grouping from `GET /automations/workstream/:workstreamId`; an automation's own conversation shows no such grouping. |
+| `apps/desktop/src/renderer/screens/automation.tsx`, `components/automation-header.tsx`, `screens/conversation-surface.tsx` | `/sidekicks/new` calls creation and replaces itself with `/sidekicks/:id`; that route renders the header (lifecycle badge, scope, email address, Pause, Resume, Delete, Run now, the run list from `GET /automations/:id/runs`) over the shared conversation surface with `parentKind: "automation"` and `substreamId: "0"`. |
+| `apps/desktop/src/renderer/components/sidebar.tsx`, `components/inspector-rail.tsx` | Enabled standalone Sidekick tiles above the account menu open library details; the center rail shows authorized main-conversation attachments and the participant facepile. |
 
 ## How it works
 
-### Two entry points, two homes
+### Creation and ownership
 
-An automation is created empty and drafted in its own conversation. Two things
-create one:
+The separate Sidekicks window lists all accessible personal, workspace and
+workstream-owned entries, including drafts. `GET /sidekicks` uses
+`WorkspaceDO.listSidekickDirectory`; the old `/automations` listing remains a
+compatibility adapter. Directory membership never grants access to an owner.
 
-- **`POST /automations`**, the sidebar's "New automation". It takes no body:
-  `AutomationService.create` calls `createAutomation` with `scope: "personal"`
-  and no owning work stream, and answers `{automationId}`. The desktop's
-  `/automations/new` makes that call once per visit and replaces itself with
-  `/automations/:id`, so Back never lands on a screen that would create
-  another; the draft is written in the conversation that page shows, and
-  **Create** on its header is the first apply.
-- **A room's agent submitting a draft.** The `rally:automations` plugin is
-  available in every conversation except a run's: preloaded in an automation's
-  own conversation, and in a work stream deferred (discovered through
-  `list_plugins` and loaded with `load_plugin`). In a work stream, its first
-  `automation_submit_draft` calls `createAutomation` with `scope: "workstream"`,
-  `owningWorkstreamId` the room, and the harness run id as the automation id,
-  so a second submission from the same authoring loop refines the first
-  rather than creating another; it then submits the definition and appends an
-  `automation_draft_proposed` card to the room's feed, keyed on the automation
-  and the revision so a retry replays the card. In an automation's own
-  conversation the plugin submits to that automation and posts no card.
-- **Editing one that exists.** The plugin's `automations_list` returns what the
-  conversation may change, each with its current definition: in a room, the
-  automations the room owns; in an automation's own conversation, that
-  automation. A submission that names one of them (`automationId` beside the
-  draft, never inside it) writes the next revision of that automation instead
-  of creating another; in a room the card is posted again for the revision, and
-  the person applies it from the automation's page the way they accepted the
-  first one. A room naming an automation it does not own is refused with the
-  tool's own message, and an automation's conversation can name only itself.
+`POST /sidekicks` creates a personal draft and its authoring conversation.
+`/sidekicks/new` replaces itself with the resulting detail route so Back cannot
+create a second draft. The existing `rally:automations` plugin can also create a
+workstream-owned Sidekick from a workstream conversation. Persisted plugin and
+tool identities remain unchanged. Workstream-owned entries are managed in the
+library; the center sidebar shows loaded attachments only.
 
-`createAutomation` creates the object first (`AutomationDO.create`: the
-automation row in `draft`, its `"0"` child registered, its sidebar row
-enqueued), then bootstraps the conversation the way a work stream's is
-(`bootstrapWorkstreamRuntimeEnvironment` with `parentKind: "automation"`, which
-writes the D1 anchor and route keyed by the automation id, and
-`provisionWorkstreamObject` with the author as the one participant and the
-placeholder title "New automation"). The object exists before its conversation
-does, so the conversation's parent always answers.
+`createAutomation` reserves the durable owner before bootstrapping its main
+`SubstreamAgent`, preserving the existing automation parent identity and routes.
+The same conversation remains available for subsequent edits. Personal versus
+workspace scope is selected conversationally while drafting; a workstream-owned
+Sidekick remains owned by that workstream.
 
-Where an automation appears follows from how it was made. The left sidebar
-lists the automations `listAutomationDirectory` returns: every `workspace`
-automation and the viewer's own `personal` ones, drafts included, and never a
-room's (`owning_workstream_id IS NULL`). A room's automation appears only in
-that room's rail, through `GET /automations/workstream/:workstreamId`
-(`listWorkstreamAutomations`, gated on participation in the room), drafts
-included. Scope is chosen in the automation's own chat, between `personal` and
-`workspace`, and only while the automation is still a draft; a room's
-automation is the room's from the start and stays so.
+### Conversational publication
 
-Personal and workspace automations render as a horizontal scrolling strip at the bottom of the sidebar above the user menu,
-including in the conversation-only shell. The strip is absent when neither personal nor workspace
-automations exist. Each tile uses a rounded hexagon with flat left and right sides without eyes, a stable identity
-color, a centered symbol from the shared stream icon family, and a bottom-right square lifecycle marker (active, paused, or draft). It opens
-the existing automation route. Personal tiles retain Run now and Delete context
-actions; workspace tiles are navigation-only because directory summaries lack
-management capabilities. Their tooltip and accessible name identify Workspace
-scope. Management remains on the automation page.
-Room-owned automations remain in their room rail. The sidebar directory excludes
-them at the server; the legacy row renderer still accepts room-owned fixtures. Compact mode keeps Search and New chat above the scrolling
-streams, while automation tiles remain above the account menu.
+Enabled personal and workspace Sidekicks render as a horizontal scrolling strip
+above the account menu, including in compact mode. Enabled means lifecycle
+`active`, not a run currently in progress and not the stored `loadable` capability.
+Draft, paused, and workstream-owned Sidekicks are excluded. The strip is absent
+when no entries qualify. Each tile reuses the rounded hexagon, stable identity
+color, centered symbol, and square lifecycle marker introduced for automation
+shortcuts. Selecting a tile opens its detail in the singleton Sidekicks library
+window. Management and execution controls remain on that authorized detail;
+directory summaries alone do not advertise those capabilities. Compact mode
+retains Search and New chat above the scrolling streams.
 
 The strip follows the installed Grok Bot 0.44.0 pinned layout, inspected on
 2026-09-07 in `Contents/Resources/app.asar`: `index-C6zjACOA.js` and
@@ -124,89 +139,38 @@ state, and the square indicator at bottom right as requested.
 
 
 ### Drafting in the conversation
+`automation_submit_draft` calls `SidekickDO.saveDefinition` under the submitting
+actor's management authority. The owner appends an immutable revision and publishes
+it immediately when ready. New definitions carry `definitionVersion: 2`; inbound
+email is explicit. There is no instruction editor, type selector, or Create/Apply
+button. Incomplete submissions remain in authoring history without replacing the
+accepted revision. The legacy acceptance route remains callable for compatibility.
 
-The conversation is an ordinary `SubstreamAgent` under the automation, with the
-author seated and the same feed, composer, and plugin catalog a work stream
-has. What the drafting plugin's tools write is a **definition revision**:
-`automation_submit_draft` calls `AutomationDO.submitDefinition({draft,
-evaluatorRules, submittedByRunId})`, which appends an immutable row to
-`definition_revisions` (the draft JSON, its hash, the evaluator rules the
-loop's `automation_set_evaluator_rules` had buffered, and `ready` from the
-draft), bumps `current_definition_revision`, follows the draft's name and
-description onto the automation so the sidebar row names it, and enqueues the
-row. A draft that is not `ready` (the agent asked a clarifying question) is
-still a revision; apply refuses it until a ready one lands. A deleted
-automation refuses submissions.
+Instruction-only definitions bypass connector binding, schedule preparation,
+email reservation and memory-table creation. Triggered definitions reuse the
+existing validation and execution setup: bindings resolve against WorkspaceDO,
+workspace Sidekicks require workspace credentials, evaluator rules must name
+inspected sources, and schedules use their explicit or resolved timezone.
+The object's current revision and lifecycle are checked again after asynchronous
+preparation, before committing publication. An archived owning workstream refuses
+publication; an ordinary pause is preserved by editing.
 
-Nothing about drafting is fenced by a generation or a claim. The conversation
-is the automation's for its whole life, so an edit after acceptance is another
-turn in the same chat and another revision; applying it is the same action as
-the first apply.
+One transaction replaces schedules, stores bindings and evaluator projections,
+writes the accepted revision and computed `loadable`, emits the directory
+projection and records a publication alarm. The durable tail reconciles schedule
+alarms, external-event registrations and triggered memory tables. It records
+`applied_effects_revision` only after the tail succeeds. A partial tail retries
+from the accepted revision's persisted setup, without asking the user to press
+Apply. Removing triggers leaves admitted runs pinned to their original revision.
 
-### Applying a revision
+`SidekickDO.reconcileLoadable` is the explicit object-owned operation for a future
+policy change. It reads the accepted definition, preserves legacy implicit email
+semantics, writes the capability and republishes the directory. It does not accept
+a boolean from the caller. Consumers continue to read stored `loadable` unchanged.
 
-`POST /automations/:id/accept` is `AutomationDO.apply`. It is the first-time
-Create and every later re-apply alike, takes no body, and reads everything
-from the object: the current revision must be `ready`, and an active
-automation whose accepted revision is already the current one answers its
-detail without doing anything.
-
-Everything read from outside the object happens first, in `prepareApplication`:
-
-- **Bindings** come from the definition. `automationAcceptanceSelections`
-  derives the default plugins from `recommendedPlugins` and the activity
-  sources from each external trigger's binding key and suggested plugin; each
-  selected plugin resolves against `connector_connections` read through the
-  workspace runtime port (a WorkspaceDO table; regional D1 has not had it since
-  migration 0090). A plugin with no connection refuses with
-  `automation_plugin_unavailable`; a `workspace` automation may bind only
-  workspace connections (`automation_workspace_connection_required`); anybody
-  else's personal connection refuses with
-  `automation_personal_connection_access_denied`, because a room's automation
-  outlives whoever wrote it and binding a colleague's credentials would lend
-  them to a standing automation they never agreed to.
-- **Evaluators** are validated against the connector manifests: each rule
-  names an inspected plugin, its `all` leaves may name people (resolved against
-  active members) and resources (which must belong to the bound connection),
-  and `validateDraftEvaluatorRules` expands event families into one registration
-  per event type. `automationDraftAcceptanceBlocker` runs here too, the same
-  predicate the drafting tool's pre-check applies, so a `ready` draft is one
-  apply will not refuse for anything the draft itself settles.
-- **Schedules** are computed from the triggers: an interval from now, a calendar
-  from its RRULE in the trigger's timezone or, when it names none, the run-as
-  user's timezone for a personal automation and the workspace's otherwise
-  (`automation_timezone_invalid` when the runtime cannot format it,
-  `automation_recurrence_has_no_future` when the rule never fires again).
-- The **email address** is reserved in the Global registry
-  (`reserveAutomation`, idempotent per automation).
-
-Apply refuses a paused automation (`automation_not_active`: resume first) and
-one whose owning room is archived (`automation_room_archived`, the code
-`resume` answers with); a pause is lifted only by `resume`, never as a side
-effect of applying an edit.
-
-Then one transaction replaces `schedules`, writes the bindings, plugin ids,
-evaluator projection, and address onto the row, sets `lifecycle = 'active'`,
-clears `paused_by`, records the accepted revision, and enqueues the sidebar
-row. After it comes the tail: the object cancels the previous schedules' alarm
-entries and arms one `automation_schedule` entry per new schedule, replaces
-the workspace's registrations for this destination
-(`WorkspaceDO.applyExternalEventRegistrations`, a complete replacement with no
-coordinate or hash) and stores the `effectiveAfterEventSequence` it answers
-with, creates the tables the definition declares (below), and only then
-records `applied_effects_revision`. A failure anywhere throws to the caller
-as an `ApiError` (the class survives the RPC hop) and the caller applies
-again: the replay guard reads that marker, not the accepted revision, so a
-repeat re-runs the tail, every step of which is idempotent, and converges.
-
-The definition's `memoryTables` are created in the automation's memory scope
-at apply (`materializeAutomationMemoryTables`), through the same object path
-and with the same deterministic table id the memory tables plugin's `create`
-tool uses, so a table a run already created under that name is reopened when
-its shape matches and refused (`automation_memory_table_conflict`) when it
-does not. Nothing drops a table: a revision that stops declaring one leaves
-it and its rows behind. Each run is told about every live table in the scope,
-declared or run-made, as `durableTables` in its prompt context.
+Memory tables remain in the Sidekick's execution scope. Publishing an instruction
+source does not provision them, and loading instructions never grants access to
+these tables, credentials, authoring history or run history.
 
 ### Triggers and occurrences
 
@@ -383,8 +347,8 @@ Automation memory is ordinary WorkspaceDO memory; there is no separate engine.
   that admits without a key admits twice.
 - **A run stops when its automation no longer consents.** Pause and delete mark
   the run rows and the lifecycle, and `assertRunAuthorityStillValid` reads the
-  live state before every provider write. There is no generation fence on this
-  object; the row is the fence.
+  live state before every provider write. The lifecycle row fences run authority;
+  a separate registration generation orders asynchronous event-registration effects.
 - **A directory row locates; it never authorizes.** `automation_directory` holds
   no definition and no run content; every content read goes to the object, which
   re-derives authority from its own row, asking WorkspaceDO only whether a
@@ -442,7 +406,9 @@ or the memory store the automation scope lives in.
   a refusal.
 - **Apply fails part-way.** The transaction either committed or did not; the
   alarm re-arming and the registration replacement after it are idempotent, so
-  the caller applies again and converges. Nothing is fenced by generation.
+  the durable publication alarm retries and converges. Registration replacements
+  carry a monotonic generation; older effects cannot overwrite newer registration
+  state, and equal-generation retries preserve the original activation cutoff.
 - **A run cannot be provisioned.** The `automation_run` alarm entry backs off
   under the shared alarm gate and retries; every step is a replay on an opened
   object. A run admitted while the automation was paused is marked `stopped`
@@ -497,7 +463,8 @@ siblings in `test-workers/helpers/conversation-effects.ts`.
 
 ## Data model
 
-`AutomationDO` SQLite, one migration: `automation`, `definition_revisions`,
+`SidekickDO` SQLite (deployed under the `AutomationDO` compatibility class), four
+ordered object migrations: `automation`, `definition_revisions`,
 `schedules`, `runs`, `inbound_email_receipts`, the shared parent tables, and
 `_internal_durable_alarms`. [`workstream-durable-object.md`](workstream-durable-object.md#automationdo)
 catalogs the columns; the occurrence keys and run states are in the tables
@@ -507,14 +474,18 @@ run.
 `WorkspaceDO` migration 32 rebuilt `automation_directory` (automation id,
 workspace, author, `source_version`, hash, lifecycle, scope, owning work stream,
 title, description, next run, projected time) and
-`workspace_external_event_registrations` (no generation, version, or hash; a
-complete replacement per destination keyed on `destination_key`, with
+`workspace_external_event_registrations` (a complete replacement per destination
+keyed on `destination_key`, with
 `effective_after_event_sequence` as the cutoff), dropped
 `workspace_external_event_deliveries`, `automation_creation_claims`,
 `automation_cutover_campaign`, `automation_templates`, and
 `automation_template_versions`, and deleted every work-stream directory row an
 automation run had made. [`data-model.md`](data-model.md) is the map of both
-authorities.
+authorities. Workspace migration 35 projects stored `loadable`; migration 36
+adds `external_registration_generations`, retaining the latest generation and
+activation cutoff even for an empty replacement. Owner migration 4 stores the
+source counter. Versioned registration IDs equal immutable evaluator IDs, so a
+late delivery from a superseded predicate is refused by the owner.
 
 ## Regional impact
 
@@ -575,6 +546,39 @@ was paused or deleted after admission. [`runbook.md`](runbook.md) has the
 production inspection paths.
 
 ## Changelog
+
+### 2026-09-08 — Fence publication effects and preserve compatibility deployment
+
+Review exposed out-of-order registration replacement, model schemas that could
+not express instruction-only definitions, and discovery checks that revoked runs
+for unused sources. Publication now orders registration effects, validates new
+loads separately from active-source revocation, and resolves the real managing
+actor. Keeping v9 deployment configuration prevents merge automation from
+skipping the verified compatibility release; the later class rename must also
+update migration tracking. Permanent email claims and separate stored loading
+policy remain intact rather than conflating visibility with execution rights.
+
+### 2026-09-07 — Retain standalone tiles while rebasing Sidekicks
+
+The personal and workspace shortcut tiles from PRs #581 and #582 now represent
+enabled standalone Sidekicks. The user chose enabled lifecycle over in-progress
+runs, so no execution-state projection is needed. Tiles open the library detail;
+drafts and paused entries remain manageable there without occupying the strip.
+The account popup retains PR #578's simplified ordering, and the Sidekick
+WorkspaceDO projection moves to migration 35 after onboarding's released 34.
+Replacing the new tiles with library-only navigation was rejected because people
+still need direct access to enabled delegated work.
+
+### 2026-09-07 — Sidekicks compose reusable knowledge with optional execution
+
+Sidekicks broaden automation ownership to instructions that can load into an
+existing conversation. Loadability is stored policy output so future eligibility
+rules can change without rewriting consumers. Publication is conversational and
+immediate, while execution bindings remain unnecessary for knowledge alone.
+Main-conversation loads persist attachments and per-execution snapshots prevent
+edits from changing resumed instructions. The class rename preserves namespace
+identity; replacing objects would discard conversations and execution history.
+The library has a dedicated window so management does not displace ongoing work.
 
 ### 2026-09-07 — Include workspace automations in the strip
 

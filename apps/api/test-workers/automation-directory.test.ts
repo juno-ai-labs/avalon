@@ -178,6 +178,14 @@ describe("automation directory", () => {
     }))).rejects.toMatchObject({ code: "automation_directory_access_denied", status: 403 });
   });
 
+  it("authorizes library summaries across personal, workspace, and room scopes", async () => {
+    const personal = await createAndPublish("personal");
+    const shared = await createAndPublish("workspace");
+    const owned = await createAndPublish("workstream");
+    expect((await workspaceStub().listSidekickDirectory({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID })).items.map((item) => item.id).sort()).toEqual([personal, shared, owned].sort());
+    expect((await workspaceStub().listSidekickDirectory({ workspaceId: WORKSPACE_ID, userId: MEMBER_ID })).items.map((item) => item.id)).toEqual([shared]);
+  });
+
   it("keeps the three scopes apart in one workspace", async () => {
     const personal = await createAndPublish("personal");
     const shared = await createAndPublish("workspace");

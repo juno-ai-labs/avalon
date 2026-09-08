@@ -2,7 +2,7 @@ import workerEvents from "./worker-events";
 
 export { SubstreamAgent } from "./durable-objects/substream-agent";
 export { MigrationProbeDO } from "./durable-objects/migration-probe-do";
-export { AutomationDO } from "./durable-objects/automation-do";
+export { SidekickDO, AutomationDO } from "./durable-objects/sidekick-do";
 export { WorkstreamDO } from "./durable-objects/workstream-do";
 export { WorkspaceDO } from "./durable-objects/workspace-do";
 export { CrashSymbolicatorContainer } from "./crash-symbolicator-container";
