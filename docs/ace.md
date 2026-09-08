@@ -76,21 +76,32 @@ beside **Retry** and **Abandon**. There is no estimated time and no percentage;
 a running phase shows when it started, and a wait that failed keeps the gaps
 its last round named. **Retry** is offered for a failed preparation and for a
 running one that has stopped moving — the regional API starts the next
-attempt either way. **Abandon** retires the candidate workspace, so it asks
-for the operation id to be typed, sends it, and the regional API refuses
-without it. While anything is running the page re-reads every five seconds;
-when a read fails, the last known state stays on screen dated by its last
-successful read until the next read succeeds, and **Refresh** asks now. The
-template is read before the page judges it: "reading" first, then either the
-form or the regional API's own reason it could not be read. **New demo** takes
-a company name, the presenter, and a cast member per pack role from the
-template's members, deals the default cast out in order, refuses to start
-while one member holds two roles, and mints one operation id per form so a
-second click resolves to the same preparation. A Ready demo names the
-workspace the presenter switches to in Rally; the desktop's deep-link contract
-has no home-screen destination, so there is no link to fabricate
+attempt either way — and a retried operation is read by its current attempt:
+an earlier attempt's phase rows are shown as that attempt's receipts, never
+as the new driver's state. **Abandon** retires the candidate workspace, so it
+asks for the operation id to be typed, sends what was typed, and the regional
+API refuses without it; an abandoned operation says whether its candidate was
+closed, was never created, or was never allocated. Every gap the readiness
+check reports names the viewer it was read as. While anything is running, and
+for as long as the page is offline, it re-reads every five seconds; when a
+read fails, the last known state stays on screen dated by its last successful
+read until the next read succeeds, and **Refresh** asks now. There is no
+per-operation read: the list is the read, and selecting a row selects from
+it. The template is read before the page judges it: "reading" first, then
+either the form, the regional API's own reason it could not be read, or — when
+the template has fewer members than the pack has roles — a sentence saying so
+rather than a form that cannot be submitted. **New demo** takes a company
+name, the presenter, and a cast member per pack role from the template's
+members, deals the default cast out in order, refuses to start while one
+member holds two roles, and mints one operation id per form so a second click
+resolves to the same preparation. A Ready demo names the workspace and where
+the presenter finds it — the account menu at the foot of Rally's sidebar,
+which lists workspaces only while their `multiple-workspaces-enabled` flag is
+on, set from the Feature flags tab; the desktop's deep-link contract has no
+home-screen destination, so there is no link to fabricate
 ([`demo-workspaces.md`](demo-workspaces.md#open-questions)). A regional refusal
-reaches the page as the API's own code and message.
+reaches the page as the API's own code and message, and a response the shared
+contract cannot parse is named as a contract mismatch rather than an outage.
 
 **Workspaces.** The tab searches both regions' directories and retires the
 selected workspace in the region that owns it, through
@@ -274,7 +285,16 @@ active DLQ discovery, metrics, non-consuming peek, the exact
 Flagship-and-Queue write contract, the safe attribute vocabulary, operators,
 nested targeting, regional fan-out, the ranked model-role catalog, live exact-match
 OpenRouter validation, invalid free-text rejection, ordered fallbacks, and
-preservation of staged model variations and rules.
+preservation of staged model variations and rules. The operator pages have a
+Worker suite and a page suite each: `demos.test.ts` and `workspaces.test.ts`
+prove the relay — the operator credential presented, a regional refusal
+relayed by its own code, an outage answered as unavailable rather than as an
+empty page, the typed confirmation forwarded — and `demos-client.test.tsx` and
+`workspaces-client.test.tsx` prove the pages against a fetch double: phases
+from receipts, a retried operation read by its current attempt, the offline
+banner and the polling that keeps it honest, a template too small to cast,
+the typed-id ceremony, an incomplete retirement kept armed. `directory.test.ts`
+proves the two-region search against real SQLite, one region down included.
 `pnpm --filter @rally/ace typecheck`
 checks both browser and Worker programs; `pnpm --filter @rally/ace build`
 builds the Vite client and performs a Wrangler dry run. API workerd tests cover
@@ -406,6 +426,34 @@ When a save succeeds but clients do not change, inspect in order:
    response even if a live notification was lost.
 
 ## Changelog
+
+### 2026-09-08 — Review: the Demos page shows the attempt it is on
+
+**What changed:** The Demos page reads a retried operation by its current
+attempt and marks an earlier attempt's rows as that attempt's; keeps polling
+while offline even when nothing is running; shows an abandoned operation's
+outcome and any last failure beside it; says why a template is too small to
+cast instead of rendering a form that cannot be submitted; names the viewer
+beside each readiness gap, parsed with the shared contract; points the
+presenter at the account menu and the `multiple-workspaces-enabled` flag;
+forwards the typed confirmation on abandon rather than re-deriving it from the
+path; sequences a poll behind an action; and lost `GET /api/demos/:id`, which
+nothing called. `responseBody` is one helper shared by both pages.
+
+**Why:** A review swarm. A retried operation showed attempt one's stale
+"running" wait as attempt two's state; an offline page with nothing running
+stopped polling and its banner promised otherwise; a template short of members
+produced a nameless duplicate error; "the workspace switcher" named a control
+Rally does not have, and a presenter without the flag would have seen no
+workspaces at all; and the abandon confirmation was checked in Ace and then
+re-minted from the path, so the regional API never saw what the operator
+typed.
+
+**Considered and rejected:** Keeping the per-operation read for a future
+detail page — a route nothing calls is a route nobody tests.
+
+**Consequences:** `abandonDemoOperation` in `demos.ts` takes the confirmation.
+A phase row's attempt is part of what the page reads, not decoration.
 
 ### 2026-09-08 — Review: the Workspaces tab tells the truth about its own state
 

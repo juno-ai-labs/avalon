@@ -1808,8 +1808,10 @@ presenter's answer must reach a real model. Owned by
 **What a future change has to respect:** The seed is not an instant and must
 not become one; `createMessage` and `initialize` stamp a seeded turn with the
 real clock like any other. A retry of a seeded run keeps its seed — the retry
-spreads the previous context — which is what lets preparation recover a
-seeded run that failed by the ordinary retry path.
+spreads the previous context. Preparation does not lean on that: a seeded
+turn is written once, by a derived client message id, so a seeded run that
+failed ends its operation rather than being retried
+([`demo-workspaces.md`](demo-workspaces.md#failure-modes-and-limits)).
 
 ### 2026-09-05 — Durable search delivery
 
