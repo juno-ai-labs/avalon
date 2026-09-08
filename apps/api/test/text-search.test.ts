@@ -49,17 +49,15 @@ describe("text search authority boundary", () => {
     }], { query: "text", mode: "text", limit: 10 })).toEqual([]);
   });
 
-  it("continues past a full page of revoked substring matches", async () => {
+  it("does not refill nonpaginated requests behind the caller", async () => {
     const row = { source: "message", source_id: "m1", scope_id: "room", revision: 1 };
     provider.query.mockResolvedValueOnce({ rows: [{ ...row, id: "a" }, { ...row, id: "b" }] })
       .mockResolvedValueOnce({ rows: [{ ...row, id: "c" }, { ...row, id: "d" }] });
     const result = await index.query([{ source: "message", scopeIds: ["room"], load: async (candidates) =>
       new Map(candidates.filter((candidate) => candidate.id >= "c").map((candidate) => [candidate.id, candidate.id])),
     }], { query: "needle", mode: "substring", limit: 2 });
-    expect(result).toEqual(["c", "d"]);
-    expect(provider.query).toHaveBeenLastCalledWith(expect.objectContaining({
-      filters: ["And", expect.arrayContaining([["id", "Gt", "b"]])],
-    }));
+    expect(result).toEqual([]);
+    expect(provider.query).toHaveBeenCalledTimes(1);
   });
 
   it("rejects the removed hybrid mode", () => {
@@ -85,23 +83,26 @@ describe("text search authority boundary", () => {
     expect(provider.query).toHaveBeenCalledTimes(3);
   });
 
-  it("keeps rejected candidate pages and their identifiers internal", async () => {
+  it("returns an explicit continuation after one rejected candidate page", async () => {
     const row = { id: "first", source: "messages", source_id: "0/turn", scope_id: "room", revision: 1 };
     provider.query.mockResolvedValueOnce({ rows: [row] }).mockResolvedValueOnce({ rows: [] });
     const load = vi.fn(async () => new Map<string, string>());
     const sources = [{ source: "messages", scopeIds: ["room"], load }];
     const first = await index.queryPage(sources, { query: "needle", mode: "substring", limit: 1 });
-    expect(first).toEqual({ results: [], nextCursor: null });
+    expect(first).toEqual({ results: [], nextCursor: "first" });
+    expect(provider.query).toHaveBeenCalledTimes(1);
+    expect(await index.queryPage(sources, { query: "needle", mode: "substring", limit: 1 }, first.nextCursor!))
+      .toEqual({ results: [], nextCursor: null });
     expect(provider.query).toHaveBeenCalledTimes(2);
     expect(provider.query.mock.calls[1]?.[0].filters[1]).toContainEqual(["id", "Gt", "first"]);
   });
 
-  it("uses the last authorized result as the cursor when a page ends in rejected candidates", async () => {
+  it("advances past every consumed candidate without rescanning rejected rows", async () => {
     const rows = ['authorized', 'private'].map((id) => ({ id, source: 'messages', source_id: '0/turn', scope_id: 'room', revision: 1 }));
     provider.query.mockResolvedValueOnce({ rows });
     const sources = [{ source: 'messages', scopeIds: ['room'], load: async () => new Map([['authorized', 'visible']]) }];
     expect(await index.queryPage(sources, { query: 'needle', mode: 'substring', limit: 2 }))
-      .toEqual({ results: ['visible'], nextCursor: 'authorized' });
+      .toEqual({ results: ['visible'], nextCursor: 'private' });
   });
 
   it("escapes glob operators in literal substring input", () => {

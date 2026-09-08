@@ -247,16 +247,16 @@ export class TextSearchIndex {
     sources: readonly AuthorizedSearchSource<T>[],
     options: TextSearchOptions,
   ): Promise<T[]> {
-    return (await this.readPage(sources, options, undefined, false)).results;
+    return (await this.readPage(sources, options)).results;
   }
 
   /** One candidate page; the caller can continue past rejected rows without blocking first paint. */
   async queryPage<T>(sources: readonly AuthorizedSearchSource<T>[], options: TextSearchOptions, cursor?: string) {
-    return this.readPage(sources, options, cursor, true);
+    return this.readPage(sources, options, cursor);
   }
 
   private async readPage<T>(sources: readonly AuthorizedSearchSource<T>[], options: TextSearchOptions,
-    cursor: string | undefined, singlePage: boolean): Promise<{ results: T[]; nextCursor: string | null }> {
+    cursor?: string): Promise<{ results: T[]; nextCursor: string | null }> {
     const authorized = sources.filter((source) => source.scopeIds === null || source.scopeIds.length > 0);
     if (authorized.length === 0) return { results: [], nextCursor: null };
     const filters: Filter = ["And", [["deleted", "Eq", false],
@@ -265,65 +265,51 @@ export class TextSearchIndex {
       ...(source.scopeIds === null ? [] : [["scope_id", "In", [...source.scopeIds]] as Filter]),
     ]])]]];
     const values: T[] = [];
-    let afterId = cursor;
-    let nextCursor: string | null;
-    do {
-      options.signal?.throwIfAborted();
-      const pageFilters: Filter[] = [filters];
-      if (options.mode === "substring") pageFilters.push(["text", "IGlob", literalSubstringPattern(options.query)]);
-      if (afterId !== undefined) pageFilters.push(["id", "Gt", afterId]);
-      const namespace = options.mode === "semantic" ? this.namespace : this.lexicalNamespace;
-      const query = (includeGeneration: boolean) => namespace.query({
-        filters: ["And", pageFilters],
-        include_attributes: ["source", "source_id", "scope_id", "revision", "chunk_start", "chunk_end",
-          ...includeGeneration ? ["generation"] : []],
-        rank_by: searchRanking(options),
-        limit: options.limit,
-        consistency: { level: "strong" },
-      }, ...options.signal ? [{ signal: options.signal }] as const : []);
-      const retrievalStarted = performance.now();
-      const result = await query(options.mode === "semantic").catch((error: unknown) => {
-        // Pre-fan-out namespaces have no generation attribute until their first
-        // new write. Preserve their existing revision-based retrieval contract.
-        if (options.mode === "semantic" && error instanceof Error && "status" in error && error.status === 400
-          && error.message.includes('attribute "generation" not found in schema')) return query(false);
-        throw error;
-      }).catch((error: unknown) => {
-        // A namespace does not exist until its first write.
-        if (error instanceof Error && "status" in error && error.status === 404) return { rows: [] };
-        throw new Error("search_index_query_failed");
-      });
-      options.signal?.throwIfAborted();
-      options.onTiming?.("retrieval", performance.now() - retrievalStarted);
-      const hydrationStarted = performance.now();
-      const candidates = z.array(CandidateSchema).parse(result.rows ?? []);
-      // Index metadata is never authority, including on refill pages.
-      const loaded = await Promise.all(authorized.map(async (source) => {
-        const scopes = source.scopeIds === null ? null : new Set(source.scopeIds);
-        return source.load(candidates.filter((row) =>
-          row.source === source.source && (scopes === null || scopes.has(row.scope_id))));
-      }));
-      options.onTiming?.("hydration", performance.now() - hydrationStarted);
-      const rows = new Map(loaded.flatMap((items) => [...items]));
-      let lastAuthorizedId: string | undefined;
-      for (const candidate of candidates) {
-        const row = rows.get(candidate.id);
-        if (row !== undefined) { values.push(row); lastAuthorizedId = candidate.id; }
-      }
-      nextCursor = candidates.length === options.limit && options.mode === "substring" ? candidates.at(-1)!.id : null;
-      if (nextCursor !== null && afterId !== undefined && nextCursor <= afterId) throw new Error("search_index_cursor_invalid");
-      if (singlePage && values.length > 0) {
-        // Never disclose a rejected candidate ID or expose empty candidate pages.
-        nextCursor = nextCursor === null ? null : lastAuthorizedId!;
-        break;
-      }
-      if (values.length >= options.limit || candidates.length < options.limit || options.mode !== "substring") break;
-      // Attribute-ordered pagination follows Turbopuffer's documented id cursor.
-      // Revoked or obsolete candidates must not hide later authorized matches.
-      const nextId = candidates.at(-1)?.id;
-      if (nextId === undefined || (afterId !== undefined && nextId <= afterId)) throw new Error("search_index_cursor_invalid");
-      afterId = nextId;
-    } while (values.length < options.limit);
+    const afterId = cursor;
+    options.signal?.throwIfAborted();
+    const pageFilters: Filter[] = [filters];
+    if (options.mode === "substring") pageFilters.push(["text", "IGlob", literalSubstringPattern(options.query)]);
+    if (afterId !== undefined) pageFilters.push(["id", "Gt", afterId]);
+    const namespace = options.mode === "semantic" ? this.namespace : this.lexicalNamespace;
+    const query = (includeGeneration: boolean) => namespace.query({
+      filters: ["And", pageFilters],
+      include_attributes: ["source", "source_id", "scope_id", "revision", "chunk_start", "chunk_end",
+        ...includeGeneration ? ["generation"] : []],
+      rank_by: searchRanking(options),
+      limit: options.limit,
+      consistency: { level: "strong" },
+    }, ...options.signal ? [{ signal: options.signal }] as const : []);
+    const retrievalStarted = performance.now();
+    const result = await query(options.mode === "semantic").catch((error: unknown) => {
+      // Pre-fan-out namespaces have no generation attribute until their first
+      // new write. Preserve their existing revision-based retrieval contract.
+      if (options.mode === "semantic" && error instanceof Error && "status" in error && error.status === 400
+        && error.message.includes('attribute "generation" not found in schema')) return query(false);
+      throw error;
+    }).catch((error: unknown) => {
+      // A namespace does not exist until its first write.
+      if (error instanceof Error && "status" in error && error.status === 404) return { rows: [] };
+      throw new Error("search_index_query_failed");
+    });
+    options.signal?.throwIfAborted();
+    options.onTiming?.("retrieval", performance.now() - retrievalStarted);
+    const hydrationStarted = performance.now();
+    const candidates = z.array(CandidateSchema).parse(result.rows ?? []);
+    // Index metadata is never authority, including on continuation pages.
+    const loaded = await Promise.all(authorized.map(async (source) => {
+      const scopes = source.scopeIds === null ? null : new Set(source.scopeIds);
+      return source.load(candidates.filter((row) =>
+        row.source === source.source && (scopes === null || scopes.has(row.scope_id))));
+    }));
+    options.onTiming?.("hydration", performance.now() - hydrationStarted);
+    const rows = new Map(loaded.flatMap((items) => [...items]));
+    for (const candidate of candidates) {
+      const row = rows.get(candidate.id);
+      if (row !== undefined) { values.push(row); }
+    }
+    const nextCursor = candidates.length === options.limit && options.mode === "substring" ? candidates.at(-1)!.id : null;
+    if (nextCursor !== null && afterId !== undefined && nextCursor <= afterId) throw new Error("search_index_cursor_invalid");
+    // One candidate batch per call. Continuation is a position, never an access grant.
     return { results: values.slice(0, options.limit), nextCursor };
   }
 }

@@ -54,17 +54,18 @@ describe('workspace search modal', () => {
     expect(onSelect).toHaveBeenCalledWith(result);
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
-  it('continues a rejected page without showing a false empty result', async () => {
+  it('waits for explicit continuation after an empty candidate page', async () => {
     const search = vi.fn<React.ComponentProps<typeof SearchModal>['search']>()
-      .mockResolvedValueOnce({ results: [], nextCursor: 'rejected-1' })
-      .mockResolvedValueOnce({ results: [], nextCursor: 'rejected-2' })
-      .mockResolvedValueOnce({ results: [], nextCursor: 'rejected' })
+      .mockResolvedValueOnce({ results: [], nextCursor: 'next' })
       .mockResolvedValueOnce({ results: [result], nextCursor: null });
     setup(search);
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'danil' } });
-    await screen.findByRole('option');
-    expect(search).toHaveBeenLastCalledWith({ query: 'danil', category: 'all', pageSize: 7, cursor: 'rejected' }, expect.any(AbortSignal));
+    await screen.findByText('More results are available');
+    expect(search).toHaveBeenCalledTimes(1);
     expect(screen.queryByText('No results')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Load more results' }));
+    await screen.findByRole('option');
+    expect(search).toHaveBeenLastCalledWith({ query: 'danil', category: 'all', pageSize: 7, cursor: 'next' }, expect.any(AbortSignal));
   });
 
   it('keeps the first page visible while loading a continuation and preserves result order', async () => {

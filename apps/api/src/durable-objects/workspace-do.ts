@@ -3150,6 +3150,21 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return json({ error: "not_found" }, 404);
   }
 
+  /** Canonical search rows for a batch already admitted by the authorization primitive. */
+  async resourceSearchRecords(input: unknown): Promise<Array<Record<string, SqlStorageValue>>> {
+    await this.initialized;
+    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, resourceIds: z.array(IdSchema) }).parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return this.state.storage.sql.exec<Record<string, SqlStorageValue>>(`SELECT r.*, v.revision AS search_revision,
+      c.connector_type, CASE WHEN EXISTS (SELECT 1 FROM resource_watches rw
+        WHERE rw.resource_id = r.id AND rw.workspace_id = r.workspace_id AND rw.enabled = 1)
+        THEN 1 ELSE 0 END AS watch_enabled
+      FROM resources r JOIN resource_search_versions v ON v.resource_id = r.id
+      LEFT JOIN connector_connections c ON c.id = r.connection_id
+      WHERE r.workspace_id = ? AND r.id IN (SELECT value FROM json_each(?))`,
+    request.workspaceId, JSON.stringify(request.resourceIds)).toArray();
+  }
+
   async resourceSearchRevision(input: unknown): Promise<number | null> {
     await this.initialized;
     const request = ResourceSearchRevisionRequestSchema.parse(input);

@@ -7,6 +7,7 @@ import { createResourceObjectPort } from '../runtime/resource-port';
 import { createIdentityObjectPort } from '../runtime/identity-port';
 import { ApiError } from '../lib/api-error';
 import { logWarn } from '../observability/logger';
+import type { AutomationDO } from '../durable-objects/automation-do';
 import type { WorkstreamDO } from '../durable-objects/workstream-do';
 import type { WorkstreamResourceStorage } from '../durable-objects/workstream-resource-storage';
 import {
@@ -60,6 +61,7 @@ export class AuthorizationService {
   constructor(private readonly env: Env) {}
 
   async checkMany(subject: AuthorizationSubject, resources: readonly AuthorizationResource[]): Promise<AuthorizationDecision[]> {
+    if (resources.length === 0) return [];
     const unique = [...new Map(resources.map((resource) => [authorizationSnapshotKey(subject, resource), resource])).values()];
     // One observation batch per call: a later check must never join an earlier read.
     const decisions = await new AuthorizationBatch(this.env).checkMany(subject, unique);
@@ -71,6 +73,8 @@ export class AuthorizationService {
 /** Owner observations, including settled reads, live for exactly one batch. */
 class AuthorizationBatch {
   private readonly parents = new Map<string, Promise<Awaited<ReturnType<WorkstreamDO['readAuthorizationFacts']>>>>();
+  private readonly automations = new Map<string, Promise<Awaited<ReturnType<AutomationDO['readAuthorizationFacts']>>>>();
+  private readonly identities = new Map<string, Promise<Awaited<ReturnType<ReturnType<typeof createIdentityObjectPort>['readAuthorizationFacts']>>>>();
   private readonly attachments = new Map<string, Promise<ReturnType<WorkstreamResourceStorage['readAuthorizationFacts']>>>();
   private readonly memberships = new Map<string, Promise<{ active: boolean; validatedAt: number }>>();
   constructor(private readonly env: Env) {}
@@ -143,15 +147,18 @@ class AuthorizationBatch {
     }
     const automation = await durableObjectStubForWorkspace(this.env, this.env.AUTOMATION_DOS, subject.workspaceId,
       automationDOName(this.env.AVALON_REGION, subject.workspaceId, asAutomationId(resource.parentId)));
-    const facts = await automation.readAuthorizationFacts(request);
+    const facts = await ownerEvidence(this.automations, JSON.stringify([subject, resource.parentId, resource.substreamId]),
+      () => automation.readAuthorizationFacts(request));
     if (!facts.exists) return { status: 'not_found', resource,
       evidence: [{ owner: resource.parentId, revision: 'absent', validatedAt: Math.min(workstream.validatedAt, facts.validatedAt) }] };
     const evidence = { owner: resource.parentId, revision: facts.revision, validatedAt: facts.validatedAt };
     if (!facts.children.includes(resource.substreamId)) return { status: 'not_found', resource, evidence: [evidence] };
     const policies = [fact(facts.scope === 'workspace' || facts.author || facts.executor, 'not_participant', evidence)];
     if (facts.scope === 'workstream' && facts.owningWorkstreamId) {
-      const owner = await createIdentityObjectPort(this.env, subject.workspaceId, facts.owningWorkstreamId)
-        .readAuthorizationFacts({ userId: subject.userId });
+      const owningWorkstreamId = facts.owningWorkstreamId;
+      const owner = await ownerEvidence(this.identities, JSON.stringify([subject, owningWorkstreamId]),
+        () => createIdentityObjectPort(this.env, subject.workspaceId, owningWorkstreamId)
+          .readAuthorizationFacts({ userId: subject.userId! }));
       policies.push(fact(owner.exists && !owner.archived && owner.participant, 'not_participant', {
         owner: `${facts.owningWorkstreamId}/0`, revision: owner.revision, validatedAt: owner.validatedAt,
       }));
@@ -174,7 +181,6 @@ class AuthorizationBatch {
     ] };
     const baseDecision = evaluateReadPolicy(base, Date.now());
     if (baseDecision.status !== 'allowed' || !facts.requiresAttachment) return baseDecision;
-    const alternatives: ReadPolicy[] = [];
     let incomplete = false;
     for (const location of facts.locations) {
       // Do not await a top-level batch that may itself contain this conversation.
@@ -185,20 +191,21 @@ class AuthorizationBatch {
       const attachment = await ownerEvidence(this.attachments, JSON.stringify([subject.workspaceId, location.parentId, location.substreamId]),
         () => createResourceObjectPort(this.env, subject.workspaceId, location.parentId, undefined, location.substreamId).readAuthorizationFacts());
       const policy = decisionPolicy(permission);
-      if (policy && attachment.resourceIds.includes(resource.resourceId)) alternatives.push({ kind: 'all', policies: [policy,
-        fact(true, 'resource_not_shared', { owner: `${location.parentId}/${location.substreamId}/attachments`,
-          revision: String(attachment.revision), validatedAt: attachment.validatedAt })] });
+      if (policy && attachment.resourceIds.includes(resource.resourceId)) {
+        const decision = evaluateReadPolicy({ kind: 'all', policies: [base, policy,
+          fact(true, 'resource_not_shared', { owner: `${location.parentId}/${location.substreamId}/attachments`,
+            revision: String(attachment.revision), validatedAt: attachment.validatedAt })] }, Date.now());
+        if (decision.status === 'allowed') return decision;
+        if (decision.status === 'unavailable') incomplete = true;
+      }
     }
-    if (!alternatives.length && !facts.projectionComplete) {
+    if (!facts.projectionComplete) {
       await workspace.beginAuthorizationBackfill({ workspaceId: subject.workspaceId, refresh: false });
       return { status: 'unavailable', reason: 'projection_incomplete', retryable: true };
     }
-    if (!alternatives.length && incomplete) return unavailable();
-    if (!alternatives.length) {
-      return evaluateReadPolicy(fact(false, 'resource_not_shared', {
-        owner: `workspace:${subject.workspaceId}/attachment-discovery`, revision: String(facts.discoveryAt), validatedAt: facts.discoveryAt,
-      }), Date.now());
-    }
-    return evaluateReadPolicy({ kind: 'all', policies: [base, { kind: 'any', policies: alternatives, reason: 'resource_not_shared' }] }, Date.now());
+    if (incomplete) return unavailable();
+    return evaluateReadPolicy(fact(false, 'resource_not_shared', {
+      owner: `workspace:${subject.workspaceId}/attachment-discovery`, revision: String(facts.discoveryAt), validatedAt: facts.discoveryAt,
+    }), Date.now());
   }
 }
