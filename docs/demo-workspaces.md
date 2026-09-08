@@ -28,9 +28,9 @@ page calls. **Open questions** below says what remains.
 | Path | Role |
 | --- | --- |
 | `apps/api/src/services/workspace-retirement-service.ts` | Owned by [`workspace-retirement.md`](workspace-retirement.md); the walk writes the operation row's `retired_at` once the graph reports closed. |
-| `apps/api/src/services/demo-workspace-register.ts` | Which workspaces this feature published, read from the operation rows: allocated, published, closed. Not an authorization input. |
-| `apps/api/src/services/demo-connection-copy.ts` | Copying template connections into a demo, with credential re-encryption. |
-| `apps/api/src/services/demo-workspace-visibility.ts` | The template and unpublished-candidate filter, applied in regional discovery and activation. |
+| `apps/api/src/services/demo-workspace-register.ts` | The walk's one write into the register: `markDemoWorkspaceRetired` stamps `retired_at` on the operation row. Not an authorization input, and nothing reads through it. |
+| `apps/api/src/services/demo-connection-copy.ts` | Copying template connections into a demo, with credential re-encryption; `SHAREABLE_CONNECTOR_TYPES` is the list of providers whose grant may be shared. |
+| `apps/api/src/services/demo-workspace-visibility.ts` | The template and unpublished-candidate filter, applied in regional discovery and activation. `DEMO_TEMPLATE_WORKSPACE_ID`, the template's UUID, is declared here and nowhere else. |
 | `apps/api/src/services/demo-pack.ts` | The pack schema and its playability rules, the planner that binds a pack to a cast, and the placeholder pack. |
 | `apps/api/src/services/demo-seeder.ts` | Plays one action at a time through the production write paths, waits for its run to settle as specified, and records the receipt. |
 | `apps/api/src/services/demo-seed-provider.ts` | The `fetch` a seeded run's harness config carries: answers the run's one inference request from the seed and refuses the next. |
@@ -63,12 +63,20 @@ so renaming it does not defeat the filter and naming another workspace
 `demo-template` does not acquire it; it is a specific exclusion rather than a
 hidden-workspace feature, and deliberately not the template's security gate —
 membership and role checks are, and an operator maintaining it still opens it. A
-**candidate** is withheld only until `ready_at`, because preparation is a real
-admission state: a demo exists and is being filled for minutes before anyone
-should see it. Activating one answers `demo_workspace_preparing` rather than
-opening a half-seeded sidebar. A *retired* demo is not withheld — it is closed by
-its tombstone, and hiding it as well would leave its presenter looking at a
-switcher a workspace silently vanished from while its rooms still answered.
+**candidate** is withheld while `ready_at` is null, whatever its status, because
+preparation is a real admission state: a demo exists and is being filled for
+minutes before anyone should see it. Activating one answers
+`demo_workspace_preparing` rather than opening a half-seeded sidebar. An
+*abandoned* candidate stays withheld for good — its workspace was retired with
+nobody ever in it, and offering it afterwards would put a half-seeded,
+tombstoned workspace in the presenter's account menu. A *published* demo is
+never withheld, retired or not: retirement closes it the way any closed
+workspace is closed, and hiding it as well would leave its presenter looking at
+a switcher a workspace silently vanished from while its rooms still answered.
+Discovery asks with the member's own workspace ids, in runs that fit D1's
+bound-parameter ceiling, so the read is bounded by what they are in rather than
+by every operation ever prepared — and it is made whenever they are in any
+workspace but the template, because the read is what answers the question.
 
 ### Copying the template's connections
 
@@ -77,6 +85,19 @@ cross-authority operation with one `workspaceRuntimeDatabase` handle per side.
 Each connection is decrypted under its source's id and re-encrypted under the
 destination's, because the envelope's additional authenticated data is the
 connection ID rather than the workspace ID.
+
+A copy shares the template's upstream grant rather than holding one of its own,
+and that is safe for exactly one provider today. Google neither rotates the
+refresh token on use nor revokes the grant remotely when one holder disconnects
+— disabling a Google connection is local (`mayRevokeRemotely` in
+`connection-service.ts`) — so the template and any number of demos can hold one
+grant at once. For every other provider the presenter, who owns the demo, would
+hold a Disconnect button that revokes the grant the template and every other
+live demo share. So only a connection whose type is in
+`SHAREABLE_CONNECTOR_TYPES` is copied; the rest are skipped and reported as
+`shared_grant`, beside the personal connections reported as `personal_scope`,
+so the operator hears "the demo has no Linear" before the meeting rather than
+the template losing Linear during one.
 
 ### Seeding a demo from a pack
 
@@ -111,9 +132,10 @@ Two things are replaced, and both are decisions rather than writers:
 - **The source of model output.** The seed rides the message's authorization
   into the run's execution context, and the harness reads it there: `OpenRouterConfig.fetch`,
   an injection point Bind already exposes, is set to a function that answers the
-  run's one chat-completion request from the seed's turn — in the streamed or
-  JSON wire form the request asked for — and answers everything else (a model
-  catalog read, a pricing read) emptily. A second chat-completion request is
+  run's one chat-completion request from the seed's turn — as the streamed
+  response Bind asks for; the unstreamed form was carried for a request nothing
+  makes and is gone — and answers everything else (a model catalog read, a
+  pricing read) emptily. A second chat-completion request is
   refused with a 400 rather than answered again: a seed has exactly one turn
   because a seeded run makes no tool calls, and without tool calls Bind asks
   once. A question is a call to the real `core_request_elicitation` tool with
@@ -212,9 +234,13 @@ is the copier, which matches what it already copied. `seeding_conversations`
 opens the seed session and applies and settles each action in order, recording
 confirmed-of-total on its phase row after every one, so the operator watches
 the count climb; the receipts make a retry resume. `waiting_for_workspace` is
-one readiness comparison: `waiting` with the open gaps on its phase row, or
-Ready — and publishing `ready_at` is part of that same phase, so there is no
-moment where the check has passed and discovery has not heard.
+one readiness comparison: `waiting` with the open gaps on its phase row, each
+naming the viewer it was read as, or Ready — and publishing is one statement
+inside that same phase, `status = 'ready'` and `ready_at` together, fenced on
+the attempt and on the row still being `running`, so there is no moment where
+the check has passed and discovery has not heard, and no driver can publish a
+row that abandon has claimed. The status Ace reads lists the phases in phase
+order, each phase's latest attempt.
 
 **One driver at a time.** Every attempt has a number, the row carries the
 current one, and a phase called by a driver whose attempt is no longer the
@@ -248,12 +274,24 @@ a retry: the next attempt of the same operation, whose every phase resumes
 from what the last attempt left. A `running` operation may be retried too — for
 the driver that died without a word — and the attempt number is what makes
 that safe. A launch that fails marks the operation failed with the same way
-back. Abandoning an unfinished candidate retires whatever it made — through the
-same walk the workspaces tab uses — and closes the operation; it takes a
-confirmation naming the operation, refuses a published demo (by status and by
-`ready_at`, which the same phase writes), and closes an operation whose
-workspace was allocated but never created without retiring anything. A
-published demo is retired from the workspaces tab like any other workspace.
+back. The one failure a retry cannot reach is a seeded run's own: the turn
+that started it is written once, by a derived id, so the retry meets the same
+run and fails the same way; **Failure modes** says what to do instead. Retry
+checks for a driver before it touches the row, so a deployment without the
+binding refuses and leaves the operation as it was.
+
+**Abandon claims before it closes.** Abandoning an unfinished candidate is
+first one statement that moves a `running` or `failed`, unpublished operation
+to `abandoned`; a driver publishing Ready in the same instant either wins, and
+abandon answers `demo_operation_ready`, or loses, and its remaining status
+writes meet a row that is no longer `running`. Only then does abandon write the
+same D1 fence the operator door writes, `workspaces.abandoned_at`, and retire
+whatever the candidate made through the same walk the workspaces tab uses. It
+takes a confirmation naming the operation, records the operator who asked, and
+closes an operation whose workspace was allocated but never created without
+retiring anything; an abandon whose walk could not finish is asked again and
+returns to the objects that remain. A published demo is retired from the
+workspaces tab like any other workspace.
 
 **The operator API is behind the operator credential, in its own role.** Each
 region's `TELEMETRY_OPERATORS_JSON` holds a token in the `demos` role, which
@@ -265,9 +303,11 @@ collected — the operator typed or pasted the id — and refuses unless it name
 the workspace, and refuses an id this region's `workspaces` table does not
 hold, so the irreversible call cannot be made by a page that forgot to ask nor
 "succeed" against an id the other region owns. Demos are prepared in Global:
-the EU deployment carries the routes and answers `demo_region_unsupported`,
-and a deployment without the Workflow binding answers
-`demo_preparation_unavailable`.
+the EU deployment carries the routes, binds no Workflow, and answers
+`demo_region_unsupported` before anything else is checked; a Global deployment
+without the binding answers `demo_preparation_unavailable`, a 503 for this tool
+rather than a boot failure for the region, because `DEMO_PREPARATION_WORKFLOW`
+is deliberately outside the environment's boot contract in every region.
 
 ## Invariants
 
@@ -289,6 +329,16 @@ demo's.
   as workspace-scoped to fix that hands one person's refresh token to everybody
   in the demo. Skipped connections are returned rather than dropped, because "the
   demo has no Slack" is something the operator needs before the meeting.
+- **Only a grant that can be shared is copied.** A provider whose disconnect
+  revokes the grant remotely, or whose refresh rotates the token, is not in
+  `SHAREABLE_CONNECTOR_TYPES` and is skipped as `shared_grant`. Adding one is a
+  decision about that provider's revocation and refresh behavior, not a list
+  edit.
+- **Withheld means unpublished.** A candidate is hidden from its members while
+  `ready_at` is null, whatever its status; a published demo is never hidden.
+- **Abandon claims the row before it closes anything**, and the driver's
+  publish is fenced on the row still being `running`, so the two cannot both
+  win.
 - **A seed decides addressing; nothing else in a seeded message does.** The
   classifier is not consulted, and neither is the room's size.
 - **A seeded run says one thing.** One turn, one provider request; the second
@@ -340,9 +390,15 @@ are closed when access ends ([`access-revocation.md`](access-revocation.md)).
   [`workspace-retirement.md`](workspace-retirement.md#failure-modes-and-limits).
   Abandon invokes the walk once and reports incomplete when objects remain;
   nothing re-invokes it on a schedule.
-- **A seeded run that fails fails the action.** The seeder reports
-  `demo_seed_run_failed` with the run's error code, and `demo_seed_run_outcome_mismatch`
-  when a run settled but not the way its turn said. Neither is skipped past.
+- **A seeded run that fails fails the action, and ends the operation.** The
+  seeder reports `demo_seed_run_failed` with the run's error code, and
+  `demo_seed_run_outcome_mismatch` when a run settled but not the way its turn
+  said. Neither is skipped past, and neither is retried into success: the turn
+  that started the run is written by a derived client message id, so a retry
+  replays the action, meets the same turn, finds the same failed run and fails
+  the same way. The way back is Abandon and a new operation — and whatever
+  failed the run, a pack the harness could not play or a room that refused the
+  line, is what to fix before starting it.
 - **A second inference request in a seeded run is refused**, with
   `demo_seed_exhausted`, so a loop the script did not anticipate dies visibly
   rather than replaying the turn forever. The first version of the spike's
@@ -363,10 +419,26 @@ are closed when access ends ([`access-revocation.md`](access-revocation.md)).
   readiness round is two Workflow steps; the driver stops at the round count
   that fits under the published limit and fails the phase as
   `demo_projection_wait_exhausted`, leaving the last round's gaps on the row.
+  The arithmetic, in the driver beside the limit's URL and the date it was
+  read: 1,024 steps per instance is the smaller published figure; four leading
+  phase steps and one step of headroom come off it; at two steps a round that
+  is 509 rounds, and the last round checks without sleeping. At the ten-second
+  poll that is about 85 minutes of waiting before the phase fails. None of
+  those is a number chosen here; a shorter ceiling is the team's, and would be
+  a constant beside these.
 - **A driver that dies outside a phase is recorded.** The Workflow's `run`
   catches whatever escapes a step and marks the operation failed for the
   attempt that owns it; a launch that fails does the same. Retry is the way
-  back from both.
+  back from both — a seeded run's own failure, above, is the one it cannot
+  reach.
+- **Lists are chunked to D1's bound-parameter ceiling.** Discovery's withheld
+  read over a member's workspace ids and the Demos page's phase read over every
+  operation both run in chunks, so neither breaks once there are more than a
+  statement's worth of ids.
+- **A Ready demo is reachable only with the presenter's flag on.** The account
+  menu lists workspaces only while `multiple-workspaces-enabled` is on for
+  that person; the Demos page's Ready copy says so, and Ace's Feature flags
+  tab is where it is set.
 - **Abandon can report incomplete.** It runs the retirement walk once and
   refuses to close the operation while objects remain; asking again returns to
   exactly those objects.
@@ -376,23 +448,31 @@ are closed when access ends ([`access-revocation.md`](access-revocation.md)).
 | Suite | What it proves |
 | --- | --- |
 | `apps/api/test-workers/workspace-retirement-graph.test.ts` | Retirement's own suite, extended here: the walk writes `retired_at` on the operation row once the graph is closed, and the first pass's instant survives a replay. |
-| `apps/api/test-workers/demo-connection-copy.test.ts` | A copy opens under its own identity, and the template is byte-identical afterwards **when its key version is stale** — the only state in which the wrong decrypt helper is visible. |
-| `apps/api/test/demo-workspace-register.test.ts` | The register read from the operation rows: nothing before allocation, publication and closure written once, and a workspace this feature never made untouched. |
-| `apps/api/test/demo-workspace-visibility.test.ts` | The template and an unpublished candidate are withheld; a published one, a retired one, and a customer workspace named like a demo are not. |
+| `apps/api/test-workers/demo-connection-copy.test.ts` | A copy opens under its own identity, and the template is byte-identical afterwards **when its key version is stale** — the only state in which the wrong decrypt helper is visible. A personal connection and a non-Google one are skipped and reported, as `personal_scope` and `shared_grant`, and only the Google copy exists afterwards. |
+| `apps/api/test/demo-workspace-register.test.ts` | The walk's `retired_at` write against the real migration: written once, the first instant kept on a replay, and a workspace this feature never made untouched. |
+| `apps/api/test/demo-workspace-visibility.test.ts` | The template, an unpublished candidate and an abandoned one are withheld; a published one, a retired one, and a customer workspace named like a demo are not; and a member in more workspaces than one statement can name is answered in chunks. |
 | `apps/api/test-workers/demo-seeder.test.ts` | A five-step pack — a scripted room, a document, two unscripted lines, a question — seeds through the real creation service, room object, alarm-driven loop and upload, with the provider double recording no call; and a confirmed or half-confirmed action replays without a second write. Proved to fail with the seam removed (every run fails at the provider) and with the classifier skip removed (a seeded line is refused at admission). |
-| `apps/api/test/demo-pack.test.ts` | The playability rules, and that the planner resolves a mention to the bound member at the offsets of the expanded name. |
-| `apps/api/test/demo-seed-provider.test.ts` | Both wire forms, an `ask` whose arguments the real elicitation schema accepts, and the refusal of a second request. |
+| `apps/api/test/demo-pack.test.ts` | The playability rules — including a role token in Rally's own prose that names nobody in the cast — that the planner resolves a mention to the bound member at the offsets of the expanded name and expands `@{role}` in Rally's turn to the cast's names, and that the placeholder pack parses. |
+| `apps/api/test/demo-seed-provider.test.ts` | The streamed wire form for `say` and for `ask` — the latter with arguments the real elicitation schema accepts — and the refusal of a second request. |
 | `apps/api/test/demo-seed-receipts.test.ts` | Against the real migration: the first confirmation wins, a receipt needs a claimed operation, and an outcome the seeder cannot confirm is refused. |
 | `apps/api/test-workers/demo-readiness.test.ts` | With the effect Queue held, a seeded two-room pack is listed but not Ready — the mention, the new marker and the attention count are named as gaps — and delivering the directory effects through the real consumer makes it Ready with no gaps, including the room the presenter can see without being in, and the order. Proved to fail with the mention comparison removed. |
 | `apps/api/test/demo-readiness.test.ts` | The manifest derived from the placeholder pack — rooms newest first, seats, states, ids from receipts — and its refusal of a pack whose rooms or question were never confirmed; and the schema's check that a viewer's expected rooms are exactly the visible ones. |
-| `apps/api/test-workers/demo-preparation.test.ts` | Every phase in order on real objects: the presenter's workspace through onboarding with the cast seated, the template's connection copied and left in place, every action confirmed and a completed phase re-run confirming nothing twice, the wait naming its gaps, and Ready published to the register only after the directory effects land; and a failed template check recorded on the operation with its reason. Proved to fail with the register's publication removed from the waiting phase. |
-| `apps/api/test/demo-operations.test.ts` | Against the real migrations: one operation id starts one Workflow and answers a repeat with the same progress; a cast that misses or invents a role, seats one person twice, or reaches outside the template is refused before a row is written; the allocation statement is accepted before the workspace exists; a retry is the next attempt of a failed or a stalled `running` operation; a superseded attempt's phase call writes nothing; the template check runs against the real rows and records a presenter the template lost; a driver that stopped outside a phase is recorded for its own attempt only, with internal text kept off the page; a failed launch marks the operation failed; abandon needs its confirmation, refuses a published demo and closes an operation with no workspace; and the routes admit only the `demos` role and reject a malformed start and an unconfirmed abandon. |
+| `apps/api/test-workers/demo-preparation.test.ts` | Every phase in order on real objects: the presenter's workspace through onboarding with the cast seated, the template's Google connection copied and left in place, every action confirmed and a completed phase re-run confirming nothing twice, the wait naming its gaps, and Ready published to the register only after the directory effects land; and a failed template check recorded on the operation with its reason. Proved to fail with the register's publication removed from the waiting phase. |
+| `apps/api/test/demo-operations.test.ts` | Against the real migrations: one operation id starts one Workflow and answers a repeat with the same progress; a cast that misses or invents a role, seats one person twice, or reaches outside the template is refused before a row is written; the allocation statement is accepted before the workspace exists; a retry is the next attempt of a failed or a stalled `running` operation; a superseded attempt's phase call writes nothing; the template check runs against the real rows and records a presenter the template lost; a driver that stopped outside a phase is recorded for its own attempt only, with internal text kept off the page; a failed launch marks the operation failed; a retry without a driver leaves the row untouched; the status lists phases in phase order at their latest attempt, and a list past one statement's parameters is answered whole; abandon needs its confirmation, refuses a published demo and closes an operation with no workspace; and the routes — start, list, template, retry, abandon — admit only the `demos` role and reject a malformed start and an unconfirmed abandon. |
+| `apps/ace/test/demos.test.ts`, `apps/ace/test/demos-client.test.tsx` | Ace's side, owned by [`ace.md`](ace.md#testing): the relay forwards the typed confirmation and answers a regional refusal by its own code, and the page reads a retried operation by its current attempt, keeps polling while offline, and names the presenter beside each gap. |
 | `apps/api/test/socket-ticket-transport.test.ts` | Every socket-ticket issuer refuses a `connector` and a `demo_seed` principal alike. |
 
-One of these was written wrong first and is worth knowing about: the copier's
+Two of these were written wrong first and are worth knowing about. The copier's
 stale-key test is the only one that fails when the writing decrypt helper is
 swapped back in, because a template whose key version is current is
-byte-identical either way.
+byte-identical either way. And the workerd preparation fixture originally
+seeded a generic webhook as the template's connection, because the run child's
+harness loads every connection in the workspace through the connector registry
+and a type the test Worker is not configured for fails the run; the test Worker
+now registers Google with placeholder credentials in `wrangler.test.jsonc` —
+construction is pure, and no test reaches Google — so the fixture holds the
+connection a real template holds, and a fixture that seeds any other provider
+has to register it the same way or watch the seeding phase fail.
 
 ## Data model
 
@@ -424,8 +504,11 @@ a region whose D1 does not hold it.
 
 `0100` creates `demo_operations`, `demo_operation_phases` and
 `demo_seed_receipts` in both regions, as every migration in
-`packages/db/migrations` does, and `DemoPreparationWorkflow` is bound in both
-Workers; the EU copies are inert. `presenter_user_id` references `users(id)`,
+`packages/db/migrations` does; the EU tables stay empty. `DemoPreparationWorkflow`
+is bound in the Global Worker only — `wrangler.eu.jsonc` binds nothing, and
+`DEMO_PREPARATION_WORKFLOW` is optional in the environment contract and outside
+its boot contract in every region, so a missing binding is this tool's 503 and
+never a region-wide fault. `presenter_user_id` references `users(id)`,
 and regional user UUIDs differ for the same verified Google account — so a
 presenter must already have activated a workspace in a region before a demo can
 be registered there. Ace reaches the Global API over HTTPS with Global's own
@@ -450,7 +533,14 @@ workspace is owned by the presenter and receives copies of the template's
 connections, so a presenter outside the template would be handed its
 credentials. Plaintext credentials exist only inside the copying operation and
 never enter a response, a log, or a receipt. The template's row is not written
-during a copy, which is asserted rather than assumed.
+during a copy, which is asserted rather than assumed. A copy shares the
+template's upstream grant, and the presenter owns the demo's Disconnect: only a
+provider whose disconnect is local and whose refresh does not rotate — Google —
+is copied, so no demo can revoke what the template and every other demo hold.
+The presenter, as owner, can invite anyone into the demo and so hand them the
+copied Google connections; that is the same trust the template extends to its
+cast, and the template membership check is what bounds who can be a presenter.
+Start and abandon record the operator who asked in the log.
 
 A seed reaches a room only over the object's internal RPC. The message route's
 request schema has no `seed` field, so nothing a client sends can carry one, and
@@ -484,6 +574,60 @@ the cast discussed is answerable. That was a product defect in every
 multi-person room, not a demo concern, and it is fixed where it lived.
 
 ## Changelog
+
+### 2026-09-08 — Review: what a demo may share, what a retry can reach, and where the driver is bound
+
+**What changed:** Only a Google connection is copied; any other provider's is
+skipped as `shared_grant` and reported beside `personal_scope`. A candidate is
+withheld while `ready_at` is null whatever its status, so an abandoned one
+never reappears; discovery's withheld read and the Demos list's phase read are
+chunked to D1's parameter ceiling. Abandon claims the row in one fenced
+statement before it fences `abandoned_at` and walks; the driver's publish
+writes `status = 'ready'` and `ready_at` together, fenced on `running`; retry
+asks for a driver before touching the row; start and abandon record the
+operator. `DEMO_PREPARATION_WORKFLOW` left the production boot contract and
+the EU Worker binds no Workflow. The wait's ceiling is arithmetic beside the
+limit's URL and date, with one step of headroom and no sleep on the last
+round. The register module keeps only the walk's write. The seed seam answers
+the streamed form only. The pack schema refuses a role token in Rally's own
+prose that names nobody in the cast, `resolveRoleNames` refuses an unbound
+role rather than throwing mid-seed, and the placeholder pack is parsed once,
+at first use, with its prose no longer inventing a figure the room never
+held. Readiness gaps name the viewer. Ace's Demos page reads a retried
+operation by its current attempt, keeps polling while offline, says why a
+template is too small to cast, shows an abandoned operation's outcome, points
+the presenter at the account menu and the flag it needs, and has no
+per-operation read.
+
+**Why:** A review swarm on the split PR. The copier shared a grant the
+presenter could revoke remotely for the template and every live demo. The
+filter tested `retired_at` as well as `ready_at`, so abandoning a candidate
+retired a workspace and then offered it. Two lists ran unchunked on paths a
+member's or an operator's history grows. Abandon checked, walked, then wrote,
+and a driver publishing Ready in between would have been retired as a
+candidate. `DEMO_PREPARATION_WORKFLOW` in the production boot contract would
+have taken Global offline on a deploy without the binding — a demo tool's
+binding must never do that. The seeded-run entry below claimed Retry
+recovered a failed seeded run; the derived client message id, the very thing
+that makes replay safe, is what makes that impossible. The 2026-09-05
+withholding entry below said discovery pays "none at all for a member in no
+demo", which was never true: the read is what answers the question, and it is
+made for every member in any workspace but the template.
+
+**Considered and rejected:** Deriving the shareable set from the adapter's
+`revoke` hook — Google has one and is the one provider that must not call it,
+so the property is the provider's, not the adapter's, and a named set with the
+reasoning beside it is what a future provider is judged against. Making a
+seeded run retryable by minting a fresh client message id on retry — that
+writes the turn twice, and the transcript is the demo. Keeping the EU binding
+inert — a binding that exists and must never be used is a trap for the next
+reader.
+
+**Consequences:** Adding a provider to `SHAREABLE_CONNECTOR_TYPES` is a
+decision about its revocation and refresh behavior. A seeded run that fails is
+the operation's end; fix the pack and start another. Every status write on the
+operation row is fenced on the status it expects, not only on the attempt. A
+new list over ids uses `boundParameterChunks`.
 
 ### 2026-09-08 — Preparation ships after retirement, on its own
 
