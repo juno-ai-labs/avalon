@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { WorkspaceRetirementResultSchema, type WorkspaceRetirementResult } from '@rally/contracts';
 import { WorkspaceSearchResultSchema, type DirectoryRegion, type DirectoryWorkspace } from '../directory';
 import { Button, EmptyState, Field } from './components/ui';
+import { responseBody } from './response';
 
 /**
  * The workspaces tab: find a workspace, and retire it.
@@ -20,15 +21,6 @@ import { Button, EmptyState, Field } from './components/ui';
  */
 
 export interface RetiredWorkspace { workspace: DirectoryWorkspace; receipt: WorkspaceRetirementResult; at: string }
-
-async function responseBody<Result>(response: Response, parse: (value: unknown) => Result): Promise<Result> {
-  const body: unknown = await response.json().catch(() => null);
-  if (!response.ok || body === null) {
-    const failure = body as { error?: string; message?: string } | null;
-    throw new Error(failure?.message ?? failure?.error ?? `Request failed (${response.status})`);
-  }
-  return parse(body);
-}
 
 function plural(count: number, noun: string, nouns = `${noun}s`): string {
   return `${count} ${count === 1 ? noun : nouns}`;

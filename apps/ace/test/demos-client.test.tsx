@@ -38,9 +38,9 @@ function operation(overrides: Record<string, unknown> = {}): Record<string, unkn
     phases: [
       { phase: 'checking_template', status: 'completed', attempt: 1, detail: { templateConnections: 2 }, error: null, startedAt: '2026-09-07T12:00:00.000Z', finishedAt: '2026-09-07T12:00:05.000Z' },
       { phase: 'creating_workspace', status: 'completed', attempt: 1, detail: { members: 4 }, error: null, startedAt: '2026-09-07T12:00:05.000Z', finishedAt: '2026-09-07T12:00:10.000Z' },
-      { phase: 'copying_connections', status: 'completed', attempt: 1, detail: { copied: [{ connectorType: 'google' }], skipped: [] }, error: null, startedAt: '2026-09-07T12:00:10.000Z', finishedAt: '2026-09-07T12:00:12.000Z' },
+      { phase: 'copying_connections', status: 'completed', attempt: 1, detail: { copied: [{ connectorType: 'google' }], skipped: [{ sourceConnectionId: 'c-linear', connectorType: 'linear', displayName: 'Linear', reason: 'shared_grant' }, { sourceConnectionId: 'c-slack', connectorType: 'slack', displayName: 'Slack', reason: 'personal_scope' }] }, error: null, startedAt: '2026-09-07T12:00:10.000Z', finishedAt: '2026-09-07T12:00:12.000Z' },
       { phase: 'seeding_conversations', status: 'completed', attempt: 1, detail: { confirmed: 9, total: 9 }, error: null, startedAt: '2026-09-07T12:00:12.000Z', finishedAt: '2026-09-07T12:01:00.000Z' },
-      { phase: 'waiting_for_workspace', status: 'running', attempt: 1, detail: { gaps: [{ room: 'northgate-renewal', code: 'mentioned', detail: 'the mention has not arrived' }] }, error: null, startedAt: '2026-09-07T12:01:00.000Z', finishedAt: null },
+      { phase: 'waiting_for_workspace', status: 'running', attempt: 1, detail: { gaps: [{ viewerUserId: PRESENTER_ID, room: 'northgate-renewal', code: 'mentioned', detail: 'the mention has not arrived' }] }, error: null, startedAt: '2026-09-07T12:01:00.000Z', finishedAt: null },
     ],
     seeding: { confirmed: 9, total: 9 },
     ...overrides,
@@ -113,6 +113,9 @@ describe('the Demos page', () => {
     expect(container.textContent).toContain('In progress · started');
     expect(container.textContent).toContain('the mention has not arrived');
     expect(container.textContent).toContain('9 of 9 actions confirmed');
+    // What was left behind, and why: one reason the template's owner can act
+    // on, one they cannot.
+    expect(container.textContent).toContain('1 connection copied · 2 left behind: Linear (grant not shareable), Slack (personal)');
     // No invented progress.
     expect(container.textContent).not.toMatch(/\d+%/u);
   });
@@ -121,7 +124,7 @@ describe('the Demos page', () => {
     const failed = operation({
       status: 'failed', failedPhase: 'waiting_for_workspace',
       error: { code: 'demo_projection_wait_exhausted', message: 'The workspace did not match the pack within 510 readiness checks' },
-      phases: [{ phase: 'waiting_for_workspace', status: 'failed', attempt: 1, detail: { gaps: [{ room: 'northgate-renewal', code: 'mentioned', detail: 'the mention has not arrived' }] }, error: { code: 'demo_projection_wait_exhausted', message: 'The workspace did not match the pack within 510 readiness checks' }, startedAt: '2026-09-07T12:00:10.000Z', finishedAt: '2026-09-07T13:25:12.000Z' }],
+      phases: [{ phase: 'waiting_for_workspace', status: 'failed', attempt: 1, detail: { gaps: [{ viewerUserId: PRESENTER_ID, room: 'northgate-renewal', code: 'mentioned', detail: 'the mention has not arrived' }] }, error: { code: 'demo_projection_wait_exhausted', message: 'The workspace did not match the pack within 510 readiness checks' }, startedAt: '2026-09-07T12:00:10.000Z', finishedAt: '2026-09-07T13:25:12.000Z' }],
     });
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(respond([failed]));
     await render();
@@ -231,7 +234,53 @@ describe('the Demos page', () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(respond([operation({ status: 'ready', readyAt: '2026-09-07T12:02:00.000Z', phases: [] })]));
     await render();
     expect(container.textContent).toContain('Tell the presenter to switch to Alto Capital-demo');
+    expect(container.textContent).toContain('account menu');
+    expect(container.textContent).toContain('multiple-workspaces-enabled');
     expect(buttonNamed('Refresh')).toBeDefined();
+  });
+
+  it('keeps trying while offline even when nothing is running, so the banner tells the truth', async () => {
+    // Every operation is ready, so no running poll exists; a failed Refresh
+    // must still be followed by another read, or "the page keeps trying" is a lie.
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(respond([operation({ status: 'ready', readyAt: '2026-09-07T12:02:00.000Z', phases: [] })]));
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await render();
+      fetchMock.mockImplementation(async () => { throw new Error('offline'); });
+      await act(async () => { buttonNamed('Refresh').click(); });
+      await act(async () => { await Promise.resolve(); });
+      expect(container.querySelector('.demo-stale')!.textContent).toContain('keeps trying');
+      const before = fetchMock.mock.calls.filter((call) => String(call[0]).endsWith('/api/demos')).length;
+      await act(async () => { await vi.advanceTimersByTimeAsync(5_100); });
+      expect(fetchMock.mock.calls.filter((call) => String(call[0]).endsWith('/api/demos')).length).toBeGreaterThan(before);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('reads a retried operation by its current attempt, not by a stale row from the last one', async () => {
+    // Attempt 2 has re-run the first phase; attempt 1's wait row is still on
+    // the operation, still "running", and must not read as where attempt 2 is.
+    const retried = operation({
+      attempt: 2,
+      phases: [
+        { phase: 'checking_template', status: 'running', attempt: 2, detail: {}, error: null, startedAt: '2026-09-07T13:00:00.000Z', finishedAt: null },
+        { phase: 'waiting_for_workspace', status: 'running', attempt: 1, detail: { gaps: [] }, error: null, startedAt: '2026-09-07T12:01:00.000Z', finishedAt: null },
+      ],
+    });
+    vi.spyOn(globalThis, 'fetch').mockImplementation(respond([retried]));
+    await render();
+    expect(currentPhase(retried as never)?.phase).toBe('checking_template');
+    expect(container.querySelector('.queue-detail-header p')?.textContent).toBe('Checking template');
+    expect(container.textContent).toContain('From attempt 1 · not reached yet by this attempt');
+  });
+
+  it('says why when the template is too small to cast a demo, instead of a form that cannot be submitted', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(respond([], { template: () => Response.json({ ...template, members: template.members.slice(0, 1) }) }));
+    await render();
+    expect(container.textContent).toContain('demo-template has 1 active member; the pack needs 4, one per role.');
+    expect(buttonNamed('New demo').disabled).toBe(true);
+    expect(container.textContent).not.toContain('is cast in two roles');
   });
 });
 
@@ -241,6 +290,8 @@ describe('what an operation says about itself', () => {
     expect(operationHeadline(operation() as never)).toBe('Waiting for workspace');
     expect(operationHeadline(operation({ status: 'ready', readyAt: '2026-09-07T12:02:00.000Z' }) as never)).toBe('Ready');
     expect(operationHeadline(operation({ status: 'ready', retiredAt: '2026-09-07T13:00:00.000Z' }) as never)).toBe('Retired');
+    // An abandoned candidate that was then closed is still abandoned, not "Retired".
+    expect(operationHeadline(operation({ status: 'abandoned', retiredAt: '2026-09-07T13:00:00.000Z' }) as never)).toBe('Abandoned · candidate closed');
     expect(operationHeadline(operation({ status: 'failed', failedPhase: 'seeding_conversations' }) as never)).toBe('Failed: seeding conversations');
     expect(operationHeadline(operation({ phases: [] }) as never)).toBe('Starting');
   });
