@@ -13,7 +13,7 @@ outside this document can break without their own tests failing.
 
 Ordinary member search and resource reads use the [authorization primitive](authorization.md):
 five-minute freshness is a design goal, not a permission lease or request timeout.
-Canonical permission checks share only overlapping work; persisted grants are not
+Canonical permission checks share observations only within one batch; persisted grants are not
 reused. Queue-maintained attachment discovery can lag source changes, while a
 positive result still requires its canonical grant. New requests pass session and
 workspace-membership middleware. This does not relax mutation checks, socket
@@ -795,7 +795,7 @@ incident response that may prompt it.
 ### 2026-09-08 — Remove the authorization freshness deadline
 
 The user changed five-minute freshness from a hard bound to a design goal after
-production expiry stalls. Reads no longer enforce evidence age or reuse persisted
+production expiry stalls. Global KV authorization caching is inert. Reads no longer enforce evidence age or reuse persisted
 grants; canonical checks and Queue discovery remain separate. Previous five-minute
 lease claims below are historical and superseded. Session and socket rules are unchanged.
 

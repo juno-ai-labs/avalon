@@ -23,8 +23,6 @@ async function ownerEvidence<T extends { validatedAt: number }>(cache: Map<strin
   if (pending) return pending;
   const work = load();
   cache.set(key, work);
-  const release = () => { if (cache.get(key) === work) cache.delete(key); };
-  void work.then(release, release);
   return work;
 }
 
@@ -59,35 +57,35 @@ export function createAccessContext(env: Env, auth: AuthContext): AccessContext 
 }
 
 export class AuthorizationService {
-  private readonly pending = new Map<string, Promise<AuthorizationDecision>>();
+  constructor(private readonly env: Env) {}
+
+  async checkMany(subject: AuthorizationSubject, resources: readonly AuthorizationResource[]): Promise<AuthorizationDecision[]> {
+    const unique = [...new Map(resources.map((resource) => [authorizationSnapshotKey(subject, resource), resource])).values()];
+    // One observation batch per call: a later check must never join an earlier read.
+    const decisions = await new AuthorizationBatch(this.env).checkMany(subject, unique);
+    const byKey = new Map(unique.map((resource, index) => [authorizationSnapshotKey(subject, resource), decisions[index]!]));
+    return resources.map((resource) => byKey.get(authorizationSnapshotKey(subject, resource))!);
+  }
+}
+
+/** Owner observations, including settled reads, live for exactly one batch. */
+class AuthorizationBatch {
   private readonly parents = new Map<string, Promise<Awaited<ReturnType<WorkstreamDO['readAuthorizationFacts']>>>>();
   private readonly attachments = new Map<string, Promise<ReturnType<WorkstreamResourceStorage['readAuthorizationFacts']>>>();
   private readonly memberships = new Map<string, Promise<{ active: boolean; validatedAt: number }>>();
   constructor(private readonly env: Env) {}
 
   async checkMany(subject: AuthorizationSubject, resources: readonly AuthorizationResource[]): Promise<AuthorizationDecision[]> {
-    const missing = [...new Map(resources.filter((resource) => !this.pending.has(authorizationSnapshotKey(subject, resource)))
-      .map((resource) => [authorizationSnapshotKey(subject, resource), resource])).values()];
-    if (missing.length) {
-      const batch = this.checkBatch(subject, missing).catch(() => {
-        logWarn(this.env, 'authorization_authority_read_failed', { region: this.env.AVALON_REGION });
-        return missing.map(() => unavailable());
-      });
-      missing.forEach((resource, index) => {
-        const key = authorizationSnapshotKey(subject, resource);
-        const work = batch.then((decisions) => decisions[index]!);
-        this.pending.set(key, work);
-        void work.then(() => { if (this.pending.get(key) === work) this.pending.delete(key); });
-      });
+    try { return await this.checkBatch(subject, resources); }
+    catch {
+      logWarn(this.env, 'authorization_authority_read_failed', { region: this.env.AVALON_REGION });
+      return resources.map(() => unavailable());
     }
-    const work = resources.map((resource) => this.pending.get(authorizationSnapshotKey(subject, resource))!);
-    return Promise.all(work);
   }
 
   private async checkBatch(subject: AuthorizationSubject, resources: readonly AuthorizationResource[]): Promise<AuthorizationDecision[]> {
     const workspace = await authorizationWorkspace(this.env, subject.workspaceId);
-    // Coalesce overlapping reads only. Persistent grants require mutation invalidation,
-    // not a clock-based lease or indefinitely trusted snapshots.
+    // Reuse owner observations within this batch only; no clock-based lease.
     const decisions: AuthorizationDecision[] = [];
     const requested = resources.map((resource, index) => ({ resource, index }));
     if (!subject.userId) return resources.map(() => ({ status: 'denied', reason: 'outside_delegation', evidence: [] }));
