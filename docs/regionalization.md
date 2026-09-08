@@ -194,11 +194,13 @@ See [`public-site-telemetry.md`](public-site-telemetry.md).
 - **Product runtimes reach EU only through named Worker RPC service bindings.**
   Two Access-gated administrative surfaces are explicit exceptions. Ace has a
   direct EU D1 binding for transient user/workspace search and flag fan-out
-  enumeration, and relays one operator action to each region's public API over
-  HTTPS with that region's own operator credential: retiring a workspace in the
-  region that owns it — an irreversible write, which is why the credential is
-  per region, the region is checked against the workspace's row before
-  anything closes, and the typed confirmation is enforced by the regional API
+  enumeration, and relays two operator actions to each region's public API over
+  HTTPS with that region's own operator credential: reading and driving demo
+  preparation in Global ([`demo-workspaces.md`](demo-workspaces.md#regional-impact)),
+  and retiring a workspace in the region that owns it — an irreversible write,
+  which is why the credential is per region, the region is checked against the
+  workspace's row before anything closes, and the typed confirmation is
+  enforced by the regional API
   ([`workspace-retirement.md`](workspace-retirement.md#regional-impact)). The engineering MCP uses a named regional API entrypoint to run
   deliberate Durable Object SQLite inspection and can return EU product content
   transiently to an admitted operator; it never persists or logs query material.
@@ -393,6 +395,16 @@ these shared datasets rather than assuming the EU Worker binding makes them EU
 resident.
 
 ## Changelog
+
+### 2026-09-07 — Ace relays demo preparation to Global
+
+**What changed:** Beside retirement, Ace reads and drives demo preparation
+through Global's public API with Global's `demos` token.
+
+**Why:** Demos are prepared in Global only — the template is a Global
+workspace and the Workflow is bound there — so the Demos page has one region
+to ask. The same relay, the same per-region credential rule, and the same
+recorded exception; nothing new crosses a region.
 
 ### 2026-09-07 — Ace relays workspace retirement to the region that owns the workspace
 
