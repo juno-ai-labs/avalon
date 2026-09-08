@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { asSubstreamId, asUserId, asWorkspaceId } from '@rally/contracts';
-import { AccessContext, AUTHORIZATION_FRESHNESS_MS, decisionIsFresh, evaluateReadPolicy,
+import { AccessContext, decisionHasValidEvidence, evaluateReadPolicy,
   type ReadPolicy, type AuthorizationResource } from '../src/services/authorization-policy';
 
 const workspaceId = asWorkspaceId('00000000-0000-7000-8000-000000000001');
@@ -21,17 +21,13 @@ describe('authorization read policy', () => {
     expect(evaluateReadPolicy({ kind: 'any', reason: 'resource_not_shared', policies: [granted(true, 0), granted(true, 300_000)] }, 300_001)).toMatchObject({ status: 'allowed' });
   });
 
-  it('expires at exactly five minutes and never renews stale or future evidence', () => {
+  it('keeps observation age diagnostic and rejects future evidence', () => {
     const decision = evaluateReadPolicy(granted(true), 1000);
-    expect(decisionIsFresh(decision, 1000 + AUTHORIZATION_FRESHNESS_MS - 1)).toBe(true);
-    expect(decisionIsFresh(decision, 1000 + AUTHORIZATION_FRESHNESS_MS)).toBe(false);
-    expect(decisionIsFresh(decision, 999)).toBe(false);
-    expect(evaluateReadPolicy(granted(false), 301_000)).toMatchObject({ status: 'unavailable', reason: 'evidence_expired' });
-  });
-
-  it('uses the earliest dependency and refuses an empty proof', () => {
-    const decision = evaluateReadPolicy({ kind: 'all', policies: [granted(true, 1000), granted(true, 2000)] }, 2000);
-    expect(decisionIsFresh(decision, 301_000)).toBe(false);
+    expect(decisionHasValidEvidence(decision, 301_000)).toBe(true);
+    expect(decisionHasValidEvidence(decision, 86_401_000)).toBe(true);
+    expect(decisionHasValidEvidence(decision, 999)).toBe(false);
+    expect(evaluateReadPolicy(granted(false), 86_401_000)).toMatchObject({ status: 'denied' });
+    expect(evaluateReadPolicy(granted(true, 2000), 1000)).toMatchObject({ status: 'unavailable', reason: 'evidence_invalid' });
     expect(evaluateReadPolicy({ kind: 'all', policies: [] }, 2000)).toMatchObject({ status: 'unavailable' });
   });
 
@@ -43,12 +39,12 @@ describe('authorization read policy', () => {
       .toMatchObject({ status: 'denied', reason: 'workspace_mismatch' });
   });
 
-  it('rejects a grant that expired while the resolver was completing its batch', async () => {
-    const at = Date.now() - AUTHORIZATION_FRESHNESS_MS;
+  it('does not impose a deadline on a grant while the resolver completes its batch', async () => {
+    const at = Date.now() - 86_400_000;
     const context = new AccessContext({ workspaceId, userId, delegation: null }, {
       checkMany: async () => [evaluateReadPolicy(granted(true, at), at)],
     });
-    expect(await context.check(resource)).toMatchObject({ status: 'unavailable', reason: 'evidence_expired' });
+    expect(await context.check(resource)).toMatchObject({ status: 'allowed' });
   });
 
   it('reports incomplete evaluation without hiding successful or failed checks', async () => {

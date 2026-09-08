@@ -6,7 +6,7 @@ import { createCloudflareTestBinding } from '../test/helpers/cloudflare-test';
 import { asSubstreamId, asUserId, asWorkspaceId } from '@rally/contracts';
 import { AUTHORIZATION_PROJECTION_MIGRATION, flushAuthorizationDeliveries, flushAuthorizationProjection } from '../src/durable-objects/authorization-projection';
 import { AuthorizationStorage } from '../src/durable-objects/authorization-storage';
-import { AUTHORIZATION_FRESHNESS_MS, type AuthorizationSnapshot } from '../src/services/authorization-policy';
+import { type AuthorizationSnapshot } from '../src/services/authorization-policy';
 
 const workspaceId = asWorkspaceId('00000000-0000-7000-8000-000000000b01');
 const parentId = '00000000-0000-7000-8000-000000000b02';
@@ -86,27 +86,19 @@ describe('authorization SQLite state', () => {
     });
   });
 
-  it('expires evidence independently of storage and refuses delayed renewal', async () => {
+  it('ignores persisted grants after removing time-based snapshot reuse', async () => {
     const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName('authorization-storage-snapshots'));
-    await stub.runInspectionSql({ sql: 'SELECT 1', bindings: [] });
-    await runInDurableObject(stub, async (_instance, state) => {
-      const storage = new AuthorizationStorage(state.storage);
-      const now = Date.now();
-      const snapshot: AuthorizationSnapshot = { policyVersion: 1,
-        subject: { workspaceId, userId: asUserId('00000000-0000-7000-8000-000000000b04'), delegation: null },
-        resource: { kind: 'resource', workspaceId, resourceId },
-        decision: { status: 'allowed', evidence: [{ owner: parentId, revision: '1', validatedAt: now }] } };
-      storage.write(snapshot);
-      expect(storage.read(snapshot.subject, snapshot.resource, now)?.decision.status).toBe('allowed');
-      expect(storage.read(snapshot.subject, snapshot.resource, now + AUTHORIZATION_FRESHNESS_MS)).toBeNull();
-      storage.write({ ...snapshot, decision: { status: 'denied', reason: 'resource_not_shared', evidence: [{ owner: parentId, revision: '2', validatedAt: now + AUTHORIZATION_FRESHNESS_MS }] } });
-      storage.write(snapshot);
-      // Future timestamps cannot be published to bypass the expiration bound.
-      expect(storage.read(snapshot.subject, snapshot.resource, now)?.decision.status).toBe('allowed');
-      const older = { ...snapshot, decision: { status: 'allowed' as const,
-        evidence: [{ owner: parentId, revision: '0', validatedAt: now - 1 }] } };
-      storage.write(older);
-      expect(storage.read(snapshot.subject, snapshot.resource, now)?.decision).toEqual(snapshot.decision);
+    await stub.initializeWorkspace(workspaceId, 'wnam');
+    const snapshot: AuthorizationSnapshot = { policyVersion: 1,
+      subject: { workspaceId, userId: asUserId('00000000-0000-7000-8000-000000000b04'), delegation: null },
+      resource: { kind: 'resource', workspaceId, resourceId },
+      decision: { status: 'allowed', evidence: [{ owner: parentId, revision: '1', validatedAt: Date.now() }] } };
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec('INSERT INTO authorization_snapshots VALUES (?, ?, ?)',
+        JSON.stringify([workspaceId, snapshot.subject.userId, null, JSON.stringify([workspaceId, 'resource', resourceId])]),
+        JSON.stringify(snapshot), Date.now());
     });
+    expect(await stub.readAuthorizationSnapshots({ subject: snapshot.subject, resources: [snapshot.resource] })).toEqual([null]);
+    await stub.writeAuthorizationSnapshots([snapshot]);
   });
 });

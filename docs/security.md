@@ -12,12 +12,14 @@ preload bridge, or the `VITE_` allowlist. Everything here is a boundary someone
 outside this document can break without their own tests failing.
 
 Ordinary member search and resource reads use the [authorization primitive](authorization.md):
-a canonical read proof can remain valid for up to five minutes after a permission
-change. New requests still pass session and workspace-membership middleware.
-This bounded read policy does not relax mutation checks, socket admission, or
-local socket visibility/revocation. Expired or unavailable evidence never grants access. Direct reads return a
-retryable failure; search and resource lists return verified rows with explicit
-incomplete status when some candidates cannot be authorized.
+five-minute freshness is a design goal, not a permission lease or request timeout.
+Canonical permission checks share only overlapping work; persisted grants are not
+reused. Queue-maintained attachment discovery can lag source changes, while a
+positive result still requires its canonical grant. New requests pass session and
+workspace-membership middleware. This does not relax mutation checks, socket
+admission, or local socket visibility/revocation. Missing authority remains a
+retryable failure for direct reads and explicit partial status for search/lists.
+
 ## Sidekick authoring and loading
 
 Conversational publication resolves the current workspace membership role and
@@ -789,6 +791,13 @@ EU rotate independently. [`runbook.md`](runbook.md) owns the procedure and the
 incident response that may prompt it.
 
 ## Changelog
+
+### 2026-09-08 — Remove the authorization freshness deadline
+
+The user changed five-minute freshness from a hard bound to a design goal after
+production expiry stalls. Reads no longer enforce evidence age or reuse persisted
+grants; canonical checks and Queue discovery remain separate. Previous five-minute
+lease claims below are historical and superseded. Session and socket rules are unchanged.
 
 ### 2026-09-08 — Sidekick authoring and loading
 

@@ -1,8 +1,6 @@
 import { z } from 'zod';
 import { IdSchema, SubstreamIdSchema, WorkspaceIdSchema, UserIdSchema } from '@rally/contracts';
 
-/** Product policy: ordinary read authority can lag a change by at most five minutes. */
-export const AUTHORIZATION_FRESHNESS_MS = 300_000;
 export const AUTHORIZATION_POLICY_VERSION = 1;
 
 export const AuthorizationResourceSchema = z.discriminatedUnion('kind', [
@@ -45,7 +43,7 @@ export const AuthorizationDecisionSchema = z.discriminatedUnion('status', [
   z.strictObject({ status: z.literal('not_found'), resource: AuthorizationResourceSchema,
     evidence: z.array(AuthorizationEvidenceSchema).nonempty() }),
   z.strictObject({ status: z.literal('unavailable'),
-    reason: z.enum(['authority_unavailable', 'projection_incomplete', 'evidence_expired']), retryable: z.literal(true) }),
+    reason: z.enum(['authority_unavailable', 'projection_incomplete', 'evidence_invalid']), retryable: z.literal(true) }),
 ]);
 export type AuthorizationDecision = z.infer<typeof AuthorizationDecisionSchema>;
 
@@ -55,14 +53,10 @@ export type ReadPolicy =
   | { kind: 'all'; policies: readonly ReadPolicy[] }
   | { kind: 'any'; policies: readonly ReadPolicy[]; reason: z.infer<typeof AuthorizationDenialReasonSchema> };
 
-export function evidenceExpiresAt(evidence: readonly AuthorizationEvidence[]): number {
-  return evidence.length ? Math.min(...evidence.map((item) => item.validatedAt + AUTHORIZATION_FRESHNESS_MS)) : 0;
-}
-
-export function decisionIsFresh(decision: AuthorizationDecision, now: number): boolean {
+/** Observation age is diagnostic, not a permission timeout. Future evidence is invalid. */
+export function decisionHasValidEvidence(decision: AuthorizationDecision, now: number): boolean {
   return decision.status !== 'unavailable' && decision.evidence.length > 0
-    && decision.evidence.every((item) => item.validatedAt <= now)
-    && now < evidenceExpiresAt(decision.evidence);
+    && decision.evidence.every((item) => item.validatedAt <= now);
 }
 
 /** Every serving strategy evaluates these same predicates. Alternative grants retain their own proof. */
@@ -71,8 +65,8 @@ export function evaluateReadPolicy(policy: ReadPolicy, now: number): Authorizati
     const decision: AuthorizationDecision = policy.granted
       ? { status: 'allowed', evidence: [policy.evidence] }
       : { status: 'denied', reason: policy.reason, evidence: [policy.evidence] };
-    return decisionIsFresh(decision, now) ? decision
-      : { status: 'unavailable', reason: 'evidence_expired', retryable: true };
+    return decisionHasValidEvidence(decision, now) ? decision
+      : { status: 'unavailable', reason: 'evidence_invalid', retryable: true };
   }
   const decisions = policy.policies.map((item) => evaluateReadPolicy(item, now));
   if (policy.kind === 'any') {
@@ -140,11 +134,11 @@ export class AccessContext {
       if (decisions.length !== admitted.length) throw new Error('authorization_resolver_cardinality_mismatch');
       const now = Date.now();
       decisions.forEach((decision, index) => {
-        // A fast member of a batch can expire while another owner is still responding.
+        // Validate the evidence shape without turning its age into a read deadline.
         results[indices[index]!] = decision.status !== 'unavailable'
           && !(decision.status === 'denied' && decision.evidence.length === 0)
-          && !decisionIsFresh(decision, now)
-          ? { status: 'unavailable', reason: 'evidence_expired', retryable: true } : decision;
+          && !decisionHasValidEvidence(decision, now)
+          ? { status: 'unavailable', reason: 'evidence_invalid', retryable: true } : decision;
       });
     }
     return results;

@@ -380,17 +380,19 @@ describe("conversation parent contract", () => {
     await expect(participant.get(resourceId)).resolves.toMatchObject({ id: resourceId, provider: 'resend' });
     await runInDurableObject(workspaceStub(), (_instance, state) => {
       state.storage.sql.exec('DELETE FROM authorization_snapshots');
-      state.storage.sql.exec('UPDATE authorization_inventories SET validated_at = ?', Date.now() - 300_000);
+      state.storage.sql.exec('UPDATE authorization_inventories SET validated_at = 1');
     });
     await expect(new ResourceService(TEST_ENV, { ...AUTH, userId: MEMBER_ID }).get(resourceId))
       .rejects.toMatchObject({ status: 404 });
     expect(await workspaceStub().authorizationBackfillStatus({ workspaceId: WORKSPACE_ID }))
       .toMatchObject({ complete: true, pendingChildren: 0 });
+    expect(await runInDurableObject(workspaceStub(), (_instance, state) =>
+      state.storage.sql.exec<{ oldest: number }>('SELECT MIN(validated_at) AS oldest FROM authorization_inventories').one().oldest)).toBe(1);
     // Creating a personal room does not replace its active participant roster.
     await expect(new ResourceService(TEST_ENV, AUTH).get(resourceId)).rejects.toMatchObject({ status: 404 });
   });
 
-  it("rechecks expired conversation authority after asynchronous content hashing", async () => {
+  it("rechecks conversation authority after asynchronous content hashing without a clock deadline", async () => {
     await seedRoom(PERSONAL_ROOM_ID, "personal", [AUTHOR_ID, PARTICIPANT_ID]);
     const text = 'needle revocation boundary';
     await runInDurableObject(conversation(PERSONAL_ROOM_ID), async (_instance, state) => {
@@ -409,8 +411,6 @@ describe("conversation parent contract", () => {
         });
         expect(removal.status).toBe(200);
         await deliverChildEffects(TEST_ENV, conversation(PERSONAL_ROOM_ID));
-        const expiredAt = Date.now() + 300_000;
-        vi.spyOn(Date, 'now').mockReturnValue(expiredAt);
         revoked = true;
       }
       return hashed;
@@ -826,7 +826,7 @@ describe("conversation parent contract", () => {
     const address = { kind: 'conversation' as const, workspaceId: WORKSPACE_ID, parentId: owned, substreamId: asSubstreamId('0') };
     expect(await createAccessContext(uncachedAuthorizationEnv(), { ...AUTH, userId: PARTICIPANT_ID }).check(address)).toMatchObject({ status: 'allowed' });
     await archiveRoom(PERSONAL_ROOM_ID);
-    // Force a canonical observation: ordinary cached reads retain their five-minute lease.
+    // Every completed read observes canonical authority again.
     await runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec('DELETE FROM authorization_snapshots').toArray());
     expect(await createAccessContext(uncachedAuthorizationEnv(), { ...AUTH, userId: PARTICIPANT_ID }).check(address)).toMatchObject({ status: 'denied' });
     expect(await createAccessContext(TEST_ENV, AUTH).check(address)).toMatchObject({ status: 'allowed' });
