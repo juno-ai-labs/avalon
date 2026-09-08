@@ -65,7 +65,11 @@ function agent(): DurableObjectStub {
 async function readyAgent(): Promise<DurableObjectStub> {
   const stub = agent();
   await boot(stub);
-  await runInDurableObject(stub, (_instance, state) => seedWorkstreamRoot(state));
+  await runInDurableObject(stub, (_instance, state) => {
+    seedWorkstreamRoot(state);
+    // This fixture starts after initial projection delivery; only the receipt/timer is pending.
+    state.storage.sql.exec('DELETE FROM authorization_projection_outbox');
+  });
   return stub;
 }
 

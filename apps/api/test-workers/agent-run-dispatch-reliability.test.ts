@@ -74,7 +74,11 @@ afterEach(async () => {
 async function readySubstream(): Promise<DurableObjectStub> {
   const stub = substreamStub();
   await boot(stub);
-  await runInDurableObject(stub, (_instance, state) => seedWorkstreamRoot(state));
+  await runInDurableObject(stub, (_instance, state) => {
+    seedWorkstreamRoot(state);
+    // This fixture starts after initial projection delivery; only the receipt/timer is pending.
+    state.storage.sql.exec('DELETE FROM authorization_projection_outbox');
+  });
   return stub;
 }
 

@@ -1,6 +1,9 @@
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
+import { ConversationAuthorizationRequestSchema, type ConversationAuthorizationRequest } from '../services/authorization-policy';
+import { createIdentityObjectPort } from '../runtime/identity-port';
 import {
   UserIdSchema,
+  SubstreamIdSchema,
   WORKSTREAM_REALTIME_MAX_FRAME_BYTES,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   WorkspaceIdSchema,
@@ -817,6 +820,39 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       authorized,
       archived: row.archived_at !== null,
     });
+  }
+
+  /** Failed or reserved preparations have no readable content to migrate. */
+  async listAuthorizationChildren(input: ConversationParentAuthorityRequest) {
+    await this.initialized;
+    const request = ConversationParentAuthorityRequestSchema.parse(input);
+    this.assertParent(request.workspaceId, request.parentId);
+    return { substreamIds: this.parentSql.exec<{ substream_id: string }>(
+      "SELECT substream_id FROM conversation_children WHERE kind = 'main' OR status = 'ready' ORDER BY substream_id",
+    ).toArray().map((row) => SubstreamIdSchema.parse(row.substream_id)) };
+  }
+
+  /** Read-only authorization evidence; validates the main roster at its canonical child. */
+  async readAuthorizationFacts(input: ConversationAuthorizationRequest) {
+    await this.initialized;
+    const request = ConversationAuthorizationRequestSchema.parse(input);
+    const metadata = this.metadataRow();
+    if (!metadata) return { exists: false as const, validatedAt: Date.now() };
+    this.assertParent(request.workspaceId, request.parentId);
+    const main = await createIdentityObjectPort(this.env, request.workspaceId, request.parentId)
+      .readAuthorizationFacts({ userId: request.userId });
+    const children = (request.substreamIds.length ? request.substreamIds : this.childRegistry().map((child) => child.substreamId)).map((substreamId) => {
+      const child = substreamId === '0' ? null : first(this.parentSql.exec<{
+        status: string; active: number | null; version: number | null;
+      }>(`SELECT child.status, member.active, member.version FROM conversation_children child
+          LEFT JOIN private_child_memberships member ON member.substream_id = child.substream_id AND member.user_id = ?
+          WHERE child.substream_id = ? AND child.kind = 'child'`, request.userId, substreamId));
+      return { substreamId, exists: substreamId === '0' ? main.exists : Boolean(child),
+        ready: substreamId === '0' || child?.status === 'ready', failed: child?.status === 'failed',
+        member: substreamId === '0' || child?.active === 1, version: child?.version ?? 0 };
+    });
+    return { exists: true as const, main, children, validatedAt: Date.now(),
+      generation: this.metadataRow()?.authority_generation ?? metadata.authority_generation };
   }
 
   async authority(input: ConversationParentAuthorityRequest): Promise<ConversationParentAuthorityResult> {

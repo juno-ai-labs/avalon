@@ -319,11 +319,21 @@ describe('Rally API wire adapter', () => {
       .toMatchObject({ harnessStatus: 'stopped' });
   });
 
+  it('advertises partial search support and preserves incomplete response metadata', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      void input; void init; return json({ results: [], complete: false });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new RallyApi('https://api.rally.test', session);
+    await expect(api.searchWorkspace({ query: 'document', category: 'all' })).resolves.toEqual({ results: [], complete: false });
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({ supportsPartialResults: true });
+  });
+
   it('lists searchable connector resources with an opaque pagination cursor', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       void input;
       void init;
-      return json({ items: [resource], nextCursor: 'cursor-2' });
+      return json({ items: [resource], nextCursor: 'cursor-2', complete: false });
     });
     vi.stubGlobal('fetch', fetchMock);
     const api = new RallyApi('https://api.rally.test', session);
@@ -331,6 +341,7 @@ describe('Rally API wire adapter', () => {
     await expect(api.listResources({ query: 'Launch brief', cursor: 'cursor-1', limit: 20 })).resolves.toEqual({
       items: [expect.objectContaining({ id: resourceId, title: 'Launch brief', provider: 'google_drive' })],
       nextCursor: 'cursor-2',
+      complete: false,
     });
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
       'https://api.rally.test/resources?limit=20&q=Launch+brief&cursor=cursor-1',

@@ -44,6 +44,8 @@ export interface Env {
   TELEMETRY_PAYLOADS: R2Bucket;
   /** One globally replicated cache shared by the Global and EU Workers. */
   INFERENCE_PRICING_CACHE: KVNamespace;
+  /** Global authorization acceleration only; EU evidence remains jurisdiction-bound. */
+  AUTHORIZATION_CACHE?: KVNamespace;
   IMAGES: ImagesBinding;
   AI: Ai;
   MEMORY_INDEX: VectorizeIndex;
@@ -329,6 +331,7 @@ const EnvContractSchema = z.object({
   PAYLOADS: binding<R2Bucket>(),
   TELEMETRY_PAYLOADS: binding<R2Bucket>(),
   INFERENCE_PRICING_CACHE: binding<KVNamespace>(),
+  AUTHORIZATION_CACHE: binding<KVNamespace>().optional(),
   IMAGES: binding<ImagesBinding>(),
   AI: binding<Ai>(),
   MEMORY_INDEX: binding<VectorizeIndex>(),

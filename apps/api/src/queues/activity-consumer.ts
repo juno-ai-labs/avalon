@@ -3,6 +3,8 @@ import { embedSearchDocuments } from '../services/search-embedding';
 import { workspaceSearchIndex, searchChunkIdentity, searchDocumentId } from '../services/text-search';
 import { ResourceSearchProjectionSchema } from '../durable-objects/resource-search-projection';
 import { SearchProjectionMessageSchema } from '../durable-objects/search-projection-outbox';
+import { AuthorizationProjectionJobSchema } from '../durable-objects/authorization-projection';
+import { projectAuthorization } from '../services/authorization-projection-service';
 import { createSearchIndexingPipeline, indexSemanticBatch } from '../services/search-indexing-pipeline';
 import { ConnectorError, connectorOriginUrl, connectorRetryAfterMs } from "@rally/connectors";
 import {
@@ -211,6 +213,16 @@ async function loadSearchSource(env: Env, reference: SearchSourceReference, capt
 
 async function consumeOne(message: Message<unknown>, env: Env,
   indexSearch: ReturnType<typeof createSearchIndexingPipeline>): Promise<void> {
+  const authorizationJob = AuthorizationProjectionJobSchema.safeParse(message.body);
+  if (authorizationJob.success) {
+    try { await projectAuthorization(env, authorizationJob.data); message.ack(); }
+    catch (error) {
+      logWarn(env, 'authorization_projection_retry', { region: env.AVALON_REGION,
+        error_code: diagnosticErrorCode(error, 'authorization_projection_failed') });
+      message.retry();
+    }
+    return;
+  }
   const documentJob = SearchDocumentJobSchema.safeParse(message.body);
   if (documentJob.success) {
     const job = documentJob.data;

@@ -1,6 +1,10 @@
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 import { WorkstreamObjectClient } from '../src/services/workstream-object-client';
 import { WorkstreamDirectoryService } from '../src/services/workstream-directory-service';
+import { createResourceObjectPort } from '../src/runtime/resource-port';
+import { ResourceService } from '../src/services/resource-service';
+import { createAccessContext } from '../src/services/authorization-service';
+import { projectAuthorization } from '../src/services/authorization-projection-service';
 import { searchDocumentId } from '../src/services/text-search';
 
 /**
@@ -203,6 +207,12 @@ async function seedAutomation(scope: "personal" | "workspace" | "workstream", ow
   return automationId;
 }
 
+function uncachedAuthorizationEnv() {
+  const result = { ...TEST_ENV };
+  delete result.AUTHORIZATION_CACHE;
+  return result;
+}
+
 function viewer(parentId: string, userId: UserId) {
   return { workspaceId: WORKSPACE_ID, parentId, userId };
 }
@@ -237,6 +247,31 @@ beforeEach(async () => {
 });
 
 describe("conversation parent contract", () => {
+  it('checks workspace membership when refreshing authority from a previously authenticated context', async () => {
+    await seedRoom(WORKSPACE_ROOM_ID, 'workspace', [AUTHOR_ID]);
+    await env.DB.prepare("UPDATE workspace_members SET status = 'removed' WHERE workspace_id = ? AND user_id = ?")
+      .bind(WORKSPACE_ID, AUTHOR_ID).run();
+    expect(await createAccessContext(TEST_ENV, AUTH).check({ kind: 'conversation', workspaceId: WORKSPACE_ID,
+      parentId: WORKSPACE_ROOM_ID, substreamId: asSubstreamId('0') }))
+      .toMatchObject({ status: 'denied', reason: 'workspace_membership_required' });
+  });
+
+  it('reads canonical roster evidence before membership projections are delivered', async () => {
+    await seedRoom(PERSONAL_ROOM_ID, 'personal', [AUTHOR_ID, MEMBER_ID]);
+    await runInDurableObject(conversation(PERSONAL_ROOM_ID), (_instance, state) => {
+      state.storage.sql.exec("UPDATE participants SET status = 'removed', removed_at = ? WHERE user_id = ?", Date.now(), MEMBER_ID);
+    });
+    // The parent still has the previous projection. Fresh authorization must use the child roster.
+    expect(await roomParent(PERSONAL_ROOM_ID).authorizeViewer(viewer(PERSONAL_ROOM_ID, MEMBER_ID)))
+      .toMatchObject({ authorized: true });
+    const access = createAccessContext(TEST_ENV, { ...AUTH, userId: MEMBER_ID });
+    const address = { kind: 'conversation' as const, workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID, substreamId: asSubstreamId('0') };
+    expect(await access.check(address)).toMatchObject({ status: 'denied', reason: 'not_participant' });
+    expect(await createAccessContext(TEST_ENV, AUTH).check(address)).toMatchObject({ status: 'allowed' });
+    expect(await access.check({ ...address, substreamId: asSubstreamId('00000000-0000-7000-8000-00000000ad99') }))
+      .toMatchObject({ status: 'not_found' });
+  });
+
   it("returns every searchable scope beyond the bounded directory lookup size", async () => {
     await seedRoom(WORKSPACE_ROOM_ID, "workspace", [AUTHOR_ID]);
     await runInDurableObject(workspaceStub(), (_instance, state) => {
@@ -311,7 +346,51 @@ describe("conversation parent contract", () => {
     } finally { release(); await pending.catch(() => {}); }
   });
 
-  it("rechecks conversation authority after asynchronous content hashing", async () => {
+  it('keeps inbound email private through the deployed resource reader', async () => {
+    const payloadReads = vi.spyOn(env.PAYLOADS, 'get');
+    await seedRoom(PERSONAL_ROOM_ID, 'personal', [PARTICIPANT_ID]);
+    const resourceId = crypto.randomUUID();
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      state.storage.sql.exec(`INSERT INTO resources
+        (id, workspace_id, resource_type, provider, title, metadata_json, attachment_status, created_at, updated_at)
+        VALUES (?, ?, 'email', 'resend', 'Private email', '{}', 'attached', ?, ?)`, resourceId, WORKSPACE_ID, NOW, NOW);
+    });
+    // No lookup may interpret undiscovered attachments as a workspace-wide grant.
+    await expect(new ResourceService(TEST_ENV, AUTH).get(resourceId))
+      .rejects.toMatchObject({ status: 503, code: 'authorization_unavailable' });
+    await runInDurableObject(conversation(PERSONAL_ROOM_ID), (_instance, state) => {
+      state.storage.sql.exec(`INSERT INTO workstream_resource_links
+        (resource_id, attached_by_user_id, watch_enabled, relationship_type, resource_json, attached_at, updated_at)
+        VALUES (?, NULL, 0, 'inbound_email', '{}', 1, 1)`, resourceId);
+    });
+    await createResourceObjectPort(TEST_ENV, WORKSPACE_ID, PERSONAL_ROOM_ID).setWatchEnabled({ resourceId, watchEnabled: 1 });
+    await deliverEffectsToWorkspace(TEST_ENV, conversation(PERSONAL_ROOM_ID));
+    const projection = { type: 'authorization_projection_v1' as const, region: 'global' as const,
+      workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID };
+    await projectAuthorization(TEST_ENV, projection);
+    await projectAuthorization(TEST_ENV, { ...projection, substreamId: asSubstreamId('0') });
+    const outsider = new ResourceService(TEST_ENV, { ...AUTH, userId: MEMBER_ID });
+    expect((await outsider.list({ limit: 10 })).items).toEqual([]);
+    await expect(outsider.get(resourceId)).rejects.toMatchObject({ status: 404 });
+    await expect(outsider.content(resourceId)).rejects.toMatchObject({ status: 404 });
+    await expect(outsider.preview(resourceId, new AbortController().signal)).rejects.toMatchObject({ status: 404 });
+    expect(payloadReads).not.toHaveBeenCalled();
+    const participant = new ResourceService(TEST_ENV, { ...AUTH, userId: PARTICIPANT_ID });
+    expect((await participant.list({ limit: 10 })).items).toMatchObject([{ id: resourceId }]);
+    await expect(participant.get(resourceId)).resolves.toMatchObject({ id: resourceId, provider: 'resend' });
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      state.storage.sql.exec('DELETE FROM authorization_snapshots');
+      state.storage.sql.exec('UPDATE authorization_inventories SET validated_at = ?', Date.now() - 300_000);
+    });
+    await expect(new ResourceService(TEST_ENV, { ...AUTH, userId: MEMBER_ID }).get(resourceId))
+      .rejects.toMatchObject({ status: 404 });
+    expect(await workspaceStub().authorizationBackfillStatus({ workspaceId: WORKSPACE_ID }))
+      .toMatchObject({ complete: true, pendingChildren: 0 });
+    // Creating a personal room does not replace its active participant roster.
+    await expect(new ResourceService(TEST_ENV, AUTH).get(resourceId)).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("rechecks expired conversation authority after asynchronous content hashing", async () => {
     await seedRoom(PERSONAL_ROOM_ID, "personal", [AUTHOR_ID, PARTICIPANT_ID]);
     const text = 'needle revocation boundary';
     await runInDurableObject(conversation(PERSONAL_ROOM_ID), async (_instance, state) => {
@@ -330,6 +409,8 @@ describe("conversation parent contract", () => {
         });
         expect(removal.status).toBe(200);
         await deliverChildEffects(TEST_ENV, conversation(PERSONAL_ROOM_ID));
+        const expiredAt = Date.now() + 300_000;
+        vi.spyOn(Date, 'now').mockReturnValue(expiredAt);
         revoked = true;
       }
       return hashed;
@@ -442,13 +523,15 @@ describe("conversation parent contract", () => {
           '{}', 'attached', 'ready', ?, ?)`, searchResourceId, WORKSPACE_ID, searchResourceId, NOW, NOW);
     });
     const searchEnv: Env = { ...TEST_ENV, TURBO_PUFFER_DEV_API_KEY: 'test-only' };
-    const resourceRevision = await workspaceStub().resourceSearchRevision({ workspaceId: WORKSPACE_ID, resourceId: searchResourceId });
+    let resourceRevision = await workspaceStub().resourceSearchRevision({ workspaceId: WORKSPACE_ID, resourceId: searchResourceId });
     let source = 'messages';
+    let includeVerifiedMessage = false;
     let generation: string | undefined;
     externalFetch.mockImplementation(async () => Response.json({ rows: [{ id: 'search-candidate', source, generation,
       scope_id: source === 'artifacts' ? WORKSPACE_ID : PERSONAL_ROOM_ID,
       source_id: source === 'messages' ? `${reserved.substreamId}/search-private-turn` : source === 'conversation_links' ? `${reserved.substreamId}/search-private-turn/${privateLinkId}` : searchResourceId,
-      revision: source === 'artifacts' ? resourceRevision : 1 }] }));
+      revision: source === 'artifacts' ? resourceRevision : 1 }, ...(includeVerifiedMessage ? [{ id: 'verified-message', source: 'messages', scope_id: PERSONAL_ROOM_ID,
+        source_id: `${reserved.substreamId}/search-private-turn`, revision: 1 }] : [])] }));
     try {
       expect(await searchWorkspace(searchEnv, AUTH, { query: 'private search', category: 'messages' }))
         .toMatchObject([{ excerpt: `private search phrase ${privateUrl}` }]);
@@ -469,6 +552,30 @@ describe("conversation parent contract", () => {
       expect(await searchWorkspace(searchEnv, { ...AUTH, userId: PARTICIPANT_ID, sessionId: participantSession },
         { query: 'private search', category: 'links' })).toEqual([]);
       source = 'artifacts';
+      // Deployment enables checks without activation; incomplete inventory is retryable and starts discovery.
+      await expect(searchWorkspacePage(searchEnv, AUTH, { query: 'private search', category: 'artifacts' }))
+        .resolves.toMatchObject({ results: [], complete: false });
+      includeVerifiedMessage = true;
+      const mixedPage = await searchWorkspacePage(searchEnv, AUTH, { query: 'private search', category: 'all' });
+      expect(mixedPage).toMatchObject({ complete: false, results: [{ id: 'verified-message' }] });
+      includeVerifiedMessage = false;
+      const visibleResourceId = crypto.randomUUID();
+      await runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec(`INSERT INTO resources
+        (id, workspace_id, resource_type, provider, title, metadata_json, attachment_status, created_at, updated_at)
+        VALUES (?, ?, 'document', 'fixture', 'private search visible', '{}', 'attached', ?, ?)`, visibleResourceId, WORKSPACE_ID, NOW, NOW).toArray());
+      const resourcePage = await new ResourceService(TEST_ENV, AUTH).list({ query: 'private search', limit: 10 });
+      expect(resourcePage).toMatchObject({ complete: false, items: [{ id: visibleResourceId }] });
+      const initialProjection = { type: 'authorization_projection_v1' as const, region: 'global' as const,
+        workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID };
+      await projectAuthorization(TEST_ENV, initialProjection);
+      await projectAuthorization(TEST_ENV, { ...initialProjection, substreamId: asSubstreamId('0') });
+      const partial = await workspaceStub().authorizationBackfillStatus({ workspaceId: WORKSPACE_ID });
+      expect(partial).toMatchObject({ pendingParents: 0, pendingChildren: 1, complete: false });
+      await expect(searchWorkspacePage(searchEnv, AUTH, { query: 'private search', category: 'artifacts' }))
+        .resolves.toMatchObject({ results: [], complete: false });
+      expect(await workspaceStub().authorizationBackfillStatus({ workspaceId: WORKSPACE_ID })).toEqual(partial);
+      await projectAuthorization(TEST_ENV, { ...initialProjection, substreamId: reserved.substreamId });
+      resourceRevision = await workspaceStub().resourceSearchRevision({ workspaceId: WORKSPACE_ID, resourceId: searchResourceId });
       expect(await searchWorkspace(searchEnv, AUTH, { query: 'private search', category: 'artifacts' }))
         .toMatchObject([{ title: 'private search artifact' }]);
       expect(await searchWorkspace(searchEnv, { ...AUTH, userId: PARTICIPANT_ID },
@@ -478,7 +585,37 @@ describe("conversation parent contract", () => {
         .toMatchObject([{ title: 'private search artifact' }]);
       generation = await searchContentHash('different private search artifact');
       expect(await searchWorkspace(searchEnv, AUTH, { query: 'private search', category: 'artifacts' })).toEqual([]);
+      // Run the actual reference-only backfill, then verify the exact-path reader.
+      await workspaceStub().beginAuthorizationBackfill({ workspaceId: WORKSPACE_ID });
+      const projection = { type: 'authorization_projection_v1' as const, region: 'global' as const,
+        workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID };
+      await projectAuthorization(TEST_ENV, projection);
+      for (const substreamId of [asSubstreamId('0'), reserved.substreamId]) {
+        await projectAuthorization(TEST_ENV, { ...projection, substreamId });
+      }
+      generation = undefined;
+      source = 'messages';
+      expect(await searchWorkspace(searchEnv, AUTH, { query: 'private search', category: 'messages' })).toHaveLength(1);
+      source = 'artifacts';
+      // Discovery may flush a pending source projection; model the external index catching up.
+      resourceRevision = await workspaceStub().resourceSearchRevision({ workspaceId: WORKSPACE_ID, resourceId: searchResourceId });
+      expect(await searchWorkspace(searchEnv, AUTH, { query: 'private search', category: 'artifacts' })).toHaveLength(1);
+      expect(await searchWorkspace(searchEnv, AUTH, { query: 'private search', category: 'artifacts' })).toHaveLength(1);
+      expect(await searchWorkspace(searchEnv, { ...AUTH, userId: PARTICIPANT_ID }, { query: 'private search', category: 'artifacts' })).toEqual([]);
     } finally { vi.unstubAllGlobals(); }
+
+    // The same exact-child grant must survive provider-specific email loading.
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE resources SET provider = 'resend', resource_type = 'email' WHERE id = ?", searchResourceId);
+      state.storage.sql.exec('DELETE FROM authorization_snapshots');
+    });
+    await expect(new ResourceService(TEST_ENV, AUTH).get(searchResourceId)).resolves.toMatchObject({ id: searchResourceId });
+    await runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec('DELETE FROM authorization_snapshots').toArray());
+    const mixed = await createAccessContext(uncachedAuthorizationEnv(), AUTH).checkMany([
+      { kind: 'resource', workspaceId: WORKSPACE_ID, resourceId: searchResourceId },
+      { kind: 'conversation', workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID, substreamId: reserved.substreamId },
+    ]);
+    expect(mixed.map((decision) => decision.status)).toEqual(['allowed', 'allowed']);
 
     const viewerWaterlineAfterReady = await runInDurableObject(parent, (_instance, state) =>
       state.storage.sql.exec<{ waterline: number }>(
@@ -686,7 +823,13 @@ describe("conversation parent contract", () => {
     // object does today; whether a former participant should keep reading a
     // finished room's automation, as they keep reading the room itself, is a
     // product decision this assertion exists to surface rather than settle.
+    const address = { kind: 'conversation' as const, workspaceId: WORKSPACE_ID, parentId: owned, substreamId: asSubstreamId('0') };
+    expect(await createAccessContext(uncachedAuthorizationEnv(), { ...AUTH, userId: PARTICIPANT_ID }).check(address)).toMatchObject({ status: 'allowed' });
     await archiveRoom(PERSONAL_ROOM_ID);
+    // Force a canonical observation: ordinary cached reads retain their five-minute lease.
+    await runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec('DELETE FROM authorization_snapshots').toArray());
+    expect(await createAccessContext(uncachedAuthorizationEnv(), { ...AUTH, userId: PARTICIPANT_ID }).check(address)).toMatchObject({ status: 'denied' });
+    expect(await createAccessContext(TEST_ENV, AUTH).check(address)).toMatchObject({ status: 'allowed' });
     expect(await automationStub(owned).authorizeViewer(viewer(owned, AUTHOR_ID)))
       .toEqual({ authorized: true, archived: true });
     expect(await automationStub(owned).authorizeViewer(viewer(owned, PARTICIPANT_ID)))

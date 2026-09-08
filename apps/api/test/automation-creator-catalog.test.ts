@@ -7,6 +7,7 @@ import type { Env } from "../src/env";
 import { __integrationTesting } from "../src/services/integrations";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import { testSubstreamAgentsBinding, testWorkstreamObjectStore } from "./helpers/durable-authority";
+import { createTestWorkspaceDO, workspaceObjectRpcs } from "./helpers/workspace-object-rpcs";
 import { sqliteD1 } from "./helpers/sqlite-d1";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-4000-8000-000000000101");
@@ -84,11 +85,27 @@ function localDatabase(): DatabaseSync {
   return database;
 }
 
+const authorizationDatabases: DatabaseSync[] = [];
+
 function env(localDb: DatabaseSync): Env {
+  const workspace = createTestWorkspaceDO({ workspaceId: WORKSPACE_ID, regionalDatabase: localDb, register: (db) => authorizationDatabases.push(db) });
+  localDb.exec(`CREATE TABLE IF NOT EXISTS workspace_members(workspace_id TEXT, user_id TEXT, status TEXT)`);
+  localDb.prepare("INSERT OR IGNORE INTO workspace_members(workspace_id, user_id, status) VALUES (?, ?, 'active')").run(WORKSPACE_ID, USER_ID);
+  for (const table of ['connector_connections', 'resources', 'notes']) {
+    for (const row of localDb.prepare(`SELECT * FROM ${table}`).all()) {
+      if (table === 'connector_connections') {
+        row.display_name = String(row.connector_type);
+        row.updated_at = row.created_at ?? '2026-08-01T00:00:00.000Z';
+      }
+      const keys = Object.keys(row);
+      workspace.objectDatabase.prepare(`INSERT INTO ${table} (${keys.join(',')}) VALUES (${keys.map(() => '?').join(',')})`)
+        .run(...Object.values(row));
+    }
+  }
   return createTestEnv({
     DB: sqliteD1(localDb),
     SUBSTREAM_AGENTS: testSubstreamAgentsBinding(testWorkstreamObjectStore()),
-    WORKSPACE_DOS: testSubstreamAgentsBinding(localDb),
+    WORKSPACE_DOS: testSubstreamAgentsBinding(localDb, { extra: workspaceObjectRpcs(workspace.instance, []) }),
     AVALON_REGION: "global",
     PUBLIC_API_BASE_URL: "https://api.with-avalon.com",
   });
@@ -153,6 +170,7 @@ function insertConnection(
 }
 
 afterEach(() => {
+  for (const database of authorizationDatabases.splice(0)) database.close();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });

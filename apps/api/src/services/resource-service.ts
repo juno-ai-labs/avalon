@@ -1,5 +1,5 @@
-import { WorkstreamDirectoryService } from './workstream-directory-service';
-import { ConversationService } from './conversation-service';
+import { createAccessContext, requireAuthorizedRead } from './authorization-service';
+import type { AccessContext } from './authorization-policy';
 import { asWorkspaceId } from '@rally/contracts';
 import { resourceSearchText } from './resource-search-text';
 import { ConnectorError, type ConnectorConnectionContext } from "@rally/connectors";
@@ -95,15 +95,24 @@ export class ResourceService {
   private connectorRegistry: ReturnType<typeof connectorRegistryForEnv> | undefined;
   private readonly env: Env;
   private readonly auth: AuthContext;
+  private readonly access: AccessContext;
 
   constructor(
     env: Env,
     auth: AuthContext,
     connectorRegistry?: ReturnType<typeof connectorRegistryForEnv>,
+    access?: AccessContext,
   ) {
     this.env = withWorkspaceRuntimeDatabase(env, auth.workspaceId);
     this.auth = auth;
     this.connectorRegistry = connectorRegistry;
+    this.access = access ?? createAccessContext(env, auth);
+  }
+
+  private async authorizeRead(id: string): Promise<void> {
+    requireAuthorizedRead(await this.access.check({
+      kind: 'resource', workspaceId: this.auth.workspaceId, resourceId: IdSchema.parse(id),
+    }));
   }
 
   async list(input: ListResourcesInput) {
@@ -151,17 +160,19 @@ export class ResourceService {
     ).bind(...bindings, limit + 1).all<Record<string, unknown>>();
     const consumed = result.results.slice(0, limit);
     const rows: Record<string, unknown>[] = [];
-    // A page can contain one hundred resources. Keep cross-DO authorization
-    // reads serial so one REST request cannot exceed the Worker's concurrent
-    // outbound-connection allowance.
-    for (const row of consumed) {
-      if (await this.canReadInboundEmailResource(row)) rows.push(row);
-    }
+    const decisions = await this.access.checkMany(consumed.map((row) => ({
+      kind: 'resource', workspaceId: this.auth.workspaceId, resourceId: IdSchema.parse(row.id),
+    })));
+    decisions.forEach((decision, index) => {
+      const row = consumed[index];
+      if (decision.status === 'allowed' && row) rows.push(row);
+    });
     const hasMore = result.results.length > limit;
     const items = rows.map((row) => this.toResource(row));
     const last = consumed.at(-1);
     return {
       items,
+      complete: decisions.every((decision) => decision.status !== 'unavailable'),
       nextCursor: hasMore && last
         ? encodeResourceCursor({ updatedAt: String(last.updated_at), id: String(last.id) })
         : null,
@@ -272,7 +283,9 @@ export class ResourceService {
   }
 
   async get(id: string) {
+    await this.authorizeRead(id);
     const row = await this.loadResource(id);
+    await this.authorizeRead(id);
     return this.toResource(row);
   }
 
@@ -312,76 +325,40 @@ export class ResourceService {
   }
 
   private async loadSearchResource(id: string): Promise<Record<string, unknown>> {
+    await this.authorizeRead(id);
     const row = await this.loadResource(id);
-    if ((row.provider === "avalon_upload" || row.provider === "avalon_generated")
-      && row.uploaded_by_user_id !== this.auth.userId) {
-      const access = await (await this.workspaceDirectory()).resourceAccess({ workspaceId: this.auth.workspaceId, resourceId: id, userId: this.auth.userId });
-      const conversation = new ConversationService(this.env, this.auth);
-      const checked = new Set<string>();
-      const readableInParent = async (parentId: string): Promise<boolean> => {
-        if (checked.has(parentId)) return false;
-        checked.add(parentId);
-        try {
-          for (const substreamId of await conversation.children(parentId)) {
-            try {
-              await conversation.authorizeViewer(parentId, substreamId);
-              const linked = await createResourceObjectPort(this.env, this.auth.workspaceId, parentId, undefined, substreamId)
-                .isAttached({ resourceId: id });
-              if (!linked) continue;
-              await conversation.authorizeViewer(parentId, substreamId);
-              return true;
-            } catch (error) {
-              if (!(error instanceof ApiError && [401, 403, 404].includes(error.status))) throw error;
-            }
-          }
-        } catch (error) {
-          if (!(error instanceof ApiError && [401, 403, 404].includes(error.status))) throw error;
-        }
-        return false;
-      };
-      let readable = false;
-      for (const hint of access.items) {
-        if (await readableInParent(hint.workstreamId)) { readable = true; break; }
-      }
-      // Main-feed projections are hints only: private-child-only attachments
-      // have none. Discover their parent, then ask the exact child authority.
-      const directory = new WorkstreamDirectoryService(this.env, this.auth);
-      let cursor: string | undefined;
-      while (!readable) {
-        const page = await directory.list(250, cursor, true);
-        for (const parent of page.items) {
-          if (await readableInParent(parent.id)) { readable = true; break; }
-        }
-        if (!page.nextCursor) break;
-        cursor = page.nextCursor;
-      }
-      if (!readable) throw new ApiError(404, "resource_not_found", "Resource not found");
-    }
+    await this.authorizeRead(id);
     return row;
   }
 
   async content(id: string): Promise<Response> {
+    await this.authorizeRead(id);
     const resource = await this.loadResource(id);
     if (typeof resource.content_ref !== "string") throw new ApiError(404, "resource_content_unavailable", "Resource content has not been hydrated");
     const object = await this.env.PAYLOADS.get(resource.content_ref);
     if (!object) throw new ApiError(404, "resource_content_unavailable", "Stored resource content was not found");
+    await this.authorizeRead(id);
     return resourceObjectResponse(object);
   }
 
   async versions(id: string): Promise<ResourceRevision[]> {
+    await this.authorizeRead(id);
     await this.loadResource(id);
     const history = await (await this.workspaceDirectory()).listResourceVersions({
       workspaceId: this.auth.workspaceId,
       resourceId: id,
       version: null,
     });
+    await this.authorizeRead(id);
     return history.items.map(toResourceRevision);
   }
 
   async version(id: string, version: number): Promise<ResourceRevision> {
+    await this.authorizeRead(id);
     await this.loadResource(id);
     const row = await this.loadVersion(id, version);
     if (!row) throw new ApiError(404, "resource_version_not_found", "Resource version not found");
+    await this.authorizeRead(id);
     return toResourceRevision(row);
   }
 
@@ -390,6 +367,7 @@ export class ResourceService {
     version: number,
     representation: "original" | "model",
   ): Promise<Response> {
+    await this.authorizeRead(id);
     await this.loadResource(id);
     const row = await this.loadVersion(id, version);
     if (!row) throw new ApiError(404, "resource_version_not_found", "Resource version not found");
@@ -399,6 +377,7 @@ export class ResourceService {
     }
     const object = await this.env.PAYLOADS.get(objectRef);
     if (!object) throw new ApiError(404, "resource_version_content_unavailable", "Stored resource version content was not found");
+    await this.authorizeRead(id);
     return resourceObjectResponse(object);
   }
 
@@ -412,6 +391,18 @@ export class ResourceService {
   }
 
   async preview(id: string, signal: AbortSignal): Promise<Response> {
+    await this.authorizeRead(id);
+    const response = await this.loadPreview(id, signal);
+    try {
+      await this.authorizeRead(id);
+      return response;
+    } catch (error) {
+      await response.body?.cancel();
+      throw error;
+    }
+  }
+
+  private async loadPreview(id: string, signal: AbortSignal): Promise<Response> {
     const resource = await this.loadResource(id);
     if (typeof resource.content_ref !== "string") throw new ApiError(404, "resource_content_unavailable", "Resource content has not been hydrated");
     const fileName = String(resource.title);
@@ -704,22 +695,8 @@ export class ResourceService {
       this.auth.userId,
     ).first<Record<string, unknown>>();
     if (!row) throw new ApiError(404, "resource_not_found", "Resource not found");
-    if (!await this.canReadInboundEmailResource(row)) {
-      throw new ApiError(404, "resource_not_found", "Resource not found");
-    }
+    if (row.provider === 'resend' && row.resource_type === 'email') await this.authorizeRead(id);
     return row;
-  }
-
-  private async canReadInboundEmailResource(resource: Record<string, unknown>): Promise<boolean> {
-    if (resource.provider !== "resend" || resource.resource_type !== "email") return true;
-    const workspace = await this.workspaceDirectory();
-    const access = await workspace.resourceAccess({
-      workspaceId: this.auth.workspaceId,
-      resourceId: String(resource.id),
-      userId: this.auth.userId,
-    });
-    if (access.items.length === 0) return false;
-    return access.items.some((item) => item.scope === "workspace" || item.isParticipant);
   }
 
   private workspaceDirectory() {

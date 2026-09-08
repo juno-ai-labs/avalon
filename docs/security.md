@@ -11,6 +11,13 @@ outside input, and before adding anything to `application-settings.json`, the
 preload bridge, or the `VITE_` allowlist. Everything here is a boundary someone
 outside this document can break without their own tests failing.
 
+Ordinary member search and resource reads use the [authorization primitive](authorization.md):
+a canonical read proof can remain valid for up to five minutes after a permission
+change. New requests still pass session and workspace-membership middleware.
+This bounded read policy does not relax mutation checks, socket admission, or
+local socket visibility/revocation. Expired or unavailable evidence never grants access. Direct reads return a
+retryable failure; search and resource lists return verified rows with explicit
+incomplete status when some candidates cannot be authorized.
 ## Sidekick authoring and loading
 
 Conversational publication resolves the current workspace membership role and
@@ -797,6 +804,13 @@ the source credentials, memory, authoring conversation, or run history.
 This records the review fixes because stale effects, overbroad revocation, and
 implicit compatibility assumptions can break otherwise valid delegated work.
 Future changes must retain the separate ownership and execution boundaries.
+
+### 2026-09-07 — Specify the ordinary-read freshness boundary
+
+Documented the approved five-minute evidence lease for member search and resource
+reads so socket revocation guarantees are not mistaken for immediate invalidation
+of reusable read proofs. Session admission, mutation and socket policies retain
+their existing authority paths.
 
 ### 2026-09-07 — Sidekick conversation window
 

@@ -12,6 +12,14 @@ Durable Object that accepts sockets, and before adding any mechanism that
 re-checks authorization on a socket that is already open — the last of those is
 the thing this module replaced, and it is not to come back.
 
+Ordinary member search and resource reads use the [authorization primitive](authorization.md):
+a canonical read proof can remain valid for up to five minutes after a permission
+change. New requests still pass session and workspace-membership middleware.
+This bounded read policy does not relax mutation checks, socket admission, or
+local socket visibility/revocation. Expired or unavailable evidence never grants access. Direct reads return a
+retryable failure; search and resource lists return verified rows with explicit
+incomplete status when some candidates cannot be authorized.
+
 ## Where the code lives
 
 | Path | Responsibility |
@@ -338,6 +346,13 @@ would be a way into somebody else's workspace.
   somebody kept access they should have lost.
 
 ## Changelog
+
+### 2026-09-07 — Specify the ordinary-read freshness boundary
+
+Documented the approved five-minute evidence lease for member search and resource
+reads so socket revocation guarantees are not mistaken for immediate invalidation
+of reusable read proofs. Session admission, mutation and socket policies retain
+their existing authority paths.
 
 ### 2026-09-05 — Parent access and membership incarnation both fence child admission
 

@@ -9,6 +9,12 @@ and generated artifacts. The broader migration is still incomplete: memory and
 agent/provider search callers retain their existing paths. Provisioning credentials
 does not deploy this code or backfill dormant objects.
 
+The core [authorization primitive](authorization.md) owns the optional migrated
+member read path and exact attachment discovery. Deployment enables this path
+for every workspace; incomplete attachment evidence initiates queued discovery.
+Search returns verified matches with `complete: false` if any candidate has
+unavailable authority; the desktop labels partial results and offers retry.
+
 ## Where the code lives
 
 - `apps/api/src/services/text-search.ts`: namespace selection, writes, revision
@@ -443,6 +449,31 @@ through Queue failure rather than silent truncation. Document-size and capture
 budgets require team policy; no arbitrary new caps are introduced here.
 
 ## Changelog
+
+### 2026-09-07 — Preserve verified results during partial authority failures
+
+Search now omits candidates with unavailable authorization and reports
+`complete: false`, following the team's decision to retain useful verified
+results. The modal labels partial pages and offers retry, including when no
+verified matches remain. Request authentication, cancellation and provider-wide
+retrieval failures retain their error behavior; unverified IDs and metadata are
+never returned.
+
+
+### 2026-09-07 — Remove authorization rollout gates
+
+Search uses the core authority path immediately on deployment. Removed shadow
+comparison and activation reads to make deployment sufficient, as requested by
+the team. Missing attachment inventories queue discovery and remain retryable;
+permission checks and the five-minute evidence deadline still apply.
+
+### 2026-09-07 — Add an owner-backed authorization cutover
+
+Member search uses the core authorization context and exact attachment
+inventories populated by queued backfill. This replaces repeated work-stream discovery
+with canonical checks along known child paths, retaining source text validation
+and a five-minute bound on permission evidence. See [authorization](authorization.md)
+for rollout controls and the distinction between denial and unavailable authority.
 
 ### 2026-09-07 — Search review corrections
 

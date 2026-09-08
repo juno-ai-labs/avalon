@@ -338,6 +338,8 @@ export function AddResourceDialog({
   onSearchChange,
   onUpload,
   uploadLabel = 'Upload file',
+  incomplete = false,
+  onRetry,
 }: {
   current: WorkstreamResource[];
   resources: WorkstreamResource[];
@@ -354,6 +356,8 @@ export function AddResourceDialog({
   onSearchChange: (value: string) => void;
   onUpload: () => void;
   uploadLabel?: string;
+  incomplete?: boolean;
+  onRetry?: () => void;
 }): React.JSX.Element {
   const currentIds = new Set(current.map((resource) => resource.id));
   const available = resources.filter((resource) => !currentIds.has(resource.id));
@@ -389,12 +393,13 @@ export function AddResourceDialog({
             value={search}
           />
         </label>
+        {incomplete && <div role="status">Some resources are unavailable. <Button onClick={onRetry}>Retry</Button></div>}
         {error ? <InlineError>{error}</InlineError> : null}
         {loading ? (
           <LoadingState label="Finding resources…" />
         ) : available.length === 0 ? (
           <EmptyState
-            title={search ? 'No matching resources' : 'No connector resources yet'}
+            title={incomplete ? 'No verified resources available' : search ? 'No matching resources' : 'No connector resources yet'}
             description={search ? 'Try a different search, or upload a file.' : 'Resources discovered by connected services will appear here.'}
           />
         ) : (
@@ -2085,6 +2090,8 @@ export function ConversationSurface({
         pending={addParticipant.isPending || removeParticipant.isPending}
       />
       <AddResourceDialog
+        incomplete={availableResources.data?.pages.some((page) => page.complete === false) ?? false}
+        onRetry={() => { void availableResources.refetch(); }}
         current={resourceManagementDetail.resources}
         error={availableResources.error?.message ?? attachResource.error?.message}
         fetching={availableResources.isFetchingNextPage}
