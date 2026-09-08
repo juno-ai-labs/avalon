@@ -1891,6 +1891,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       id: row.workstream_id,
       workspaceId: row.workspace_id,
       title: row.title,
+      appearance: this.childCommonProjections()[0]?.appearance,
       description: row.description,
       preview: row.preview,
       emailAddress: row.email_address,

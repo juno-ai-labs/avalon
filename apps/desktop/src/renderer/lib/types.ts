@@ -1,4 +1,4 @@
-import type { PersonalPresentation } from '@rally/contracts';
+import type { PersonalPresentation, WorkstreamAppearance } from '@rally/contracts';
 import type {
   AgentModelOverride,
   AutomationDraft as ContractAutomationDraft,
@@ -136,6 +136,7 @@ export interface AutomationSummary {
 export type WorkstreamAutomationSummary = Omit<AutomationSummary, 'scope' | 'owningWorkstreamId'>;
 
 export interface WorkstreamSummary {
+  appearance?: WorkstreamAppearance;
   id: string;
   /** Workspace-owned visit; undefined means legacy metadata, null means unvisited. */
   lastAccessedAt?: string | null;

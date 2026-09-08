@@ -212,9 +212,10 @@ describe('useWorkstreamControlSocket', () => {
     act(() => socket.open());
     expect(socket.send).toHaveBeenCalledWith(JSON.stringify({ type: 'subscribe' }));
 
-    act(() => socket.message(metadata(4, { preview: '' })));
+    act(() => socket.message(metadata(4, { preview: '', appearance: { icon: 'rocket', color: 'purple' } })));
     expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]).toMatchObject({
       title: 'Authoritative title',
+      appearance: { icon: 'rocket', color: 'purple' },
       objective: 'Authoritative description',
       preview: 'Authoritative description',
       harnessStatus: 'running',

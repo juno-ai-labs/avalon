@@ -13,7 +13,8 @@ import {
   Workflow,
   type LucideIcon,
 } from 'lucide-react';
-import { PROJECT_COLOR_KEYS, type ProjectColorKey } from '@rally/contracts';
+import { PROJECT_COLOR_KEYS, type ProjectColorKey, type WorkstreamAppearance as SavedAppearance } from '@rally/contracts';
+import { PROJECT_ICONS } from './project-icons';
 
 const WORKSTREAM_ICONS = [
   Aperture,
@@ -30,13 +31,20 @@ const WORKSTREAM_ICONS = [
   Workflow,
 ] as const satisfies readonly LucideIcon[];
 
+export const WORKSTREAM_ICON_COMPONENTS = {
+  aperture: Aperture, atom: Atom, boxes: Boxes, 'circle-dot': CircleDot,
+  'circuit-board': CircuitBoard, component: Component, dices: Dices, orbit: Orbit,
+  sparkles: Sparkles, spline: Spline, 'wand-sparkles': WandSparkles, workflow: Workflow,
+  ...PROJECT_ICONS,
+};
+
 export interface WorkstreamAppearance {
   color: ProjectColorKey;
   iconIndex: number;
 }
 
 /**
- * A work stream has no stored appearance, so its id is the seed. The result is
+ * A work stream without a chosen appearance uses its id as the seed. The result is
  * deliberately deterministic: an identity that changed on every launch would
  * make the sidebar harder to scan even though it looked more random.
  */
@@ -59,8 +67,10 @@ export function WorkstreamSymbol({ id, size, className }: { id: string; size: nu
   return <Icon className={className} size={size} strokeWidth={1.9} />;
 }
 
-export function WorkstreamGlyph({ id, size = 32 }: { id: string; size?: number }): React.JSX.Element {
-  const appearance = workstreamAppearance(id);
+export function WorkstreamGlyph({ id, size = 32, appearance: saved }: { id: string; size?: number; appearance?: SavedAppearance }): React.JSX.Element {
+  const generated = workstreamAppearance(id);
+  const appearance = { ...generated, color: saved?.color ?? generated.color };
+  const Icon = saved?.icon ? WORKSTREAM_ICON_COMPONENTS[saved.icon] : WORKSTREAM_ICONS[generated.iconIndex] ?? Sparkles;
   const color = `var(--av-sys-color-project-${appearance.color})`;
   return (
     <span
@@ -72,7 +82,7 @@ export function WorkstreamGlyph({ id, size = 32 }: { id: string; size?: number }
         className="workstream-glyph-shape"
         style={{ background: `linear-gradient(145deg, color-mix(in srgb, ${color} 78%, var(--av-sys-color-surface-default)), ${color})` }}
       />
-      <WorkstreamSymbol id={id} className="workstream-glyph-icon" size={Math.max(12, Math.round(size * 0.5))} />
+      <Icon className="workstream-glyph-icon" size={Math.max(12, Math.round(size * 0.5))} strokeWidth={1.9} />
     </span>
   );
 }
