@@ -50,12 +50,15 @@ describe("the seeded provider", () => {
       prompt: "Which position should I write the proposal against?",
       options: ["Include at no uplift", "Include at the $4k uplift"],
     }));
-    const response = await fetch(...chatRequest({ stream: false, messages: [] }));
-    const body = await response.json() as {
-      choices: { finish_reason: string; message: { tool_calls: { function: { name: string; arguments: string } }[] } }[];
-    };
-    expect(body.choices[0]?.finish_reason).toBe("tool_calls");
-    const call = body.choices[0]?.message.tool_calls[0];
+    // Streamed, like every completion a run asks for: the seam has no second
+    // wire form, because no seeded run reaches the harness's one
+    // non-streaming call (the addressing classifier a seed skips).
+    const response = await fetch(...chatRequest({ stream: true, messages: [] }));
+    const chunks = await events(response) as {
+      choices?: { finish_reason: string | null; delta: { tool_calls?: { function: { name: string; arguments: string } }[] } }[];
+    }[];
+    expect(chunks[1]?.choices?.[0]?.finish_reason).toBe("tool_calls");
+    const call = chunks[0]?.choices?.[0]?.delta.tool_calls?.[0];
     expect(call?.function.name).toBe("core_request_elicitation");
     // The real schema, not a copy of what it accepted last time.
     expect(RequestElicitationInputSchema.parse(JSON.parse(call!.function.arguments))).toEqual({
