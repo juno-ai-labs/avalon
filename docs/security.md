@@ -205,12 +205,12 @@ are canonical storage services, not authorization layers.
   operator UUID and role with timing-safe token comparison — `support` and
   `security` from `TELEMETRY_OPERATORS_JSON`, `demos` from the separate
   `DEMO_OPERATORS_JSON`; every operator router names the roles it admits and
-  the secret it reads, so the `demos` role reaches only the workspace
-  retirement route Ace calls ([`workspace-retirement.md`](workspace-retirement.md#the-operator-door)),
-  and neither telemetry role reaches it. Ace holds one `demos` token per region,
-  each known to that region alone. Raw access and replay derive audit identity
-  from that principal; neither endpoint accepts an operator ID or role in its
-  body.
+  the secret it reads, so the `demos` role reaches only the demo preparation
+  and workspace retirement routes Ace calls
+  ([`demo-workspaces.md`](demo-workspaces.md#preparing-a-demo)), and neither
+  telemetry role reaches those. Ace holds one `demos` token per region, each
+  known to that region alone. Raw access and replay derive audit identity from
+  that principal; neither endpoint accepts an operator ID or role in its body.
 
 ### macOS distribution and updates
 
@@ -285,7 +285,10 @@ membership role. A connector ingress may assert a member's own authority by
 marking its auth `principal: "connector"` — set only after verifying the account
 link on the delivered message, re-checked against current membership by the
 work-stream object, and refused by every socket-ticket issuer (see
-[`workstream-durable-object.md`](workstream-durable-object.md#invariants)).
+[`workstream-durable-object.md`](workstream-durable-object.md#invariants)). The
+demo seeder asserts a cast member's authority the same way under
+`principal: "demo_seed"`, verified and refused identically; only server code
+constructs either value ([`demo-workspaces.md`](demo-workspaces.md#security-and-trust-model)).
 Every connector tool checks its execution principal, connection
 scope, granted capability, and resource visibility. Workspace-scoped connector
 capabilities roll down to every work stream in that workspace and execute as the

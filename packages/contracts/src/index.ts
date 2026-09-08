@@ -20,6 +20,9 @@ export * from "./workstream-transcript";
 import { ConnectorOAuthProviders } from "./connector-oauth-providers";
 import { HttpsUrlSchema, HttpUrlSchema, httpUrlSchema } from "./url-schemas";
 export * from "./workspace-retirement";
+import { DemoSeedSchema } from "./demo-seed";
+export * from "./demo-seed";
+export * from "./demo-operations";
 import { AttachmentKindSchema, ResourceSlugSchema, SuggestedAttachmentToolCallSchema } from "./attachment-contracts";
 import {
   ResourceDirectionSchema,
@@ -3038,6 +3041,16 @@ export const WorkstreamWorkflowInputSchema = z.object({
   telemetrySubjectUserId: IdSchema.optional(),
   slackOrigin: SlackOriginContextSchema.optional(),
   slackSearchAuthorization: SlackSearchAuthorizationSchema.optional(),
+  /**
+   * Set on a run a demo seed started. The harness answers this run's provider
+   * requests from the seed's turn instead of reaching OpenRouter, and nothing
+   * else about the run differs. Carried from the message's authorization into
+   * the execution context at activation, and from an opening message's context
+   * at initialize. A run an elicitation answer resumes is built from the answer,
+   * not from this context, so it is never seeded. Optional so every existing
+   * producer keeps parsing unchanged; `docs/demo-workspaces.md` owns it.
+   */
+  seed: DemoSeedSchema.optional(),
   reason: z.string().min(1).max(500)
 });
 export const ConnectorPollWorkflowInputSchema = z.object({

@@ -182,33 +182,33 @@ describe("socket ticket transport", () => {
     expect(roomFetch).toHaveBeenCalledOnce();
   });
 
-  it("refuses to mint any socket ticket for a connector principal", async () => {
+  it.each(["connector", "demo_seed"] as const)("refuses to mint any socket ticket for a %s principal", async (principal) => {
     // A socket ticket is a session credential: admission stores its `sid`, and
     // the access-revocation queue closes sockets by matching that id against
-    // real `sessions` rows. A connector principal's correlation id matches no
-    // session, so a ticket minted from one would open a read feed that no
+    // real `sessions` rows. A non-session principal's correlation id matches
+    // no session, so a ticket minted from one would open a read feed that no
     // session revocation could ever close. The documented invariant — sockets
-    // never carry a connector principal — is enforced at the mint, and this is
-    // the assertion behind it.
+    // never carry a non-session principal — is enforced at the mint, and this
+    // is the assertion behind it, for each principal the product has.
     const env = createTestEnv({
       APP_ENV: "test",
       AVALON_REGION: "global",
       SESSION_SIGNING_KEY: "socket-ticket-test-signing-key",
     });
-    const connector = {
-      sessionId: "slack:T123:U456",
+    const auth = {
+      sessionId: principal === "connector" ? "slack:T123:U456" : "demo-seed:op:action",
       userId: asUserId("00000000-0000-7000-8000-000000000722"),
       workspaceId: asWorkspaceId("00000000-0000-7000-8000-000000000723"),
       region: "global" as const,
       role: "member" as const,
-      principal: "connector" as const,
+      principal,
     };
-    const refusal = { status: 403, code: "connector_principal_cannot_hold_socket" };
+    const refusal = { status: 403, code: "non_session_principal_cannot_hold_socket" };
 
-    await expect(issueSocketTicket(env, connector, { kind: "workstream", id: "00000000-0000-7000-8000-000000000724" }))
+    await expect(issueSocketTicket(env, auth, { kind: "workstream", id: "00000000-0000-7000-8000-000000000724" }))
       .rejects.toMatchObject(refusal);
-    await expect(issueWorkspaceSocketTicket(env, connector)).rejects.toMatchObject(refusal);
-    await expect(issueWorkstreamControlSocketTicket(env, connector, "00000000-0000-7000-8000-000000000724"))
+    await expect(issueWorkspaceSocketTicket(env, auth)).rejects.toMatchObject(refusal);
+    await expect(issueWorkstreamControlSocketTicket(env, auth, "00000000-0000-7000-8000-000000000724"))
       .rejects.toMatchObject(refusal);
   });
 
