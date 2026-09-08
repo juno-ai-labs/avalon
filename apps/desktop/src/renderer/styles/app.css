@@ -6662,4 +6662,4 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 .sidekick-attachments-list { list-style: none; margin: 0; padding: 0; }
 .sidekick-attachments-list > li { padding-bottom: 8px; }
 .sidekick-attachments-list > li > small { display: block; color: var(--av-sys-color-text-muted); padding-inline: 8px; }
-.sidekick-attachments-list > li > button[aria-label] { font-size: 11px; color: var(--av-sys-color-text-muted); margin-left: 8px; }
+.sidekick-attachments-list > li > .sidekick-attachment-remove { font-size: 11px; color: var(--av-sys-color-text-muted); margin-left: 8px; }

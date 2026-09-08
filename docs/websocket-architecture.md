@@ -42,6 +42,15 @@ protocol inside each Durable Object.
 | `apps/api/src/durable-objects/workstream-do.ts` | Accepts the per-work-stream aggregate metadata socket through the hibernation API. |
 | `apps/api/src/durable-objects/substream-agent.ts` | Accepts the substream feed socket, sends the canonical snapshot, and publishes ordered transcript/runtime events. |
 
+## Sidekick library synchronization
+
+Each Sidekicks library renderer shares the existing workspace/session boundary
+and listens to WorkspaceDO synchronization. Automation topics and pushed sidebar
+rows invalidate the broader library and attachment REST queries alongside detail
+and run queries. This matters when authoring happens in a different window: its
+local query cache cannot invalidate the library's cache. The existing workspace
+push supplies that signal without an additional broadcast channel or polling.
+
 ## How it works
 
 ### The topology
@@ -446,6 +455,13 @@ rows while intentionally leaving pins and active runs uncapped because those are
 explicit product states rather than speculative guesses.
 
 ## Changelog
+
+### 2026-09-08 — Refresh Sidekick surfaces through workspace synchronization
+
+Added library and attachment invalidation to existing automation pushes. Local
+mutation invalidation alone left other windows stale; reusing the authorized
+workspace socket avoids a second cross-window data transport. Keep the full
+library separate from the filtered enabled shortcut list.
 
 ### 2026-09-03: The automation room is gone; an automation's chat is a conversation feed
 

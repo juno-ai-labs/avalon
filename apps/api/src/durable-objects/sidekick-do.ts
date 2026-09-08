@@ -162,6 +162,7 @@ type RunState = "pending" | "running" | "needs_input" | "completed" | "failed" |
 type Lifecycle = "draft" | "active" | "paused" | "deleted";
 
 interface AutomationRow extends Record<string, SqlStorageValue> {
+  registration_generation: number;
   automation_id: string;
   workspace_id: string;
   region: "global" | "eu";
@@ -325,6 +326,10 @@ export const AUTOMATION_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
     // Every legacy accepted definition implicitly permits email execution.
     // It therefore remains non-loadable without rewriting its immutable revision.
   ],
+}, {
+  version: 4,
+  description: "fence external registration effects across publication and lifecycle changes",
+  statements: [`ALTER TABLE automation ADD COLUMN registration_generation INTEGER NOT NULL DEFAULT 0`],
 }];
 
 function first<T extends Record<string, SqlStorageValue>>(cursor: SqlStorageCursor<T>): T | null {
@@ -509,9 +514,9 @@ export class SidekickDO extends ConversationParentDurableObject {
         request.submittedByRunId,
         now,
       );
-      const scope = row.lifecycle === "draft" && row.scope !== "workstream" && request.draft.suggestedScope !== "workstream"
+      const scope = latest.lifecycle === "draft" && latest.scope !== "workstream" && request.draft.suggestedScope !== "workstream"
         ? request.draft.suggestedScope
-        : row.scope;
+        : latest.scope;
       this.state.storage.sql.exec(
         `UPDATE automation
             SET current_definition_revision = ?, title = ?, description = ?, scope = ?, updated_at = ?
@@ -601,7 +606,7 @@ export class SidekickDO extends ConversationParentDurableObject {
       }
       this.state.storage.sql.exec(
         `UPDATE automation
-            SET lifecycle = CASE WHEN lifecycle = 'paused' THEN 'paused' ELSE 'active' END, accepted_definition_revision = ?,
+            SET lifecycle = CASE WHEN lifecycle = 'paused' THEN 'paused' ELSE 'active' END, effective_after_event_sequence = NULL, accepted_definition_revision = ?,
                 connector_bindings_json = ?, default_plugin_ids_json = ?,
                 activity_source_plugin_ids_json = ?, evaluator_projection_json = ?,
                 email_address = ?, loadable = ?, updated_at = ?
@@ -646,7 +651,8 @@ export class SidekickDO extends ConversationParentDurableObject {
     for (const schedule of row.lifecycle === "paused" ? [] : prepared.schedules) {
       await this.scheduleAlarm({ kind: AUTOMATION_SCHEDULE_ALARM_KIND, key: schedule.id, dueAt: schedule.nextDueAt });
     }
-    await this.replaceRegistrations(row.lifecycle === "paused" ? [] : prepared.evaluators);
+    if (row.accepted_definition_revision !== definitionRevision) return;
+    await this.replaceRegistrations(row.lifecycle === "paused" ? [] : prepared.evaluators, row);
     if (definition.triggers.length > 0) await materializeAutomationMemoryTables(this.env, {
       workspaceId: row.workspace_id,
       automationId: row.automation_id,
@@ -655,7 +661,7 @@ export class SidekickDO extends ConversationParentDurableObject {
       tables: definition.memoryTables,
     });
     const current = this.row();
-    if (current?.accepted_definition_revision === definitionRevision && current.lifecycle === row.lifecycle) {
+    if (current?.accepted_definition_revision === definitionRevision && current.lifecycle === row.lifecycle && current.registration_generation === row.registration_generation) {
       this.state.storage.sql.exec(
         `UPDATE automation SET applied_effects_revision = ?, updated_at = ? WHERE id = 1`,
         definitionRevision, Date.now(),
@@ -816,8 +822,8 @@ export class SidekickDO extends ConversationParentDurableObject {
     const revision = row.accepted_definition_revision === null ? null : this.revision(row.accepted_definition_revision);
     const definition = revision ? AutomationDraftSchema.parse(JSON.parse(revision.definition_json)) : null;
     if (definition?.definitionVersion === 2) {
-      const sources = z.array(z.object({ source: z.object({ eventType: z.string() }) })).parse(JSON.parse(row.evaluator_projection_json));
-      if (!definition.triggers.some(isExternalEventTrigger) || !sources.some((entry) => entry.source.eventType === request.event.eventType)) {
+      const sources = z.array(z.object({ evaluatorId: z.string(), source: z.object({ eventType: z.string() }) })).parse(JSON.parse(row.evaluator_projection_json));
+      if (!definition.triggers.some(isExternalEventTrigger) || !sources.some((entry) => entry.evaluatorId === request.registrationId && entry.source.eventType === request.event.eventType)) {
         return { admitted: false, outcomeCode: "sidekick_trigger_removed" };
       }
     }
@@ -1533,8 +1539,7 @@ export class SidekickDO extends ConversationParentDurableObject {
   }
 
   /** The workspace's registrations for this automation, replaced whole. */
-  private async replaceRegistrations(evaluators: unknown[]): Promise<void> {
-    const row = this.row();
+  private async replaceRegistrations(evaluators: unknown[], row = this.row()): Promise<void> {
     if (!row) throw new Error("automation_missing");
     const workspace = await durableObjectStubForWorkspace(
       this.env,
@@ -1546,12 +1551,14 @@ export class SidekickDO extends ConversationParentDurableObject {
       schemaVersion: 1,
       workspaceId: row.workspace_id,
       destination: { kind: "automation", automationId: row.automation_id },
+      sourceGeneration: row.registration_generation,
       evaluators,
     });
     this.state.storage.sql.exec(
-      `UPDATE automation SET effective_after_event_sequence = ?, updated_at = ? WHERE id = 1`,
+      `UPDATE automation SET effective_after_event_sequence = ?, updated_at = ? WHERE id = 1 AND registration_generation = ?`,
       registration.effectiveAfterEventSequence,
       Date.now(),
+      row.registration_generation,
     );
   }
 
@@ -1848,7 +1855,7 @@ export class SidekickDO extends ConversationParentDurableObject {
       name: row.title || "New Sidekick",
       loadable: row.loadable === 1,
       description: row.description,
-      emailAddress: row.email_address,
+      emailAddress: row.accepted_definition_revision !== null && sidekickReceivesEmail(AutomationDraftSchema.parse(JSON.parse(this.revision(row.accepted_definition_revision)!.definition_json))) ? row.email_address : null,
       scope: row.scope,
       owningWorkstreamId: row.owning_workstream_id,
       status: row.lifecycle,
@@ -1896,6 +1903,7 @@ export class SidekickDO extends ConversationParentDurableObject {
 
   /** The automation's own sidebar row, into the shared outbox. */
   private enqueueDirectory(now: number): void {
+    this.state.storage.sql.exec(`UPDATE automation SET registration_generation = registration_generation + 1 WHERE id = 1`);
     const row = this.row();
     if (!row) throw new Error("automation_missing");
     const effect: ParentEffect = {

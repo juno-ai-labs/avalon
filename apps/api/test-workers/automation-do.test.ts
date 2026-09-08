@@ -425,6 +425,16 @@ describe("AutomationDO", () => {
     expect((await runInDurableObject(automationStub(), (instance: AutomationDO) => instance.readDetail({ ...addressed(), actor: actor() }))).loadable).toBe(true);
   });
 
+  it("hides disabled email while retaining its permanent address", async () => {
+    await createDraft();
+    await automationStub().saveDefinition({ ...addressed(), draft: DEFINITION, evaluatorRules: null, submittedByRunId: null, actor: actor() });
+    const before = await runInDurableObject(automationStub(), (instance: AutomationDO) => instance.readDetail({ ...addressed(), actor: actor() }));
+    expect(before.emailAddress).toBeTruthy();
+    await automationStub().saveDefinition({ ...addressed(), draft: { ...DEFINITION, definitionVersion: 2, triggers: [] }, evaluatorRules: null, submittedByRunId: null, actor: actor() });
+    expect((await runInDurableObject(automationStub(), (instance: AutomationDO) => instance.readDetail({ ...addressed(), actor: actor() }))).emailAddress).toBeNull();
+    expect(await runInDurableObject(automationStub(), (_instance, state) => state.storage.sql.exec<{ email_address: string }>(`SELECT email_address FROM automation`).one().email_address)).toBe(before.emailAddress);
+  });
+
   it("reads stored loadability independently of trigger count and contains personal instructions", async () => {
     await createDraft();
     await automationStub().saveDefinition({ ...addressed(), draft: { ...DEFINITION, definitionVersion: 2, triggers: [] }, evaluatorRules: null, submittedByRunId: null, actor: actor() });
@@ -685,6 +695,9 @@ describe("AutomationDO", () => {
     // The registrations WorkspaceDO holds for this destination are the
     // accepted set, replaced whole; a pause replaces it with nothing.
     await workspaceStub().applyExternalEventRegistrations({
+      sourceGeneration: await runInDurableObject(automationStub(), (_instance, state) => state.storage.sql.exec<{ registration_generation: number }>(
+        `UPDATE automation SET registration_generation = registration_generation + 1 WHERE id = 1 RETURNING registration_generation`,
+      ).one().registration_generation),
       schemaVersion: 1,
       workspaceId: WORKSPACE_ID,
       destination: { kind: "automation", automationId: AUTOMATION_ID },

@@ -15,6 +15,17 @@ chat alike and withheld from a run, and a run's loop reads its definition from
 the parent by revision at start. See
 [`automation-lifecycle.md`](automation-lifecycle.md).
 
+## Sidekick trust and activation
+
+The host resolves Sidekick candidates once and persists their accepted instruction
+snapshots with activation refs for retry. Model/tool boundary checks authorize
+active sources only; a deleted unused catalog candidate cannot revoke unrelated
+work. Loading a new source rechecks stored `loadable`, publication, lifecycle,
+principal, workspace, and audience before activation is committed. Catalog
+metadata is escaped onto one discovery line and is data, not an instruction.
+Activated Sidekick content is user-authored guidance subordinate to platform
+policy and the current request, and grants no tools or credentials.
+
 ## Sidekick instruction sources
 
 The host resolves stored-loadable Sidekicks against execution and conversation audiences. Stable Sidekick IDs identify skills. Per-execution snapshots and loaded refs live in the owning substream; main-conversation loads also attach the Sidekick for future executions. Loading adds instructions, never credentials or access to the Sidekick memory scope.
@@ -1191,6 +1202,21 @@ Nothing pins `breakerScope`, so deleting that one property from `routePlan` woul
 silently return every test to the shared key while each still passes alone.
 
 ## Changelog
+
+### 2026-09-08 — Sidekick trust and activation
+
+The host resolves Sidekick candidates once and persists their accepted instruction
+snapshots with activation refs for retry. Model/tool boundary checks authorize
+active sources only; a deleted unused catalog candidate cannot revoke unrelated
+work. Loading a new source rechecks stored `loadable`, publication, lifecycle,
+principal, workspace, and audience before activation is committed. Catalog
+metadata is escaped onto one discovery line and is data, not an instruction.
+Activated Sidekick content is user-authored guidance subordinate to platform
+policy and the current request, and grants no tools or credentials.
+
+This records the review fixes because stale effects, overbroad revocation, and
+implicit compatibility assumptions can break otherwise valid delegated work.
+Future changes must retain the separate ownership and execution boundaries.
 
 ### 2026-09-07 — Sidekick instruction sources
 

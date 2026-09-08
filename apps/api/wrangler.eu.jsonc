@@ -166,7 +166,7 @@
   "durable_objects": {
     "bindings": [
       { "name": "SUBSTREAM_AGENTS", "class_name": "SubstreamAgent" },
-      { "name": "AUTOMATION_DOS", "class_name": "SidekickDO" },
+      { "name": "AUTOMATION_DOS", "class_name": "AutomationDO" },
       { "name": "WORKSTREAM_DOS", "class_name": "WorkstreamDO" },
       { "name": "WORKSPACE_DOS", "class_name": "WorkspaceDO" },
       { "name": "CRASH_SYMBOLICATOR", "class_name": "CrashSymbolicatorContainer" },
@@ -211,8 +211,7 @@
     { "tag": "v6", "new_sqlite_classes": ["AutomationAgent"] },
     { "tag": "v7", "new_sqlite_classes": ["ArtifactHostDO"] },
     { "tag": "v8", "deleted_classes": ["BlockDashboardAgent"] },
-    { "tag": "v9", "deleted_classes": ["AutomationAgent"], "new_sqlite_classes": ["AutomationDO"] },
-    { "tag": "v10", "renamed_classes": [{ "from": "AutomationDO", "to": "SidekickDO" }] }
+    { "tag": "v9", "deleted_classes": ["AutomationAgent"], "new_sqlite_classes": ["AutomationDO"] }
   ],
   "queues": {
     "producers": [

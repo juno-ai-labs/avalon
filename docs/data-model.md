@@ -454,7 +454,8 @@ column catalog; what follows is only what WorkspaceDO still holds.
   resource, indexed on `(connection, event type, resource, state)` for
   candidate selection and on `(destination kind, destination key, state)` for
   replacement. A destination's set is replaced whole by
-  `applyExternalEventRegistrations`, with no generation, version, or hash;
+  `applyExternalEventRegistrations`, ordered by the destination generation in
+  `external_registration_generations`;
   `effective_after_event_sequence` is the cutoff, so an event admitted before
   the call is never matched by a rule that did not exist when it arrived.
   Removed rows are reaped after a day.
@@ -893,6 +894,15 @@ perform the regional audit/control write explicitly through
 
 ## Changelog
 
+### 2026-09-08 — Order Sidekick registration replacement
+
+Sidekick owner migration 4 stores `registration_generation`; WorkspaceDO migration
+36 stores the latest per-destination generation and activation cutoff. A stale
+publication tail previously could reinstall old predicates after new acceptance.
+Equal-generation retries now preserve the boundary and empty replacements retain
+the fence. These are object-owned SQLite migrations, not regional D1 migrations.
+The Cloudflare class stays `AutomationDO` for the compatibility deployment.
+
 ### 2026-09-07 — Sidekick loading and attachment storage
 
 SidekickDO migration 3 adds automation.loadable, atomically maintained with the accepted revision. WorkspaceDO migration 35 projects this value, using null for unresolved legacy eligibility. Substream migration 43 adds sidekick_attachments and sidekick_execution_skills for conversation ownership and retry-stable instruction snapshots. Existing namespace lookup keys remain unchanged.
@@ -902,7 +912,7 @@ This composes knowledge with existing execution machinery while keeping one Side
 
 Onboarding needs the same appearance and resumable setup across sessions.
 Migration 0099 stores the revisioned account presentation in identity D1;
-WorkspaceDO migration 34 stores the per-member journey and connector choices.
+WorkspaceDO migrations 34–35 store the per-member journey and connector choices.
 Existing accounts are exempted. A second execution store was rejected: first
 work uses ordinary workstream creation and the existing durable agent loop.
 

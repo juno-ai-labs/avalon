@@ -21,6 +21,10 @@ project the stored value. Changing the policy requires recomputing authoritative
 values and republishing projections; readers never infer it from trigger count.
 Legacy accepted definitions implicitly enabled email and remain non-loadable.
 New definitions use `definitionVersion: 2` and an explicit `inbound_email` trigger.
+Disabling email hides the address in details but retains its permanent reservation.
+Legacy `/automations` detail responses adapt empty/email-only triggers to a manual
+placeholder for installed clients; owner execution checks still refuse dedicated
+runs of instruction-only definitions. New clients read `/sidekicks` details.
 
 Instruction-only publication does not bind connectors, reserve an email address,
 or materialize execution memory tables. It cannot start a dedicated manual run.
@@ -32,7 +36,11 @@ The harness host resolves eligible Sidekicks through WorkspaceDO candidates and
 an authorized `readSkillSource` on each owner. A private source's audience must
 contain the entire receiving conversation; workspace sources stay regional and
 room sources stay within their owning room. Loading grants no tool credentials,
-Sidekick memory, authoring history, or run history.
+Sidekick memory, authoring history, or run history. The model-visible catalog
+escapes metadata and presents it as data; activated instructions remain subordinate
+to platform policy and the receiving request. Only active sources are reauthorized
+before model/tool boundaries. A new activation separately rechecks eligibility,
+so deleting an unused catalog candidate does not stop unrelated work.
 
 A substream persists its skill snapshots by execution id and records loaded refs.
 Loading a Sidekick in a workstream's main substream also persists a deduplicated
@@ -49,10 +57,13 @@ sidebar renders participants as a facepile and provides attachment removal.
 ### Class rename deployment
 
 The implementation exports both `SidekickDO` and its historical `AutomationDO`
-alias. The target regional configs append migration v10 with `renamed_classes`.
-Before that target deployment, deploy these exports with the previous v9 configs;
-then deploy v10 in EU and Global and verify existing identities, schedules, email,
-and history. Remove the old export only in a later change after verification.
+alias. This compatibility release keeps both regional configs at v9 and the
+`AUTOMATION_DOS` binding on `AutomationDO`; merging it cannot perform the class
+rename. After verifying both regional deployments against existing objects, a
+separate change must append v10 with `renamed_classes`, update the binding class
+and migration-tracker class reporting/force dispatch together, and verify existing
+identities, schedules, email, and history. Remove the old export only in a later
+change after that verification.
 Keep the existing `:automation:` object-name segment: changing it addresses new
 objects. This checkout alone does not prove the production rename has run.
 
@@ -336,8 +347,8 @@ Automation memory is ordinary WorkspaceDO memory; there is no separate engine.
   that admits without a key admits twice.
 - **A run stops when its automation no longer consents.** Pause and delete mark
   the run rows and the lifecycle, and `assertRunAuthorityStillValid` reads the
-  live state before every provider write. There is no generation fence on this
-  object; the row is the fence.
+  live state before every provider write. The lifecycle row fences run authority;
+  a separate registration generation orders asynchronous event-registration effects.
 - **A directory row locates; it never authorizes.** `automation_directory` holds
   no definition and no run content; every content read goes to the object, which
   re-derives authority from its own row, asking WorkspaceDO only whether a
@@ -395,7 +406,9 @@ or the memory store the automation scope lives in.
   a refusal.
 - **Apply fails part-way.** The transaction either committed or did not; the
   alarm re-arming and the registration replacement after it are idempotent, so
-  the caller applies again and converges. Nothing is fenced by generation.
+  the durable publication alarm retries and converges. Registration replacements
+  carry a monotonic generation; older effects cannot overwrite newer registration
+  state, and equal-generation retries preserve the original activation cutoff.
 - **A run cannot be provisioned.** The `automation_run` alarm entry backs off
   under the shared alarm gate and retries; every step is a replay on an opened
   object. A run admitted while the automation was paused is marked `stopped`
@@ -450,7 +463,8 @@ siblings in `test-workers/helpers/conversation-effects.ts`.
 
 ## Data model
 
-`AutomationDO` SQLite, one migration: `automation`, `definition_revisions`,
+`SidekickDO` SQLite (deployed under the `AutomationDO` compatibility class), four
+ordered object migrations: `automation`, `definition_revisions`,
 `schedules`, `runs`, `inbound_email_receipts`, the shared parent tables, and
 `_internal_durable_alarms`. [`workstream-durable-object.md`](workstream-durable-object.md#automationdo)
 catalogs the columns; the occurrence keys and run states are in the tables
@@ -460,14 +474,18 @@ run.
 `WorkspaceDO` migration 32 rebuilt `automation_directory` (automation id,
 workspace, author, `source_version`, hash, lifecycle, scope, owning work stream,
 title, description, next run, projected time) and
-`workspace_external_event_registrations` (no generation, version, or hash; a
-complete replacement per destination keyed on `destination_key`, with
+`workspace_external_event_registrations` (a complete replacement per destination
+keyed on `destination_key`, with
 `effective_after_event_sequence` as the cutoff), dropped
 `workspace_external_event_deliveries`, `automation_creation_claims`,
 `automation_cutover_campaign`, `automation_templates`, and
 `automation_template_versions`, and deleted every work-stream directory row an
 automation run had made. [`data-model.md`](data-model.md) is the map of both
-authorities.
+authorities. Workspace migration 35 projects stored `loadable`; migration 36
+adds `external_registration_generations`, retaining the latest generation and
+activation cutoff even for an empty replacement. Owner migration 4 stores the
+source counter. Versioned registration IDs equal immutable evaluator IDs, so a
+late delivery from a superseded predicate is refused by the owner.
 
 ## Regional impact
 
@@ -528,6 +546,17 @@ was paused or deleted after admission. [`runbook.md`](runbook.md) has the
 production inspection paths.
 
 ## Changelog
+
+### 2026-09-08 — Fence publication effects and preserve compatibility deployment
+
+Review exposed out-of-order registration replacement, model schemas that could
+not express instruction-only definitions, and discovery checks that revoked runs
+for unused sources. Publication now orders registration effects, validates new
+loads separately from active-source revocation, and resolves the real managing
+actor. Keeping v9 deployment configuration prevents merge automation from
+skipping the verified compatibility release; the later class rename must also
+update migration tracking. Permanent email claims and separate stored loading
+policy remain intact rather than conflating visibility with execution rights.
 
 ### 2026-09-07 — Retain standalone tiles while rebasing Sidekicks
 

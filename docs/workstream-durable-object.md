@@ -34,6 +34,17 @@ external delivery attempts. Regional D1 retains identity/membership, opaque
 ingress and object routing, migration controls, and bounded audit/telemetry; it
 does not serve workspace product state or transcripts after cutover.
 
+## Sidekick durable boundaries
+
+Substream migration 43 adds `sidekick_attachments` (conversation-owned, deduplicated
+by Sidekick) and `sidekick_execution_skills` (admitted snapshots and activation
+refs pinned to an execution). Only main-substream loading attaches; removal
+affects future executions. Future runs reauthorize attachments and pin the latest
+accepted revisions. Workspace migration 35 projects the owner stored `loadable`
+policy output; unknown legacy values exclude discovery. Workspace migration 36
+adds `external_registration_generations` for ordered registration replacements
+and retry-stable event cutoffs. Owner migration 4 supplies the monotonic counter.
+
 ## Where the code lives
 
 | Path | Responsibility |
@@ -1622,6 +1633,21 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-09-08 — Sidekick durable boundaries
+
+Substream migration 43 adds `sidekick_attachments` (conversation-owned, deduplicated
+by Sidekick) and `sidekick_execution_skills` (admitted snapshots and activation
+refs pinned to an execution). Only main-substream loading attaches; removal
+affects future executions. Future runs reauthorize attachments and pin the latest
+accepted revisions. Workspace migration 35 projects the owner stored `loadable`
+policy output; unknown legacy values exclude discovery. Workspace migration 36
+adds `external_registration_generations` for ordered registration replacements
+and retry-stable event cutoffs. Owner migration 4 supplies the monotonic counter.
+
+This records the review fixes because stale effects, overbroad revocation, and
+implicit compatibility assumptions can break otherwise valid delegated work.
+Future changes must retain the separate ownership and execution boundaries.
 
 ### 2026-09-07 — Search directory readability
 

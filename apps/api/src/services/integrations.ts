@@ -107,7 +107,7 @@ import {
 } from "@rally/connectors";
 import { z } from "zod";
 import { automationDOName, conversationObjectName, workspaceDOName, workstreamDOName } from "../durable-objects/names";
-import { createAutomation } from "./automation-service";
+import { AutomationService, createAutomation } from "./automation-service";
 import { ResourceService } from "./resource-service";
 import type { TranscriptCompactionContinuation } from "../durable-objects/workstream-transcript-storage";
 import { rpcResultBody } from "../durable-objects/rpc-result";
@@ -1914,13 +1914,22 @@ function createAvalonAutomationsPlugin(
           asWorkspaceId(input.workspaceId),
           automationDOName(env.AVALON_REGION, asWorkspaceId(input.workspaceId), targetId),
         );
+        const membership = await env.DB.prepare(
+          `SELECT role FROM workspace_members WHERE workspace_id = ? AND user_id = ? AND status = 'active'`,
+        ).bind(input.workspaceId, authorUserId).first<{ role: "owner" | "admin" | "member" }>();
+        if (!membership) throw new Error("automation_draft_author_unavailable");
+        const actorRequest = await new AutomationService(env, {
+          sessionId: `run:${input.harnessRunId}`, userId: asUserId(authorUserId),
+          workspaceId: asWorkspaceId(input.workspaceId), region: input.region,
+          role: membership.role, analyticsWorkspaceId: null,
+        }).actorRequest(targetId);
         const submitted = await automation.saveDefinition({
           workspaceId: asWorkspaceId(input.workspaceId),
           automationId: targetId,
           draft: { ...draft, definitionVersion: 2 },
           evaluatorRules: draftState.evaluatorRules,
           submittedByRunId: input.harnessRunId,
-          actor: { userId: authorUserId, participantOfOwningWorkstream: input.parentKind !== "automation" },
+          actor: actorRequest.actor,
         });
         return { ...submitted, saved: draft.ready, description: draft.description };
       },
@@ -2421,7 +2430,7 @@ export async function runWorkstreamHarness(
   if (initialRun.status === "cancelled") return { status: "stopped" };
   const storedSidekickSkills = runtime?.persistentLoop?.readSidekickSkills() ?? null;
   const currentSidekickSources = await resolveSidekickSkills(env, input, storedSidekickSkills?.sources.map((source) => source.id));
-  if (storedSidekickSkills && storedSidekickSkills.sources.some((source) => !currentSidekickSources.some((current) => current.id === source.id))) {
+  if (storedSidekickSkills && storedSidekickSkills.sources.some((source) => storedSidekickSkills.activeRefs.includes(sidekickSkillRef(source.id)) && !currentSidekickSources.some((current) => current.id === source.id))) {
     throw new ApiError(403, "sidekick_access_changed", "A Sidekick is no longer available to this execution");
   }
   const attachedSidekickIds = new Set(runtime?.persistentLoop?.attachedSidekickIds() ?? []);
@@ -2431,9 +2440,10 @@ export async function runWorkstreamHarness(
   };
   if (!storedSidekickSkills) runtime?.persistentLoop?.saveSidekickSkills(sidekickSnapshot);
   const assertSidekickAuthority = async (): Promise<void> => {
-    if (sidekickSnapshot.sources.length === 0) return;
-    const authorized = await resolveSidekickSkills(env, input, sidekickSnapshot.sources.map((source) => source.id));
-    if (authorized.length !== sidekickSnapshot.sources.length) {
+    const active = sidekickSnapshot.sources.filter((source) => sidekickSnapshot.activeRefs.includes(sidekickSkillRef(source.id)));
+    if (active.length === 0) return;
+    const authorized = await resolveSidekickSkills(env, input, active.map((source) => source.id));
+    if (active.some((source) => !authorized.some((current) => current.id === source.id))) {
       throw new ApiError(403, "sidekick_access_changed", "A Sidekick is no longer available to this execution");
     }
   };
@@ -2999,7 +3009,15 @@ export async function runWorkstreamHarness(
       // a future general skill would be hidden along with it.
       skills: [...BUILT_IN_SKILLS, ...sidekickSnapshot.sources.map(sidekickHarnessSkill)],
       skillActivationHints: sidekickSnapshot.activeRefs,
-      persistSkillActivation: (ref) => runtime?.persistentLoop?.activateSidekickSkill(ref),
+      persistSkillActivation: async (ref) => {
+        const source = sidekickSnapshot.sources.find((entry) => sidekickSkillRef(entry.id) === ref);
+        if (source && !sidekickSnapshot.activeRefs.includes(ref)) {
+          const allowed = await resolveSidekickSkills(env, input, [source.id], false);
+          if (!allowed.some((entry) => entry.id === source.id)) throw new ApiError(403, "sidekick_access_changed", "This Sidekick is no longer available");
+        }
+        if (!sidekickSnapshot.activeRefs.includes(ref)) sidekickSnapshot.activeRefs.push(ref);
+        runtime?.persistentLoop?.activateSidekickSkill(ref);
+      },
       compaction: {
           prepare: async () => {
             await liveness.pulse("compaction_prepare", true);

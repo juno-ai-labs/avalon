@@ -1,5 +1,5 @@
 import { AccountOnboardingGate, WorkspaceOnboardingJourney } from './screens/guided-onboarding';
-import { SidekicksLibraryScreen } from './screens/sidekicks-library';
+import { SidekicksLibraryScreen, SidekicksWindowRedirect } from './screens/sidekicks-library';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { AlertTriangle, Cable, RefreshCcw } from 'lucide-react';
@@ -226,7 +226,7 @@ function WorkspaceApp(): React.JSX.Element {
           <HashRouter useTransitions={false}>
             <Routes>
               <Route element={<SidekicksLibraryScreen />} path="/sidekicks" />
-              <Route element={<AutomationScreen />} path="/sidekicks/:id" />
+                <Route element={<AutomationScreen />} path="/sidekicks/:id" />
               <Route element={<AutomationScreen />} path="/automations/:id" />
               <Route element={<Navigate replace to="/sidekicks" />} path="*" />
             </Routes>
@@ -277,6 +277,7 @@ function WorkspaceApp(): React.JSX.Element {
                 <Route element={<WorkstreamScreen />} path="/workstreams/:id" />
                 <Route element={<NoteDetailScreen />} path="/notes/:id" />
                 <Route element={<AutomationScreen />} path="/automations/:id" />
+                <Route element={<SidekicksWindowRedirect />} path="/sidekicks" />
                 <Route element={<AutomationScreen />} path="/sidekicks/:id" />
                 <Route element={<WorkspaceSettingsScreen workspace={workspace.data} />} path="/settings" />
                 <Route element={<NotFoundScreen />} path="*" />

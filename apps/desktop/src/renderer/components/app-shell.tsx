@@ -88,7 +88,7 @@ export function backgroundRealtimeWorkstreamIds(
  * automation share the one route, so this covers both.
  */
 export function showsAutomation(pathname: string, automationId: string): boolean {
-  return pathname === `/automations/${automationId}`;
+  return pathname === `/automations/${automationId}` || pathname === `/sidekicks/${automationId}`;
 }
 
 /**

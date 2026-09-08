@@ -29,6 +29,20 @@ describe('browser fallback single-platform identity boundary', () => {
     vi.unstubAllGlobals();
   });
 
+  it('reuses the Sidekicks window and clears its opener before navigation', async () => {
+    const popup = { closed: false, opener: window, location: { href: '' }, focus: vi.fn() };
+    const open = vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window);
+    await desktopBridge().openSidekicks('example');
+    expect(popup.opener).toBeNull();
+    expect(popup.location.href).toContain('#/sidekicks/example');
+    await desktopBridge().openSidekicks();
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(popup.location.href).toContain('#/sidekicks');
+    expect(popup.focus).toHaveBeenCalledOnce();
+    popup.closed = true;
+    open.mockRestore();
+  });
+
   it('prefers the hardened preload bridge for clipboard writes', async () => {
     const copyText = vi.fn(async () => undefined);
     const preloadBridge = { copyText } satisfies Pick<RallyDesktopBridge, 'copyText'>;

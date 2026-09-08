@@ -9,7 +9,7 @@ export function AttachedSidekicks({ items, error, onRemove }: { items?: Sidekick
     <ul className="sidekick-attachments-list">{items.map((item) => <li key={item.id}>
       <button className="workstream-context-row" type="button" aria-label={item.name} title={item.description} onClick={() => void desktopBridge().openSidekicks(item.id)}><span className="workstream-context-copy"><span>{item.name}</span><small>{item.description}</small></span></button>
       {!item.available && <small>Unavailable</small>}
-      {onRemove && <button type="button" aria-label={`Remove ${item.name}`} onClick={() => onRemove(item.id)}>Remove</button>}
+      {onRemove && <button className="sidekick-attachment-remove" type="button" aria-label={`Remove ${item.name}`} onClick={() => onRemove(item.id)}>Remove</button>}
     </li>)}</ul>
   </section>;
 }
