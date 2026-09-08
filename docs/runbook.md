@@ -223,7 +223,7 @@ mechanism: retain stale valid pricing during an upstream outage.
 ### Terminal provider activation and recovery
 
 Terminal is fail-closed per region. Global and EU are both enabled against the
-same Daytona environment: `DAYTONA_TARGET=us` and `daytona-small`. Rally does
+same Daytona environment: `DAYTONA_TARGET=us` and `rally-terminal-1`. Rally does
 not run a separate EU Daytona fleet. Presence of provider values never implies
 availability: a region whose `TERMINAL_REGION_CAPABILITY` is `unsupported`, or
 whose Daytona values are incomplete, omits the plugin. Leave any unverified
@@ -238,7 +238,7 @@ An activated region requires:
 - `TERMINAL_REGION_CAPABILITY=supported` and
   `TERMINAL_EMERGENCY_DISABLED=false`;
 - `DAYTONA_API_URL`, `DAYTONA_TARGET`, and
-  `DAYTONA_TERMINAL_SNAPSHOT=daytona-small`; and
+  `DAYTONA_TERMINAL_SNAPSHOT=rally-terminal-1`; and
 - `DAYTONA_API_KEY` as a regional Worker secret. EU reuses the same Daytona
   project key already on Global: put that exact value on the EU Worker. Cloudflare
   cannot copy a secret between Workers, so this is a second `secret put`, not a

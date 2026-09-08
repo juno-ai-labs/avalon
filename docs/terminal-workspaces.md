@@ -43,13 +43,16 @@ Repository checkout explicitly invalidates the run-local acquisition because it
 can replace the sandbox generation; a later tool then acquires and prepares the
 replacement once. A new harness run performs its own acquisition.
 
-Rally uses Daytona's managed `daytona-small` container snapshot. On first
-creation an idempotent compatibility bootstrap creates the owned `/workspace`,
-installs only missing SQLite/`gh`/pnpm/`tsx` capabilities through the compiled
-Trusted-only apt/npm hosts, and then executes the complete manifest. That
-manifest probes Bash, Python, JavaScript/Node.js, TypeScript, SQLite, apt/dpkg,
-pip/uv, npm/pnpm, Git, `gh`, and passwordless sudo. A compatible Daytona update
-is adopted automatically; a breaking update fails creation closed. The plugin prompt tells the model to use those languages when code is
+Rally creates sandboxes from its own `rally-terminal-1` snapshot: Daytona's
+managed `daytonaio/sandbox:0.9.0` base with SQLite, `gh`, pnpm, and `tsx`
+preinstalled by `terminal:build-snapshot`. On first creation an idempotent
+compatibility bootstrap creates the owned `/workspace`, installs only missing
+SQLite/`gh`/pnpm/`tsx` capabilities through the compiled Trusted-only apt/npm
+hosts — a no-op against the owned snapshot — and then executes the complete
+manifest. That manifest probes Bash, Python, JavaScript/Node.js, TypeScript,
+SQLite, apt/dpkg, pip/uv, npm/pnpm, Git, `gh`, and passwordless sudo. Daytona's
+base-image updates reach the snapshot only through the weekly rebuild described
+under Operations; a breaking update fails creation closed at the manifest. The plugin prompt tells the model to use those languages when code is
 the clearest way to calculate, transform data, analyze files, validate a
 repository, or create a graph, image, dataset, report, or archive. It tells the
 model not to install another runtime or manager.
@@ -378,10 +381,11 @@ The regional activation record must separately include controlled DNS-rebinding
 and alternate-host secret-substitution evidence. A region remains `unsupported`
 when any automated or controlled gate cannot run or fails.
 
-Production config sets `DAYTONA_TERMINAL_SNAPSHOT=daytona-small`. The provider
-probe must pass against the current managed revision before a region is enabled;
-the per-sandbox compatibility probe protects the interval between activation
-reviews.
+Production config sets `DAYTONA_TERMINAL_SNAPSHOT=rally-terminal-1` in both
+regions. The provider probe must pass against a snapshot before a region serves
+from it — it passed against `rally-terminal-1` on 2026-09-08 — and the weekly
+rebuild re-proves each replacement; the per-sandbox compatibility probe protects
+the interval between those reviews.
 
 ## Data model
 
@@ -414,7 +418,7 @@ reconciliation facts and never authorize a request.
 All Terminal local rows, regional resource bytes, generated logs/diffs, GitHub App
 installation-token creation, and tool execution records stay in the workspace's
 owning Rally region. Daytona is one shared environment: both the Global and EU
-Workers are `supported` on `DAYTONA_TARGET=us` and the same `daytona-small`
+Workers are `supported` on `DAYTONA_TARGET=us` and the same `rally-terminal-1`
 snapshot. Sandbox files therefore run on that one Daytona fleet regardless of
 the Rally workspace region. That is a subprocessor exception, not a Rally
 cross-region bridge — no Terminal D1, R2, or GitHub-token record falls back to
@@ -576,7 +580,7 @@ archived restore. It separately prints provider-create, policy-read-back,
 compatibility-install, and manifest-verification percentiles plus how often each
 missing executable was installed. Region and snapshot filters are available.
 
-Do not replace `daytona-small` from a handful of cold starts. The report waits
+Do not replace the default snapshot from a handful of cold starts. The report waits
 for at least 100 successful bootstraps in the selected cohort. When
 compatibility-install p95 then exceeds ten seconds it recommends a controlled
 prebuilt-snapshot benchmark. Verification remains in both variants, because a
@@ -586,6 +590,52 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-09-08 — Both regions create sandboxes from the Rally-owned snapshot
+
+**What changed:** `DAYTONA_TERMINAL_SNAPSHOT` is `rally-terminal-1` in both
+regional Wrangler configs. The snapshot was built by `terminal:build-snapshot`
+from `daytonaio/sandbox:0.9.0` on the Juno AI Labs Daytona organization
+(created 2026-09-07T15:27:23Z, region `us`), and `terminal:verify-provider`
+passed against it the same day. The `sandbox_bootstrap` measurement from that
+run was `install=225ms verify=1782ms installed=none`: the bootstrap found all
+four managed capabilities present and installed nothing, against ~14.4s when
+they are missing.
+
+**Why:** This reinstates the adoption that "Stay on daytona-small until a
+snapshot can pass the acceptance gate" reverted on 2026-09-05, now with the
+evidence that revert said was missing. Two things changed since. The gate had
+only ever been run against a personal Daytona account on a tier that rejects
+every post-creation network update, so its policy-update step failed on every
+snapshot; the Juno organization accepts them, and the gate's
+stop → update → read-back → start sequence passed. And the `git-ca` probe (the
+entry below) no longer fails full-internet sandboxes, which had hidden the
+earlier custom snapshots' real state.
+
+**Considered and rejected:** Landing the branch first and letting the weekly
+rebuild open the adoption pull request. That is two merges for one outcome, and
+the workflow only exists once this branch is on `main`. Adopting the
+date-stamped name the workflow will produce instead of `rally-terminal-1`: the
+verified artifact is this one, and the next Monday rebuild replaces it through
+its own pull request.
+
+**Consequences:** Daytona appears to key built images by Dockerfile content.
+The snapshot's image reference is the SHA-256 of the Dockerfile the build
+sends, the build returned `active` in one second with an empty build log, and
+the image's reported size is roughly double the base's — an image built earlier
+from the identical Dockerfile was reused. A rebuild with an unchanged Dockerfile
+may therefore hand back the same cached image rather than a fresh build against
+Daytona's current base, which is the drift the weekly rebuild exists to bound.
+Until Daytona confirms otherwise, treat a one-second "build" from the workflow
+as a reused image, and vary the Dockerfile (a build-date label, say) when a
+fresh base is required. The acceptance gate's probe endpoints now live on
+`rallywith.ai` — `probe-redirect`, a Cloudflare redirect rule to `example.org`,
+and `probe-private`, an unproxied A record to `10.0.0.1` — and are configured
+in the `api-production` GitHub environment with the Daytona credentials, so the
+workflow can run. The two production paths the 2026-09-05 revert flagged as
+failing under the rejecting tier — `reconcileNetworkPolicy` on acquisition and
+the settings rollback — succeed on the Juno organization and were not changed in
+code; a return to a rejecting tier would surface them again.
 
 ### 2026-09-03 — The Git CA probe stops requiring what Daytona only sometimes gives
 
