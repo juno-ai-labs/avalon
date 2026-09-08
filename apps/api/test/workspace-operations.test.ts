@@ -21,6 +21,8 @@ import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
  */
 
 const DEMOS_TOKEN = "demos-operator-token-0123456789abcdef0123456789";
+const MISFILED_DEMOS_TOKEN = "demos-token-in-the-telemetry-map-0123456789abcdef";
+const MISFILED_SUPPORT_TOKEN = "support-token-in-the-demo-map-0123456789abcdef";
 const SUPPORT_TOKEN = "support-operator-token-0123456789abcdef012345678";
 const WORKSPACE_ID = "00000000-0000-7000-8000-00000000aaaa";
 const OTHER_ID = "00000000-0000-7000-8000-00000000bbbb";
@@ -75,9 +77,17 @@ function fixture(options: { workspaceRegion?: "global" | "eu"; objectCalls?: str
     AVALON_REGION: "global",
     DB: sqliteD1(database),
     ...(options.objectCalls ? { WORKSPACE_DOS: emptyWorkspaceObjects(options.objectCalls) } : {}),
-    TELEMETRY_OPERATORS_JSON: JSON.stringify({
+    // Two secrets of one shape. A token filed in the wrong one is what the
+    // isolation has to refuse: a demos principal in the telemetry map never
+    // reaches this route, and a support principal in the demo map verifies
+    // but is refused by role.
+    DEMO_OPERATORS_JSON: JSON.stringify({
       [DEMOS_TOKEN]: { operatorId: "00000000-0000-7000-8000-0000000000d1", role: "demos" },
+      [MISFILED_SUPPORT_TOKEN]: { operatorId: "00000000-0000-7000-8000-0000000000d3", role: "support" },
+    }),
+    TELEMETRY_OPERATORS_JSON: JSON.stringify({
       [SUPPORT_TOKEN]: { operatorId: "00000000-0000-7000-8000-0000000000d2", role: "support" },
+      [MISFILED_DEMOS_TOKEN]: { operatorId: "00000000-0000-7000-8000-0000000000d4", role: "demos" },
     }),
   });
   const app = new Hono<HonoAppEnv>();
@@ -89,16 +99,24 @@ function fixture(options: { workspaceRegion?: "global" | "eu"; objectCalls?: str
 const confirmed = (workspaceId: string) => JSON.stringify({ confirmWorkspaceId: workspaceId });
 
 describe("the workspace retirement route", () => {
-  it("admits only the demos role", async () => {
+  it("admits only the demos role, and only from the demo secret", async () => {
     const { env, app } = fixture();
     const path = `/internal/workspaces/${WORKSPACE_ID}/retire`;
-    const anonymous = await app.request(path, { method: "POST", headers: { "content-type": "application/json" }, body: confirmed(WORKSPACE_ID) }, env);
-    expect(anonymous.status).toBe(401);
-    const support = await app.request(path, {
-      method: "POST", headers: { authorization: `Bearer ${SUPPORT_TOKEN}`, "content-type": "application/json" }, body: confirmed(WORKSPACE_ID),
+    const attempt = (token?: string) => app.request(path, {
+      method: "POST",
+      headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), "content-type": "application/json" },
+      body: confirmed(WORKSPACE_ID),
     }, env);
-    expect(support.status).toBe(403);
-    await expect(support.json()).resolves.toMatchObject({ error: { code: "operator_role_forbidden" } });
+    expect((await attempt()).status).toBe(401);
+    // The telemetry map is not consulted here, whatever role its tokens carry.
+    const support = await attempt(SUPPORT_TOKEN);
+    expect(support.status).toBe(401);
+    await expect(support.json()).resolves.toMatchObject({ error: { code: "operator_authentication_invalid" } });
+    expect((await attempt(MISFILED_DEMOS_TOKEN)).status).toBe(401);
+    // The demo map is, and the role still narrows it.
+    const misfiled = await attempt(MISFILED_SUPPORT_TOKEN);
+    expect(misfiled.status).toBe(403);
+    await expect(misfiled.json()).resolves.toMatchObject({ error: { code: "operator_role_forbidden" } });
   });
 
   it("refuses a retirement whose confirmation names another workspace, or a workspace this region does not own", async () => {

@@ -202,10 +202,11 @@ are canonical storage services, not authorization layers.
   This is the only safe point to enforce opt-out, region, and the local deadline.
 - Restricted telemetry operations use a separate per-region bearer credential,
   not a desktop session or request-supplied role. The Worker resolves the fixed
-  operator UUID and `support`/`security`/`demos` role from `TELEMETRY_OPERATORS_JSON`
-  with timing-safe token comparison; every operator router names the roles it
-  admits, so the `demos` role reaches only the workspace retirement route Ace
-  calls ([`workspace-retirement.md`](workspace-retirement.md#the-operator-door)),
+  operator UUID and role with timing-safe token comparison — `support` and
+  `security` from `TELEMETRY_OPERATORS_JSON`, `demos` from the separate
+  `DEMO_OPERATORS_JSON`; every operator router names the roles it admits and
+  the secret it reads, so the `demos` role reaches only the workspace
+  retirement route Ace calls ([`workspace-retirement.md`](workspace-retirement.md#the-operator-door)),
   and neither telemetry role reaches it. Ace holds one `demos` token per region,
   each known to that region alone. Raw access and replay derive audit identity
   from that principal; neither endpoint accepts an operator ID or role in its
@@ -565,7 +566,10 @@ it has no R2 credentials and no network egress.
 
 `TELEMETRY_OPERATORS_JSON` is an independent secret in each region. Its bearer
 tokens never cross regions or enter URLs; its stored principal is the only source
-of operator identity and role for `/internal/telemetry`.
+of operator identity and role for `/internal/telemetry`. `DEMO_OPERATORS_JSON`
+is its sibling for the `demos` role Ace presents: the same shape, read only by
+the surfaces Ace calls, and set and rotated independently, so neither secret's
+holders can overwrite the other's tokens.
 
 `OPS_SLACK_BOT_TOKEN` and `OPS_SLACK_CHANNEL_ID` are optional independent
 secrets in each region: the bot token of a small internal Slack app with
@@ -807,6 +811,22 @@ EU rotate independently. [`runbook.md`](runbook.md) owns the procedure and the
 incident response that may prompt it.
 
 ## Changelog
+
+### 2026-09-08 — The `demos` role moves to its own secret
+
+**What changed:** The `demos` operator role is read from `DEMO_OPERATORS_JSON`,
+a per-region secret with the same shape as `TELEMETRY_OPERATORS_JSON`, which
+goes back to the telemetry roles only. Each operator router names the secret
+it verifies against as well as the roles it admits.
+
+**Why:** Reversing the entry below on its rotation argument. A Worker secret
+cannot be read back; the telemetry map was set by someone else, and adding
+one token to it meant overwriting tokens nobody could name. Two credentials
+set by different people for different surfaces should not share a value.
+
+**Consequences:** A leaked demo token holds the surfaces Ace calls and no
+telemetry route; a leaked telemetry token holds no operator surface Ace calls.
+Owned by [`workspace-retirement.md`](workspace-retirement.md#changelog).
 
 ### 2026-09-08 — A `demos` operator role, isolated per router
 
