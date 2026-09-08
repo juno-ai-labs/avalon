@@ -28,10 +28,6 @@ export async function readDemoTemplate(env: Env): Promise<DemoTemplate> {
   return regional(env, 'global', '/internal/demos/template', {}, (value) => DemoTemplateSchema.parse(value));
 }
 
-export async function readDemoOperation(env: Env, operationId: string): Promise<DemoOperationStatus> {
-  return regional(env, 'global', `/internal/demos/${encodeURIComponent(operationId)}`, {}, (value) => DemoOperationStatusSchema.parse(value));
-}
-
 export async function startDemoOperation(env: Env, request: DemoOperationStartRequest): Promise<DemoOperationStatus> {
   return regional(env, 'global', '/internal/demos', { method: 'POST', body: request }, (value) => DemoOperationStatusSchema.parse(value));
 }
@@ -41,16 +37,17 @@ export async function retryDemoOperation(env: Env, operationId: string): Promise
 }
 
 /**
- * Abandon an unfinished preparation. The confirmation travels with the call,
- * as retirement's does: the candidate workspace is retired irreversibly, and
- * the regional API refuses unless the confirmation names the operation.
+ * Abandon an unfinished preparation. The confirmation the operator typed
+ * travels with the call, as retirement's does, and the regional API compares
+ * it with the path once more — a consistency check on the request, not a
+ * second confirmation; the typed ceremony is the page's.
  */
-export async function abandonDemoOperation(env: Env, operationId: string): Promise<DemoOperationStatus> {
+export async function abandonDemoOperation(env: Env, operationId: string, confirmOperationId: string): Promise<DemoOperationStatus> {
   return regional(
     env,
     'global',
     `/internal/demos/${encodeURIComponent(operationId)}/abandon`,
-    { method: 'POST', body: { confirmOperationId: operationId } },
+    { method: 'POST', body: { confirmOperationId } },
     (value) => DemoOperationStatusSchema.parse(value),
   );
 }
