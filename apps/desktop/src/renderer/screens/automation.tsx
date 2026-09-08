@@ -132,7 +132,7 @@ function AutomationDetailScreen({ id }: { id: string }): React.JSX.Element {
       <ConversationSurface
         parentId={id}
         parentKind="automation"
-        renderHeader={() => <header className="sidekick-conversation-heading"><h2>What would you like your Sidekick to do?</h2><p>Tell it what you need or ask for a change, in your own words.</p></header>}
+        renderHeader={() => <header className="sidekick-conversation-heading"><h2>Conversation</h2></header>}
         substreamId="0"
       />
     </SidekickDetailLayout>

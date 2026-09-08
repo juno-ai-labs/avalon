@@ -4,7 +4,7 @@ import { CirclePause, Ellipsis, History, Mail, Play, Trash2 } from 'lucide-react
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { DeleteAutomationDialog } from './delete-automation-dialog';
 import type { AutomationDetail, AutomationRun } from '../lib/types';
-import { formatRelative } from '../lib/format';
+import { formatRelative, statusLabel } from '../lib/format';
 import { Badge, Button, IconButton, InlineError, Modal, StatusDot } from './primitives';
 
 export type AutomationHeaderAction = 'pause' | 'resume' | 'delete' | 'run';
@@ -134,10 +134,10 @@ export function AutomationHeader({
         </div>
       </div>
       <div className="automation-header-details">
-        {automation.triggerSummaries.length > 0 && (
-          <section className="sidekick-profile-section"><h2>When to expect it</h2><ul aria-label="Triggers" className="automation-header-triggers">
+        {(automation.triggerSummaries.length > 0 || automation.nextRunAt) && (
+          <section className="sidekick-profile-section"><h2>When to expect it</h2>{automation.triggerSummaries.length > 0 && <ul aria-label="Triggers" className="automation-header-triggers">
             {automation.triggerSummaries.map((summary) => <li key={summary}>{summary}</li>)}
-          </ul>{automation.nextRunAt && <p className="automation-runs-next">Next {formatRelative(automation.nextRunAt)}</p>}</section>
+          </ul>}{automation.nextRunAt && <p className="automation-runs-next">Next {formatRelative(automation.nextRunAt)}</p>}</section>
         )}
         <section className="sidekick-profile-section sidekick-guidance">
           <h2>Make it work for you</h2>
@@ -164,7 +164,7 @@ export function AutomationHeader({
                           : formatRelative(run.completedAt ?? run.startedAt ?? run.plannedFor ?? run.createdAt))}
                     </small>
                   </span>
-                  <Badge>{run.status.replace('_', ' ')}</Badge>
+                  <Badge>{statusLabel[runStatus(run)]}</Badge>
                 </li>
               ))}
             </ul>

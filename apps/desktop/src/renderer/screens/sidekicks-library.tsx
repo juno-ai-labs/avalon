@@ -26,8 +26,8 @@ export function SidekicksLibraryScreen(): React.JSX.Element {
       {([['all', 'Everyone'], ['you', 'Only you'], ['workspace', 'Workspace'], ['workstream', 'Work streams']] as const).map(([value, label]) =>
         <button key={value} type="button" aria-pressed={scope === value} onClick={() => setScope(value)}>{label}</button>)}
     </div>
-    <section className="sidekick-library-results" aria-label="Sidekicks">
-    <div className="sidekick-results-heading"><h2>{search ? 'Search results' : 'Your Sidekicks'}</h2><span>{items.length}</span></div>
+    <section aria-labelledby="sidekick-results-title">
+    <div className="sidekick-results-heading"><h2 id="sidekick-results-title">{search ? 'Search results' : 'Your Sidekicks'}</h2><span role="status" aria-label="Sidekick count">{query.isSuccess ? `${items.length} Sidekicks` : ''}</span></div>
     {query.isLoading ? <OpeningState label="Loading Sidekicks…" /> : query.error ? <InlineError>{query.error.message}</InlineError> : items.length === 0 ? <EmptyState title={query.data?.length ? "No matching Sidekicks" : "No Sidekicks yet"} description={query.data?.length ? "Try a different search or ownership filter." : "Describe what you would like to delegate to create one."} /> :
       <ul className="sidekicks-library-list">{items.map((item) => <li key={item.id}><Link to={`/sidekicks/${item.id}`}>
         <span className="sidekick-list-glyph"><AutomationGlyph id={item.id} /></span>

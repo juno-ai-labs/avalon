@@ -57,6 +57,11 @@ Sidekick authoring uses the shared conversation surface in a separate library wi
 
 ## Contract
 
+A host that hides a conversation must provide `ConversationVisibilityContext`.
+The conversation remains mounted, but hidden panes do not claim window-level
+file pastes or acknowledge reads. `useVisibleReadAcknowledgement` cancels queued
+reads when hidden and rechecks visibility before dispatch.
+
 The adapter provides canonical ordered turns, loaded coverage, streaming
 blocks, activity timing, attachment actions, retry/stop state, and a stable
 conversation identity, for a work stream's conversation and an automation's
@@ -71,7 +76,7 @@ Sharing stops at product semantics. Work streams retain participants, unread,
 resource, run, and steering controls. The in-flight pending queue is one of
 those: it attaches to the work-stream composer, not to the shared
 `ComposerInput`. An automation's page keeps its lifecycle controls (apply,
-pause, resume, delete, run now, the run list) beside the feed rather than
+pause, resume, delete, run now, the run-history dialog) outside the feed rather than
 inside it. Neither host may smuggle those controls through an optional common
 prop.
 
@@ -130,8 +135,10 @@ prove layout, focus, scroll position, or overlap.
 ### 2026-09-08 — Separate Sidekick management from its conversation
 
 SidekickDetailLayout owns a scrollable profile beside the shared conversation,
-with Conversation/Details switches on narrow windows. Switching hides a pane
-without unmounting it, preserving composer drafts and socket ownership. The
+with Conversation/Details switches based on the host width, including when
+embedded beside the main sidebar. Inactive panes retain layout boxes with
+`visibility: hidden` and are inert, preserving measurements, drafts, and sockets.
+A visibility context prevents hidden panes from claiming paste or marking reads. The
 header-only design left the feed competing with schedules and run history;
 those controls now live entirely outside ConversationSurface. Run history is
 behind More → Run history, while the first view explains how to ask for changes.
