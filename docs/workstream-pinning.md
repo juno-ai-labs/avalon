@@ -286,7 +286,8 @@ allocated — `MAX(position) + 1` inside the insert — rather than by the schem
 **What changed:** Visit pushes carry one row, including system rows, instead of
 rebuilding the recent page. Child responses cannot clear workspace-owned visits;
 legacy servers retain activity semantics. One renderer helper owns ordering and
-bulk-route matching, and incompatible cursor anchors restart the directory walk.
+bulk-route matching and default landing selection, and incompatible cursor
+anchors restart the directory walk.
 
 **Why:** Review exposed response merges that erased visits, mismatched batch
 cleanup, unnecessary per-focus page work, and rollout compatibility gaps.
