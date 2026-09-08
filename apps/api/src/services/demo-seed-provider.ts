@@ -84,46 +84,15 @@ function streamed(turn: DemoSeedTurn, seed: DemoSeed): Response {
   ]);
 }
 
-function unstreamed(model: string, turn: DemoSeedTurn, seed: DemoSeed): Response {
-  const message = turn.kind === "say"
-    ? { role: "assistant", content: turn.text }
-    : {
-        role: "assistant",
-        content: null,
-        tool_calls: [elicitationCall(turn, seed)].map(({ id, type, function: fn }) => ({ id, type, function: fn })),
-      };
-  return Response.json({
-    id: `demo-seed-${seed.actionId}`,
-    model,
-    choices: [{ message, finish_reason: turn.kind === "say" ? "stop" : "tool_calls" }],
-    usage: USAGE,
-  });
-}
-
 function requestUrl(input: RequestInfo | URL): URL {
   return new URL(typeof input === "string" || input instanceof URL ? input.toString() : input.url);
-}
-
-async function requestBody(input: RequestInfo | URL, init?: RequestInit): Promise<Record<string, unknown>> {
-  const text = typeof init?.body === "string"
-    ? init.body
-    : input instanceof Request
-      ? await input.clone().text()
-      : "";
-  try {
-    const parsed: unknown = JSON.parse(text || "{}");
-    return parsed !== null && typeof parsed === "object" ? parsed as Record<string, unknown> : {};
-  } catch {
-    return {};
-  }
 }
 
 /**
  * A `fetch` the harness config accepts in place of the real one.
  *
- * Answers the run's one inference request from the seed's turn, in whichever
- * of the two wire forms the request asked for, and refuses every request after
- * it. Anything that is not a chat completion — a model catalog read, a pricing
+ * Answers the run's one inference request from the seed's turn, in the
+ * streamed form every run asks for, and refuses every request after it. Anything that is not a chat completion — a model catalog read, a pricing
  * read — is answered emptily: nothing the client sends through this `fetch`
  * leaves the machine, and the harness already treats an unlisted model as one
  * with its documented default context window. The seam covers the client it is
@@ -138,7 +107,7 @@ export function demoSeedProviderFetch(seed: DemoSeed): typeof globalThis.fetch {
     throw new Error("demo_seed_run_without_script");
   }
   let served = false;
-  return (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+  return (async (input: RequestInfo | URL): Promise<Response> => {
     const url = requestUrl(input);
     if (!url.pathname.endsWith(CHAT_COMPLETIONS_SUFFIX)) return Response.json({ data: [] });
     if (served) {
@@ -148,9 +117,10 @@ export function demoSeedProviderFetch(seed: DemoSeed): typeof globalThis.fetch {
       );
     }
     served = true;
-    const body = await requestBody(input, init);
-    return body.stream === true
-      ? streamed(turn, seed)
-      : unstreamed(String(body.model ?? ""), turn, seed);
+    // Streamed, always: every chat completion a run makes is streamed
+    // (`bind-runtime.ts` sends `stream: true` on both provider branches), and
+    // the one non-streaming call in the harness is the addressing classifier,
+    // which a seeded message skips by construction.
+    return streamed(turn, seed);
   }) as typeof globalThis.fetch;
 }

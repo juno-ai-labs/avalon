@@ -238,6 +238,20 @@ export const DemoPackSchema = z.strictObject({
         context.addIssue({ code: "custom", path, message: `Mentioned role "${role}" is not in the cast` });
       }
     }
+    // Rally's own prose names people with the same tokens, expanded to bare
+    // names when played. An unbound one there seats nobody, but it is
+    // dereferenced when the seed is planned — mid-seeding, after the
+    // workspace exists and the connections are copied — so it is refused here,
+    // with the rest.
+    const assistant = "assistant" in step ? step.assistant : undefined;
+    const spoken = assistant === undefined
+      ? []
+      : assistant.kind === "say" ? [assistant.text] : [assistant.prompt, ...assistant.options];
+    for (const role of spoken.flatMap(mentionedRoles)) {
+      if (!roles.has(role)) {
+        context.addIssue({ code: "custom", path: [...path, "assistant"], message: `Rally's turn names role "${role}", which is not in the cast` });
+      }
+    }
     if (step.kind === "create_workstream") {
       if (seated.has(step.room)) {
         context.addIssue({ code: "custom", path: [...path, "room"], message: `Room "${step.room}" is created twice` });
@@ -314,10 +328,15 @@ interface ResolvedText {
 /**
  * Expand every `@{role}` in Rally's own prose to the bound name, with no
  * mention: an assistant turn names people the way the model would, and the
- * pack cannot know who is cast until it is played.
+ * pack cannot know who is cast until it is played. The schema has already
+ * refused a role the cast does not bind, so the lookup cannot miss.
  */
 function resolveRoleNames(text: string, cast: DemoCast): string {
-  return text.replaceAll(MENTION_TOKEN, (_token, role: string) => cast[role]!.displayName);
+  return text.replaceAll(MENTION_TOKEN, (_token, role: string) => {
+    const member = cast[role];
+    if (!member) throw new Error(`demo_pack_role_unbound:${role}`);
+    return member.displayName;
+  });
 }
 
 function resolveTurn(turn: DemoSeedTurn, cast: DemoCast): DemoSeedTurn {
@@ -476,8 +495,13 @@ const DECISION_MEMO_TITLE = "Insights pricing — decision memo";
  * one real run in a demo — the presenter's answer to the closing question —
  * honest: it inherits a transcript in which every number has a source. Names
  * in Rally's prose are `@{role}` tokens, expanded to the cast when played.
+ *
+ * A literal, not a parsed value: it is checked against the schema the first
+ * time a demo asks for it (`activeDemoPack`) and by `demo-pack.test.ts`, not
+ * when the Worker's module graph loads — a pack the schema refused took every
+ * route in both regions down at boot, for a feature one region refuses.
  */
-export const PLACEHOLDER_DEMO_PACK: DemoPack = DemoPackSchema.parse({
+export const PLACEHOLDER_DEMO_PACK = {
   version: "placeholder-2026-09",
   roles: ["presenter", "priya", "marcus", "dana"],
   steps: [
@@ -509,13 +533,12 @@ export const PLACEHOLDER_DEMO_PACK: DemoPack = DemoPackSchema.parse({
           "target at 41 attached accounts against 18 for the add-on, so the revenue risk",
           "is in the add-on, not the bundle.",
           "",
-          "**Against.** A $4k uplift on Growth clears the $31k ARPA floor by less than",
-          "$900, which leaves no room for a single concession at renewal. And TID-431",
-          "means a bundled launch cannot be quoted today: with no bundle SKU, the first",
-          "bundled deal is a manual invoice.",
+          "**Against.** A $4k uplift on Growth clears the $31k ARPA floor, but you have",
+          "not said by how much, and a thin margin leaves no room for a concession at",
+          "renewal. And TID-431 means a bundled launch cannot be quoted today: with no",
+          "bundle SKU, the first bundled deal is a manual invoice.",
           "",
-          "My read: bundle, and make TID-431 the blocker rather than the price. If you",
-          "attach the memo draft here I will mark where it needs to say that.",
+          "My read: bundle, and make TID-431 the blocker rather than the price.",
         ].join("\n"),
       },
     },
@@ -540,7 +563,7 @@ export const PLACEHOLDER_DEMO_PACK: DemoPack = DemoPackSchema.parse({
         "",
         "## The case against",
         "",
-        "ARPA floor is $31k and the bundle clears it by less than $900. TID-431 means",
+        "ARPA floor is $31k and the bundle clears it, but not by much. TID-431 means",
         "billing has no bundle SKU, so nothing can be quoted until it exists.",
         "",
       ].join("\n"),
@@ -622,9 +645,9 @@ export const PLACEHOLDER_DEMO_PACK: DemoPack = DemoPackSchema.parse({
         prompt: [
           "Northgate's notice window opens in eleven days and the room disagrees about",
           "what Insights costs them at renewal. @{dana} would hold the line item and give",
-          "up the 6% uplift; @{priya} would keep Insights in the account at any price;",
-          "@{marcus} wants a number on the order form. Which position should the renewal",
-          "proposal argue for?",
+          "up the 6% uplift; @{priya} would not pull Insights at renewal; @{marcus}",
+          "wants a number on the order form. Which position should the renewal proposal",
+          "argue for? I will draft the argument for whichever you pick.",
         ].join(" "),
         options: [
           "Include Insights at no uplift — protect the renewal",
@@ -647,4 +670,4 @@ export const PLACEHOLDER_DEMO_PACK: DemoPack = DemoPackSchema.parse({
       "northgate-renewal": { unseen: true, hasUnread: true, mentioned: true },
     },
   }],
-});
+} satisfies z.input<typeof DemoPackSchema>;
