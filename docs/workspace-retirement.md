@@ -31,7 +31,7 @@ that first needed it ships separately, calling what is here.
 | `apps/api/src/routes/workspace-operations.ts` | `/internal/workspaces/:id/retire`, behind the operator credential in the `demos` role. |
 | `apps/api/src/middleware/errors.ts` | Maps a refusal that reaches an HTTP route to `409 workspace_retired`. |
 | `apps/api/src/queues/access-revocation-consumer.ts`, `product-feature-flag-consumer.ts`, `activity-consumer.ts`, `apps/api/src/workflows/connector-event.ts`, `apps/api/src/services/digest-service.ts` | The background callers that can meet a retired object; each acknowledges a refusal as terminal. |
-| `apps/api/src/telemetry/operator-auth.ts` | The operator credential (`TELEMETRY_OPERATORS_JSON`), which now carries the `demos` role beside the telemetry roles, and `requireOperatorRole`, which every operator router narrows with. |
+| `apps/api/src/telemetry/operator-auth.ts` | The operator credentials: `requireOperatorFrom` verifies a bearer token against one of two same-shaped secrets — `DEMO_OPERATORS_JSON` for the `demos` role Ace holds, `TELEMETRY_OPERATORS_JSON` for the telemetry roles — and `requireOperatorRole`, which every operator router narrows with. |
 | `packages/contracts/src/workspace-retirement.ts` | The receipt a retirement answers with. |
 | `packages/contracts/src/conversation-parent.ts` | `childrenForRetirement`'s three-way answer. |
 | `apps/ace/src/regional-api.ts`, `apps/ace/src/client/workspaces.tsx` | Ace's relay to the regional route and the workspaces tab that calls it ([`ace.md`](ace.md)). |
@@ -164,9 +164,13 @@ operator's id from the credential into the pass, so the region's own log names
 who closed the workspace.
 
 The route sits behind the operator credential in a role of its own, `demos`,
-which Ace holds one token per region for. Every operator router names the roles
-it admits: the telemetry router refuses `demos`, and this router refuses the
-telemetry roles, which is the only thing that makes a role an isolation.
+which Ace holds one token per region for, read from a secret of its own,
+`DEMO_OPERATORS_JSON` — the same map shape as the telemetry surface's
+`TELEMETRY_OPERATORS_JSON`, set and rotated independently of it, so adding or
+rotating Ace's token never touches the telemetry tokens. Every operator router
+names the roles it admits as well: the telemetry router refuses `demos`, and
+this router refuses the telemetry roles, so a token filed in the wrong secret
+is refused by role even when it verifies.
 
 ## Invariants
 
@@ -392,7 +396,7 @@ a set of new empty objects. The region records the operator's id in its pass
 log.
 
 The operator credential's `demos` role is one token per region, held by that
-region's `TELEMETRY_OPERATORS_JSON` and by Ace as that region's secret, and by
+region's `DEMO_OPERATORS_JSON` and by Ace as that region's secret, and by
 nobody else: an operator credential never crosses regions, so a leak of one is
 destructive authority in one jurisdiction rather than both. Every operator
 router names the roles it admits, which is the only thing that makes a role an
@@ -416,6 +420,33 @@ telemetry roles.
   workspaces it was built for.
 
 ## Changelog
+
+### 2026-09-08 — The `demos` credential has a secret of its own
+
+**What changed:** The retirement route verifies its bearer token against
+`DEMO_OPERATORS_JSON`, a new per-region Worker secret with the same shape as
+`TELEMETRY_OPERATORS_JSON`, through `requireOperatorFrom(secret)` in
+`operator-auth.ts`; `requireDemoOperator` and `requireTelemetryOperator` are
+the two instances. The `demos` role no longer lives in the telemetry map.
+The context key and accessor are `operator` and `getOperator`.
+
+**Why:** The earlier decision to put the `demos` role in the telemetry map
+("one thing to rotate") met its cost the first time anyone tried to add the
+token: a Worker secret cannot be read back, the telemetry map had been set by
+someone else with tokens nobody could name, and adding one role meant
+overwriting all of them. Two secrets that different people set for different
+reasons should not share a value. A leak of either now holds one surface
+rather than both.
+
+**Considered and rejected:** Keeping one map and asking for the current
+telemetry tokens — they were not recorded anywhere reachable, and the coupling
+would recur at every rotation.
+
+**Consequences:** Operators set `DEMO_OPERATORS_JSON` in each region; the
+telemetry map goes back to telemetry roles only. Both layers still apply: a
+`demos` principal filed in the telemetry map reaches nothing, and a `support`
+principal filed in the demo map is refused by role. A new operator surface
+picks its secret with `requireOperatorFrom` and names its roles.
 
 ### 2026-09-08 — Review: the D1 door, the sockets, the background callers, and a resumable walk
 

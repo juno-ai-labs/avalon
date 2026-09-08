@@ -6,15 +6,15 @@ import type { HonoAppEnv } from '../env';
 import { ApiError } from '../lib/api-error';
 import { zValidator } from '../middleware/validation';
 import { retireWorkspaceForOperator } from '../services/workspace-retirement-service';
-import { getTelemetryOperator, requireOperatorRole, requireTelemetryOperator } from '../telemetry/operator-auth';
+import { getOperator, requireDemoOperator, requireOperatorRole } from '../telemetry/operator-auth';
 
 /**
  * The regional API Ace's workspaces tab talks to.
  *
- * Behind the operator credential, in the `demos` role: Ace holds one token
- * per region, and that token can retire and nothing else. The handler
- * validates, delegates, and maps; the rules live in
- * `workspace-retirement-service.ts`.
+ * Behind the operator credential in the `demos` role, from the region's
+ * `DEMO_OPERATORS_JSON`: Ace holds one token per region, and that token can
+ * retire and nothing else. The handler validates, delegates, and maps; the
+ * rules live in `workspace-retirement-service.ts`.
  */
 
 const WorkspaceParamSchema = z.strictObject({ workspaceId: z.string().uuid() });
@@ -29,7 +29,7 @@ const WorkspaceParamSchema = z.strictObject({ workspaceId: z.string().uuid() });
 const RetireBodySchema = z.strictObject({ confirmWorkspaceId: z.string().uuid() });
 
 export const workspaceOperatorRoutes = new Hono<HonoAppEnv>();
-workspaceOperatorRoutes.use('*', requireTelemetryOperator, requireOperatorRole('demos'));
+workspaceOperatorRoutes.use('*', requireDemoOperator, requireOperatorRole('demos'));
 
 workspaceOperatorRoutes.post(
   '/:workspaceId/retire',
@@ -41,7 +41,7 @@ workspaceOperatorRoutes.post(
       throw new ApiError(409, 'workspace_retirement_unconfirmed', 'The confirmation does not name this workspace');
     }
     const receipt = await retireWorkspaceForOperator(c.env, workspaceId, {
-      operatorId: getTelemetryOperator(c).operatorId,
+      operatorId: getOperator(c).operatorId,
     });
     return c.json(WorkspaceRetirementResultSchema.parse({ workspaceId, ...receipt }));
   },
