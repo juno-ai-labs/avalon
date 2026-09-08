@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { focusManager, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { describe, expect, it, vi } from 'vitest';
 import type { SearchResult } from '@rally/contracts/search';
 import { ApiError } from '../lib/api';
@@ -16,7 +16,8 @@ const result: SearchResult = {
 function setup(search: React.ComponentProps<typeof SearchModal>['search']) {
   const onSelect = vi.fn();
   const onOpenChange = vi.fn();
-  const client = new QueryClient();
+  // Match App.tsx: focusing the window must not refetch an admitted search page.
+  const client = new QueryClient({ defaultOptions: { queries: { refetchOnWindowFocus: false } } });
   render(<QueryClientProvider client={client}><SearchModal workspaceId="workspace:user"
     open onOpenChange={onOpenChange} onSelect={onSelect} search={search} /></QueryClientProvider>);
   return { onSelect, onOpenChange, client };
@@ -69,13 +70,14 @@ describe('workspace search modal', () => {
       await screen.findByText('Continue searching');
       await act(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
       expect(end).not.toHaveBeenCalled();
+      await act(async () => { focusManager.setFocused(false); focusManager.setFocused(true); });
       expect(search).toHaveBeenCalledTimes(1);
       expect(screen.queryByText('No results')).not.toBeInTheDocument();
       fireEvent.click(screen.getByRole('button', { name: 'Load more results' }));
       await screen.findByRole('option');
       expect(search).toHaveBeenLastCalledWith({ query: 'danil', category: 'all', pageSize: 7, cursor: 'next' }, expect.any(AbortSignal));
       await waitFor(() => expect(end).toHaveBeenCalledWith({ outcome: 'completed' }));
-    } finally { trace.mockRestore(); }
+    } finally { focusManager.setFocused(undefined); trace.mockRestore(); }
   });
 
   it('keeps the first page visible while loading a continuation and preserves result order', async () => {
