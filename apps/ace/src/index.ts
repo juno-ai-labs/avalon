@@ -6,7 +6,6 @@ import { listDeadLetterQueues, peekDeadLetterQueue } from './cloudflare-queue-ad
 import {
   abandonDemoOperation,
   listDemoOperations,
-  readDemoOperation,
   readDemoTemplate,
   retryDemoOperation,
   startDemoOperation,
@@ -212,32 +211,28 @@ app.post('/api/demos', async (c) => {
   } catch (error) { return relayRegionalError(error); }
 });
 
-app.get('/api/demos/:operationId', async (c) => {
-  const operationId = UuidSchema.safeParse(c.req.param('operationId'));
-  if (!operationId.success) return c.json({ error: 'invalid_operation_id', message: 'The operation id is not a UUID.' }, 400);
-  try {
-    return c.json(await readDemoOperation(c.env, operationId.data));
-  } catch (error) { return relayRegionalError(error); }
-});
-
 app.post('/api/demos/:operationId/:action{retry|abandon}', async (c) => {
   if (!sameOrigin(c)) return c.json({ error: 'same_origin_required', message: 'Writes are accepted from the Ace page only.' }, 403);
   const operationId = UuidSchema.safeParse(c.req.param('operationId'));
   if (!operationId.success) return c.json({ error: 'invalid_operation_id', message: 'The operation id is not a UUID.' }, 400);
   const action = c.req.param('action') as 'retry' | 'abandon';
+  let confirmOperationId: string | null = null;
   if (action === 'abandon') {
-    // Refused here as well as regionally, as retirement is: abandoning retires
-    // the candidate workspace, and the page is not trusted to have asked.
+    // The typed confirmation has to name the operation in the path — a
+    // consistency check made here and again regionally, as retirement's is —
+    // and what the operator typed is what travels, not a value re-derived
+    // from the path.
     const body = AbandonRequestSchema.safeParse(await c.req.json().catch(() => null));
     if (!body.success) return c.json({ error: 'invalid_abandon_request', message: 'Type the operation id to confirm.' }, 400);
     if (body.data.confirmOperationId !== operationId.data) {
       return c.json({ error: 'demo_abandon_unconfirmed', message: 'The confirmation does not name this preparation.' }, 409);
     }
+    confirmOperationId = body.data.confirmOperationId;
   }
   try {
     const status = action === 'retry'
       ? await retryDemoOperation(c.env, operationId.data)
-      : await abandonDemoOperation(c.env, operationId.data);
+      : await abandonDemoOperation(c.env, operationId.data, confirmOperationId!);
     console.log(JSON.stringify({
       event: action === 'retry' ? 'ace_demo_preparation_retried' : 'ace_demo_preparation_abandoned',
       actor_subject: c.get('principal').subject,
