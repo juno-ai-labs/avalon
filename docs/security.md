@@ -464,7 +464,7 @@ own local checkout.
 
 Commands, repository contents, package output, and imported files are untrusted.
 The model receives no PTY, inbound port, background daemon, provider lifecycle,
-network-policy, credential, or raw-Daytona tool. Paths stay below `/workspace`,
+network-policy, credential, or raw-Daytona tool. Paths stay at or below `/workspace`,
 output is stripped of terminal controls and recognizable token forms, and logs
 never carry commands or output. Trusted-only egress is a host-compiled Daytona
 `domainAllowList` with an immutable baseline and read-back verification; the
