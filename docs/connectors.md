@@ -36,6 +36,7 @@ or remounting Settings does not orphan reconciliation.
 
 | Path | Responsibility |
 | --- | --- |
+| `apps/api/src/durable-objects/workspace-event-resources.ts` | Exact workspace/connection/provider identity resolution for incoming event relationships. |
 | `packages/connectors/src/index.ts` | The registry, and the cross-validation that runs at its construction. |
 | `packages/connectors/src/types.ts` | The manifest and descriptor types, and the unexported symbol that brands `AuthorizedConnectorConnection`. |
 | `packages/connectors/src/provider-utils.ts` | `withProviderReauthorization` — the shared mid-call recovery every adapter routes through. |
@@ -906,6 +907,20 @@ one to a fixture list to make a new adapter pass — declare the exemption in th
 fixture table instead, where it is reviewable.
 
 ## Changelog
+
+### 2026-09-08 — Resolve event relationships with indexed identity seeks
+
+Connector event ingestion now resolves the primary provider resource ID and
+entity keys as one deduplicated JSON set through the existing scoped resource
+identity index. The former correlated OR scanned the connection's full inventory:
+one production event read 495,339 rows for three resource identities. Exact seeks
+returned the same identities with 18 reads. Workspace, connection, provider,
+null handling, and sorted canonical IDs remain part of the resolver contract.
+
+One bound parameter per key was rejected because a valid event can exceed the
+runtime's SQL variable ceiling. Inventory pruning and event drops were rejected
+because the lookup can preserve all admitted data without paying for unrelated
+resources on every event.
 
 ### 2026-09-03 — Every other connector's cursor gets the repair Google's got
 
