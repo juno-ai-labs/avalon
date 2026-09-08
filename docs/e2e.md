@@ -643,3 +643,38 @@ binding.
 ## Provider and deployment note
 
 Flows 2 and 3 require external services and are release gates for a hosted test workspace, not for an offline local build. Follow the regional deployment checklist in `docs/runbook.md`; production smoke should create a Gmail draft unless an explicit send has been approved.
+
+### Sidebar geometry and resizing
+
+Both collapsed navigation sidebars are 96 CSS pixels wide, allowing symmetric
+space around the macOS traffic lights. Their navigation controls, including
+Search and New substream, are 54-pixel squares with 9-pixel padding. Collapse
+controls sit at the bottom; the account avatar and navigation toggle remain
+side by side. The main conversation row uses the work-stream title.
+
+Check each bottom toggle and double-click each right edge to collapse and
+expand. Drag short of the expansion/collapse threshold and confirm a faint
+vertical guide follows the pointer; release or cancel and confirm it disappears.
+Check both appearances, long titles, and a short window: account and collapse
+controls must remain visible while the content scrolls.
+
+Public work streams show the globe in the glyph's upper-right corner, above
+the status badge. Both badges have a surface-colored cutout and stay attached
+to the glyph in expanded and collapsed navigation. Check public and private
+rows, selected and hovered rows, and light and dark appearances.
+
+In collapsed navigation, Search and New chat are the first two items inside
+the same vertical scroller as work streams and Sidekicks. Scroll a long list
+and confirm both move out of view while the account and collapse controls
+stay fixed at the bottom.
+
+Hover a public stream icon and then move onto its globe in both appearances.
+The globe stays visible and only the stream preview opens; the public badge
+has an accessible label rather than a competing nested tooltip.
+
+When a narrow window forces navigation into compact mode, its Expand control
+is disabled and double-clicking the edge must preserve the saved expanded
+preference. Widening the window restores expansion. Clicking either separator
+must focus it so ArrowLeft/ArrowRight can immediately resize it. Public stream
+links expose their visibility as an accessible description; the compact center
+sidebar's bottom toggle is centered in the same icon column as its rows.

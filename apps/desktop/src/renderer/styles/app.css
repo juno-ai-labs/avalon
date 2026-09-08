@@ -2694,9 +2694,8 @@ pre {
 .workstream-context-sidebar { background: var(--av-cmp-sidebar-background); border-right: 1px solid var(--av-cmp-sidebar-border); display: flex; flex: 0 0 280px; flex-direction: column; min-height: 0; min-width: 0; position: relative; }
 .workstream-context-resizer:hover > .sidebar-resizer-handle { opacity: 1; }
 .conversation-layout:has(> .workstream-context-sidebar.is-resizing) { cursor: col-resize; user-select: none; }
-.workstream-context-sidebar.is-compact { flex-basis: 88px; }
+.workstream-context-sidebar.is-compact { flex-basis: 96px; }
 .workstream-context-toolbar { align-items: center; display: flex; flex: 0 0 44px; justify-content: space-between; padding: 0 12px; }
-.workstream-context-label,
 .workstream-context-section h2 { color: var(--av-sys-color-text-muted); font-size: 12px; font-weight: 400; line-height: 18px; }
 .workstream-context-scroll { min-height: 0; overflow-x: hidden; overflow-y: auto; padding: 8px 12px 16px; }
 .workstream-context-row { align-items: center; background: transparent; border: 0; border-radius: 10px; color: var(--av-sys-color-text-default); display: flex; font: inherit; gap: 8px; height: 54px; padding: 8px; position: relative; text-align: left; width: 100%; }
@@ -2727,7 +2726,6 @@ pre {
 .workstream-context-sidebar.is-compact .workstream-context-toolbar { justify-content: center; }
 .workstream-context-sidebar.is-compact .workstream-substream-connector { display: none; }
 .workstream-context-sidebar.is-compact .workstream-substream-branch { gap: 0; }
-.workstream-context-sidebar.is-compact .workstream-context-label,
 .workstream-context-sidebar.is-compact .workstream-context-copy,
 .workstream-context-sidebar.is-compact .workstream-context-section h2,
 .workstream-context-sidebar.is-compact .workstream-context-empty span { display: none; }
@@ -5387,7 +5385,7 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 .grokbot-shell .sidebar-group-menu-trigger { display: none; }
 
 /* GrokBot's sidebar does not become a drawer when the conversation gets
-   narrow. It becomes an 88px icon rail, either because the saved compact
+   narrow. It becomes a 96px icon rail, either because the saved compact
    preference is on or because the conversation needs its protected 424px.
    The component owns that calculation; this block owns the resulting rail. */
 .grokbot-shell .sidebar.is-compact .sidebar-titlebar {
@@ -5405,7 +5403,7 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   display: none;
 }
 .grokbot-shell .sidebar.is-compact .sidebar-scroll {
-  padding: 4px 17px 12px;
+  padding: 4px 20.5px 12px;
 }
 .grokbot-shell .sidebar.is-compact .sidebar-section,
 .grokbot-shell .sidebar.is-compact .workstreams-section,
@@ -5433,6 +5431,7 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   border-radius: 10px;
   flex: 0 0 54px;
   height: 54px;
+  padding: 9px;
   margin: 0 auto;
   width: 54px;
 }
@@ -6563,12 +6562,14 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 .automation-tile-state.active .status-dot { background: var(--av-sys-color-success-base); }
 .automation-tile-state.paused .status-dot { background: var(--av-sys-color-workstream-stopped); }
 .automation-tile-state.draft .status-dot { background: transparent; border: 1px dashed var(--av-sys-color-text-muted); }
-.grokbot-shell .sidebar.is-compact .sidebar-automation-strip > .sidebar-context-target { flex-basis: 54px; }
+.grokbot-shell .sidebar.is-compact .sidebar-automation-strip { flex-direction: column; gap: 0; margin: 0; padding: 0; overflow: visible; }
+.grokbot-shell .sidebar.is-compact .sidebar-automation-strip > .sidebar-context-target { flex: 0 0 54px; min-width: 54px; max-width: 54px; }
+.grokbot-shell .sidebar.is-compact .automation-tile { height: 54px; min-height: 54px; width: 54px; padding: 9px; gap: 0; justify-content: center; }
 .grokbot-shell .sidebar.is-compact .automation-tile-glyph { height: 36px; width: 36px; }
 .grokbot-shell .sidebar.is-compact .automation-tile-name { display: none; }
 
 .grokbot-shell .sidebar-rail-actions { display: flex; flex-direction: column; align-items: center; flex-shrink: 0; }
-.grokbot-shell .sidebar-rail-actions .sidebar-search { width: 54px; height: 44px; padding: 0; justify-content: center; background: transparent; box-shadow: none; }
+.grokbot-shell .sidebar-rail-actions .sidebar-search { width: 54px; height: 54px; padding: 9px; justify-content: center; background: transparent; box-shadow: none; }
 .grokbot-shell .sidebar-rail-actions .sidebar-search > span { display: none; }
 .grokbot-shell .sidebar-rail-actions .sidebar-search > svg { width: 19px; height: 19px; }
 .grokbot-shell .sidebar-rail-actions .sidebar-search:hover { background: var(--av-cmp-row-background-hover); }
@@ -6627,3 +6628,22 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 .sidekick-attachments-list > li { padding-bottom: 8px; }
 .sidekick-attachments-list > li > small { display: block; color: var(--av-sys-color-text-muted); padding-inline: 8px; }
 .sidekick-attachments-list > li > .sidekick-attachment-remove { font-size: 11px; color: var(--av-sys-color-text-muted); margin-left: 8px; }
+
+/* The two navigation rails share square controls and symmetric gutters. */
+.workstream-context-sidebar.is-compact .workstream-context-scroll { padding-left: 20.5px; padding-right: 20.5px; }
+.workstream-context-sidebar.is-compact .workstream-context-row,
+.workstream-context-sidebar.is-compact .workstream-context-empty { flex: 0 0 auto; width: 54px; height: 54px; padding: 9px; gap: 0; }
+.workstream-context-sidebar.is-compact .avatar-stack .avatar,
+.workstream-context-sidebar.is-compact .avatar-overflow { width: 20px; height: 20px; font-size: 8px; }
+.workstream-context-sidebar.is-compact .avatar-stack-item + .avatar-stack-item,
+.workstream-context-sidebar.is-compact .avatar-overflow { margin-left: -12px; }
+.sidebar-workstream-public { align-items: center; background: var(--av-sys-color-surface-default); border-radius: var(--av-sys-size-radius-pill); color: var(--av-sys-color-text-muted); display: flex; height: 17px; justify-content: center; position: absolute; right: -1px; top: -2px; width: 17px; }
+.sidebar-collapse-footer { display: flex; align-items: center; justify-content: flex-end; flex-shrink: 0; gap: 4px; margin-top: auto; padding: 8px 12px; min-height: 62px; }
+.grokbot-shell .sidebar .sidebar-collapse-footer .account-trigger { flex: 1; min-width: 0; width: auto; margin: 0; }
+.grokbot-shell .sidebar.is-compact .sidebar-collapse-footer,
+.workstream-context-sidebar.is-compact .sidebar-collapse-footer { padding: 8px; gap: 0; }
+.grokbot-shell .sidebar.is-compact .sidebar-collapse-footer .account-trigger { height: 38px; min-height: 38px; padding: 6px; }
+.sidebar-collapse-footer > .icon-button { flex-shrink: 0; }
+.sidebar-drag-guide { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--av-sys-color-text-muted); opacity: .25; pointer-events: none; z-index: 100; }
+
+.workstream-context-sidebar.is-compact .sidebar-collapse-footer { justify-content: center; }
