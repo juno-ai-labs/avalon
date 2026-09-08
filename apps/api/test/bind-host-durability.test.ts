@@ -961,10 +961,9 @@ describe("Bind host durability boundaries", () => {
   });
 
   it("reads a run a tool ended as completed even when the model wrote nothing after it", () => {
-    // A ready draft submitted from the automation's chat ends the run from
-    // the tool; the work is the submission, and the model's silence after it
-    // is not the empty answer the failure code describes. Seen live: every
-    // successful ready submission was logged as a failed run.
+    // This tests only the adapter's generic tool-ended outcome. Conversation
+    // terminalization still requires a final turn; Sidekick authoring now
+    // returns to the model for a reply, as the workerd regression proves.
     expect(__integrationTesting.workstreamHarnessTerminalResult({
       outcome: { status: "completed", completedByTool: true },
       streamedText: "",
