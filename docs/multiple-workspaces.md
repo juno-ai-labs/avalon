@@ -98,7 +98,12 @@ revocation.
 ### The account menu's directory
 
 The menu lists the union of what this device has stored and what Global
-discovery answers, in device recency order. Discovery is the account's
+discovery answers, in device recency order. Discovery withholds two things the
+member belongs to: the demo template, always, and a demo workspace still being
+prepared, until it is published — and activation answers
+`demo_workspace_preparing` for the latter. Both are decided in the regional
+API from the demo operation rows
+([`demo-workspaces.md`](demo-workspaces.md#withholding-a-workspace-from-its-own-member)). Discovery is the account's
 complete membership and needs the identity credential; the stored set is one
 regional credential and cached profile per workspace this device has opened,
 readable with no network at all. `getOnboardingState` never rejects on
@@ -328,7 +333,11 @@ active workspace.
   credential in use, which the regional API re-checks on every request.
 - A stored workspace stays on the account menu whether or not discovery can be
   reached. Only a complete discovery that no longer lists it, a departure, a
-  revocation of its credential, or sign-out removes it.
+  revocation of its credential, or sign-out removes it. A complete discovery
+  omits the demo template and an unpublished demo candidate on purpose, so a
+  device that opened either while it was reachable reconciles its stored
+  credential away on the next complete answer; that is the withholding working
+  as designed, not a lost membership.
 - This device rotates one refresh token at most once at a time.
 - Leaving one workspace cannot delete another workspace's credential, profile,
   query state, or draft.
@@ -411,6 +420,25 @@ encrypts the complete account set, while sign-out erases it locally before
 best-effort remote revocation.
 
 ## Changelog
+
+### 2026-09-07 — Discovery withholds the demo template and an unpublished candidate
+
+**What changed:** Regional discovery drops the demo template and a demo
+workspace still being prepared from its answer, and activation refuses the
+latter with `demo_workspace_preparing`.
+
+**Why:** A presenter who opened a half-seeded demo would see a sidebar the
+pack had not finished writing, and nobody should find the template — which
+holds the cast's real connections — in their switcher. The filter is the
+regional API's, keyed by the demo operation rows, so the desktop changes
+nothing; but the invariant above that a complete discovery removes a stored
+workspace now has two deliberate cases. Owned by
+[`demo-workspaces.md`](demo-workspaces.md).
+
+**Consequences:** `endedStoredWorkspaces` treats an absence from a complete
+discovery as a lost membership; for these two workspaces that is the intended
+outcome, and a change that wants either to survive on a device has to change
+the filter, not the reconciliation.
 
 ### 2026-09-07 — Simplify the bottom-bar account popup
 
