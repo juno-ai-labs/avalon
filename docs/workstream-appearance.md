@@ -25,6 +25,12 @@ and publishes it to its control sockets. Existing versioned state handling
 updates the header, sidebar, and cached detail. Reconnection obtains the same
 appearance in the canonical snapshot.
 
+New control clients request `workstreamAppearance=1` when issuing a socket ticket.
+The server includes it in the socket URL. The Worker forwards that capability, and WorkstreamDO stores it in the hibernating
+socket attachment. Subscribe snapshots and later broadcasts omit `appearance`
+for older clients, whose strict metadata schema would reject the whole frame.
+Missing capabilities on pre-deploy attachments also retain the original shape.
+
 The socket connection queues rapid clicks in order, retaining their original
 work-stream address even if the picker unmounts. A click changes only its own field, so
 a color change does not overwrite another user's icon. The icon registry extends
@@ -72,6 +78,15 @@ cover the common cache path. Inspect the actual Electron popup in light and dark
 including scrolling, and check another connected window and reopening.
 
 ## Changelog
+
+### 2026-09-08 — Preserve installed-client control updates
+
+Review caught that an optional field remains incompatible with an older strict
+reader. Appearance now requires an explicit socket capability, preserved through
+hibernation, so deploying the server cannot stop older clients receiving title,
+viewer, or private-child changes. A URL capability also leaves older servers able
+to accept newer clients without changing their strict subscribe command. Runtime
+tests cover both frame shapes and the actual workspace directory projection.
 
 ### 2026-09-08 — Shared editable identity
 
