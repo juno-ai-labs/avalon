@@ -255,6 +255,7 @@ export interface MessageAttachment {
 }
 
 export interface ResourcePage {
+  complete?: boolean;
   items: WorkstreamResource[];
   nextCursor: string | null;
 }

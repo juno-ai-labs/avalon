@@ -106,6 +106,7 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect 
     gcTime: 0,
     retry: false,
   });
+  const incomplete = settledQuery === normalized && response.data?.pages.some((page) => page.complete === false);
   const continuationFailed = response.isFetchNextPageError
     && (!(response.error instanceof ApiError) || response.error.status >= 500);
   const results = open && normalized && settledQuery === normalized && (!response.isFetching || response.isFetchingNextPage) && (!response.isError || continuationFailed)
@@ -198,6 +199,10 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect 
             </div>;
           })}
         </div>
+        {incomplete && !response.isFetching && <div className="rally-search-footer" role="status">
+          <div>Some results are unavailable.</div>
+          <Button type="button" onClick={() => { void response.refetch(); }}>Retry search</Button>
+        </div>}
         {settledQuery === normalized && response.hasNextPage && (!response.isError || continuationFailed) && <div className="rally-search-footer">
           {continuationFailed && <div role="status">More results could not be loaded. Please try again.</div>}
           <Button type="button" onClick={loadMore} aria-disabled={response.isFetching}
@@ -208,7 +213,7 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect 
         {results.length === 0 && <div className="rally-search-state" role="status">
           {!normalized ? 'Search messages, links, artifacts, and files'
             : (response.isFetching || settledQuery !== normalized) ? 'Searching…'
-            : response.isError ? 'Search could not be completed. Please try again.' : response.hasNextPage ? 'More results are available' : 'No results'}
+            : response.isError ? 'Search could not be completed. Please try again.' : response.hasNextPage ? 'More results are available' : incomplete ? 'No verified results available' : 'No results'}
         </div>}
       </Dialog.Content>
     </Dialog.Portal>
