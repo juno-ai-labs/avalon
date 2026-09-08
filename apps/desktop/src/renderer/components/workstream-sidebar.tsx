@@ -40,6 +40,7 @@ export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstrea
   });
   const [paneWidth, setPaneWidth] = useState(Number.POSITIVE_INFINITY);
   const [resizing, setResizing] = useState(false);
+  const [dragWidth, setDragWidth] = useState<number | null>(null);
   const drag = useRef<{ pointerId: number; offset: number } | null>(null);
   // Observe the available pane, never this sidebar or the transcript. Its
   // width does not change when this rail collapses, avoiding resize feedback.
@@ -80,19 +81,7 @@ export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstrea
   const artifacts = workstream.resources.filter((resource) => resource.direction === 'artifact');
   return (
     <aside aria-label="Work-stream sidebar" className={clsx('workstream-context-sidebar', compact && 'is-compact', resizing && 'is-resizing')} ref={sidebar} style={{ flexBasis: effectiveWidth }}>
-      <div className="workstream-context-toolbar window-drag">
-        <span className="workstream-context-label">Work stream</span>
-        <IconButton
-          className="window-no-drag"
-          label={compact ? 'Expand work-stream sidebar' : 'Collapse work-stream sidebar'}
-          aria-expanded={!compact}
-          disabled={narrow}
-          title={narrow ? 'Widen the window to expand the work-stream sidebar' : undefined}
-          onClick={() => {
-            saveCollapsed(!collapsed);
-          }}
-        >{compact ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}</IconButton>
-      </div>
+      <div className="workstream-context-toolbar window-drag" />
       <div className="workstream-context-scroll">
         <button
           className={clsx('workstream-context-row workstream-conversation-row', selectedSubstreamId === '0' && 'is-current')}
@@ -103,7 +92,7 @@ export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstrea
           onClick={() => { onSelectSubstream?.('0'); onFocusTranscript(); }}
         >
           {compact && <MessageSquare aria-hidden="true" size={20} />}
-          <span className="workstream-context-copy"><span>Main log</span></span>
+          <span className="workstream-context-copy"><span>{workstream.title}</span></span>
         </button>
         <div className="workstream-substream-list">
           {workstream.privateChildren?.map((child) => {
@@ -146,11 +135,24 @@ export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstrea
         <section aria-label="Work-stream participants" className="workstream-context-section">
           <h2>Participants</h2>
           <button className="workstream-context-row" aria-label="Manage work-stream participants" aria-description={workstream.participants.map((person) => person.name).join(', ')} type="button" onClick={onParticipants}>
-            {workstream.participants.length ? <AvatarStack members={workstream.participants} presentUserIds={presentUserIds} /> : <UserPlus aria-hidden="true" size={18} />}
+            {workstream.participants.length ? <AvatarStack members={workstream.participants} limit={compact ? 2 : 4} presentUserIds={presentUserIds} /> : <UserPlus aria-hidden="true" size={18} />}
           </button>
         </section>
         <AttachedSidekicks items={attachedSidekicks} error={attachedSidekicksError} onRemove={onRemoveSidekick} />
       </div>
+      <div className="sidebar-collapse-footer">
+        <IconButton
+          className="window-no-drag"
+          label={compact ? 'Expand work-stream sidebar' : 'Collapse work-stream sidebar'}
+          aria-expanded={!compact}
+          disabled={narrow}
+          title={narrow ? 'Widen the window to expand the work-stream sidebar' : undefined}
+          onClick={() => {
+            saveCollapsed(!collapsed);
+          }}
+        >{compact ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}</IconButton>
+      </div>
+      {resizing && dragWidth !== null && <div aria-hidden="true" className="sidebar-drag-guide" style={{ left: dragWidth }} />}
       <div
         role="separator"
         aria-label="Resize work-stream sidebar"
@@ -160,6 +162,7 @@ export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstrea
         aria-valuenow={effectiveWidth}
         className={clsx('sidebar-resizer workstream-context-resizer', resizing && 'is-near')}
         tabIndex={0}
+        onDoubleClick={() => { if (!narrow) saveCollapsed(!collapsed); }}
         onKeyDown={(event) => {
           if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
           event.preventDefault();
@@ -169,6 +172,7 @@ export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstrea
         onPointerDown={(event) => {
           if (event.button !== 0) return;
           event.preventDefault();
+          event.currentTarget.focus();
           const bounds = sidebar.current?.getBoundingClientRect();
           if (!bounds) return;
           drag.current = { pointerId: event.pointerId, offset: event.clientX - bounds.right };
@@ -178,16 +182,20 @@ export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstrea
         onPointerMove={(event) => {
           if (drag.current?.pointerId !== event.pointerId) return;
           const bounds = sidebar.current?.getBoundingClientRect();
-          if (bounds) resize(event.clientX - drag.current.offset - bounds.left);
+          if (bounds) {
+            const requested = event.clientX - drag.current.offset - bounds.left;
+            setDragWidth(Math.max(0, requested));
+            resize(requested);
+          }
         }}
         onPointerUp={(event) => {
           if (drag.current?.pointerId !== event.pointerId) return;
           drag.current = null;
-          setResizing(false);
+          setResizing(false); setDragWidth(null);
           event.currentTarget.releasePointerCapture(event.pointerId);
         }}
-        onPointerCancel={() => { drag.current = null; setResizing(false); }}
-        onLostPointerCapture={() => { drag.current = null; setResizing(false); }}
+        onPointerCancel={() => { drag.current = null; setResizing(false); setDragWidth(null); }}
+        onLostPointerCapture={() => { drag.current = null; setResizing(false); setDragWidth(null); }}
       >
         <span aria-hidden="true" className="sidebar-resizer-handle"><GripVertical size={11} strokeWidth={2} /></span>
       </div>

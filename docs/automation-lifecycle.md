@@ -117,7 +117,9 @@ Sidekick remains owned by that workstream.
 ### Conversational publication
 
 Enabled personal and workspace Sidekicks render as a horizontal scrolling strip
-above the account menu, including in compact mode. Enabled means lifecycle
+above the account menu in expanded mode. In compact mode they join the vertical
+navigation scroller as 54px square icon buttons with 9px padding and 36px
+artwork, matching the work-stream rows. Enabled means lifecycle
 `active`, not a run currently in progress and not the stored `loadable` capability.
 Draft, paused, and workstream-owned Sidekicks are excluded. The strip is absent
 when no entries qualify. Each tile reuses the rounded hexagon, stable identity
@@ -573,6 +575,15 @@ host-owned sibling, preserving the shared transcript and composer implementation
 Publication remains conversational, and deletion keeps its confirmation dialog.
 Run history is secondary because it serves troubleshooting; the first view
 should help people understand the Sidekick and ask for changes in their own words.
+
+### 2026-09-08 — Scroll compact Sidekicks with navigation
+
+The compact sidebar now places each enabled standalone Sidekick in the shared
+vertical navigation scroller. Horizontal footer tiles could clip the single
+icon and gave Sidekicks different spacing from work streams. Expanded navigation
+retains its captioned horizontal strip; compact navigation uses the same 54px
+row geometry as work streams while the account controls remain fixed.
+
 
 ### 2026-09-08 — Finish authoring conversations after publication
 
