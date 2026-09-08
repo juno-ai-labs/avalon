@@ -1,3 +1,4 @@
+import { resolveWorkspaceEventResources } from "./workspace-event-resources";
 import { RESOURCE_SEARCH_MIGRATION_STATEMENTS, ResourceSearchProjectionSchema, ResourceSearchRevisionRequestSchema,
   resourceSearchRevision, nextResourceSearchDueAt, publishResourceSearch, prepareResourceSearch } from './resource-search-projection';
 import { ONBOARDING_JOURNEY_SQL, OnboardingJourneyStore } from './onboarding-journey';
@@ -2669,6 +2670,17 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   version: 38,
   description: 'owner-backed authorization snapshots and exact conversation attachment discovery',
   statements: AUTHORIZATION_STORAGE_MIGRATION,
+}, {
+  version: 39,
+  description: "index pending resource maintenance and search work without scanning completed resources",
+  statements: [
+    `CREATE INDEX resources_expired_drafts_idx ON resources(workspace_id, created_at, id)
+      WHERE provider = 'avalon_upload' AND attachment_status = 'draft'`,
+    `CREATE INDEX resources_missing_slug_idx ON resources(workspace_id, created_at, id)
+      WHERE slug IS NULL`,
+    `CREATE INDEX resource_search_pending_due_idx ON resource_search_versions(not_before, resource_id)
+      WHERE pending = 1`,
+  ],
 }];
 
 interface AutomationDirectoryRow extends Record<string, SqlStorageValue> {
@@ -3196,11 +3208,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       const request = WorkspaceRuntimeSqlRequestSchema.parse(input);
       this.assertWorkspace(request.workspaceId);
       const results = this.runWorkspaceSql(request);
-      if (request.statements.some((statement) => {
+      const kinds = new Set<WorkspaceScheduleTargetKind>();
+      for (const statement of request.statements) {
         const target = workspaceMutationTarget(statement.sql);
-        return target !== null && WORKSPACE_ALARM_SOURCE_TABLES.has(target);
-      })) {
-        this.state.waitUntil(this.refreshSchedule(request.workspaceId).catch((error: unknown) => {
+        if (target === null || !WORKSPACE_ALARM_SOURCE_TABLES.has(target)) continue;
+        kinds.add(target === "schedules" ? "schedule" : target === "resource_watches" ? "watch" : "maintenance");
+        // Resource deletion cascades to its watches in the same transaction.
+        if (target === "resources") kinds.add("watch");
+      }
+      if (kinds.size > 0) {
+        this.state.waitUntil(this.refreshScheduleKinds(request.workspaceId, [...kinds]).catch((error: unknown) => {
           // Swallowed silently, a failed refresh here leaves a schedule dark
           // until something else reconciles. The alarm's own end-of-drain
           // refresh is the backstop; this line is how anyone finds out the
@@ -3699,15 +3716,23 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * its alarm with it.
    */
   async refreshSchedule(workspaceId: string): Promise<{ alarmAt: string | null }> {
+    return this.refreshScheduleKinds(workspaceId, WORKSPACE_SCHEDULE_ALARM_KINDS);
+  }
+
+  /** Re-derive affected kinds without deleting another source's alarms or retry gates. */
+  private async refreshScheduleKinds(
+    workspaceId: string,
+    kinds: readonly WorkspaceScheduleTargetKind[],
+  ): Promise<{ alarmAt: string | null }> {
     await this.initialized;
     const parsed = WorkspaceIdSchema.parse(workspaceId);
     // No identity means no workspace rows: every write to this object asserts
     // its identity first, so there is nothing here that could be due.
     if (this.workspaceId() === null) return { alarmAt: null };
     this.assertWorkspace(parsed);
-    const targets = await workspaceScheduleTargets(this.scheduleContext(parsed));
+    const targets = await workspaceScheduleTargets(this.scheduleContext(parsed), kinds);
     const grouped = new Map<WorkspaceScheduleTargetKind, { key: string; dueAt: number }[]>(
-      WORKSPACE_SCHEDULE_ALARM_KINDS.map((kind) => [kind, []]),
+      kinds.map((kind) => [kind, []]),
     );
     for (const target of targets) {
       grouped.get(target.kind)?.push({ key: target.id, dueAt: Date.parse(target.dueAt) });
@@ -4922,21 +4947,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // Evaluators address canonical Rally identities, never provider IDs. Resolve
     // provider relationships once before the canonical event commits so every
     // destination sees one closed context without per-evaluator provider work.
-    const relatedResourceIds = this.state.storage.sql.exec<{ id: string }>(
-      `SELECT id FROM resources
-        WHERE workspace_id = ? AND connection_id = ? AND provider = ?
-          AND provider_resource_id IS NOT NULL
-          AND (provider_resource_id = ? OR EXISTS (
-            SELECT 1 FROM json_each(?) entity
-             WHERE entity.value = resources.provider_resource_id
-          ))
-        ORDER BY id`,
-      request.workspaceId,
-      activity.connectionId,
-      activity.provider,
-      activity.providerResourceId,
-      JSON.stringify(activity.entityKeys),
-    ).toArray().map((row) => row.id);
+    const relatedResourceIds = resolveWorkspaceEventResources(this.state.storage.sql, {
+      workspaceId: request.workspaceId,
+      connectionId: activity.connectionId,
+      provider: activity.provider,
+      providerResourceId: activity.providerResourceId,
+      entityKeys: activity.entityKeys,
+    });
     const resolvedPeople = (activity.externalPeople ?? []).flatMap((person) => {
       const row = this.state.storage.sql.exec<{ user_id: string }>(
         `SELECT user_id FROM external_user_identities
@@ -5885,7 +5902,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       });
     });
     if (request.resourceIds.length > 0) {
-      await this.refreshSchedule(request.workspaceId);
+      await this.refreshScheduleKinds(request.workspaceId, ["maintenance"]);
     }
     return result;
   }
@@ -5907,7 +5924,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     ).toArray().length;
     // Always reconcile on replay: the preceding attempt may have committed the
     // delete and then lost the response while refreshing the single alarm.
-    await this.refreshSchedule(request.workspaceId);
+    await this.refreshScheduleKinds(request.workspaceId, ["maintenance"]);
     return WorkspaceReleaseDraftAttachmentsResultSchema.parse({ released });
   }
 
@@ -6032,7 +6049,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       envelope.effect.kind === "directory_common"
       && (envelope.effect.resourceLinks?.length ?? 0) > 0
     ))) {
-      await this.refreshSchedule(request.workspaceId);
+      await this.refreshScheduleKinds(request.workspaceId, ["maintenance", "watch"]);
     }
     if (directoryChanged) {
       // Scope, participant, generation, and archival effects can invalidate a
@@ -6222,7 +6239,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // A terminal replay can mean the earlier settle committed and its
     // post-commit schedule refresh failed. Reconcile here so that failure
     // cannot strand the terminal receipt past its retention window.
-    if (result.outcome === "terminal") await this.refreshSchedule(request.workspaceId);
+    if (result.outcome === "terminal") await this.refreshScheduleKinds(request.workspaceId, ["maintenance"]);
     return result;
   }
 
@@ -6252,7 +6269,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         || (result.outcome === "lease_lost"
           && (result.state === "delivered" || result.state === "skipped")))
     ) {
-      await this.refreshSchedule(request.workspaceId);
+      await this.refreshScheduleKinds(request.workspaceId, ["maintenance"]);
     }
     return result;
   }
@@ -6652,7 +6669,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * pass those rows are due for never wakes.
    */
   private refreshScheduleAfterWrite(workspaceId: string): void {
-    this.state.waitUntil(this.refreshSchedule(workspaceId).catch((error: unknown) => {
+    this.state.waitUntil(this.refreshScheduleKinds(workspaceId, ["maintenance"]).catch((error: unknown) => {
       // Swallowed silently, a failed refresh here leaves a schedule dark until
       // something else reconciles; this line is how anyone finds out the
       // alarm's own end-of-drain backstop was needed.
@@ -7602,7 +7619,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * neither does `sweepSlackIngress` — see the comment on it for why.
    */
   private refreshScheduleAfterSlackWrite(workspaceId: string): void {
-    this.state.waitUntil(this.refreshSchedule(workspaceId).catch((error: unknown) => {
+    this.state.waitUntil(this.refreshScheduleKinds(workspaceId, ["maintenance"]).catch((error: unknown) => {
       logWarn(this.env, "workspace_schedule_auto_refresh_failed", {
         workspace_id: workspaceId,
         code: error instanceof Error ? error.message : "unknown_error",
@@ -7739,7 +7756,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * advanced its rows.
    */
   private refreshScheduleAfterMemoryOutboxWrite(workspaceId: string): void {
-    this.state.waitUntil(this.refreshSchedule(workspaceId).catch((error: unknown) => {
+    this.state.waitUntil(this.refreshScheduleKinds(workspaceId, ["maintenance"]).catch((error: unknown) => {
       logWarn(this.env, "workspace_schedule_auto_refresh_failed", {
         workspace_id: workspaceId,
         code: error instanceof Error ? error.message : "unknown_error",
@@ -8104,7 +8121,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * forgets would leave a schedule row dark until an unrelated wake.
    */
   private refreshScheduleAfterDigestWrite(workspaceId: string): void {
-    this.state.waitUntil(this.refreshSchedule(workspaceId).catch((error: unknown) => {
+    this.state.waitUntil(this.refreshScheduleKinds(workspaceId, ["schedule"]).catch((error: unknown) => {
       logWarn(this.env, "workspace_schedule_auto_refresh_failed", {
         workspace_id: workspaceId,
         code: error instanceof Error ? error.message : "unknown_error",
