@@ -38,7 +38,7 @@ import { workspaceDOName } from "../src/durable-objects/names";
  * of the run is doing to that object, which showed up as a `beforeAll` timeout
  * rather than as a failure anyone could read.
  */
-const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000008a0");
+let WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000008a0");
 
 const OWNER = asUserId("00000000-0000-7000-8000-0000000008a1");
 const OUTSIDER = asUserId("00000000-0000-7000-8000-0000000008a2");
@@ -46,6 +46,7 @@ const MEMBER_A = asUserId("00000000-0000-7000-8000-0000000008a3");
 const MEMBER_B = asUserId("00000000-0000-7000-8000-0000000008a4");
 const MEMBER_C = asUserId("00000000-0000-7000-8000-0000000008a5");
 
+let workspaceSeq = 0;
 let envelopeSeq = 0;
 let workstreamSeq = 0;
 
@@ -187,10 +188,10 @@ async function establishWorkspace(): Promise<void> {
 }
 
 beforeEach(async () => {
+  workspaceSeq += 1;
+  WORKSPACE_ID = asWorkspaceId(`00000000-0000-7000-8000-${String(workspaceSeq).padStart(9, "0")}8a0`);
   await establishWorkspace();
-  // Directory rows can survive from an earlier test in this file, so every read
-  // below is scoped to the ids its own test seeded rather than to "everything
-  // this object holds".
+  // Each test owns its directory: earlier fixtures must not crowd its page.
   envelopeSeq += 1_000;
   // Generous, and only because of the interleave above: a sibling file's
   // `reset()` holds every object's gate, so this file's first hook can wait out

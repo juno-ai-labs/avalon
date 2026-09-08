@@ -51,6 +51,15 @@ describe('default work-stream landing', () => {
     expect(await screen.findByTestId('destination')).toHaveTextContent('/workstreams/newest');
   });
 
+  it('opens the last visited work stream ahead of newer shared activity', async () => {
+    directory.data = [
+      { ...stream('noisy', null, '2026-09-08'), createdAt: '2026-08-01', lastAccessedAt: null },
+      { ...stream('visited', null, '2026-08-01'), createdAt: '2026-08-01', lastAccessedAt: '2026-09-07' },
+    ];
+    render(<Router />);
+    expect(await screen.findByTestId('destination')).toHaveTextContent('/workstreams/visited');
+  });
+
   it('opens the composer only for a loaded empty directory', async () => {
     directory.data = [];
     render(<Router />);
