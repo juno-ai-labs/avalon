@@ -338,7 +338,7 @@ export function ProjectSidebarSection({
                     const members = workstreams
                       .filter((workstream) => project.workstreamIds.includes(workstream.id))
                       .sort((left, right) => (
-                        new Date(right.lastActivityAt).getTime() - new Date(left.lastActivityAt).getTime()
+                        new Date(right.lastAccessedAt ?? right.createdAt ?? right.lastActivityAt).getTime() - new Date(left.lastAccessedAt ?? left.createdAt ?? left.lastActivityAt).getTime()
                         || left.id.localeCompare(right.id)
                       ));
                     const missing = project.workstreamIds.length - members.length;
