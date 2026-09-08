@@ -2862,8 +2862,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     // this region. Before this branch existed, connector ingress synthesized a
     // session id that no `sessions` row could ever match, and every linked
     // member's Slack message died here as `session_revoked` (2026-08-22).
-    const connectorPrincipal = request.auth.principal !== undefined;
-    const current = connectorPrincipal
+    // Any non-session principal — `connector`, `demo_seed` — is verified by
+    // membership rather than by a session row. The enum on `principal` is the
+    // gate: a value added to it inherits this branch.
+    const nonSessionPrincipal = request.auth.principal !== undefined;
+    const current = nonSessionPrincipal
       ? await span.step("workstream.room.connector_auth", () => this.connectorPrincipalAuth(request.auth))
       : await span.step("workstream.room.session_auth", () => this.socketAuth({
         workspaceId: request.auth.workspaceId,
@@ -2871,13 +2874,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         sessionId: request.auth.sessionId,
       }));
     if (!current || current.role !== request.auth.role || current.region !== request.auth.region) {
-      const refusal = connectorPrincipal ? "connector_member_revoked" : "session_revoked";
+      const refusal = nonSessionPrincipal ? "connector_member_revoked" : "session_revoked";
       span.setError(refusal);
       // The message rides to `WorkstreamObjectClient.decode`, whose fallback
       // ("The work stream could not be loaded") misdescribes a refused send.
       return jsonResponse({
         error: refusal,
-        message: connectorPrincipal
+        message: nonSessionPrincipal
           ? "You are no longer an active member of this workspace"
           : "Sign in again to continue",
       }, 401);

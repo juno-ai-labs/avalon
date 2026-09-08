@@ -51,8 +51,11 @@ function issues(result: ReturnType<typeof pack>): string[] {
 
 describe("the pack schema", () => {
   it("accepts the placeholder pack", () => {
-    // Parsed at module load, so importing it is already the proof; asserting
-    // its shape keeps the two settled scenarios from silently becoming one.
+    // A literal, parsed here and the first time a demo asks for it — never at
+    // module load, where a bad pack took the whole Worker down. This is the
+    // check that keeps the checked-in pack playable.
+    const parsed = DemoPackSchema.safeParse(PLACEHOLDER_DEMO_PACK);
+    expect(parsed.success ? [] : parsed.error.issues.map((issue) => issue.message)).toEqual([]);
     const rooms = PLACEHOLDER_DEMO_PACK.steps.filter((step) => step.kind === "create_workstream");
     expect(rooms.map((step) => step.room)).toEqual(["decision-memo", "northgate-renewal"]);
     const last = PLACEHOLDER_DEMO_PACK.steps.at(-1);
@@ -85,6 +88,19 @@ describe("the pack schema", () => {
     expect(issues(pack([
       open({ openingMessage: "@{sam} look at this" }),
     ]))).toContain('Mentioned role "sam" is not in the cast');
+  });
+
+  it("refuses a role Rally's own prose names that the cast does not bind, in a say and in an ask", () => {
+    // These tokens are dereferenced when the seed is planned — mid-seeding,
+    // after the workspace exists and the connections are copied — so an
+    // unbound one has to be a parse-time refusal like the human lines' are.
+    expect(issues(pack([
+      open({ assistant: { kind: "say", text: "@{sam} raised a good point." } }),
+    ]))).toContain('Rally\'s turn names role "sam", which is not in the cast');
+    expect(issues(pack([
+      open(),
+      { kind: "message", id: "m", room: "room", as: "priya", text: "Well?", assistant: { kind: "ask", prompt: "Which?", options: ["@{sam} is right", "Nobody"] } },
+    ]))).toContain('Rally\'s turn names role "sam", which is not in the cast');
   });
 
   it("refuses a room that carries on after its question", () => {
@@ -138,6 +154,29 @@ describe("planning a pack against a cast", () => {
     expect(message.confirmedParticipantUserIds).toEqual([CAST.presenter!.userId]);
     // A message with no `assistant` starts no run, and says so on its seed.
     expect(message.seed).toEqual({ packVersion: "test", actionId: "priya-1", assistant: null });
+  });
+
+  it("expands the roles in Rally's own prose to bare names, with no mention", () => {
+    // The shipped pack's closing question names three cast members this way;
+    // nothing else exercised the resolver that turns them into people.
+    const parsed = DemoPackSchema.parse({
+      version: "test",
+      roles: ["presenter", "priya", "marcus"],
+      steps: [
+        open({ assistant: { kind: "say", text: "@{priya} and @{marcus} disagree." } }),
+        { kind: "message", id: "ask", room: "room", as: "marcus", text: "Decide.", assistant: { kind: "ask", prompt: "@{priya} would hold; which?", options: ["Side with @{priya}", "Side with @{marcus}"] } },
+      ],
+    });
+    const [opening, ask] = planDemoSeed(parsed, CAST);
+    expect(opening?.kind).toBe("create_workstream");
+    expect(ask?.kind).toBe("message");
+    if (opening?.kind !== "create_workstream" || ask?.kind !== "message") return;
+    expect(opening.seed.assistant).toEqual({ kind: "say", text: "Priya Raman and Marcus Hale disagree." });
+    expect(ask.seed.assistant).toEqual({
+      kind: "ask",
+      prompt: "Priya Raman would hold; which?",
+      options: ["Side with Priya Raman", "Side with Marcus Hale"],
+    });
   });
 
   it("seats the named participants by id and carries the opening script", () => {
