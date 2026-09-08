@@ -89,7 +89,7 @@ not export a Cloudflare class from the Worker entrypoint.
 | `apps/api/src/queues/activity-consumer.ts` | Delivers a matched event to `admitExternalEvent`, and a run child's effects to the object through the shared effect leg. |
 | `apps/api/src/services/resend-inbound-email-service.ts` | `ingestAutomation`: resolves the sender, stores the message, and calls `admitInboundEmail` once. |
 | `apps/api/src/services/memory-service.ts` | `resolveMemoryAccess`: a conversation whose parent is an automation resolves the workspace scope and the automation's own `automation` scope. |
-| `apps/desktop/src/renderer/screens/automation.tsx`, `components/automation-header.tsx`, `screens/conversation-surface.tsx` | `/sidekicks/new` calls creation and replaces itself with `/sidekicks/:id`; that route renders the header (lifecycle badge, scope, email address, Pause, Resume, Delete, Run now, the run list from `GET /automations/:id/runs`) over the shared conversation surface with `parentKind: "automation"` and `substreamId: "0"`. |
+| `apps/desktop/src/renderer/screens/automation.tsx`, `components/automation-header.tsx`, `screens/conversation-surface.tsx` | `/sidekicks/new` calls creation and replaces itself with `/sidekicks/:id`; that route renders the profile (lifecycle badge, scope, email address, Pause, Resume, Delete, Run now, and access to the run-history dialog) beside the shared conversation surface with `parentKind: "automation"` and `substreamId: "0"`. |
 | `apps/desktop/src/renderer/components/sidebar.tsx`, `components/inspector-rail.tsx` | Enabled standalone Sidekick tiles above the account menu open library details; the center rail shows authorized main-conversation attachments and the participant facepile. |
 
 ## How it works
@@ -553,6 +553,26 @@ was paused or deleted after admission. [`runbook.md`](runbook.md) has the
 production inspection paths.
 
 ## Changelog
+
+### 2026-09-08 — Give Sidekicks a library and dedicated profile layout
+
+The library uses the existing AutomationGlyph identity, a shared search field,
+ownership filter pills, and two-column descriptive rows. Detail pages place the
+profile, lifecycle actions, schedule, and plain-language guidance beside the
+shared conversation. Email is collapsed behind a disclosure, and current and
+previous runs are available through More → Run history in a troubleshooting
+dialog. The initial page has no run list or counts. Both panes reserve their scrollbar gutters. Hosts narrower than 900px switch
+between Conversation and Details without unmounting or removing layout boxes.
+The threshold reserves 340px for the profile and 560px for the conversation;
+measuring the host also handles the main window with its sidebar. Hidden
+conversations do not claim paste or acknowledge reads.
+
+The earlier header-only styling still crowded management information above the
+chat and did not meet the requested whole-page redesign. The profile is now a
+host-owned sibling, preserving the shared transcript and composer implementation.
+Publication remains conversational, and deletion keeps its confirmation dialog.
+Run history is secondary because it serves troubleshooting; the first view
+should help people understand the Sidekick and ask for changes in their own words.
 
 ### 2026-09-08 — Finish authoring conversations after publication
 

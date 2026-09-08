@@ -1,3 +1,5 @@
+import { useVisibleReadAcknowledgement } from '../lib/use-visible-read-acknowledgement';
+import { ConversationVisibilityContext } from '../lib/conversation-visibility';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
@@ -13,7 +15,7 @@ import {
   RefreshCcw,
   Search,
 } from 'lucide-react';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   MESSAGE_MAX_CHARACTERS,
@@ -645,7 +647,6 @@ export function ConversationSurface({
   const pendingNewerAfterReconnectRef = useRef(false);
   const pendingJumpAfterReconnectRef = useRef(false);
   const initialPositionedWorkstreamRef = useRef<string | null>(null);
-  const readAckTimerRef = useRef<number | null>(null);
   const readAckInFlightRef = useRef<string | null>(null);
   const conversationAddress = `${id}:${substreamId}`;
   const activeConversationAddressRef = useRef(conversationAddress);
@@ -668,7 +669,10 @@ export function ConversationSurface({
   // The composer does not take focus when a work stream opens, so a paste that
   // lands on the document reaches the same draft the transcript and rail accept
   // files into.
-  useWindowFilePaste(attachmentDraft.addFiles);
+  const conversationVisible = useContext(ConversationVisibilityContext);
+  const conversationVisibleRef = useRef(conversationVisible);
+  conversationVisibleRef.current = conversationVisible;
+  useWindowFilePaste(attachmentDraft.addFiles, !conversationVisible);
   const loadAttachmentContent = useCallback(
     (resourceId: string, signal?: AbortSignal) => api!.getResourcePreviewContent(resourceId, signal),
     [api],
@@ -711,8 +715,6 @@ export function ConversationSurface({
     pendingJumpAfterReconnectRef.current = false;
     initialPositionedWorkstreamRef.current = null;
     readAckInFlightRef.current = null;
-    if (readAckTimerRef.current !== null) window.clearTimeout(readAckTimerRef.current);
-    readAckTimerRef.current = null;
     setLoadingOlder(false);
     setOlderMessagesError(undefined);
   }, [conversationAddress]);
@@ -1739,7 +1741,7 @@ export function ConversationSurface({
   const acknowledgeVisibleMessages = useCallback((): void => {
     const detail = queryClient.getQueryData<WorkstreamDetail>(detailQueryKey);
     const element = transcriptRef.current;
-    if (!api || !detail || !element || document.visibilityState !== 'visible' || !document.hasFocus()) return;
+    if (!conversationVisibleRef.current || !api || !detail || !element || document.visibilityState !== 'visible' || !document.hasFocus()) return;
     if (initialPositionedWorkstreamRef.current !== id) return;
     const viewportTop = element.scrollTop;
     const viewportBottom = viewportTop + element.clientHeight;
@@ -1777,28 +1779,7 @@ export function ConversationSurface({
     });
   }, [api, id, queryClient, requestSocketSnapshot, transcript, transcriptVirtualizer]);
 
-  const scheduleReadAcknowledgement = useCallback((): void => {
-    if (readAckTimerRef.current !== null) window.clearTimeout(readAckTimerRef.current);
-    readAckTimerRef.current = window.setTimeout(() => {
-      readAckTimerRef.current = null;
-      acknowledgeVisibleMessages();
-    }, 250);
-  }, [acknowledgeVisibleMessages]);
-
-  useEffect(() => {
-    scheduleReadAcknowledgement();
-  }, [scheduleReadAcknowledgement, transcript.length]);
-
-  useEffect(() => {
-    const acknowledgeOnFocus = (): void => scheduleReadAcknowledgement();
-    window.addEventListener('focus', acknowledgeOnFocus);
-    document.addEventListener('visibilitychange', acknowledgeOnFocus);
-    return () => {
-      window.removeEventListener('focus', acknowledgeOnFocus);
-      document.removeEventListener('visibilitychange', acknowledgeOnFocus);
-      if (readAckTimerRef.current !== null) window.clearTimeout(readAckTimerRef.current);
-    };
-  }, [scheduleReadAcknowledgement]);
+  const scheduleReadAcknowledgement = useVisibleReadAcknowledgement(acknowledgeVisibleMessages);
 
   if (!payloadBelongsToRoute || !routedDetail) {
     if (
@@ -1953,7 +1934,7 @@ export function ConversationSurface({
             <EmptyState
               title="Ready to begin"
               description={parentKind === 'automation'
-                ? 'What would you like to delegate? Teach your Sidekick what it should know or do.'
+                ? 'Tell your Sidekick what you’d like help with. You can ask for changes as you go.'
                 : 'Send a message to start work in this stream.'}
             />
           ) : (
@@ -2006,7 +1987,7 @@ export function ConversationSurface({
         <div className="composer-stack">
           <WorkstreamComposer
             api={api ?? undefined}
-            placeholder={parentKind === 'automation' ? 'Teach your Sidekick…' : 'Message the work stream…'}
+            placeholder={parentKind === 'automation' ? 'Ask your Sidekick…' : 'Message the work stream…'}
             attachments={attachmentDraft.attachments}
             error={sendError ?? attachmentDraft.error ?? attachResource.error?.message ?? stop.error?.message ?? retry.error?.message}
             fileInputRef={fileInputRef}
