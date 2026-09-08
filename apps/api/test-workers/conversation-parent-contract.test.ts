@@ -4,6 +4,8 @@ import { WorkstreamDirectoryService } from '../src/services/workstream-directory
 import { createResourceObjectPort } from '../src/runtime/resource-port';
 import { ResourceService } from '../src/services/resource-service';
 import type { WorkstreamDO } from '../src/durable-objects/workstream-do';
+import { WorkstreamIdentityStorage } from '../src/durable-objects/workstream-identity-storage';
+import { WorkspaceDO } from '../src/durable-objects/workspace-do';
 import { WorkstreamResourceStorage } from '../src/durable-objects/workstream-resource-storage';
 import { createAccessContext } from '../src/services/authorization-service';
 import { projectAuthorization } from '../src/services/authorization-projection-service';
@@ -33,7 +35,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { asAutomationId, asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId, type UserId } from "@rally/contracts";
 
-import type { AutomationDO } from "../src/durable-objects/automation-do";
+import { AutomationDO } from "../src/durable-objects/automation-do";
 import {
   automationDOName,
   conversationObjectName,
@@ -467,9 +469,71 @@ describe("conversation parent contract", () => {
     expect((await access.checkMany(addresses)).map((decision) => decision.status)).toEqual(['allowed', 'allowed']);
     expect(parentReads).toBe(2);
     expect(attachments).toHaveBeenCalledTimes(2);
+    const snapshots = vi.spyOn(WorkspaceDO.prototype, 'resourceSearchRecords');
+    const page = await new ResourceService(readEnv, AUTH).searchTexts(resourceIds);
+    expect(page.complete).toBe(true);
+    expect([...page.records.keys()].sort()).toEqual(resourceIds.sort());
+    expect([...page.records.values()].every(record => record.text.includes('Private email') && record.revision.length > 0)).toBe(true);
+    expect(snapshots).toHaveBeenCalledTimes(1);
+    expect(parentReads).toBe(3);
+    expect(attachments).toHaveBeenCalledTimes(3);
   });
 
-  it("rechecks conversation authority after asynchronous content hashing without a clock deadline", async () => {
+  it("stops resource admission at the first valid attachment location", async () => {
+    await seedRoom(PERSONAL_ROOM_ID, "personal", [AUTHOR_ID]);
+    await seedRoom(WORKSPACE_ROOM_ID, "workspace", [AUTHOR_ID]);
+    const id = crypto.randomUUID();
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      state.storage.sql.exec(`INSERT INTO resources
+        (id, workspace_id, resource_type, provider, title, metadata_json, attachment_status, created_at, updated_at)
+        VALUES (?, ?, 'email', 'resend', 'Shared email', '{}', 'attached', ?, ?)`, id, WORKSPACE_ID, NOW, NOW);
+    });
+    for (const parentId of [PERSONAL_ROOM_ID, WORKSPACE_ROOM_ID]) {
+      await runInDurableObject(conversation(parentId), (_instance, state) => {
+        state.storage.sql.exec(`INSERT INTO workstream_resource_links
+          (resource_id, attached_by_user_id, watch_enabled, relationship_type, resource_json, attached_at, updated_at)
+          VALUES (?, NULL, 0, 'inbound_email', '{}', 1, 1)`, id);
+      });
+      await projectAuthorization(TEST_ENV, { type: 'authorization_projection_v1', region: 'global',
+        workspaceId: WORKSPACE_ID, parentId, substreamId: asSubstreamId('0') });
+    }
+    let parentReads = 0;
+    const attachments = vi.spyOn(WorkstreamResourceStorage.prototype, 'readAuthorizationFacts');
+    const access = createAccessContext(observeParentReads(async () => { parentReads++; }), AUTH);
+    expect(await access.check({ kind: 'resource', workspaceId: WORKSPACE_ID, resourceId: id })).toMatchObject({ status: 'allowed' });
+    expect(parentReads).toBe(1);
+    expect(attachments).toHaveBeenCalledTimes(1);
+  });
+
+  it("shares automation and inherited identity facts within a resource batch", async () => {
+    await seedRoom(PERSONAL_ROOM_ID, "personal", [AUTHOR_ID, PARTICIPANT_ID]);
+    const parentId = await seedAutomation("workstream", PERSONAL_ROOM_ID);
+    const ids = [crypto.randomUUID(), crypto.randomUUID()];
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      for (const id of ids) state.storage.sql.exec(`INSERT INTO resources
+        (id, workspace_id, resource_type, provider, title, metadata_json, attachment_status, created_at, updated_at)
+        VALUES (?, ?, 'email', 'resend', 'Automation email', '{}', 'attached', ?, ?)`, id, WORKSPACE_ID, NOW, NOW);
+    });
+    await runInDurableObject(conversation(parentId), (_instance, state) => {
+      for (const id of ids) state.storage.sql.exec(`INSERT INTO workstream_resource_links
+        (resource_id, attached_by_user_id, watch_enabled, relationship_type, resource_json, attached_at, updated_at)
+        VALUES (?, NULL, 0, 'inbound_email', '{}', 1, 1)`, id);
+    });
+    await projectAuthorization(TEST_ENV, { type: 'authorization_projection_v1', region: 'global',
+      workspaceId: WORKSPACE_ID, parentId, substreamId: asSubstreamId('0') });
+    const automations = vi.spyOn(AutomationDO.prototype, 'readAuthorizationFacts');
+    const identities = vi.spyOn(WorkstreamIdentityStorage.prototype, 'readAuthorizationFacts');
+    const access = createAccessContext(TEST_ENV, { ...AUTH, userId: PARTICIPANT_ID });
+    const addresses = ids.map(resourceId => ({ kind: 'resource' as const, workspaceId: WORKSPACE_ID, resourceId }));
+    expect((await access.checkMany(addresses)).map(decision => decision.status)).toEqual(['allowed', 'allowed']);
+    expect(automations).toHaveBeenCalledTimes(1);
+    expect(identities).toHaveBeenCalledTimes(1);
+    expect((await access.checkMany(addresses)).map(decision => decision.status)).toEqual(['allowed', 'allowed']);
+    expect(automations).toHaveBeenCalledTimes(2);
+    expect(identities).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns an admitted result when access is revoked mid-request and denies the next request", async () => {
     await seedRoom(PERSONAL_ROOM_ID, "personal", [AUTHOR_ID, PARTICIPANT_ID]);
     const text = 'needle revocation boundary';
     await runInDurableObject(conversation(PERSONAL_ROOM_ID), async (_instance, state) => {
@@ -493,8 +557,10 @@ describe("conversation parent contract", () => {
       return hashed;
     });
     expect(await searchWorkspace({ ...TEST_ENV, TURBO_PUFFER_DEV_API_KEY: 'test-only' }, AUTH,
-      { query: 'needle', category: 'messages' })).toEqual([]);
+      { query: 'needle', category: 'messages' })).toMatchObject([{ id: 'hash-candidate' }]);
     expect(revoked).toBe(true);
+    expect(await searchWorkspace({ ...TEST_ENV, TURBO_PUFFER_DEV_API_KEY: 'test-only' }, AUTH,
+      { query: 'needle', category: 'messages' })).toEqual([]);
   });
 
   it("publishes only ready private children to their exact roster and revokes them durably", async () => {

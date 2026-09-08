@@ -68,27 +68,36 @@ The desktop requests seven candidates initially: the 360px results list minus
 16px padding shows six complete 52px two-line rows and part of the seventh,
 with 2px gaps. Additional pages load
 at the bottom of the list or through the keyboard-accessible Load more control.
-The server follows fully rejected candidate pages until a current result is found
-or retrieval is exhausted; rejected candidate IDs never become public cursors. Existing rows stay visible while fetching another page;
-a transient continuation failure offers retry, while a failed reauthorization hides them. Query and category changes discard old pages.
+Each request consumes one candidate page. An empty page with a continuation
+shows a Load more control instead of automatically scanning more pages. Existing
+rows stay visible while fetching another page; a transient continuation failure
+offers retry, while a failed reauthorization hides them. Query and category
+changes discard old pages.
 
-Requests opt into pagination with `pageSize` and continue with the returned
-`nextCursor`. The cursor is the last authorized Turbopuffer id boundary (stable
-hash order, not relevance or recency), never an authorization
-grant. Each page obtains current readable conversation scopes from WorkspaceDO
-(including archived/system conversations), filters retrieval by those scopes,
-and reauthorizes canonical results. Resource sources remain workspace-scoped and
-apply resource/attachment authority while loading. Conversation messages and links
-are grouped by parent/substream; link groups use one batched read. Independent
-groups and resources load concurrently within the existing candidate page bound.
+Requests opt into pagination with `pageSize` and continue with `nextCursor`, the
+last consumed Turbopuffer id boundary (stable hash order, not relevance or
+recency). This deterministic position is never an authorization grant.
+Continuation exposes matching index progress even if the page has no admitted
+results; it does not guarantee a readable match on a subsequent page. Each page obtains
+readable conversation scopes from WorkspaceDO and filters retrieval by those
+scopes. Each source admits its candidate batch once through `checkMany`, then
+loads canonical content without repeating authorization after asynchronous reads.
+Conversation messages and links are grouped by parent/substream. Resources load
+metadata and revisions in one WorkspaceDO RPC, then load bodies concurrently.
+Canonical revision and content-hash checks still reject stale index candidates.
 
-Older clients omit `pageSize` and retain the 50-result response shape. They do
-not receive new pagination or timing fields. The 250ms typing debounce, REST,
-and final workspace membership check remain unchanged. No search-result cache
-or permission cache is introduced.
+Older clients omit `pageSize` and retain the array response shape with up to 50
+results from one candidate batch. They receive no pagination or timing fields and
+do not trigger hidden refill scans. The 250ms typing debounce, REST, and final
+workspace membership check remain unchanged. No search-result cache or permission
+cache is introduced.
 
 The user-facing targets are p50 <= 500ms and p90 <= 1000ms from the last
-keystroke to painted results, including debounce. `renderer_perf_flow` with
+keystroke to painted results, including debounce. An empty page with continuation
+is not a completed first-result flow: its trace stays open until a result or
+terminal response, including time the user spends before continuing. A terminal
+empty search is a completed no-match response, not evidence of fast result delivery.
+Empty intermediate pages do not satisfy the results latency target. `renderer_perf_flow` with
 `flow=workspace_search` measures debounce, request, and paint through the existing
 regional telemetry path. Optional paginated response timings expose scope,
 Turbopuffer retrieval, canonical hydration, and server duration; the backend also
@@ -449,6 +458,25 @@ through Queue failure rather than silent truncation. Document-size and capture
 budgets require team policy; no arbitrary new caps are introduced here.
 
 ## Changelog
+
+### 2026-09-08 — Preserve the results latency boundary across empty pages
+
+Review caught an empty candidate page ending the search trace as completed. The
+trace now stays open across explicit continuation, including user wait time; the
+empty-page copy says Continue searching without promising readable matches. This
+keeps the latency goal tied to the actual product outcome. Candidate continuation
+metadata remains observable under the member-only pagination contract.
+
+### 2026-09-08 — Admit search batches once and expose continuation
+
+Search now authorizes each source batch once, loads resource metadata and revisions
+in one owner RPC, and consumes one candidate page per request. Empty desktop pages
+require explicit continuation. Repeated per-resource and post-read checks added
+serial owner calls without improving the agreed operation-level admission contract.
+Hidden refill scans also made response work unpredictable. We trust the platform's
+canonical authorization and content stores; subsequent requests authorize again.
+Source revision validation remains required, and this change makes no production
+latency claim.
 
 ### 2026-09-08 — Remove age-triggered authorization stalls
 

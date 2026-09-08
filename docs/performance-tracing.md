@@ -46,7 +46,9 @@ necessarily keeps apart.
 
 Interactive search uses the existing `renderer_perf_flow` diagnostic event with
 `flow=workspace_search`. Its duration runs from the last query-changing keystroke
-through painted authorized results. The optional search timing fields separate
+through painted authorized results (or a terminal no-match response). Empty pages
+with continuation leave the trace open, including the user's wait before loading
+another page. They must not count as completed first-result samples. The optional search timing fields separate
 debounce, request, paint, scope resolution, retrieval, hydration, and server work.
 Queries and result contents are never event properties. `text-search.md` owns the
 pagination contract and p50/p90 acceptance targets.
@@ -687,6 +689,14 @@ a new recorded decision. But what enforces it is the absence of a line in
 both signals rather than trusting the comment there to survive.
 
 ## Changelog
+
+### 2026-09-08 — Keep search traces open across candidate-only pages
+
+Explicit pagination can paint an empty intermediate page. Closing the trace there
+would report a fast success before a result existed. Search now keeps the trace
+open through continuation and user wait time until results or a terminal response.
+The latency target remains about useful results rather than candidate-page speed.
+
 
 ### 2026-09-07 — Search review corrections
 
