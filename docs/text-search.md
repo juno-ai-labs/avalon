@@ -450,6 +450,16 @@ budgets require team policy; no arbitrary new caps are introduced here.
 
 ## Changelog
 
+### 2026-09-08 — Remove age-triggered authorization stalls
+
+Authorization freshness is now a five-minute design goal, not a hard read cutoff.
+Search no longer expires permissions by age or synchronously refreshes the whole
+workspace's attachment inventory. Canonical checks coalesce overlapping work only;
+persistent grant caches are not reused without mutation invalidation. This avoids
+permanent stale grants while keeping the existing Queue discovery and explicit
+partial-results contract. Search latency targets still require production validation.
+
+
 ### 2026-09-07 — Preserve verified results during partial authority failures
 
 Search now omits candidates with unavailable authorization and reports
