@@ -776,6 +776,8 @@ SQLite size, the runtime's placement, or the shutdown that preceded it decides
 the seconds is the next observation, and `room_activation_ms` against
 `databaseBytes` from the object's inspection route is the pair to read.
 
+Shipped in #607.
+
 ### 2026-09-08 — Keep search traces open across candidate-only pages
 
 Explicit pagination can paint an empty intermediate page. Closing the trace there
