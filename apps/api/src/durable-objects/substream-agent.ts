@@ -1,5 +1,6 @@
 import { SidekickSkillSnapshotSchema } from "@rally/contracts";
 import { sidekickSkillRef } from "../services/sidekick-skills";
+import { flushAuthorizationProjection, nextAuthorizationProjectionAt } from './authorization-projection';
 import { searchIndexingConfigured } from '../services/search-embedding';
 import { conversationSearchDocumentIds, prepareConversationLinks, readConversationSearchLink } from './conversation-link-search';
 import { drainSearchProjectionOutbox, nextSearchProjectionDueAt, SearchProjectionMessageSchema } from './search-projection-outbox';
@@ -4593,6 +4594,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         reason: diagnosticErrorCode(error, "semantic_realtime_delivery_failed"),
       });
     }
+    const authzDueAt = nextAuthorizationProjectionAt(this.state.storage.sql);
+    if (authzDueAt !== null) await this.ensureAlarmNoLaterThan(authzDueAt);
     const searchDueAt = nextSearchProjectionDueAt(this.state.storage.sql, this.env);
     if (searchDueAt !== null) await this.ensureAlarmNoLaterThan(searchDueAt);
     const nextDueAt = this.objectStore.nextSemanticRealtimeDueAt();
@@ -5546,6 +5549,16 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
 
   protected override async runDueAlarmWork(): Promise<void> {
     this.loopDrainDeferred = false;
+    const authzIdentity = this.objectStore.identity();
+    if (authzIdentity) {
+      try {
+        await flushAuthorizationProjection(this.state.storage.sql, this.env.ACTIVITY_QUEUE, {
+          type: 'authorization_projection_v1', region: this.env.AVALON_REGION,
+          workspaceId: authzIdentity.workspaceId, parentId: authzIdentity.parentId,
+          substreamId: this.externalSubstreamId(),
+        });
+      } catch { logWarn(this.env, 'authorization_projection_dispatch_deferred', { region: this.env.AVALON_REGION }); }
+    }
     await this.flushSearchProjectionOutbox();
     const nextEffectAt = this.objectStore.nextRegionalEffectDueAt();
     const nextSemanticRealtimeAt = this.objectStore.nextSemanticRealtimeDueAt();
@@ -6043,6 +6056,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         this.objectStore.nextRegionalEffectDueAt(),
         this.objectStore.nextSemanticRealtimeDueAt(),
         nextSearchProjectionDueAt(this.state.storage.sql, this.env),
+        nextAuthorizationProjectionAt(this.state.storage.sql),
         this.nextExternalSettlementAt(),
         now + KEEP_ALIVE_INTERVAL_MS,
       ],
@@ -6118,6 +6132,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       this.objectStore.nextRegionalEffectDueAt(),
       this.objectStore.nextSemanticRealtimeDueAt(),
       nextSearchProjectionDueAt(this.state.storage.sql, this.env),
+        nextAuthorizationProjectionAt(this.state.storage.sql),
       this.nextLoopWorkAt(now),
       this.nextExternalSettlementAt(),
     ];

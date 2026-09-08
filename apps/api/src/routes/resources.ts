@@ -30,6 +30,7 @@ const listQuery = z.object({
 
 const ResourcePageSchema = z.object({
   items: z.array(ResourceSchema),
+  complete: z.boolean().optional(),
   nextCursor: z.string().nullable(),
 });
 const ResourceRevisionListSchema = z.array(ResourceRevisionSchema);

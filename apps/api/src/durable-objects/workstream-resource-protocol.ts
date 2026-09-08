@@ -22,6 +22,7 @@ export type ResourceOperation = keyof WorkstreamResourceStorage;
 export type ResourceObjectPort = ObjectPortOf<WorkstreamResourceStorage>;
 
 const DISPATCHED_OPERATIONS = [
+  "readAuthorizationFacts",
   "attachedLinks",
   "attachedResourceIds",
   "isAttached",

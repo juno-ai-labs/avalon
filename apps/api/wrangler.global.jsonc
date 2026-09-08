@@ -163,6 +163,9 @@
     { "binding": "TELEMETRY_PAYLOADS", "bucket_name": "avalon-global-telemetry" }
   ],
   "kv_namespaces": [
+    // Wrangler provisions this dedicated namespace on first deployment.
+    // Authorization evidence is never stored in the public pricing namespace.
+    { "binding": "AUTHORIZATION_CACHE" },
     { "binding": "INFERENCE_PRICING_CACHE", "id": "ea2442c2ee744decbad3d1ca03fce728" }
   ],
   "analytics_engine_datasets": [
