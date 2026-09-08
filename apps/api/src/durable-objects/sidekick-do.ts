@@ -1923,4 +1923,3 @@ export class SidekickDO extends ConversationParentDurableObject {
 }
 
 /** Compatibility export during the staged Cloudflare class rename. */
-export { SidekickDO as AutomationDO };
