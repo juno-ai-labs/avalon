@@ -56,8 +56,8 @@ sidebar renders participants as a facepile and provides attachment removal.
 
 ### Class rename deployment
 
-The implementation exports both `SidekickDO` and its historical `AutomationDO`
-alias. PR #583 supplies the compatibility release with the old v9 bindings. The
+The Worker exports `SidekickDO`. PR #583 supplied the dual-export compatibility
+release with the old v9 bindings. The
 rename release appends v10 in both regions and points `AUTOMATION_DOS` at
 `SidekickDO`, preserving namespace IDs and all `:automation:` object-name bytes.
 It requires verified compatibility deployments in both regions before rollout.
@@ -65,7 +65,9 @@ The object now reports class `SidekickDO` but retains component `automation_do`
 and its existing schema ledger. Migration commands queued with `AutomationDO`
 are translated at dispatch to the new class; the tracker accepts both names so
 pre-rename inventory and reports remain actionable during regional rollout.
-Remove the old Worker export only in a later release after verifying the rename.
+The final cleanup removes the old Worker export only after verifying the rename.
+An internal source-import shim still exposes the historical type name; it does
+not export a Cloudflare class from the Worker entrypoint.
 
 
 ## Where the code lives
@@ -464,7 +466,7 @@ siblings in `test-workers/helpers/conversation-effects.ts`.
 
 ## Data model
 
-`SidekickDO` SQLite (deployed under the `AutomationDO` compatibility class), four
+`SidekickDO` SQLite retains the namespace renamed from `AutomationDO`, with four
 ordered object migrations: `automation`, `definition_revisions`,
 `schedules`, `runs`, `inbound_email_receipts`, the shared parent tables, and
 `_internal_durable_alarms`. [`workstream-durable-object.md`](workstream-durable-object.md#automationdo)
@@ -547,6 +549,14 @@ was paused or deleted after admission. [`runbook.md`](runbook.md) has the
 production inspection paths.
 
 ## Changelog
+
+### 2026-09-08 — Retire the temporary Worker class export after the rename
+
+The final rollout stage removes the Worker entrypoint's AutomationDO alias and
+uses SidekickDO in binding types. It requires verified renamed namespaces in both
+regions. The old source-import shim, automation_do schema component, lookup-key
+bytes, routes, and queued-command adapter remain compatibility contracts; none
+are new Cloudflare exports or namespaces.
 
 ### 2026-09-08 — Stage the Sidekick namespace rename with operational compatibility
 
