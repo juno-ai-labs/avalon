@@ -198,7 +198,9 @@ own pending wake-ups).
 
 `WorkspaceDO.refreshSchedule(workspaceId)` is called after any mutation that can
 move a due time — including automatically from `executeRuntimeSql` when a
-statement touches one of the alarm-source tables. It reconciles four kinds:
+statement touches one of the alarm-source tables. Automatic refreshes reconcile
+only the affected kinds, preserving unrelated entries; explicit repair and the
+post-drain refresh reconcile all four kinds:
 
 | Kind | Key | Source |
 | --- | --- | --- |
@@ -206,6 +208,13 @@ statement touches one of the alarm-source tables. It reconciles four kinds:
 | `watch` | watch id | `resource_watches`, enabled with a `next_poll_at` |
 | `maintenance` | task name | the oldest row of whichever tables that task still owes work on |
 | `terminal` | work-stream id | `workspace_workstream_directory.next_terminal_action_at` |
+
+Runtime writes map `schedules` to `schedule`, `resource_watches` to `watch`,
+and `resources` to both `maintenance` and `watch` (deletion cascades).
+Resource versions and cleanup, note, memory, and Slack outboxes map to
+`maintenance`. Digest RPCs select `schedule`; directory effects repair
+`terminal` on first application and replay. The source map next to schedule
+derivation is the registry for compatibility-port writes.
 
 A fifth kind, `product`, is scheduled directly rather than reconciled: the
 opportunity and ranking pass wants its instant computed differently depending on
@@ -235,6 +244,14 @@ and re-arms before it returns. The outbox lane is the shared parent drain
 automation's sidebar row from reaching the workspace.
 
 ## Invariants
+
+- A scoped reconcile receives the complete authoritative target set for every
+  selected kind; it must not delete or reset another kind's entries.
+- Compatibility-port writers declare every affected kind in
+  `WORKSPACE_ALARM_SOURCE_KINDS`, including foreign-key cascades. There is no
+  default kind. Typed writers explicitly select their own kinds.
+- An exact directory replay repairs Terminal arming after a post-commit failure,
+  even when applying the directory row reports no change.
 
 - **An object never derives its alarm outside this base.** A second derivation
   of "the earliest thing" will disagree with the base's, and the disagreement
@@ -475,6 +492,32 @@ emitted, and `$workers.durableObjectId` is the platform-owned correlation
 field.
 
 ## Changelog
+
+### 2026-09-08 — Preserve Terminal replay repair and explicit source kinds
+
+Directory effects now repair Terminal alarms on exact replay: a prior attempt
+can commit its deadline and fail before arming it. Gating arming on a changed
+row strands that deadline. Re-reading the current directory on replay preserves
+recovery without restoring unrelated schedule scans. Source tables now declare
+all affected kinds in one map, and query kinds come from TypeScript metadata
+rather than a second SQL literal, removing silent defaults and disagreement.
+
+### 2026-09-08 — Index pending resources and reconcile only affected alarm kinds
+
+WorkspaceDO migration 39 adds partial indexes for expired upload drafts and
+resources without slugs. The maintenance queries retain their link/reservation
+exclusions and deadlines, but no longer visit every completed resource when no
+work remains. Runtime SQL writes now derive and reconcile only their source
+kinds, including watch removal when a resource deletion cascades; typed note,
+Slack, memory, and digest writes do the same. The public
+repair operation and post-drain recovery still reconcile all kinds.
+
+The billing investigation found each empty resource maintenance query reading
+about 71,000 rows, repeatedly behind unrelated writes. Caching due times or
+skipping no-op replays was rejected: durable source rows must remain authoritative,
+and a replay must repair a previous failed post-commit refresh. A scoped reconcile
+must preserve other kinds and surviving retry gates. New alarm-source tables must
+be assigned the kind their writes can change.
 
 ### 2026-09-08 — Sidekick publication recovery
 

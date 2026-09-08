@@ -68,6 +68,12 @@ SidekickDO migration 3 adds automation.loadable, atomically maintained with the 
 
 WorkspaceDO migration 33 owns `resource_search_versions`: a retained resource revision, pending flag, and dispatch time. Resource create/edit/delete triggers update it in the same transaction as the canonical write. SubstreamAgent migration 42 adds `conversation_search_links` and transcript-triggered `search_projection_v1` entries in `durable_outbox`. Both migrations enqueue existing records; these are projections, never new content authority. See [text search](text-search.md).
 
+WorkspaceDO migration 39 adds partial indexes for draft upload cleanup
+(`resources_expired_drafts_idx`), missing slugs (`resources_missing_slug_idx`),
+and pending search revisions (`resource_search_pending_due_idx`). They bound
+these reads to pending work rather than the entire retained resource inventory;
+completed search watermarks remain durable. No table or authority is replaced.
+
 ### Identity and tenancy
 
 Account presentation and new-user eligibility are added by migration 0099.
@@ -905,6 +911,16 @@ perform the regional audit/control write explicitly through
 `workspaceRegionalDatabase`, with idempotent repair on retry.
 
 ## Changelog
+
+### 2026-09-08 — Index pending WorkspaceDO resource work
+
+Migration 39 adds partial indexes for expired upload drafts, missing resource
+slugs, and pending resource-search deadlines. Empty maintenance/search queries
+were reading roughly 71,000 completed rows per derivation in the busiest
+workspace. Indexing the demonstrated predicates preserves the existing ownership,
+cleanup exclusions, and revision fences; deleting retained watermarks or caching
+due times would weaken those guarantees. Future queries must retain predicates
+that select the pending indexes, and migration history remains immutable.
 
 ### 2026-09-08 — Store per-user sidebar access history
 
