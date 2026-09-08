@@ -9,6 +9,7 @@ import {
 import type { Env } from "../env";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { diagnosticErrorCode, logStructuredEvent } from "../observability/logger";
+import { isRetirementRefusal } from "../durable-objects/object-retirement";
 import { processConnectorEvent } from "../queues/activity-consumer";
 import { enqueueWorkspaceConnectorEvent } from "../services/workspace-connector-event-ingress";
 
@@ -21,7 +22,7 @@ export class ConnectorEventWorkflow extends WorkflowEntrypoint<Env, ConnectorEve
   override async run(
     event: Readonly<WorkflowEvent<ConnectorEventWorkflowInput>>,
     step: WorkflowStep,
-  ): Promise<{ outcome: "processed" | "already_processed" }> {
+  ): Promise<{ outcome: "processed" | "already_processed" | "workspace_retired" }> {
     const input = ConnectorEventWorkflowInputSchema.parse(event.payload);
     if (input.region !== this.env.AVALON_REGION) throw new Error("workflow_region_mismatch");
     const workspace = await durableObjectStubForWorkspace(
@@ -30,14 +31,35 @@ export class ConnectorEventWorkflow extends WorkflowEntrypoint<Env, ConnectorEve
       input.workspaceId,
       workspaceDOName(input.region, input.workspaceId),
     );
-    const claim = await step.do("claim-workspace-connector-event", async () =>
-      WorkspaceConnectorEventClaimResultSchema.parse(await workspace.claimConnectorEvent({
-        workspaceId: input.workspaceId,
-        eventId: input.eventId,
-        processingOwnerId: input.workflowInstanceId,
-        attempt: input.attempt,
-        orchestrator: "workflow",
-      })));
+    // A retired workspace refuses the claim, and would refuse it on every
+    // retry of the step. The instance ends here rather than failing: nothing
+    // will process this event, and a failed instance per event per retired
+    // workspace is noise on the signal a failed instance is meant to be.
+    const claim = await step.do("claim-workspace-connector-event", async () => {
+      try {
+        return WorkspaceConnectorEventClaimResultSchema.parse(await workspace.claimConnectorEvent({
+          workspaceId: input.workspaceId,
+          eventId: input.eventId,
+          processingOwnerId: input.workflowInstanceId,
+          attempt: input.attempt,
+          orchestrator: "workflow",
+        }));
+      } catch (error) {
+        if (isRetirementRefusal(error)) return { outcome: "workspace_retired" as const };
+        throw error;
+      }
+    });
+    if (claim.outcome === "workspace_retired") {
+      logStructuredEvent(this.env, "info", "connector_event_workflow_terminal", {
+        workspace_id: input.workspaceId,
+        connector_event_id: input.eventId,
+        workflow_instance_id: input.workflowInstanceId,
+        workflow_attempt: input.attempt,
+        outcome: "skipped",
+        reason: "workspace_retired",
+      });
+      return { outcome: "workspace_retired" };
+    }
     logStructuredEvent(this.env, "info", "connector_event_workflow_claimed", {
       workspace_id: input.workspaceId,
       connector_event_id: input.eventId,

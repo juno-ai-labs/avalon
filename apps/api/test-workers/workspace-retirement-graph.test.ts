@@ -221,6 +221,83 @@ describe("workspace retirement graph", () => {
     expect(receipt.complete).toBe(true);
   });
 
+  it("resumes over a parent that was retired but never receipted", async () => {
+    // The gap a pass can die in: the parent's tombstone is written, then the
+    // receipt is not. The next pass has to ask that parent for its children
+    // again — a refusal there left the node unreceipted on every pass, so the
+    // operator saw "incomplete, retire again" forever.
+    const workspaceId = freshWorkspaceId();
+    const stub = workspaceStub(workspaceId);
+    await seedDirectory(stub, workspaceId);
+    const tombstone = { retiredAt: Date.now(), operationId: OPERATION_ID, actorUserId: null, reason: "operator_retirement" };
+    await stub.beginWorkspaceRetirement(tombstone);
+    const room = TEST_ENV.WORKSTREAM_DOS.get(TEST_ENV.WORKSTREAM_DOS.idFromName(
+      workstreamDOName(TEST_ENV.AVALON_REGION, workspaceId, asWorkstreamId(FIRST_ROOM_ID)),
+    )) as DurableObjectStub<WorkstreamDO>;
+    // Retired directly, with no `recordRetiredNode` — exactly the state an
+    // interrupted pass leaves behind.
+    await room.retireObject(tombstone);
+    expect((await stub.workspaceRetirementProgress()).remaining).toBe(3);
+
+    const receipt = await retireWorkspaceGraph(TEST_ENV, { workspaceId, ...tombstone });
+    expect(receipt.failed).toEqual([]);
+    expect(receipt.complete).toBe(true);
+    expect(receipt.remaining).toBe(0);
+    expect(receipt.parents).toBe(3);
+  });
+
+  it("leaves a parent that disagrees about its own identity unreceipted, and says so", async () => {
+    // The one outcome that is a failure: a directory row naming an object that
+    // holds a different identity. Tombstoning it would close the wrong object,
+    // so the walk records the node as failed and the pass reports incomplete —
+    // which is also the only path that produces a non-empty `failed`, the
+    // receipt shape the route and the Ace page render.
+    const workspaceId = freshWorkspaceId();
+    const stub = workspaceStub(workspaceId);
+    await seedDirectory(stub, workspaceId);
+    const room = TEST_ENV.WORKSTREAM_DOS.get(TEST_ENV.WORKSTREAM_DOS.idFromName(
+      workstreamDOName(TEST_ENV.AVALON_REGION, workspaceId, asWorkstreamId(FIRST_ROOM_ID)),
+    )) as DurableObjectStub<WorkstreamDO>;
+    await runInDurableObject(room, (instance: WorkstreamDO, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO workstream_metadata
+           (id, revision, authority_generation, workspace_id, workstream_id, region, title,
+            description, preview, scope, exact_state, system_kind, last_activity_at,
+            completed_at, archived_at, email_address, created_by_user_id, title_status,
+            latest_attention_ordinal, unread_tracking_start_ordinal, next_wakeup_due_at,
+            next_wakeup_prompt, next_terminal_action_at, source_created_at, source_updated_at,
+            created_at, updated_at)
+         VALUES (1, 1, 1, ?, ?, ?, 'Someone else', '', '', 'workspace', 'idle', NULL, ?,
+                 NULL, NULL, NULL, ?, 'settled', 0, 0, NULL, NULL, NULL, ?, ?,
+                 unixepoch(), unixepoch())
+         ON CONFLICT (id) DO NOTHING`,
+        workspaceId,
+        "00000000-0000-7000-8000-00000000e2ff",
+        TEST_ENV.AVALON_REGION,
+        Date.now(),
+        ACTOR_ID,
+        Date.now(),
+        Date.now(),
+      );
+      void instance;
+    });
+
+    const receipt = await retireWorkspaceGraph(TEST_ENV, {
+      workspaceId,
+      retiredAt: Date.now(),
+      operationId: OPERATION_ID,
+      actorUserId: null,
+      reason: "operator_retirement",
+    });
+    expect(receipt.complete).toBe(false);
+    expect(receipt.remaining).toBe(1);
+    expect(receipt.failed).toEqual([
+      { parentKind: "workstream", parentId: FIRST_ROOM_ID, error: "conversation_parent_identity_mismatch" },
+    ]);
+    // Not tombstoned: the mismatched object is left exactly as it was.
+    expect((await room.objectRetirementState()).retired).toBe(false);
+  });
+
   it("closes children before parents and reports the pass", async () => {
     const workspaceId = freshWorkspaceId();
     const stub = workspaceStub(workspaceId);
@@ -277,6 +354,7 @@ describe("workspace retirement graph", () => {
     });
 
     expect(receipt.failed).toEqual([]);
+    expect(receipt.parents).toBe(3);
     expect(receipt.retiredParents).toBe(3);
     // The child was found and closed, which is only possible because it was
     // asked for before its parent was tombstoned.

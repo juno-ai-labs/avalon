@@ -38,6 +38,7 @@ import { SlackAgentService } from "../services/slack-agent-service";
 import { enqueueActivityOpportunity } from "../services/work-opportunity-batching";
 import { recordActivityEvent } from "../services/activity-event-service";
 import { diagnosticErrorCode, logInfo, logWarn } from "../observability/logger";
+import { isRetirementRefusal } from "../durable-objects/object-retirement";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { restrictedActivityUserIds } from "../lib/activity-visibility";
 import {
@@ -333,6 +334,21 @@ async function consumeOne(message: Message<unknown>, env: Env,
       }
       message.ack();
     } catch (error) {
+      // A registration in a retired workspace stays in D1, so deliveries keep
+      // arriving, and the object refuses each one the same way every time.
+      // Terminal: the event has nowhere to land and never will.
+      if (isRetirementRefusal(error)) {
+        logInfo(env, "external_event_delivery_terminal", {
+          workspace_id: input.workspaceId,
+          connector_event_id: input.event.id,
+          registration_id: input.registrationId,
+          destination_kind: input.destination.kind,
+          outcome: "refused",
+          reason: "workspace_retired",
+        });
+        message.ack();
+        return;
+      }
       logWarn(env, "external_event_delivery_failed", {
         workspace_id: input.workspaceId,
         connector_event_id: input.event.id,
@@ -356,7 +372,16 @@ async function consumeOne(message: Message<unknown>, env: Env,
       target.workspaceId,
       workspaceDOName(env.AVALON_REGION, target.workspaceId),
     );
-    if (!await workspace.projectDefaultTargetCurrent(target)) {
+    let current: boolean;
+    try {
+      current = await workspace.projectDefaultTargetCurrent(target);
+    } catch (error) {
+      // A retired workspace's default target is never current again.
+      if (!isRetirementRefusal(error)) throw error;
+      message.ack();
+      return;
+    }
+    if (!current) {
       message.ack();
       return;
     }
@@ -593,6 +618,19 @@ async function consumeOne(message: Message<unknown>, env: Env,
       });
       message.ack();
     } catch (error) {
+      if (isRetirementRefusal(error)) {
+        logInfo(env, "connector_event_process_terminal", {
+          workspace_id: input.workspaceId,
+          connector_event_id: input.eventId,
+          processing_owner_id: input.processingOwnerId,
+          processing_attempt: processingAttempt,
+          outcome: "skipped",
+          reason: "workspace_retired",
+          queue_attempts: message.attempts,
+        });
+        message.ack();
+        return;
+      }
       const attempts = Math.max(1, message.attempts);
       const retryDelaySeconds = Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6));
       logWarn(env, "connector_event_process_delivery_failed", {
@@ -656,7 +694,8 @@ async function consumeOne(message: Message<unknown>, env: Env,
       // An event that reuses an identity with different content is refused
       // the same way on every delivery; retrying it only repeats the refusal
       // with backoff until the Queue gives up. It is terminal here.
-      if (reason === "connector_event_identity_reused_with_different_content") {
+      // A retired workspace refuses every ingest the same way. Same rule.
+      if (reason === "connector_event_identity_reused_with_different_content" || isRetirementRefusal(error)) {
         message.ack();
         return;
       }

@@ -911,6 +911,15 @@ export abstract class ConversationParentDurableObject extends ScheduledDurableOb
 }
 
 applyRetirementGate(ConversationParentDurableObject, {
+  permit: [
+    // Retirement's own read, and the one that makes an interrupted pass
+    // resumable. The walk asks for a parent's children, retires them, retires
+    // the parent, and only then writes the receipt; a pass that dies between
+    // the last two steps leaves a tombstoned parent with no receipt, and the
+    // next pass has to be able to ask it again. Refusing here made every such
+    // node permanently unreceipted — "incomplete, retire again" forever.
+    "childrenForRetirement",
+  ],
   drop: {
     // The child's leg of the same Queue path WorkspaceDO's receivers end.
     receiveChildEffects: ([input]) => ({ accepted: droppedEnvelopeReceipts(input) }),
