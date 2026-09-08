@@ -228,7 +228,9 @@ models place an image on its own line by training, so the card lands between
 sentences with no renderer heuristic guessing where a block belongs. A run of
 consecutive embeds — adjacent embed-only paragraphs, or several in one
 paragraph — is merged by `rehypeCitationEmbedRows` into a single
-`.citation-card-row` that scrolls sideways; a lone embed keeps its paragraph.
+`.citation-card-row` that wraps — file cards stack at full width so every
+delivered file is visible without scrolling, image tiles sit side by side — and
+a lone embed keeps its paragraph.
 **The pass groups only what this render will actually draw as a card**: it is
 given a predicate over the citation context's own resolver, so a surface with no
 context, or a target this work stream does not carry, keeps the paragraphs it
@@ -707,6 +709,28 @@ The traps, both of which have bitten:
   exercises none of the `ol` selectors.
 
 ## Changelog
+
+### 2026-09-08 — A run of embed cards wraps instead of scrolling sideways
+
+**What changed:** `.citation-card-row` no longer scrolls horizontally. It
+wraps, a file card inside it takes the row's full width, and an image tile
+keeps its intrinsic width.
+
+**Why:** A run's third published file sat behind a horizontal scrollbar that a
+reader had no reason to notice, so the message read as "here are two files"
+when three had been delivered. The row was built for runs of image tiles,
+where a column of 200-pixel tiles between two sentences was the problem; a
+run of file cards has the opposite problem, and wrapping serves both: tiles
+still sit side by side, files stack as a list with whole titles.
+
+**Considered and rejected:** A column for everything, which brings back the
+tile column the row was created to avoid. Keeping the 340-pixel card width in
+the list, which truncates titles a full-width card shows whole; a lone card
+keeps 340 pixels, since one card is not a list.
+
+**Consequences:** The export stylesheet already wrapped this row, so a saved
+message and the feed now agree. Anything that adds a third card kind to the
+row says whether it stacks or tiles.
 
 ### 2026-09-04 — Explicit resource clicks use lightboxes
 
