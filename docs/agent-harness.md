@@ -33,7 +33,7 @@ policy and the current request, and grants no tools or credentials.
 
 ## Sidekick instruction sources
 
-The host resolves stored-loadable Sidekicks against execution and conversation audiences. Stable Sidekick IDs identify skills. Per-execution snapshots and loaded refs live in the owning substream; main-conversation loads also attach the Sidekick for future executions. Loading adds instructions, never credentials or access to the Sidekick memory scope.
+The host resolves stored-loadable Sidekicks against execution and conversation audiences. Model-facing skill names use kebab-case Sidekick names (`sidekick-brand-voice`) with integer suffixes only for collisions (`sidekick-brand-voice-2`). Snapshot order fixes that mapping across retries; durable activation refs and attachments retain canonical Sidekick IDs. Per-execution snapshots and loaded refs live in the owning substream; main-conversation loads also attach the Sidekick for future executions. Loading adds instructions, never credentials or access to the Sidekick memory scope.
 
 ## Where the code lives
 
@@ -1145,6 +1145,13 @@ outputs, summaries, token content, and provider responses remain excluded.
 
 ## Testing
 
+Sidekick catalog naming is covered by `apps/api/test/sidekick-presentation.test.ts`
+(`pnpm --filter @rally/api exec vitest run test/sidekick-presentation.test.ts`).
+The load, durable attachment, and next-execution instruction restoration path is
+covered by `apps/api/test-workers/automation-do.test.ts`
+(`pnpm --filter @rally/api test:workers test-workers/automation-do.test.ts -t 'attaches a loaded main-stream Sidekick'`).
+
+
 The suite table below is an inventory, not a claim that the ordered-transcript
 PRD is fully proved. Its focused [test contract](PRDs/2026-08-26_ordered-workstream-turn-transcripts/prd.md#test-contract)
 maps the persistent-loop, safe-boundary, exact-settlement, observable-failure,
@@ -1217,6 +1224,14 @@ silently return every test to the shared key while each still passes alone.
 
 ## Changelog
 
+### 2026-09-08 — Short Sidekick skill IDs
+
+Skill names now use kebab-case Sidekick names, adding integer suffixes only for
+collisions, so models can recognize knowledge without copying UUIDs. The host translates activation
+refs at the harness boundary; storage keeps canonical IDs so attachments and
+existing activation snapshots retain their meaning. Collision resolution follows snapshot
+order, never a freshly filtered candidate list on retry.
+
 ### 2026-09-08 — Publication returns to the conversation for its final response
 
 Remove the ready submission's terminal tool halt and ask the model to acknowledge
@@ -1244,7 +1259,7 @@ Future changes must retain the separate ownership and execution boundaries.
 
 ### 2026-09-07 — Sidekick instruction sources
 
-The host resolves stored-loadable Sidekicks against execution and conversation audiences. Stable Sidekick IDs identify skills. Per-execution snapshots and loaded refs live in the owning substream; main-conversation loads also attach the Sidekick for future executions. Loading adds instructions, never credentials or access to the Sidekick memory scope.
+The host resolves stored-loadable Sidekicks against execution and conversation audiences. Model-facing skill names use kebab-case Sidekick names (`sidekick-brand-voice`) with integer suffixes only for collisions (`sidekick-brand-voice-2`). Snapshot order fixes that mapping across retries; durable activation refs and attachments retain canonical Sidekick IDs. Per-execution snapshots and loaded refs live in the owning substream; main-conversation loads also attach the Sidekick for future executions. Loading adds instructions, never credentials or access to the Sidekick memory scope.
 
 This composes knowledge with existing execution machinery while keeping one Sidekick identity and preserving authorization boundaries.
 

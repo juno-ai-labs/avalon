@@ -132,7 +132,7 @@ const provider = useOpenRouterDouble((call) => {
   }
   if (loadSkillOnNextTurn) {
     loadSkillOnNextTurn = false;
-    return { callTool: { name: "load_skill", arguments: { name: `sidekick-${AUTOMATION_ID}` } } };
+    return { callTool: { name: "load_skill", arguments: { name: "sidekick-manual-helper" } } };
   }
   return { say: "Done." };
 });
@@ -563,6 +563,9 @@ describe("AutomationDO", () => {
     expect(admitted[0].sources[0].instructions).toBe(draft.instructions);
     expect(admitted[1].sources[0].revision).toBe(2);
     expect(admitted[1].activeRefs).toContain(`platform:sidekick-${AUTOMATION_ID}`);
+    await expect.poll(() => provider.calls.some((call) => call.messages.some((message) =>
+      message.role === "system" && promptText(message.content).includes("Second accepted Sidekick instructions."))),
+    { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(true);
     expect(await root.sidekickAttachments({ workspaceId: WORKSPACE_ID, workstreamId, removeId: AUTOMATION_ID })).toEqual([]);
   });
 

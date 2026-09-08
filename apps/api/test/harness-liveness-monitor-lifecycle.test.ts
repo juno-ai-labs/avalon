@@ -33,7 +33,7 @@ describe("what a run may consult, and what it may do", () => {
     );
     // Offered to both live run kinds. Withholding a skill would hide advice and
     // never authority, and would hide a future general skill along with it.
-    expect(root).toContain("skills: [...BUILT_IN_SKILLS, ...sidekickSnapshot.sources.map(sidekickHarnessSkill)]");
+    expect(root).toContain("skills: [...BUILT_IN_SKILLS, ...sidekickCatalog.map((entry) => entry.skill)]");
 
     const inlineChild = section(
       "function createInlineChildAgentTool(",
