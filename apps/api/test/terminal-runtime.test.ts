@@ -7,6 +7,10 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { TerminalSandboxCoordinator } from "../src/services/terminal/coordinator";
+import type {
+  TerminalCheckoutRepositoryOutput,
+  TerminalRepositorySelector,
+} from "../src/services/terminal/repository-selection";
 import {
   DAYTONA_REQUEST_TIMEOUT_MS,
   type TerminalSandboxProvider,
@@ -1158,5 +1162,42 @@ describe("Daytona Terminal runtime", () => {
       code: "resource_empty",
       message: expect.stringContaining("empty"),
     });
+  });
+
+  it("lets an in-flight activation acquisition settle before a checkout replaces the generation", async () => {
+    // Activation no longer blocks the model, so its first tool can be
+    // checkout_repository while activation's own repository bootstrap is still
+    // running against the sandbox. Replacing the generation underneath that
+    // work would be two operations on one sandbox, so the checkout waits for the
+    // acquisition to end — here by rejecting, which is what a checkout repairs —
+    // before it starts.
+    const { provider, resources, publisher, objectStore } = fixture();
+    let rejectAcquire = (): void => undefined;
+    const acquiring = new Promise<never>((_resolve, reject) => {
+      rejectAcquire = () => reject(new TerminalToolError("repository_access_revoked", "Repository access was revoked."));
+    });
+    const coordinator = { acquire: vi.fn(() => acquiring) } satisfies Pick<TerminalSandboxCoordinator, "acquire">;
+    const checkedOut: TerminalCheckoutRepositoryOutput = {
+      repository: "o/r", repositoryId: 1, connectionId: "connection-1", connectionName: "GitHub",
+      baseRef: "main", baseSha: "a".repeat(40), headRef: "rally/workstream", remoteAccess: "read_only",
+      localEditsAllowed: true, remoteWritesAllowed: false, outcome: "selected", backup: null,
+    };
+    const checkout = vi.fn(async () => checkedOut);
+    const selector: TerminalRepositorySelector = { checkout };
+    const runtime = createDaytonaTerminalRuntime(
+      testTerminalPortFactory(objectStore), coordinator, provider, resources, publisher, selector, undefined, () => 0,
+    );
+
+    const activation = runtime.prepare(context).then(() => "resolved", (error: unknown) => error);
+    const checkingOut = runtime.checkoutRepository(context, { repositoryFullName: "o/r", requiredRemoteAccess: "read_only" });
+    // Flush every continuation the checkout could have taken while the
+    // acquisition is still pending: it must not have reached the selector.
+    for (let tick = 0; tick < 5; tick += 1) await Promise.resolve();
+    expect(checkout).not.toHaveBeenCalled();
+
+    rejectAcquire();
+    await expect(checkingOut).resolves.toMatchObject({ repository: "o/r" });
+    expect(checkout).toHaveBeenCalledOnce();
+    await expect(activation).resolves.toMatchObject({ code: "repository_access_revoked" });
   });
 });

@@ -1,3 +1,5 @@
+import { Buffer } from "node:buffer";
+
 export interface TerminalSnapshotProbe {
   id: "bash" | "python" | "javascript" | "typescript" | "sqlite" | "apt" | "dpkg" | "pip" | "uv" | "npm" | "pnpm" | "git" | "git-ca" | "gh" | "sudo";
   command: string;
@@ -7,6 +9,14 @@ export interface TerminalSnapshotProbe {
  * Executable contract for the pinned Daytona snapshot. Adding a runtime or
  * manager to the model prompt requires adding a functional probe here first.
  */
+/**
+ * The Daytona base image the Rally-owned snapshot is built from. Checked in so
+ * that changing what every sandbox runs on is a reviewable diff, not a GitHub
+ * variable nobody sees move; `TERMINAL_SNAPSHOT_BASE_IMAGE` in the environment
+ * overrides it for a one-off build.
+ */
+export const TERMINAL_SNAPSHOT_BASE_IMAGE = "daytonaio/sandbox:0.9.0";
+
 export const TERMINAL_SNAPSHOT_PROBES: readonly TerminalSnapshotProbe[] = [
   { id: "bash", command: "bash -c 'set -euo pipefail; test \"$(printf avalon)\" = avalon'" },
   { id: "python", command: "python3 -c 'import json; assert json.loads(\"{\\\"ok\\\": true}\")[\"ok\"]'" },
@@ -20,7 +30,18 @@ export const TERMINAL_SNAPSHOT_PROBES: readonly TerminalSnapshotProbe[] = [
   { id: "npm", command: "npm --version" },
   { id: "pnpm", command: "pnpm --version" },
   { id: "git", command: "git --version" },
-  { id: "git-ca", command: "test -n \"${CURL_CA_BUNDLE:-}\" && test -f \"$CURL_CA_BUNDLE\" && test -s \"$CURL_CA_BUNDLE\" && test -r \"$CURL_CA_BUNDLE\"" },
+  // Daytona advertises its proxy CA only for sandboxes created with a domain
+  // allow list. A full-internet sandbox is not intercepted and needs no extra
+  // trust, so requiring the bundle unconditionally failed every such sandbox —
+  // including ones from the managed snapshot, which is how this was found. It
+  // also meant no workspace on full-internet networking could create a Terminal
+  // sandbox at all: the probe rejected it and the coordinator discarded it.
+  //
+  // The shape here matches `terminalGitCaSetupCommands({ required: false })`,
+  // which is what the repository bootstrap actually runs: wire Git to the bundle
+  // when one is advertised, and accept its absence otherwise. The probe was
+  // stricter than the code it exists to protect.
+  { id: "git-ca", command: "if [ -n \"${CURL_CA_BUNDLE:-}\" ]; then test -f \"$CURL_CA_BUNDLE\" && test -s \"$CURL_CA_BUNDLE\" && test -r \"$CURL_CA_BUNDLE\"; fi" },
   { id: "gh", command: "gh --version" },
   { id: "sudo", command: "sudo -n true" },
 ] as const;
@@ -40,21 +61,107 @@ export function terminalManagedSnapshotBootstrapCommand(): string {
     "if ! command -v sqlite3 >/dev/null 2>&1; then system_packages=\"$system_packages sqlite3\"; installed_capabilities=\"$installed_capabilities,sqlite3\"; fi",
     "if ! command -v gh >/dev/null 2>&1; then system_packages=\"$system_packages gh\"; installed_capabilities=\"$installed_capabilities,gh\"; fi",
     "if [ -n \"$system_packages\" ]; then sudo -n apt-get update -qq && sudo -n apt-get install -y --no-install-recommends $system_packages >/dev/null; fi",
-    "if ! command -v pnpm >/dev/null 2>&1; then npm install --global 'pnpm@11.13.0' >/dev/null; installed_capabilities=\"$installed_capabilities,pnpm\"; fi",
-    "if ! command -v tsx >/dev/null 2>&1; then npm install --global 'tsx@4.20.6' >/dev/null; installed_capabilities=\"$installed_capabilities,tsx\"; fi",
+    // One `npm install --global` for both packages rather than one apiece. Each
+    // invocation pays npm's own start-up and registry handshake before it
+    // installs anything, so two sequential calls cost about twice a single call
+    // carrying both — measured at 3.3s split versus 1.5s combined. Accumulating
+    // into a variable first mirrors the apt branch immediately above, and keeps
+    // the whole block a no-op when the snapshot already ships both.
+    "node_packages=''",
+    "if ! command -v pnpm >/dev/null 2>&1; then node_packages=\"$node_packages pnpm@11.13.0\"; installed_capabilities=\"$installed_capabilities,pnpm\"; fi",
+    "if ! command -v tsx >/dev/null 2>&1; then node_packages=\"$node_packages tsx@4.20.6\"; installed_capabilities=\"$installed_capabilities,tsx\"; fi",
+    "if [ -n \"$node_packages\" ]; then npm install --global $node_packages >/dev/null; fi",
     "printf 'AVALON_BOOTSTRAP_INSTALLED=%s\\n' \"${installed_capabilities#,}\"",
   ].join("\n");
 }
 
-export function terminalSnapshotProbeCommand(): string {
+/**
+ * The bootstrap as one Dockerfile-safe line, for baking it into a snapshot
+ * image instead of running it on every new sandbox.
+ *
+ * A Dockerfile instruction cannot span raw newlines, and the provider renders
+ * each build command as a single `RUN`. Handing it the bootstrap directly makes
+ * that script's second line its own instruction, which Daytona rejects with
+ * `unknown instruction: sudo`. Quoting does not help: the shell would honour the
+ * quotes, but the Dockerfile parser splits the line before any shell sees it.
+ *
+ * Base64 sidesteps the whole class — the encoded form has no newlines and no
+ * quotes, and its only non-alphanumerics (`+`, `/`, `=`) are inert as an
+ * unquoted `echo` argument, so it survives whatever quoting the provider
+ * applies while keeping the script byte-identical to the one the runtime would
+ * have run. It is deliberately left unquoted: a quote is exactly what the
+ * provider's own quoting could then mangle.
+ */
+export function terminalSnapshotImageBuildCommand(): string {
+  const encoded = Buffer.from(terminalManagedSnapshotBootstrapCommand(), "utf8").toString("base64");
+  return `echo ${encoded} | base64 -d | bash -l`;
+}
+
+/**
+ * Verifies the pinned snapshot still satisfies the manifest.
+ *
+ * The probes are independent of one another, and each one pays a whole runtime
+ * start-up: `pnpm --version` alone costs about 770ms, `python3 -m pip` about
+ * 250ms. Run sequentially that is the entire probe budget spent waiting on
+ * fifteen interpreters to boot one after another, on the critical path of the
+ * participant's first Terminal tool. Running them concurrently bounds the phase
+ * by its slowest single probe instead of their sum.
+ *
+ * It still fails closed: a probe that fails writes no marker, and the check
+ * after `wait` exits non-zero when any marker is missing. Reporting *every*
+ * missing capability rather than only the first also makes a breaking managed
+ * image update one diagnostic instead of one per redeploy.
+ */
+export interface TerminalSnapshotProbeOptions {
+  /**
+   * Require the advertised Git CA bundle instead of verifying it only when
+   * advertised. Daytona advertises its proxy CA to sandboxes created with a
+   * domain allow list, so a Trusted-only sandbox that lacks one would pass the
+   * optional probe and fail at its first Git operation through the intercepting
+   * proxy. `prepareSandbox` knows the allow list and sets this; the
+   * full-internet acceptance probes leave it unset.
+   */
+  requireGitCa?: boolean;
+}
+
+const GIT_CA_REQUIRED_PROBE_COMMAND =
+  "test -n \"${CURL_CA_BUNDLE:-}\" && test -f \"$CURL_CA_BUNDLE\" && test -s \"$CURL_CA_BUNDLE\" && test -r \"$CURL_CA_BUNDLE\"";
+
+export function terminalSnapshotProbeCommand(options: TerminalSnapshotProbeOptions = {}): string {
+  const probes = TERMINAL_SNAPSHOT_PROBES.map((probe) => (
+    probe.id === "git-ca" && options.requireGitCa
+      ? { id: probe.id, command: GIT_CA_REQUIRED_PROBE_COMMAND }
+      : probe
+  ));
+  return terminalProbeRunnerCommand(probes, "/workspace");
+}
+
+/**
+ * The runner itself, over any probe list and workspace root, so a test can
+ * execute it against a temporary directory and prove the sweep fails closed
+ * rather than matching the script's text.
+ */
+export function terminalProbeRunnerCommand(
+  probes: readonly { id: string; command: string }[],
+  workspaceRoot: string,
+): string {
+  const ids = probes.map((probe) => probe.id);
   return [
     "set -euo pipefail",
-    "test -d /workspace/.rally/tmp",
-    "test -d /workspace/.rally-output",
-    ...TERMINAL_SNAPSHOT_PROBES.flatMap((probe) => [
-      probe.command,
-      `printf '%s\\n' '${probe.id}:ok'`,
-    ]),
+    `test -d ${workspaceRoot}/.rally/tmp`,
+    `test -d ${workspaceRoot}/.rally-output`,
+    `probe_results="$(mktemp -d ${workspaceRoot}/.rally/tmp/probe.XXXXXX)"`,
+    "trap 'rm -rf -- \"$probe_results\"' EXIT",
+    ...probes.map((probe) => (
+      `{ ${probe.command} ; } >/dev/null 2>&1 && printf '%s\\n' '${probe.id}:ok' >"$probe_results/${probe.id}" &`
+    )),
+    "wait",
+    "probe_missing=''",
+    `for probe_id in ${ids.join(" ")}; do`,
+    "  if [ ! -s \"$probe_results/$probe_id\" ]; then probe_missing=\"$probe_missing $probe_id\"; fi",
+    "done",
+    "if [ -n \"$probe_missing\" ]; then printf 'AVALON_PROBE_MISSING=%s\\n' \"${probe_missing# }\"; exit 1; fi",
+    "cat -- \"$probe_results\"/*",
   ].join("\n");
 }
 

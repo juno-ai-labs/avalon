@@ -35,6 +35,12 @@ export interface TerminalProviderOperationMeasurement {
   installMs: number;
   verifyMs: number;
   installedCapabilities: TerminalManagedBootstrapCapability[];
+  /**
+   * Manifest ids the verification probe could not satisfy, when `failurePhase`
+   * is `verify`; empty otherwise. Drawn from the manifest's fixed id set, never
+   * from provider or user text, so it is safe to log and index.
+   */
+  missingCapabilities?: readonly string[];
 }
 
 export interface TerminalProviderInstrumentation {
