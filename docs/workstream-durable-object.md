@@ -1756,7 +1756,7 @@ including deferred retries rather than only the currently due batch.
 
 ### 2026-09-05 — The loop records how far into the transcript it has looked
 
-**What changed:** Schema v43 adds `substream_loops.transcript_projected_through`,
+**What changed:** Schema v45 adds `substream_loops.transcript_projected_through`,
 backfilled to the transcript's high-water mark for every existing room. When a
 pending input is appended to the Bind projection — at activation or at a safe
 step — the object first appends every human or external text turn above the

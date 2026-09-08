@@ -431,7 +431,7 @@ describe("the Workstream Durable Object relational schema", () => {
     }
   });
 
-  it("backfills the loop's projection mark to the transcript high-water when v43 applies", () => {
+  it("backfills the loop's projection mark to the transcript high-water when v45 applies", () => {
     // An existing room starts "seen through now": the mark is what the
     // transcript holds at upgrade, so nothing historical surfaces into the
     // model on the next activation. A room with no counter row gets zero,
@@ -441,9 +441,9 @@ describe("the Workstream Durable Object relational schema", () => {
     try {
       applyDurableObjectSqliteMigrations({
         storage,
-        migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 42),
+        migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 44),
         component: "substream_agent_do",
-        workerVersionId: "worker-v42",
+        workerVersionId: "worker-v44",
         now: 1_000,
       });
       database.exec(`
@@ -460,7 +460,7 @@ describe("the Workstream Durable Object relational schema", () => {
         storage,
         migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS,
         component: "substream_agent_do",
-        workerVersionId: "worker-v43",
+        workerVersionId: "worker-v45",
         now: 2_000,
       });
       expect(database.prepare(
