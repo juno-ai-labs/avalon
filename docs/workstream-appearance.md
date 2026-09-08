@@ -79,6 +79,21 @@ including scrolling, and check another connected window and reopening.
 
 ## Changelog
 
+### 2026-09-08 — Reconcile individual optimistic choices
+
+Review found that unrelated metadata broadcasts rebuild the appearance object,
+which prematurely retired a saved preview by reference equality. Each choice now
+tracks its own field values and receipt; only an authoritative value change settles
+it. Failed earlier choices are removed independently and cannot leave a stale error
+on a later success. Closing the popup clears its transient error. The compact
+header keeps the picker outside the heading so its accessible name remains the title.
+
+Stored keys remain server-validated on every write and projection. A newer desktop
+cannot write an unknown key through an older server. Catalog expansion or rollback
+must preserve the accepted stored keys; malformed durable state deliberately fails
+visibly rather than silently replacing shared identity. This change does not add a
+second, permissive interpretation of the server's validated appearance contract.
+
 ### 2026-09-08 — Preserve installed-client control updates
 
 Review caught that an optional field remains incompatible with an older strict
