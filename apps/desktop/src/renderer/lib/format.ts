@@ -160,7 +160,8 @@ const MARKER_PRECEDENCE: readonly WorkstreamMarkerStatus[] = [
  *
  * The single answer every surface asks for, so the sidebar and the home screen
  * cannot disagree about which of a work stream's states is the one worth
- * showing. `scheduled` has no personal state to lose to and is not in the
+ * showing. Surfaces may omit that result: the sidebar hides `completed`.
+ * `scheduled` has no personal state to lose to and is not in the
  * ranking; it falls through as the run's own status.
  */
 export function workstreamMarkerStatus(
