@@ -104,7 +104,14 @@ Set these shared Worker secrets separately in each regional deployment:
 - `CONNECTOR_CREDENTIALS_KEY`
 - `CONNECTOR_CREDENTIALS_KEYS_JSON` during credential-key rotation; a JSON object mapping old numeric versions to their regional keys
 - `TELEMETRY_OPERATORS_JSON`; a JSON map from opaque bearer token to the fixed
-  principal accepted by that region's restricted telemetry operator surface
+  principal (`support` or `security`) accepted by that region's restricted
+  telemetry operator surface
+- `DEMO_OPERATORS_JSON`; the same shape, holding the `demos` principal the
+  workspace retirement route Ace calls accepts, and nothing the telemetry
+  surface reads. The token is per region: Global's is what Ace holds as
+  `RALLY_OPERATOR_TOKEN`, EU's as `RALLY_EU_OPERATOR_TOKEN`, and neither value
+  appears in the other region's map. Set and rotated independently of the
+  telemetry map, whose tokens it never has to touch
 - `OPS_SLACK_BOT_TOKEN` and `OPS_SLACK_CHANNEL_ID`; optional, as a pair — the
   internal Slack app operator notifications are posted with, and the channel
   they go to ([`ops-alerting.md`](ops-alerting.md)). Either absent, the Worker
@@ -1133,8 +1140,11 @@ Required repository configuration: secret `CLOUDFLARE_API_TOKEN` and variable
 `CLOUDFLARE_ACCOUNT_ID` in the `api-production` environment for the API and Ace
 deployments and in `site-production` for the site deployment, plus the existing
 `desktop-release` environment for the macOS release. `api-production` also holds
-`ACE_FLAGSHIP_API_TOKEN`, restricted to Flagship Write on the Avalon account;
-the Ace workflow installs it as an encrypted Worker secret. Regional API Worker
+`ACE_FLAGSHIP_API_TOKEN`, restricted to Flagship Write on the Avalon account,
+and `ACE_RALLY_OPERATOR_TOKEN` and `ACE_RALLY_EU_OPERATOR_TOKEN`, each equal to
+a token in that region's `DEMO_OPERATORS_JSON` under the `demos` role and
+present in no other region's; the Ace workflow installs all three as encrypted
+Worker secrets and refuses to deploy without them. Regional API Worker
 secrets are never held by Actions; they are set per region with Wrangler.
 
 Deployments cannot overlap. Each workflow declares a concurrency group, so a second run waits for the first to finish, and a burst of merges collapses to the newest commit: GitHub keeps only one run pending per group and drops the superseded ones. Runs already in progress are never cancelled, so a migration cannot be interrupted halfway. Each run deploys the commit that triggered it, not the tip of `main` at the time it starts.
@@ -2153,7 +2163,20 @@ bearer token and each value is a fixed principal:
 
 The other role is `security`. Use independent tokens in Global and EU, add a new
 token before removing its predecessor during rotation, and never put a token in a
-URL, log, ticket, or shell history. Requests use `Authorization: Bearer <token>`
+URL, log, ticket, or shell history.
+
+`DEMO_OPERATORS_JSON` is a second secret of exactly this shape, one per region,
+whose principals carry the `demos` role and are accepted only by the surfaces
+Ace calls (workspace retirement, and demo preparation once it ships). It is
+separate so that adding or rotating Ace's token never requires re-entering the
+telemetry tokens, which cannot be read back once set. To add Ace's token:
+generate one (`openssl rand -hex 32`) and an operator UUID, set the map with
+`wrangler secret put DEMO_OPERATORS_JSON --config wrangler.global.jsonc` from
+`apps/api` (and `wrangler.eu.jsonc` with a different token for EU), then store
+the same token as `ACE_RALLY_OPERATOR_TOKEN` (`ACE_RALLY_EU_OPERATOR_TOKEN`) in
+the `api-production` GitHub environment. A `demos` principal placed in the
+telemetry map reaches nothing, and a telemetry principal placed in the demo map
+is refused by role. Requests use `Authorization: Bearer <token>`
 against the owning regional API under `/internal/telemetry`:
 
 - `GET /status` returns the fixed regional operational snapshot to either role.

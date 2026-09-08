@@ -201,6 +201,11 @@ export interface Env {
   /** Per-region operator credentials for the restricted telemetry operations
    * surface. Stored as a JSON map from opaque bearer token to fixed principal. */
   TELEMETRY_OPERATORS_JSON?: string;
+  /** Per-region operator credentials for the surfaces Ace calls — workspace
+   * retirement, and demo preparation — in the `demos` role. The same map
+   * shape as `TELEMETRY_OPERATORS_JSON`, kept as its own secret so the two
+   * are set and rotated independently (`telemetry/operator-auth.ts`). */
+  DEMO_OPERATORS_JSON?: string;
   /** Optional in every region, as a pair: the bot token of the internal Slack
    * app operator notifications are posted with, and the channel they go to.
    * Either absent, `notifyOps` answers `skipped` and the log row beside each
@@ -280,7 +285,7 @@ export interface AuthContext extends IdentityAuthContext {
 export interface AppVariables {
   requestId: string;
   auth: IdentityAuthContext | undefined;
-  telemetryOperator: TelemetryOperatorPrincipal | undefined;
+  operator: TelemetryOperatorPrincipal | undefined;
   /**
    * How long authentication took, in milliseconds.
    *

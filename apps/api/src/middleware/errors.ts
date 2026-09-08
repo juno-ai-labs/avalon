@@ -5,6 +5,11 @@ import { RepositoryError } from "@rally/db";
 import { ConnectorError } from "@rally/connectors";
 import type { HonoAppEnv } from "../env";
 import { asApiError } from "../lib/api-error";
+import {
+  RETIREMENT_REFUSAL_CODE,
+  RETIREMENT_REFUSAL_MESSAGE,
+  isRetirementRefusal,
+} from "../durable-objects/object-retirement";
 import { logEvent } from "../observability/logger";
 import { RequestValidationError } from "./validation";
 
@@ -37,6 +42,17 @@ export const errorHandler: ErrorHandler<HonoAppEnv> = (error, c) => {
     code = "invalid_request";
     message = "The request is invalid";
     malformedJson = true;
+  } else if (isRetirementRefusal(error)) {
+    // A retired object's refusal, arriving through a route that reached the
+    // object directly. Matched by code rather than `instanceof` because the
+    // error crossed a Durable Object RPC boundary and was rebuilt on this side.
+    // 409, the same answer the object's own HTTP door gives: the request was
+    // understood and the workspace's state is what makes it inadmissible — a
+    // designed condition, not the 500 that logs at error level and that the
+    // desktop retries.
+    status = 409;
+    code = RETIREMENT_REFUSAL_CODE;
+    message = RETIREMENT_REFUSAL_MESSAGE;
   } else if (error instanceof RepositoryError) {
     status = error.code === "not_found" ? 404 : error.code === "conflict" ? 409 : 500;
     code = error.code;

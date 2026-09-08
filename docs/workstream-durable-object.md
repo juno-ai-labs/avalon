@@ -1145,6 +1145,7 @@ misrouted product statement now fails because the table or column is absent.
 ## Invariants
 
 - **Exactly one object name owns each region/workspace/work-stream/substream tuple.** A second naming formula forks ordering and storage.
+- **Every callable method on these classes is fenced by the retirement gate, and an unclassified one refuses on a retired object.** `applyRetirementGate` wraps the prototype chain at module load; a method retirement's own walk needs is permitted, a Queue-delivered effect receiver answers a terminal acknowledgement, and a Queue consumer, Workflow or cron pass that meets a refusal acknowledges it. [`workspace-retirement.md`](workspace-retirement.md) owns the dispositions; read it before adding an RPC or an effect receiver to any of these classes.
 - **Every workspace-scoped stub is resolved through `durableObjectStubForWorkspace`.** It combines the hard jurisdiction lock with the parent's immutable affinity; only non-workspace regional singletons use the fallback resolver. ESLint rejects direct namespace and low-level resolver bypasses.
 - **The object jurisdiction matches the immutable workspace region.** Product-object constructors fail closed when `ctx.id.jurisdiction` is not `us` for Global or `eu` for EU.
 - **`WorkstreamDO` and `AutomationDO` run no model and own no transcript.** Putting an agent in a parent recreates one serialization bottleneck across substreams.
@@ -1403,6 +1404,8 @@ already have committed across the object boundary.
 | `workspace_identity` | Singleton row (`id = 1`) binding the object to workspace, region, and immutable placement affinity. |
 | `workspace_socket_ticket_receipts` | One consumed workspace-scoped ticket including user, expiry, and consumption time; its expiry index supports bounded cleanup. |
 | `workspace_sync_events` | Monotonic `waterline`, UUIDv7 `event_id`, JSON topic set, and occurrence time for the bounded 1,024-event reconciliation window. Rows are invalidations only, never workspace data copies. |
+| `object_retirement` | Singleton (`id = 1`): the retirement tombstone — instant, operation, actor, reason. Present in all four object classes from one shared constant; migration 40 here. [`workspace-retirement.md`](workspace-retirement.md). |
+| `workspace_retirement_graph` | `(parent_kind, parent_id)`: one row per work stream and automation recorded before the tombstone, with a nullable `retired_at` receipt the walk writes. Migration 41. |
 | `workspace_connector_events` | Complete authoritative normalized provider event, connection/workspace scope, bounded JSON/text fields, provider/dedupe unique keys, local insertion sequence, and processing claim/terminal state. It is never shared with another workspace. |
 | `workspace_connector_event_ingress_receipts` | One ingress UUID/content-hash to canonical-event mapping. It makes provider replay and at-least-once Queue delivery idempotent even when a second delivery used a different UUIDv7; ingest opportunistically reaps the oldest receipts after 30 days while the provider/dedupe keys continue to resolve the canonical event. |
 | `connector_connections`, `external_user_identities` | Workspace connector credentials, cursor/configuration/health, model plugin identity, refresh lease, and verified provider-user mappings. Global/provider ingress routes retain only the opaque fields needed to find this object. |
@@ -1464,7 +1467,8 @@ remain bounded and exclude the supplemented rows.
 | --- | --- |
 | `_sql_schema_migrations` | Immutable parent schema history. |
 | `workstream_metadata` | Singleton aggregate identity/generation and revisioned complete common metadata: title/description/preview/email/creator/state/attention/activity/completion/archive/schedule timestamps. `origin_type`, `automation_subscription_id`, `automation_run_id`, and `planned_for` are dead columns kept because released migration text names them. Created provisionally by `reserveChild("0")` at creation, or by the first child effect for an object that predates that. |
-| `conversation_children` | The child registry: one row per substream the parent has reserved, with `kind` (`main` or `child`), who created it, and when. Added by migration 6. `listChildren` reads it and always includes `"0"`, because a work stream created before the registry existed has no row for its main conversation. |
+| `conversation_children` | The child registry: one row per substream the parent has reserved, with `kind` (`main` or `child`), who created it, and when. Added by migration 6. `listChildren` reads it and always includes `"0"`, because a work stream created before the registry existed has no row for its main conversation. `childrenForRetirement` reads the same registry with a three-way answer (`ok`, `missing`, `identity_mismatch`) and is permitted on a retired parent. |
+| `object_retirement` | Singleton tombstone, migration 8; shared constant, see `WorkspaceDO`. |
 | `substream_directory` | Latest common envelope per child, keyed by external substream ID. |
 | `substream_user_directory` | Latest viewer envelope per child/user pair. |
 | `child_effect_receipts` | Child/message/hash inbox proving idempotent acceptance of a Queue delivery; a replay whose hash differs is refused. Receipts older than 180 days are reaped a hundred at a time on each apply; past that window a redelivery converges on the per-key waterlines. |
@@ -1491,7 +1495,7 @@ alone.
 
 ### `AutomationDO`
 
-One migration, v1, in `automation-do.ts`: the automation's own tables, then the
+Five migrations in `sidekick-do.ts`; v1 is the automation's own tables, then the
 shared parent statements `conversation-parent-object.ts` exports (the same
 `conversation_children`, `substream_directory`, `substream_user_directory`,
 `child_effect_receipts`, `projection_keys`, `workstream_state_clock`,
@@ -1516,6 +1520,7 @@ onto `runs.state` forward only.
 | Table group | Meaning and relationships |
 | --- | --- |
 | `_sql_schema_migrations`, `object_versions` | Schema versions and the applied-migration receipts. |
+| `object_retirement` | Singleton tombstone, conversation-object schema v48; shared constant, see `WorkspaceDO`. |
 | `workstream`, `substream_agent_identity`, `substreams` | Local root/authority, immutable external child identity, and LLM-array context metadata. The root's `workstream_key` is the parent id and `parent_kind` (v39, default `workstream`) says which kind; `origin_type`, `automation_subscription_id`, `automation_run_id`, and `planned_for` are dead columns, never written or projected, kept because the runtime-compat triggers in `workstream-runtime-compat-schema.ts` name them inside released migration hashes. Existing main data uses local context `0`. |
 | `participants`, `member_attention` | Participation and personal read/mention waterlines; active workspace membership remains D1 authority. |
 | `participant_transcript_turns`, `participant_transcript_blocks`, `participant_transcript_attachments`, `participant_transcript_mentions`, `transcript_facts`, `transcript_payloads`, `content_refs` | One provider-neutral semantic order whose canonical turns reference content-addressed payloads plus exact attachment, mention, and large-content joins. Accepted human and assistant content, identity, and order never change. One stable tool turn may advance only its explicit lifecycle from started to terminal; a different turn under the same client id remains an ignored replay. Terminal residual-receipt repair asynchronously prepares the replacement payload, then commits its fact and tool metadata synchronously so alarm/reaper settlement cannot leave a started card behind. Tool UI rows project only as complete assistant-call/tool-result pairs; pending messages have no canonical order and enter Bind only through the persistent loop's delivery transaction. |
@@ -1555,7 +1560,7 @@ added by each one's own migration history from the statements
 
 | Table | Key and relationship |
 | --- | --- |
-| `_internal_durable_alarms` | `(kind, alarm_key)`: one row per thing this object wants woken for, with its due instant, optional repeat, and its own attempt/`retry_at` gate. The object's single Cloudflare alarm is always armed for `MIN(MAX(due_at, retry_at))` across these rows and whatever the object derives from its other tables. |
+| `_internal_durable_alarms` | `(kind, alarm_key)`: one row per thing this object wants woken for, with its due instant, optional repeat, and its own attempt/`retry_at` gate. The object's single Cloudflare alarm is always armed for `MIN(MAX(due_at, retry_at))` across these rows and whatever the object derives from its other tables — except on a retired object, where retirement empties this table in the tombstone's transaction, deletes the alarm, and makes every mutator inert ([`durable-object-alarms.md`](durable-object-alarms.md#invariants)). |
 
 WorkspaceDO reconciles `schedule`, `watch`, `maintenance`, and `terminal`
 entries from the tables above; SubstreamAgent reconciles `agent_timer` entries
@@ -1647,6 +1652,29 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-09-08 — Every object under a workspace can be retired
+
+**What changed:** Each of the four object classes gains the `object_retirement`
+tombstone table (WorkspaceDO 41, WorkstreamDO 8, SidekickDO 5,
+conversation-object v48) and WorkspaceDO gains `workspace_retirement_graph`
+(42); the shared parent base gains `childrenForRetirement`. Every callable
+method of these classes is wrapped by the retirement gate at module load.
+`SubstreamAgent`'s runtime recovery is a prototype method rather than a
+constructor-bound closure, and returns at once on a retired object.
+
+**Why:** [`workspace-retirement.md`](workspace-retirement.md) records the
+pressure: a product write reaches `SubstreamAgent` and `WorkstreamDO` without
+passing WorkspaceDO, so closing a workspace has to be a property each object
+answers for itself. This document owns the class catalog and had not moved
+with the classes.
+
+**Considered and rejected:** Recorded in the owning document.
+
+**Consequences:** A new RPC on any of these classes refuses on a retired object
+until classified; a new effect receiver needs a `drop` entry; a new background
+caller acknowledges the refusal. The always-armed alarm invariant is suspended
+on a retired object.
 
 ### 2026-09-08 — Reserve Sidekick skill names across executions
 

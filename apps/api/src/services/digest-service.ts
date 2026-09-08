@@ -15,12 +15,14 @@ import {
   WorkspaceDigestReplaceResultSchema,
   WorkspaceDigestRowStateSchema,
   WorkspaceDigestSettingsSchema,
+  type WorkspaceDigestSettings,
   type WorkspaceDigestReplaceRequest,
 } from "../durable-objects/workspace-digests-protocol";
 import { ApiError } from "../lib/api-error";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { nextRRuleOccurrence } from "../lib/recurrence";
-import { logWarn } from "../observability/logger";
+import { isRetirementRefusal } from "../durable-objects/object-retirement";
+import { logInfo, logWarn } from "../observability/logger";
 import { refreshWorkspaceSchedule } from "./workstream-wakeup-service";
 import { declaredUserDeliveryTargetType, resolveFrozenDeliveryIdentity } from "./user-delivery";
 import { emitProductUsageTelemetry, telemetryCountBucket } from "../telemetry/product-usage";
@@ -230,10 +232,27 @@ export async function reconcileDigestDefaults(env: Env): Promise<{
   const workspaces = new Set<string>();
   for (const member of members.results ?? []) {
     const workspace = await workspaceDigests(env, member.workspace_id);
-    const settings = WorkspaceDigestSettingsSchema.parse(await workspace.digestSettings({
-      workspaceId: member.workspace_id,
-      userId: member.user_id,
-    }));
+    let settings: WorkspaceDigestSettings;
+    try {
+      settings = WorkspaceDigestSettingsSchema.parse(await workspace.digestSettings({
+        workspaceId: member.workspace_id,
+        userId: member.user_id,
+      }));
+    } catch (error) {
+      // A retired workspace. Its members stay active in D1 — retirement is not
+      // deletion — so this page names them on every cycle, and the object
+      // refuses them every time. The refusal must not abort the pass: the
+      // cursor advances only after the loop, so an abort here re-read the same
+      // page and met the same refusal on every tick, and every member sorted
+      // after this one stopped getting a digest default, region-wide.
+      if (!isRetirementRefusal(error)) throw error;
+      logInfo(env, "digest_reconciliation_member_skipped", {
+        workspace_id: member.workspace_id,
+        user_id: member.user_id,
+        reason: "workspace_retired",
+      });
+      continue;
+    }
     let digest = settings.schedule;
     let times = settings.times;
     if (!digest) {
