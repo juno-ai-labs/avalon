@@ -1,3 +1,6 @@
+import { createHostAccessContext } from './authorization-host-context';
+import { requireAuthorizedRead } from './authorization-service';
+import { IdSchema, asWorkspaceId } from '@rally/contracts';
 import type { HarnessTool, HarnessToolContext, ModelMessageContentPart } from "@rally/agent-harness";
 import {
   ATTACHMENT_LIST_RESOURCES_DESCRIPTION,
@@ -150,6 +153,7 @@ export function createWorkstreamAttachmentTools(
           : null;
         const attachmentKind = state?.attachmentKind ?? args.attachmentKind ?? null;
         const limit = state?.limit ?? args.limit ?? DEFAULT_LIST_LIMIT;
+        const validatedAt = Date.now();
         const asOf = state?.asOf ?? new Date().toISOString();
         if (options.loadVisibleResources) {
           if (state && state.mode !== "in_memory") {
@@ -161,7 +165,7 @@ export function createWorkstreamAttachmentTools(
           }
           const matching = visible.rows.filter((row) => !attachmentKind || rowKind(row) === attachmentKind);
           const start = state?.nextIndex ?? 0;
-          const page = matching.slice(start, start + limit);
+          const page = await authorizeHostRows(input, matching.slice(start, start + limit), validatedAt);
           const nextIndex = start + page.length;
           const nextCursor = nextIndex < matching.length
             ? await sealCursorState(env, input, options, LIST_CURSOR_PURPOSE, {
@@ -205,6 +209,7 @@ export function createWorkstreamAttachmentTools(
           }
           throw error;
         }
+        await authorizeHostRows(input, result.rows, validatedAt);
         const last = result.rows.at(-1);
         const nextCursor = result.hasMore && last
           ? await sealCursorState(env, input, options, LIST_CURSOR_PURPOSE, {
@@ -928,27 +933,34 @@ async function sealReadCursor(
   return sealCursorState(env, input, options, READ_CURSOR_PURPOSE, { resourceId, ...version, start, pageSize });
 }
 
+async function authorizeHostRows(input: WorkstreamWorkflowInput, rows: VisibleWorkstreamResourceRow[], validatedAt: number) {
+  const resources = rows.map((row) => ({ kind: 'resource' as const,
+    workspaceId: asWorkspaceId(row.workspace_id), resourceId: IdSchema.parse(row.id) }));
+  const access = createHostAccessContext({ workspaceId: input.workspaceId, principal: input.executionPrincipal,
+    executionId: input.harnessRunId, resources, validatedAt });
+  for (const decision of await access.checkMany(resources)) requireAuthorizedRead(decision);
+  return rows;
+}
+
 async function loadScopedResourceRows(
   env: Env,
   input: WorkstreamWorkflowInput,
   options: WorkstreamAttachmentToolOptions,
   resourceIds: readonly string[],
 ): Promise<VisibleWorkstreamResourceRow[]> {
+  const validatedAt = Date.now();
   if (options.loadVisibleResources) {
     const visible = await options.loadVisibleResources();
     const requested = new Set(resourceIds);
-    return visible.rows.filter((row) => requested.has(row.id));
+    return authorizeHostRows(input, visible.rows.filter((row) => requested.has(row.id)), validatedAt);
   }
-  return loadVisibleWorkstreamResourcesByIds(
+  const rows = await loadVisibleWorkstreamResourcesByIds(
     env.DB,
     createResourceObjectPort(env, input.workspaceId, input.parentId),
-    {
-      workspaceId: input.workspaceId,
-      workstreamId: input.parentId,
-      principal: input.executionPrincipal,
-      resourceIds,
-    },
+    { workspaceId: input.workspaceId, workstreamId: input.parentId,
+      principal: input.executionPrincipal, resourceIds },
   );
+  return authorizeHostRows(input, rows, validatedAt);
 }
 
 function scopedCursorPurpose(options: WorkstreamAttachmentToolOptions, purpose: string): string {

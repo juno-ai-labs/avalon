@@ -35,7 +35,7 @@ const auth: AuthContext = {
 };
 
 const open: DatabaseSync[] = [];
-afterEach(() => { for (const database of open.splice(0)) database.close(); });
+afterEach(() => { vi.restoreAllMocks(); for (const database of open.splice(0)) database.close(); });
 
 interface UploadFixture {
   database: DatabaseSync;
@@ -55,6 +55,8 @@ interface UploadFixture {
 function fixture(payloads: Parameters<typeof createCloudflareTestBinding<R2Bucket>>[0], bindings: Partial<Env> = {}): UploadFixture {
   const regional = new DatabaseSync(':memory:');
   open.push(regional);
+  regional.exec(`CREATE TABLE workspace_members(workspace_id TEXT, user_id TEXT, status TEXT)`);
+  regional.prepare("INSERT INTO workspace_members VALUES (?, ?, 'active')").run(workspaceId, userId);
   const workspaceObject = createTestWorkspaceDO({
     workspaceId,
     regionalDatabase: regional,
@@ -126,6 +128,8 @@ describe('uploaded attachment drafts', () => {
     await service.upload(new File(['private'], 'private.txt', { type: 'text/plain' }), undefined, draftId);
     database.prepare("UPDATE resources SET attachment_status = 'attached', uploaded_by_user_id = ? WHERE id = ?")
       .run('00000000-0000-7000-8000-000000000004', draftId);
+    const expiredAt = Date.now() + 300_000;
+    vi.spyOn(Date, 'now').mockReturnValue(expiredAt);
     await expect(service.searchPreview(draftId, new AbortController().signal)).rejects.toMatchObject({ status: 404 });
     expect(get).not.toHaveBeenCalled();
   });
@@ -373,6 +377,7 @@ describe('uploaded attachment drafts', () => {
       'c'.repeat(64), 'ready', ATTACHMENT_TEXT_EXTRACTOR_VERSION, 20);
     previewRow.run(audioResourceId, workspaceId, 'voice.mp3', 'audio/mpeg', 'source-audio',
       'e'.repeat(64), null, null, null, 'unsupported', ATTACHMENT_TEXT_EXTRACTOR_VERSION, null);
+    database.prepare('UPDATE resources SET uploaded_by_user_id = ?').run(userId);
     const service = new ResourceService(env, auth);
 
     const markdown = await service.preview(markdownResourceId, new AbortController().signal);
@@ -417,6 +422,7 @@ describe('uploaded attachment drafts', () => {
     `);
     previewRow.run(heifResourceId, workspaceId, 'phone.heic', 'image/heif', 'source-heif', 'f'.repeat(64));
     previewRow.run(tiffResourceId, workspaceId, 'scan.tiff', 'image/tiff', 'source-tiff', '1'.repeat(64));
+    database.prepare('UPDATE resources SET uploaded_by_user_id = ?').run(userId);
     const service = new ResourceService(env, auth);
 
     for (const id of [heifResourceId, tiffResourceId]) {

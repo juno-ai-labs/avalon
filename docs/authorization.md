@@ -1,0 +1,214 @@
+# Authorization
+
+Rally's internal read authorization primitive composes canonical owner facts into
+an explicit decision. It serves member search and resource reads, and provides
+an attenuated context for host-authorized agent retrieval. Ordinary read evidence
+may lag a permission change by at most five minutes. The module does not admit
+participants or become a new canonical owner of memberships.
+
+## Where the code lives
+
+| File under `apps/api/src/` | Responsibility |
+| --- | --- |
+| `services/authorization-policy.ts` | Typed addresses, subject, four outcomes, proof composition, five-minute bound, `AccessContext`, `AuthorizedView` |
+| `services/authorization-service.ts` | Member policy, owner reads, request coalescing, cache validation and HTTP disclosure adapter |
+| `services/authorization-host-context.ts` | Attenuates trusted host-selected memory/resource scopes to one execution |
+| `durable-objects/authorization-storage.ts` | Workspace SQLite snapshots, exact attachment locations and migration tables |
+| `durable-objects/authorization-projection.ts` | Transactional child outbox and reference-only Queue contract |
+| `services/authorization-projection-service.ts` | Reloads attachment inventories from their owners when jobs execute |
+| `durable-objects/workspace-do.ts` | Snapshot publication, resource facts, migration fan-out and discovery status |
+| `durable-objects/workstream-do.ts`, `automation-do.ts` | Canonical parent/private-child facts; automation author, executor and owning work stream |
+| `authorization-control.ts` | Private operator Service Binding entrypoint |
+
+## How it works
+
+A trusted request creates one `AccessContext`. Addresses identify a workspace
+and either a conversation `(parentId, substreamId)`, a resource ID, or a memory
+scope ID. `within()` intersects restrictions; calling it twice cannot restore a
+resource removed by the first restriction. `readableScopes()` and
+`AuthorizedView.read()` use the same checks as direct reads and report whether
+all candidates could be evaluated. An incomplete list is not an empty success.
+
+Policies are ordinary TypeScript `fact`, `all` and `any` expressions. There is no
+policy interpreter, customer-supplied graph language or hosted policy service.
+An alternative attachment location can independently grant access. Denial from
+one location does not override a valid grant from another.
+
+Member proofs include a canonical regional workspace-membership observation,
+coalesced per request and refreshed when its evidence expires. A long-running
+request cannot renew resource grants using its original authentication alone.
+For member reads, a work stream's main SubstreamAgent owns its scope and roster.
+WorkstreamDO adds its canonical private-child membership and ready-state facts.
+An automation supplies its own scope, author, executor and child registry; an
+owning work stream's canonical roster supplies inherited access. Archived work
+streams remain readable. Deleted automations are absent.
+
+WorkspaceDO supplies resource existence, connection ownership, note visibility,
+upload ownership and draft status. A resource requiring an attachment is resolved
+through exact `(parent, child, resource)` locations. Each potential grant is
+checked against both conversation authority and the canonical attachment
+inventory. The reverse index is discovery, never sufficient proof of a grant.
+This removes the member search path's serial scan of all work streams and all
+children. Content and search passages still come from canonical source records.
+
+### Evidence and caches
+
+Every proof carries `owner`, `revision` and `validatedAt`. Its deadline is the
+oldest required observation plus `AUTHORIZATION_FRESHNESS_MS = 300_000`.
+Evaluation rejects evidence at the deadline and rejects future timestamps.
+Composition, Queue delivery, WorkspaceDO reads and KV publication preserve the
+observation time. They cannot start a new five-minute lease.
+
+Each request coalesces identical decisions, parent roster reads and child
+attachment-inventory reads. WorkspaceDO stores reusable decision snapshots.
+Global may read/write the dedicated `AUTHORIZATION_CACHE` KV namespace; EU does
+not access it. KV retention is five minutes, but the embedded evidence deadline
+is authoritative even when a cache returns an older value. Snapshot publication
+in SQLite rejects older observations, and subsequent writes reclaim expired
+rows. KV failure falls through to regional authority.
+
+A negative attachment decision requires completed discovery. Its evidence time
+comes from the oldest discovered inventory, not the current time on WorkspaceDO.
+If that proof expires, the request reports unavailable and starts a resumable
+inventory refresh. Positive decisions only need their independently verified
+grant path. An old or delayed index cannot manufacture access.
+
+Resource content, versions and previews check freshness again before returning.
+This bounds admission of a response; it does not terminate a response body
+already being streamed. Search repeats the check after content validation.
+
+### Agent scope adapters
+
+Memory and attachment tools retain their existing canonical host loaders and
+execution-principal validation. They wrap the resulting authorized selection in
+a host context whose observation time is captured before those reads. The model
+cannot supply the principal, grant list or observation time. Existing memory
+scope selection and connector visibility SQL remain source-specific adapters;
+this release does not replace those loaders or their retrieval engines.
+
+### Migration
+
+Child SQLite triggers commit a reference outbox alongside scope, membership and
+attachment changes. The existing alarm sends that reference through the regional
+activity Queue. Jobs reload current owner state, so queue payloads contain no
+text, grants or bearer permissions. WorkspaceDO owns durable discovery jobs and
+per-parent/per-child completion receipts. Delivery acceptance is separate from
+completion: a child is complete only after its inventory is applied.
+
+Deployment enables the core member read path for every workspace. There is no
+legacy/shadow mode, activation flag or comparison gate. `backfill` queues parent
+discovery followed by child inventories; `status` reports completion receipts.
+An incomplete attachment lookup automatically schedules missing discovery without
+resetting in-progress jobs, and returns retryable `projection_incomplete` until
+a canonical grant or complete negative evidence can be established. Explicit
+backfill can refresh existing receipts. Source mutations also queue inventory
+updates through their transactional outbox.
+
+Completeness remains an evidence requirement for a negative attachment decision,
+not a switch controlling which authorization implementation serves the request.
+
+## Invariants
+
+- Canonical owners stay canonical. Retimestamping a projection as authority
+  would extend revocations past the agreed five-minute bound.
+- The exact internal outcomes are `allowed`, `denied`, `not_found` and
+  `unavailable`. `denied` includes a policy reason; `not_found` means a canonical
+  owner established absence; `unavailable` carries a retryable reason.
+- Only disclosure adapters collapse denial and absence into a concealed HTTP
+  404. Unavailable authority is HTTP 503, never an empty search page.
+- Subject, workspace, exact address and policy version must match cached
+  evidence. A record for another user or private child cannot authorize a read.
+- The shortest evidence lifetime governs a conjunction. A newer attachment
+  observation cannot renew an older membership proof.
+- Missing discovery cannot be treated as confirmed absence. Activation before
+  coverage is complete would silently omit private-child-only resources.
+- Queue writes and resource changes share durable local intent. A crashed
+  dispatcher can retry without reconstructing permissions from an old payload.
+
+## Boundary
+
+This module owns read decisions and their derived evidence. Authentication and
+active workspace membership are established by request middleware. Agent
+execution authority is established by the host, not tool arguments. Existing
+creation, mutation, socket admission and participant admission retain their
+current authority paths. See [workstream creation](workstream-creation.md),
+[agent harness](agent-harness.md), [agent attachments](agent-attachments.md) and
+[text search](text-search.md).
+
+`AuthorizationControl` is a named Worker entrypoint intended only for a private
+operator Service Binding. It is not mounted on product HTTP and is deliberately
+separate from the read-only engineering inspection bridge. Provision that
+binding only for trusted operational tooling.
+
+## Failure modes and limits
+
+Owner failures produce retryable `authority_unavailable` and a diagnostic event.
+Expired evidence produces `evidence_expired`; missing discovery or an unready
+child produces `projection_incomplete`. A KV outage does not change a denial
+into a grant. A failed canonical refresh cannot reuse expired evidence.
+
+Reference delivery uses the existing five-second regional outbox retry interval.
+Workspace Queue dispatch uses Cloudflare's 100-message batch limit. Neither
+number is a permission lease. Queue consumer failures retry and can eventually
+reach the configured activity dead-letter queue; incomplete receipts prevent
+discovery. An unprovisioned registered child therefore requires repair before
+negative attachment evidence is complete; it cannot silently disappear from the backfill.
+
+Absence proofs can require a full inventory refresh after five minutes. This
+cost is confined to negative discovery; improving it requires a stronger
+completeness protocol, not extending cache TTLs. No production latency target
+is inferred from local tests.
+
+## Testing
+
+`test/authorization-policy.test.ts` covers composition, alternate grants,
+attenuation, exact expiration, future timestamps and explicit incomplete lists.
+`test-workers/authorization-storage.test.ts` uses real SQLite migrations for
+out-of-order inventory delivery, snapshot expiry and discovery completion.
+`test-workers/conversation-parent-contract.test.ts` exercises stale roster
+projections and private-child search before and after queued backfill without activation.
+Existing memory, attachment-tool, resource-list, identity-authority and search
+projection suites cover the retained integration boundaries.
+
+Run the focused Node tests with `pnpm --filter @rally/api exec vitest run` and
+runtime tests with the same command plus `--config vitest.workers.config.ts`.
+Runtime fixtures must seed regional routing and canonical objects; mocking the
+permission answer cannot prove that a stale projection is ignored.
+
+## Regional impact
+
+All owner state, Queue references and WorkspaceDO snapshots stay in their
+workspace region. Global Wrangler configuration declares a dedicated KV binding
+for provisioning on first deployment. EU deliberately has no authorization KV
+binding and does not use a Global fallback. See [regionalization](regionalization.md).
+
+## Operations
+
+The private control binding accepts `{workspaceId, action}` where action is
+`backfill` or `status`. Regional route validation precedes every operation.
+Monitor pending parent/child counts, repair failed sources and replay reference
+jobs. No operator activation is required. Proactive backfill avoids retryable
+attachment lookups while dormant source inventories are discovered; ordinary
+reads also initiate missing discovery. Rolling back the serving implementation
+requires a Worker code rollback, not a per-workspace mode change.
+
+## Changelog
+
+### 2026-09-07 — Enable authorization on deployment
+
+Removed per-workspace shadow and activation controls at the team's request so
+shipping the code enables one read implementation immediately. Retained exact
+permission checks, the five-minute freshness bound and complete negative
+evidence. Missing discovery starts through the existing Queue automatically;
+repeated reads must not reset already progressing jobs. Operator backfill and
+status remain for proactive migration and repair.
+
+### 2026-09-07 — Introduce bounded, composable read authority
+
+Search's source verification repeatedly scanned work streams to discover resource
+attachments, while projected membership lacked a reliable freshness boundary.
+Introduce explicit owner evidence, exact child attachment discovery and a shared
+read context. Keep policy as typed local code rather than introducing Oso Cloud
+or a general graph interpreter. Preserve the team's five-minute read bound and
+regional ownership. Future changes must not exchange complete discovery or
+canonical observation time for a faster but misleading empty result.

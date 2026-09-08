@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AUTHORIZATION_STORAGE_TABLES } from '../durable-objects/authorization-storage';
 
 import { workspaceDOName } from "../durable-objects/names";
 import { rpcResultBody } from "../durable-objects/rpc-result";
@@ -50,6 +51,7 @@ const responseSchema = z.object({
 
 /** Tables whose only live authority is the WorkspaceDO SQLite database. */
 export const WORKSPACE_LOCAL_TABLES = [
+  ...AUTHORIZATION_STORAGE_TABLES,
   "resource_search_versions",
   "connector_connections",
   "webhook_receipts",

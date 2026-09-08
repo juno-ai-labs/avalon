@@ -3,6 +3,9 @@ import { RESOURCE_SEARCH_MIGRATION_STATEMENTS, ResourceSearchProjectionSchema, R
 import { ONBOARDING_JOURNEY_SQL, OnboardingJourneyStore } from './onboarding-journey';
 import { UpdateOnboardingJourneySchema, type OnboardingJourney, type UpdateOnboardingJourney } from '@rally/contracts';
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
+import { AuthorizationStorage, AUTHORIZATION_STORAGE_MIGRATION, AUTHORIZATION_STORAGE_TABLES, AuthorizationLocationSchema } from './authorization-storage';
+import { AuthorizationProjectionJobSchema, type AuthorizationProjectionJob } from './authorization-projection';
+import { AuthorizationSnapshotSchema, AuthorizationSubjectSchema, AuthorizationResourceSchema } from '../services/authorization-policy';
 import {
   ExternalEventEvaluatorV1Schema,
   ExternalEventRegistrationProjectionV1Schema,
@@ -14,6 +17,7 @@ import {
   PROJECT_COLOR_KEYS,
   PROJECT_ICON_KEYS,
   UserIdSchema,
+  SubstreamIdSchema,
   WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
   WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
   WORKSPACE_SYNC_TOPICS,
@@ -832,6 +836,7 @@ const WORKSPACE_ALARM_SOURCE_TABLES = new Set([
 ]);
 
 const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
+  ...AUTHORIZATION_STORAGE_TABLES,
   "resource_search_versions",
   "onboarding_journeys",
   "workstream_notification_intents",
@@ -2660,6 +2665,10 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
     last_accessed_at INTEGER NOT NULL,
     PRIMARY KEY (user_id, workstream_id)
   ) STRICT`],
+}, {
+  version: 38,
+  description: 'owner-backed authorization snapshots and exact conversation attachment discovery',
+  statements: AUTHORIZATION_STORAGE_MIGRATION,
 }];
 
 interface AutomationDirectoryRow extends Record<string, SqlStorageValue> {
@@ -3509,10 +3518,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     ).one().created_at;
     const publication = this.projectStorage().nextDefaultPublicationDueAt();
     const search = nextResourceSearchDueAt(this.state.storage.sql, this.env);
+    const authorization = this.state.storage.sql.exec<{ due: number | null }>('SELECT MIN(not_before) AS due FROM authorization_delivery').one().due;
     return [
       ...(oldest === null ? [] : [Number(oldest) + ACTIVITY_EVENT_RETENTION_MS]),
       ...(publication === null ? [] : [publication]),
       ...(search === null ? [] : [search]),
+      ...(authorization === null ? [] : [authorization]),
     ];
   }
 
@@ -3526,6 +3537,18 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   protected override async runDueAlarmWork(now: number): Promise<void> {
     const workspaceId = this.workspaceId();
     if (workspaceId) {
+      const deliveries = this.state.storage.sql.exec<{ job_key: string; payload_json: string }>(
+        'SELECT job_key, payload_json FROM authorization_delivery WHERE not_before <= ? ORDER BY job_key LIMIT 100', now,
+      ).toArray();
+      if (deliveries.length) {
+        try {
+          await this.env.ACTIVITY_QUEUE.sendBatch(deliveries.map((row) => ({ body: AuthorizationProjectionJobSchema.parse(JSON.parse(row.payload_json)) })));
+          for (const row of deliveries) this.state.storage.sql.exec('DELETE FROM authorization_delivery WHERE job_key = ? AND payload_json = ?', row.job_key, row.payload_json);
+        } catch {
+          for (const row of deliveries) this.state.storage.sql.exec('UPDATE authorization_delivery SET not_before = ? WHERE job_key = ?', now + 5_000, row.job_key);
+          logWarn(this.env, 'authorization_backfill_dispatch_deferred', { region: this.env.AVALON_REGION });
+        }
+      }
       try { await publishResourceSearch(this.state.storage.sql, this.env, workspaceId); }
       catch { logWarn(this.env, "resource_search_dispatch_deferred", { workspace_id: workspaceId }); }
       await this.instrumentWorkspaceAlarmPhase("project_default_publish", undefined, async () => {
@@ -8427,6 +8450,138 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         createdByUserId: row.created_by_user_id,
         isParticipant: row.is_participant === 1,
       })),
+    });
+  }
+
+  async readAuthorizationSnapshots(input: unknown) {
+    await this.initialized;
+    const request = z.strictObject({ subject: AuthorizationSubjectSchema, resources: z.array(AuthorizationResourceSchema) }).parse(input);
+    this.assertWorkspace(request.subject.workspaceId);
+    const storage = new AuthorizationStorage(this.state.storage);
+    return request.resources.map((resource) => {
+      this.assertWorkspace(resource.workspaceId);
+      return storage.read(request.subject, resource, Date.now());
+    });
+  }
+
+  async writeAuthorizationSnapshots(input: unknown) {
+    await this.initialized;
+    const snapshots = z.array(AuthorizationSnapshotSchema).parse(input);
+    for (const snapshot of snapshots) {
+      this.assertWorkspace(snapshot.subject.workspaceId);
+      this.assertWorkspace(snapshot.resource.workspaceId);
+    }
+    this.state.storage.transactionSync(() => {
+      const storage = new AuthorizationStorage(this.state.storage);
+      for (const snapshot of snapshots) storage.write(snapshot);
+    });
+  }
+
+  async applyAuthorizationLocations(input: unknown) {
+    await this.initialized;
+    const request = AuthorizationLocationSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    this.state.storage.transactionSync(() => {
+      new AuthorizationStorage(this.state.storage).replaceLocations(request);
+      this.state.storage.sql.exec('UPDATE authorization_backfill_children SET completed = 1 WHERE parent_id = ? AND substream_id = ?', request.parentId, request.substreamId);
+    });
+  }
+
+  /** Internal migration control; source permissions remain in their original objects. */
+  async beginAuthorizationBackfill(input: { workspaceId: string; refresh?: boolean }) {
+    await this.initialized;
+    this.assertWorkspace(WorkspaceIdSchema.parse(input.workspaceId));
+    this.state.storage.transactionSync(() => {
+      const parents = this.state.storage.sql.exec<{ parent_id: string; parent_kind: 'workstream' | 'automation' }>(
+        `SELECT workstream_id AS parent_id, 'workstream' AS parent_kind FROM workspace_workstream_directory
+         UNION SELECT automation_id AS parent_id, 'automation' AS parent_kind FROM automation_directory`,
+      ).toArray();
+      for (const parent of parents) {
+        if (input.refresh === false && this.state.storage.sql.exec(
+          'SELECT 1 FROM authorization_backfill WHERE parent_id = ?', parent.parent_id,
+        ).toArray().length) continue;
+        this.state.storage.sql.exec(`INSERT INTO authorization_backfill(parent_id, parent_kind) VALUES (?, ?)
+          ON CONFLICT(parent_id) DO UPDATE SET completed = 0`, parent.parent_id, parent.parent_kind);
+        this.enqueueAuthorizationDiscovery({ type: 'authorization_projection_v1', region: this.env.AVALON_REGION,
+          workspaceId: asWorkspaceId(input.workspaceId), parentId: IdSchema.parse(parent.parent_id) });
+      }
+    });
+    await this.armNextAlarm();
+    return this.authorizationBackfillStatus(input);
+  }
+
+  private enqueueAuthorizationDiscovery(job: AuthorizationProjectionJob): void {
+    this.state.storage.sql.exec(`INSERT INTO authorization_delivery(job_key, payload_json, not_before) VALUES (?, ?, 0)
+      ON CONFLICT(job_key) DO UPDATE SET payload_json = excluded.payload_json, not_before = 0`,
+    JSON.stringify([job.parentId, job.substreamId ?? null]), JSON.stringify(job));
+  }
+
+  async registerAuthorizationChildren(input: { workspaceId: string; parentId: string; substreamIds: string[] }) {
+    await this.initialized;
+    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, parentId: IdSchema, substreamIds: z.array(SubstreamIdSchema) }).parse(input);
+    this.assertWorkspace(request.workspaceId);
+    this.state.storage.transactionSync(() => {
+      for (const substreamId of request.substreamIds) {
+        this.state.storage.sql.exec(`INSERT INTO authorization_backfill_children(parent_id, substream_id) VALUES (?, ?)
+          ON CONFLICT(parent_id, substream_id) DO UPDATE SET completed = 0`, request.parentId, substreamId);
+        this.enqueueAuthorizationDiscovery({ type: 'authorization_projection_v1', region: this.env.AVALON_REGION,
+          workspaceId: request.workspaceId, parentId: request.parentId, substreamId });
+      }
+      this.state.storage.sql.exec('UPDATE authorization_backfill SET completed = 1 WHERE parent_id = ?', request.parentId);
+    });
+    await this.armNextAlarm();
+  }
+
+  async authorizationBackfillStatus(input: { workspaceId: string }) {
+    await this.initialized;
+    this.assertWorkspace(WorkspaceIdSchema.parse(input.workspaceId));
+    return this.authorizationCoverage();
+  }
+
+  private authorizationCoverage() {
+    const parents = this.state.storage.sql.exec<{ pending: number }>('SELECT COUNT(*) AS pending FROM authorization_backfill WHERE completed = 0').one().pending;
+    const children = this.state.storage.sql.exec<{ pending: number }>('SELECT COUNT(*) AS pending FROM authorization_backfill_children WHERE completed = 0').one().pending;
+    const undiscovered = this.state.storage.sql.exec<{ pending: number }>(`SELECT COUNT(*) AS pending FROM (
+      SELECT workstream_id AS parent_id FROM workspace_workstream_directory
+      UNION SELECT automation_id AS parent_id FROM automation_directory
+    ) directory LEFT JOIN authorization_backfill tracked USING(parent_id) WHERE tracked.parent_id IS NULL`).one().pending;
+    return { pendingParents: parents + undiscovered, pendingChildren: children,
+      complete: parents === 0 && children === 0 && undiscovered === 0 };
+  }
+
+  async authorizationResourceFacts(input: { workspaceId: string; userId: string; resourceIds: string[] }) {
+    await this.initialized;
+    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, userId: UserIdSchema, resourceIds: z.array(IdSchema) }).parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const locations = new AuthorizationStorage(this.state.storage);
+    const coverage = this.authorizationCoverage();
+    // Absence is evidence only as old as the oldest source observation, never today's projection read.
+    const discoveryAt = this.state.storage.sql.exec<{ validated_at: number | null }>(
+      'SELECT MIN(validated_at) AS validated_at FROM authorization_inventories').one().validated_at ?? Date.now();
+    return request.resourceIds.map((resourceId) => {
+      const row = this.state.storage.sql.exec<{
+        provider: string; resource_type: string; uploaded_by_user_id: string | null;
+        attachment_status: string | null; updated_at: string; connection_id: string | null;
+      }>('SELECT provider, resource_type, uploaded_by_user_id, attachment_status, updated_at, connection_id FROM resources WHERE id = ? AND workspace_id = ?',
+      resourceId, request.workspaceId).toArray()[0];
+      if (!row) return { resourceId, exists: false as const, validatedAt: Date.now() };
+      const connection = row.connection_id ? this.state.storage.sql.exec<{ scope: string; owner_user_id: string | null; status: string }>(
+        'SELECT scope, owner_user_id, status FROM connector_connections WHERE id = ?', row.connection_id,
+      ).toArray()[0] : null;
+      const note = row.provider === 'avalon_note' ? this.state.storage.sql.exec<{ scope: string; owner_user_id: string; archived_at: string | null }>(
+        'SELECT scope, owner_user_id, archived_at FROM notes WHERE resource_id = ?', resourceId,
+      ).toArray()[0] : null;
+      const owned = row.uploaded_by_user_id === request.userId;
+      return { resourceId, exists: true as const, validatedAt: Date.now(), revision: row.updated_at,
+        connectionAllowed: !row.connection_id || Boolean(connection && connection.status !== 'disabled'
+          && (connection.scope === 'workspace' || connection.owner_user_id === request.userId)),
+        noteAllowed: row.provider !== 'avalon_note' || Boolean(note && note.archived_at === null
+          && (note.scope === 'workspace' || note.owner_user_id === request.userId)),
+        draftAllowed: row.provider !== 'avalon_upload' || row.attachment_status === 'attached' || owned,
+        requiresAttachment: ((row.provider === 'avalon_upload' || row.provider === 'avalon_generated') && !owned)
+          || (row.provider === 'resend' && row.resource_type === 'email'),
+        locations: locations.locations(resourceId), projectionComplete: coverage.complete, discoveryAt,
+      };
     });
   }
 

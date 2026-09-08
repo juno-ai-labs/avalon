@@ -930,6 +930,8 @@ describe("an agent's own wake-ups", () => {
     });
     const dueAt = Date.now() + 120_000;
     await runInDurableObject(agent, (_instance, state) => {
+      // Arrange a delivered initial projection so the next alarm belongs to these timers.
+      state.storage.sql.exec('DELETE FROM authorization_projection_outbox');
       for (const [index, id] of ["wake-one", "wake-two"].entries()) {
         state.storage.sql.exec(
           `INSERT INTO workstream_wakeups

@@ -1,9 +1,10 @@
+import { createAccessContext, requireAuthorizedRead } from './authorization-service';
 import { WorkstreamDirectoryService } from './workstream-directory-service';
 import { logInfo } from '../observability/logger';
 import type { SearchRequest, SearchResult } from '@rally/contracts/search';
 import type { AuthContext, Env } from '../env';
 import { ApiError } from '../lib/api-error';
-import { IdSchema, SubstreamIdSchema } from '@rally/contracts';
+import { IdSchema, SubstreamIdSchema, asSubstreamId } from '@rally/contracts';
 import { WorkstreamObjectClient } from './workstream-object-client';
 import { ConversationService } from './conversation-service';
 import { ResourceService } from './resource-service';
@@ -27,6 +28,20 @@ export async function searchWorkspace(env: Env, auth: AuthContext, request: Sear
 export async function searchWorkspacePage(env: Env, auth: AuthContext, request: SearchRequest, signal?: AbortSignal) {
   signal?.throwIfAborted();
   const started = performance.now();
+  const access = createAccessContext(env, auth);
+  const conversations = new ConversationService(env, auth);
+  const parents = new Map<string, ReturnType<ConversationService['resolveParent']>>();
+  const authorizeConversation = async (parentId: string, substreamId: string) => {
+    const resource = { kind: 'conversation' as const, workspaceId: auth.workspaceId,
+      parentId: IdSchema.parse(parentId), substreamId: asSubstreamId(substreamId) };
+    requireAuthorizedRead(await access.check(resource));
+    let parent = parents.get(parentId);
+    if (!parent) { parent = conversations.resolveParent(parentId); parents.set(parentId, parent); }
+    // Retain the existing automation conversation seating required by its product reader.
+    // Policy evaluation itself remains read-only and runs before this compatibility action.
+    if ((await parent).kind === 'automation') await conversations.authorizeViewer(parentId, substreamId);
+  };
+  const resources = new ResourceService(env, auth, undefined, access);
   const scopes = request.pageSize && ['all', 'messages', 'links'].includes(request.category)
     ? await new WorkstreamDirectoryService(env, auth).searchableIds() : null;
   const scopeMs = performance.now() - started;
@@ -51,8 +66,7 @@ export async function searchWorkspacePage(env: Env, auth: AuthContext, request: 
       await Promise.all([...groups.values()].map(async (group) => {
         signal?.throwIfAborted();
         try {
-          const conversation = new ConversationService(env, auth);
-          await conversation.authorizeViewer(group.parentId, group.substreamId);
+          await authorizeConversation(group.parentId, group.substreamId);
           const record = await new WorkstreamObjectClient(env, auth, group.parentId, group.substreamId)
             .searchTurns(group.candidates.map((candidate) => candidate.turnId));
           const validated = new Map<string, SearchResult>();
@@ -72,7 +86,7 @@ export async function searchWorkspacePage(env: Env, auth: AuthContext, request: 
             });
           }
           // Hashing is asynchronous too: authorize after all canonical validation.
-          await conversation.authorizeViewer(group.parentId, group.substreamId);
+          await authorizeConversation(group.parentId, group.substreamId);
           for (const [id, result] of validated) results.set(id, result);
         } catch (error) { if (!denied(error)) throw error; }
       }));
@@ -94,8 +108,7 @@ export async function searchWorkspacePage(env: Env, auth: AuthContext, request: 
       await Promise.all([...groups.values()].map(async (group) => {
         signal?.throwIfAborted();
         try {
-          const conversation = new ConversationService(env, auth);
-          await conversation.authorizeViewer(group.parentId, group.substreamId);
+          await authorizeConversation(group.parentId, group.substreamId);
           const record = await new WorkstreamObjectClient(env, auth, group.parentId, group.substreamId)
             .searchLinks(group.candidates.map(({ turnId, linkId }) => ({ turnId, linkId })));
           const validated = new Map<string, SearchResult>();
@@ -111,7 +124,7 @@ export async function searchWorkspacePage(env: Env, auth: AuthContext, request: 
               location: { kind: 'link', url: link.url, range: passage.range } });
           }
           // Hashing is asynchronous too: authorize after all canonical validation.
-          await conversation.authorizeViewer(group.parentId, group.substreamId);
+          await authorizeConversation(group.parentId, group.substreamId);
           for (const [id, result] of validated) results.set(id, result);
         } catch (error) { if (!denied(error)) throw error; }
       }));
@@ -125,7 +138,7 @@ export async function searchWorkspacePage(env: Env, auth: AuthContext, request: 
       await Promise.all(candidates.map(async (candidate) => {
         signal?.throwIfAborted();
         try {
-          const record = await new ResourceService(env, auth).searchText(candidate.source_id);
+          const record = await resources.searchText(candidate.source_id);
           if (!record || Number(record.revision) !== candidate.revision) return;
           const resource = record.resource;
           const actualCategory = resourceSearchCategory(resource.provider, resource.canonicalUrl);
