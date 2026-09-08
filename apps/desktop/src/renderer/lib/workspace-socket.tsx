@@ -462,7 +462,10 @@ export function WorkspaceSocketProvider({
           }
           const recency = WorkspaceWorkstreamRecencyEventSchema.safeParse(decoded);
           if (recency.success) {
-            mergeCachedWorkstreamPage(queryClient, applyDirectoryPage(queryClient, recency.data).items);
+            mergeCachedWorkstreamPage(queryClient, applyDirectoryPage(queryClient, {
+              directoryWaterline: recency.data.directoryWaterline,
+              items: [recency.data.workstream], stateVersions: [recency.data.stateVersion], nextCursor: null,
+            }).items);
             return;
           }
           const workstreamPage = WorkspaceWorkstreamPageEventSchema.safeParse(decoded);

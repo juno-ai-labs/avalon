@@ -8,7 +8,7 @@ import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, screen } from '@testing-library/react';
 import { useEffect, type JSX } from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WorkstreamSummary } from './types';
 import { useWorkstreamControlSocket } from './use-workstream-control-socket';
 import { WorkspaceSocketProvider, useWorkspaceSocket } from './workspace-socket';
@@ -110,6 +110,10 @@ async function flushPromises(): Promise<void> {
   });
 }
 
+beforeEach(() => {
+  vi.stubGlobal('WebSocket', FakeWebSocket);
+});
+
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
@@ -122,7 +126,6 @@ afterEach(() => {
 
 describe('WorkspaceSocketProvider', () => {
   it('reports app and work-stream foreground separately and receives viewer-scoped presence', async () => {
-    vi.stubGlobal('WebSocket', FakeWebSocket);
     applicationFocus.foregrounded = true;
     const documentFocus = vi.spyOn(document, 'hasFocus').mockReturnValue(true);
     const queryClient = new QueryClient();
@@ -198,7 +201,6 @@ describe('WorkspaceSocketProvider', () => {
   });
 
   it('drops snapshots on route changes and fails malformed foreground ids closed', async () => {
-    vi.stubGlobal('WebSocket', FakeWebSocket);
     applicationFocus.foregrounded = true;
     vi.spyOn(document, 'hasFocus').mockReturnValue(true);
     const queryClient = new QueryClient();
@@ -268,7 +270,6 @@ describe('WorkspaceSocketProvider', () => {
     { closeCode: 1006, label: 'retryable transport loss' },
     { closeCode: WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, label: 'permanent access loss' },
   ])('clears ephemeral presence after $label', async ({ closeCode }) => {
-    vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     const workstreamId = '00000000-0000-7000-8000-000000000002';
 
@@ -307,7 +308,6 @@ describe('WorkspaceSocketProvider', () => {
   });
 
   it('notifies the session owner when the active workspace revokes access', async () => {
-    vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     const onAccessRevoked = vi.fn();
 
@@ -364,7 +364,6 @@ describe('WorkspaceSocketProvider', () => {
     telemetryCause,
   }) => {
     vi.useFakeTimers();
-    vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     const getWorkspaceSocketTicket = vi.fn(async () => ({
       url: 'wss://api.rally.test/socket/workspaces/workspace-1',
@@ -414,7 +413,6 @@ describe('WorkspaceSocketProvider', () => {
   });
 
   it('keeps one workspace socket, subscribes durably, and invalidates every workspace surface', async () => {
-    vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     const invalidations = vi.spyOn(queryClient, 'invalidateQueries');
     const getWorkspaceSocketTicket = vi.fn(async () => ({
@@ -505,7 +503,6 @@ describe('WorkspaceSocketProvider', () => {
 
   it('reports how deep a workspace reconnect had to go, and stops reporting at teardown', async () => {
     vi.useFakeTimers();
-    vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     const getWorkspaceSocketTicket = vi.fn(async () => ({
       url: 'wss://api.rally.test/socket/workspaces/workspace-1',
@@ -547,7 +544,6 @@ describe('WorkspaceSocketProvider', () => {
   });
 
   it('calls an offline transition during the ticket request what it is', async () => {
-    vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     let releaseTicket: (() => void) | null = null;
     const getWorkspaceSocketTicket = vi.fn(async () => {
@@ -591,7 +587,6 @@ describe('WorkspaceSocketProvider', () => {
 
   it('names the cause a workspace close event cannot carry', async () => {
     vi.useFakeTimers();
-    vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     const getWorkspaceSocketTicket = vi.fn(async () => ({
       url: 'wss://api.rally.test/socket/workspaces/workspace-1',
@@ -629,7 +624,6 @@ describe('WorkspaceSocketProvider', () => {
   });
 
   it('applies pushed access history and rejects a delayed older page', async () => {
-    vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     const getWorkspaceSocketTicket = vi.fn(async () => ({
       url: 'wss://api.rally.test/socket/workspaces/workspace-1', ticket: 'workspace-ticket',
@@ -682,18 +676,18 @@ describe('WorkspaceSocketProvider', () => {
       }],
     };
     const access = '2026-09-07T20:00:00.000Z';
-    act(() => socket.message({ ...page, directoryWaterline: 8,
-      items: page.items.map((item) => ({ ...item, lastAccessedAt: access })) }));
+    const push = { type: page.type, directoryWaterline: 8, stateVersion: page.stateVersions[0],
+      workstream: { ...page.items[0], lastAccessedAt: access } };
+    act(() => socket.message(push));
     expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.lastAccessedAt).toBe(access);
-    act(() => socket.message({ ...page, directoryWaterline: 9,
-      items: page.items.map((item) => ({ ...item, lastAccessedAt: '2026-09-08T20:00:00.000Z' })) }));
-    act(() => socket.message(page));
+    act(() => socket.message({ ...push, directoryWaterline: 9,
+      workstream: { ...push.workstream, lastAccessedAt: '2026-09-08T20:00:00.000Z' } }));
+    act(() => socket.message(push));
     expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.lastAccessedAt)
       .toBe('2026-09-08T20:00:00.000Z');
   });
 
   it('pages the authoritative work-stream directory over the workspace socket', async () => {
-    vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     const getWorkspaceSocketTicket = vi.fn(async () => ({
       url: 'wss://api.rally.test/socket/workspaces/workspace-1',
@@ -779,7 +773,6 @@ describe('WorkspaceSocketProvider', () => {
   });
 
   it('paints the whole sidebar from the subscribe answer, without asking for it', async () => {
-    vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     const getWorkspaceSocketTicket = vi.fn(async () => ({
       url: 'wss://api.rally.test/socket/workspaces/workspace-1',
@@ -901,7 +894,6 @@ describe('WorkspaceSocketProvider', () => {
   });
 
   it('does not ask for the directory it was just handed', async () => {
-    vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     const invalidations = vi.spyOn(queryClient, 'invalidateQueries');
     const getWorkspaceSocketTicket = vi.fn(async () => ({
@@ -949,7 +941,6 @@ describe('WorkspaceSocketProvider', () => {
   });
 
   it('asks for the directory when the payload leaves a resident row unaccounted for', async () => {
-    vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     // A row already resident from before the socket dropped. The reconnect
     // payload is page one and does not carry it, which page one alone cannot
@@ -1007,7 +998,6 @@ describe('WorkspaceSocketProvider', () => {
   });
 
   it('drops a resident row the whole directory no longer lists, without a refetch', async () => {
-    vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     setCachedWorkstreams(queryClient, () => [summary({
       id: '00000000-0000-7000-8000-0000000000ff',
@@ -1057,7 +1047,6 @@ describe('WorkspaceSocketProvider', () => {
   });
 
   it('takes the sidebar off a resume whose waterline is not newer', async () => {
-    vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     const getWorkspaceSocketTicket = vi.fn(async () => ({
       url: 'wss://api.rally.test/socket/workspaces/workspace-1',
@@ -1124,7 +1113,6 @@ describe('WorkspaceSocketProvider', () => {
   });
 
   it('refetches an open automation page when its list row is pushed', async () => {
-    vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     const automationId = '00000000-0000-7000-8000-000000000005';
     queryClient.setQueryData(['automation', automationId], { id: automationId, currentDefinition: null });
@@ -1180,7 +1168,6 @@ describe('WorkspaceSocketProvider', () => {
   });
 
   it('drops a sidebar list whose version is not newer than the one applied', async () => {
-    vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     const getWorkspaceSocketTicket = vi.fn(async () => ({
       url: 'wss://api.rally.test/socket/workspaces/workspace-1',
@@ -1239,7 +1226,6 @@ describe('WorkspaceSocketProvider', () => {
   });
 
   it('applies active and archived project state from the socket and drops an older snapshot', async () => {
-    vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     const getWorkspaceSocketTicket = vi.fn(async () => ({
       url: 'wss://api.rally.test/socket/workspaces/workspace-1',
@@ -1300,7 +1286,6 @@ describe('WorkspaceSocketProvider', () => {
   });
 
   it('fails an in-flight directory page immediately when the desktop goes offline', async () => {
-    vi.stubGlobal('WebSocket', FakeWebSocket);
     let online = true;
     vi.spyOn(navigator, 'onLine', 'get').mockImplementation(() => online);
     const queryClient = new QueryClient();
@@ -1488,7 +1473,6 @@ describe('the workspace and work-stream sockets over one store', () => {
   }
 
   it('takes the transition from whichever socket reports it first', async () => {
-    vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     setCachedWorkstreams(queryClient, [summary({ id: workstreamId, harnessStatus: 'running' })]);
     const { workspaceSocket, controlSocket } = await renderBothSockets(queryClient);
@@ -1510,7 +1494,6 @@ describe('the workspace and work-stream sockets over one store', () => {
   });
 
   it('takes it from the other socket when that one arrives first', async () => {
-    vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     setCachedWorkstreams(queryClient, [summary({ id: workstreamId, harnessStatus: 'running' })]);
     const { workspaceSocket, controlSocket } = await renderBothSockets(queryClient);

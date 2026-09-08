@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   formatDuration,
+  workstreamRecencyAt,
   formatSparseRelativeDate,
   groupWorkstreams,
   nextRecencyBoundary,
@@ -216,4 +217,12 @@ describe('work-stream presentation rules', () => {
     expect(formatSparseRelativeDate(localDate(2026, 7, 1, 9), now)).toBe('last week');
     expect(formatSparseRelativeDate(localDate(2026, 6, 15, 9), now)).toBe('last month');
   });
+});
+
+it('distinguishes legacy servers, unvisited rows, and recorded visits', () => {
+  const row = { lastActivityAt: '2026-09-01T00:00:00.000Z', createdAt: '2026-01-01T00:00:00.000Z' };
+  expect(workstreamRecencyAt(row)).toBe(row.lastActivityAt);
+  expect(workstreamRecencyAt({ ...row, lastAccessedAt: null })).toBe(row.createdAt);
+  expect(workstreamRecencyAt({ ...row, lastAccessedAt: '2026-09-08T00:00:00.000Z' }))
+    .toBe('2026-09-08T00:00:00.000Z');
 });
