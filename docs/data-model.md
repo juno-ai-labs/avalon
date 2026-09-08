@@ -955,7 +955,8 @@ high-water mark.
 **Why:** The Bind projection is appended one admission at a time and never
 re-read from the transcript, so a human turn that started no run was invisible
 to the model forever. The column is the record of which turns the projection has
-considered; the next admission appends the ones above it. Owned by
+considered; the next admission appends the ones above it and advances the
+column to what its scan covered, never to its own turn. Owned by
 [`workstream-durable-object.md`](workstream-durable-object.md).
 
 ### 2026-09-04: Private work-stream children gain parent and local authority tables

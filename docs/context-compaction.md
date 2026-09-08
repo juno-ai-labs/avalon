@@ -113,6 +113,15 @@ tool calls and exact tool results in the suffix are reconstructed as inseparable
 provider pairs. Tool activity before the waterline is not replayed verbatim; it
 survives only to the extent captured by the lossy continuation summary.
 
+The sequence a checkpoint records as compacted through is the loop's
+`transcript_projected_through` — the highest transcript sequence the Bind
+projection has considered — and not the transcript's high-water mark. The two
+differ by exactly the human turns that started no run and have not yet been
+appended at an admission ([`workstream-durable-object.md`](workstream-durable-object.md)):
+a checkpoint claiming the high-water would claim turns the model never saw,
+and a later bootstrap from it would lose them for good. A bootstrap may
+therefore replay slightly more than before, never less.
+
 ### Visible activity and reconnect
 
 Compaction is a first-class agent phase rather than an inference guessed from a
@@ -275,6 +284,24 @@ results.
   every routed model.
 
 ## Changelog
+
+### 2026-09-05 — A checkpoint covers what the projection considered, not what the transcript holds
+
+**What changed:** `compacted_through_sequence` is written from the loop's
+`transcript_projected_through` rather than from `transcriptThrough()`.
+
+**Why:** A human turn that starts no run is appended to the projection at the
+next admission, not when it is written, so the transcript's high-water can be
+above what the model has seen. A checkpoint recording the high-water would
+have covered turns the model never read, and the bootstrap that replays from
+`compacted_through_sequence` would have skipped them permanently. The mark is
+owned by [`workstream-durable-object.md`](workstream-durable-object.md); this
+module only reads it.
+
+**Consequences:** A checkpoint's waterline can sit below turns already in the
+transcript, and a bootstrap from it replays those turns — slightly more than
+before, never less. Nothing here may substitute the transcript's high-water
+back in.
 
 ### 2026-09-03 — Compaction has no HyperSight caller
 
