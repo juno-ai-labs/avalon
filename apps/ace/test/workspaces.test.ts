@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import worker from '../src/index';
 import type { Env } from '../src/env';
-import { createTestEnv } from './helpers/cloudflare-test';
+import { createTestD1Database, createTestEnv } from './helpers/cloudflare-test';
 
 /**
  * Ace relays; it does not decide. The retirement route asks the regional API
@@ -58,7 +58,7 @@ describe('the retirement route', () => {
   });
 
   it('retires in the region that owns the workspace, with that region\'s token, carrying the confirmation', async () => {
-    const receipt = { workspaceId: WORKSPACE_ID, complete: true, remaining: 0, retiredParents: 2, retiredChildren: 2, retainedOutbox: 0, failed: [] };
+    const receipt = { workspaceId: WORKSPACE_ID, complete: true, remaining: 0, parents: 2, retiredParents: 2, retiredChildren: 2, retainedOutbox: 0, failed: [] };
     const regional = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(Response.json(receipt));
     const response = await worker.fetch!(new Request(`https://ace.internal.rallywith.ai/api/workspaces/${WORKSPACE_ID}/retire`, {
       method: 'POST',
@@ -87,6 +87,27 @@ describe('the retirement route', () => {
     const outage = await worker.fetch!(request(), env(), context);
     expect(outage.status).toBe(502);
     await expect(outage.json()).resolves.toMatchObject({ error: 'regional_api_unavailable' });
+  });
+
+  it('names an answer the contract refuses as a version mismatch, not an outage', async () => {
+    // A well-formed 200 in a shape this Ace does not know. Ace and the regional
+    // API deploy independently; read as an outage, this never clears.
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(Response.json({ workspaceId: WORKSPACE_ID, done: true }));
+    const response = await worker.fetch!(new Request(`https://ace.internal.rallywith.ai/api/workspaces/${WORKSPACE_ID}/retire`, {
+      method: 'POST', headers, body: JSON.stringify({ region: 'global', confirmWorkspaceId: WORKSPACE_ID }),
+    }), env(), context);
+    expect(response.status).toBe(502);
+    await expect(response.json()).resolves.toMatchObject({ error: 'regional_api_contract_mismatch' });
+  });
+
+  it('answers a directory that did not answer with a sentence, never the bare internal error', async () => {
+    const broken = createTestD1Database({ prepare: () => { throw new Error('D1_ERROR: no such table'); } });
+    const response = await worker.fetch!(new Request('https://ace.internal.rallywith.ai/api/directory/workspaces?q=alto'), env({ GLOBAL_DB: broken, EU_DB: broken }), context);
+    expect(response.status).toBe(502);
+    await expect(response.json()).resolves.toEqual({
+      error: 'directory_unavailable',
+      message: 'The directory did not answer. Try again; nothing was searched.',
+    });
   });
 
   it('refuses before asking when the operator credential is not configured', async () => {

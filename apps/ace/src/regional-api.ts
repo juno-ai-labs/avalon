@@ -1,4 +1,5 @@
 import { WorkspaceRetirementResultSchema, type WorkspaceRetirementResult } from '@rally/contracts';
+import { z } from 'zod';
 import type { Env } from './env';
 
 /**
@@ -39,13 +40,17 @@ function operatorToken(env: Env, region: RallyRegion): string {
   return token;
 }
 
-/** One request to one region's operator API, parsed with the contract the caller names. */
+/**
+ * One request to one region's operator API, parsed with the contract the
+ * caller names. The parser is required: a default that cast the body was an
+ * `as` standing in for a parse, in the one file whose job is to parse.
+ */
 export async function regional<Result>(
   env: Env,
   region: RallyRegion,
   path: string,
-  init: { method?: 'GET' | 'POST'; body?: unknown } = {},
-  parse: (value: unknown) => Result = (value) => value as Result,
+  init: { method?: 'GET' | 'POST'; body?: unknown },
+  parse: (value: unknown) => Result,
 ): Promise<Result> {
   const token = operatorToken(env, region);
   const response = await fetch(`${baseUrl(env, region)}${path}`, {
@@ -71,19 +76,32 @@ export async function regional<Result>(
   return parse(body);
 }
 
-/** A regional 5xx is relayed as a bad gateway; Ace's own refusal keeps its status. */
+/**
+ * A regional 5xx is relayed as a bad gateway; Ace's own refusal keeps its
+ * status. An answer the contract does not accept is named as such: Ace and the
+ * regional API deploy independently, and a version skew between them read as
+ * an outage — one that no refresh clears, because the mismatch is
+ * deterministic.
+ */
 export function relayRegionalError(error: unknown): Response {
   if (error instanceof RegionalApiError) {
     const status = error.local ? error.status : error.status >= 500 ? 502 : error.status;
     return Response.json({ error: error.code, message: error.message }, { status });
   }
+  if (error instanceof z.ZodError) {
+    return Response.json({
+      error: 'regional_api_contract_mismatch',
+      message: 'The regional API answered in a shape this version of Ace does not recognise; Ace and the regional API may be on different versions.',
+    }, { status: 502 });
+  }
   return Response.json({ error: 'regional_api_unavailable', message: 'The regional API could not be reached.' }, { status: 502 });
 }
 
 /**
- * Retire a workspace in the region that owns it. The confirmation travels
- * with the call: the regional API refuses unless it names the workspace, so
- * the irreversible close cannot be made by a page that forgot to ask.
+ * Retire a workspace in the region that owns it. The confirmation the operator
+ * typed travels with the call, and the regional API refuses unless it names
+ * the workspace in the path — a consistency check on the request, made once
+ * more on the far side; the typed ceremony itself is the page's.
  */
 export async function retireWorkspace(
   env: Env,
