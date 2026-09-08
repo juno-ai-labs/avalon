@@ -8447,10 +8447,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = z.strictObject({ subject: AuthorizationSubjectSchema, resources: z.array(AuthorizationResourceSchema) }).parse(input);
     this.assertWorkspace(request.subject.workspaceId);
-    const storage = new AuthorizationStorage(this.state.storage);
     return request.resources.map((resource) => {
       this.assertWorkspace(resource.workspaceId);
-      return storage.read(request.subject, resource, Date.now());
+      // Legacy RPC: old snapshots have no mutation invalidation and cannot authorize reads.
+      return null;
     });
   }
 
@@ -8461,11 +8461,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       this.assertWorkspace(snapshot.subject.workspaceId);
       this.assertWorkspace(snapshot.resource.workspaceId);
     }
-    this.state.storage.transactionSync(() => {
-      const storage = new AuthorizationStorage(this.state.storage);
-      storage.pruneExpired(Date.now());
-      for (const snapshot of snapshots) storage.write(snapshot);
-    });
+    // Compatibility during rollout: accept the old wire shape without persisting grants.
   }
 
   async applyAuthorizationLocations(input: unknown) {

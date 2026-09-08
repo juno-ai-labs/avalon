@@ -1,15 +1,14 @@
 # Authorization
 
 Rally's internal read authorization primitive composes canonical owner facts into
-an explicit decision. It serves member search and resource reads. Ordinary read evidence
-may lag a permission change by at most five minutes. The module does not admit
+an explicit decision. It serves member search and resource reads. Five-minute authorization freshness is a design goal, not a read deadline. The module does not admit
 participants or become a new canonical owner of memberships.
 
 ## Where the code lives
 
 | File under `apps/api/src/` | Responsibility |
 | --- | --- |
-| `services/authorization-policy.ts` | Typed addresses, subject, four outcomes, proof composition, five-minute bound, `AccessContext` |
+| `services/authorization-policy.ts` | Typed addresses, subject, four outcomes, proof composition, evidence validation, `AccessContext` |
 | `services/authorization-service.ts` | Member policy, owner reads, request coalescing, cache validation and HTTP disclosure adapter |
 | `durable-objects/authorization-storage.ts` | Workspace SQLite snapshots, exact attachment locations and migration tables |
 | `durable-objects/authorization-projection.ts` | Transactional child outbox and reference-only Queue contract |
@@ -33,8 +32,8 @@ An alternative attachment location can independently grant access. Denial from
 one location does not override a valid grant from another.
 
 Member proofs include a canonical regional workspace-membership observation,
-coalesced per request and refreshed when its evidence expires. A long-running
-request cannot renew resource grants using its original authentication alone.
+shared only while an identical read is in flight. Subsequent checks reload
+canonical facts, including after asynchronous content loading.
 For member reads, a work stream's main SubstreamAgent owns its scope and roster.
 WorkstreamDO adds its canonical private-child membership and ready-state facts.
 An automation supplies its own scope, author, executor and child registry; an
@@ -49,35 +48,36 @@ inventory. The reverse index is discovery, never sufficient proof of a grant.
 This removes the member search path's serial scan of all work streams and all
 children. Content and search passages still come from canonical source records.
 
-### Evidence and caches
+### Evidence and read lifetime
 
-Every proof carries `owner`, `revision` and `validatedAt`. Its deadline is the
-oldest required observation plus `AUTHORIZATION_FRESHNESS_MS = 300_000`.
-Evaluation rejects evidence at the deadline and rejects future timestamps.
-Composition, Queue delivery, WorkspaceDO reads and KV publication preserve the
-observation time. They cannot start a new five-minute lease.
+Every proof carries `owner`, `revision` and `validatedAt`. Observation timestamps
+are diagnostic: old evidence does not become unavailable merely because time has
+passed. Future timestamps and empty grants remain invalid. Five-minute freshness
+is a design goal for propagation and performance, with no code-enforced timeout,
+lease duration, or permission-expiration timer.
 
-Each request coalesces identical decisions, parent roster reads and child
-attachment-inventory reads. Snapshot and resource-fact RPCs batch the page;
-remaining distinct owner checks run serially. Expired request promises are evicted
-before a new observation, and the completed batch is checked for freshness. WorkspaceDO stores reusable decision snapshots.
-Global may read/write the dedicated `AUTHORIZATION_CACHE` KV namespace; EU does
-not access it. KV retention is five minutes, but the embedded evidence deadline
-is authoritative even when a cache returns an older value. Snapshot publication
-in SQLite rejects older observations, and subsequent writes reclaim expired
-rows. KV failure falls through to regional authority.
+Each authorization check loads canonical permission facts. Concurrent identical
+checks share only in-flight work; a later check observes the owner again, including
+the final check after asynchronous content loading. Resource-fact RPCs batch the
+requested resources. The evaluator, typed addresses and four outcomes are shared
+primitives; source loaders remain responsible for their canonical facts.
 
-A negative attachment decision requires completed discovery. Its evidence time
-comes from the oldest discovered inventory, not the current time on WorkspaceDO.
-If that proof expires, the request refreshes canonical inventories once and
-re-evaluates the absence proof. This refresh preserves existing Queue receipts;
-it neither resets backfill progress nor renews old observation timestamps. A
-failed refresh remains unavailable. Positive decisions only need their independently verified
-grant path. An old or delayed index cannot manufacture access.
+Cross-request decision snapshots are no longer read or written. Removing their
+expiry alone would have made old grants permanent, because source projection jobs
+do not invalidate decision snapshots. Existing SQLite snapshot tables and Global
+KV bindings remain inert for deployment compatibility. Legacy snapshot RPCs validate
+addresses but return cache misses and accept writes without storing them. A future
+cache needs explicit owner-revision invalidation rather than a time-based lease.
+EU does not access Global KV.
 
-Resource content, versions and previews check freshness again before returning.
-This bounds admission of a response; it does not terminate a response body
-already being streamed. Search repeats the check after content validation.
+The attachment reverse index remains Queue-maintained discovery, never a grant.
+Each positive attachment path is checked against its current canonical owner.
+Completed negative discovery is usable regardless of observation age; source
+changes queue new inventories. Delayed projection can delay a newly available
+resource, so five minutes is a propagation goal rather than a guaranteed bound.
+Missing discovery queues the existing backfill and returns unavailable until a
+canonical grant or completed negative discovery exists. Reads never synchronously
+walk all workspace parents to refresh discovery because a timestamp aged.
 
 ### Agent scope adapters
 
@@ -115,7 +115,7 @@ not a switch controlling which authorization implementation serves the request.
 ## Invariants
 
 - Canonical owners stay canonical. Retimestamping a projection as authority
-  would extend revocations past the agreed five-minute bound.
+  would misrepresent when canonical authority was observed.
 - The exact internal outcomes are `allowed`, `denied`, `not_found` and
   `unavailable`. `denied` includes a policy reason; `not_found` means a canonical
   owner established absence; `unavailable` carries a retryable reason.
@@ -133,8 +133,7 @@ not a switch controlling which authorization implementation serves the request.
   Resource page parsers already accept additive fields.
 - Subject, workspace, exact address and policy version must match cached
   evidence. A record for another user or private child cannot authorize a read.
-- The shortest evidence lifetime governs a conjunction. A newer attachment
-  observation cannot renew an older membership proof.
+- Composition preserves each owner observation; it does not rewrite timestamps.
 - Missing discovery cannot be treated as confirmed absence. Activation before
   coverage is complete would silently omit private-child-only resources.
 - Queue writes and resource changes share durable local intent. A crashed
@@ -159,9 +158,8 @@ provisioned in this PR; product reads and automatic discovery do not require one
 ## Failure modes and limits
 
 Owner failures produce retryable `authority_unavailable` and a diagnostic event.
-Expired evidence produces `evidence_expired`; missing discovery or an unready
-child produces `projection_incomplete`. A KV outage does not change a denial
-into a grant. A failed canonical refresh cannot reuse expired evidence.
+Invalid future evidence produces `evidence_invalid`; missing discovery or an unready
+child produces `projection_incomplete`. Observation age alone produces no error.
 
 Reference delivery uses the existing five-second regional outbox retry interval.
 Workspace Queue dispatch uses Cloudflare's 100-message batch limit. Neither
@@ -170,17 +168,17 @@ reach the configured activity dead-letter queue; incomplete receipts prevent
 discovery. An unprovisioned registered child therefore requires repair before
 negative attachment evidence is complete; it cannot silently disappear from the backfill.
 
-Absence proofs can require a full inventory refresh after five minutes. This
-cost is confined to negative discovery; improving it requires a stronger
-completeness protocol, not extending cache TTLs. No production latency target
-is inferred from local tests.
+Canonical permission and content reads still cost RPCs. Removing cross-request
+snapshot reuse may increase repeated-query latency; this change does not claim
+the production p50/p90 search goals are met. Measure the complete app path after
+deployment, including permission changes and delayed Queue delivery.
 
 ## Testing
 
 `test/authorization-policy.test.ts` covers composition, alternate grants,
-workspace isolation, exact expiration, future timestamps and explicit incomplete lists.
+workspace isolation, aged evidence, future timestamps and explicit incomplete lists.
 `test-workers/authorization-storage.test.ts` uses real SQLite migrations for
-out-of-order inventory delivery, snapshot expiry and discovery completion.
+out-of-order inventory delivery, ignored legacy grants and discovery completion.
 `test-workers/conversation-parent-contract.test.ts` exercises stale roster
 projections and private-child search before and after queued backfill without activation.
 Existing memory, attachment-tool, resource-list, identity-authority and search
@@ -213,6 +211,23 @@ reads also initiate missing discovery. Rolling back the serving implementation
 requires a Worker code rollback, not a per-workspace mode change.
 
 ## Changelog
+
+### 2026-09-08 — Freshness is a design goal, not a read deadline
+
+**Changed:** Removed the five-minute evidence cutoff, age-triggered synchronous
+workspace discovery, and persisted decision reuse. Coalescing shares only active
+canonical reads; later checks observe permission changes without waiting for a timer.
+
+**Why:** Production searches stalled on expired attachment evidence. The user
+explicitly replaced the hard five-minute bound with a design goal. Keeping old
+snapshots forever would silently retain grants, so snapshot reuse is retired
+until it has owner-driven invalidation. The Queue remains the discovery primitive.
+
+**Consequences:** No schema migration or binding deletion is needed. Legacy
+snapshot RPCs remain inert during rollout. Ordinary reads still require canonical
+grants, unavailable authority remains explicit, and performance must be measured
+again; the earlier changelog's five-minute guarantees are superseded.
+
 
 ### 2026-09-07 — Preserve the workstream access-history migration
 
