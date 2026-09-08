@@ -114,6 +114,7 @@ class MemoryBucket {
 const openDatabases: DatabaseSync[] = [];
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const database of openDatabases.splice(0)) database.close();
 });
 
@@ -140,6 +141,9 @@ function fixture(): {
     INSERT INTO workspaces
       (id, name, slug, region, created_by_user_id, created_at, updated_at)
     VALUES ('${workspaceId}', 'Notes', 'notes', 'global', '${userId}', '2026-01-01', '2026-01-01');
+    INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
+    VALUES ('${workspaceId}', '${userId}', 'active', 'owner', '2026-01-01'),
+           ('${workspaceId}', '${otherUserId}', 'active', 'member', '2026-01-01');
   `);
   // The notes, their segments, both outboxes and the note resource rows live
   // in a real WorkspaceDO over its own schema — STRICT, identity-fenced, and
@@ -309,6 +313,8 @@ describe("NoteService", () => {
     })).rejects.toMatchObject({ status: 404, code: "note_not_found" });
     await expect(otherService.generate(noteId, "request-other"))
       .rejects.toMatchObject({ status: 404, code: "note_not_found" });
+    const refreshedAt = Date.now() + 300_000;
+    vi.spyOn(Date, 'now').mockReturnValue(refreshedAt);
     await expect(new ResourceService(env, otherAuth).get(created.resourceId)).resolves.toMatchObject({ id: created.resourceId });
   });
 

@@ -43,6 +43,11 @@ export class WorkstreamResourceStorage {
     return this.storage.sql;
   }
 
+  /** One canonical observation for reverse-index discovery and attachment authorization. */
+  readAuthorizationFacts() {
+    return { resourceIds: this.attachedResourceIds(), revision: this.inventoryRevision(), validatedAt: Date.now() };
+  }
+
   /** Every resource this work stream has attached, newest first. */
   attachedLinks(input: { resourceIds?: readonly string[] } = {}): ResourceLinkRow[] {
     const ids = input.resourceIds ? [...new Set(input.resourceIds)] : null;

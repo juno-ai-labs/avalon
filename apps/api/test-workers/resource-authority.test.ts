@@ -16,6 +16,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { asSubstreamId } from "@rally/contracts";
 
 import { conversationObjectName } from "../src/durable-objects/names";
+import { flushAuthorizationProjection, nextAuthorizationProjectionAt } from '../src/durable-objects/authorization-projection';
 import {
   WORKSPACE_ID,
   WORKSTREAM_ID,
@@ -78,6 +79,23 @@ function attach(state: DurableObjectState, watchEnabled = 0): void {
 }
 
 describe("resource authority on real workerd", () => {
+  it('retains authorization projection intent until Queue acceptance and records the next removal', async () => {
+    const stub = agent();
+    await boot(stub);
+    await runInDurableObject(stub, async (_instance, state) => {
+      seedWorkstreamRoot(state);
+      attach(state);
+      expect(nextAuthorizationProjectionAt(state.storage.sql)).toBe(0);
+      await flushAuthorizationProjection(state.storage.sql, env.ACTIVITY_QUEUE, {
+        type: 'authorization_projection_v1', region: 'global', workspaceId: WORKSPACE_ID,
+        parentId: WORKSTREAM_ID, substreamId: asSubstreamId('0'),
+      });
+      expect(nextAuthorizationProjectionAt(state.storage.sql)).toBeNull();
+      state.storage.sql.exec('DELETE FROM workstream_resource_links WHERE resource_id = ?', RESOURCE);
+      expect(nextAuthorizationProjectionAt(state.storage.sql)).toBe(0);
+    });
+  });
+
   it("commits a watch toggle and the directory projection in one step", async () => {
     const stub = agent();
     await boot(stub);

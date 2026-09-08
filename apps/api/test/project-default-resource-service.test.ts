@@ -1,3 +1,5 @@
+import { DatabaseSync } from "node:sqlite";
+import { createTestWorkspaceDO, workspaceObjectRpcs } from "./helpers/workspace-object-rpcs";
 import {
   asProjectId,
   asUserId,
@@ -5,7 +7,7 @@ import {
   ProjectSummarySchema,
   type WorkstreamId,
 } from "@rally/contracts";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../src/env";
 import { ProjectService } from "../src/services/project-service";
@@ -39,6 +41,12 @@ const project = ProjectSummarySchema.parse({
   updatedAt: "2026-08-27T00:00:00.000Z",
 });
 
+const authorizationDatabases: DatabaseSync[] = [];
+afterEach(() => {
+  for (const database of authorizationDatabases.splice(0)) database.close();
+  vi.unstubAllGlobals();
+});
+
 function environment(regionalSql: string[], targets: Array<{
   projectId: typeof projectId;
   resourceId: string;
@@ -46,7 +54,14 @@ function environment(regionalSql: string[], targets: Array<{
   workstreamId: WorkstreamId;
   membershipGeneration: number;
 }> = []): { env: Env; sendBatch: ReturnType<typeof vi.fn> } {
+  const regional = new DatabaseSync(':memory:');
+  authorizationDatabases.push(regional);
+  const workspace = createTestWorkspaceDO({ workspaceId, regionalDatabase: regional, register: (db) => authorizationDatabases.push(db) });
+  workspace.objectDatabase.prepare(`INSERT INTO resources
+    (id, workspace_id, resource_type, provider, title, metadata_json, created_at, updated_at)
+    VALUES (?, ?, 'document', 'avalon', 'Brand guide', '{}', '2026-08-27', '2026-08-27')`).run(resourceId, workspaceId);
   const stub = {
+    ...workspaceObjectRpcs(workspace.instance, []),
     listProjects: async () => ({ ok: true, directory: { items: [project], waterline: 1 } }),
     addProjectDefaultResource: async () => ({
       ok: true,

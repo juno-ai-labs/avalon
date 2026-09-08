@@ -13,6 +13,7 @@ import { RESOURCE_RELATIONSHIP_TYPES } from "@rally/contracts";
 import { SCHEDULED_ALARM_SCHEMA_STATEMENTS } from "./scheduled-alarms";
 import { ORDERED_TRANSCRIPT_SCHEMA_V1 } from "./ordered-transcript-sqlite/schema-v1";
 import { WORKSTREAM_RUNTIME_COMPAT_SCHEMA } from "./workstream-runtime-compat-schema";
+import { AUTHORIZATION_PROJECTION_MIGRATION } from './authorization-projection';
 import {
   applyDurableObjectSqliteMigrations,
   durableObjectMigrationHash,
@@ -20,7 +21,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 43;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 44;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -2868,6 +2869,10 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
       `CREATE TABLE sidekick_attachments (sidekick_id TEXT PRIMARY KEY, attached_at INTEGER NOT NULL) STRICT`,
       `CREATE TABLE sidekick_execution_skills (execution_id TEXT PRIMARY KEY, snapshot_json TEXT NOT NULL CHECK(json_valid(snapshot_json))) STRICT`,
     ],
+  }, {
+    version: 44,
+    description: 'durable authorization location discovery and membership refresh intent',
+    statements: AUTHORIZATION_PROJECTION_MIGRATION,
   },
 ];
 
