@@ -143,6 +143,13 @@ jobs:
             perl -pi -e \
               's/("DAYTONA_TERMINAL_SNAPSHOT":\s*)"[^"]*"/$1 . chr(34) . $ENV{SNAPSHOT} . chr(34)/e' \
               "$config"
+            # A rewrite the regex silently missed would look like "nothing to
+            # adopt" below and leave production on the old image with a green
+            # job; the config has to carry the name before the diff is judged.
+            if ! grep -qF "\"DAYTONA_TERMINAL_SNAPSHOT\": \"$SNAPSHOT\"" "$config"; then
+              echo "$config does not name $SNAPSHOT after the rewrite; the config's shape changed" >&2
+              exit 1
+            fi
           done
           if git diff --quiet -- apps/api/wrangler.global.jsonc apps/api/wrangler.eu.jsonc; then
             echo "Both regions already run \`$SNAPSHOT\`; nothing to adopt." >> "$GITHUB_STEP_SUMMARY"
