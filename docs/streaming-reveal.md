@@ -6,7 +6,7 @@ line-sized bursts at ~8Hz on a display painting at 60Hz — measured against the
 running client, 85% of painted frames revealed nothing and the rest revealed a
 ~12-character burst. This module decouples the two clocks on the client:
 everything the wire delivers is buffered per streaming message, and an
-animation-frame loop reveals a prefix of it at a rate that tracks the backlog,
+animation-frame loop reveals a prefix of it at a rate that tracks arriving text with backlog catch-up,
 so the visible text grows a few characters per painted frame whatever the
 wire's cadence. The wire itself is untouched: the batcher, the Durable Object
 wake rate, the socket frame rate, and the replay window are exactly what they
@@ -19,9 +19,9 @@ or how the transcript renders a message that is still growing.
 
 | Path | Responsibility |
 | --- | --- |
-| [`apps/desktop/src/renderer/lib/streaming-reveal.ts`](../apps/desktop/src/renderer/lib/streaming-reveal.ts) | The reveal arithmetic and state transitions: `revealBudget`, `advanceStreamReveal`, `flushStreamReveal`, `applyRevealedText`, and `STREAM_REVEAL_DRAIN_MS`. Pure over the cursor map; owns no timer. |
+| [`apps/desktop/src/renderer/lib/streaming-reveal.ts`](../apps/desktop/src/renderer/lib/streaming-reveal.ts) | The reveal arithmetic and state transitions: `recordStreamArrival`, `revealBudget`, `advanceStreamReveal`, `flushStreamReveal`, `applyRevealedText`, and `STREAM_REVEAL_CADENCE_MS`. Pure over the cursor map; owns no timer. |
 | [`apps/desktop/src/renderer/lib/use-workstream-socket.ts`](../apps/desktop/src/renderer/lib/use-workstream-socket.ts) | The loop: `applyStreamingSocketEvent` lands wire text in the cursors' `receivedText` (paced while the document is visible), and one `requestAnimationFrame` chain per hook instance advances and writes the revealed prefixes. |
-| [`apps/desktop/src/renderer/lib/workstream-socket-resume.tsx`](../apps/desktop/src/renderer/lib/workstream-socket-resume.tsx) | `StreamCursor` carries `receivedText`, `revealed`, and `lastRevealAt` beside the replay-ordering fields, so the reveal survives the foreground/background hook handoff the resume registry exists for. |
+| [`apps/desktop/src/renderer/lib/workstream-socket-resume.tsx`](../apps/desktop/src/renderer/lib/workstream-socket-resume.tsx) | `StreamCursor` carries `receivedText`, `revealed`, `lastRevealAt`, and mutable `pacing` beside the replay-ordering fields, so the reveal survives the foreground/background hook handoff the resume registry exists for. |
 | [`apps/desktop/src/renderer/components/workstream-blocks.tsx`](../apps/desktop/src/renderer/components/workstream-blocks.tsx) | The rendering half: `MarkdownBody`'s `streaming` mode splits the source into memoised settled segments plus an open tail (`splitStreamingMarkdown`), which is what makes a commit per painted frame affordable. [`markdown-rendering.md`](markdown-rendering.md) owns that component. |
 
 ## How it works
@@ -36,8 +36,9 @@ returns the cache untouched, so the wire's cadence stops costing commits.
 Accepted nonempty deltas record their arrival time and UTF-16 length in the
 shared cursor. A time-weighted estimate tracks characters per millisecond and
 packet cadence. The first packet uses the existing wire batcher's 100ms cadence;
-subsequent observations adapt it. Same-timestamp packets accumulate until the
-next measurable interval rather than dividing by zero.
+observations while text remains buffered adapt it. The same 100ms constant is
+also the weighting timescale, not a maximum rate. Same-timestamp packets
+accumulate until the next measurable interval rather than dividing by zero.
 
 Each arrival sets the draw rate to the greater of the measured incoming rate
 and the rate needed to drain the backlog in one estimated packet interval.
@@ -49,7 +50,12 @@ against the next frame's credit.
 
 The loop arms itself only when a stream event leaves a backlog, re-arms only
 while one remains, and one frame is in flight per hook instance at a time. An
-idle transcript costs nothing.
+idle transcript costs nothing. The frame that empties a cursor parks both its
+drawing clock and its arrival clock and discards fractional credit. The next
+packet uses the retained cadence in place of an idle interval; its size still
+updates the rate. No timeout or guessed stall multiplier distinguishes pauses.
+This favors prompt drawing over preserving motion across every delivery gap:
+when a packet drains before the next arrives, the caret briefly parks.
 
 Four paths deliberately do not pace:
 
@@ -114,14 +120,18 @@ narration through a different surface and is deliberately not paced by this.
 ## Failure modes and limits
 
 - **The initial cadence is 100ms**, matching the wire batcher's existing delay.
-  It is an initial estimate, not a speed ceiling or a timeout. Observed arrivals
-  replace it; there is no backend dependency or tokenizer assumption.
+  It seeds the cadence estimate and remains the weighting timescale. It is not
+  a speed ceiling or timeout; there is no backend dependency or tokenizer assumption.
 - **A provider pause** drains the received text at the last draw rate, then parks
-  the caret. A resumed packet updates the estimate and backlog catch-up rate.
+  the caret. A resumed packet updates the rate using the retained cadence,
+  excluding the period when the buffer was empty. Hidden arrivals do not train
+  the estimate.
 - **Hidden windows and completion** flush immediately. Checkpoints show their
   accumulated text immediately and begin estimating with fresh live deltas.
 - **Fractional credit** avoids refresh-rate-dependent rounding and is discarded
-  when the buffer drains. Retry resets discard the prior arrival estimate.
+  on the draining tick. Slow producers can have zero-character frames, rather
+  than being forced to one character per frame. Retry resets discard the prior
+  arrival estimate.
 
 ## Testing
 
@@ -161,6 +171,31 @@ sort, a segment key that churns, a `mentions` default that mints a new array per
 render — multiplies at 60 commits a second, not 8.
 
 ## Changelog
+
+### 2026-09-08 — Park pacing on the frame that drains the buffer
+
+**What changed:** Draining and hidden flushes park both timing clocks and clear
+fractional credit. Resumption retains the last cadence rather than training on
+an empty-buffer gap. Socket regressions cover 250ms, 2s, and 10s gaps; unit tests
+cover fractional debt and the measured-rate branch. The cadence constant's name
+now describes its seed and weighting role.
+
+**Why:** Review reproduced a gap the initial regular-cadence check missed: the
+last scheduled tick left its clock live, so the next packet banked idle time
+and burst on screen. The estimator separately learned pauses as slow production,
+causing resumed text to crawl once the clock bug was fixed.
+
+**Considered and rejected:** A guessed stall multiplier or draw-speed ceiling.
+The drained state already tells us there is no incoming text to pace. Keeping
+the measured-rate estimate matters when a smaller packet follows a faster one.
+
+**Consequences:** The loop must park before it stops scheduling itself. This PR
+replaces the deliberate 270ms smoothing trade-off recorded in the 2026-08-23
+entry with lower latency and linear catch-up, accepting brief empty-buffer gaps.
+That entry's original smoothness measurements remain historical evidence, not
+measurements of this implementation. The original PR check covered a component
+in Electron; review follow-up validation is recorded in the PR.
+
 
 ### 2026-09-07 — Drawing follows frontend text arrival speed
 
