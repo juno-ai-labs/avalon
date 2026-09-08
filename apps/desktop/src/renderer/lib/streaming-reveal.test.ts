@@ -5,7 +5,8 @@ import {
   applyRevealedText,
   flushStreamReveal,
   revealBudget,
-  STREAM_REVEAL_DRAIN_MS,
+  recordStreamArrival,
+  STREAM_REVEAL_CADENCE_MS,
 } from './streaming-reveal';
 import type { Message } from './types';
 import type { StreamCursor } from './workstream-socket-resume';
@@ -42,27 +43,24 @@ function streamingMessage(overrides: Partial<Message> = {}): Message {
 }
 
 describe('revealBudget', () => {
-  it('reveals the backlog proportionally to elapsed time over the drain window', () => {
-    expect(revealBudget(STREAM_REVEAL_DRAIN_MS, STREAM_REVEAL_DRAIN_MS / 2)).toBe(STREAM_REVEAL_DRAIN_MS / 2);
-    expect(revealBudget(1_000, STREAM_REVEAL_DRAIN_MS)).toBe(1_000);
+  it('integrates the explicit draw rate over elapsed time', () => {
+    expect(revealBudget(STREAM_REVEAL_CADENCE_MS, STREAM_REVEAL_CADENCE_MS / 2, 1)).toBe(STREAM_REVEAL_CADENCE_MS / 2);
+    expect(revealBudget(1_000, STREAM_REVEAL_CADENCE_MS, 10)).toBe(1_000);
   });
 
-  it('keeps a trickle moving with a one-character floor', () => {
-    // Zero elapsed is the case only the floor covers: proportionality alone
-    // would reveal nothing, and a second shared-loop tick in the same frame
-    // must still make progress eventually.
-    expect(revealBudget(3, 0)).toBe(1);
+  it('does not advance without elapsed time', () => {
+    expect(revealBudget(3, 0, 1)).toBe(0);
   });
 
   it('never reveals more than the backlog and nothing for an empty one', () => {
-    expect(revealBudget(2, 10 * STREAM_REVEAL_DRAIN_MS)).toBe(2);
-    expect(revealBudget(0, 100)).toBe(0);
+    expect(revealBudget(2, 10 * STREAM_REVEAL_CADENCE_MS, 1)).toBe(2);
+    expect(revealBudget(0, 100, 1)).toBe(0);
   });
 });
 
 describe('advanceStreamReveal', () => {
   it('advances the revealed prefix and reports remaining backlog', () => {
-    const cursors = new Map([['message-one', cursor({ receivedText: 'x'.repeat(STREAM_REVEAL_DRAIN_MS) })]]);
+    const cursors = new Map([['message-one', cursor({ receivedText: 'x'.repeat(STREAM_REVEAL_CADENCE_MS) })]]);
     const first = advanceStreamReveal(cursors, 1_000);
     expect(first).toEqual({ changed: true, backlogRemains: true });
     const advanced = cursors.get('message-one')!;
@@ -80,7 +78,7 @@ describe('advanceStreamReveal', () => {
     advanceStreamReveal(cursors, 1_000);
     const afterFirst = cursors.get('message-one')!.revealed;
     advanceStreamReveal(cursors, 1_000);
-    expect(cursors.get('message-one')!.revealed).toBe(afterFirst + 1);
+    expect(cursors.get('message-one')!.revealed).toBe(afterFirst);
   });
 
   it('skips completed cursors and clears the clock on a drained one', () => {
@@ -107,10 +105,9 @@ describe('alignRevealBoundary', () => {
   it('never exposes an unpaired surrogate through repeated one-unit ticks', () => {
     const cursors = new Map([['message-one', cursor({ receivedText: 'A😀B😀C' })]]);
     const seen: string[] = [];
-    // Elapsed time near zero pins the budget to its one-unit floor, the case
-    // that would otherwise slice an emoji in half for a frame.
+    // Small budgets must still preserve surrogate pairs.
     for (let tick = 0; tick < 12; tick += 1) {
-      advanceStreamReveal(cursors, 1_000);
+      advanceStreamReveal(cursors, 1_000 + tick * 17);
       const current = cursors.get('message-one')!;
       seen.push(current.receivedText.slice(0, current.revealed));
     }
@@ -153,5 +150,101 @@ describe('applyRevealedText', () => {
     const cursors = new Map([['message-one', cursor({ completed: true, receivedText: 'stale', revealed: 1 })]]);
     expect(applyRevealedText([completed], cursors)).toEqual([completed]);
     expect(applyRevealedText([streamingMessage({ id: 'unknown', text: 'kept' })], new Map())[0]?.text).toBe('kept');
+  });
+});
+
+describe('arrival-rate pacing', () => {
+  it('drains a packet at its measured rate without an exponential tail', () => {
+    const current = cursor({ receivedText: 'x'.repeat(100), pacing: recordStreamArrival(undefined, 100, 100, 0), lastRevealAt: 0 });
+    const cursors = new Map([['one', current]]);
+    for (let now = 10; now <= 100; now += 10) advanceStreamReveal(cursors, now);
+    expect(current.revealed).toBe(100);
+  });
+
+  it('follows a speedup and catches up within the next packet interval', () => {
+    const slow = recordStreamArrival(undefined, 10, 10, 0);
+    const fast = recordStreamArrival(slow, 100, 110, 100);
+    const current = cursor({ receivedText: 'x'.repeat(110), pacing: fast, lastRevealAt: 100 });
+    const cursors = new Map([['one', current]]);
+    advanceStreamReveal(cursors, 150);
+    expect(current.revealed).toBeGreaterThanOrEqual(55);
+    advanceStreamReveal(cursors, 200);
+    expect(current.revealed).toBe(110);
+  });
+
+  it('carries fractional characters equally at different refresh rates', () => {
+    // Hold drawRate fixed to isolate integration from arrival estimation.
+    const run = (step: number) => {
+      const current = cursor({ receivedText: 'x'.repeat(100), pacing: { ...recordStreamArrival(undefined, 1, 1, 0), drawRate: 0.01 }, lastRevealAt: 0 });
+      const cursors = new Map([['one', current]]);
+      for (let now = step; now <= 1000; now += step) advanceStreamReveal(cursors, now);
+      return current.revealed;
+    };
+    expect(run(10)).toBeGreaterThanOrEqual(9);
+    expect(Math.abs(run(10) - run(20))).toBeLessThanOrEqual(1);
+  });
+
+  it('accumulates simultaneous arrivals without infinite rates', () => {
+    const first = recordStreamArrival(undefined, 10, 10, 0);
+    const simultaneous = recordStreamArrival(first, 20, 30, 0);
+    expect(simultaneous.pendingCharacters).toBe(20);
+    const next = recordStreamArrival(simultaneous, 10, 40, 100);
+    expect(next.rate).toBeCloseTo(0.2);
+    expect(next.pendingCharacters).toBe(0);
+  });
+});
+
+
+describe('pacing across idle gaps', () => {
+  it('parks both clocks and clears fractional credit on the draining frame', () => {
+    const current = cursor({ receivedText: 'abc', lastRevealAt: 0,
+      pacing: { ...recordStreamArrival(undefined, 3, 3, 0), credit: 0.5 } });
+    expect(advanceStreamReveal(new Map([['one', current]]), 1000))
+      .toEqual({ changed: true, backlogRemains: false });
+    expect(current.lastRevealAt).toBeNull();
+    expect(current.pacing?.credit).toBe(0);
+    expect(current.pacing?.lastArrivalAt).toBeNull();
+  });
+
+  it.each([250, 2000, 10000])('does not learn a drained %ims gap as slow production', (gap) => {
+    const current = cursor({ receivedText: 'x'.repeat(10), lastRevealAt: 0,
+      pacing: recordStreamArrival(undefined, 10, 10, 0) });
+    advanceStreamReveal(new Map([['one', current]]), 100);
+    const resumed = recordStreamArrival(current.pacing, 10, 10, gap);
+    expect(resumed.cadenceMs).toBe(100);
+    expect(resumed.drawRate).toBeCloseTo(0.1);
+  });
+
+  it('uses the measured rate when a smaller packet follows a fast packet', () => {
+    const first = recordStreamArrival(undefined, 100, 100, 0);
+    const next = recordStreamArrival(first, 10, 10, 100);
+    expect(next.rate).toBeGreaterThan(10 / next.cadenceMs);
+    expect(next.drawRate).toBe(next.rate);
+  });
+
+  it('keeps sub-millisecond samples finite without a draw-speed ceiling', () => {
+    let pacing = recordStreamArrival(undefined, 100, 100, 0);
+    for (let i = 1; i <= 10; i += 1) {
+      pacing = recordStreamArrival(pacing, 100, 100 * (i + 1), i * 0.001);
+      expect(Number.isFinite(pacing.rate)).toBe(true);
+      expect(pacing.rate).toBeLessThanOrEqual(i + 1);
+    }
+  });
+
+  it('repays a surrogate unit before revealing the following character', () => {
+    const current = cursor({ receivedText: '😀ab', lastRevealAt: 0,
+      pacing: { ...recordStreamArrival(undefined, 4, 4, 0), drawRate: 0.01 } });
+    const cursors = new Map([['one', current]]);
+    advanceStreamReveal(cursors, 100);
+    expect(current.revealed).toBe(2);
+    expect(current.pacing?.credit).toBe(-1);
+    advanceStreamReveal(cursors, 150);
+    expect(current.revealed).toBe(2);
+    advanceStreamReveal(cursors, 200);
+    expect(current.revealed).toBe(2);
+    advanceStreamReveal(cursors, 300);
+    expect(current.revealed).toBe(3);
+    advanceStreamReveal(cursors, 400);
+    expect(current.revealed).toBe(4);
   });
 });
