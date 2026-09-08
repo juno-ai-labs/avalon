@@ -22,9 +22,10 @@ export interface StreamCursor {
    * cursor replacements the socket events perform.
    */
   revealed: number;
-  /** Frontend arrival estimate and fractional draw credit, shared across subscribers. */
+  /** Mutable frontend arrival estimate and fractional draw credit, shared across subscribers. */
   pacing?: {
-    lastArrivalAt: number;
+    /** Null while drained: provider idle time must not train the estimator. */
+    lastArrivalAt: number | null;
     cadenceMs: number;
     rate: number;
     drawRate: number;

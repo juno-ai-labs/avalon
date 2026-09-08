@@ -314,8 +314,8 @@ export function applyStreamingSocketEvent(
     completed: false,
     receivedText,
     revealed,
-    lastRevealAt: replacesAttempt ? null : cursor?.lastRevealAt ?? null,
-    pacing: event.type === 'stream_delta' && event.delta.length > 0
+    lastRevealAt: !paced || replacesAttempt ? null : cursor?.lastRevealAt ?? null,
+    pacing: !paced ? undefined : event.type === 'stream_delta' && event.delta.length > 0
       ? recordStreamArrival(
           replacesAttempt ? undefined : cursor?.pacing,
           event.delta.length,
