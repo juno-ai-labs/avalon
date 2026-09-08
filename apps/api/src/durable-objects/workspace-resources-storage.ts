@@ -794,7 +794,8 @@ export function upsertWorkspaceInboundEmailResource(
 /**
  * Register the resources a provider webhook mentioned, refreshing the ones
  * this connection already knows — the same conflict target the schema's
- * partial unique index declares.
+ * partial unique index declares. Delivery provenance alone is not a resource
+ * change: retain the timestamp and provenance of the last meaningful update.
  */
 export function upsertWorkspaceDiscoveredResources(
   storage: DurableObjectStorage,
@@ -815,7 +816,13 @@ export function upsertWorkspaceDiscoveredResources(
            title = excluded.title,
            canonical_url = COALESCE(excluded.canonical_url, resources.canonical_url),
            metadata_json = json_patch(resources.metadata_json, excluded.metadata_json),
-           updated_at = excluded.updated_at`,
+           updated_at = excluded.updated_at
+         WHERE resources.resource_type IS NOT excluded.resource_type
+            OR resources.title IS NOT excluded.title
+            OR resources.canonical_url IS NOT COALESCE(excluded.canonical_url, resources.canonical_url)
+            OR json_remove(resources.metadata_json, '$.discoveredEventType', '$.discoveredDeliveryId')
+               IS NOT json_remove(json_patch(resources.metadata_json, excluded.metadata_json),
+                 '$.discoveredEventType', '$.discoveredDeliveryId')`,
         resource.id,
         request.workspaceId,
         request.connectionId,
