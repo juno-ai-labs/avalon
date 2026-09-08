@@ -1,4 +1,5 @@
 import clsx from 'clsx';
+import { MemberPresentationContext } from '../lib/member-presentation';
 import {
   IconBrain,
   IconDeviceDesktop,
@@ -25,7 +26,7 @@ import {
   Volume2,
   X,
 } from 'lucide-react';
-import { Children, Fragment, memo, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { Children, Fragment, memo, useCallback, useContext, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Highlight, Prism, type Language, type PrismTheme } from 'prism-react-renderer';
 import {
   citationFootnotes,
@@ -2260,6 +2261,19 @@ export function MessageBlock({
   acceptingDraftFor,
   acceptDraftError,
 }: MessageBlockProps): React.JSX.Element {
+  const presentations = useContext(MemberPresentationContext);
+  const profileUserId = message.authorType === 'human' ? message.author?.id
+    : message.authorType === 'agent' && !message.author && message.messageType === 'elicitation'
+      && message.elicitation?.status === 'answered' ? currentUserId : undefined;
+  const profile = profileUserId ? presentations.get(profileUserId) : undefined;
+  const personStyle = {
+    '--person-accent': profile ? 'var(--av-sys-color-text-default)' : turnAccent(message),
+    ...(profile ? {
+      '--person-dot': `var(--av-cmp-member-message-${profile.color}-dot)`,
+      '--av-cmp-bubble-human-background': `var(--av-cmp-member-message-${profile.color}-background)`,
+      '--av-cmp-bubble-human-foreground': `var(--av-cmp-member-message-${profile.color}-foreground)`,
+    } : {}),
+  } as React.CSSProperties;
   if (message.messageType === 'thought') return <div className="transcript-event" id={`message-${message.id}`}><ThoughtBlock message={message} /></div>;
   if (message.messageType === 'tool_event') return <div className="transcript-event" id={`message-${message.id}`}><ToolBlock message={message} /></div>;
   if (message.messageType === 'plugin_activity') return <div className="transcript-event" id={`message-${message.id}`}><PluginActivityBlock message={message} /></div>;
@@ -2290,7 +2304,7 @@ export function MessageBlock({
         // label there would attribute the reader's own answer to a "Workspace
         // member" on a row this same branch labels as theirs, so the session's
         // own name stands in for that window.
-        : message.author?.name
+        : profile?.displayName ?? message.author?.name
           ?? (ownHumanResponse ? currentUserName : undefined)
           ?? 'Workspace member';
       return (
@@ -2301,7 +2315,8 @@ export function MessageBlock({
             ownHumanResponse ? 'own-human-message' : 'coworker-message',
           )}
           id={`message-${message.id}`}
-          style={{ '--person-accent': turnAccent(message) } as React.CSSProperties}
+          data-profile-color={profile?.color}
+          style={personStyle}
         >
           {/* The same identity line every human turn carries, the reader's own
               included — see the header on the ordinary authored row below. */}
@@ -2350,7 +2365,7 @@ export function MessageBlock({
   const ownHumanMessage = message.authorType === 'human' && currentUserId !== undefined && message.author?.id === currentUserId;
   const humanAuthorName = external
     ? `${message.externalActor?.displayName ?? 'Slack workspace member'} · Slack`
-    : message.author?.name ?? 'Workspace member';
+    : profile?.displayName ?? message.author?.name ?? 'Workspace member';
   const sending = message.deliveryState === 'sending';
   const pending = message.deliveryState === 'steer_pending'
     || message.deliveryState === 'queue_pending';
@@ -2375,7 +2390,8 @@ export function MessageBlock({
         pending && 'is-pending-delivery',
       )}
       id={`message-${message.id}`}
-      style={human ? { '--person-accent': turnAccent(message) } as React.CSSProperties : undefined}
+      data-profile-color={human ? profile?.color : undefined}
+      style={human ? personStyle : undefined}
     >
       {/* One identity line for every turn in the feed, the reader's own
           included. A person reading back a long transcript is reading a room,

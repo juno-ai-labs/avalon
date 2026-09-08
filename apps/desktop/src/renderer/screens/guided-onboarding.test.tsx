@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { AccountOnboardingGate, WorkspaceOnboardingJourney } from './guided-onboarding';
+import { AccountOnboardingGate, PersonalSetup, WorkspaceOnboardingJourney } from './guided-onboarding';
 import { act } from '@testing-library/react';
 import type { Workspace } from '../lib/types';
 
@@ -130,4 +130,28 @@ describe('new-account learning paths', () => {
     expect(state.invite).toHaveBeenCalledTimes(1);
   });
 
+});
+
+
+describe('Account profile settings', () => {
+  it('saves field edits without a save action and keeps pending updates when leaving the pane', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    let release!: (account: unknown) => void;
+    state.saveAccount.mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }))
+      .mockImplementation(async (input) => ({ ...state.account, revision: input.expectedRevision + 1, presentation: { ...input.presentation, revision: input.expectedRevision + 1 } }));
+    const view = render(<QueryClientProvider client={client}><AccountOnboardingGate><PersonalSetup variant="settings" /></AccountOnboardingGate></QueryClientProvider>);
+    await screen.findByLabelText('Avatar initials');
+    expect(screen.queryByRole('button', { name: 'Save profile' })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'New Name' } });
+    expect(state.saveAccount).toHaveBeenCalledWith({ expectedRevision: 0, presentation: { displayName: 'New Name', initials: 'P', avatar: 'circle', color: 'blue' } });
+    fireEvent.change(screen.getByLabelText('Avatar initials'), { target: { value: 'NN' } });
+    fireEvent.click(screen.getByRole('button', { name: 'violet' }));
+    expect(screen.getByLabelText('Name')).toHaveValue('New Name');
+    expect(screen.getByRole('button', { name: 'violet' })).toHaveAttribute('aria-pressed', 'true');
+    view.rerender(<QueryClientProvider client={client}><AccountOnboardingGate><div>Application settings</div></AccountOnboardingGate></QueryClientProvider>);
+    await act(async () => release({ ...state.account, revision: 1, presentation: { displayName: 'New Name', initials: 'P', color: 'blue', avatar: 'circle', revision: 1 } }));
+    await waitFor(() => expect(state.saveAccount).toHaveBeenCalledTimes(2));
+    expect(state.saveAccount.mock.lastCall?.[0]).toMatchObject({ expectedRevision: 1, presentation: { displayName: 'New Name', initials: 'NN', color: 'violet' } });
+    expect(client.getQueryData(['account-onboarding', 'person@example.com'])).toMatchObject({ revision: 2, presentation: { displayName: 'New Name', initials: 'NN', color: 'violet' } });
+  });
 });

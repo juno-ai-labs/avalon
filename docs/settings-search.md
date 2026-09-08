@@ -110,6 +110,10 @@ scrolling and both appearances.
 
 ## Changelog
 
+### 2026-09-08 — Move personal appearance to Account
+
+Account now exposes name, avatar initials and color as individual searchable settings. The compact profile editor previews edits immediately and saves valid changes automatically through the existing account save path; Application retains device appearance controls.
+
 ### 2026-09-07 — Preserve the theme guard across grouped selectors
 
 The navigation-painter invariant now allows the separate Settings panel and
