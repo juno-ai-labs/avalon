@@ -468,6 +468,7 @@ let mainWindow: BrowserWindow | null = null;
 let conversationDetailsExpansion = 0;
 let conversationDetailsAppliedWidth = 0;
 let settingsWindow: BrowserWindow | null = null;
+let sidekicksWindow: BrowserWindow | null = null;
 /**
  * LIMIT UNSET — open, enforcing nothing. Awaiting a value from the team; see
  * docs/adding-security-defensive-and-other-limits.md.
@@ -679,7 +680,7 @@ async function reportJavascriptErrorCandidate(
 }
 
 function rallyWindows(): BrowserWindow[] {
-  return [mainWindow, settingsWindow, deepLinkErrorWindow, ...meetingWindows]
+  return [mainWindow, settingsWindow, sidekicksWindow, deepLinkErrorWindow, ...meetingWindows]
     .filter((window): window is BrowserWindow => Boolean(window && !window.isDestroyed()));
 }
 
@@ -2741,6 +2742,7 @@ async function logout(): Promise<void> {
       failures.push(error);
     }
     settingsWindow?.close();
+    sidekicksWindow?.close();
     for (const window of meetingWindows) forceCloseMeetingWindow(window);
     if (stored) {
       const credentials = [
@@ -3036,6 +3038,7 @@ function assertTrustedIpcSender(event: IpcMainInvokeEvent): void {
   const sender = event.sender;
   const belongsToRallyWindow = sender === mainWindow?.webContents
     || sender === settingsWindow?.webContents
+    || sender === sidekicksWindow?.webContents
     || sender === deepLinkErrorWindow?.webContents
     || isMeetingWindowContents(sender);
   if (!belongsToRallyWindow || !event.senderFrame || !rendererNavigationAllowed(event.senderFrame.url)) {
@@ -3081,7 +3084,12 @@ function meetingAudioPermissionDependencies() {
 function registerIpc(): void {
   registerRealtimeSocketIpc({
     apiBaseUrls: Object.values(runtimeConfig().api),
-    assertSender: assertMainWindowIpcSender,
+    assertSender: (event) => {
+      assertTrustedIpcSender(event);
+      if (event.sender !== mainWindow?.webContents && event.sender !== sidekicksWindow?.webContents) {
+        throw new Error('Only Rally conversation windows can open realtime sockets');
+      }
+    },
     broker: realtimeSocketBroker,
     ipc: ipcMain,
   });
@@ -3425,6 +3433,11 @@ function registerIpc(): void {
     const request = parseArtifactWindowRequest(raw);
     if (!request || !isArtifactUrl(request.url, artifactServingDomain())) return;
     openArtifactWindow(request);
+  });
+  ipcMain.handle('system:open-sidekicks', async (event, rawId: unknown) => {
+    assertTrustedIpcSender(event);
+    const id = rawId === undefined ? undefined : IdSchema.parse(rawId);
+    await createSidekicksWindow(id);
   });
   ipcMain.handle('system:open-settings', async (event, rawSection: unknown) => {
     assertTrustedIpcSender(event);
@@ -3923,7 +3936,7 @@ function preloadPath(): string {
 
 function installWindowDiagnostics(
   window: BrowserWindow,
-  surface: 'main' | 'settings' | 'meeting' | 'deep-link-error',
+  surface: 'main' | 'settings' | 'sidekicks' | 'meeting' | 'deep-link-error',
 ): void {
   window.webContents.on('preload-error', (_event, _scriptPath, error) => {
     logError('rally', `${surface} preload failed to initialize`, {
@@ -3984,7 +3997,7 @@ function installWindowDiagnostics(
 async function loadRenderer(
   window: BrowserWindow,
   url: string,
-  surface: 'main' | 'settings' | 'meeting' | 'deep-link-error',
+  surface: 'main' | 'settings' | 'sidekicks' | 'meeting' | 'deep-link-error',
 ): Promise<void> {
   try {
     await window.loadURL(url);
@@ -3996,7 +4009,7 @@ async function loadRenderer(
 }
 
 function rendererUrl(
-  surface?: 'settings' | 'meeting' | 'deep-link-error',
+  surface?: 'settings' | 'sidekicks' | 'meeting' | 'deep-link-error',
   settingsSection?: DesktopSettingsSection,
   noteId?: string,
   meetingEntrypoint?: 'sidebar' | 'menu_bar' | 'unknown',
@@ -4007,6 +4020,7 @@ function rendererUrl(
   if (surface) target.searchParams.set('surface', surface);
   if (settingsSection) target.searchParams.set('settingsSection', settingsSection);
   if (surface === 'settings') target.hash = '/settings';
+  if (surface === 'sidekicks') target.hash = '/sidekicks';
   if (surface === 'deep-link-error') target.hash = '/deep-link-error';
   if (surface === 'meeting') {
     if (noteId) target.searchParams.set('noteId', noteId);
@@ -4165,6 +4179,55 @@ async function createSettingsWindow(section?: DesktopSettingsSection): Promise<v
     settingsWindow = null;
   });
   await loadRenderer(settingsWindow, rendererUrl('settings', section), 'settings');
+}
+
+async function createSidekicksWindow(sidekickId?: string): Promise<void> {
+  const target = new URL(rendererUrl('sidekicks'));
+  if (sidekickId) target.hash = `/sidekicks/${sidekickId}`;
+  if (sidekicksWindow && !sidekicksWindow.isDestroyed()) {
+    if (sidekickId) await loadRenderer(sidekicksWindow, target.toString(), 'sidekicks');
+    if (sidekicksWindow.isMinimized()) sidekicksWindow.restore();
+    sidekicksWindow.show();
+    sidekicksWindow.focus();
+    return;
+  }
+
+  sidekicksWindow = new BrowserWindow({
+    width: 960,
+    height: 720,
+    minWidth: 720,
+    minHeight: 560,
+    show: false,
+    backgroundColor: windowBackgroundColor(),
+    title: 'Rally Sidekicks',
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    trafficLightPosition: { x: 18, y: 17 },
+    ...(process.platform === 'darwin' ? {} : { icon: applicationWindowIconPath() }),
+    webPreferences: {
+      preload: preloadPath(),
+      contextIsolation: true,
+      devTools: !app.isPackaged,
+      nodeIntegration: false,
+      sandbox: true,
+      spellcheck: true,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
+    },
+  });
+
+  const sidekicksWebContentsId = sidekicksWindow.webContents.id;
+  sidekicksWindow.webContents.on('render-process-gone', () => realtimeSocketBroker.closeOwner(sidekicksWebContentsId));
+  sidekicksWindow.webContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
+    if (isMainFrame && !isInPlace) realtimeSocketBroker.closeOwner(sidekicksWebContentsId);
+  });
+  installWindowDiagnostics(sidekicksWindow, 'sidekicks');
+  sidekicksWindow.setMenuBarVisibility(false);
+  sidekicksWindow.once('ready-to-show', () => sidekicksWindow?.show());
+  sidekicksWindow.on('closed', () => {
+    realtimeSocketBroker.closeOwner(sidekicksWebContentsId);
+    sidekicksWindow = null;
+  });
+  await loadRenderer(sidekicksWindow, target.toString(), 'sidekicks');
 }
 
 async function createMeetingWindow(

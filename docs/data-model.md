@@ -32,6 +32,10 @@ relationally queried.
 Read it before adding a table, a column, or a migration, and before assuming that
 knowing an object's ID is enough to read it — it never is.
 
+## Sidekick loading and attachment storage
+
+SidekickDO migration 3 adds automation.loadable, atomically maintained with the accepted revision. WorkspaceDO migration 35 projects this value, using null for unresolved legacy eligibility. Substream migration 43 adds sidekick_attachments and sidekick_execution_skills for conversation ownership and retry-stable instruction snapshots. Existing namespace lookup keys remain unchanged.
+
 ## Where the code lives
 
 | Path | Responsibility |
@@ -59,7 +63,7 @@ WorkspaceDO migration 33 owns `resource_search_versions`: a retained resource re
 
 Account presentation and new-user eligibility are added by migration 0099.
 Global identity owns the revisioned name, initials, avatar and color, projected
-narrowly to EU. WorkspaceDO migrations 34 and 35 own resumable per-person
+narrowly to EU. WorkspaceDO migration 34 owns resumable per-person
 onboarding and confirmed connector selections. See [new-user onboarding](new-user-onboarding.md).
 
 - `users` stores Google identity subjects and display information, plus the
@@ -889,11 +893,16 @@ perform the regional audit/control write explicitly through
 
 ## Changelog
 
+### 2026-09-07 — Sidekick loading and attachment storage
+
+SidekickDO migration 3 adds automation.loadable, atomically maintained with the accepted revision. WorkspaceDO migration 35 projects this value, using null for unresolved legacy eligibility. Substream migration 43 adds sidekick_attachments and sidekick_execution_skills for conversation ownership and retry-stable instruction snapshots. Existing namespace lookup keys remain unchanged.
+
+This composes knowledge with existing execution machinery while keeping one Sidekick identity and preserving authorization boundaries.
 ### 2026-09-07 — Persist new-user identity and learning progress
 
 Onboarding needs the same appearance and resumable setup across sessions.
 Migration 0099 stores the revisioned account presentation in identity D1;
-WorkspaceDO migrations 34–35 store the per-member journey and connector choices.
+WorkspaceDO migration 34 stores the per-member journey and connector choices.
 Existing accounts are exempted. A second execution store was rejected: first
 work uses ordinary workstream creation and the existing durable agent loop.
 

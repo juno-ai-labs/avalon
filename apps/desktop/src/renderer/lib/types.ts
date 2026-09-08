@@ -112,6 +112,7 @@ export interface PendingWorkspaceInvitation extends WorkspaceInvitationPreview {
 export type AutomationScope = 'you' | 'workspace' | 'workstream';
 
 export interface AutomationSummary {
+  loadable?: boolean;
   id: string;
   name: string;
   description: string;
@@ -652,6 +653,7 @@ export interface AutomationDetail extends AutomationSummary {
   currentDefinitionRevision: number;
   /** The revision that is running, or null while still a draft. */
   acceptedDefinitionRevision: number | null;
+  runnable?: boolean;
   connectorBindings: Record<string, string>;
   /** One line per trigger of the current definition, or empty before one exists. */
   triggerSummaries: string[];

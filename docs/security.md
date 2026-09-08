@@ -17,7 +17,7 @@ outside this document can break without their own tests failing.
 | --- | --- |
 | `apps/desktop/src/main/index.ts` | Window creation, sandbox and `contextIsolation` flags, navigation denial, IPC handler registration. |
 | `apps/desktop/src/preload/index.ts` | The whole renderer-facing API. Nothing else crosses. |
-| `apps/desktop/src/common/realtime-socket-validation.ts`, `apps/desktop/src/main/realtime-socket-ipc.ts` | Shared broker channel/event validation and the main-window-only socket IPC boundary. |
+| `apps/desktop/src/common/realtime-socket-validation.ts`, `apps/desktop/src/main/realtime-socket-ipc.ts` | Shared broker channel/event validation and the conversation-window socket IPC boundary. |
 | `apps/desktop/src/main/realtime-socket-broker.ts` | Route-confined Node socket transport, ordered system/PAC routing, OS trust roots, frame limits, and renderer-owner teardown. |
 | `apps/desktop/src/renderer/index.html` | The Content Security Policy. |
 | `apps/desktop/src/main/theme-assets.ts` | The private remote-font cache that keeps the renderer off remote font hosts. |
@@ -52,7 +52,7 @@ are canonical storage services, not authorization layers.
   sandbox. Its bridge exposes a small named API and never exposes `ipcRenderer`,
   environment variables, filesystem paths, or arbitrary channel names.
 - Every IPC argument is parsed before use.
-- Four windows are trusted IPC senders: main, settings, meeting, and the
+- Five window kinds are trusted IPC senders: main, Sidekicks, settings, meeting, and the
   deep-link failure window. Handlers that must not be reachable from every one of
   them narrow further — `assertDeepLinkErrorIpcSender` admits only the failure
   window, because its channels read and close that window. The failure window's
@@ -618,7 +618,7 @@ bound it on the thing a placeholder cannot fake, and add the bound to
 - **A native WebSocket in the renderer is constructed only from a URL an
   authenticated ticket endpoint returned; Electron's work-stream broker is
   narrower still.** Its typed IPC accepts only configured regional
-  WorkstreamDO/SubstreamAgent paths from the main window and main supplies the
+  WorkstreamDO/SubstreamAgent paths from main or Sidekicks windows, and main supplies the
   application Origin.
 - **A URL schema names its accepted scheme contract explicitly.** Bare Zod URL
   validation accepts `javascript:` and `data:`.
@@ -771,6 +771,15 @@ EU rotate independently. [`runbook.md`](runbook.md) owns the procedure and the
 incident response that may prompt it.
 
 ## Changelog
+
+### 2026-09-07 — Sidekick conversation window
+
+The Sidekicks library needs the same conversational socket transport as the main
+window. Its trusted renderer may open broker sockets; each socket remains scoped
+to the requesting webContents and validated regional routes. Settings and external
+content still cannot open sockets. The window uses the existing workspace/session
+broadcasts and closes on logout.
+
 
 ### 2026-09-04 — Fail visibly when isolated release-smoke processes cannot exit
 

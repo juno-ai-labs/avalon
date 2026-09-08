@@ -9,7 +9,6 @@ import {
   ChevronsLeft,
   Check,
   CircleHelp,
-  CirclePause,
   Clock,
   Cog,
   Copy,
@@ -26,11 +25,9 @@ import {
   Pencil,
   Pin,
   PinOff,
-  Play,
   Plus,
   Settings,
   Smartphone,
-  Trash2,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
@@ -38,7 +35,6 @@ import { workstreamCanonicalUrl } from '@rally/contracts/workstream-links';
 import type { CreateProjectRequest, ProjectSummary, WorkstreamBatchFilter, WorkstreamBatchUpdate } from '@rally/contracts';
 import {
   formatDateTime,
-  formatRelative,
   formatTime,
   groupActivityItems,
   nextRecencyBoundary,
@@ -67,16 +63,15 @@ import {
   useUiStore,
 } from '../lib/ui-store';
 import { useDebugEnabled } from '../lib/use-debug-enabled';
-import { DeleteAutomationDialog } from './delete-automation-dialog';
-import { Avatar, Badge, Button, IconButton, InlineError, Modal, StatusDot, TitleSkeleton } from './primitives';
+import { Avatar, Button, IconButton, InlineError, Modal, StatusDot, TitleSkeleton } from './primitives';
 import { ProjectIcon, ProjectSidebarSection } from './project-sidebar-section';
-import { SidebarSkeletonGroup, SidebarSkeletonRows } from './sidebar-skeleton';
+import { SidebarSkeletonGroup } from './sidebar-skeleton';
 import { ContextNestedMenu } from './nested-menu';
 import { AutomationGlyph, WorkstreamGlyph } from './workstream-glyph';
 
 interface SidebarProps {
   onOpenSearch?: () => void;
-  /** GrokBot-style shell: work streams and personal/workspace automation shortcuts. */
+  /** GrokBot-style shell: work streams and active standalone Sidekick shortcuts. */
   conversationOnly?: boolean;
   /** The responsive or manually selected GrokBot icon rail. */
   compact?: boolean;
@@ -386,117 +381,28 @@ function CopyWorkstreamLinkItem({ workstreamId, workspace }: {
   );
 }
 
-function automationScopeLabel(scope: AutomationSummary['scope']): string {
-  return scope === 'you' ? 'You' : scope === 'workspace' ? 'Workspace' : 'Work stream';
-}
-
-const automationStatusLabels: Record<AutomationSummary['status'], string> = {
-  active: 'Active',
-  paused: 'Paused',
-  draft: 'Draft',
-};
-
-/** The durable automation route currently open, excluding the new route. */
-function useOpenDraftId(): string | null {
-  const location = useLocation();
-  const id = /^\/automations\/([^/]+)$/u.exec(location.pathname)?.[1] ?? null;
-  return id === 'new' ? null : id;
-}
-
-function AutomationRow({
-  automation,
-  debugEnabled,
-  onDelete,
-  onRunNow,
-  tile = false,
-}: {
-  automation: AutomationSummary;
-  tile?: boolean;
-  debugEnabled: boolean;
-  onDelete: (automation: AutomationSummary) => void;
-  onRunNow: (automation: AutomationSummary) => void;
-}): React.JSX.Element {
-  const isDraft = automation.status === 'draft';
-  const draftActive = useOpenDraftId() === automation.id;
-  const scopeDescription = automation.scope === 'workspace' ? ' · Workspace' : '';
+function SidekickTile({ sidekick }: { sidekick: AutomationSummary }): React.JSX.Element {
+  const scopeDescription = sidekick.scope === 'workspace' ? ' · Workspace' : '';
   return (
-    <ContextMenu.Root>
-      <ContextMenu.Trigger asChild disabled={tile && automation.scope === 'workspace'}>
-        <div className="sidebar-context-target">
-          {/* One durable route for a draft and an accepted automation: the
-              screen behind it is the automation's own conversation, with its
-              lifecycle in the header. */}
-          <NavLink
-            className={({ isActive }) => clsx('sidebar-row automation-row', tile && 'automation-tile', (isDraft ? draftActive : isActive) && 'is-active', isDraft && 'is-draft')}
-            aria-label={tile ? `${automation.name}, ${automationStatusLabels[automation.status]}${scopeDescription}` : undefined}
-            title={tile ? `${automation.name} · ${automationStatusLabels[automation.status]}${scopeDescription}` : undefined}
-            onClick={() => markSurfaceEntrypoint('sidebar_automation')}
-            to={`/automations/${automation.id}`}
-          >
-            {tile ? (
-              <>
-                <span className="automation-tile-glyph" aria-hidden="true">
-                  <AutomationGlyph id={automation.id} />
-                  <span className={clsx('automation-tile-state', automation.status)}>
-                    <span className="status-dot" />
-                  </span>
-                </span>
-                <span className="automation-tile-name">{automation.name}</span>
-                <span className="sr-only">{automationStatusLabels[automation.status]}</span>
-              </>
-            ) : (
-              <>
-                <span className="sidebar-row-icon" aria-hidden="true">
-                  {automation.status === 'paused'
-                    ? <CirclePause size={13} />
-                    : <span className={clsx('mini-state', automation.status)} />}
-                </span>
-                <span className="sidebar-row-main">
-                  <span className="sidebar-row-title">{automation.name}</span>
-                  {isDraft
-                    ? <span className="sidebar-row-hint">Draft</span>
-                    : automation.nextRunAt && <span className="sidebar-row-hint">Next {formatRelative(automation.nextRunAt)}</span>}
-                </span>
-                <Badge className="scope-badge">{automationScopeLabel(automation.scope)}</Badge>
-              </>
-            )}
-          </NavLink>
-        </div>
-      </ContextMenu.Trigger>
-      <ContextMenu.Portal>
-        <ContextMenu.Content className="menu-content sidebar-context-menu" collisionPadding={8}>
-          <ContextMenu.Item
-            className="menu-item"
-            disabled={isDraft}
-            onSelect={() => onRunNow(automation)}
-          >
-            <Play aria-hidden="true" size={16} /> Run now
-          </ContextMenu.Item>
-          {/* "Turn into template" is deliberately absent: it had no
-              `onSelect`, so it closed the menu and did nothing.
-              Publishing a template is offered on the automation's
-              own overview, which is where the API for it is
-              wired. */}
-          {debugEnabled && (
-            <CopyResourceIdItem
-              contentType="automation_id"
-              id={automation.id}
-              label="Copy automation id"
-              resourceType="automation"
-            />
-          )}
-          <ContextMenu.Separator className="menu-separator" />
-          {/* Named and iconed for what the API actually does. It calls
-              `deleteAutomation` — a tombstone nothing can undo — so
-              labelling it "Archive draft" beside a confirmed "Delete
-              automation" offered the irreversible one as the softer
-              choice, and fired it straight off the right-click. */}
-          <ContextMenu.Item className="menu-item menu-item-danger" onSelect={() => onDelete(automation)}>
-            <Trash2 aria-hidden="true" size={16} /> {isDraft ? 'Delete draft' : 'Delete automation'}
-          </ContextMenu.Item>
-        </ContextMenu.Content>
-      </ContextMenu.Portal>
-    </ContextMenu.Root>
+    <div className="sidebar-context-target">
+      <button
+        className="sidebar-row automation-row automation-tile"
+        aria-label={`${sidekick.name}, Active${scopeDescription}`}
+        title={`${sidekick.name} · Active${scopeDescription}`}
+        onClick={() => {
+          markSurfaceEntrypoint('sidebar_automation');
+          void desktopBridge().openSidekicks(sidekick.id);
+        }}
+        type="button"
+      >
+        <span className="automation-tile-glyph" aria-hidden="true">
+          <AutomationGlyph id={sidekick.id} />
+          <span className="automation-tile-state active"><span className="status-dot" /></span>
+        </span>
+        <span className="automation-tile-name">{sidekick.name}</span>
+        <span className="sr-only">Active</span>
+      </button>
+    </div>
   );
 }
 
@@ -1034,12 +940,10 @@ export function Sidebar({
   onApplyWorkstreamBatch,
   onChangeNoteScope,
   onChangeWorkstreamScope,
-  onDeleteAutomation,
   onMarkWorkstreamUnread,
   onPinWorkstream,
   onReorderPinnedWorkstreams,
   onRenameWorkstream,
-  onRunAutomation,
   onOpenMeetingNotes,
   onPreviewWorkstreamBatch,
   onCreateProject = async () => {
@@ -1139,25 +1043,9 @@ export function Sidebar({
   const [batchError, setBatchError] = useState<string | null>(null);
   const [batchPreviewFailed, setBatchPreviewFailed] = useState(false);
   const batchPreviewGeneration = useRef(0);
-  const [deleteTarget, setDeleteTarget] = useState<AutomationSummary | null>(null);
-  const runAutomation = async (automation: AutomationSummary): Promise<void> => {
-    try {
-      await onRunAutomation(automation);
-    } catch (error) {
-      setMenuError({
-        title: 'Automation could not run',
-        copy: `Open ${automation.name} to check its run history before trying again.`,
-        message: error instanceof Error ? error.message : 'The run request could not be completed.',
-      });
-    }
-  };
   const visibleWorkstreams = workstreams;
   const visibleNotes = useMemo(() => conversationOnly ? [] : notes, [conversationOnly, notes]);
-  const standaloneAutomations = useMemo(() => automations.filter((automation) => automation.scope !== 'workstream'), [automations]);
-  const visibleAutomations = useMemo(() => conversationOnly ? [] : automations.filter((automation) => automation.scope === 'workstream'), [conversationOnly, automations]);
-  // Drafts are listed with the rest: a draft is a conversation in progress on
-  // the automation's own screen, which is where its row leads.
-  const orderedAutomations = visibleAutomations;
+  const standaloneSidekicks = useMemo(() => automations.filter((sidekick) => sidekick.scope !== 'workstream' && sidekick.status === 'active'), [automations]);
   // A pinned work stream leaves the recent list entirely rather than appearing
   // twice: the section it moves to is the one whose order the reader controls,
   // and a row in both places would take its order from whichever they saw last.
@@ -1742,16 +1630,6 @@ export function Sidebar({
               <Plus aria-hidden="true" size={15} />
               <span>New work stream</span>
             </NavLink>
-            {/* Creates the automation and opens its conversation, which is
-                where the draft is written. */}
-            <NavLink
-              className={({ isActive }) => clsx('sidebar-action', isActive && 'is-active')}
-              onClick={() => markSurfaceEntrypoint('sidebar_automation')}
-              to="/automations/new"
-            >
-              <Plus aria-hidden="true" size={15} />
-              <span>New automation</span>
-            </NavLink>
             {meetingRecordingAvailable && (
               <button className="sidebar-action" onClick={() => void onOpenMeetingNotes()} type="button">
                 <Mic2 aria-hidden="true" size={15} />
@@ -1774,28 +1652,7 @@ export function Sidebar({
             />
           )}
 
-          {!conversationOnly && (visibleAutomations.length > 0 || standaloneAutomations.length === 0) && <section className="sidebar-section" aria-labelledby="automations-heading">
-            <div className="sidebar-section-heading">
-              <h2 id="automations-heading">Automations</h2>
-            </div>
-            {loading && visibleAutomations.length === 0 ? (
-              <SidebarSkeletonRows count={3} />
-            ) : visibleAutomations.length === 0 ? (
-              <p className="sidebar-empty">No automations</p>
-            ) : (
-              <div className="sidebar-list">
-                {orderedAutomations.map((automation) => (
-                  <AutomationRow
-                    automation={automation}
-                    debugEnabled={debugEnabled}
-                    key={automation.id}
-                    onDelete={setDeleteTarget}
-                    onRunNow={(target) => { void runAutomation(target); }}
-                  />
-                ))}
-              </div>
-            )}
-          </section>}
+
 
           {/* Only when something is pinned. An empty heading would be a
               standing invitation to a feature the reader has not used, sitting
@@ -1861,7 +1718,7 @@ export function Sidebar({
                 nested in the branch below would already be gone. */}
             {loading && (
               <div role="status">
-                <span className="sr-only">Loading your projects, work streams, automations and notes</span>
+                <span className="sr-only">Loading your projects, work streams and notes</span>
               </div>
             )}
             {loading && visibleWorkstreams.length === 0 && visibleNotes.length === 0 ? (
@@ -1984,18 +1841,9 @@ export function Sidebar({
         */}
         {/* <OnboardingChecklist /> */}
 
-        {standaloneAutomations.length > 0 && (
-          <section className="sidebar-automation-strip" aria-label="Automation shortcuts" onClick={() => setSidebarOpen(false)}>
-            {standaloneAutomations.map((automation) => (
-              <AutomationRow
-                automation={automation}
-                debugEnabled={debugEnabled}
-                key={automation.id}
-                tile
-                onDelete={setDeleteTarget}
-                onRunNow={(target) => { void runAutomation(target); }}
-              />
-            ))}
+        {standaloneSidekicks.length > 0 && (
+          <section className="sidebar-automation-strip" aria-label="Sidekick shortcuts" onClick={() => setSidebarOpen(false)}>
+            {standaloneSidekicks.map((sidekick) => <SidekickTile key={sidekick.id} sidekick={sidekick} />)}
           </section>
         )}
 
@@ -2215,11 +2063,6 @@ export function Sidebar({
         <p className="modal-copy">{menuError?.copy}</p>
         {menuError && <InlineError>{menuError.message}</InlineError>}
       </Modal>
-      <DeleteAutomationDialog
-        onClose={() => setDeleteTarget(null)}
-        onConfirm={() => deleteTarget ? onDeleteAutomation(deleteTarget) : Promise.resolve()}
-        target={deleteTarget}
-      />
     </>
   );
 }

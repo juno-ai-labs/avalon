@@ -144,6 +144,7 @@ export function createApp(): Hono<HonoAppEnv> {
   protectedApi.route("/projects", projectRoutes);
   protectedApi.route("/digest", digestRoutes);
   protectedApi.route("/automations", automationRoutes);
+  protectedApi.route("/sidekicks", automationRoutes);
   protectedApi.route("/conversations", conversationRoutes);
   protectedApi.route("/connections", connectionRoutes);
   protectedApi.route("/resources", resourceRoutes);

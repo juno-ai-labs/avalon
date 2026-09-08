@@ -107,6 +107,8 @@ const EXPECTED_TABLES = [
   "run_plugin_activations",
   "run_scopes",
   "runs",
+  "sidekick_attachments",
+  "sidekick_execution_skills",
   "substream_agent_identity",
   "substream_context_captures",
   "substream_initial_context",

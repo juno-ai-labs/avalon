@@ -1,3 +1,5 @@
+import type { SidekickAttachment } from '@rally/contracts';
+import { AttachedSidekicks } from './attached-sidekicks';
 import { FileBox, GripVertical, MessageSquare, PanelLeftClose, PanelLeftOpen, UserPlus } from 'lucide-react';
 import { IconBorderCornerPill, IconPlus } from '@tabler/icons-react';
 import { useLayoutEffect, useRef, useState } from 'react';
@@ -5,7 +7,7 @@ import clsx from 'clsx';
 import type { WorkstreamDetail } from '../lib/types';
 import type { WorkstreamChildDirectory } from '../lib/use-workstream-control-socket';
 import { COLLAPSED_SIDEBAR_WIDTH, DEFAULT_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, SIDEBAR_COLLAPSE_DRAG_THRESHOLD, SIDEBAR_CONTENT_MIN_WIDTH, SIDEBAR_EXPAND_DRAG_THRESHOLD } from '../lib/ui-store';
-import { Avatar, IconButton } from './primitives';
+import { Avatar, AvatarStack, IconButton } from './primitives';
 import { ResourceIcon } from './markdown-citations';
 
 const COLLAPSED_KEY = 'rally.workstream-sidebar-collapsed';
@@ -13,9 +15,12 @@ const WIDTH_KEY = 'rally.workstream-sidebar-width';
 const clampWidth = (width: number): number => Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, width));
 
 /** Work-stream navigation only: no second resource query or substream model. */
-export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstreamId = '0', onSelectSubstream, onNewSubstream, onOpenArtifact, onParticipants, onFocusTranscript }: {
+export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstreamId = '0', onSelectSubstream, onNewSubstream, onOpenArtifact, onParticipants, onFocusTranscript, attachedSidekicks, attachedSidekicksError, onRemoveSidekick }: {
   workstream: Pick<WorkstreamDetail, 'id' | 'title' | 'resources' | 'participants'> & Pick<WorkstreamChildDirectory, 'privateChildren'>;
   presentUserIds: readonly string[];
+  attachedSidekicks?: SidekickAttachment[] | undefined;
+  attachedSidekicksError?: string | undefined;
+  onRemoveSidekick?: ((id: string) => void) | undefined;
   selectedSubstreamId?: string;
   onSelectSubstream?: (substreamId: string) => void;
   onNewSubstream?: () => void;
@@ -140,17 +145,11 @@ export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstrea
         </section>
         <section aria-label="Work-stream participants" className="workstream-context-section">
           <h2>Participants</h2>
-          {workstream.participants.map((person) => (
-            <button className="workstream-context-row" key={person.id} aria-label={`Manage participants: ${person.name}${presentUserIds.includes(person.id) ? ', viewing now' : ''}`} title={person.name} type="button" onClick={onParticipants}>
-              <span className="workstream-context-resource-icon"><Avatar member={person} title={null} /></span>
-              <span className="workstream-context-copy"><span>{person.name}</span></span>
-              {presentUserIds.includes(person.id) && <span className="workstream-context-presence" aria-hidden="true" />}
-            </button>
-          ))}
-          <button className="workstream-context-row" aria-label="Manage work-stream participants" title="Manage participants" type="button" onClick={onParticipants}>
-            <span className="workstream-context-resource-icon"><UserPlus size={18} /></span><span className="workstream-context-copy">Manage participants</span>
+          <button className="workstream-context-row" aria-label="Manage work-stream participants" aria-description={workstream.participants.map((person) => person.name).join(', ')} type="button" onClick={onParticipants}>
+            {workstream.participants.length ? <AvatarStack members={workstream.participants} presentUserIds={presentUserIds} /> : <UserPlus aria-hidden="true" size={18} />}
           </button>
         </section>
+        <AttachedSidekicks items={attachedSidekicks} error={attachedSidekicksError} onRemove={onRemoveSidekick} />
       </div>
       <div
         role="separator"

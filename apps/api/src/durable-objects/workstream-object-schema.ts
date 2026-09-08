@@ -20,7 +20,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 42;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 43;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -2860,6 +2860,14 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
     version: 42,
     description: "durably project canonical transcript text and backfill existing turns",
     statements: [...CONVERSATION_LINK_SEARCH_SCHEMA, ...TRANSCRIPT_SEARCH_MIGRATION_STATEMENTS],
+  },
+  {
+    version: 43,
+    description: "conversation Sidekick attachments and immutable per-execution instruction snapshots",
+    statements: [
+      `CREATE TABLE sidekick_attachments (sidekick_id TEXT PRIMARY KEY, attached_at INTEGER NOT NULL) STRICT`,
+      `CREATE TABLE sidekick_execution_skills (execution_id TEXT PRIMARY KEY, snapshot_json TEXT NOT NULL CHECK(json_valid(snapshot_json))) STRICT`,
+    ],
   },
 ];
 

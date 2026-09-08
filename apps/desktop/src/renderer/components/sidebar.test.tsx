@@ -12,6 +12,7 @@ import { REVEAL_DEADLINE_MS, Sidebar } from './sidebar';
 
 const copyText = vi.hoisted(() => vi.fn());
 const openSettings = vi.hoisted(() => vi.fn());
+const openSidekicks = vi.hoisted(() => vi.fn());
 const reportTelemetryProductIntent = vi.hoisted(() => vi.fn());
 const markWorkstreamNavigation = vi.hoisted(() => vi.fn());
 const markSurfaceEntrypoint = vi.hoisted(() => vi.fn());
@@ -41,6 +42,7 @@ vi.mock('../lib/platform', () => ({
   desktopBridge: () => ({
     copyText,
     openSettings,
+    openSidekicks,
     getRuntimeConfig: () => Promise.resolve({ webBaseUrl: 'https://rallywith.ai' }),
     getApplicationSettings: () => Promise.resolve(applicationSettings.current),
     onApplicationSettingsChanged: (listener: (settings: unknown) => void) => {
@@ -177,35 +179,7 @@ describe('Sidebar work-stream markers', () => {
     });
   });
 
-  it.each([false, true].flatMap((conversationOnly) => [
-    { label: 'empty', conversationOnly, automations: [] },
-    { label: 'workstream', conversationOnly, automations: [{ ...automation, scope: 'workstream' as const }] },
-  ]))('omits the automation strip for $label entries (conversationOnly=$conversationOnly)', ({ automations, conversationOnly }) => {
-    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} conversationOnly={conversationOnly} automations={automations} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
-    expect(screen.queryByRole('region', { name: 'Automation shortcuts' })).not.toBeInTheDocument();
-  });
-
-  it.each([false, true].flatMap((conversationOnly) => [false, true].map((compact) => ({ conversationOnly, compact }))))('shows personal and workspace tiles exactly once (conversationOnly=$conversationOnly, compact=$compact)', ({ conversationOnly, compact }) => {
-    const shared = { ...automation, id: 'shared-automation', name: 'Team brief', scope: 'workspace' as const };
-    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} conversationOnly={conversationOnly} compact={compact} automations={[automation, shared]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
-    const sharedLinks = screen.getAllByRole('link', { name: /Team brief/u });
-    expect(sharedLinks).toHaveLength(1);
-    expect(sharedLinks[0]).toHaveClass('automation-tile');
-    expect(screen.getAllByRole('link', { name: /Daily product brief/u })).toHaveLength(1);
-    expect(screen.queryByText('No automations')).not.toBeInTheDocument();
-  });
-
-  it('keeps shared shortcuts navigable without offering management actions', () => {
-    const shared = { ...automation, id: 'shared', name: 'Team brief', scope: 'workspace' as const };
-    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} conversationOnly automations={[shared]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
-    const link = screen.getByRole('link', { name: /Team brief/u });
-    fireEvent.contextMenu(link);
-    expect(screen.queryByRole('menuitem', { name: 'Run now' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('menuitem', { name: 'Delete automation' })).not.toBeInTheDocument();
-    expect(link).toHaveAttribute('href', '/automations/shared');
-  });
-
-  it('shows automation shortcuts above the user menu in the GrokBot shell', () => {
+  it('reduces the GrokBot shell navigation to work streams', () => {
     render(
       <MemoryRouter>
         <Tooltip.Provider>
@@ -223,10 +197,7 @@ describe('Sidebar work-stream markers', () => {
     );
 
     expect(screen.getByText('Customer launch')).toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'Automation shortcuts' })).toContainElement(screen.getByText('Daily product brief'));
-    const strip = screen.getByRole('region', { name: 'Automation shortcuts' });
-    expect(strip.closest('.sidebar-scroll')).toBeNull();
-    expect(strip.nextElementSibling).toBe(screen.getByRole('button', { name: 'Open account menu' }));
+    expect(screen.getByRole('region', { name: 'Sidekick shortcuts' })).toContainElement(screen.getByText('Daily product brief'));
     expect(screen.queryByText('Meeting notes')).not.toBeInTheDocument();
     expect(screen.queryByText('New automation')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Search workspace' })).toBeInTheDocument();
@@ -495,13 +466,13 @@ describe('Sidebar work-stream markers', () => {
       </MemoryRouter>,
     );
 
-    // Three for the projects, three for the automations, then two groups of
+    // Three for the projects, then two groups of
     // four and three.
-    expect(container.querySelectorAll('.skeleton-row')).toHaveLength(13);
+    expect(container.querySelectorAll('.skeleton-row')).toHaveLength(10);
     expect(container.querySelectorAll('.skeleton-group-label')).toHaveLength(2);
     // Said once for the whole wait, not once per section and not once per row.
     expect(screen.getAllByRole('status')).toHaveLength(1);
-    expect(screen.getByText('Loading your projects, work streams, automations and notes')).toBeInTheDocument();
+    expect(screen.getByText('Loading your projects, work streams and notes')).toBeInTheDocument();
     // Nothing claims the sidebar is empty while it is still arriving.
     expect(screen.queryByText('No active automations')).not.toBeInTheDocument();
     expect(screen.queryByText('No work streams or notes yet')).not.toBeInTheDocument();
@@ -549,12 +520,12 @@ describe('Sidebar work-stream markers', () => {
     );
 
     // The note is listed, so this section shows no placeholder of its own —
-    // while the projects and automations above still do.
+    // while the projects above still do.
     expect(screen.getByText('Standup')).toBeInTheDocument();
     expect(container.querySelectorAll('.skeleton-group-label')).toHaveLength(0);
-    expect(container.querySelectorAll('.skeleton-row')).toHaveLength(6);
+    expect(container.querySelectorAll('.skeleton-row')).toHaveLength(3);
     expect(screen.getAllByRole('status')).toHaveLength(1);
-    expect(screen.getByText('Loading your projects, work streams, automations and notes')).toBeInTheDocument();
+    expect(screen.getByText('Loading your projects, work streams and notes')).toBeInTheDocument();
   });
 
   it('does not render the disabled onboarding checklist', () => {
@@ -1095,28 +1066,6 @@ describe('Sidebar work-stream markers', () => {
     }
   });
 
-  it('renders personal automation tiles without a contradictory empty list', () => {
-    render(
-      <MemoryRouter>
-        <Tooltip.Provider>
-          <Sidebar
-            {...defaultActions}
-            automations={[automation]}
-            onSignOut={vi.fn()}
-            workspace={workspace}
-            workstreams={[]}
-          />
-        </Tooltip.Provider>
-      </MemoryRouter>,
-    );
-
-    const row = screen.getByRole('link', { name: /Daily product brief/u });
-    expect(row).toHaveClass('sidebar-row', 'automation-row');
-    expect(row).toHaveClass('automation-tile');
-    expect(screen.queryByText('No automations')).not.toBeInTheDocument();
-    expect(row).toHaveTextContent('Active');
-  });
-
   it('keeps compact search and creation above the scrolling streams', () => {
     const onOpenSearch = vi.fn();
     render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} compact conversationOnly automations={[]} onOpenSearch={onOpenSearch} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
@@ -1132,163 +1081,34 @@ describe('Sidebar work-stream markers', () => {
     expect(create).toHaveAttribute('href', '/workstreams/new');
   });
 
-  it('keeps compact automation links named when captions are hidden', () => {
-    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} compact conversationOnly automations={[automation]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
-    const caption = screen.getByText(automation.name);
-    caption.style.display = 'none';
-    expect(screen.getByRole('link', { name: 'Daily product brief, Active' })).toHaveAttribute('href', '/automations/automation-1');
+  it.each([false, true])('shows only enabled standalone Sidekicks and opens their library detail (compact=%s)', (compact) => {
+    const shared = { ...automation, loadable: false, id: 'shared', name: 'Team brief', scope: 'workspace' as const };
+    const excluded = [
+      { ...automation, id: 'paused', name: 'Paused helper', status: 'paused' as const },
+      { ...automation, id: 'draft', name: 'Draft helper', status: 'draft' as const },
+      { ...automation, id: 'room', name: 'Room helper', scope: 'workstream' as const },
+    ];
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} compact={compact} conversationOnly automations={[{ ...automation, loadable: true }, shared, ...excluded]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
+    const strip = screen.getByRole('region', { name: 'Sidekick shortcuts' });
+    expect(strip.closest('.sidebar-scroll')).toBeNull();
+    expect(strip.nextElementSibling).toBe(screen.getByRole('button', { name: 'Open account menu' }));
+    expect(within(strip).getAllByRole('button')).toHaveLength(2);
+    for (const item of excluded) expect(screen.queryByText(item.name)).toBeNull();
+    fireEvent.click(within(strip).getByRole('button', { name: 'Team brief, Active · Workspace' }));
+    expect(openSidekicks).toHaveBeenCalledWith('shared');
+    expect(screen.queryByRole('link', { name: /Daily product brief/u })).toBeNull();
   });
 
-  it('reports a failed manual automation run', async () => {
-    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={[automation]} onRunAutomation={async () => { throw new Error('Service unavailable'); }} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
-    fireEvent.contextMenu(screen.getByRole('link', { name: /Daily product brief/u }), { clientX: 120, clientY: 90 });
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Run now' }));
-    expect(await screen.findByRole('dialog', { name: 'Automation could not run' })).toHaveTextContent('Service unavailable');
+  it('omits the Sidekick strip when none are enabled', () => {
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={[{ ...automation, status: 'paused' }]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
+    expect(screen.queryByRole('region', { name: 'Sidekick shortcuts' })).toBeNull();
   });
 
-  it('offers New automation beside New work stream, leading to the create route', () => {
-    render(
-      <MemoryRouter>
-        <Tooltip.Provider>
-          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} />
-        </Tooltip.Provider>
-      </MemoryRouter>,
-    );
-
-    const actions = screen.getByRole('link', { name: 'New work stream' }).parentElement!;
-    const newAutomation = within(actions).getByRole('link', { name: 'New automation' });
-    // Its own route rather than a new work stream: the automation is created
-    // there and its draft is written in its own conversation.
-    expect(newAutomation).toHaveAttribute('href', '/automations/new');
+  it('manages Sidekicks through the library instead of listing them in the sidebar', () => {
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={[automation]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
+    expect(screen.queryByRole('region', { name: 'Automations' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'New automation' })).toBeNull();
     expect(screen.getByRole('link', { name: 'New work stream' })).toHaveAttribute('href', '/workstreams/new');
-  });
-
-  it('names the room that owns a work-stream-scoped automation on its badge', () => {
-    render(
-      <MemoryRouter>
-        <Tooltip.Provider>
-          <Sidebar
-            {...defaultActions}
-            automations={[{ ...automation, scope: 'workstream', owningWorkstreamId: 'workstream-9' }]}
-            onSignOut={vi.fn()}
-            workspace={workspace}
-            workstreams={[]}
-          />
-        </Tooltip.Provider>
-      </MemoryRouter>,
-    );
-
-    const row = screen.getByRole('link', { name: /Daily product brief/u });
-    expect(row.querySelector('.scope-badge')).toHaveTextContent('Work stream');
-  });
-
-  it('shows the requested automation actions on right click and runs the automation', async () => {
-    const onRunAutomation = vi.fn(async () => undefined);
-    render(
-      <MemoryRouter>
-        <Tooltip.Provider>
-          <Sidebar
-            {...defaultActions}
-            automations={[automation]}
-            onRunAutomation={onRunAutomation}
-            onSignOut={vi.fn()}
-            workspace={workspace}
-            workstreams={[]}
-          />
-        </Tooltip.Provider>
-      </MemoryRouter>,
-    );
-
-    fireEvent.contextMenu(screen.getByRole('link', { name: /Daily product brief/u }), { clientX: 120, clientY: 90 });
-
-    expect(await screen.findByRole('menuitem', { name: 'Run now' })).toBeVisible();
-    // "Turn into template" had no `onSelect`, so choosing it
-    // closed the menu and did nothing at all. Sharing is
-    // offered on the automation's own overview instead.
-    expect(screen.queryByRole('menuitem', { name: 'Turn into template' })).not.toBeInTheDocument();
-    expect(screen.getByRole('menuitem', { name: 'Delete automation' })).toHaveClass('menu-item-danger');
-    expect(screen.queryByRole('menuitem', { name: 'Archive draft' })).not.toBeInTheDocument();
-    expect(screen.queryByText(/^[PTRADU]$/u)).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Run now' }));
-    await waitFor(() => expect(onRunAutomation).toHaveBeenCalledWith(automation));
-    expect(reportTelemetryProductIntent).not.toHaveBeenCalledWith(
-      expect.objectContaining({ kind: 'automation_action_completed' }),
-    );
-  });
-
-  it('lists a draft with its hint and links it to the automation it is drafting', () => {
-    const draft: AutomationSummary = {
-      id: 'automation-2',
-      name: 'Ad hoc competitor scan',
-      description: 'Watch the competitors.',
-      scope: 'you',
-      status: 'draft',
-      updatedAt: '2026-07-28T11:00:00.000Z',
-    };
-    render(
-      <MemoryRouter>
-        <Tooltip.Provider>
-          <Sidebar
-            {...defaultActions}
-            automations={[draft, automation]}
-            onSignOut={vi.fn()}
-            workspace={workspace}
-            workstreams={[]}
-          />
-        </Tooltip.Provider>
-      </MemoryRouter>,
-    );
-
-    // A draft is a conversation in progress on the automation's own screen,
-    // which is where its tile leads; its accessible label identifies the draft.
-    const section = screen.getByRole('region', { name: 'Automation shortcuts' });
-    expect([...section.querySelectorAll('.automation-tile-name')].map((row) => row.textContent))
-      .toEqual(['Ad hoc competitor scan', 'Daily product brief']);
-    const row = screen.getByRole('link', { name: /Ad hoc competitor scan/u });
-    expect(row).toHaveClass('is-draft');
-    expect(row).toHaveAttribute('href', '/automations/automation-2');
-    expect(within(row).getByText('Draft')).toBeInTheDocument();
-    expect(section).not.toHaveTextContent('No automations');
-  });
-
-  it('deletes an automation only after the confirmation dialog', async () => {
-    const onDeleteAutomation = vi.fn(async () => undefined);
-    render(
-      <MemoryRouter>
-        <Tooltip.Provider>
-          <Sidebar
-            {...defaultActions}
-            automations={[automation]}
-            onDeleteAutomation={onDeleteAutomation}
-            onSignOut={vi.fn()}
-            workspace={workspace}
-            workstreams={[]}
-          />
-        </Tooltip.Provider>
-      </MemoryRouter>,
-    );
-
-    fireEvent.contextMenu(screen.getByRole('link', { name: /Daily product brief/u }), { clientX: 120, clientY: 90 });
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete automation' }));
-
-    const dialog = await screen.findByRole('dialog', { name: 'Delete automation' });
-    expect(within(dialog).getByText('Daily product brief')).toBeVisible();
-    expect(onDeleteAutomation).not.toHaveBeenCalled();
-
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Delete automation' })).not.toBeInTheDocument());
-    expect(onDeleteAutomation).not.toHaveBeenCalled();
-
-    fireEvent.contextMenu(screen.getByRole('link', { name: /Daily product brief/u }), { clientX: 120, clientY: 90 });
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete automation' }));
-    fireEvent.click(within(await screen.findByRole('dialog', { name: 'Delete automation' })).getByRole('button', { name: 'Delete' }));
-
-    await waitFor(() => expect(onDeleteAutomation).toHaveBeenCalledWith(automation));
-    expect(reportTelemetryProductIntent).not.toHaveBeenCalledWith(
-      expect.objectContaining({ kind: 'automation_action_completed' }),
-    );
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Delete automation' })).not.toBeInTheDocument());
   });
 
   it('opens meeting notes from the primary actions', async () => {
@@ -1636,10 +1456,6 @@ describe('Sidebar work-stream markers', () => {
     await waitFor(() => expect(copyText).toHaveBeenCalledWith(
       'https://rallywith.ai/app/workspaces/global/00000000-0000-7000-8000-000000000001/workstreams/00000000-0000-4000-8000-000000000042',
     ));
-
-    fireEvent.contextMenu(screen.getByRole('link', { name: /Daily product brief/u }), { clientX: 120, clientY: 90 });
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy automation id' }));
-    await waitFor(() => expect(copyText).toHaveBeenLastCalledWith('automation-1'));
 
     fireEvent.contextMenu(noteRow, { clientX: 120, clientY: 90 });
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy note id' }));

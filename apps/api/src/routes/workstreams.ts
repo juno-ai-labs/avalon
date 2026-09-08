@@ -1,3 +1,4 @@
+import { SidekickAttachmentsSchema } from "@rally/contracts";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import { Hono, type Context } from "hono";
 import { requireSendableMessageLength, zValidator } from "../middleware/validation";
@@ -81,6 +82,11 @@ const SocketTicketSchema = z.object({
 });
 
 export const workstreamRoutes = new Hono<HonoAppEnv>();
+workstreamRoutes.get("/:id/sidekicks", zValidator("param", idParam), async (c) =>
+  c.json(SidekickAttachmentsSchema.parse(await new WorkstreamService(c.env, getAuth(c)).sidekickAttachments(c.req.valid("param").id))));
+workstreamRoutes.delete("/:id/sidekicks/:sidekickId", zValidator("param", z.object({ id: IdSchema, sidekickId: IdSchema })), async (c) =>
+  c.json(SidekickAttachmentsSchema.parse(await new WorkstreamService(c.env, getAuth(c)).sidekickAttachments(c.req.valid("param").id, c.req.valid("param").sidekickId))));
+
 
 
 /**

@@ -15,6 +15,10 @@ chat alike and withheld from a run, and a run's loop reads its definition from
 the parent by revision at start. See
 [`automation-lifecycle.md`](automation-lifecycle.md).
 
+## Sidekick instruction sources
+
+The host resolves stored-loadable Sidekicks against execution and conversation audiences. Stable Sidekick IDs identify skills. Per-execution snapshots and loaded refs live in the owning substream; main-conversation loads also attach the Sidekick for future executions. Loading adds instructions, never credentials or access to the Sidekick memory scope.
+
 ## Where the code lives
 
 | Path | Responsibility |
@@ -1187,6 +1191,13 @@ Nothing pins `breakerScope`, so deleting that one property from `routePlan` woul
 silently return every test to the shared key while each still passes alone.
 
 ## Changelog
+
+### 2026-09-07 — Sidekick instruction sources
+
+The host resolves stored-loadable Sidekicks against execution and conversation audiences. Stable Sidekick IDs identify skills. Per-execution snapshots and loaded refs live in the owning substream; main-conversation loads also attach the Sidekick for future executions. Loading adds instructions, never credentials or access to the Sidekick memory scope.
+
+This composes knowledge with existing execution machinery while keeping one Sidekick identity and preserving authorization boundaries.
+
 
 ### 2026-09-06 — Accept provider model capitalization in memory embeddings
 
