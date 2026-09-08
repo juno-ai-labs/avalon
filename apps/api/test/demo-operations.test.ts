@@ -51,6 +51,7 @@ const OUTSIDER_ID = "00000000-0000-7000-8000-0000000000a9";
 const OPERATION_ID = "00000000-0000-7000-8000-0000000000e2";
 const DEMOS_TOKEN = "demos-operator-token-0123456789abcdef0123456789";
 const SUPPORT_TOKEN = "support-operator-token-0123456789abcdef012345678";
+const MISFILED_SUPPORT_TOKEN = "support-token-in-the-demo-map-0123456789abcdef";
 const NOW = "2026-09-07T12:00:00.000Z";
 
 const databases: DatabaseSync[] = [];
@@ -103,8 +104,13 @@ function fixture(overrides: Partial<Env> = {}, options: { withoutDriver?: boolea
     APP_ENV: "development",
     AVALON_REGION: "global",
     DB: sqliteD1(database),
-    TELEMETRY_OPERATORS_JSON: JSON.stringify({
+    // The demo routes read the demo secret only; the telemetry map's tokens
+    // are not credentials here whatever role they carry.
+    DEMO_OPERATORS_JSON: JSON.stringify({
       [DEMOS_TOKEN]: { operatorId: "00000000-0000-7000-8000-0000000000d1", role: "demos" },
+      [MISFILED_SUPPORT_TOKEN]: { operatorId: "00000000-0000-7000-8000-0000000000d3", role: "support" },
+    }),
+    TELEMETRY_OPERATORS_JSON: JSON.stringify({
       [SUPPORT_TOKEN]: { operatorId: "00000000-0000-7000-8000-0000000000d2", role: "support" },
     }),
     DEMO_PREPARATION_WORKFLOW: { create } as unknown as Workflow,
@@ -338,13 +344,18 @@ describe("a demo preparation operation", () => {
 });
 
 describe("the operator routes", () => {
-  it("admit only the demos role", async () => {
+  it("admit only the demos role, from the demo secret", async () => {
     const { env, app } = fixture();
     const anonymous = await app.request("/internal/demos", {}, env);
     expect(anonymous.status).toBe(401);
+    // A telemetry token is not a credential here: the telemetry map is never read.
     const support = await app.request("/internal/demos", { headers: { authorization: `Bearer ${SUPPORT_TOKEN}` } }, env);
-    expect(support.status).toBe(403);
-    await expect(support.json()).resolves.toMatchObject({ error: { code: "operator_role_forbidden" } });
+    expect(support.status).toBe(401);
+    await expect(support.json()).resolves.toMatchObject({ error: { code: "operator_authentication_invalid" } });
+    // A support principal filed in the demo map verifies and is refused by role.
+    const misfiled = await app.request("/internal/demos", { headers: { authorization: `Bearer ${MISFILED_SUPPORT_TOKEN}` } }, env);
+    expect(misfiled.status).toBe(403);
+    await expect(misfiled.json()).resolves.toMatchObject({ error: { code: "operator_role_forbidden" } });
     const demos = await app.request("/internal/demos", { headers: { authorization: `Bearer ${DEMOS_TOKEN}` } }, env);
     expect(demos.status).toBe(200);
     await expect(demos.json()).resolves.toEqual({ operations: [] });
