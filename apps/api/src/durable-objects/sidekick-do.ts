@@ -1,3 +1,4 @@
+import { ConversationAuthorizationRequestSchema, type ConversationAuthorizationRequest } from '../services/authorization-policy';
 import { z } from "zod";
 import {
   AutomationDetailSchema,
@@ -1092,6 +1093,30 @@ export class SidekickDO extends ConversationParentDurableObject {
       authorized,
       archived: row.owning_room_archived_at !== null,
     });
+  }
+
+  async authorizationDiscoveryChildren(input: ConversationParentAuthorityRequest) {
+    await this.initialized;
+    const request = ConversationParentAuthorityRequestSchema.parse(input);
+    const row = this.row();
+    if (!row || row.lifecycle === 'deleted') return { substreamIds: [] as string[] };
+    this.assertAutomation(request.workspaceId, request.parentId);
+    // Automation registries have no failed/ready preparation state. A registered, unprovisioned
+    // child is unresolved authority, not evidence that its content can be discarded.
+    return { substreamIds: this.childRegistry().map((child) => child.substreamId) };
+  }
+
+  /** No participant admission and no projection-dependent permission decision. */
+  async readAuthorizationFacts(input: ConversationAuthorizationRequest) {
+    await this.initialized;
+    const request = ConversationAuthorizationRequestSchema.parse(input);
+    const row = this.row();
+    if (!row || row.lifecycle === 'deleted') return { exists: false as const, validatedAt: Date.now() };
+    this.assertAutomation(request.workspaceId, request.parentId);
+    return { exists: true as const, scope: row.scope, owningWorkstreamId: row.owning_workstream_id,
+      author: row.author_user_id === request.userId, executor: row.run_as_user_id === request.userId,
+      children: this.childRegistry().map((child) => child.substreamId),
+      revision: JSON.stringify([row.authority_generation, row.updated_at]), validatedAt: Date.now() };
   }
 
   async authority(input: ConversationParentAuthorityRequest): Promise<ConversationParentAuthorityResult> {

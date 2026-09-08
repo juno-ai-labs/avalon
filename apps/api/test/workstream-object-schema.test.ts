@@ -72,6 +72,7 @@ const EXPECTED_TABLES = [
   "active_output_turns",
   "assistant_turn_reservations",
   "attachment_tool_receipts",
+  "authorization_projection_outbox",
   "bind_activation_inputs",
   "bind_loop_heads",
   "bind_loop_state_messages",

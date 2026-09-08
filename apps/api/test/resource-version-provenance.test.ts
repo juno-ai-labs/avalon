@@ -41,6 +41,8 @@ afterEach(() => { for (const database of open.splice(0)) database.close(); });
 function fixture(stored = new Map<string, string>()): { database: DatabaseSync; env: Env } {
   const regional = new DatabaseSync(":memory:");
   open.push(regional);
+  regional.exec(`CREATE TABLE workspace_members(workspace_id TEXT, user_id TEXT, status TEXT)`);
+  regional.prepare("INSERT INTO workspace_members VALUES (?, ?, 'active')").run(workspaceId, userId);
   // A real WorkspaceDO over its own ledger schema: the swap sites are typed
   // methods on the object, and the capture their writes drive is its triggers.
   const workspaceObject = createTestWorkspaceDO({
