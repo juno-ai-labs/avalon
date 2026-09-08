@@ -57,7 +57,7 @@ import { logStructuredEvent, logWarn } from "../observability/logger";
  * `CrashSymbolicatorContainer` is absent because it is a container rather than a
  * migrated object; it runs no schema and has nothing to force. Add a class here
  * in the same change that adds it to the Worker, and to `REPORTING_CLASSES` in
- * `apps/migration-tracker/src/registry.ts`, which is what decides whether the
+ * `apps/migration-tracker/src/protocol.ts`, which is what decides whether the
  * tracker offers it at all.
  */
 export function migrationCommandDispatchers(env: Env): Record<

@@ -15,13 +15,13 @@
 import { env } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
-import { asWorkspaceId } from "@rally/contracts";
+import { asAutomationId, asWorkspaceId } from "@rally/contracts";
 import type {
   DurableObjectMigrationCommand,
   DurableObjectMigrationReport,
 } from "@rally/contracts/durable-object-migrations";
 
-import { workspaceDOName } from "../src/durable-objects/names";
+import { automationDOName, workspaceDOName } from "../src/durable-objects/names";
 import {
   latestMigrationVersion,
   reportForcedMigration,
@@ -178,10 +178,13 @@ describe("forceMigration", () => {
   });
 
   it("accepts renamed and already-queued legacy Sidekick migration commands", async () => {
-    const objectId = env.AUTOMATION_DOS.idFromName("global:00000000-0000-7000-8000-000000000001:automation:00000000-0000-7000-8000-000000000002").toString();
+    const objectId = env.AUTOMATION_DOS.idFromName(automationDOName("global", asWorkspaceId("00000000-0000-7000-8000-000000000001"), asAutomationId("00000000-0000-7000-8000-000000000002"))).toString();
     for (const className of ["AutomationDO", "SidekickDO"]) {
       const result = await applyMigrationCommand(env, command({ className, objectId }));
       expect(result).toMatchObject({ className: "SidekickDO", schemaVersion: MIGRATION_COMMAND_HEADS.SidekickDO });
+      const delivery = batch([command({ className, objectId })]);
+      await consumeMigrationCommandQueue(delivery.batch, env);
+      expect(delivery.messages[0]).toMatchObject({ acked: true, retried: false });
     }
   });
 

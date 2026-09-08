@@ -1,7 +1,7 @@
 # Durable Object migration tracking
 
 Rally runs four migrated Durable Object classes across two regional Workers,
-`SubstreamAgent`, `WorkstreamDO`, `WorkspaceDO`, and `AutomationDO`, and each
+`SubstreamAgent`, `WorkstreamDO`, `WorkspaceDO`, and `SidekickDO`, and each
 object applies its own SQLite migration history in its constructor. Nothing in
 Cloudflare's account model can answer the question that follows from that:
 **which objects are on which schema version, and which of them are broken?** A
@@ -33,7 +33,15 @@ same. The tracker recognizes both `AutomationDO` and `SidekickDO`. Deploy that
 reader compatibility before the regional API rename. API dispatch accepts either
 name and translates a queued `AutomationDO` command to `SidekickDO` before the
 owner's strict class guard. Namespace inventory and newer reports update each
-existing object row; historical reports retain their original class name.
+existing object row; historical reports retain their original class name. Once
+observed as SidekickDO, current object and component labels cannot be reverted
+by a legacy report, even when a sweep preceded the first report.
+
+The third release removes only the old Worker entrypoint export. Keep report
+acceptance and command translation until legacy queued messages and retained
+inventory no longer require them; removing those adapters during the rename
+would defeat their compatibility purpose. The source import shim can be removed
+when its internal callers have migrated independently of the deployed binding.
 
 ## Where the code lives
 
@@ -821,6 +829,16 @@ radius of a misclick. It sits an order of magnitude above the largest class, so
 it does not shape the cost of any run somebody means to make.
 
 ## Changelog
+
+### 2026-09-08 — Keep renamed current identities monotonic
+
+Late legacy reports retain their original labels in event history but cannot
+replace a current SidekickDO object or component label with AutomationDO.
+Queue delivery is unordered, so accepting both names without this guard could
+hide renamed objects from the operator's exact-class migration selection.
+Chronology alone is insufficient for objects discovered by a namespace sweep
+before their first report. Namespace sweeps remain authoritative.
+
 
 ### 2026-09-08 — Stage the Sidekick namespace rename with operational compatibility
 
