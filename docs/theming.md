@@ -125,6 +125,16 @@ without changing avatar or project colors. Components select a profile role;
 they do not decide text contrast from a hard-coded list of hues.
 
 
+### 2026-09-08 — Soften the neon-yellow identity swatch
+
+Work-stream chips that use the legacy `orange` key were painting Rally's brand
+lime `#ccff00`. On the sidebar glyph that color reads as a harsh lime (sampled
+around 193, 255, 60 after the 78% mix with the surface). The identity token is
+now `#ffff3c` (255, 255, 60) in both appearances so the chip is yellow rather
+than lime. Brand fills stay `#ccff00` to match the public site; member-message
+orange is independently tunable and is left on the brand lime. The stored key
+and "Neon yellow" label are unchanged.
+
 ### 2026-09-08 — Identity palette keys are stable; shades are appearance-specific
 
 Projects and work streams store semantic color keys and resolve the shared
