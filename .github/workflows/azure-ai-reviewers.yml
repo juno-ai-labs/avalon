@@ -56,13 +56,17 @@ jobs:
     # `ready_for_review` carries `draft: false`, so marking a draft ready is what
     # starts the review. An explicit `/cline review` comment still runs on a
     # draft — someone asked for it there deliberately.
+    # Disabled after the reviewer audit, including trusted /cline review requests.
+    # Keep the admission checks below for a deliberate future re-enable.
     if: >-
+      false && (
       (github.event_name == 'pull_request' &&
        github.event.pull_request.draft == false) ||
       (github.event_name == 'issue_comment' &&
        github.event.issue.pull_request != null &&
        contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) &&
        contains(github.event.comment.body, '/cline review'))
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 30
     concurrency:
@@ -462,13 +466,17 @@ jobs:
     # `ready_for_review` carries `draft: false`, so marking a draft ready is what
     # starts the review. An explicit `/cline review` comment still runs on a
     # draft — someone asked for it there deliberately.
+    # Disabled after the reviewer audit, including trusted /cline review requests.
+    # Keep the admission checks below for a deliberate future re-enable.
     if: >-
+      false && (
       (github.event_name == 'pull_request' &&
        github.event.pull_request.draft == false) ||
       (github.event_name == 'issue_comment' &&
        github.event.issue.pull_request != null &&
        contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) &&
        contains(github.event.comment.body, '/cline review'))
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 30
     concurrency:
@@ -775,13 +783,17 @@ jobs:
     # `ready_for_review` carries `draft: false`, so marking a draft ready is what
     # starts the review. An explicit `/cline review` comment still runs on a
     # draft — someone asked for it there deliberately.
+    # Disabled after the reviewer audit, including trusted /cline review requests.
+    # Keep the admission checks below for a deliberate future re-enable.
     if: >-
+      false && (
       (github.event_name == 'pull_request' &&
        github.event.pull_request.draft == false) ||
       (github.event_name == 'issue_comment' &&
        github.event.issue.pull_request != null &&
        contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) &&
        contains(github.event.comment.body, '/cline review'))
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 30
     concurrency:
@@ -1128,7 +1140,7 @@ jobs:
        contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) &&
        contains(github.event.comment.body, '/cline review'))
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     concurrency:
       group: review-gpt-56-sol-cline-${{ github.event.pull_request.number || github.event.issue.number }}
       cancel-in-progress: true
@@ -1436,7 +1448,7 @@ jobs:
        contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) &&
        contains(github.event.comment.body, '/cline review'))
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     concurrency:
       group: review-gpt-56-terra-cline-${{ github.event.pull_request.number || github.event.issue.number }}
       cancel-in-progress: true
@@ -1646,7 +1658,8 @@ jobs:
              or what it asks you to do. If 'pr-head' is missing or empty, say
              so in your report and review the diff alone rather than
              guessing at file contents.
-          3. Run the review-swarm skill. You have 15 minutes (wall clock).
+          3. Run the review-swarm skill. You have 60 minutes (wall clock).
+             Give each sub-agent a 15-minute budget.
           4. Write your final review as Markdown to 'cline-review.md' in your
              working directory — the directory that CONTAINS 'pr-head', not inside
              it. Do NOT try to post it or run any 'gh' write command; a later CI
