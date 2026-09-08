@@ -481,6 +481,7 @@ function WorkstreamRow({
   const location = useLocation();
   const socketWarmup = useWorkstreamSocketHoverWarmup(workstream.id);
   const socketOpenContext = useWorkstreamSocketOpenContext(workstream.id);
+  const markerStatus = workstreamMarkerStatus(workstream);
   const [previewOpen, setPreviewOpen] = useState(false);
   const previewOpenTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const previewCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -648,9 +649,12 @@ function WorkstreamRow({
           >
             <span className="sidebar-row-icon">
               <WorkstreamGlyph id={workstream.id} size={36} />
-              <span className="workstream-row-status">
-                <StatusDot compact status={workstreamMarkerStatus(workstream)} tooltip />
-              </span>
+              {/* Personal attention markers on completed runs must remain visible. */}
+              {markerStatus !== 'completed' && (
+                <span className="workstream-row-status">
+                  <StatusDot compact status={markerStatus} tooltip />
+                </span>
+              )}
             </span>
             <span className="sidebar-row-main">
               <span className="sidebar-row-title">
