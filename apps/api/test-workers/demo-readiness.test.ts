@@ -102,7 +102,7 @@ describe("the readiness barrier", () => {
     // through the creation service's own RPC — but nothing that rides the
     // Queue has: the presenter is not yet mentioned, the room is not yet new to
     // them, the question has not parked it, and the home screen counts nothing.
-    const before = await checkDemoReadiness(demoSeedEnv(), { workspaceId: DEMO_WORKSPACE_ID, manifest });
+    const before = await checkDemoReadiness(demoSeedEnv(), { operationId: DEMO_OPERATION_ID, workspaceId: DEMO_WORKSPACE_ID, manifest });
     expect(before.ready).toBe(false);
     expect(before.gaps.map((gap) => gap.code)).not.toContain("room_missing");
     expect(before.gaps.map((gap) => [gap.room, gap.code])).toEqual(expect.arrayContaining([
@@ -115,7 +115,7 @@ describe("the readiness barrier", () => {
     expect(await deliverDirectoryEffects(room!.workstreamId)).toBeGreaterThan(0);
     expect(await deliverDirectoryEffects(aside!.workstreamId)).toBeGreaterThan(0);
 
-    const after = await checkDemoReadiness(demoSeedEnv(), { workspaceId: DEMO_WORKSPACE_ID, manifest });
+    const after = await checkDemoReadiness(demoSeedEnv(), { operationId: DEMO_OPERATION_ID, workspaceId: DEMO_WORKSPACE_ID, manifest });
     expect(after.gaps).toEqual([]);
     expect(after.ready).toBe(true);
   }, 60_000);

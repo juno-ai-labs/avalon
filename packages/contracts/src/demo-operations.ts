@@ -43,6 +43,15 @@ export const DemoOperationAbandonRequestSchema = z.strictObject({
 });
 export type DemoOperationAbandonRequest = z.infer<typeof DemoOperationAbandonRequestSchema>;
 
+/** One thing a viewer's projection does not yet show; the wait phase's detail carries a list of these. */
+export const DemoReadinessGapSchema = z.strictObject({
+  viewerUserId: IdSchema,
+  room: z.string().nullable(),
+  code: z.string().min(1),
+  detail: z.string(),
+});
+export type DemoReadinessGap = z.infer<typeof DemoReadinessGapSchema>;
+
 export const DemoOperationErrorSchema = z.strictObject({
   code: z.string().min(1).max(120),
   message: z.string().min(1).max(1200),

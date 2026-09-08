@@ -25,6 +25,8 @@
  * operation decides how often to ask and how long, which is the wait policy the
  * PRD hands to the team. `docs/demo-workspaces.md` owns the feature.
  */
+import type { DemoReadinessGapSchema } from "@rally/contracts";
+import type { z } from "zod";
 import type { Workstream } from "@rally/contracts";
 
 import type { AuthContext, Env } from "../env";
@@ -139,13 +141,8 @@ export function demoReadinessManifest(
   };
 }
 
-/** One thing a viewer's projection does not yet show. */
-export interface DemoReadinessGap {
-  viewerUserId: string;
-  room: string | null;
-  code: string;
-  detail: string;
-}
+/** One thing a viewer's projection does not yet show; the shape is the contract's, because the page renders it. */
+export type DemoReadinessGap = z.infer<typeof DemoReadinessGapSchema>;
 
 export interface DemoReadinessReport {
   ready: boolean;
@@ -156,14 +153,14 @@ export interface DemoReadinessReport {
 /** Pages of this size, followed until the directory says there are no more. */
 const DIRECTORY_PAGE_SIZE = 100;
 
-async function viewerAuth(env: Env, workspaceId: string, userId: string): Promise<AuthContext> {
+async function viewerAuth(env: Env, operationId: string, workspaceId: string, userId: string): Promise<AuthContext> {
   // The barrier reads as the viewer, and the viewer is whoever membership says
   // they are — the same resolution the seeder uses to write. A viewer the
   // workspace no longer seats is refused here rather than read with an
   // invented role: the directory and attention reads below do not re-check
   // membership, so an authority fabricated for them would be the one place a
   // non-member's view of the workspace was ever computed.
-  const member = await demoMemberAuth(env, { operationId: "readiness", workspaceId, userId });
+  const member = await demoMemberAuth(env, { operationId, workspaceId, userId });
   if (!member) {
     throw new ApiError(409, "demo_readiness_viewer_not_member", `Viewer ${userId} is not an active member of the workspace`);
   }
@@ -221,12 +218,12 @@ function compareRoom(
  */
 export async function checkDemoReadiness(
   env: Env,
-  input: { workspaceId: string; manifest: DemoReadinessManifest },
+  input: { operationId: string; workspaceId: string; manifest: DemoReadinessManifest },
 ): Promise<DemoReadinessReport> {
   const gaps: DemoReadinessGap[] = [];
   const canonicalChecked = new Set<string>();
   for (const view of input.manifest.views) {
-    const auth = await viewerAuth(env, input.workspaceId, view.viewerUserId);
+    const auth = await viewerAuth(env, input.operationId, input.workspaceId, view.viewerUserId);
     const gap = (room: string | null, code: string, detail: string) =>
       gaps.push({ viewerUserId: view.viewerUserId, room, code, detail });
     const [items, attention] = await Promise.all([
@@ -260,7 +257,7 @@ export async function checkDemoReadiness(
     for (const room of view.rooms) {
       if (canonicalChecked.has(room.workstreamId)) continue;
       canonicalChecked.add(room.workstreamId);
-      const creator = await viewerAuth(env, input.workspaceId, room.creatorUserId);
+      const creator = await viewerAuth(env, input.operationId, input.workspaceId, room.creatorUserId);
       const detail = await new WorkstreamObjectClient(env, creator, room.workstreamId, "0").get();
       if (detail.harnessStatus !== room.harnessStatus) {
         gap(room.room, "canonical_state", `${detail.harnessStatus} instead of ${room.harnessStatus}`);
