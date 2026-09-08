@@ -6647,3 +6647,23 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 .sidebar-drag-guide { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--av-sys-color-text-muted); opacity: .25; pointer-events: none; z-index: 100; }
 
 .workstream-context-sidebar.is-compact .sidebar-collapse-footer { justify-content: center; }
+
+.settings-account-profile { display: grid; gap: 12px; }
+.settings-account-profile .settings-profile-card { border-radius: 0; }
+.settings-account-avatar { width: 38px; height: 38px; font-size: 13px; }
+.settings-account-profile .settings-preference-row { font-size: 13px; }
+.settings-account-profile input { width: min(280px, 100%); min-width: 0; padding: 7px 10px; font-size: 13px; border-radius: 8px; }
+.settings-account-profile .settings-preference-row { grid-template-columns: minmax(100px, 1fr) minmax(0, 280px); }
+.settings-account-profile .personal-colors { justify-content: flex-end; gap: 10px; padding: 5px; }
+.settings-account-profile .personal-colors button { width: 22px; height: 22px; display: grid; place-items: center; }
+.settings-account-actions { display: flex; align-items: center; gap: 10px; justify-content: flex-end; color: var(--av-sys-color-text-muted); }
+
+/* Feed colors follow the sender's live profile, including older loaded turns. */
+:is(.workstream-screen, .automation-chat-surface) .human-message[data-profile-color] .human-message-bubble {
+  background: var(--av-cmp-bubble-human-background);
+  color: var(--av-cmp-bubble-human-foreground);
+}
+:is(.workstream-screen, .automation-chat-surface) .human-message[data-profile-color] .human-message-bubble .markdown-body,
+:is(.workstream-screen, .automation-chat-surface) .human-message[data-profile-color] .human-message-bubble .markdown-body :is(p, strong, em, code, a) {
+  color: var(--av-cmp-bubble-human-foreground);
+}

@@ -250,7 +250,8 @@ describe('token references', () => {
   // Set at runtime rather than in CSS: some by components as inline styles,
   // three by libraries on their own elements. They cannot be checked from this
   // file, so they are listed to say they were considered.
-  const RUNTIME = ['--rail-width', '--person-accent', '--markdown-table-columns', '--arrival-index',
+  const RUNTIME = ['--rail-width', '--person-accent',
+    '--markdown-table-columns', '--arrival-index',
     '--workstream-sidebar-width', '--conversation-min-width',
     '--citation-card-played',
     '--radix-dropdown-menu-content-available-height',
