@@ -1137,8 +1137,11 @@ Required repository configuration: secret `CLOUDFLARE_API_TOKEN` and variable
 `CLOUDFLARE_ACCOUNT_ID` in the `api-production` environment for the API and Ace
 deployments and in `site-production` for the site deployment, plus the existing
 `desktop-release` environment for the macOS release. `api-production` also holds
-`ACE_FLAGSHIP_API_TOKEN`, restricted to Flagship Write on the Avalon account;
-the Ace workflow installs it as an encrypted Worker secret. Regional API Worker
+`ACE_FLAGSHIP_API_TOKEN`, restricted to Flagship Write on the Avalon account,
+and `ACE_RALLY_OPERATOR_TOKEN` and `ACE_RALLY_EU_OPERATOR_TOKEN`, each equal to
+a token in that region's `TELEMETRY_OPERATORS_JSON` under the `demos` role and
+present in no other region's; the Ace workflow installs all three as encrypted
+Worker secrets and refuses to deploy without them. Regional API Worker
 secrets are never held by Actions; they are set per region with Wrangler.
 
 Deployments cannot overlap. Each workflow declares a concurrency group, so a second run waits for the first to finish, and a burst of merges collapses to the newest commit: GitHub keeps only one run pending per group and drops the superseded ones. Runs already in progress are never cancelled, so a migration cannot be interrupted halfway. Each run deploys the commit that triggered it, not the tip of `main` at the time it starts.

@@ -71,10 +71,16 @@ id — the button stays disabled until it matches — and the id travels with th
 request, where Ace and the regional API each refuse a confirmation that names
 another workspace. The receipt says what closed, what stayed in an outbox, and
 what remains when the walk could not finish, which a second retirement returns
-to. A failed directory search is shown as a failure, never as "no matches",
-and a workspace the tab has retired stays marked, because the directory it
-searches does not know. A regional refusal reaches the page as the API's own
-code and message.
+to; an incomplete pass keeps the typed id and the button armed, under the
+counts and the failed nodes, so the next click returns to what remains. A
+failed directory search is shown as a failure, never as "no matches"; a region
+whose directory did not answer is named beside the rows the other returned;
+the search matches an id as well as a name or slug; and a workspace the tab has
+retired stays marked for the rest of the session — the mark is held in the app,
+so it survives a switch to another tab — because the directory it searches does
+not know. A regional refusal reaches the page as the API's own code and
+message, and an answer the shared contract refuses is named
+`regional_api_contract_mismatch` rather than read as an outage.
 
 `GET /api/queues/dead-letters` lists account Queues through Cloudflare's REST
 API. A Queue is classified as a dead-letter queue only when a live consumer's
@@ -316,8 +322,8 @@ protection between an operator and the close, and it is enforced twice: in
 Ace, and again by the regional API, which also refuses an id its region does
 not own. The tab shows a failed directory search as a failure, never as "no
 matches", because a stale result list is how the wrong workspace gets retired
-with full ceremony; and a workspace it has retired stays marked, because the
-directory it searches does not know.
+with full ceremony; and a workspace it has retired stays marked for the
+session, because the directory it searches does not know.
 
 ## Operations
 
@@ -365,6 +371,33 @@ When a save succeeds but clients do not change, inspect in order:
    response even if a live notification was lost.
 
 ## Changelog
+
+### 2026-09-08 — Review: the Workspaces tab tells the truth about its own state
+
+**What changed:** Retirement status and errors are scoped to the workspace they
+belong to; an incomplete pass is shown with its counts and failed nodes, the
+typed id kept and the button re-armed; the retired mark lives in the app rather
+than the tab; the receipt is neutral rather than red and takes focus; the
+directory route answers an outage with a sentence and names a region that did
+not answer beside the other's rows; the search matches an id; the relay names a
+contract mismatch; `regional()`'s parser is required; every write uses the one
+`sameOrigin` helper; Ace's flag fan-out skips closed workspaces; and the tab's
+`demo-*` classes became the shared `ace-form` family with `.retire-*` for its
+own pieces. Captured in seven states.
+
+**Why:** A review swarm. Global `retiring`/`error` state was shown under
+whichever row was selected; an incomplete pass cleared the confirmation and
+left a dead button; switching tabs lost the mark the document said was kept;
+a directory outage reached the page as the literal `internal_error`; one
+region's outage blanked both; the receipt inherited the source panel's error
+red; and a contract mismatch was indistinguishable from an outage, forever.
+
+**Considered and rejected:** Persisting the retired mark — the directory is the
+authority and a session-long mark is what the page can honestly promise.
+
+**Consequences:** `WorkspacesView` takes `retired` and `onRetired` from the
+app. `/api/directory/workspaces` answers `{ results, unavailableRegions }`. A
+new Ace form uses `.ace-form`.
 
 ### 2026-09-07 — Workspaces
 

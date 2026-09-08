@@ -712,6 +712,10 @@ owns what they mean; this entry exists so somebody adding a table finds them.
   lands. Completion is the absence of unreceipted rows plus the workspace's own
   tombstone, rather than a flag somebody sets.
 
+In D1, retirement writes no table of its own: the operator door sets
+`workspaces.abandoned_at`, the column the last member leaving already writes and
+every authority read already fences on, before any object is closed.
+
 Retirement is not deletion. Every other row stays exactly where it is; the
 tombstone is what stops anything reading or draining them.
 
@@ -972,8 +976,8 @@ work uses ordinary workstream creation and the existing durable agent loop.
 
 ### 2026-09-05 — Two tables for closing a workspace permanently
 
-**What changed:** `object_retirement` in the SQLite of all five classes that
-can belong to a workspace, and `workspace_retirement_graph` in WorkspaceDO.
+**What changed:** `object_retirement` in the SQLite of all four object classes
+that can belong to a workspace, and `workspace_retirement_graph` in WorkspaceDO.
 Conversation-object schema v46 carries the tombstone, after the loop's v45.
 
 **Why:** A demo workspace is replaced rather than cleared, and "replaced" has to

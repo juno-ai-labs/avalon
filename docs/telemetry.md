@@ -684,6 +684,14 @@ inspect a raw payload or dump through logs. Replay is region- and role-restricte
 preserves the original event ID/hash/deadline, and records only fixed audit codes.
 The operator HTTP surface authenticates against a per-region secret map, derives
 the operator ID/role server-side, and never accepts either value from a request.
+That map now also carries a third role, `demos`, which this surface refuses:
+`requireTelemetryOperator` only verifies the credential, and each operator router
+narrows to the roles it admits with `requireOperatorRole` — the telemetry router
+names `support` and `security` — so a route added here inherits the refusal, and
+a `demos` token reaches only the workspace retirement route
+([`workspace-retirement.md`](workspace-retirement.md#the-operator-door)).
+Collapsing a router back to `requireTelemetryOperator` alone would hand every
+token in the map every route.
 
 ## Performance and cost
 
@@ -700,6 +708,23 @@ the dry-run evidence; change batching or sampling only after measuring those
 signals, never by weakening policy or deadline tests.
 
 ## Changelog
+
+### 2026-09-08 — The operator credential map carries a role this surface refuses
+
+**What changed:** `OperatorPrincipalSchema` in `telemetry/operator-auth.ts`
+gains the `demos` role, and `requireOperatorRole` narrows each router to the
+roles it admits; `telemetry-operations.ts` names `support` and `security`.
+
+**Why:** Workspace retirement ([`workspace-retirement.md`](workspace-retirement.md))
+needed an operator credential that can retire and nothing else. A second
+secret with the same shape is a second thing to rotate for no isolation gained;
+the role is what isolates, and only if every surface names the roles it admits.
+
+**Considered and rejected:** A separate `WORKSPACE_OPERATORS_JSON` — the
+rotation cost above.
+
+**Consequences:** Adding an operator router means naming its roles. A role added
+to the map reaches no surface until a router names it.
 
 ### 2026-09-07 — Search review corrections
 
