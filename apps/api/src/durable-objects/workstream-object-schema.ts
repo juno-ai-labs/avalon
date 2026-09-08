@@ -21,7 +21,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 45;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 46;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -2896,6 +2896,16 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
             SELECT next_transcript_sequence - 1 FROM transcript_counters WHERE id = 1
           )
         WHERE EXISTS (SELECT 1 FROM transcript_counters WHERE id = 1)`,
+    ],
+  },
+  {
+    version: 46,
+    description: "conversation-owned stable Sidekick skill names",
+    statements: [
+      `CREATE TABLE sidekick_skill_names (
+         sidekick_id TEXT PRIMARY KEY,
+         name TEXT NOT NULL UNIQUE
+       ) STRICT`,
     ],
   },
 ];
