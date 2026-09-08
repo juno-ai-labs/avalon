@@ -1263,11 +1263,10 @@ export function WorkspaceSettingsScreen({
             {activeSection === 'account' && (
               <section aria-labelledby="settings-title" className="settings-pane">
                 <div className="settings-pane-heading"><h2><SettingLabel setting={settings.profile} /></h2><p>Your Rally identity and access in this workspace.</p></div>
-                <div className="settings-profile-card">
-                  <Avatar member={workspace.currentUser} size="large" />
-                  <span><strong>{workspace.currentUser.name}</strong><small>{workspace.currentUser.email}</small></span>
+                <PersonalSetup variant="settings" profileDetails={(displayName) => <>
+                  <span><strong>{displayName}</strong><small>{workspace.currentUser.email}</small></span>
                   <Badge className="role-badge">{workspace.currentUser.role}</Badge>
-                </div>
+                </>} />
                 <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Preferences</h2></div>
                 <div className="settings-list-card">
                   <label className="settings-preference-row">
@@ -2107,7 +2106,6 @@ export function WorkspaceSettingsScreen({
                 {updateProductAnalytics.error && <InlineError>{updateProductAnalytics.error.message}</InlineError>}
                 <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Appearance</h2><p>Make Rally feel at home on this Mac.</p></div>
                 <ThemePicker />
-                <PersonalSetup />
                 {isSettingAvailable(settings.menuBar, settingsContext) && (
                   <>
                     <div className="settings-list-card">
