@@ -123,7 +123,13 @@ const DEFINITION: AutomationDraft = {
 };
 
 let loadSkillOnNextTurn = false;
-const provider = useOpenRouterDouble(() => {
+let submitDraftOnNextTurn = false;
+const provider = useOpenRouterDouble((call) => {
+  if (submitDraftOnNextTurn) {
+    submitDraftOnNextTurn = false;
+    expect(call.toolNames).toContain("automation_submit_draft");
+    return { callTool: { name: "automation_submit_draft", arguments: { ...DEFINITION, triggers: [] } } };
+  }
   if (loadSkillOnNextTurn) {
     loadSkillOnNextTurn = false;
     return { callTool: { name: "load_skill", arguments: { name: `sidekick-${AUTOMATION_ID}` } } };
@@ -397,6 +403,7 @@ async function settledChildRun(runId: string): Promise<{ status: string; error_j
 
 beforeEach(async () => {
   loadSkillOnNextTurn = false;
+  submitDraftOnNextTurn = false;
   automationOrdinal += 1;
   AUTOMATION_ID = asAutomationId(`00000000-0000-7000-8000-${String(automationOrdinal).padStart(4, "0")}00000ad0`);
   await reset();
@@ -405,6 +412,31 @@ beforeEach(async () => {
 });
 
 describe("AutomationDO", () => {
+  it("publishes through the authoring conversation and completes with a durable final reply", async () => {
+    await createDraft();
+    const root = childStub("0");
+    submitDraftOnNextTurn = true;
+    const sent = await root.fetch("https://object.test/internal/product", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ operation: "create_message", auth: {
+        sessionId: SESSION_ID, userId: AUTHOR_ID, workspaceId: WORKSPACE_ID, region: "global", role: "member",
+      }, input: { text: "Publish a personal knowledge Sidekick.", clientMessageId: "sidekick-authoring", mentions: [], confirmedParticipantUserIds: [], attachmentIds: [], modelOverride: "double/primary" } }),
+    });
+    expect(sent.status, await sent.clone().text()).toBe(200);
+    await runDurableObjectAlarm(root);
+    const latestRun = () => runInDurableObject(root, (_instance, state) => state.storage.sql.exec<{
+      status: string; final_turn_id: string | null; terminalized_at: number | null; error_json: string | null;
+    }>(`SELECT status, final_turn_id, terminalized_at, error_json FROM runs ORDER BY created_at DESC LIMIT 1`).one());
+    await expect.poll(async () => (await latestRun()).terminalized_at, { timeout: RUN_SETTLE_TIMEOUT_MS }).not.toBeNull();
+    expect(await automationRow()).toMatchObject({ lifecycle: "active", accepted_definition_revision: 1 });
+    const run = await latestRun();
+    expect(run).toMatchObject({ status: "completed", error_json: null, final_turn_id: expect.any(String) });
+    expect(await runInDurableObject(root, (_instance, state) => state.storage.sql.exec<{ count: number }>(
+      `SELECT COUNT(*) AS count FROM participant_transcript_turns WHERE turn_id = ?`, run.final_turn_id,
+    ).one().count)).toBe(1);
+    expect(provider.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
   it("publishes instruction-only Sidekicks without execution setup and stores their loading capability", async () => {
     await createDraft();
     const draft: AutomationDraft = { ...DEFINITION, definitionVersion: 2, triggers: [], instructions: "Use short sentences." };

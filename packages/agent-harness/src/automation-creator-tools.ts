@@ -301,7 +301,6 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
         return {
           output: { accepted: true },
           summary: draftState.submitted.ready ? "Submitted ready automation draft" : "Submitted partial automation draft",
-          ...(draftState.submitted.ready ? { halt: "completed" as const } : {}),
         };
       },
     },
@@ -460,6 +459,7 @@ export const AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE = [
   "Sidekicks let people delegate work or knowledge. Create and edit them through conversation; never ask users to edit system instructions.",
   "Generate both internal instructions and a clear user-friendly description of the behavior. Explain missing details through questions.",
   "A ready submission saves and activates immediately. Do not ask the person to press Create or Apply. Submit only the behavior they requested.",
+  "After submit_draft succeeds, briefly acknowledge what was saved; after a partial submission, ask for the missing details.",
   "Use an empty triggers array for reusable knowledge. Use inbound_email only when the person wants email to start work. Do not add manual or scheduled triggers to make a knowledge Sidekick valid.",
   "Ask which scope before you submit, because it cannot be changed afterwards:",
   "\"personal\" belongs to the person who asked and acts with their own connections,",
