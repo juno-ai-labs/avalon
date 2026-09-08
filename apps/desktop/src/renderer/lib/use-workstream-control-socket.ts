@@ -47,6 +47,7 @@ function metadataState(metadata: WorkstreamControlMetadata): {
     id: metadata.id,
     title: metadata.title,
     titleStatus: metadata.titleStatus,
+    appearance: metadata.appearance,
     objective: metadata.description,
     // Full snapshots must overwrite nullable fields too. Omitting a field here
     // would preserve an old value after another client cleared it.
@@ -83,6 +84,7 @@ function metadataState(metadata: WorkstreamControlMetadata): {
       id: metadata.id,
       title: metadata.title,
       titleStatus: metadata.titleStatus,
+    appearance: metadata.appearance,
       objective: metadata.description,
       emailAddress: metadata.emailAddress ?? undefined,
       createdByUserId: metadata.createdByUserId ?? undefined,

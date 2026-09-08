@@ -1,3 +1,4 @@
+import type { WorkstreamAppearancePatch } from '@rally/contracts';
 import {
   ServerSocketEventSchema,
   WorkstreamSocketCommandResultSchema,
@@ -117,6 +118,7 @@ export interface WorkstreamSocketConnection {
   ): Promise<void>;
   reorderPendingInputs(inputIds: string[]): Promise<{ pendingInputs: PendingTranscriptInput[] }>;
   stopHarness(): Promise<void>;
+  setAppearance(appearance: WorkstreamAppearancePatch): Promise<void>;
   retryHarness(): Promise<{ harnessRunId: string }>;
   loadTranscriptRange(input: {
     snapshotId: string;
@@ -772,6 +774,8 @@ export function useWorkstreamSocket(
     (inputIds) => reorderPendingInputsRef.current(inputIds),
     [],
   );
+  const setAppearanceRef = useRef<WorkstreamSocketConnection['setAppearance']>(() => Promise.reject(new Error('Work stream is not connected')));
+  const setAppearance = useCallback<WorkstreamSocketConnection['setAppearance']>((appearance) => setAppearanceRef.current(appearance), []);
   const stopHarnessRef = useRef<WorkstreamSocketConnection['stopHarness']>(
     () => Promise.reject(new ApiError(
       'The substream is not ready to stop.',
@@ -830,6 +834,7 @@ export function useWorkstreamSocket(
       reorderPendingInputsRef.current = () => Promise.reject(new ApiError(
         'The substream is not ready to reorder queued messages.', 409, 'workstream_socket_unavailable',
       ));
+      setAppearanceRef.current = () => Promise.reject(new ApiError('The work stream is not connected.', 409, 'workstream_socket_unavailable'));
       stopHarnessRef.current = () => Promise.reject(new ApiError(
         'The substream is not ready to stop.', 409, 'workstream_socket_unavailable',
       ));
@@ -1087,6 +1092,19 @@ export function useWorkstreamSocket(
       });
       if (result.command !== 'reorder_pending_inputs') throw new Error('substream_command_receipt_mismatch');
       return { pendingInputs: result.pendingInputs };
+    };
+    // Keep queued choices bound to this addressed connection, even if the
+    // header unmounts or the direct hook is later reused for another room.
+    let appearanceQueue = Promise.resolve();
+    setAppearanceRef.current = (appearance) => {
+      const command = { type: 'set_workstream_appearance' as const, operationId: uuidV7(), appearance };
+      const result = appearanceQueue.then(async () => {
+        if (closedByEffect) throw new ApiError('The work stream is no longer available.', 409, 'workstream_socket_unavailable');
+        const receipt = await submitSubstreamCommand(command);
+        if (receipt.command !== 'set_workstream_appearance') throw new Error('substream_command_receipt_mismatch');
+      });
+      appearanceQueue = result.catch(() => undefined);
+      return result;
     };
     stopHarnessRef.current = async (): Promise<void> => {
       const result = await submitSubstreamCommand({ type: 'stop_harness', operationId: uuidV7() });
@@ -2225,6 +2243,7 @@ export function useWorkstreamSocket(
       reorderPendingInputsRef.current = () => Promise.reject(new ApiError(
         'The substream is no longer available.', 409, 'workstream_socket_unavailable',
       ));
+      setAppearanceRef.current = () => Promise.reject(new ApiError('The work stream is not connected.', 409, 'workstream_socket_unavailable'));
       stopHarnessRef.current = () => Promise.reject(new ApiError(
         'The substream is no longer available.', 409, 'workstream_socket_unavailable',
       ));
@@ -2285,6 +2304,7 @@ export function useWorkstreamSocket(
       reorderPendingInputs,
       retryHarness,
       stopHarness,
+      setAppearance,
     }),
     [
       activeCompaction,
@@ -2299,6 +2319,7 @@ export function useWorkstreamSocket(
       sendReady,
       state,
       stopHarness,
+      setAppearance,
       workspaceSocketState,
     ],
   );

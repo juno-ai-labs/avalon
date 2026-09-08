@@ -4851,6 +4851,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         });
         return;
       }
+      if (command.type === "set_workstream_appearance") {
+        await this.product.setAppearanceForAdmittedSocket(auth, command.operationId, command.appearance);
+        this.sendSocketCommandResult(socket, { type: "client_command_succeeded", command: command.type, operationId: command.operationId });
+        return;
+      }
       if (command.type === "reorder_pending_inputs") {
         const result = await this.product.reorderPendingInputsForAdmittedSocket(
           auth,

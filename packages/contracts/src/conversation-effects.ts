@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { WorkstreamAppearanceSchema } from "./workstream-appearance";
 import { ConversationParentKindSchema } from "./conversation-parent";
 import { IdSchema, SubstreamIdSchema, WorkspaceIdSchema } from "./identifiers";
 import { ResourceRelationshipTypeSchema } from "./resource-relationships";
@@ -23,6 +24,7 @@ export const WORKSTREAM_DIRECTORY_RESOURCE_LINK_LIMIT = 10_000;
 /** A child's, or a parent's aggregated, common state. */
 export const WorkstreamDirectoryCommonEffectSchema = z.strictObject({
   kind: z.literal("directory_common"),
+  appearance: WorkstreamAppearanceSchema.optional(),
   title: ShortTextSchema,
   description: z.string().max(4_000),
   preview: z.string().max(1_000),

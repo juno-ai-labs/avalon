@@ -1,3 +1,4 @@
+import { WorkstreamAppearanceSchema, WorkstreamAppearancePatchSchema, type WorkstreamAppearancePatch } from "@rally/contracts";
 import type { ConversationParentKind } from "@rally/contracts/conversation-parent";
 import {
   AcknowledgeWorkstreamReadRequestSchema,
@@ -236,6 +237,7 @@ export type WorkstreamObjectAcknowledgeReadInput = z.infer<typeof AcknowledgeWor
 export type WorkstreamObjectAnswerElicitationInput = z.infer<typeof AnswerElicitationRequestSchema>;
 
 interface RootRow extends SqlRow {
+  appearance_json: string | null;
   workstream_key: string;
   parent_workspace_key: string;
   authority_mode: string;
@@ -483,7 +485,7 @@ export class WorkstreamObjectProductService {
     sql: SqlStorage,
     auth: AuthContext,
     operationId: string,
-    command: "reorder_pending_inputs" | "stop_harness",
+    command: "reorder_pending_inputs" | "stop_harness" | "set_workstream_appearance",
     requestHash: string,
     resultHash: string,
     now: number,
@@ -1568,6 +1570,7 @@ export class WorkstreamObjectProductService {
       workspaceId: root.parent_workspace_key,
       title: truncateUtf16Safe(root.title, 180),
       titleStatus,
+      appearance: root.appearance_json ? WorkstreamAppearanceSchema.parse(JSON.parse(root.appearance_json)) : undefined,
       objective: truncateUtf16Safe(root.description, WORKSTREAM_DESCRIPTION_MAX_CHARACTERS),
       emailAddress: root.email_address,
       createdByUserId: root.created_by_user_id,
@@ -2961,6 +2964,7 @@ export class WorkstreamObjectProductService {
     }));
     return {
       kind: "directory_common" as const,
+      appearance: root.appearance_json ? WorkstreamAppearanceSchema.parse(JSON.parse(root.appearance_json)) : undefined,
       title: truncateUtf16Safe(root.title, 500),
       description: truncateUtf16Safe(root.description, WORKSTREAM_DESCRIPTION_MAX_CHARACTERS),
       preview: truncateUtf16Safe(root.preview, 1_000),
@@ -4609,6 +4613,24 @@ export class WorkstreamObjectProductService {
     inputIds: readonly string[],
   ): Promise<{ pendingInputs: PendingTranscriptInput[] }> {
     return this.reorderPendingInputsWithAuthority(auth, operationId, inputIds, true);
+  }
+
+  async setAppearanceForAdmittedSocket(auth: AuthContext, operationId: string, raw: WorkstreamAppearancePatch): Promise<void> {
+    this.locallyAuthorizedRoot(auth);
+    if (this.externalSubstreamId() !== "0" || this.objectStore.identity()?.parentKind !== "workstream") throw new ApiError(403, "main_conversation_required", "Change the work stream appearance from Main");
+    const patch = WorkstreamAppearancePatchSchema.parse(raw);
+    const requestHash = workstreamImportHash({ command: "set_workstream_appearance", patch });
+    let changed = false;
+    await this.objectStore.commitWithRegionalEffects((sql) => {
+      if (this.socketCommandReceipt(sql, auth, operationId, requestHash) !== "new") return;
+      const root = this.root();
+      const current = root.appearance_json ? WorkstreamAppearanceSchema.parse(JSON.parse(root.appearance_json)) : { icon: null, color: null };
+      const appearance = WorkstreamAppearanceSchema.parse({ ...current, ...patch });
+      const now = Date.now();
+      sql.exec(`UPDATE workstream SET appearance_json = ?, updated_at = ? WHERE id = 1`, JSON.stringify(appearance), now);
+      this.recordSocketCommandReceipt(sql, auth, operationId, "set_workstream_appearance", requestHash, workstreamImportHash(appearance), now);
+      changed = true;
+    }, () => changed ? [{ partitionKey: "common", effect: this.commonEffect(this.root()) }] : []);
   }
 
   async reorderPendingInputsForAdmittedSocket(

@@ -36,6 +36,7 @@ export function workstreamSummaryState(workstream: WorkstreamSummary): {
       id: workstream.id,
       title: workstream.title,
       titleStatus: workstream.titleStatus,
+      appearance: workstream.appearance,
       objective: workstream.objective,
       emailAddress: workstream.emailAddress,
       createdByUserId: workstream.createdByUserId,
