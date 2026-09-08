@@ -13,9 +13,11 @@ import {
 import {
   ConversationParentListChildrenRequestSchema,
   ConversationParentListChildrenResultSchema,
+  ConversationParentRetirementChildrenResultSchema,
   type ConversationParentKind,
   type ConversationParentListChildrenRequest,
   type ConversationParentListChildrenResult,
+  type ConversationParentRetirementChildrenResult,
 } from "@rally/contracts/conversation-parent";
 import type { Region, WorkspaceId } from "@rally/contracts";
 import { z } from "zod";
@@ -24,6 +26,10 @@ import type { Env } from "../env";
 import { uuidV7 } from "../lib/uuid-v7";
 import { diagnosticErrorCode, logInfo, logWarn } from "../observability/logger";
 import { ScheduledDurableObject } from "./scheduled-alarms";
+import {
+  applyRetirementGate,
+  droppedEnvelopeReceipts,
+} from "./object-retirement";
 
 /**
  * The half of a conversation parent that is the same for every kind of parent.
@@ -327,6 +333,35 @@ export abstract class ConversationParentDurableObject extends ScheduledDurableOb
     const request = ConversationParentListChildrenRequestSchema.parse(input);
     this.assertParent(request.workspaceId, request.parentId);
     return ConversationParentListChildrenResultSchema.parse({ children: this.childRegistry() });
+  }
+
+  /**
+   * The children this parent knows about, for the caller that is about to close
+   * it.
+   *
+   * Separate from {@link listChildren} because retirement has to distinguish
+   * three outcomes and act differently on each, and two of them arrive as
+   * exceptions there. A parent a directory names but that never materialized is
+   * retired anyway — it has no children by construction, and the call fences an
+   * id a late create would otherwise take. A parent that disagrees about its own
+   * identity is left alone, because closing it would tombstone the wrong object.
+   */
+  async childrenForRetirement(
+    input: ConversationParentListChildrenRequest,
+  ): Promise<ConversationParentRetirementChildrenResult> {
+    await this.migrationsReady();
+    const request = ConversationParentListChildrenRequestSchema.parse(input);
+    const identity = this.parentIdentity();
+    if (!identity) {
+      return ConversationParentRetirementChildrenResultSchema.parse({ status: "missing" });
+    }
+    if (identity.workspaceId !== request.workspaceId || identity.parentId !== request.parentId) {
+      return ConversationParentRetirementChildrenResultSchema.parse({ status: "identity_mismatch" });
+    }
+    return ConversationParentRetirementChildrenResultSchema.parse({
+      status: "ok",
+      children: this.childRegistry(),
+    });
   }
 
   protected assertParent(workspaceId: string, parentId: string): ConversationParentIdentity {
@@ -874,3 +909,15 @@ export abstract class ConversationParentDurableObject extends ScheduledDurableOb
     ))?.due_at ?? null;
   }
 }
+
+applyRetirementGate(ConversationParentDurableObject, {
+  drop: {
+    // The child's leg of the same Queue path WorkspaceDO's receivers end.
+    receiveChildEffects: ([input]) => ({ accepted: droppedEnvelopeReceipts(input) }),
+    // No `fetch` and no socket callbacks: this class serves neither, and the
+    // gate refuses a policy entry naming a method the class does not have.
+    // The platform retries an alarm that throws. A retired object answers the
+    // wake by doing nothing and arming nothing, which is what quiet means.
+    alarm: () => Promise.resolve(),
+  },
+});

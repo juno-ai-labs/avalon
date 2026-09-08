@@ -696,6 +696,25 @@ column catalog; what follows is only what WorkspaceDO still holds.
 - `audit_events` records security- and side-effect-relevant actions without copying
   sensitive bodies.
 
+### Object retirement
+
+Two tables belong to closing a workspace permanently, and they sit in the
+objects rather than D1 on purpose. [`workspace-retirement.md`](workspace-retirement.md)
+owns what they mean; this entry exists so somebody adding a table finds them.
+
+- **`object_retirement`, in every gated object's own SQLite**, is one permanent
+  row: the tombstone. It is not in D1 because the gate has to answer during
+  constructor recovery, before anything cross-authority could be consulted.
+  It arrives through each class's own append-only migration ledger, from one
+  shared constant, exactly as `_internal_durable_alarms` does.
+- **`workspace_retirement_graph`, in WorkspaceDO**, holds one row per conversation
+  parent with a nullable `retired_at` receipt, captured *before* the tombstone
+  lands. Completion is the absence of unreceipted rows plus the workspace's own
+  tombstone, rather than a flag somebody sets.
+
+Retirement is not deletion. Every other row stays exactly where it is; the
+tombstone is what stops anything reading or draining them.
+
 ### Regional telemetry
 
 Telemetry uses regional D1 as a durable policy boundary, not as product truth.
@@ -951,6 +970,29 @@ WorkspaceDO migrations 34–35 store the per-member journey and connector choice
 Existing accounts are exempted. A second execution store was rejected: first
 work uses ordinary workstream creation and the existing durable agent loop.
 
+### 2026-09-05 — Two tables for closing a workspace permanently
+
+**What changed:** `object_retirement` in the SQLite of all five classes that
+can belong to a workspace, and `workspace_retirement_graph` in WorkspaceDO.
+Conversation-object schema v46 carries the tombstone, after the loop's v45.
+
+**Why:** A demo workspace is replaced rather than cleared, and "replaced" has to
+mean an object that can never write again — including after eviction, when the
+platform recovers an alarm and a Queue redelivers an effect. That needs an
+authority the object itself can read before it admits anything, which is its own
+SQLite and not D1.
+
+**Considered and rejected:** The tombstone in D1 — the gate answers during
+constructor recovery, where a cross-authority read is a second failure mode in
+the one path that must have none. Deleting a retired workspace's rows —
+retirement is reversible for nobody but auditable for everybody, and the
+tombstone is cheaper and safer than a cascade. A regional register of what may
+be retired — built, then dropped: retirement takes any workspace, and the
+register was bookkeeping for a surface one Access policy already admits.
+
+**Consequences:** Adding a table to any of the five gated classes now means
+deciding what retirement does to the methods that read it — the default is
+refusal.
 
 ### 2026-09-05 — Search projection state
 
