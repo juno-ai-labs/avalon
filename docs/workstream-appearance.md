@@ -79,6 +79,15 @@ including scrolling, and check another connected window and reopening.
 
 ## Changelog
 
+### 2026-09-08 — Soften the neon-yellow chip
+
+The shared `orange` identity token was the same lime as brand fills (`#ccff00`),
+which made sidebar chips too bright and green. Both appearances now resolve it
+to `#ffff3c` so the glyph is yellow. Brand fills are left on `#ccff00`; the
+stored key stays `orange` and the picker still labels it Neon yellow. Changing
+only this token also shifts project and personal-accent swatches that share the
+palette, which is the coupling the picker already documents.
+
 ### 2026-09-08 — Reconcile individual optimistic choices
 
 Review found that unrelated metadata broadcasts rebuild the appearance object,
