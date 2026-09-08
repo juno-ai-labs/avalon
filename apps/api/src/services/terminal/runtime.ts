@@ -31,11 +31,12 @@ import {
 import type { TerminalPortFactory } from "./object-port";
 import type { TerminalTaskRecord } from "../../durable-objects/workstream-terminal-storage";
 import type { TerminalRepositorySelector } from "./repository-selection";
+import { TERMINAL_OUTPUT_DIRECTORY, TERMINAL_OUTPUT_ROOT, TERMINAL_WORKSPACE_ROOT } from "./contract";
 import { recordTerminalAcquisition } from "./tracing";
 
-const ROOT = "/workspace";
+const ROOT = TERMINAL_WORKSPACE_ROOT;
 const RESOURCE_ROOT = ".rally/resources";
-const OUTPUT_ROOT = ".rally-output";
+const OUTPUT_ROOT = TERMINAL_OUTPUT_DIRECTORY;
 const MAX_PROVIDER_CAPTURE_BYTES = 128 * 1_024;
 const MAX_COMMAND_LOG_BYTES = 5_000_000;
 const OUTPUT_LIMIT_MARKER_RESERVE_BYTES = 256;
@@ -432,7 +433,7 @@ export function createDaytonaTerminalRuntime(
     if (result.exitCode === 44) {
       throw new TerminalToolError(
         "not_found",
-        "No output file or directory exists at that path under AVALON_RESOURCE_DIR (/workspace/.rally-output). publish_resource resolves filePath against that directory, not the workspace root that read_file and write_file use. Write or copy the finished file or directory beneath it, then publish its path relative to that directory.",
+        `No output file or directory exists at that path under $AVALON_RESOURCE_DIR (${TERMINAL_OUTPUT_ROOT}). terminal_publish_resource resolves filePath against that directory, not the workspace root that terminal_read_file and terminal_write_file use. Write or copy the finished file or directory beneath it, then publish its path relative to that directory.`,
         { field: "filePath" },
       );
     }
@@ -599,7 +600,7 @@ export function createDaytonaTerminalRuntime(
     if (result.exitCode === 44) {
       throw new TerminalToolError(
         "not_found",
-        "No output file exists at that path under AVALON_RESOURCE_DIR (/workspace/.rally-output). publish_resource resolves filePath against that directory, not the workspace root that read_file and write_file use. Write or copy the finished file beneath it, then publish its path relative to that directory.",
+        `No output file exists at that path under $AVALON_RESOURCE_DIR (${TERMINAL_OUTPUT_ROOT}). terminal_publish_resource resolves filePath against that directory, not the workspace root that terminal_read_file and terminal_write_file use. Write or copy the finished file beneath it, then publish its path relative to that directory.`,
         { field: "filePath" },
       );
     }

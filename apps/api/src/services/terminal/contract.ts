@@ -8,7 +8,14 @@ import type { ToolDefinition } from "@rally/contracts";
 import { z } from "zod";
 
 export const TERMINAL_PLUGIN_ID = "rally:terminal";
-export const TERMINAL_PLUGIN_SYSTEM_MESSAGE = "You have a Linux sandbox with Bash, Python, JavaScript (Node.js), TypeScript, and SQLite. Use these tools when code is the clearest reliable way to calculate, transform data, analyze files, validate a repository, or create a graph, image, dataset, report, archive, or artifact. Prefer Bash for simple CLI/file pipelines, Python for analysis and generated artifacts, JavaScript/TypeScript for Node and web-shaped data, and SQLite for relational transforms. Supported installers are apt/dpkg, pip/uv, and npm/pnpm. Use `sudo apt-get` for system packages; do not install another runtime or manager, and report an unsupported requirement. Use `terminal_run_command` with `ls`, `find`, `rg --files`, and `rg` for discovery and search. The workspace root is `/workspace`: it is the default working directory, and every file path and `cwd` is relative to it, except `terminal_publish_resource`, whose path is relative to `$AVALON_RESOURCE_DIR` (`/workspace/.rally-output`). To work in an authorized GitHub repository, choose the exact owner/name yourself and call `terminal_checkout_repository`; use GitHub repository search first when needed, and set `requiredRemoteAccess` to `full_access` when the task needs a git push or to open a pull request. Permissions are a durable ceiling: choosing `read_only` keeps the sandbox credential read-only even when connector policy permits full access. The checkout result's `remoteAccess` is the remote boundary: `read_only` allows local edits and commits but its credential cannot push with git or mutate GitHub; `full_access` provides a repository-scoped credential for ordinary `git` and `gh` commands. Before initial repository access Rally creates or restores `$AVALON_GIT_BRANCH` and switches to it. Later tools attempt to restore that branch; if an in-progress merge, rebase, bisect, or local edit prevents the switch, inspect and repair Git state before pushing. Stay on the prepared branch, commit normally, push only that branch, and create or update its pull request against `$AVALON_GIT_BASE_BRANCH`; do not push the default branch or another ref. For deliberate text changes, read the file first with `terminal_read_file` and use `terminal_edit_file` or `terminal_apply_patch` to edit the file; use `terminal_write_file` only for intentional complete replacement or for writing a new file. To create a durable artifact/file/document visible and readable to the user, write the final stable file beneath `$AVALON_RESOURCE_DIR`, then call `terminal_publish_resource` with a path relative to that directory. Publishing the same path again updates that same artifact rather than creating a second one, so revise an artifact by editing its file and republishing its path. A nonzero command exit, timeout, cancellation, or output limit is a failed tool response whose `state` and `terminationReason` must be inspected; never infer success from the tool call alone.";
+
+/** The sandbox directory every Terminal path is relative to. */
+export const TERMINAL_WORKSPACE_ROOT = "/workspace";
+/** Where published artifacts are written, relative to the root. */
+export const TERMINAL_OUTPUT_DIRECTORY = ".rally-output";
+/** The same directory as the sandbox sees it in `$AVALON_RESOURCE_DIR`. */
+export const TERMINAL_OUTPUT_ROOT = `${TERMINAL_WORKSPACE_ROOT}/${TERMINAL_OUTPUT_DIRECTORY}`;
+export const TERMINAL_PLUGIN_SYSTEM_MESSAGE = "You have a Linux sandbox with Bash, Python, JavaScript (Node.js), TypeScript, and SQLite. Use these tools when code is the clearest reliable way to calculate, transform data, analyze files, validate a repository, or create a graph, image, dataset, report, archive, or artifact. Prefer Bash for simple CLI/file pipelines, Python for analysis and generated artifacts, JavaScript/TypeScript for Node and web-shaped data, and SQLite for relational transforms. Supported installers are apt/dpkg, pip/uv, and npm/pnpm. Use `sudo apt-get` for system packages; do not install another runtime or manager, and report an unsupported requirement. Use `terminal_run_command` with `ls`, `find`, `rg --files`, and `rg` for discovery and search. The workspace root is `/workspace`: it is the default working directory, and every file path and `cwd` is relative to it, except `terminal_publish_resource`, whose path is relative to `$AVALON_RESOURCE_DIR` (`/workspace/.rally-output`). To work in an authorized GitHub repository, choose the exact owner/name yourself and call `terminal_checkout_repository`; use GitHub repository search first when needed, and set `requiredRemoteAccess` to `full_access` when the task needs a git push or to open a pull request. Permissions are a durable ceiling: choosing `read_only` keeps the sandbox credential read-only even when connector policy permits full access. The checkout result's `remoteAccess` is the remote boundary: `read_only` allows local edits and commits but its credential cannot push with git or mutate GitHub; `full_access` provides a repository-scoped credential for ordinary `git` and `gh` commands. Before initial repository access Rally creates or restores `$AVALON_GIT_BRANCH` and switches to it. Later tools attempt to restore that branch; if an in-progress merge, rebase, bisect, or local edit prevents the switch, inspect and repair Git state before pushing. Stay on the prepared branch, commit normally, push only that branch, and create or update its pull request against `$AVALON_GIT_BASE_BRANCH`; do not push the default branch or another ref. For deliberate text changes, read the file first with `terminal_read_file` and use `terminal_edit_file` or `terminal_apply_patch` to edit the file; use `terminal_write_file` only for intentional complete replacement or for writing a new file. To create a durable artifact/file/document visible and readable to the user, write the final stable file beneath `$AVALON_RESOURCE_DIR`, then publish it with `terminal_publish_resource`. Publishing the same path again updates that same artifact rather than creating a second one, so revise an artifact by editing its file and republishing its path. A nonzero command exit, timeout, cancellation, or output limit is a failed tool response whose `state` and `terminationReason` must be inspected; never infer success from the tool call alone.";
 
 export const TERMINAL_TOOL_NAMES = [
   "read_file",
@@ -47,7 +54,7 @@ const applyPatchArguments = z.strictObject({
 });
 const runCommandArguments = z.strictObject({
   command: z.string().min(1).max(32 * 1_024),
-  cwd: relativePath.optional(),
+  cwd: z.string().max(4_096).optional(),
   timeoutMs: z.number().int().positive().max(900_000).optional(),
   description: z.string().min(1).max(240).optional(),
 });
@@ -116,7 +123,7 @@ export const TERMINAL_PLUGIN_ACTIVATION_BUDGET_MS =
 const definitions: Record<TerminalToolName, ToolDefinition> = {
   read_file: {
     name: "read_file",
-    description: "Read an exact bounded range from one UTF-8 text file. Paths are relative to the terminal workspace. Use run_command with ls, find, or rg for discovery.",
+    description: "Read an exact bounded range from one UTF-8 text file. Paths are relative to the workspace root. Use run_command with ls, find, or rg for discovery.",
     capability: "terminal.file.read",
     mode: "read",
     idempotency: "safe",
@@ -173,7 +180,7 @@ const definitions: Record<TerminalToolName, ToolDefinition> = {
     timeoutMs: TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS + 930_000,
     inputSchema: objectSchema({
       command: { type: "string", minLength: 1, maxLength: 32 * 1_024, description: "One non-interactive Bash script fragment." },
-      cwd: pathProperty("Optional working directory relative to the workspace root. Omit it to run in the root; pass a subdirectory such as out or src/app. A leading / or a .. segment is refused."),
+      cwd: { type: "string", maxLength: 4_096, description: "Optional working directory relative to the workspace root. Omit it, or pass . or an empty string, to run in the root; pass a subdirectory such as out or src/app. A leading / or a .. segment is refused." },
       timeoutMs: { type: "integer", minimum: 1, maximum: 900_000, default: 120_000, description: "Command wall-clock deadline in milliseconds." },
       description: { type: "string", minLength: 1, maxLength: 240, description: "Short participant-facing activity label; it does not affect execution." },
     }, ["command"]),

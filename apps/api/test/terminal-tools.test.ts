@@ -304,7 +304,7 @@ describe("Terminal file and command tools", () => {
     });
   });
 
-  it.each([".", "./", "./."])("accepts the workspace root as a working directory: %s", async (cwd) => {
+  it.each([".", "./", "./.", ""])("accepts the workspace root as a working directory: %s", async (cwd) => {
     // `.` normalizes to nothing, and nothing used to read as an escape. The root
     // is inside the root: a recorded run spent four turns being refused for
     // naming it, then guessed directory names until stderr leaked the real one.
@@ -317,11 +317,78 @@ describe("Terminal file and command tools", () => {
     expect(runCommand.mock.calls[0]![1]).not.toHaveProperty("cwd");
   });
 
+  it("forwards a real working directory to the runtime", async () => {
+    // The inverse of the root case: if every cwd normalized to nothing, every
+    // command would silently run in the root and the root tests would stay green.
+    const { value } = runtime();
+    const runCommand = vi.spyOn(value, "runCommand");
+    await createTerminalToolExecutors(value).run_command({ command: "pwd", cwd: "out/app" }, context);
+    expect(runCommand.mock.calls[0]![1]).toMatchObject({ cwd: "out/app" });
+  });
+
+  it("refuses a working directory outside the root, echoes it, and says to omit cwd", async () => {
+    const { value } = runtime();
+    await expect(createTerminalToolExecutors(value).run_command({ command: "pwd", cwd: "../escape" }, context)).rejects.toMatchObject({
+      code: "path_outside_root",
+      message: expect.stringContaining("`cwd` must stay inside the workspace root"),
+    });
+    await expect(createTerminalToolExecutors(value).run_command({ command: "pwd", cwd: "../escape" }, context)).rejects.toMatchObject({
+      message: expect.stringMatching(/`\.\.\/escape`.*Omit `cwd` to run in the workspace root/su),
+    });
+  });
+
+  it("strips terminal controls from the echoed value", async () => {
+    // The echo reaches the transcript like every other Terminal string, so it
+    // takes the same sanitizer; a path carrying an ANSI escape is model output.
+    const { value } = runtime();
+    await expect(createTerminalToolExecutors(value).read_file({ filePath: "../\u001b[31mx" }, context)).rejects.toMatchObject({
+      code: "path_outside_root",
+      message: expect.stringMatching(/`\.\.\/x`/u),
+    });
+    await expect(createTerminalToolExecutors(value).read_file({ filePath: "../\u001b[31mx" }, context)).rejects.toMatchObject({
+      message: expect.not.stringContaining("\u001b"),
+    });
+  });
+
+  it("names the output directory, not the workspace root, when a publish path is refused", async () => {
+    // publish_resource is the one tool resolved against $AVALON_RESOURCE_DIR; a
+    // refusal that pointed at the workspace root would steer the model into the
+    // not_found it gets for a file written there.
+    const { value } = runtime();
+    await expect(createTerminalToolExecutors(value).publish_resource({ filePath: "/workspace/.rally-output/report.md" }, context)).rejects.toMatchObject({
+      code: "path_outside_root",
+      message: expect.stringContaining("the output directory, `$AVALON_RESOURCE_DIR` (`/workspace/.rally-output`)"),
+    });
+    await expect(createTerminalToolExecutors(value).publish_resource({ filePath: "/workspace/.rally-output/report.md" }, context)).rejects.toMatchObject({
+      message: expect.not.stringContaining("workspace root ("),
+    });
+  });
+
+  it("names the parameter a tool actually has when it refuses a path", async () => {
+    const { value } = runtime();
+    await expect(createTerminalToolExecutors(value).import_resource({
+      resourceId: "00000000-0000-4000-8000-000000000099",
+      destinationPath: "/abs/out",
+    }, context)).rejects.toMatchObject({
+      code: "path_outside_root",
+      message: expect.stringContaining("`destinationPath` must stay inside"),
+    });
+    await expect(createTerminalToolExecutors(value).apply_patch({
+      patch: "--- /dev/null\n+++ /abs/new.txt\n@@ -0,0 +1 @@\n+hello\n",
+    }, context)).rejects.toMatchObject({
+      code: "path_outside_root",
+      message: expect.stringContaining("A path in the patch, `/abs/new.txt`, leaves the workspace root"),
+    });
+  });
+
   it("refuses the workspace root as a file path with its own code", async () => {
     const { value } = runtime();
     const refused = createTerminalToolExecutors(value).read_file({ filePath: "." }, context);
     await expect(refused).rejects.toBeInstanceOf(TerminalToolError);
-    await expect(refused).rejects.toMatchObject({ code: "invalid_path" });
+    await expect(refused).rejects.toMatchObject({
+      code: "invalid_path",
+      message: expect.stringContaining("`filePath` names the workspace root (`/workspace`) itself, not a file"),
+    });
   });
 
   it("returns nonzero exits as final results and lets repository policy govern standard GitHub CLI writes", async () => {
