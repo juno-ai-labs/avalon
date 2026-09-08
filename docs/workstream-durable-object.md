@@ -1404,8 +1404,8 @@ already have committed across the object boundary.
 | `workspace_identity` | Singleton row (`id = 1`) binding the object to workspace, region, and immutable placement affinity. |
 | `workspace_socket_ticket_receipts` | One consumed workspace-scoped ticket including user, expiry, and consumption time; its expiry index supports bounded cleanup. |
 | `workspace_sync_events` | Monotonic `waterline`, UUIDv7 `event_id`, JSON topic set, and occurrence time for the bounded 1,024-event reconciliation window. Rows are invalidations only, never workspace data copies. |
-| `object_retirement` | Singleton (`id = 1`): the retirement tombstone — instant, operation, actor, reason. Present in all four object classes from one shared constant; migration 39 here. [`workspace-retirement.md`](workspace-retirement.md). |
-| `workspace_retirement_graph` | `(parent_kind, parent_id)`: one row per work stream and automation recorded before the tombstone, with a nullable `retired_at` receipt the walk writes. Migration 40. |
+| `object_retirement` | Singleton (`id = 1`): the retirement tombstone — instant, operation, actor, reason. Present in all four object classes from one shared constant; migration 40 here. [`workspace-retirement.md`](workspace-retirement.md). |
+| `workspace_retirement_graph` | `(parent_kind, parent_id)`: one row per work stream and automation recorded before the tombstone, with a nullable `retired_at` receipt the walk writes. Migration 41. |
 | `workspace_connector_events` | Complete authoritative normalized provider event, connection/workspace scope, bounded JSON/text fields, provider/dedupe unique keys, local insertion sequence, and processing claim/terminal state. It is never shared with another workspace. |
 | `workspace_connector_event_ingress_receipts` | One ingress UUID/content-hash to canonical-event mapping. It makes provider replay and at-least-once Queue delivery idempotent even when a second delivery used a different UUIDv7; ingest opportunistically reaps the oldest receipts after 30 days while the provider/dedupe keys continue to resolve the canonical event. |
 | `connector_connections`, `external_user_identities` | Workspace connector credentials, cursor/configuration/health, model plugin identity, refresh lease, and verified provider-user mappings. Global/provider ingress routes retain only the opaque fields needed to find this object. |
@@ -1656,9 +1656,9 @@ directory write at all.
 ### 2026-09-08 — Every object under a workspace can be retired
 
 **What changed:** Each of the four object classes gains the `object_retirement`
-tombstone table (WorkspaceDO 39, WorkstreamDO 8, SidekickDO 5,
+tombstone table (WorkspaceDO 40, WorkstreamDO 8, SidekickDO 5,
 conversation-object v46) and WorkspaceDO gains `workspace_retirement_graph`
-(40); the shared parent base gains `childrenForRetirement`. Every callable
+(41); the shared parent base gains `childrenForRetirement`. Every callable
 method of these classes is wrapped by the retirement gate at module load.
 `SubstreamAgent`'s runtime recovery is a prototype method rather than a
 constructor-bound closure, and returns at once on a retired object.
