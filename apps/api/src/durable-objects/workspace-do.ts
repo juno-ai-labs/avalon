@@ -8503,22 +8503,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     JSON.stringify([job.parentId, job.substreamId ?? null]), JSON.stringify(job));
   }
 
-  async authorizationDiscoveryInventory(input: { workspaceId: string; parentId: string }) {
-    await this.initialized;
-    this.assertWorkspace(WorkspaceIdSchema.parse(input.workspaceId));
-    return this.state.storage.sql.exec<{ substream_id: string }>(
-      'SELECT substream_id FROM authorization_backfill_children WHERE parent_id = ?', IdSchema.parse(input.parentId),
-    ).toArray().map((row) => row.substream_id);
-  }
-
-  async authorizationDiscoveryParents(input: { workspaceId: string }) {
-    await this.initialized;
-    this.assertWorkspace(WorkspaceIdSchema.parse(input.workspaceId));
-    return this.state.storage.sql.exec<{ parentId: string }>(`
-      SELECT workstream_id AS parentId FROM workspace_workstream_directory
-      UNION SELECT automation_id AS parentId FROM automation_directory`).toArray();
-  }
-
   async registerAuthorizationChildren(input: { workspaceId: string; parentId: string; substreamIds: string[]; refreshExisting?: boolean }) {
     await this.initialized;
     const request = z.strictObject({ workspaceId: WorkspaceIdSchema, parentId: IdSchema, substreamIds: z.array(SubstreamIdSchema), refreshExisting: z.boolean().optional() }).parse(input);
