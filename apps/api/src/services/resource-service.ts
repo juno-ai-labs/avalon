@@ -1,6 +1,5 @@
 import { createAccessContext, requireAuthorizedRead } from './authorization-service';
 import type { AccessContext } from './authorization-policy';
-import { asWorkspaceId } from '@rally/contracts';
 import { resourceSearchText } from './resource-search-text';
 import { ConnectorError, type ConnectorConnectionContext } from "@rally/connectors";
 import {
@@ -289,22 +288,18 @@ export class ResourceService {
     return this.toResource(row);
   }
 
-  /** Reload readable source text for search; never trust text returned by an index. */
-  async searchText(id: string) {
-    const stub = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS, this.auth.workspaceId,
-      workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(this.auth.workspaceId)));
-    const request = { workspaceId: this.auth.workspaceId, resourceId: id };
-    const revision = await stub.resourceSearchRevision(request);
-    if (revision === null) return null;
-    const row = await this.loadSearchResource(id);
-    const text = await resourceSearchText(this.env, row);
-    if (await stub.resourceSearchRevision(request) !== revision) return null;
-    // The final source read rechecks resource authority after every external await.
-    const current = await this.loadSearchResource(id);
-    if (current.updated_at !== row.updated_at || current.model_content_ref !== row.model_content_ref
-      || current.content_ref !== row.content_ref || current.metadata_json !== row.metadata_json
-      || current.title !== row.title || current.canonical_url !== row.canonical_url) return null;
-    return { resource: this.toResource(current), text, revision: String(revision) };
+  /** Admit a page once, then load canonical snapshots through the owning store. */
+  async searchTexts(ids: readonly string[]) {
+    const addresses = [...new Set(ids)].map((id) => ({ kind: 'resource' as const,
+      workspaceId: this.auth.workspaceId, resourceId: IdSchema.parse(id) }));
+    const decisions = await this.access.checkMany(addresses);
+    const allowed = addresses.filter((_, index) => decisions[index]?.status === 'allowed');
+    const rows = allowed.length ? await (await this.workspaceDirectory()).resourceSearchRecords({ workspaceId: this.auth.workspaceId,
+      resourceIds: allowed.map((address) => address.resourceId) }) : [];
+    const records = await Promise.all(rows.map(async (row) => ({ resource: this.toResource(row),
+      text: await resourceSearchText(this.env, row), revision: String(row.search_revision) })));
+    return { records: new Map(records.map((record) => [record.resource.id, record])),
+      complete: decisions.every((decision) => decision.status !== 'unavailable') };
   }
 
   /** Opening a search result repeats the same attachment authority checks. */
