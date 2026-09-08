@@ -51,6 +51,17 @@ export interface SubstreamLoopRow extends Record<string, SqlStorageValue> {
   next_input_sequence: number;
   next_assistant_turn_sequence: number;
   next_execution_sequence: number;
+  /**
+   * The highest transcript sequence the model's conversation has considered.
+   *
+   * Not the transcript's high-water mark, and not the last admitted input:
+   * every conversation turn at or below it is either in the projection or was
+   * deliberately left out of it, and every one above it has not been looked at.
+   * Advanced when an admission is appended, to the high-water the gap-fill
+   * scanned before it — never to the admitted turn's own sequence, which is
+   * allocated after the scan. An elicitation answer advances it not at all.
+   */
+  transcript_projected_through: number;
   created_at: number;
   updated_at: number;
 }
@@ -174,7 +185,7 @@ const LOOP_COLUMNS = `id, loop_id, revision, status, cycle_ordinal, step_ordinal
   bind_state_revision, active_execution_id, active_execution_epoch,
   lease_owner, lease_expires_at, stop_requested_at, stop_after_step_ordinal,
   stop_reason, next_input_sequence, next_assistant_turn_sequence,
-  next_execution_sequence, created_at, updated_at`;
+  next_execution_sequence, transcript_projected_through, created_at, updated_at`;
 const INPUT_COLUMNS = `input_id, loop_id, input_sequence, prepared_turn_id,
   admitted_after_transcript_sequence, mode,
   actor, author_user_id, author_name_snapshot, author_avatar_url_snapshot,
@@ -221,9 +232,10 @@ export class SubstreamLoopStorage {
             bind_state_revision, active_execution_id, active_execution_epoch,
             lease_owner, lease_expires_at, stop_requested_at,
             stop_after_step_ordinal, stop_reason, next_input_sequence,
-            next_assistant_turn_sequence, next_execution_sequence, created_at, updated_at)
+            next_assistant_turn_sequence, next_execution_sequence,
+            transcript_projected_through, created_at, updated_at)
          VALUES (1, ?, 1, 'idle', 0, 0, ?, NULL, NULL, NULL, NULL, NULL, NULL,
-                 NULL, 1, 1, 1, ?, ?)`,
+                 NULL, 1, 1, 1, 0, ?, ?)`,
         input.loopId, input.bindStateRevision, input.now, input.now,
       );
       return this.#requiredLoop(input.loopId);

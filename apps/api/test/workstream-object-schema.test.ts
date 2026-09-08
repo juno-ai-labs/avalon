@@ -250,6 +250,8 @@ describe("the Workstream Durable Object relational schema", () => {
       expect(database.prepare(
         `PRAGMA table_info("pending_loop_input_mailbox")`,
       ).all().map((column) => column.name)).toContain("admitted_after_transcript_sequence");
+      expect(database.prepare(`PRAGMA table_info("substream_loops")`).all()
+        .map((column) => column.name)).toContain("transcript_projected_through");
       expect(pendingInputColumns).not.toEqual(expect.arrayContaining([
         "state", "delivered_turn_id", "delivered_attention_ordinal", "delivered_at",
         "claimed_at", "cancelled_at", "cancelled_reason",
@@ -424,6 +426,46 @@ describe("the Workstream Durable Object relational schema", () => {
           WHERE turn_id = 'run-1:compaction:2'`,
       ).get()).toEqual({ activity_id: "run-1:compaction:2", revision: 2 });
       expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("backfills the loop's projection mark to the transcript high-water when v45 applies", () => {
+    // An existing room starts "seen through now": the mark is what the
+    // transcript holds at upgrade, so nothing historical surfaces into the
+    // model on the next activation. A room with no counter row gets zero,
+    // which the loop's own insert also uses for a fresh room.
+    const database = new DatabaseSync(":memory:");
+    const storage = objectStorage(database);
+    try {
+      applyDurableObjectSqliteMigrations({
+        storage,
+        migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 44),
+        component: "substream_agent_do",
+        workerVersionId: "worker-v44",
+        now: 1_000,
+      });
+      database.exec(`
+        UPDATE transcript_counters SET next_transcript_sequence = 8 WHERE id = 1;
+        INSERT INTO substream_loops
+          (id, loop_id, revision, status, cycle_ordinal, step_ordinal, bind_state_revision,
+           next_input_sequence, next_assistant_turn_sequence, next_execution_sequence,
+           created_at, updated_at)
+        VALUES (1, 'loop-1', 1, 'idle', 0, 0, 0, 1, 1, 1, 1, 1);
+      `);
+      expect(database.prepare(`PRAGMA table_info("substream_loops")`).all()
+        .map((column) => column.name)).not.toContain("transcript_projected_through");
+      applyDurableObjectSqliteMigrations({
+        storage,
+        migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS,
+        component: "substream_agent_do",
+        workerVersionId: "worker-v45",
+        now: 2_000,
+      });
+      expect(database.prepare(
+        `SELECT transcript_projected_through FROM substream_loops WHERE id = 1`,
+      ).get()).toEqual({ transcript_projected_through: 7 });
     } finally {
       database.close();
     }

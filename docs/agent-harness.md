@@ -86,9 +86,16 @@ content-free provenance notice. Because the replacement is the accepted turn,
 run settlement and realtime completion cannot disagree with canonical text.
 
 On the first activation, only canonical transcript history bootstraps the
-persistent Bind projection. Model-only activation inputs — connector activity,
-scheduled wake-ups, digest briefs, Slack origin wrappers, and frozen recalled
-memory — cross a separate host boundary on every activation. Each carries full
+persistent Bind projection. After it, the projection is appended one admission
+at a time and never re-read from the transcript — so a human turn that started
+no run (one the addressing classifier judged to be conversation between people)
+used to stay out of the model's context for good. The conversation object now
+records how far into the transcript the projection has looked, and every
+admission first appends the conversation turns between that mark and its own
+admission point, in transcript order, before appending itself. Model-only
+activation inputs — connector activity, scheduled wake-ups, digest briefs,
+Slack origin wrappers, and frozen recalled memory — cross a separate host
+boundary on every activation. Each carries full
 derived provenance plus a stable logical `activationInputId` that is independent
 of the execution attempt. The host atomically deduplicates and appends the
 missing inputs under the exact active-execution and Bind-head fence, then returns
@@ -140,6 +147,8 @@ Stream and checkpoint events for participant loops carry that same sequence.
 ### Addressing
 
 Before starting a loop, a lightweight classifier returns `agent_action`, `human_only`, `both`, or `uncertain` with confidence and a terse rationale code. Explicit Rally/connector mentions and clear work requests invoke the harness. Social acknowledgement and human-only coordination can remain unanswered — including a message aimed at a teammate: the caller passes the display names of the people the message mentions (`humanMentions`, resolved from validated mention rows), and the prompt rules that a message telling or asking a mentioned person something is that person's to act on, even mid-task, unless it also asks Rally for work. The same signal gates the deterministic fast paths: an opening imperative short-circuits to `agent_action` only while the message mentions nobody, since "Please review the deck @Alex" hands the work to Alex, not to Rally. Uncertain messages invoke only when an active task or explicit tool context exists. The label is not exposed in the UI.
+
+A message that invokes nothing is still a turn the model reads. The conversation object appends every such human or external text turn to the loop's projection at the next text admission, in transcript order, ahead of the input that follows it — rendered with a header saying it was said to the room, not to Rally, and naming its author, so the model reads it as context rather than as a request ([`workstream-durable-object.md`](workstream-durable-object.md)). An elicitation answer carries no such fill; the turns said while the question was open wait for the next text input.
 
 ### Naming
 
@@ -1251,6 +1260,46 @@ slug. The exact comparison rejected valid vectors, leaving memory indexing to
 retry and recall to fall back to FTS. Normalizing only case preserves rejection
 of genuinely different models and keeps existing namespace identities intact;
 changing the embedding model still requires rebuilding its projection.
+
+### 2026-09-05 — A human turn that started no run still reaches the model
+
+**What changed:** The conversation object appends every unprojected human or
+external text turn to the persistent Bind projection at the next text
+admission, ahead of the admitted input, using the same `protocol_user_appended`
+transition and the same `participant_turn` provenance the pending-input drain
+uses, rendered under a header that says it was said to the room and by whom.
+The loop records `transcript_projected_through`, the highest transcript
+sequence the projection has considered — advanced to what each admission's
+scan covered, never to the admitted turn's own sequence — and the run reports
+that mark, not the transcript's high-water mark, as what a compaction
+checkpoint covers.
+
+**Why:** A message the addressing classifier judged to be conversation between
+people was written to the canonical transcript and nowhere else. It rendered for
+every member, and the model never saw it: a later run bootstraps from the
+projection, and the projection was only ever appended by an admission. Nobody
+decided that; it fell out of the persistent-loop cutover. The demo-workspace
+work made it visible — a scripted discussion between cast members that Rally
+could not answer a question about — but it is a product defect in every room
+with more than one person in it.
+
+**Considered and rejected:** Appending at admission time, when the non-invoking
+message is written — the loop may be executing, and the pending-input queue
+exists precisely so nothing appends to a projection an attempt is mid-way
+through. Making every such message an activation input of the next run — the
+trigger is a pending input the object drains, so those would land *after* the
+question they preceded. Re-reading the transcript on every activation — that is
+the bootstrap path, and it exists once for a reason: the projection is the exact
+hash-verified provider-boundary value, and rebuilding it from the transcript
+would change what the model already saw.
+
+**Consequences:** The model's conversation now interleaves side conversation
+with the turns that address it, so a question about what two people said is
+answerable. Existing rooms start with the mark at the transcript's high-water
+mark (v45 backfills it), so nothing historical surfaces on upgrade; only turns
+from then on are carried. A compaction checkpoint's `compactedThroughSequence`
+is the projection's mark, which a later bootstrap may replay slightly more from
+than before rather than lose turns the model never saw.
 
 ### 2026-09-04: Child seeds enter Bind once as inert context
 
