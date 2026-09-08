@@ -36,6 +36,13 @@ does not serve workspace product state or transcripts after cutover.
 
 ## Sidekick durable boundaries
 
+Substream migration 46 adds `sidekick_skill_names`, a conversation-owned map from
+canonical Sidekick ID to a unique model-facing name. Assignment is synchronous
+and transactional. Removed Sidekicks keep their reservation so a name present in
+earlier transcript turns cannot later select a different Sidekick. Renames update
+catalog descriptions while retaining the assigned tool name.
+
+
 Substream migration 43 adds `sidekick_attachments` (conversation-owned, deduplicated
 by Sidekick) and `sidekick_execution_skills` (admitted snapshots and activation
 refs pinned to an execution). Only main-substream loading attaches; removal
@@ -1640,6 +1647,16 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-09-08 — Reserve Sidekick skill names across executions
+
+Added migration 46 and conversation-owned name assignment. Recomputing duplicate
+suffixes from only the current candidates could silently reassign an old name
+after removal. Reservations persist even when a Sidekick becomes unavailable;
+access still depends on the current authorized execution snapshot. The real
+workerd Sidekick load/restore test in `automation-do.test.ts` verifies that a
+renamed Sidekick retains its original name in the next execution.
+
 
 ### 2026-09-08 — Review: the mark stops where the scan stopped, and an aside says what it is
 

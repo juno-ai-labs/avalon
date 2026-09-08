@@ -110,6 +110,7 @@ const EXPECTED_TABLES = [
   "runs",
   "sidekick_attachments",
   "sidekick_execution_skills",
+  "sidekick_skill_names",
   "substream_agent_identity",
   "substream_context_captures",
   "substream_initial_context",
@@ -426,6 +427,25 @@ describe("the Workstream Durable Object relational schema", () => {
           WHERE turn_id = 'run-1:compaction:2'`,
       ).get()).toEqual({ activity_id: "run-1:compaction:2", revision: 2 });
       expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("adds v46 name reservations without changing existing Sidekick snapshots", () => {
+    const database = new DatabaseSync(":memory:");
+    const storage = objectStorage(database);
+    try {
+      applyDurableObjectSqliteMigrations({ storage, migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 45), component: "substream_agent_do", workerVersionId: "worker-v45", now: 1_000 });
+      database.exec(`INSERT INTO sidekick_execution_skills VALUES ('execution', '{"sources":[],"activeRefs":[]}');
+        INSERT INTO sidekick_attachments VALUES ('sidekick', 1000)`);
+      applyWorkstreamObjectSchema(storage, "worker-v46", 2_000);
+      expect(database.prepare(`SELECT * FROM sidekick_execution_skills`).all()).toEqual([{ execution_id: "execution", snapshot_json: '{"sources":[],"activeRefs":[]}' }]);
+      expect(database.prepare(`SELECT * FROM sidekick_attachments`).all()).toEqual([{ sidekick_id: "sidekick", attached_at: 1000 }]);
+      database.exec(`INSERT INTO sidekick_skill_names VALUES ('first', 'sidekick-editor')`);
+      expect(() => database.exec(`INSERT INTO sidekick_skill_names VALUES ('second', 'sidekick-editor')`)).toThrow(/UNIQUE/);
+      applyWorkstreamObjectSchema(storage, "worker-v46", 3_000);
+      expect(database.prepare(`SELECT * FROM sidekick_skill_names`).all()).toEqual([{ sidekick_id: "first", name: "sidekick-editor" }]);
     } finally {
       database.close();
     }
