@@ -421,6 +421,19 @@ for a model to fabricate tool receipts.
   appends the unseen turns at the next admission. Fixed in the conversation
   object rather than in the pack, because it was wrong in every room with more
   than one person in it, and the pack format assumes it.
+- **September 8: retirement takes any workspace, and lands on its own.**
+  Supersedes the **Product behavior** paragraph "Only a workspace this feature
+  created can be retired through this surface" and acceptance item 9's
+  refusals "for `demo-template`, for an ordinary customer workspace, for one an
+  operator renames to end in `-demo`, and for a plausible but unknown workspace
+  ID". Decided in review of the combined branch: the register-as-authorization
+  was bookkeeping for a surface one Access policy already admits, and an
+  operator tool that can close any workspace is what was wanted. The typed
+  workspace-id confirmation in Ace, and the regional refusal of an id the
+  region's own table does not hold, replace it. Retirement shipped ahead of the
+  demo feature, in its own pull request and with its own document,
+  [`workspace-retirement.md`](../../workspace-retirement.md), because it is the
+  one change with a production footprint.
 
 ## Key design decisions
 

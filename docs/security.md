@@ -808,6 +808,32 @@ incident response that may prompt it.
 
 ## Changelog
 
+### 2026-09-08 — A `demos` operator role, isolated per router
+
+**What changed:** `TELEMETRY_OPERATORS_JSON` carries a third role, `demos`,
+which reaches only the workspace retirement route; every operator router names
+the roles it admits with `requireOperatorRole`. Ace holds one `demos` token per
+region. Retirement writes `workspaces.abandoned_at`, the fence every D1
+authority read applies, before closing any object, so a session into a retired
+workspace fails authentication on its next request.
+
+**Why:** An operator tool that can close any workspace needed a credential that
+can do that and nothing else. A second secret with the same shape would be a
+second thing to rotate for no isolation gained: the role isolates, and only if
+every surface names the roles it admits. The D1 fence is from review — the
+objects' gate stopped everything that reached an object, and nothing else:
+sign-in, the member list and invitations are D1 reads.
+
+**Considered and rejected:** A separate secret for the role. Revoking sessions
+on retirement — the fence answers `session_revoked` on the next request
+without a per-member fan-out; the desktop's wording is the remaining gap
+([`workspace-retirement.md`](workspace-retirement.md#open-questions)).
+
+**Consequences:** Adding an operator router means naming its roles. The typed
+confirmation on retirement is a client-side ceremony; the server-side
+comparison of the confirmation with the path is a consistency check, not a
+second factor.
+
 ### 2026-09-08 — Locate the member search metadata contract
 
 Recorded the observable substring/continuation inference in this overview as well
