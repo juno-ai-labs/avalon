@@ -1953,7 +1953,6 @@ export function ConversationSurface({
             />
           ) : (
             <MessageFeed
-              agentDocumentCards={parentKind === 'workstream'}
               citations={citations}
               currentUserId={session?.user.id}
               currentUserName={session?.user.name}
