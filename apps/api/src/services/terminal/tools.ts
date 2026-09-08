@@ -260,7 +260,7 @@ function rootLabel(root: TerminalPathRoot): string {
 }
 
 function rootExamples(root: TerminalPathRoot): string {
-  return root === "output" ? "`report.md` or `charts/q3.png`" : "`notes.md` or `out/report.md`";
+  return root === "output" ? "`report.md` or `site`" : "`notes.md` or `out/report.md`";
 }
 
 // The refused value is echoed so the model can see what was wrong: without it,
@@ -301,14 +301,15 @@ function safeRelativePath(
   const normalized = value.split("/").filter((segment) => segment && segment !== ".").join("/");
   if (!normalized) {
     // `.` and `./` name the root, which is inside the root: a legal working
-    // directory (the runtime's default), and not a file.
+    // directory (the runtime's default), but not something to read, write,
+    // import onto, or publish as a whole.
     if (field === "cwd") return "";
     throw new TerminalToolError(
       "invalid_path",
       field === "patch"
-        ? `A path in the patch names ${rootLabel(root)} itself, not a file. Regenerate the patch with file paths relative to that root.`
-        : `\`${field}\` names ${rootLabel(root)} itself, not a file. Pass a file's path relative to that root, such as ${rootExamples(root)}.`,
-      { field, reason: "Name a file beneath the root, not the root itself." },
+        ? `A path in the patch names ${rootLabel(root)} itself. Regenerate the patch with file paths beneath that root.`
+        : `\`${field}\` names ${rootLabel(root)} itself. Pass a path beneath it, such as ${rootExamples(root)}.`,
+      { field, reason: "Name a path beneath the root, not the root itself." },
     );
   }
   return normalized;

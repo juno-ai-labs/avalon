@@ -387,7 +387,24 @@ describe("Terminal file and command tools", () => {
     await expect(refused).rejects.toBeInstanceOf(TerminalToolError);
     await expect(refused).rejects.toMatchObject({
       code: "invalid_path",
-      message: expect.stringContaining("`filePath` names the workspace root (`/workspace`) itself, not a file"),
+      message: expect.stringContaining("`filePath` names the workspace root (`/workspace`) itself. Pass a path beneath it"),
+    });
+  });
+
+  it("refuses the root as a publish path or an import destination with the right root and parameter", async () => {
+    // Both accept directories, so the repair is "a path beneath the root", and
+    // for publication the root is the output directory, not the workspace.
+    const { value } = runtime();
+    await expect(createTerminalToolExecutors(value).publish_resource({ filePath: "." }, context)).rejects.toMatchObject({
+      code: "invalid_path",
+      message: expect.stringContaining("`filePath` names the output directory, `$AVALON_RESOURCE_DIR` (`/workspace/.rally-output`) itself. Pass a path beneath it, such as `report.md` or `site`."),
+    });
+    await expect(createTerminalToolExecutors(value).import_resource({
+      resourceId: "00000000-0000-4000-8000-000000000099",
+      destinationPath: "./",
+    }, context)).rejects.toMatchObject({
+      code: "invalid_path",
+      message: expect.stringContaining("`destinationPath` names the workspace root (`/workspace`) itself. Pass a path beneath it"),
     });
   });
 
