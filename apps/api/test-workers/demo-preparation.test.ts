@@ -170,7 +170,7 @@ async function seedControlPlane(): Promise<void> {
       harness_run_id TEXT, run_outcome TEXT, elicitation_id TEXT, resource_id TEXT,
       completed_at TEXT NOT NULL, PRIMARY KEY (operation_id, action_id)
     )`),
-    // The same columns and constraints as `0099`, minus the references to
+    // The same columns and constraints as `0100`, minus the references to
     // `users` and `workspaces` this suite does not need — and, as in
     // production, no foreign key on `workspace_id`: the creating phase writes
     // it before the workspace row exists.

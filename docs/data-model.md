@@ -744,7 +744,7 @@ In D1, retirement writes no table of its own: the operator door sets
 `workspaces.abandoned_at`, the column the last member leaving already writes and
 every authority read already fences on, before any object is closed.
 
-All three D1 tables arrive in one migration, `0099_demo_workspaces.sql`.
+All three D1 tables arrive in one migration, `0100_demo_workspaces.sql`.
 Retirement is not deletion. Every other row stays exactly where it is; the
 tombstone is what stops anything reading or draining them.
 
@@ -1007,8 +1007,9 @@ work uses ordinary workstream creation and the existing durable agent loop.
 
 **What changed:** The three demo migrations written on the combined branch —
 the register (`0099`), the seeder's receipts (`0100`) and the operation
-(`0101`) — are folded into one `0099_demo_workspaces.sql` before any of them
-ships. `demo_workspaces` is gone: `demo_operations` carries `ready_at` and
+(`0101`) — are folded into one file before any of them ships — `0099` as
+written, `0100_demo_workspaces.sql` once `main` took `0099` for account
+onboarding while this branch was open. `demo_workspaces` is gone: `demo_operations` carries `ready_at` and
 `retired_at`, `workspace_id` is unique with no foreign key to `workspaces`,
 `demo_seed_receipts` references `demo_operations`, and the phase name has no
 `CHECK`. The entries below describe the shape as it was written and are kept

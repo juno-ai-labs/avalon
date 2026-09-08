@@ -40,7 +40,7 @@ page calls. **Open questions** below says what remains.
 | `apps/api/src/routes/demo-operations.ts` | `/internal/demos`, behind the operator credential in the `demos` role; `/internal/workspaces/:id/retire` is retirement's own router. |
 | `packages/contracts/src/demo-operations.ts` | The operation on the wire: the start request, the status Ace renders, the template's cast candidates, and the Workflow's pointer payload. |
 | `packages/contracts/src/demo-seed.ts` | `DemoSeedSchema`: what a seed action carries, and the one field a run's execution context gains. |
-| `packages/db/migrations/0099_demo_workspaces.sql` | The operation's row — which is also the register of published workspaces — its per-phase receipts, and the seeder's receipts. |
+| `packages/db/migrations/0100_demo_workspaces.sql` | The operation's row — which is also the register of published workspaces — its per-phase receipts, and the seeder's receipts. |
 
 ## How it works
 
@@ -422,7 +422,7 @@ is required in production Global only — absent, the routes answer
 template is a Global workspace, and the template check refuses an operation in
 a region whose D1 does not hold it.
 
-`0099` creates `demo_operations`, `demo_operation_phases` and
+`0100` creates `demo_operations`, `demo_operation_phases` and
 `demo_seed_receipts` in both regions, as every migration in
 `packages/db/migrations` does, and `DemoPreparationWorkflow` is bound in both
 Workers; the EU copies are inert. `presenter_user_id` references `users(id)`,
@@ -507,7 +507,8 @@ only what the demo adds to them.
 
 ### 2026-09-07 — Review: one driver, one table, and every door named
 
-**What changed:** `0099`, `0100` and `0101` folded into one `0099` that creates
+**What changed:** `0099`, `0100` and `0101` folded into one file — `0099` as
+written, `0100_demo_workspaces.sql` after `main` took `0099` on rebase — that creates
 `demo_operations`, `demo_operation_phases` and `demo_seed_receipts`; the
 register table is gone and `demo_operations` carries `ready_at` and
 `retired_at`, with no foreign key on `workspace_id`. The operation is fenced by
