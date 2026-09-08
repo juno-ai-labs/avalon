@@ -1,10 +1,26 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { PROJECT_COLOR_KEYS, WORKSTREAM_ICON_KEYS, type WorkstreamAppearance, type WorkstreamAppearancePatch } from '@rally/contracts';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { WORKSTREAM_ICON_COMPONENTS, WorkstreamGlyph, workstreamAppearance } from './workstream-glyph';
 
 function label(key: string): string {
   return key === 'orange' ? 'Neon yellow' : key.split('-').map((part) => part[0]?.toUpperCase() + part.slice(1)).join(' ');
+}
+
+type PendingChoice = {
+  revision: number;
+  patch: WorkstreamAppearancePatch;
+  baseline: WorkstreamAppearance | undefined;
+  saved: boolean;
+};
+
+function settled(choice: PendingChoice, appearance: WorkstreamAppearance | undefined): boolean {
+  if (!choice.saved) return false;
+  const matches = (choice.patch.icon === undefined || choice.patch.icon === appearance?.icon)
+    && (choice.patch.color === undefined || choice.patch.color === appearance?.color);
+  const changed = (choice.patch.icon !== undefined && choice.baseline?.icon !== appearance?.icon)
+    || (choice.patch.color !== undefined && choice.baseline?.color !== appearance?.color);
+  return matches || changed;
 }
 
 export function WorkstreamAppearancePicker({ id, appearance, size, onChange }: {
@@ -13,27 +29,37 @@ export function WorkstreamAppearancePicker({ id, appearance, size, onChange }: {
   size: number;
   onChange: (patch: WorkstreamAppearancePatch) => Promise<void>;
 }): React.JSX.Element {
-  const [pending, setPending] = useState<{ patch: WorkstreamAppearancePatch; baseline: WorkstreamAppearance | undefined; saved: boolean } | null>(null);
+  const [pending, setPending] = useState<PendingChoice[]>([]);
   const [error, setError] = useState<string | null>(null);
   const sequence = useRef(0);
+  const open = useRef(false);
   const generated = workstreamAppearance(id);
-  const preview = pending && (!pending.saved || pending.baseline === appearance) ? pending.patch : {};
+  // A title or viewer broadcast rebuilds appearance without changing its values.
+  // Retire only the fields whose authoritative values have actually moved.
+  const preview = pending.filter((choice) => !settled(choice, appearance))
+    .reduce<WorkstreamAppearancePatch>((patch, choice) => ({ ...patch, ...choice.patch }), {});
+  useEffect(() => {
+    if (pending.some((choice) => settled(choice, appearance))) {
+      setPending(pending.filter((choice) => !settled(choice, appearance)));
+    }
+  }, [appearance, pending]);
   const selected = { icon: appearance?.icon ?? WORKSTREAM_ICON_KEYS[generated.iconIndex]!, color: appearance?.color ?? generated.color, ...preview };
   const change = (patch: WorkstreamAppearancePatch): void => {
     const revision = ++sequence.current;
-    setPending({ patch: { ...preview, ...patch }, baseline: appearance, saved: false });
+    setPending((current) => [...current, { revision, patch, baseline: appearance, saved: false }]);
     setError(null);
     // The connection owns ordering, including when this picker unmounts.
     void onChange(patch).then(() => {
-      if (sequence.current === revision) setPending((current) => current ? { ...current, saved: true } : null);
+      setPending((current) => current.map((choice) => choice.revision === revision ? { ...choice, saved: true } : choice));
+      if (sequence.current === revision) setError(null);
     }).catch(() => {
-      if (sequence.current === revision) {
-        setPending(null);
+      setPending((current) => current.filter((choice) => choice.revision !== revision));
+      if (sequence.current === revision && open.current) {
+        setError('Couldn’t update the appearance. Please choose again.');
       }
-      setError('Couldn’t update the appearance. Please choose again.');
     });
   };
-  return <DropdownMenu.Root>
+  return <DropdownMenu.Root onOpenChange={(value) => { open.current = value; setError(null); }}>
     <DropdownMenu.Trigger asChild>
       <button type="button" aria-label="Change work-stream icon and color" className="workstream-appearance-trigger window-no-drag">
         <WorkstreamGlyph id={id} appearance={selected} size={size} />

@@ -5319,7 +5319,7 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   min-width: 0;
   padding: 4px 6px;
 }
-.grokbot-conversation-title > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.grokbot-conversation-title > h1 { font: inherit; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface-elevated-hover); color: var(--av-sys-color-text-default); }
 .grokbot-computer-button.icon-button {
   color: var(--av-sys-color-text-muted);
