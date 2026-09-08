@@ -27,6 +27,8 @@ import {
   Pin,
   PinOff,
   Plus,
+  PanelLeftClose,
+  PanelLeftOpen,
   Settings,
   Smartphone,
 } from 'lucide-react';
@@ -650,6 +652,7 @@ function WorkstreamRow({
           >
             <span className="sidebar-row-icon">
               <WorkstreamGlyph id={workstream.id} size={36} />
+              {workstream.scope === 'workspace' && <PublicMarker />}
               {/* Personal attention markers on completed runs must remain visible. */}
               {markerStatus !== 'completed' && (
                 <span className="workstream-row-status">
@@ -697,7 +700,6 @@ function WorkstreamRow({
                 </Tooltip.Portal>
               </Tooltip.Root>
             )}
-            {workstream.scope === 'workspace' && <PublicMarker />}
                 </NavLink>
               </div>
             </Tooltip.Trigger>
@@ -795,25 +797,12 @@ function PrivacyMarker({ label }: { label: string }): React.JSX.Element {
 }
 
 function PublicMarker(): React.JSX.Element {
+  // The parent row owns its hover preview. A nested tooltip competes with it
+  // and can obscure the tiny badge while both poppers are positioning.
   return (
-    <Tooltip.Root delayDuration={300}>
-      <Tooltip.Trigger asChild>
-        <span aria-hidden="true" className="sidebar-note-privacy sidebar-workstream-public">
-          <Globe2 size={15} />
-        </span>
-      </Tooltip.Trigger>
-      <Tooltip.Portal>
-        <Tooltip.Content
-          align="center"
-          className="tooltip"
-          side="right"
-          sideOffset={8}
-        >
-          This is a public work stream
-          <Tooltip.Arrow className="tooltip-arrow" />
-        </Tooltip.Content>
-      </Tooltip.Portal>
-    </Tooltip.Root>
+    <span aria-label="Public work stream" className="sidebar-workstream-public" role="img">
+      <Globe2 aria-hidden="true" size={11} />
+    </span>
   );
 }
 
@@ -980,6 +969,7 @@ export function Sidebar({
     await bridge.openExternal(new URL(path, `${webBaseUrl.replace(/\/$/u, '')}/`).toString());
   }, []);
   const [resizing, setResizing] = useState(false);
+  const [dragWidth, setDragWidth] = useState<number | null>(null);
   // The handle stands in the strip beside the sidebar rather than on its edge,
   // so the pointer's own position is not the sidebar's width. Holding the
   // difference from the moment of the grab keeps the edge from jumping out to
@@ -1490,13 +1480,19 @@ export function Sidebar({
   useEffect(() => {
     if (!resizing) return undefined;
 
-    const move = (event: PointerEvent): void => resizeSidebar(event.clientX - grabOffset.current);
-    const stop = (): void => setResizing(false);
+    const move = (event: PointerEvent): void => {
+      const requested = event.clientX - grabOffset.current;
+      setDragWidth(Math.max(0, requested));
+      resizeSidebar(requested);
+    };
+    const stop = (): void => { setResizing(false); setDragWidth(null); };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', stop, { once: true });
+    window.addEventListener('pointercancel', stop, { once: true });
     return () => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', stop);
+      window.removeEventListener('pointercancel', stop);
     };
   }, [resizeSidebar, resizing]);
 
@@ -1572,6 +1568,12 @@ export function Sidebar({
     }
   }, [reveal, workstreams]);
 
+  const sidekickShortcuts = standaloneSidekicks.length > 0 && (
+    <section className="sidebar-automation-strip" aria-label="Sidekick shortcuts" onClick={() => setSidebarOpen(false)}>
+      {standaloneSidekicks.map((sidekick) => <SidekickTile key={sidekick.id} sidekick={sidekick} />)}
+    </section>
+  );
+
   return (
     <>
       <IconButton className="mobile-sidebar-trigger" label="Open navigation" onClick={() => setSidebarOpen(true)}>
@@ -1598,6 +1600,13 @@ export function Sidebar({
           </NavLink>}
         </div>
 
+
+        <nav
+          className="sidebar-scroll"
+          onClick={() => setSidebarOpen(false)}
+          onScroll={loadMoreWhenNearBottom}
+          ref={scrollRef}
+        >
         {compact && (
           <div className="sidebar-rail-actions window-no-drag">
             <SidebarSearch mode="button" onClick={onOpenSearch} disabled={!onOpenSearch} aria-label="Search workspace" />
@@ -1613,12 +1622,6 @@ export function Sidebar({
           </div>
         )}
 
-        <nav
-          className="sidebar-scroll"
-          onClick={() => setSidebarOpen(false)}
-          onScroll={loadMoreWhenNearBottom}
-          ref={scrollRef}
-        >
           {!compact && <div className="sidebar-commandbar window-no-drag">
             <SidebarSearch mode="button" onClick={onOpenSearch} disabled={!onOpenSearch} aria-label="Search workspace" />
           </div>}
@@ -1829,6 +1832,7 @@ export function Sidebar({
             )}
 
           </section>
+          {compact && sidekickShortcuts}
         </nav>
 
         {/*
@@ -1851,12 +1855,9 @@ export function Sidebar({
         */}
         {/* <OnboardingChecklist /> */}
 
-        {standaloneSidekicks.length > 0 && (
-          <section className="sidebar-automation-strip" aria-label="Sidekick shortcuts" onClick={() => setSidebarOpen(false)}>
-            {standaloneSidekicks.map((sidekick) => <SidekickTile key={sidekick.id} sidekick={sidekick} />)}
-          </section>
-        )}
+        {!compact && sidekickShortcuts}
 
+        <div className="sidebar-collapse-footer">
         {accountMenu ?? <DropdownMenu.Root>
           <DropdownMenu.Trigger asChild>
             <button aria-label="Open account menu" className="account-trigger window-no-drag" type="button">
@@ -1921,6 +1922,11 @@ export function Sidebar({
             </DropdownMenu.Content>
           </DropdownMenu.Portal>
         </DropdownMenu.Root>}
+          <IconButton className="window-no-drag" label={compact ? 'Expand navigation' : 'Collapse navigation'} aria-expanded={!compact} onClick={() => setSidebarCollapsed(!sidebarCollapsed)}>
+            {compact ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+          </IconButton>
+        </div>
+        {resizing && dragWidth !== null && <div aria-hidden="true" className="sidebar-drag-guide" style={{ left: dragWidth }} />}
         <div
           aria-label="Resize navigation"
           aria-orientation="vertical"
@@ -1928,6 +1934,7 @@ export function Sidebar({
           aria-valuemin={COLLAPSED_SIDEBAR_WIDTH}
           aria-valuenow={effectiveSidebarWidth}
           className={clsx('sidebar-resizer', pointerNearEdge && 'is-near')}
+          onDoubleClick={() => setSidebarCollapsed(!sidebarCollapsed)}
           onKeyDown={(event) => {
             if (event.key === 'ArrowLeft' && !compact) {
               resizeSidebar(sidebarWidth > MIN_SIDEBAR_WIDTH
@@ -1937,6 +1944,8 @@ export function Sidebar({
             if (event.key === 'ArrowRight') resizeSidebar(compact ? MIN_SIDEBAR_WIDTH : sidebarWidth + 16);
           }}
           onPointerDown={(event) => {
+            if (event.button !== 0) return;
+            event.preventDefault();
             event.currentTarget.setPointerCapture(event.pointerId);
             grabOffset.current = event.clientX - effectiveSidebarWidth;
             setResizing(true);

@@ -40,7 +40,7 @@ interface UiState {
 export const MIN_RAIL_WIDTH = 280;
 export const DEFAULT_RAIL_WIDTH = 320;
 /** GrokBot's compact rail and expanded-sidebar geometry. */
-export const COLLAPSED_SIDEBAR_WIDTH = 88;
+export const COLLAPSED_SIDEBAR_WIDTH = 96;
 export const MIN_SIDEBAR_WIDTH = 240;
 export const MAX_SIDEBAR_WIDTH = 400;
 export const DEFAULT_SIDEBAR_WIDTH = 280;
