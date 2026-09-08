@@ -1736,6 +1736,23 @@ until classified; a new effect receiver needs a `drop` entry; a new background
 caller acknowledges the refusal. The always-armed alarm invariant is suspended
 on a retired object.
 
+### 2026-09-08 — An accepted feed upgrade reports its accept time and instance age
+
+**What changed:** `SubstreamAgent`'s accepted socket upgrade answers with two
+internal headers, its own accept duration and milliseconds since this
+instance's constructor began (`instanceAgeMs()` on the migratable base), and
+records `rally.room.instance_age_ms` on its accept flow. The edge strips both.
+
+**Why:** Slow opens whose `room_upgrade` step ran 8–12 s had accepts of under
+220 ms and 0 ms constructor phases; the seconds were the platform activating a
+cold object, and the room needs to say what it saw for the edge to name the
+rest. [`performance-tracing.md`](performance-tracing.md#what-room_upgrade-contains)
+carries the evidence.
+
+**Consequences:** Nothing about admission changed; a rejection carries neither
+header. The age is read before the accept's first yield, so it describes the
+instance, not the accept.
+
 ### 2026-09-08 — Reserve Sidekick skill names across executions
 
 Added migration 46 and conversation-owned name assignment. Recomputing duplicate

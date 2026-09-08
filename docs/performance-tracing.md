@@ -178,6 +178,8 @@ under `avalon.`, so it can never collide with a convention added later:
 | `rally.analytics.person_id`, `rally.analytics.workspace_id` | What PostHog knows the same person and workspace as. See [Joining a system span to a product event](#joining-a-system-span-to-a-product-event). |
 | `rally.auth.duration_ms` | What authentication cost, which the flow's own duration excludes. |
 | `rally.socket.ticket_id`, `rally.socket.connection_id` | The two socket joins below. |
+| `rally.socket.room_accept_ms`, `rally.socket.room_activation_ms`, `rally.socket.room_instance_age_ms` | On the edge's upgrade: how long the room's own accept ran, the remainder of the `room_upgrade` wait — the platform routing to and waking the object before its constructor ran — and how old the room's instance was when it answered. See [What `room_upgrade` contains](#what-room_upgrade-contains). |
+| `rally.room.instance_age_ms` | On the room's accept: milliseconds since this instance's constructor began. Near zero means this upgrade is the call that woke it. |
 | `rally.message.client_id` | The composer's client message id. |
 | `rally.snapshot.bytes`, `rally.snapshot.message_count`, `rally.snapshot.trims` | What a subscription had to assemble. |
 | `rally.create.path`, `rally.create.receipt_state`, `rally.create.first_naming` | Which create this was. |
@@ -311,7 +313,36 @@ worth reading beside the byte size. A
 subscription snapshot also records `rally.subscribe.snapshot_reason` as
 `initial` or `history_unavailable`, so hibernation recovery can be separated
 from a cold open. The trim loop re-serializes the whole frame per dropped
-message, and that count is the only place its cost appears. Normal navigation
+message, and that count is the only place its cost appears.
+
+#### What `room_upgrade` contains
+
+`workstream.socket.room_upgrade` is the edge's wait for the room's answer, and
+it is **not** the room's work. It includes the platform locating the object,
+waking it when it is cold, and running its constructor — all before
+`workstream.room.socket.accept` opens — and on a cold object that part is the
+whole number. Production on 2026-09-08 showed three opens of one work stream
+with `room_upgrade` at 2,864, 11,508, and 12,542 ms whose room accepts ran 119,
+214, and 174 ms; every Rally step in the room was under 140 ms, the
+constructor's `initialize`, `schema_migrate`, and `runtime_recovery` phases all
+read 0 ms, and no alarm overlapped. The invocation logs told the rest: the
+room's `fetch`, the ticket-transit `prepareSocketAdmission`, and the parent's
+`wake()` all began at the same instant, all spent 8–12 s at zero CPU, and all
+ended within 150 ms of the `durable_object_initialization` row — the object
+was being activated by the platform, and did not exist yet.
+
+The edge therefore records what the room reports on its 101 (two internal
+headers, stripped before the handshake reaches a client):
+`rally.socket.room_accept_ms` is the room's own accept,
+`rally.socket.room_activation_ms` is `room_upgrade` less that, and
+`rally.socket.room_instance_age_ms` says how old the instance was when it
+answered — near zero when this upgrade is the call that woke it. Read the
+`api_socket` row with those three beside `room_upgrade`; `slowest_step` will
+still name `room_upgrade`, and the attributes say how much of it the room saw.
+The ticket-transit warm-up cannot hide a cold activation, because the warm RPC
+waits on the same one; in the three opens above it finished *after* the
+upgrade's own admission check and the upgrade fell back to
+`regional_fallback`, so a cold open also pays `member_authorize` twice. Normal navigation
 issues neither detail nor transcript REST reads. Canonical history recovery
 uses snapshot-fenced `load_transcript_range` requests on the admitted
 SubstreamAgent socket. When replay is unavailable or the client cursor is
@@ -624,6 +655,19 @@ Inspect `durable_object.runtime_recovery` independently: it is intentionally
 off the socket's storage-readiness gate even though it begins during the same
 activation.
 
+When those phases all read 0 ms and the binding span is still seconds long, the
+time is the platform's, before the constructor. Confirm it from the invocation
+logs rather than from any Rally row: filter `$workers.durableObjectId` to the
+object and read the `cf-worker-event` rows for the window — the wait shows as
+`wallTimeMs` in the seconds with `cpuTimeMs` near zero, every invocation that
+arrived during it ending together, and a `jsrpc` invocation that reports
+`rpcCallCount: 0` because its session was opened before the instance existed.
+The `api_socket` row's `rally.socket.room_activation_ms` is that number
+without the join. Filter `flow = workstream_open`, `component = api_socket`
+and group by whether `rally.socket.room_instance_age_ms` is near zero to
+separate the cold cohort from a room that was slow while awake; the cold
+cohort is the platform's to shorten, not a step's.
+
 To find the pattern rather than the instance, filter `event = perf_flow` with
 `flow = <name>` and `duration_ms >` a threshold, and group by `slowest_step`.
 Worth adding to the saved views in [`runbook.md`](runbook.md#log-shape) once
@@ -689,6 +733,48 @@ a new recorded decision. But what enforces it is the absence of a line in
 both signals rather than trusting the comment there to survive.
 
 ## Changelog
+
+### 2026-09-08 — `room_upgrade` names what the room saw of it
+
+**What changed:** The room answers an accepted feed upgrade with two internal
+headers — its own accept duration and its instance's age — and the edge turns
+them into `rally.socket.room_accept_ms`, `rally.socket.room_activation_ms`
+(the `room_upgrade` wait less the accept), and
+`rally.socket.room_instance_age_ms` on the upgrade span and its `perf_flow`
+row, stripping both headers before the 101 reaches a client. The room's own
+accept row carries `rally.room.instance_age_ms`.
+
+**Why:** Three opens of one Global work stream on 2026-09-08 took 2.9, 11.6,
+and 12.6 s with `slowest_step = workstream.socket.room_upgrade` at 2,864,
+11,508, and 12,542 ms, and matching ticket warm-ups of 4.1, 12.5, and 13.6 s.
+The same flow took 212–327 ms half an hour earlier. The room's accept in each
+was 119–214 ms — an authority read of 101–138 ms and a fallback member
+authorization of 73–87 ms — with no snapshot assembly, a 0 ms replay plan, 0 ms
+constructor phases, and no overlapping alarm. Every Rally step was accounted
+for and small; the seconds were the platform activating a cold object, which
+`room_upgrade` charged to the room and no span in the room could see, because
+the room did not exist yet. The invocation logs carried the proof — zero CPU
+on every invocation that waited, `rpcCallCount: 0` on the RPC sessions, and
+the constructor's row written at the instant the wait ended — but only after
+a join across three invocations. The row now says it.
+
+**Considered and rejected:** Awaiting the ticket-transit warm-up before
+returning the ticket, or holding the socket open longer on the client, neither
+of which shortens an activation and the first of which puts it on the ticket
+path. Splitting `room_upgrade` into two clock-measured steps, which the edge
+cannot do: it has one clock and one call. Keeping the object warm after a run
+ends — an alarm costs nothing while the object sleeps, and would not reach the
+case where the object was rebuilt three seconds after its last event.
+
+**Consequences:** `slowest_step = room_upgrade` on an `api_socket` row is not
+evidence about the room until `rally.socket.room_activation_ms` is read beside
+it; a dashboard that groups slow opens by step should split that step on
+`rally.socket.room_instance_age_ms`. The two headers are object-to-Worker only:
+a change that stops stripping them puts a diagnostic on the client handshake.
+What shortens a cold activation is not decided here — whether the object's
+SQLite size, the runtime's placement, or the shutdown that preceded it decides
+the seconds is the next observation, and `room_activation_ms` against
+`databaseBytes` from the object's inspection route is the pair to read.
 
 ### 2026-09-08 — Keep search traces open across candidate-only pages
 

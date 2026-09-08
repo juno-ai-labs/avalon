@@ -265,6 +265,14 @@ Common examples include:
   long root span does not identify the slow application phase on its own.
 - **A compatibility resource name is read as deployment age.** A name that
   still contains `avalon` may be an intentionally retained identifier.
+- **A slow step that wraps a Durable Object call is read as the object's
+  work.** The caller's step and the platform's binding span both include the
+  object's activation — placement, storage, and the constructor — which
+  happens before any handler and is invisible to every span inside the object.
+  The object's own flow row, the constructor's `durable_object_initialization`
+  row on the same invocation, and the invocation log's `cpuTimeMs` say whether
+  the object was slow or was being woken; on a feed upgrade
+  `rally.socket.room_activation_ms` already carries the difference.
 
 The recent WorkspaceDO alarm investigation is the canonical example. The
 pre-work recovery arm once created an immediately due second alarm. Cloudflare
@@ -323,6 +331,23 @@ hypothesis.
 5. Compare failures with the matching successful-invocation denominator and,
    when relevant, group slow successes by phase/kind before changing scheduling
    behaviour.
+
+### A slow call into a Durable Object
+
+1. Read the object's own flow row for the call — `perf_flow` with the
+   object's `component` — before the caller's. If its `duration_ms` is small
+   and the caller's step is large, the difference is outside the object.
+2. Filter the invocation logs by `$workers.durableObjectId` for the window.
+   Invocations that all end together, at `cpuTimeMs` near zero, with the
+   constructor's `durable_object_initialization` row written at that instant,
+   were waiting for the platform to activate the object; a `jsrpc` invocation
+   with `rpcCallCount: 0` is a session that opened before the instance
+   existed.
+3. Check what preceded it: a `close` of the object's last socket, an alarm
+   that ended, a long-lived RPC, or nothing for minutes. Each is a different
+   reason for the object to have been cold, and none is a Rally step.
+4. Only then look inside the object: its constructor phases, alarm handlers,
+   and D1 reads, in that order, because they run in that order.
 
 ### “The socket disconnected”
 
