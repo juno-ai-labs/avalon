@@ -7,8 +7,9 @@ import clsx from 'clsx';
 import { Fragment, useRef, useState, type ReactNode } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
-  PROJECT_COLOR_KEYS,
+  PROJECT_COLOR_CHOICES,
   PROJECT_ICON_KEYS,
+  paintProjectColor,
   type CreateProjectRequest,
   type ProjectColorKey,
   type ProjectIconKey,
@@ -22,7 +23,6 @@ import type { WorkstreamSummary } from '../lib/types';
 
 
 function label(value: string): string {
-  if (value === 'orange') return 'Neon yellow';
   return value.split('-').map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`).join(' ');
 }
 
@@ -32,7 +32,7 @@ export function ProjectIcon({ project, size = 15 }: { project: ProjectSummary; s
     <Icon
       aria-hidden="true"
       size={size}
-      stroke={`var(--av-sys-color-project-${project.colorKey})`}
+      stroke={`var(--av-sys-color-project-${paintProjectColor(project.colorKey)})`}
       strokeWidth={1.8}
     />
   );
@@ -56,17 +56,17 @@ export function ProjectAppearancePicker({
         <div className="project-icon-grid">
           {PROJECT_ICON_KEYS.map((key) => {
             const Icon = PROJECT_ICONS[key];
-            return <button aria-label={label(key)} aria-pressed={iconKey === key} className={clsx(iconKey === key && 'is-selected')} key={key} onClick={() => onIconChange(key)} type="button"><Icon aria-hidden="true" size={17} stroke={`var(--av-sys-color-project-${colorKey})`} /></button>;
+            return <button aria-label={label(key)} aria-pressed={iconKey === key} className={clsx(iconKey === key && 'is-selected')} key={key} onClick={() => onIconChange(key)} type="button"><Icon aria-hidden="true" size={17} stroke={`var(--av-sys-color-project-${paintProjectColor(colorKey)})`} /></button>;
           })}
         </div>
       </fieldset>
       <fieldset>
         <legend>Color</legend>
         <div className="project-color-grid">
-          {PROJECT_COLOR_KEYS.map((key) => (
+          {PROJECT_COLOR_CHOICES.map((key) => (
             <Tooltip.Root delayDuration={250} key={key}>
               <Tooltip.Trigger asChild>
-                <button aria-label={label(key)} aria-pressed={colorKey === key} className={clsx(colorKey === key && 'is-selected')} onClick={() => onColorChange(key)} type="button"><span style={{ background: `var(--av-sys-color-project-${key})` }} /></button>
+                <button aria-label={label(key)} aria-pressed={paintProjectColor(colorKey) === key} className={clsx(paintProjectColor(colorKey) === key && 'is-selected')} onClick={() => onColorChange(key)} type="button"><span style={{ background: `var(--av-sys-color-project-${key})` }} /></button>
               </Tooltip.Trigger>
               <Tooltip.Portal><Tooltip.Content className="tooltip" sideOffset={5}>{label(key)}<Tooltip.Arrow className="tooltip-arrow" /></Tooltip.Content></Tooltip.Portal>
             </Tooltip.Root>

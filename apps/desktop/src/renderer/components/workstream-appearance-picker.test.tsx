@@ -21,6 +21,7 @@ describe('work stream appearance picker', () => {
     await act(async () => finish());
     await waitFor(() => expect(onChange).toHaveBeenNthCalledWith(2, { icon: 'rocket' }));
     expect(screen.getByRole('menu')).toBeVisible();
+    expect(screen.queryByRole('menuitemradio', { name: 'Neon yellow' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
     fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
     await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument());

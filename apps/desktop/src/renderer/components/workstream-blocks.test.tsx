@@ -322,8 +322,8 @@ describe('MessageBlock human identity', () => {
     expect(own.style.getPropertyValue('--av-cmp-bubble-human-foreground')).toBe('var(--av-cmp-member-message-violet-foreground)');
     view.rerender(<MemberPresentationContext.Provider value={new Map([['user-adam', { ...profile, color: 'orange', revision: 2 }]])}>{rows}</MemberPresentationContext.Provider>);
     expect(screen.getByLabelText('Message from Alex Rivera')).toBe(own);
-    expect(own.style.getPropertyValue('--person-dot')).toBe('var(--av-cmp-member-message-orange-dot)');
-    expect(own.style.getPropertyValue('--av-cmp-bubble-human-foreground')).toBe('var(--av-cmp-member-message-orange-foreground)');
+    expect(own.style.getPropertyValue('--person-dot')).toBe('var(--av-cmp-member-message-amber-dot)');
+    expect(own.style.getPropertyValue('--av-cmp-bubble-human-foreground')).toBe('var(--av-cmp-member-message-amber-foreground)');
     expect(other.style.getPropertyValue('--person-accent')).toBe(otherAccent);
     expect(other).not.toHaveAttribute('data-profile-color');
   });

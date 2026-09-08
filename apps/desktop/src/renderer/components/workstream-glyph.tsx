@@ -13,7 +13,7 @@ import {
   Workflow,
   type LucideIcon,
 } from 'lucide-react';
-import { PROJECT_COLOR_KEYS, type ProjectColorKey, type WorkstreamAppearance as SavedAppearance } from '@rally/contracts';
+import { PROJECT_COLOR_KEYS, paintProjectColor, type ProjectColorKey, type WorkstreamAppearance as SavedAppearance } from '@rally/contracts';
 import { PROJECT_ICONS } from './project-icons';
 
 const WORKSTREAM_ICONS = [
@@ -55,8 +55,9 @@ export function workstreamAppearance(id: string): WorkstreamAppearance {
     hash = Math.imul(hash, 16_777_619);
   }
   const unsigned = hash >>> 0;
+  const hashed = PROJECT_COLOR_KEYS[unsigned % PROJECT_COLOR_KEYS.length] ?? 'purple';
   return {
-    color: PROJECT_COLOR_KEYS[unsigned % PROJECT_COLOR_KEYS.length] ?? 'purple',
+    color: paintProjectColor(hashed),
     iconIndex: Math.floor(unsigned / PROJECT_COLOR_KEYS.length) % WORKSTREAM_ICONS.length,
   };
 }
@@ -71,7 +72,8 @@ export function WorkstreamGlyph({ id, size = 32, appearance: saved }: { id: stri
   const generated = workstreamAppearance(id);
   const appearance = { ...generated, color: saved?.color ?? generated.color };
   const Icon = saved?.icon ? WORKSTREAM_ICON_COMPONENTS[saved.icon] : WORKSTREAM_ICONS[generated.iconIndex] ?? Sparkles;
-  const color = `var(--av-sys-color-project-${appearance.color})`;
+  const painted = paintProjectColor(appearance.color);
+  const color = `var(--av-sys-color-project-${painted})`;
   return (
     <span
       aria-hidden="true"
@@ -93,7 +95,7 @@ export function AutomationGlyph({ id }: { id: string }): React.JSX.Element {
   const Icon = WORKSTREAM_ICONS[appearance.iconIndex] ?? Sparkles;
   return (
     <svg className="automation-glyph" viewBox="0 0 100 100" fill="none" aria-hidden="true">
-      <path d="M43 6C47 3 52 3 57 6L86 23C91 26 94 30 94 36L94 66C94 72 91 76 86 79L57 95C52 98 47 98 42 95L14 78C9 75 6 71 6 65L6 35C6 29 9 25 14 22Z" fill={`var(--av-sys-color-project-${appearance.color})`} />
+      <path d="M43 6C47 3 52 3 57 6L86 23C91 26 94 30 94 36L94 66C94 72 91 76 86 79L57 95C52 98 47 98 42 95L14 78C9 75 6 71 6 65L6 35C6 29 9 25 14 22Z" fill={`var(--av-sys-color-project-${paintProjectColor(appearance.color)})`} />
       <Icon x={25} y={25} size={50} strokeWidth={1.9} />
     </svg>
   );

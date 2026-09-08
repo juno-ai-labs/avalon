@@ -9,6 +9,7 @@ Each choice saves immediately and keeps the palette open.
 | Path | Responsibility |
 | --- | --- |
 | `packages/contracts/src/workstream-appearance.ts` | Stable icon keys, color keys, and partial updates. |
+| `packages/contracts/src/projects.ts` | Shared color registry, picker choices, and `paintProjectColor`. |
 | `apps/desktop/src/renderer/components/workstream-appearance-picker.tsx` | Palette, optimistic preview, ordered clicks, and failures. |
 | `apps/desktop/src/renderer/components/workstream-glyph.tsx` | Shared rendering and deterministic defaults. |
 | `apps/api/src/durable-objects/workstream-object-product.ts` | Authoritative write, command receipt, and common-state publication. |
@@ -37,11 +38,12 @@ a color change does not overwrite another user's icon. The icon registry extends
 the original twelve deterministic symbols with the existing project icons.
 Colors store semantic keys such as `blue` and `purple`, never hex or RGB values.
 Both the swatch and glyph resolve `sys.color.project.<key>` through the current
-appearance. Tune these keys independently in
+appearance, after `paintProjectColor` remaps the retired `orange` key to gold
+`yellow`. Tune the remaining keys independently in
 `config/design-tokens/themes/light.json` and `dark.json`, then run
 `pnpm tokens:build`. The shared palette also affects projects and personal accents.
-The legacy `orange` key is displayed as Neon yellow; preserve that stored key
-when tuning its shade.
+Pickers offer `PROJECT_COLOR_CHOICES`, which omits `orange`. The stored key stays
+valid so existing appearances do not fail the wire schema.
 
 ## Invariants
 
@@ -78,6 +80,17 @@ cover the common cache path. Inspect the actual Electron popup in light and dark
 including scrolling, and check another connected window and reopening.
 
 ## Changelog
+
+### 2026-09-08 — Retire neon yellow from pickers
+
+Neon yellow (`orange`) failed contrast on sidebar chips even after retuning the
+token off brand lime. Removing it from pickers and from new deterministic
+defaults is cheaper than hunting a readable neon. The stored key stays in
+`PROJECT_COLOR_KEYS` so existing appearances and the WorkspaceDO check still
+validate; `paintProjectColor` maps leftover `orange` to gold `yellow`. Personal
+`orange` follows the same split via `PERSONAL_COLOR_CHOICES` and
+`paintPersonalColor` onto `amber`. Reintroducing a neon swatch needs a color
+that holds against white icons, not a restoration of this key's former paint.
 
 ### 2026-09-08 — Soften the neon-yellow chip
 

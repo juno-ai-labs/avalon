@@ -1,6 +1,14 @@
 import { z } from 'zod';
 
 export const PersonalColorSchema = z.enum(['blue', 'teal', 'green', 'amber', 'orange', 'rose', 'violet', 'slate']);
+/** Colors a profile picker may offer. `orange` stays valid on the wire. */
+export const PERSONAL_COLOR_CHOICES = ['blue', 'teal', 'green', 'amber', 'rose', 'violet', 'slate'] as const;
+export type PersonalColor = z.infer<typeof PersonalColorSchema>;
+export type PersonalColorChoice = (typeof PERSONAL_COLOR_CHOICES)[number];
+
+export function paintPersonalColor(color: PersonalColor): PersonalColorChoice {
+  return color === 'orange' ? 'amber' : color;
+}
 export const PersonalAvatarSchema = z.enum(['circle', 'rounded', 'diamond', 'flower', 'spark', 'arch']);
 export const PersonalPresentationSchema = z.object({
   // The regional identity bridge already requires names of at most 255 characters.

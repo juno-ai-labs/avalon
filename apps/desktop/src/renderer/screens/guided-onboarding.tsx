@@ -5,7 +5,7 @@ import { MemberPresentationContext } from '../lib/member-presentation';
 import { createContext, useCallback, useContext, useEffect, useRef, useState, useMemo, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, Search, X } from 'lucide-react';
-import { PersonalColorSchema, OnboardingJourneySchema, type AccountOnboarding, type OnboardingJourney, type PersonalPresentation } from '@rally/contracts';
+import { PERSONAL_COLOR_CHOICES, paintPersonalColor, OnboardingJourneySchema, type AccountOnboarding, type OnboardingJourney, type PersonalPresentation } from '@rally/contracts';
 import { Button, ConnectorMark, InlineError, RallyMark } from '../components/primitives';
 import { PersonalAvatar, personalColor } from '../components/personal-avatar';
 import { useAppSession } from '../lib/app-session';
@@ -47,7 +47,7 @@ export function AccountOnboardingGate({ children }: { children: ReactNode }): Re
   }, [members.data, session?.user.id, hasPresentation, profile, account.data?.revision]);
   useEffect(() => {
     const root = document.documentElement;
-    if (session && (account.data?.presentation || profileState.saving || profileState.error)) root.dataset['personalColor'] = profileState.profile.color;
+    if (session && (account.data?.presentation || profileState.saving || profileState.error)) root.dataset['personalColor'] = paintPersonalColor(profileState.profile.color);
     else delete root.dataset['personalColor'];
     if (profileState.profile.displayName?.trim()) updateCurrentUserName?.(profileState.profile.displayName.trim());
     return () => { delete root.dataset['personalColor']; };
@@ -124,7 +124,7 @@ function OnboardingPersonalSetup({ onSaved }: { onSaved?: () => Promise<void> })
     } catch (caught) { setError(caught instanceof Error ? caught.message : 'Could not save your profile.'); await queryClient.invalidateQueries({ queryKey: ['account-onboarding'] }); }
     finally { setBusy(false); }
   };
-  const colorPicker = <div className="personal-colors" role="group" aria-label="Your color">{PersonalColorSchema.options.map((value) => <button type="button" key={value} aria-label={value === 'orange' ? 'Neon yellow' : value} aria-pressed={color === value} style={{ background: personalColor(value), color: ['amber', 'orange', 'green', 'teal'].includes(value) ? 'var(--personal-ink-dark)' : 'var(--personal-ink-light)' }} onClick={() => setColor(value)}>{color === value && <Check size={18} />}</button>)}</div>;
+  const colorPicker = <div className="personal-colors" role="group" aria-label="Your color">{PERSONAL_COLOR_CHOICES.map((value) => <button type="button" key={value} aria-label={value} aria-pressed={paintPersonalColor(color) === value} style={{ background: personalColor(value), color: ['amber', 'green', 'teal'].includes(value) ? 'var(--personal-ink-dark)' : 'var(--personal-ink-light)' }} onClick={() => setColor(value)}>{paintPersonalColor(color) === value && <Check size={18} />}</button>)}</div>;
   return <div className="personal-setup">
     <PersonalAvatar color={color} initials={initials} className="personal-setup-preview" />
     {colorPicker}
@@ -155,7 +155,7 @@ function AccountProfileFields({ editor, profileDetails }: { editor: AccountProfi
       <label className="settings-preference-row"><SettingLabel setting={settings.profileName} /><input autoComplete="name" value={profile.displayName ?? ''} data-saved-value={account?.presentation?.displayName ?? session?.user.name ?? ''} onChange={(event) => editor.update({ displayName: event.target.value })} /></label>
       <label className="settings-preference-row"><SettingLabel setting={settings.profileInitials} /><input value={profile.initials ?? ''} data-saved-value={account?.presentation?.initials ?? (session?.user.name ?? '').split(/\s+/u).map((part) => part[0]).join('').slice(0, 2).toUpperCase()} onChange={(event) => editor.update({ initials: event.target.value })} /></label>
       <div className="settings-preference-row"><SettingLabel setting={settings.profileColor} />
-        <div className="personal-colors" role="group" aria-label={settings.profileColor.label}>{PersonalColorSchema.options.map((value) => <button type="button" key={value} aria-label={value === 'orange' ? 'Neon yellow' : value} aria-pressed={profile.color === value} style={{ background: personalColor(value), color: ['amber', 'orange', 'green', 'teal'].includes(value) ? 'var(--personal-ink-dark)' : 'var(--personal-ink-light)' }} onClick={() => editor.update({ color: value })}>{profile.color === value && <Check size={14} />}</button>)}</div>
+        <div className="personal-colors" role="group" aria-label={settings.profileColor.label}>{PERSONAL_COLOR_CHOICES.map((value) => <button type="button" key={value} aria-label={value} aria-pressed={paintPersonalColor(profile.color) === value} style={{ background: personalColor(value), color: ['amber', 'green', 'teal'].includes(value) ? 'var(--personal-ink-dark)' : 'var(--personal-ink-light)' }} onClick={() => editor.update({ color: value })}>{paintPersonalColor(profile.color) === value && <Check size={14} />}</button>)}</div>
       </div>
     </div>
     <div className="settings-account-actions" role="status">{error ? <><InlineError>{error}</InlineError><Button onClick={editor.retry}>Retry</Button></> : <small>{saving ? 'Saving…' : 'Changes save automatically'}</small>}</div>

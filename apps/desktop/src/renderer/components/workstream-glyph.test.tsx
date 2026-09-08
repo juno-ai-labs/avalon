@@ -6,8 +6,17 @@ describe('workstreamAppearance', () => {
   it('derives a stable color and icon from the work-stream id', () => {
     expect(workstreamAppearance('00000000-0000-7000-8000-000000000001'))
       .toEqual({ color: 'brown', iconIndex: 4 });
-    expect(workstreamAppearance('launch-room'))
-      .toEqual({ color: 'teal', iconIndex: 10 });
+    expect(workstreamAppearance('00000000-0000-7000-8000-000000000021'))
+      .toEqual({ color: 'yellow', iconIndex: 1 });
+  });
+
+  it('paints a stored orange appearance through the gold yellow token', () => {
+    const { container } = render(
+      <WorkstreamGlyph id="room" size={30} appearance={{ color: 'orange', icon: 'atom' }} />,
+    );
+    expect(container.querySelector('.workstream-glyph-shape')).toHaveStyle({
+      background: 'linear-gradient(145deg, color-mix(in srgb, var(--av-sys-color-project-yellow) 78%, var(--av-sys-color-surface-default)), var(--av-sys-color-project-yellow))',
+    });
   });
 
   it('renders the derived theme token without exposing decoration to assistive technology', () => {
