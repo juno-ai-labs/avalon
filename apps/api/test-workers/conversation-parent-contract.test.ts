@@ -3,6 +3,8 @@ import { WorkstreamObjectClient } from '../src/services/workstream-object-client
 import { WorkstreamDirectoryService } from '../src/services/workstream-directory-service';
 import { createResourceObjectPort } from '../src/runtime/resource-port';
 import { ResourceService } from '../src/services/resource-service';
+import type { WorkstreamDO } from '../src/durable-objects/workstream-do';
+import { WorkstreamResourceStorage } from '../src/durable-objects/workstream-resource-storage';
 import { createAccessContext } from '../src/services/authorization-service';
 import { projectAuthorization } from '../src/services/authorization-projection-service';
 import { searchDocumentId } from '../src/services/text-search';
@@ -207,10 +209,26 @@ async function seedAutomation(scope: "personal" | "workspace" | "workstream", ow
   return automationId;
 }
 
-function uncachedAuthorizationEnv() {
-  const result = { ...TEST_ENV };
-  delete result.AUTHORIZATION_CACHE;
-  return result;
+/** Delay/observe delivery on the caller side; every fact still comes from the real DO. */
+function observeParentReads(observe: () => Promise<void>): Env {
+  return { ...TEST_ENV, WORKSTREAM_DOS: new Proxy(TEST_ENV.WORKSTREAM_DOS, {
+    get(namespace, key) {
+      if (key === 'get') return (...args: Parameters<typeof namespace.get>) => {
+        const stub = namespace.get(...args);
+        return new Proxy(stub, { get(target, method) {
+          if (method === 'readAuthorizationFacts') return async (input: Parameters<WorkstreamDO['readAuthorizationFacts']>[0]) => {
+            const facts = await target.readAuthorizationFacts(input);
+            await observe();
+            return facts;
+          };
+          const value = Reflect.get(target, method, target);
+          return typeof value === 'function' ? value.bind(target) : value;
+        } });
+      };
+      const value = Reflect.get(namespace, key, namespace);
+      return typeof value === 'function' ? value.bind(namespace) : value;
+    },
+  }) };
 }
 
 function viewer(parentId: string, userId: UserId) {
@@ -379,18 +397,79 @@ describe("conversation parent contract", () => {
     expect((await participant.list({ limit: 10 })).items).toMatchObject([{ id: resourceId }]);
     await expect(participant.get(resourceId)).resolves.toMatchObject({ id: resourceId, provider: 'resend' });
     await runInDurableObject(workspaceStub(), (_instance, state) => {
-      state.storage.sql.exec('DELETE FROM authorization_snapshots');
-      state.storage.sql.exec('UPDATE authorization_inventories SET validated_at = ?', Date.now() - 300_000);
+      state.storage.sql.exec('UPDATE authorization_inventories SET validated_at = 1');
     });
     await expect(new ResourceService(TEST_ENV, { ...AUTH, userId: MEMBER_ID }).get(resourceId))
       .rejects.toMatchObject({ status: 404 });
     expect(await workspaceStub().authorizationBackfillStatus({ workspaceId: WORKSPACE_ID }))
       .toMatchObject({ complete: true, pendingChildren: 0 });
+    expect(await runInDurableObject(workspaceStub(), (_instance, state) =>
+      state.storage.sql.exec<{ oldest: number }>('SELECT MIN(validated_at) AS oldest FROM authorization_inventories').one().oldest)).toBe(1);
     // Creating a personal room does not replace its active participant roster.
     await expect(new ResourceService(TEST_ENV, AUTH).get(resourceId)).rejects.toMatchObject({ status: 404 });
   });
 
-  it("rechecks expired conversation authority after asynchronous content hashing", async () => {
+  it("starts a new canonical observation when an earlier authorization read is still pending", async () => {
+    await seedRoom(PERSONAL_ROOM_ID, "personal", [AUTHOR_ID, PARTICIPANT_ID]);
+    let release = () => {};
+    let observed = () => {};
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const observation = new Promise<void>((resolve) => { observed = resolve; });
+    let reads = 0;
+    const readEnv = observeParentReads(async () => {
+      if (++reads === 1) { observed(); await gate; }
+    });
+    const access = createAccessContext(readEnv, AUTH);
+    const address = { kind: 'conversation' as const, workspaceId: WORKSPACE_ID,
+      parentId: PERSONAL_ROOM_ID, substreamId: asSubstreamId('0') };
+    const first = access.check(address);
+    try {
+      await observation;
+      const removal = await post(conversation(PERSONAL_ROOM_ID), '/internal/product', {
+        operation: 'remove_participant', auth: AUTH, userId: AUTHOR_ID,
+      });
+      expect(removal.status).toBe(200);
+      await deliverChildEffects(TEST_ENV, conversation(PERSONAL_ROOM_ID));
+      const later = access.check(address);
+      // Start the later check before delivering the old observation.
+      release();
+      expect(await later).toMatchObject({ status: 'denied' });
+      expect(reads).toBe(2);
+    } finally { release(); await first; }
+  });
+
+  it("shares canonical owners within one resource batch and reloads them for the next batch", async () => {
+    await seedRoom(PERSONAL_ROOM_ID, "personal", [AUTHOR_ID, PARTICIPANT_ID]);
+    const resourceIds = [crypto.randomUUID(), crypto.randomUUID()];
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      for (const id of resourceIds) state.storage.sql.exec(`INSERT INTO resources
+        (id, workspace_id, resource_type, provider, title, metadata_json, attachment_status, created_at, updated_at)
+        VALUES (?, ?, 'email', 'resend', 'Private email', '{}', 'attached', ?, ?)`, id, WORKSPACE_ID, NOW, NOW);
+    });
+    await runInDurableObject(conversation(PERSONAL_ROOM_ID), (_instance, state) => {
+      for (const id of resourceIds) state.storage.sql.exec(`INSERT INTO workstream_resource_links
+        (resource_id, attached_by_user_id, watch_enabled, relationship_type, resource_json, attached_at, updated_at)
+        VALUES (?, NULL, 0, 'inbound_email', '{}', 1, 1)`, id);
+    });
+    const projection = { type: 'authorization_projection_v1' as const, region: 'global' as const,
+      workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID };
+    await projectAuthorization(TEST_ENV, projection);
+    await projectAuthorization(TEST_ENV, { ...projection, substreamId: asSubstreamId('0') });
+    let parentReads = 0;
+    const readEnv = observeParentReads(async () => { parentReads++; });
+    const attachments = vi.spyOn(WorkstreamResourceStorage.prototype, 'readAuthorizationFacts');
+    const access = createAccessContext(readEnv, AUTH);
+    const addresses = resourceIds.map((resourceId) => ({ kind: 'resource' as const, workspaceId: WORKSPACE_ID, resourceId }));
+    expect((await access.checkMany([...addresses, addresses[0]!])).map((decision) => decision.status))
+      .toEqual(['allowed', 'allowed', 'allowed']);
+    expect(parentReads).toBe(1);
+    expect(attachments).toHaveBeenCalledTimes(1);
+    expect((await access.checkMany(addresses)).map((decision) => decision.status)).toEqual(['allowed', 'allowed']);
+    expect(parentReads).toBe(2);
+    expect(attachments).toHaveBeenCalledTimes(2);
+  });
+
+  it("rechecks conversation authority after asynchronous content hashing without a clock deadline", async () => {
     await seedRoom(PERSONAL_ROOM_ID, "personal", [AUTHOR_ID, PARTICIPANT_ID]);
     const text = 'needle revocation boundary';
     await runInDurableObject(conversation(PERSONAL_ROOM_ID), async (_instance, state) => {
@@ -409,8 +488,6 @@ describe("conversation parent contract", () => {
         });
         expect(removal.status).toBe(200);
         await deliverChildEffects(TEST_ENV, conversation(PERSONAL_ROOM_ID));
-        const expiredAt = Date.now() + 300_000;
-        vi.spyOn(Date, 'now').mockReturnValue(expiredAt);
         revoked = true;
       }
       return hashed;
@@ -607,11 +684,9 @@ describe("conversation parent contract", () => {
     // The same exact-child grant must survive provider-specific email loading.
     await runInDurableObject(workspaceStub(), (_instance, state) => {
       state.storage.sql.exec("UPDATE resources SET provider = 'resend', resource_type = 'email' WHERE id = ?", searchResourceId);
-      state.storage.sql.exec('DELETE FROM authorization_snapshots');
     });
     await expect(new ResourceService(TEST_ENV, AUTH).get(searchResourceId)).resolves.toMatchObject({ id: searchResourceId });
-    await runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec('DELETE FROM authorization_snapshots').toArray());
-    const mixed = await createAccessContext(uncachedAuthorizationEnv(), AUTH).checkMany([
+    const mixed = await createAccessContext(TEST_ENV, AUTH).checkMany([
       { kind: 'resource', workspaceId: WORKSPACE_ID, resourceId: searchResourceId },
       { kind: 'conversation', workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID, substreamId: reserved.substreamId },
     ]);
@@ -824,11 +899,10 @@ describe("conversation parent contract", () => {
     // finished room's automation, as they keep reading the room itself, is a
     // product decision this assertion exists to surface rather than settle.
     const address = { kind: 'conversation' as const, workspaceId: WORKSPACE_ID, parentId: owned, substreamId: asSubstreamId('0') };
-    expect(await createAccessContext(uncachedAuthorizationEnv(), { ...AUTH, userId: PARTICIPANT_ID }).check(address)).toMatchObject({ status: 'allowed' });
+    expect(await createAccessContext(TEST_ENV, { ...AUTH, userId: PARTICIPANT_ID }).check(address)).toMatchObject({ status: 'allowed' });
     await archiveRoom(PERSONAL_ROOM_ID);
-    // Force a canonical observation: ordinary cached reads retain their five-minute lease.
-    await runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec('DELETE FROM authorization_snapshots').toArray());
-    expect(await createAccessContext(uncachedAuthorizationEnv(), { ...AUTH, userId: PARTICIPANT_ID }).check(address)).toMatchObject({ status: 'denied' });
+    // Archiving the owning room removes inherited automation access; its author still reads.
+    expect(await createAccessContext(TEST_ENV, { ...AUTH, userId: PARTICIPANT_ID }).check(address)).toMatchObject({ status: 'denied' });
     expect(await createAccessContext(TEST_ENV, AUTH).check(address)).toMatchObject({ status: 'allowed' });
     expect(await automationStub(owned).authorizeViewer(viewer(owned, AUTHOR_ID)))
       .toEqual({ authorized: true, archived: true });
