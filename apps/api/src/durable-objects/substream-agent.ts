@@ -44,6 +44,7 @@ import {
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   WorkstreamSocketCommandResultSchema,
   WorkstreamWorkflowInputSchema,
+  DemoSeedSchema,
   type ServerSocketEvent,
   type TranscriptRangeResult,
   type TranscriptTurn,
@@ -377,8 +378,10 @@ const ProductAuthSchema = z.strictObject({
   // `"connector"`: a connector ingress already verified the link that binds
   // this member on the message being delivered, `sessionId` is correlation
   // only, and the object verifies current membership instead — see
-  // `connectorPrincipalAuth`.
-  principal: z.literal("connector").optional(),
+  // `connectorPrincipalAuth`. `"demo_seed"`: the demo seeder acting as a cast
+  // member who never signs in, verified the same way. Both are constructed
+  // only by server code; `IdentityAuthContext.principal` says why.
+  principal: z.enum(["connector", "demo_seed"]).optional(),
 });
 const ProductRequestSchema = z.discriminatedUnion("operation", [
   z.strictObject({ operation: z.literal("initialize"), auth: ProductAuthSchema,
@@ -2859,7 +2862,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     // this region. Before this branch existed, connector ingress synthesized a
     // session id that no `sessions` row could ever match, and every linked
     // member's Slack message died here as `session_revoked` (2026-08-22).
-    const connectorPrincipal = request.auth.principal === "connector";
+    const connectorPrincipal = request.auth.principal !== undefined;
     const current = connectorPrincipal
       ? await span.step("workstream.room.connector_auth", () => this.connectorPrincipalAuth(request.auth))
       : await span.step("workstream.room.session_auth", () => this.socketAuth({
@@ -3259,6 +3262,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         telemetryOperationId: z.string().nullable().optional(),
         slackOrigin: z.unknown().nullable().optional(),
         slackSearchAuthorization: z.unknown().nullable().optional(),
+        seed: DemoSeedSchema.nullable().optional(),
       }).parse(JSON.parse(pending.authorization_json));
       const runId = asHarnessRunId(uuidV7(now));
       const input = WorkstreamWorkflowInputSchema.parse({
@@ -3289,6 +3293,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         ...(authorization.slackSearchAuthorization
           ? { slackSearchAuthorization: authorization.slackSearchAuthorization }
           : {}),
+        // Carries the seed from the message that started this run onto the
+        // run's own execution receipt, which is what the harness reads.
+        ...(authorization.seed ? { seed: authorization.seed } : {}),
         reason: authorization.reason,
       });
       const leaseOwner = uuidV7(now + 1);

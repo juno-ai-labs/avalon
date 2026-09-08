@@ -109,6 +109,7 @@ import { z } from "zod";
 import { automationDOName, conversationObjectName, workspaceDOName, workstreamDOName } from "../durable-objects/names";
 import { AutomationService, createAutomation } from "./automation-service";
 import { ResourceService } from "./resource-service";
+import { DEMO_SEED_PROVIDER_KEY, demoSeedProviderFetch } from "./demo-seed-provider";
 import type { TranscriptCompactionContinuation } from "../durable-objects/workstream-transcript-storage";
 import { rpcResultBody } from "../durable-objects/rpc-result";
 import { WorkspaceConnectorEventSchema } from "../durable-objects/workspace-connector-event-protocol";
@@ -269,6 +270,10 @@ const MESSAGE_ORIGIN_REASONS_WITHOUT_ADMISSION_RECALL = new Set([
   "opening_message",
   "human_message",
   "elicitation_answer",
+  // A seeded turn stands in for a human message, and its run reaches no
+  // provider but the seed's own: admission recall would embed the query
+  // through the real embedding endpoint, outside the seam.
+  "demo_seed",
   "inbound_email",
   "slack_workspace_opening_message",
   "slack_workspace_message",
@@ -2416,6 +2421,11 @@ export async function runWorkstreamHarness(
   // actual authority without copying connector/resource state into the agent.
   env = withWorkspaceRuntimeDatabase(env, input.workspaceId);
   const conversationSubstreamId = input.substreamId ?? "0";
+  // A seeded run answers its own provider requests. Only the source of model
+  // bytes changes — tools, plugins, receipts and settlement are the ordinary
+  // path below, which is what makes seeded history real history rather than
+  // rows written to look like it. See `docs/demo-workspaces.md`.
+  const seedProvider = input.seed ? demoSeedProviderFetch(input.seed) : null;
   const runStartedAtMs = Date.now();
   // The archive gate was a `WHERE` clause because the read was a statement;
   // it is a test on the row here, and the row carries the object's own column
@@ -2909,12 +2919,16 @@ export async function runWorkstreamHarness(
   try {
     outcome = await runHarness({
       config: {
-        apiKey: env.OPENROUTER_API_KEY,
+        // Bind refuses to construct a client without a key, and a seeded run
+        // never presents one anywhere; the stand-in keeps a sandbox without a
+        // key able to seed. Production always has the real one.
+        apiKey: seedProvider ? env.OPENROUTER_API_KEY || DEMO_SEED_PROVIDER_KEY : env.OPENROUTER_API_KEY,
         primaryModel: modelRouting.model,
         fallbackModels: modelRouting.fallbackModels,
         appName: "Rally",
         ...azureInferenceConfig(env),
         ...runLimits,
+        ...(seedProvider ? { fetch: seedProvider } : {}),
         toolTimeoutMs: numericEnv(env, "TOOL_DEFAULT_TIMEOUT_MS", 30_000),
         maxWebResults: numericEnv(env, "WEB_SEARCH_MAX_RESULTS", 8),
         maxCatalogTokens: runScopeLimits.maxCatalogTokens,
