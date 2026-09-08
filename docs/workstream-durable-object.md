@@ -1753,6 +1753,8 @@ carries the evidence.
 header. The age is read before the accept's first yield, so it describes the
 instance, not the accept.
 
+Shipped in #607.
+
 ### 2026-09-08 — Reserve Sidekick skill names across executions
 
 Added migration 46 and conversation-owned name assignment. Recomputing duplicate
