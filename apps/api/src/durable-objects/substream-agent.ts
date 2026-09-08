@@ -1,5 +1,5 @@
 import { SidekickSkillSnapshotSchema } from "@rally/contracts";
-import { sidekickSkillRef } from "../services/sidekick-skills";
+import { sidekickSkillCatalog, sidekickSkillRef } from "../services/sidekick-skills";
 import { flushAuthorizationProjection, nextAuthorizationProjectionAt } from './authorization-projection';
 import { searchIndexingConfigured } from '../services/search-embedding';
 import { conversationSearchDocumentIds, prepareConversationLinks, readConversationSearchLink } from './conversation-link-search';
@@ -3971,6 +3971,24 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       return loop;
     };
     return {
+      assignSidekickSkillNames: (sources) => {
+        fence();
+        return this.state.storage.transactionSync(() => {
+          const rows = this.state.storage.sql.exec<{ sidekick_id: string; name: string }>(
+            `SELECT sidekick_id, name FROM sidekick_skill_names`,
+          ).toArray();
+          const assigned = new Map(rows.map((row) => [row.sidekick_id, row.name]));
+          for (const entry of sidekickSkillCatalog(sources, assigned)) {
+            if (assigned.has(entry.source.id)) continue;
+            this.state.storage.sql.exec(
+              `INSERT INTO sidekick_skill_names (sidekick_id, name) VALUES (?, ?)`,
+              entry.source.id, entry.skill.name,
+            );
+            assigned.set(entry.source.id, entry.skill.name);
+          }
+          return assigned;
+        });
+      },
       readSidekickSkills: () => {
         fence();
         const row = this.state.storage.sql.exec<{ snapshot_json: string }>(
