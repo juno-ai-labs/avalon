@@ -466,7 +466,7 @@ siblings in `test-workers/helpers/conversation-effects.ts`.
 
 ## Data model
 
-`SidekickDO` SQLite (deployed under the `AutomationDO` compatibility class), four
+`SidekickDO` SQLite retains the namespace renamed from `AutomationDO`, with four
 ordered object migrations: `automation`, `definition_revisions`,
 `schedules`, `runs`, `inbound_email_receipts`, the shared parent tables, and
 `_internal_durable_alarms`. [`workstream-durable-object.md`](workstream-durable-object.md#automationdo)
