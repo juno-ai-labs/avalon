@@ -1095,6 +1095,17 @@ export class SidekickDO extends ConversationParentDurableObject {
     });
   }
 
+  async authorizationDiscoveryChildren(input: ConversationParentAuthorityRequest) {
+    await this.initialized;
+    const request = ConversationParentAuthorityRequestSchema.parse(input);
+    const row = this.row();
+    if (!row || row.lifecycle === 'deleted') return { substreamIds: [] as string[] };
+    this.assertAutomation(request.workspaceId, request.parentId);
+    // Automation registries have no failed/ready preparation state. A registered, unprovisioned
+    // child is unresolved authority, not evidence that its content can be discarded.
+    return { substreamIds: this.childRegistry().map((child) => child.substreamId) };
+  }
+
   /** No participant admission and no projection-dependent permission decision. */
   async readAuthorizationFacts(input: ConversationAuthorizationRequest) {
     await this.initialized;

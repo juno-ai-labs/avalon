@@ -1,6 +1,3 @@
-import { createHostAccessContext } from './authorization-host-context';
-import { requireAuthorizedRead } from './authorization-service';
-import { IdSchema } from '@rally/contracts';
 import type { WorkstreamWorkflowInput } from "@rally/contracts";
 import { asWorkspaceId, MEMORY_RECALL_QUERY_LIMIT } from "@rally/contracts";
 import { newId, nowIso } from "@rally/db";
@@ -494,26 +491,13 @@ async function recordAccess(
   });
 }
 
-/** Reuses the core read policy while retaining the host's canonical memory-scope rules. */
-async function authorizedMemoryScopes(env: Env, input: WorkstreamWorkflowInput): Promise<MemoryScope[]> {
-  const validatedAt = Date.now();
-  const scopes = await resolveMemoryAccess(env, input);
-  const resources = scopes.map((scope) => ({ kind: 'memory' as const, workspaceId: input.workspaceId,
-    scopeId: IdSchema.parse(scope.memoryScopeId) }));
-  const access = createHostAccessContext({ workspaceId: input.workspaceId, principal: input.executionPrincipal,
-    executionId: input.harnessRunId, resources, validatedAt });
-  const decisions = await access.checkMany(resources);
-  for (const decision of decisions) requireAuthorizedRead(decision);
-  return scopes;
-}
-
 async function hybridMemorySearch(
   env: Env,
   input: WorkstreamWorkflowInput,
   query: string,
   trackAccess = true,
 ): Promise<MemorySearchResult & { scopes: MemoryScope[] }> {
-  const scopes = await authorizedMemoryScopes(env, input);
+  const scopes = await resolveMemoryAccess(env, input);
   if (scopes.length === 0) {
     return { query, retrievalMode: "none", results: [], scopes };
   }
@@ -530,7 +514,7 @@ async function hybridMemorySearch(
 
   // Re-resolve after both retrieval legs so membership, principal, automation,
   // and scope authorization cannot be revoked mid-search yet still leak rows.
-  const reauthorizedScopes = await authorizedMemoryScopes(env, input);
+  const reauthorizedScopes = await resolveMemoryAccess(env, input);
   const reauthorizedIds = new Set(reauthorizedScopes.map((scope) => scope.memoryScopeId));
   const canonicalScopeIds = scopeIds.filter((scopeId) => reauthorizedIds.has(scopeId));
   const candidateIds = [...new Set([...fts, ...vector].map((candidate) => candidate.memoryItemId))];
@@ -598,10 +582,10 @@ async function memoryReadById(
   input: WorkstreamWorkflowInput,
   memoryItemId: string,
 ) {
-  const scopes = await authorizedMemoryScopes(env, input);
+  const scopes = await resolveMemoryAccess(env, input);
   const scopeIds = scopes.map((scope) => scope.memoryScopeId);
   const row = (await loadCanonicalItems(env, input.workspaceId, scopeIds, [memoryItemId]))[0];
-  const currentScopes = await authorizedMemoryScopes(env, input);
+  const currentScopes = await resolveMemoryAccess(env, input);
   const currentlyAuthorized = new Set(currentScopes.map((scope) => scope.memoryScopeId));
   const visible = row && currentlyAuthorized.has(row.memoryScopeId) ? row : null;
   if (visible) {

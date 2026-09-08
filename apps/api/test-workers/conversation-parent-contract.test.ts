@@ -207,6 +207,12 @@ async function seedAutomation(scope: "personal" | "workspace" | "workstream", ow
   return automationId;
 }
 
+function uncachedAuthorizationEnv() {
+  const result = { ...TEST_ENV };
+  delete result.AUTHORIZATION_CACHE;
+  return result;
+}
+
 function viewer(parentId: string, userId: UserId) {
   return { workspaceId: WORKSPACE_ID, parentId, userId };
 }
@@ -341,6 +347,7 @@ describe("conversation parent contract", () => {
   });
 
   it('keeps inbound email private through the deployed resource reader', async () => {
+    const payloadReads = vi.spyOn(env.PAYLOADS, 'get');
     await seedRoom(PERSONAL_ROOM_ID, 'personal', [PARTICIPANT_ID]);
     const resourceId = crypto.randomUUID();
     await runInDurableObject(workspaceStub(), (_instance, state) => {
@@ -367,9 +374,18 @@ describe("conversation parent contract", () => {
     await expect(outsider.get(resourceId)).rejects.toMatchObject({ status: 404 });
     await expect(outsider.content(resourceId)).rejects.toMatchObject({ status: 404 });
     await expect(outsider.preview(resourceId, new AbortController().signal)).rejects.toMatchObject({ status: 404 });
+    expect(payloadReads).not.toHaveBeenCalled();
     const participant = new ResourceService(TEST_ENV, { ...AUTH, userId: PARTICIPANT_ID });
     expect((await participant.list({ limit: 10 })).items).toMatchObject([{ id: resourceId }]);
     await expect(participant.get(resourceId)).resolves.toMatchObject({ id: resourceId, provider: 'resend' });
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      state.storage.sql.exec('DELETE FROM authorization_snapshots');
+      state.storage.sql.exec('UPDATE authorization_inventories SET validated_at = ?', Date.now() - 300_000);
+    });
+    await expect(new ResourceService(TEST_ENV, { ...AUTH, userId: MEMBER_ID }).get(resourceId))
+      .rejects.toMatchObject({ status: 404 });
+    expect(await workspaceStub().authorizationBackfillStatus({ workspaceId: WORKSPACE_ID }))
+      .toMatchObject({ complete: true, pendingChildren: 0 });
     // Creating a personal room does not replace its active participant roster.
     await expect(new ResourceService(TEST_ENV, AUTH).get(resourceId)).rejects.toMatchObject({ status: 404 });
   });
@@ -575,6 +591,19 @@ describe("conversation parent contract", () => {
       expect(await searchWorkspace(searchEnv, AUTH, { query: 'private search', category: 'artifacts' })).toHaveLength(1);
       expect(await searchWorkspace(searchEnv, { ...AUTH, userId: PARTICIPANT_ID }, { query: 'private search', category: 'artifacts' })).toEqual([]);
     } finally { vi.unstubAllGlobals(); }
+
+    // The same exact-child grant must survive provider-specific email loading.
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE resources SET provider = 'resend', resource_type = 'email' WHERE id = ?", searchResourceId);
+      state.storage.sql.exec('DELETE FROM authorization_snapshots');
+    });
+    await expect(new ResourceService(TEST_ENV, AUTH).get(searchResourceId)).resolves.toMatchObject({ id: searchResourceId });
+    await runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec('DELETE FROM authorization_snapshots').toArray());
+    const mixed = await createAccessContext(uncachedAuthorizationEnv(), AUTH).checkMany([
+      { kind: 'resource', workspaceId: WORKSPACE_ID, resourceId: searchResourceId },
+      { kind: 'conversation', workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID, substreamId: reserved.substreamId },
+    ]);
+    expect(mixed.map((decision) => decision.status)).toEqual(['allowed', 'allowed']);
 
     const viewerWaterlineAfterReady = await runInDurableObject(parent, (_instance, state) =>
       state.storage.sql.exec<{ waterline: number }>(
@@ -782,7 +811,13 @@ describe("conversation parent contract", () => {
     // object does today; whether a former participant should keep reading a
     // finished room's automation, as they keep reading the room itself, is a
     // product decision this assertion exists to surface rather than settle.
+    const address = { kind: 'conversation' as const, workspaceId: WORKSPACE_ID, parentId: owned, substreamId: asSubstreamId('0') };
+    expect(await createAccessContext(uncachedAuthorizationEnv(), { ...AUTH, userId: PARTICIPANT_ID }).check(address)).toMatchObject({ status: 'allowed' });
     await archiveRoom(PERSONAL_ROOM_ID);
+    // Force a canonical observation: ordinary cached reads retain their five-minute lease.
+    await runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec('DELETE FROM authorization_snapshots').toArray());
+    expect(await createAccessContext(uncachedAuthorizationEnv(), { ...AUTH, userId: PARTICIPANT_ID }).check(address)).toMatchObject({ status: 'denied' });
+    expect(await createAccessContext(TEST_ENV, AUTH).check(address)).toMatchObject({ status: 'allowed' });
     expect(await automationStub(owned).authorizeViewer(viewer(owned, AUTHOR_ID)))
       .toEqual({ authorized: true, archived: true });
     expect(await automationStub(owned).authorizeViewer(viewer(owned, PARTICIPANT_ID)))

@@ -695,22 +695,8 @@ export class ResourceService {
       this.auth.userId,
     ).first<Record<string, unknown>>();
     if (!row) throw new ApiError(404, "resource_not_found", "Resource not found");
-    if (!await this.canReadInboundEmailResource(row)) {
-      throw new ApiError(404, "resource_not_found", "Resource not found");
-    }
+    if (row.provider === 'resend' && row.resource_type === 'email') await this.authorizeRead(id);
     return row;
-  }
-
-  private async canReadInboundEmailResource(resource: Record<string, unknown>): Promise<boolean> {
-    if (resource.provider !== "resend" || resource.resource_type !== "email") return true;
-    const workspace = await this.workspaceDirectory();
-    const access = await workspace.resourceAccess({
-      workspaceId: this.auth.workspaceId,
-      resourceId: String(resource.id),
-      userId: this.auth.userId,
-    });
-    if (access.items.length === 0) return false;
-    return access.items.some((item) => item.scope === "workspace" || item.isParticipant);
   }
 
   private workspaceDirectory() {

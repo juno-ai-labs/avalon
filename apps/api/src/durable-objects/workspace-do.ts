@@ -4,7 +4,7 @@ import { ONBOARDING_JOURNEY_SQL, OnboardingJourneyStore } from './onboarding-jou
 import { UpdateOnboardingJourneySchema, type OnboardingJourney, type UpdateOnboardingJourney } from '@rally/contracts';
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import { AuthorizationStorage, AUTHORIZATION_STORAGE_MIGRATION, AUTHORIZATION_STORAGE_TABLES, AuthorizationLocationSchema } from './authorization-storage';
-import { AuthorizationProjectionJobSchema, type AuthorizationProjectionJob } from './authorization-projection';
+import { flushAuthorizationDeliveries, type AuthorizationProjectionJob } from './authorization-projection';
 import { AuthorizationSnapshotSchema, AuthorizationSubjectSchema, AuthorizationResourceSchema } from '../services/authorization-policy';
 import {
   ExternalEventEvaluatorV1Schema,
@@ -3537,18 +3537,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   protected override async runDueAlarmWork(now: number): Promise<void> {
     const workspaceId = this.workspaceId();
     if (workspaceId) {
-      const deliveries = this.state.storage.sql.exec<{ job_key: string; payload_json: string }>(
-        'SELECT job_key, payload_json FROM authorization_delivery WHERE not_before <= ? ORDER BY job_key LIMIT 100', now,
-      ).toArray();
-      if (deliveries.length) {
-        try {
-          await this.env.ACTIVITY_QUEUE.sendBatch(deliveries.map((row) => ({ body: AuthorizationProjectionJobSchema.parse(JSON.parse(row.payload_json)) })));
-          for (const row of deliveries) this.state.storage.sql.exec('DELETE FROM authorization_delivery WHERE job_key = ? AND payload_json = ?', row.job_key, row.payload_json);
-        } catch {
-          for (const row of deliveries) this.state.storage.sql.exec('UPDATE authorization_delivery SET not_before = ? WHERE job_key = ?', now + 5_000, row.job_key);
-          logWarn(this.env, 'authorization_backfill_dispatch_deferred', { region: this.env.AVALON_REGION });
-        }
-      }
+      try { await flushAuthorizationDeliveries(this.state.storage.sql, this.env.ACTIVITY_QUEUE, now); }
+      catch { logWarn(this.env, 'authorization_backfill_dispatch_deferred', { region: this.env.AVALON_REGION }); }
       try { await publishResourceSearch(this.state.storage.sql, this.env, workspaceId); }
       catch { logWarn(this.env, "resource_search_dispatch_deferred", { workspace_id: workspaceId }); }
       await this.instrumentWorkspaceAlarmPhase("project_default_publish", undefined, async () => {
@@ -8473,6 +8463,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }
     this.state.storage.transactionSync(() => {
       const storage = new AuthorizationStorage(this.state.storage);
+      storage.pruneExpired(Date.now());
       for (const snapshot of snapshots) storage.write(snapshot);
     });
   }
@@ -8512,16 +8503,47 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   private enqueueAuthorizationDiscovery(job: AuthorizationProjectionJob): void {
     this.state.storage.sql.exec(`INSERT INTO authorization_delivery(job_key, payload_json, not_before) VALUES (?, ?, 0)
-      ON CONFLICT(job_key) DO UPDATE SET payload_json = excluded.payload_json, not_before = 0`,
+      ON CONFLICT(job_key) DO UPDATE SET payload_json = excluded.payload_json, revision = authorization_delivery.revision + 1`,
     JSON.stringify([job.parentId, job.substreamId ?? null]), JSON.stringify(job));
   }
 
-  async registerAuthorizationChildren(input: { workspaceId: string; parentId: string; substreamIds: string[] }) {
+  async authorizationDiscoveryInventory(input: { workspaceId: string; parentId: string }) {
     await this.initialized;
-    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, parentId: IdSchema, substreamIds: z.array(SubstreamIdSchema) }).parse(input);
+    this.assertWorkspace(WorkspaceIdSchema.parse(input.workspaceId));
+    return this.state.storage.sql.exec<{ substream_id: string }>(
+      'SELECT substream_id FROM authorization_backfill_children WHERE parent_id = ?', IdSchema.parse(input.parentId),
+    ).toArray().map((row) => row.substream_id);
+  }
+
+  async authorizationDiscoveryParents(input: { workspaceId: string }) {
+    await this.initialized;
+    this.assertWorkspace(WorkspaceIdSchema.parse(input.workspaceId));
+    return this.state.storage.sql.exec<{ parentId: string }>(`
+      SELECT workstream_id AS parentId FROM workspace_workstream_directory
+      UNION SELECT automation_id AS parentId FROM automation_directory`).toArray();
+  }
+
+  async registerAuthorizationChildren(input: { workspaceId: string; parentId: string; substreamIds: string[]; refreshExisting?: boolean }) {
+    await this.initialized;
+    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, parentId: IdSchema, substreamIds: z.array(SubstreamIdSchema), refreshExisting: z.boolean().optional() }).parse(input);
     this.assertWorkspace(request.workspaceId);
     this.state.storage.transactionSync(() => {
+      // Reconcile the exact registry: deleted/failed children must not leave immortal pending receipts.
+      const expected = new Set(request.substreamIds);
+      const old = this.state.storage.sql.exec<{ substream_id: string }>(
+        'SELECT substream_id FROM authorization_backfill_children WHERE parent_id = ? UNION SELECT substream_id FROM authorization_inventories WHERE parent_id = ?',
+        request.parentId, request.parentId,
+      ).toArray();
+      for (const child of old) if (!expected.has(SubstreamIdSchema.parse(child.substream_id))) {
+        for (const table of ['authorization_backfill_children', 'authorization_inventories', 'authorization_locations']) {
+          this.state.storage.sql.exec(`DELETE FROM ${table} WHERE parent_id = ? AND substream_id = ?`, request.parentId, child.substream_id);
+        }
+        this.state.storage.sql.exec('DELETE FROM authorization_delivery WHERE job_key = ?', JSON.stringify([request.parentId, child.substream_id]));
+      }
       for (const substreamId of request.substreamIds) {
+        if (request.refreshExisting === false && this.state.storage.sql.exec(
+          'SELECT 1 FROM authorization_backfill_children WHERE parent_id = ? AND substream_id = ?', request.parentId, substreamId,
+        ).toArray().length) continue;
         this.state.storage.sql.exec(`INSERT INTO authorization_backfill_children(parent_id, substream_id) VALUES (?, ?)
           ON CONFLICT(parent_id, substream_id) DO UPDATE SET completed = 0`, request.parentId, substreamId);
         this.enqueueAuthorizationDiscovery({ type: 'authorization_projection_v1', region: this.env.AVALON_REGION,

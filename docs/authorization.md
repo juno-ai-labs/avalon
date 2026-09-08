@@ -1,8 +1,7 @@
 # Authorization
 
 Rally's internal read authorization primitive composes canonical owner facts into
-an explicit decision. It serves member search and resource reads, and provides
-an attenuated context for host-authorized agent retrieval. Ordinary read evidence
+an explicit decision. It serves member search and resource reads. Ordinary read evidence
 may lag a permission change by at most five minutes. The module does not admit
 participants or become a new canonical owner of memberships.
 
@@ -12,12 +11,11 @@ participants or become a new canonical owner of memberships.
 | --- | --- |
 | `services/authorization-policy.ts` | Typed addresses, subject, four outcomes, proof composition, five-minute bound, `AccessContext`, `AuthorizedView` |
 | `services/authorization-service.ts` | Member policy, owner reads, request coalescing, cache validation and HTTP disclosure adapter |
-| `services/authorization-host-context.ts` | Attenuates trusted host-selected memory/resource scopes to one execution |
 | `durable-objects/authorization-storage.ts` | Workspace SQLite snapshots, exact attachment locations and migration tables |
 | `durable-objects/authorization-projection.ts` | Transactional child outbox and reference-only Queue contract |
 | `services/authorization-projection-service.ts` | Reloads attachment inventories from their owners when jobs execute |
 | `durable-objects/workspace-do.ts` | Snapshot publication, resource facts, migration fan-out and discovery status |
-| `durable-objects/workstream-do.ts`, `automation-do.ts` | Canonical parent/private-child facts; automation author, executor and owning work stream |
+| `durable-objects/workstream-do.ts`, `sidekick-do.ts` | Canonical parent/private-child facts; automation author, executor and owning work stream |
 | `authorization-control.ts` | Private operator Service Binding entrypoint |
 
 ## How it works
@@ -60,7 +58,9 @@ Composition, Queue delivery, WorkspaceDO reads and KV publication preserve the
 observation time. They cannot start a new five-minute lease.
 
 Each request coalesces identical decisions, parent roster reads and child
-attachment-inventory reads. WorkspaceDO stores reusable decision snapshots.
+attachment-inventory reads. Snapshot and resource-fact RPCs batch the page;
+remaining distinct owner checks run serially. Expired request promises are evicted
+before a new observation, and the completed batch is checked for freshness. WorkspaceDO stores reusable decision snapshots.
 Global may read/write the dedicated `AUTHORIZATION_CACHE` KV namespace; EU does
 not access it. KV retention is five minutes, but the embedded evidence deadline
 is authoritative even when a cache returns an older value. Snapshot publication
@@ -69,8 +69,10 @@ rows. KV failure falls through to regional authority.
 
 A negative attachment decision requires completed discovery. Its evidence time
 comes from the oldest discovered inventory, not the current time on WorkspaceDO.
-If that proof expires, the request reports unavailable and starts a resumable
-inventory refresh. Positive decisions only need their independently verified
+If that proof expires, the request refreshes canonical inventories once and
+re-evaluates the absence proof. This refresh preserves existing Queue receipts;
+it neither resets backfill progress nor renews old observation timestamps. A
+failed refresh remains unavailable. Positive decisions only need their independently verified
 grant path. An old or delayed index cannot manufacture access.
 
 Resource content, versions and previews check freshness again before returning.
@@ -80,9 +82,9 @@ already being streamed. Search repeats the check after content validation.
 ### Agent scope adapters
 
 Memory and attachment tools retain their existing canonical host loaders and
-execution-principal validation. They wrap the resulting authorized selection in
-a host context whose observation time is captured before those reads. The model
-cannot supply the principal, grant list or observation time. Existing memory
+execution-principal validation. They do not construct a second authorization
+context from the selection they just authorized: that would only check its own
+input. The model cannot supply the execution principal. Existing memory
 scope selection and connector visibility SQL remain source-specific adapters;
 this release does not replace those loaders or their retrieval engines.
 
@@ -93,7 +95,10 @@ attachment changes. The existing alarm sends that reference through the regional
 activity Queue. Jobs reload current owner state, so queue payloads contain no
 text, grants or bearer permissions. WorkspaceDO owns durable discovery jobs and
 per-parent/per-child completion receipts. Delivery acceptance is separate from
-completion: a child is complete only after its inventory is applied.
+completion: a child is complete only after its inventory is applied. Delivery
+cleanup is revision-fenced so an accepted send cannot erase newer intent, and
+new intent preserves Queue failure backoff. Parent discovery prunes retired
+children; even delayed child jobs check the current parent registry.
 
 Deployment enables the core member read path for every workspace. There is no
 legacy/shadow mode, activation flag or comparison gate. `backfill` queues parent
@@ -138,7 +143,8 @@ current authority paths. See [workstream creation](workstream-creation.md),
 `AuthorizationControl` is a named Worker entrypoint intended only for a private
 operator Service Binding. It is not mounted on product HTTP and is deliberately
 separate from the read-only engineering inspection bridge. Provision that
-binding only for trusted operational tooling.
+binding only for trusted operational tooling. No operator caller binding is
+provisioned in this PR; product reads and automatic discovery do not require one.
 
 ## Failure modes and limits
 
@@ -179,7 +185,11 @@ permission answer cannot prove that a stale projection is ignored.
 
 All owner state, Queue references and WorkspaceDO snapshots stay in their
 workspace region. Global Wrangler configuration declares a dedicated KV binding
-for provisioning on first deployment. EU deliberately has no authorization KV
+for provisioning on first deployment. The pinned Wrangler 4.129.0 CLI enables
+`experimental-provision` and `experimental-auto-create` by default; its binding
+provisioner creates or reuses the named resource. No production deployment was
+performed to verify that operation. KV is an optional accelerator, so it is not
+in the environment contract's required `productionOnlyBindings` list. EU deliberately has no authorization KV
 binding and does not use a Global fallback. See [regionalization](regionalization.md).
 
 ## Operations
@@ -193,6 +203,26 @@ reads also initiate missing discovery. Rolling back the serving implementation
 requires a Worker code rollback, not a per-workspace mode change.
 
 ## Changelog
+
+### 2026-09-07 — Preserve Sidekick migrations during rebase
+
+Main moved the automation implementation into SidekickDO and claimed the next
+object migration numbers. Authorization facts now live on SidekickDO behind the
+existing AutomationDO compatibility export. Authorization uses WorkspaceDO
+migration 37 and SubstreamAgent migration 44, preserving main's published schemas.
+
+### 2026-09-07 — Verify review findings against canonical authority
+
+Batched page-level evidence reads and removed unbounded distinct-owner fan-out
+because the former batch API issued singleton RPCs for every candidate. Fenced
+Queue cleanup against concurrent intent, preserved retry backoff, and reconciled
+retired child receipts. Stale absence evidence now refreshes canonical inventories
+without resetting Queue progress; this can still require a full workspace scan.
+Fixed private-child email loading and archived owning-room automation grants.
+Removed host wrappers that merely rechecked their own input. Kept the agreed
+five-minute read bound and whole-query retryable failures: silently dropping
+unverifiable rows would misrepresent an incomplete result as complete.
+
 
 ### 2026-09-07 — Enable authorization on deployment
 
