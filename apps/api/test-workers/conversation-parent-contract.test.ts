@@ -473,7 +473,12 @@ describe("conversation parent contract", () => {
     const page = await new ResourceService(readEnv, AUTH).searchTexts(resourceIds);
     expect(page.complete).toBe(true);
     expect([...page.records.keys()].sort()).toEqual(resourceIds.sort());
-    expect([...page.records.values()].every(record => record.text.includes('Private email') && record.revision.length > 0)).toBe(true);
+    for (const id of resourceIds) {
+      expect(page.records.get(id)?.text).toContain('Private email');
+      expect(page.records.get(id)?.revision).toBe(String(await workspaceStub().resourceSearchRevision({
+        workspaceId: WORKSPACE_ID, resourceId: id,
+      })));
+    }
     expect(snapshots).toHaveBeenCalledTimes(1);
     expect(parentReads).toBe(3);
     expect(attachments).toHaveBeenCalledTimes(3);

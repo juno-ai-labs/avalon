@@ -289,15 +289,14 @@ from those loaders, never from the index.
 
 - Search scope enumeration includes archived and system conversations and has its own complete-list contract. Sidebar visibility is not search readability.
 - Scope prefilters are an optimization, never authority. Current canonical authorization decides every returned result.
-- Public cursors refer only to authorized result IDs and never grant access. Fully rejected candidate pages remain internal.
+- Public cursors identify consumed candidate positions and never grant access. Fully rejected pages may expose continuation; index-existence concealment is not part of this member-only API.
 
 - One tokenizer is retained per isolate (about 26 MiB after releasing construction
   tables in a local Node 22 heap measurement). Its model stays closure-private; only the policy wrapper is
   frozen. Input fragments must be cleared before every count returns or throws.
 - Chunk offsets use the sorted code-point boundary array directly; do not add
   a per-character Map and its transient construction pairs.
-- Source loaders must check current authority after retrieval and reject stale
-  revisions. Otherwise revoked access or obsolete content could be returned.
+- Source loaders admit each candidate batch before canonical loading and reject stale index revisions. A new request admits again; an admitted result may finish after a concurrent revocation.
 - Namespace identity includes the embedding model and dimensions. Mixing spaces
   makes vector distances meaningless.
 - Deleted revisions win against replayed upserts at the same revision. Removing
@@ -315,9 +314,10 @@ All, Messages, Links, Artifacts, and Files tabs use literal case-insensitive
 substring retrieval. BM25 and ANN are available at the shared boundary but are
 not yet exposed through this member endpoint.
 
-Conversation loaders authorize the parent and private child before and after
-reading canonical turns. Resource loaders re-read current source revisions and
-attachment access. The route revalidates the workspace session before returning.
+Conversation loaders admit the parent/private-child batch before reading canonical
+turns. Resource loaders admit their batch and load canonical metadata and revisions
+in one owner snapshot. Search revision values are parsed as integers; missing or
+renamed columns fail visibly instead of silently discarding every result. The route revalidates the workspace session before returning.
 The index returns candidate identifiers, never trusted display text. Excerpts
 contain UTF-16 source ranges and excerpt-relative highlight ranges; React renders
 matching spans as text. Selecting a message hydrates its canonical sequence and
@@ -343,11 +343,11 @@ Turbopuffer requires a valid embedding for live documents in a vector-enabled
 namespace. Callers must retain failed projection work for retry. The service does
 not invent retry limits or result caps; the caller supplies its product limit.
 
-Substring retrieval advances an ID cursor when canonical filtering removes
-results, continuing until the legacy requested page is filled, or a paginated
-request finds an authorized candidate page, or the index is exhausted.
-BM25 and semantic retrieval currently return one candidate page and may return
-fewer canonical matches. The desktop exposes substring continuation through
+Each request consumes one candidate page and may return fewer or zero canonical
+matches. Substring pagination returns the last consumed candidate position when
+the candidate page is full. Nonpaginated clients receive only the result array,
+so they cannot continue and may miss matches beyond that first page. BM25 and
+semantic retrieval have no continuation cursor. The desktop exposes substring continuation through
 scroll and its pagination footer.
 The cursor follows [Turbopuffer attribute pagination](https://turbopuffer.com/docs/query#pagination).
 
@@ -424,7 +424,8 @@ notes/table text, agent tools, and external provider ranking still need migratio
 Conversation discovery queries the workspace namespace and authorizes each hit;
 archived parents and automation runs still require navigation/coverage verification.
 BM25/semantic canonical filtering can shorten a page; their refill and client
-pagination are not implemented. Substring requests refill rejected candidates.
+pagination are not implemented. Substring clients that supply pageSize can
+explicitly continue; legacy clients receive only the first candidate page.
 
 ## Regional impact
 
@@ -437,9 +438,9 @@ No cross-region fallback is permitted.
 
 ## Security and trust model
 
-Index content is never an access grant. Member routes reauthenticate after awaits,
-and source loaders recheck canonical parent/private-child or connector ownership
-before returning text. Connector resources retain their existing connection scope
+Index content is never an access grant. Member routes revalidate workspace sessions
+before returning, and source loaders admit canonical parent/private-child or
+connector ownership once per candidate batch. Connector resources retain their existing connection scope
 and owner rules. Attachment access checks the exact owning child, including when
 the main-feed directory has no attachment hint. The workspace namespace permits
 candidate discovery without enumerating the directory; every candidate still
@@ -458,6 +459,16 @@ through Queue failure rather than silent truncation. Document-size and capture
 budgets require team policy; no arbitrary new caps are introduced here.
 
 ## Changelog
+
+### 2026-09-08 — Validate snapshot revisions and reconcile older search contracts
+
+A second review of PR #600 found that coercing a missing revision to the string
+undefined could silently discard every resource result, and the test only checked
+string length. Revisions now parse as integers, and the workerd test compares them
+with the canonical revision RPC. Updated older invariant, boundary, and failure-mode
+sections that still described hidden refill and post-await checks, superseded by
+PR #600's operation-level admission and explicit pagination. Legacy array clients
+can return zero without continuation; this is the documented compatibility trade-off.
 
 ### 2026-09-08 — Seek pending resource projections by deadline
 
