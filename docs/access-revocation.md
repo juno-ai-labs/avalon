@@ -287,6 +287,15 @@ Callers: any Worker code that ends access calls `publishAccessRevocation`. The
   read, not the object-local one.
 - **Genuinely not covered:** a block's visibility narrowing within a dashboard
   the reader still has access to. That closes on their next reconnect.
+- **A hop against a retired workspace still closes its sockets.** A retired
+  workspace refuses almost every method it has, and `revokeSocketAccess` is one
+  of the handful it deliberately does not: a workspace nobody can reach must
+  still be able to drop the connections it is holding, and a throw here would
+  retry and dead-letter one message per retired object — spending this module's
+  own monitoring signal on a condition somebody designed. The permit covers the
+  whole call rather than that one method name, so the private helpers each
+  implementation reaches on its way to the sockets are covered too. See
+  [`workspace-retirement.md`](workspace-retirement.md).
 - **A revocation is not versioned.** A message names `(workspaceId, userId)` and
   nothing more, so one delayed or dead-letter-replayed message can close sockets
   belonging to a membership that was since restored. Admission decides what
@@ -370,6 +379,22 @@ equal the local mirror, not merely be older than it: removal followed by re-add
 must not revive a previously issued ticket. Workerd regressions cover both
 parent removal while child membership remains active and old-ticket replay
 after re-addition.
+
+### 2026-09-05 — Revocation keeps working against a retired workspace
+
+**What changed:** Nothing in this module. Workspace retirement fences almost
+every method of the objects in this walk, and `revokeSocketAccess` is named as an
+exception on every one of them.
+
+**Why:** Retirement is what a closed workspace gets, and the objects it closes may
+still be holding sockets. A refusal would have failed the hop, which retries and
+then dead-letters — turning a designed-for condition into noise on the one signal
+this module uses as its monitoring.
+
+**Consequences:** A hop against a retired object succeeds and closes what it
+finds; a *new* method this consumer starts calling on those objects is refused by
+default and must be named in the gate's permit list, which is in
+[`workspace-retirement.md`](workspace-retirement.md).
 
 ### 2026-09-04 — Private-child removal has a durable local revocation leg
 

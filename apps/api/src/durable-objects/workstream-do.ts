@@ -79,6 +79,11 @@ import {
   type DurableObjectSqliteMigration,
 } from "./sqlite-migrations";
 import {
+  OBJECT_RETIREMENT_SCHEMA_STATEMENTS,
+  applyRetirementGate,
+  retiredObjectResponse,
+} from "./object-retirement";
+import {
   SCHEDULED_ALARM_SCHEMA_STATEMENTS,
   type ScheduledAlarm,
 } from "./scheduled-alarms";
@@ -528,6 +533,16 @@ export const WORKSTREAM_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
     ) STRICT`,
     `CREATE INDEX private_child_membership_effects_due_idx
       ON private_child_membership_effects(state, not_before, created_at, operation_id)`,
+  ],
+}, {
+  version: 8,
+  description: "record a permanent retirement tombstone",
+  statements: [
+    // A retired workspace never reopens, and the fence in front of every
+    // method here reads this table. It lives in the object rather than D1
+    // because the gate answers during constructor recovery, before anything
+    // else this object could consult is admitted.
+    ...OBJECT_RETIREMENT_SCHEMA_STATEMENTS,
   ],
 }];
 
@@ -2044,3 +2059,15 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       .filter((due): due is number => due !== null);
   }
 }
+
+applyRetirementGate(WorkstreamDO, {
+  // The shared classification is inherited from ConversationParentDurableObject;
+  // this call is what wraps the doors *this* class overrides for itself.
+  drop: {
+    fetch: () => retiredObjectResponse(),
+    webSocketMessage: () => Promise.resolve(),
+    webSocketClose: () => Promise.resolve(),
+    webSocketError: () => Promise.resolve(),
+    alarm: () => Promise.resolve(),
+  },
+});
