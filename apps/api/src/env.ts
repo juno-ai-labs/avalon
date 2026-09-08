@@ -89,8 +89,10 @@ export interface Env {
   CONNECTOR_POLL_WORKFLOW: Workflow;
   CONNECTOR_EVENT_WORKFLOW: Workflow;
   WORK_OPPORTUNITY_WORKFLOW: Workflow;
-  /** Global-only in production: the demo preparation driver. Absent, the demo
-   * routes answer 503 and nothing else changes. */
+  /** Global-only: the demo preparation driver. Absent, the demo write routes
+   * answer 503 (`demo_preparation_unavailable`) and nothing else changes — it
+   * is not in the boot contract on purpose, because a demo tool's binding must
+   * never take a region offline. EU binds nothing; its demo routes refuse. */
   DEMO_PREPARATION_WORKFLOW?: Workflow;
   EU_IDENTITY_BRIDGE?: RegionalIdentityBridgeRpcBinding;
   EU_GITHUB_BRIDGE?: GitHubRegionalBridgeRpcBinding;
@@ -491,7 +493,8 @@ const productionOnlyBindings = [
   { key: "INFERENCE_LAKEHOUSE", regions: ["global"] },
   { key: "ANALYTICS_LAKEHOUSE_QUEUE", regions: ["global"] },
   { key: "ANALYTICS_LAKEHOUSE", regions: ["global"] },
-  { key: "DEMO_PREPARATION_WORKFLOW", regions: ["global"] },
+  // `DEMO_PREPARATION_WORKFLOW` is deliberately absent: it drives an operator
+  // tool, and a missing binding is that tool's 503, not a region-wide fault.
 ] as const satisfies readonly { key: keyof Env; regions: readonly Region[] }[];
 
 /**

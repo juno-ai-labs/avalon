@@ -36,22 +36,31 @@ const PROJECTION_POLL = "10 seconds";
 
 const NO_RETRIES: WorkflowStepConfig = { retries: { limit: 0, delay: "1 second" } };
 
+const PROJECTION_POLL_MS = 10_000;
+
+/** The phases before the wait, each one step. */
+const LEADING_PHASES = ["checking_template", "creating_workspace", "copying_connections", "seeding_conversations"] as const;
+
 /**
  * How many rounds the wait may take, from the platform's own ceiling.
  *
- * Cloudflare publishes a maximum number of steps per Workflow instance: 1,024
- * on the Workers Free plan, 10,000 by default on Paid. Each wait round costs
- * two steps — one check, one sleep — after the four phase steps before it.
- * Bounding the rounds by the smaller published figure means the wait ends, on
- * either plan, with a failure this driver recorded rather than with the
- * platform ending the instance mid-round, which records nothing. At the poll
- * cadence above that is about 85 minutes; a readiness gap that lasts that long
- * is not a projection still on its way.
+ * Cloudflare publishes a maximum number of steps per Workflow instance
+ * (https://developers.cloudflare.com/workflows/platform/limits/, read
+ * 2026-09-08): 1,024 on the Workers Free plan, 10,000 by default on Paid.
+ * Each wait round costs two steps — one check, one sleep — after the phase
+ * steps before it, and the final round skips its sleep, so one step of
+ * headroom is kept: bounding the rounds by the smaller published figure means
+ * the wait ends, on either plan, with a failure this driver recorded rather
+ * than with the platform ending the instance mid-round, which records nothing.
+ * At the poll cadence above that is about 85 minutes; a readiness gap that
+ * lasts that long is not a projection still on its way.
  */
 const WORKFLOW_STEP_LIMIT = 1_024;
-const PHASE_STEPS = 4;
+const PHASE_STEPS = LEADING_PHASES.length;
 const STEPS_PER_WAIT_ROUND = 2;
-export const MAX_PROJECTION_WAIT_ROUNDS = Math.floor((WORKFLOW_STEP_LIMIT - PHASE_STEPS) / STEPS_PER_WAIT_ROUND);
+const STEP_HEADROOM = 1;
+const MAX_PROJECTION_WAIT_ROUNDS = Math.floor((WORKFLOW_STEP_LIMIT - PHASE_STEPS - STEP_HEADROOM) / STEPS_PER_WAIT_ROUND);
+const MAX_PROJECTION_WAIT_MINUTES = Math.round((MAX_PROJECTION_WAIT_ROUNDS * PROJECTION_POLL_MS) / 60_000);
 
 /**
  * What a step memoizes: the outcome alone. The detail a phase produced is in
@@ -70,7 +79,7 @@ export class DemoPreparationWorkflow extends WorkflowEntrypoint<Env, DemoPrepara
     if (input.region !== this.env.AVALON_REGION) throw new Error("workflow_region_mismatch");
     const phaseOptions = { attempt: input.attempt };
     try {
-      for (const phase of ["checking_template", "creating_workspace", "copying_connections", "seeding_conversations"] as const) {
+      for (const phase of LEADING_PHASES) {
         await step.do(
           phase,
           NO_RETRIES,
@@ -84,10 +93,13 @@ export class DemoPreparationWorkflow extends WorkflowEntrypoint<Env, DemoPrepara
           async () => outcomeOf(await runDemoPreparationPhase(this.env, input.operationId, "waiting_for_workspace", phaseOptions)),
         );
         if (outcome === "ready") return { outcome: "ready" };
-        await step.sleep(`projection_wait:${round}`, PROJECTION_POLL);
+        // No sleep after the last check: nothing follows it but the failure.
+        if (round + 1 < MAX_PROJECTION_WAIT_ROUNDS) await step.sleep(`projection_wait:${round}`, PROJECTION_POLL);
       }
-      await exhaustDemoProjectionWait(this.env, input.operationId, input.attempt, MAX_PROJECTION_WAIT_ROUNDS);
-      throw new Error("demo_projection_wait_exhausted");
+      return exhaustDemoProjectionWait(this.env, input.operationId, input.attempt, {
+        rounds: MAX_PROJECTION_WAIT_ROUNDS,
+        minutes: MAX_PROJECTION_WAIT_MINUTES,
+      });
     } catch (error) {
       await failDemoPreparationDriver(this.env, input.operationId, input.attempt, error);
       throw error;
