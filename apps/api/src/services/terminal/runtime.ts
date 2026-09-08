@@ -432,7 +432,7 @@ export function createDaytonaTerminalRuntime(
     if (result.exitCode === 44) {
       throw new TerminalToolError(
         "not_found",
-        "No output file or directory exists there. Use a path relative to AVALON_RESOURCE_DIR, not a repository-relative or absolute path.",
+        "No output file or directory exists at that path under AVALON_RESOURCE_DIR (/workspace/.rally-output). publish_resource resolves filePath against that directory, not the workspace root that read_file and write_file use. Write or copy the finished file or directory beneath it, then publish its path relative to that directory.",
         { field: "filePath" },
       );
     }
@@ -599,7 +599,7 @@ export function createDaytonaTerminalRuntime(
     if (result.exitCode === 44) {
       throw new TerminalToolError(
         "not_found",
-        "No output file exists there. Use a path relative to AVALON_RESOURCE_DIR, not a repository-relative or absolute path.",
+        "No output file exists at that path under AVALON_RESOURCE_DIR (/workspace/.rally-output). publish_resource resolves filePath against that directory, not the workspace root that read_file and write_file use. Write or copy the finished file beneath it, then publish its path relative to that directory.",
         { field: "filePath" },
       );
     }
