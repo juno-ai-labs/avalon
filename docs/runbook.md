@@ -979,15 +979,18 @@ Three GitHub Actions workflows carry the mechanical part of this procedure. They
 
 ### Deploying the Sidekick class rename
 
-The current release is the compatibility stage: deploy both exports using the
-existing v9 `AutomationDO` binding in EU and Global, then verify existing object
-IDs, schedules, addresses, history, and old links. A separate change may append
-the Cloudflare class-rename migration and update both binding class names plus
-migration tracking and force dispatch. Verify both regions again before removing
-the old export. Keep `:automation:` lookup bytes unchanged. After the rename,
-recovery uses a compatible forward deployment; do not point bindings back at the
-old class or replay historical migration tags. No local build proves this rollout
-has happened in production.
+1. Deploy PR #583's compatibility release: both exports, v9 `AutomationDO`
+   binding, EU then Global. Verify existing object identities and content.
+2. Deploy the migration tracker accepting both class names. After compatibility
+   validation, deploy the rename release (v10 `renamed_classes`, `SidekickDO`
+   binding and report identity, legacy queued-command adapter), EU then Global.
+3. Compare namespace IDs, stored object IDs, accepted revisions, definition and
+   address fingerprints, and existing run history. Keep `:automation:` key bytes.
+4. Only after verification, ship a separate cleanup removing the old Worker export.
+
+After the rename, recover with a compatible forward deployment; do not point
+bindings back at the old class or replay historical migration tags. Local builds
+cannot establish production namespace preservation.
 
 ### Debugging an automation
 

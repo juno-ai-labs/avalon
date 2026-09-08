@@ -57,15 +57,16 @@ sidebar renders participants as a facepile and provides attachment removal.
 ### Class rename deployment
 
 The implementation exports both `SidekickDO` and its historical `AutomationDO`
-alias. This compatibility release keeps both regional configs at v9 and the
-`AUTOMATION_DOS` binding on `AutomationDO`; merging it cannot perform the class
-rename. After verifying both regional deployments against existing objects, a
-separate change must append v10 with `renamed_classes`, update the binding class
-and migration-tracker class reporting/force dispatch together, and verify existing
-identities, schedules, email, and history. Remove the old export only in a later
-change after that verification.
-Keep the existing `:automation:` object-name segment: changing it addresses new
-objects. This checkout alone does not prove the production rename has run.
+alias. PR #583 supplies the compatibility release with the old v9 bindings. The
+rename release appends v10 in both regions and points `AUTOMATION_DOS` at
+`SidekickDO`, preserving namespace IDs and all `:automation:` object-name bytes.
+It requires verified compatibility deployments in both regions before rollout.
+The object now reports class `SidekickDO` but retains component `automation_do`
+and its existing schema ledger. Migration commands queued with `AutomationDO`
+are translated at dispatch to the new class; the tracker accepts both names so
+pre-rename inventory and reports remain actionable during regional rollout.
+Remove the old Worker export only in a later release after verifying the rename.
+
 
 ## Where the code lives
 
@@ -546,6 +547,14 @@ was paused or deleted after admission. [`runbook.md`](runbook.md) has the
 production inspection paths.
 
 ## Changelog
+
+### 2026-09-08 — Stage the Sidekick namespace rename with operational compatibility
+
+Append the class rename only after the dual-export release is verified. Keep
+`automation_do` schema history and object-name bytes, and translate already-queued
+legacy commands so strict owner class checks do not turn the rollout into a dead
+letter backlog. The tracker accepts both labels before either regional rename;
+removing the old Worker export remains a separately verified third deployment.
 
 ### 2026-09-08 — Fence publication effects and preserve compatibility deployment
 
