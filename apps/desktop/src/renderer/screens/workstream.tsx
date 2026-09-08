@@ -221,12 +221,10 @@ export function WorkstreamHeader({
         {naming ? (
           <h1><TitleSkeleton className="title-skeleton-header" /></h1>
         ) : (
-          <h1>
-            <span className="grokbot-conversation-title">
+          <div className="grokbot-conversation-title">
               {onAppearanceChange ? <WorkstreamAppearancePicker key={workstream.id} id={workstream.id} appearance={workstream.appearance} size={20} onChange={onAppearanceChange} /> : <WorkstreamGlyph id={workstream.id} appearance={workstream.appearance} size={20} />}
-              <span>{workstream.title}</span>
-            </span>
-          </h1>
+              <h1>{workstream.title}</h1>
+          </div>
         )}
         {RIGHT_SIDEBAR_ENABLED && <IconButton
           aria-pressed={showing('context')}
