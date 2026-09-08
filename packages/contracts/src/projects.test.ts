@@ -1,15 +1,17 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  PROJECT_COLOR_CHOICES,
   PROJECT_COLOR_KEYS,
   PROJECT_ICON_KEYS,
+  paintProjectColor,
   CreateProjectRequestSchema,
   ProjectSnapshotSchema,
   ProjectSummarySchema,
 } from "./projects";
 
 describe("project contracts", () => {
-  it("given the V1 picker, when its registries are read, then it exposes exactly 25 icons and 12 colors", () => {
+  it("given the V1 picker, when its registries are read, then it exposes exactly 25 icons, 12 stored colors, and 11 selectable colors", () => {
     expect(PROJECT_ICON_KEYS).toEqual([
       "briefcase",
       "target",
@@ -51,6 +53,21 @@ describe("project contracts", () => {
       "purple",
       "pink",
     ]);
+    expect(PROJECT_COLOR_CHOICES).toEqual([
+      "gray",
+      "brown",
+      "red",
+      "yellow",
+      "green",
+      "teal",
+      "cyan",
+      "blue",
+      "indigo",
+      "purple",
+      "pink",
+    ]);
+    expect(paintProjectColor("orange")).toBe("yellow");
+    expect(paintProjectColor("blue")).toBe("blue");
   });
 
   it("given custom presentation values, when project creation is parsed, then the closed contract refuses them", () => {

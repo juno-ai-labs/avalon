@@ -130,6 +130,13 @@ Real external OAuth requires configured provider credentials; onboarding no long
 
 ## Changelog
 
+### 2026-09-08 — Drop neon yellow from the personal palette
+
+The profile picker no longer offers `orange` (Neon yellow). The stored personal
+color remains valid; `paintPersonalColor` maps leftover `orange` onto `amber` so
+avatars, sidebar accents, and member-message bubbles use gold instead of lime.
+Do not remove `orange` from `PersonalColorSchema`.
+
 ### 2026-09-08 — Preserve live text and scope profile notifications
 
 Acknowledged text retains typed whitespace locally so a save cannot remove the
