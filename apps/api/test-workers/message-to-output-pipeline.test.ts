@@ -27,6 +27,8 @@ import {
   runInDurableObject,
 } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
+import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
+import { deliverEffectsToWorkspaceInOrder } from "./helpers/conversation-effects";
 
 import {
   MESSAGE_MAX_CHARACTERS,
@@ -62,7 +64,7 @@ import type { WorkstreamObjectProductService } from "../src/durable-objects/work
 import { WorkstreamMessageStorage } from "../src/durable-objects/workstream-message-storage";
 import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
 import { createSchedulingObjectPort } from "../src/runtime/scheduling-port";
-import { launchWorkstreamHarness } from "../src/services/workstream-service";
+import { launchWorkstreamHarness, WorkstreamService } from "../src/services/workstream-service";
 import { BOUND_PARAMETER_ID_CHUNK } from "../src/durable-objects/bound-parameters";
 import {
   seedCanonicalMessageRecord,
@@ -2960,25 +2962,37 @@ describe("a member's message travels the whole pipeline", () => {
     }
   });
 
-  it("persists shared appearance patches and does not replay an old choice", async () => {
-    const stub = agentStub();
-    const opened = await initializeWorkstream(stub, "first message");
-    await settledRun(stub, opened.body.harnessRunId as string);
-    const { socket } = await openSubscribedSocket(stub, "00000000-0000-7000-8000-0000000006c0");
-    const choose = async (operationId: string, appearance: Record<string, string>) => {
-      const receipt = nextSocketCommandOutcome(socket);
-      socket.send(JSON.stringify({ type: "set_workstream_appearance", operationId, appearance }));
-      expect(await receipt).toMatchObject({ type: "client_command_succeeded", command: "set_workstream_appearance", operationId });
-    };
-    await choose("00000000-0000-7000-8000-0000000006c1", { color: "blue" });
-    await choose("00000000-0000-7000-8000-0000000006c2", { icon: "rocket" });
-    await choose("00000000-0000-7000-8000-0000000006c3", { color: "purple" });
-    await choose("00000000-0000-7000-8000-0000000006c1", { color: "blue" });
-    socket.close(1000, "done");
-    await evictDurableObject(stub);
-    const reopened = await openSubscribedSocket(stub, "00000000-0000-7000-8000-0000000006c4");
-    expect(reopened.initial).toMatchObject({ workstream: { appearance: { icon: "rocket", color: "purple" } } });
-    reopened.socket.close(1000, "done");
+  describe("shared appearance projection", () => {
+    useHeldEffectQueue();
+    it("persists shared appearance patches and does not replay an old choice", async () => {
+      const stub = agentStub();
+      const opened = await initializeWorkstream(stub, "first message");
+      await settledRun(stub, opened.body.harnessRunId as string);
+      const { socket } = await openSubscribedSocket(stub, "00000000-0000-7000-8000-0000000006c0");
+      const choose = async (operationId: string, appearance: Record<string, string>) => {
+        const receipt = nextSocketCommandOutcome(socket);
+        socket.send(JSON.stringify({ type: "set_workstream_appearance", operationId, appearance }));
+        expect(await receipt).toMatchObject({ type: "client_command_succeeded", command: "set_workstream_appearance", operationId });
+      };
+      await choose("00000000-0000-7000-8000-0000000006c1", { color: "blue" });
+      await choose("00000000-0000-7000-8000-0000000006c2", { icon: "rocket" });
+      await choose("00000000-0000-7000-8000-0000000006c3", { color: "purple" });
+      await choose("00000000-0000-7000-8000-0000000006c1", { color: "blue" });
+      await deliverEffectsToWorkspaceInOrder(env, stub);
+      const workspace = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)));
+      const page = await workspace.listWorkstreams({ workspaceId: WORKSPACE_ID, userId: USER_ID, limit: 20, includeSystem: false });
+      expect(page.items.find((item) => item.id === WORKSTREAM_ID)?.appearance).toEqual({ icon: "rocket", color: "purple" });
+      const service = new WorkstreamService({ ...TEST_ENV, SESSION_SIGNING_KEY: "appearance-test-signing-key", PUBLIC_API_BASE_URL: "https://api.rally.test" }, AUTH);
+      const legacyTicket = await service.workstreamControlSocketTicket(WORKSTREAM_ID);
+      const currentTicket = await service.workstreamControlSocketTicket(WORKSTREAM_ID, true);
+      expect(new URL(legacyTicket.url).searchParams.has("workstreamAppearance")).toBe(false);
+      expect(new URL(currentTicket.url).searchParams.get("workstreamAppearance")).toBe("1");
+      socket.close(1000, "done");
+      await evictDurableObject(stub);
+      const reopened = await openSubscribedSocket(stub, "00000000-0000-7000-8000-0000000006c4");
+      expect(reopened.initial).toMatchObject({ workstream: { appearance: { icon: "rocket", color: "purple" } } });
+      reopened.socket.close(1000, "done");
+    });
   });
 
   it("does not replay an old reorder command over newer queue state", async () => {

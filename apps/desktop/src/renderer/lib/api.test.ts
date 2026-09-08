@@ -1011,7 +1011,7 @@ describe('socket ticket transport', () => {
       ticket: 'control-ticket',
       protocols: socketTicketProtocols('control-ticket'),
     });
-    expect(String(fetchMock.mock.calls[0]?.[0])).toContain(`/workstreams/${workstreamId}/control-socket`);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain(`/workstreams/${workstreamId}/control-socket?workstreamAppearance=1`);
   });
 });
 
@@ -1059,7 +1059,7 @@ describe('request correlation', () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       sent.push(init);
       urls.push(String(input));
-      return String(input).endsWith('/control-socket')
+      return String(input).endsWith('/control-socket?workstreamAppearance=1')
         ? json({ url: 'wss://api.rally.test/control', ticket: 'ticket' })
         : json(detail);
     }));
@@ -1080,7 +1080,7 @@ describe('request correlation', () => {
     // because only a work stream has one.
     expect(urls).toEqual([
       `https://api.rally.test/conversations/${workstreamId}`,
-      `https://api.rally.test/workstreams/${workstreamId}/control-socket`,
+      `https://api.rally.test/workstreams/${workstreamId}/control-socket?workstreamAppearance=1`,
     ]);
   });
 });
