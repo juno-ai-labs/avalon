@@ -12,6 +12,7 @@ export { ArtifactAssetLoopback } from "./artifacts/asset-loopback";
 export { ConnectorPollWorkflow } from "./workflows/connector-poll";
 export { ConnectorEventWorkflow } from "./workflows/connector-event";
 export { WorkOpportunityWorkflow } from "./workflows/work-opportunity";
+export { DemoPreparationWorkflow } from "./workflows/demo-preparation";
 export { RegionalIdentityBridge } from "./regional-identity-bridge";
 export { GitHubRegionalBridge } from "./github-regional-bridge";
 export { GitHubRoutingBridge } from "./github-routing-bridge";

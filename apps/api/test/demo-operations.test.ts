@@ -1,0 +1,338 @@
+import type { DatabaseSync } from "node:sqlite";
+import { Hono } from "hono";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import type { Env, HonoAppEnv } from "../src/env";
+import { errorHandler } from "../src/middleware/errors";
+import { demoOperatorRoutes } from "../src/routes/demo-operations";
+import { DEMO_TEMPLATE_WORKSPACE_ID } from "../src/services/demo-workspace-visibility";
+import {
+  abandonDemoOperation,
+  activeDemoPack,
+  demoOperationStatus,
+  failDemoPreparationDriver,
+  retryDemoOperation,
+  runDemoPreparationPhase,
+  startDemoOperation,
+} from "../src/services/demo-preparation";
+import { createTestEnv } from "./helpers/cloudflare-test";
+import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+
+// The template check counts the template's connections through the
+// workspace's runtime database, which is routed through its Durable Object —
+// the one thing this suite cannot run. The regional D1 stands in for it here;
+// the workerd suite proves the count against the real object.
+vi.mock("../src/services/workspace-runtime-database", () => ({
+  workspaceRuntimeDatabase: (env: { DB: D1Database }) => env.DB,
+}));
+
+/**
+ * Operation identity, one driver at a time, and the door it sits behind.
+ *
+ * One operation id is one demo: submitting it again returns the progress it
+ * already has and starts nothing, and a retry is a new attempt of the same
+ * operation rather than a new one. Every attempt has a number the row carries,
+ * and a driver whose attempt is no longer the row's writes nothing. The rows
+ * are proved against the real migration, and the Workflow binding is the one
+ * thing doubled — what is asserted is whether it was asked to start, which is
+ * the whole of its contract here.
+ *
+ * The routes are proved with the real service over the same database: the
+ * operator credential and its `demos` role are the only way in, and an abandon
+ * is refused unless the confirmation names its target.
+ */
+
+const PRESENTER_ID = "00000000-0000-7000-8000-0000000000a1";
+const PRIYA_ID = "00000000-0000-7000-8000-0000000000a2";
+const MARCUS_ID = "00000000-0000-7000-8000-0000000000a3";
+const DANA_ID = "00000000-0000-7000-8000-0000000000a4";
+const OUTSIDER_ID = "00000000-0000-7000-8000-0000000000a9";
+const OPERATION_ID = "00000000-0000-7000-8000-0000000000e2";
+const DEMOS_TOKEN = "demos-operator-token-0123456789abcdef0123456789";
+const SUPPORT_TOKEN = "support-operator-token-0123456789abcdef012345678";
+const NOW = "2026-09-07T12:00:00.000Z";
+
+const databases: DatabaseSync[] = [];
+afterEach(() => {
+  for (const database of databases.splice(0)) database.close();
+  vi.restoreAllMocks();
+});
+
+function cast(): Record<string, string> {
+  return { presenter: PRESENTER_ID, priya: PRIYA_ID, marcus: MARCUS_ID, dana: DANA_ID };
+}
+
+function request(): { operationId: string; companyName: string; presenterUserId: string; cast: Record<string, string> } {
+  return { operationId: OPERATION_ID, companyName: "Alto Capital", presenterUserId: PRESENTER_ID, cast: cast() };
+}
+
+interface Fixture {
+  env: Env;
+  launched: { id: string; params: unknown }[];
+  create: ReturnType<typeof vi.fn>;
+  app: Hono<HonoAppEnv>;
+}
+
+function fixture(overrides: Partial<Env> = {}, options: { withoutDriver?: boolean } = {}): Fixture {
+  const database = migratedSqliteDatabase();
+  databases.push(database);
+  for (const [id, name] of [[PRESENTER_ID, "Adam"], [PRIYA_ID, "Priya Raman"], [MARCUS_ID, "Marcus Hale"], [DANA_ID, "Dana Okafor"], [OUTSIDER_ID, "Sam Outsider"]]) {
+    database.exec(`
+      INSERT INTO users (id, google_subject, email, name, created_at, updated_at, platform_user_id)
+      VALUES ('${id}', 'sub-${id}', '${name!.toLowerCase().replace(/ /gu, ".")}@example.com', '${name}', '${NOW}', '${NOW}', '${id}');
+    `);
+  }
+  // The connections table lives in the workspace's runtime database, which the
+  // double above answers from this one; the template holds none here.
+  database.exec("CREATE TABLE connector_connections (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, scope TEXT NOT NULL)");
+  // The template, with the cast seated and the outsider not.
+  database.exec(`
+    INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
+    VALUES ('${DEMO_TEMPLATE_WORKSPACE_ID}', 'demo-template', 'demo-template', 'global', '${PRESENTER_ID}', '${NOW}', '${NOW}');
+  `);
+  for (const [id, role] of [[PRESENTER_ID, "owner"], [PRIYA_ID, "member"], [MARCUS_ID, "member"], [DANA_ID, "member"]]) {
+    database.exec(`
+      INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
+      VALUES ('${DEMO_TEMPLATE_WORKSPACE_ID}', '${id}', '${role}', 'active', '${NOW}');
+    `);
+  }
+  const launched: { id: string; params: unknown }[] = [];
+  const create = vi.fn(async (input: { id: string; params: unknown }) => { launched.push(input); });
+  const env = createTestEnv({
+    APP_ENV: "development",
+    AVALON_REGION: "global",
+    DB: sqliteD1(database),
+    TELEMETRY_OPERATORS_JSON: JSON.stringify({
+      [DEMOS_TOKEN]: { operatorId: "00000000-0000-7000-8000-0000000000d1", role: "demos" },
+      [SUPPORT_TOKEN]: { operatorId: "00000000-0000-7000-8000-0000000000d2", role: "support" },
+    }),
+    DEMO_PREPARATION_WORKFLOW: { create } as unknown as Workflow,
+    ...overrides,
+  });
+  if (options.withoutDriver) delete (env as { DEMO_PREPARATION_WORKFLOW?: Workflow }).DEMO_PREPARATION_WORKFLOW;
+  const app = new Hono<HonoAppEnv>();
+  app.route("/internal/demos", demoOperatorRoutes);
+  app.onError(errorHandler);
+  return { env, launched, create, app };
+}
+
+async function row(env: Env, operationId: string): Promise<{ status: string; attempt: number; failed_phase: string | null; error_code: string | null; workspace_id: string | null }> {
+  return (await env.DB.prepare(
+    "SELECT status, attempt, failed_phase, error_code, workspace_id FROM demo_operations WHERE operation_id = ?",
+  ).bind(operationId).first())!;
+}
+
+describe("a demo preparation operation", () => {
+  it("starts once per operation id and answers a repeat with the same progress", async () => {
+    const { env, launched } = fixture();
+    const first = await startDemoOperation(env, request());
+    expect(first).toMatchObject({
+      operationId: OPERATION_ID,
+      status: "running",
+      attempt: 1,
+      presenterName: "Adam",
+      workspaceId: null,
+      packVersion: activeDemoPack().version,
+      seeding: { confirmed: 0, total: activeDemoPack().steps.length },
+    });
+    expect(launched).toEqual([{
+      id: `demo-preparation:${OPERATION_ID}:1`,
+      params: { region: "global", operationId: OPERATION_ID, attempt: 1 },
+    }]);
+
+    const again = await startDemoOperation(env, { ...request(), companyName: "Alto Capital (again)" });
+    // The first submission's facts, and no second Workflow.
+    expect(again.companyName).toBe("Alto Capital");
+    expect(launched).toHaveLength(1);
+  });
+
+  it("refuses a cast that leaves a pack role unbound, binds a role the pack has not got, or seats one person twice", async () => {
+    const { env } = fixture();
+    const short = Object.fromEntries(Object.entries(cast()).filter(([role]) => role !== "dana"));
+    await expect(startDemoOperation(env, { ...request(), cast: short })).rejects.toMatchObject({ code: "demo_pack_role_unbound" });
+    await expect(startDemoOperation(env, { ...request(), cast: { ...cast(), sam: DANA_ID } })).rejects.toMatchObject({ code: "demo_pack_role_unknown" });
+    await expect(startDemoOperation(env, { ...request(), cast: { ...cast(), dana: PRIYA_ID } })).rejects.toMatchObject({ code: "demo_cast_duplicate" });
+    await expect(startDemoOperation(env, { ...request(), presenterUserId: PRIYA_ID })).rejects.toMatchObject({ code: "demo_presenter_mismatch" });
+  });
+
+  it("refuses a presenter or a cast member the template does not seat, before writing a row", async () => {
+    const { env, launched } = fixture();
+    // The new workspace is owned by the presenter and receives the template's
+    // credentials; a presenter outside the template would be handed them.
+    await expect(startDemoOperation(env, { ...request(), presenterUserId: OUTSIDER_ID, cast: { ...cast(), presenter: OUTSIDER_ID } }))
+      .rejects.toMatchObject({ code: "demo_presenter_not_in_template" });
+    await expect(startDemoOperation(env, { ...request(), cast: { ...cast(), dana: OUTSIDER_ID } }))
+      .rejects.toMatchObject({ code: "demo_cast_not_in_template" });
+    expect(launched).toEqual([]);
+    expect(await env.DB.prepare("SELECT COUNT(*) AS count FROM demo_operations").first()).toEqual({ count: 0 });
+  });
+
+  it("allocates a workspace id onto the row before the workspace exists", async () => {
+    // The creating phase writes the id first so a crash between the two
+    // retries the same id. The real migration has to accept that write — a
+    // foreign key to `workspaces` would refuse it, and this is the statement
+    // the phase issues.
+    const { env } = fixture();
+    await startDemoOperation(env, request());
+    const workspaceId = "00000000-0000-7000-8000-00000000c0de";
+    await env.DB.prepare(
+      "UPDATE demo_operations SET workspace_id = ?, updated_at = ? WHERE operation_id = ? AND workspace_id IS NULL",
+    ).bind(workspaceId, NOW, OPERATION_ID).run();
+    expect((await row(env, OPERATION_ID)).workspace_id).toBe(workspaceId);
+    expect(await env.DB.prepare("SELECT COUNT(*) AS count FROM workspaces WHERE id = ?").bind(workspaceId).first()).toEqual({ count: 0 });
+  });
+
+  it("retries a failed operation as the next attempt, and a running one whose driver died", async () => {
+    const { env, launched } = fixture();
+    await startDemoOperation(env, request());
+    await env.DB.prepare(
+      `UPDATE demo_operations SET status = 'failed', failed_phase = 'copying_connections',
+              error_code = 'demo_template_missing', error_message = 'gone' WHERE operation_id = ?`,
+    ).bind(OPERATION_ID).run();
+    const retried = await retryDemoOperation(env, OPERATION_ID);
+    expect(retried).toMatchObject({ status: "running", attempt: 2, failedPhase: null, error: null });
+    expect(launched.at(-1)).toMatchObject({ id: `demo-preparation:${OPERATION_ID}:2`, params: { attempt: 2 } });
+
+    // A driver the platform ended without a word leaves the row `running`;
+    // the operator's Retry is the way back, and it is the next attempt.
+    const again = await retryDemoOperation(env, OPERATION_ID);
+    expect(again).toMatchObject({ status: "running", attempt: 3 });
+
+    await env.DB.prepare("UPDATE demo_operations SET status = 'ready' WHERE operation_id = ?").bind(OPERATION_ID).run();
+    await expect(retryDemoOperation(env, OPERATION_ID)).rejects.toMatchObject({ code: "demo_operation_not_retryable" });
+  });
+
+  it("refuses a phase call from a superseded attempt without writing", async () => {
+    const { env } = fixture();
+    await startDemoOperation(env, request());
+    await env.DB.prepare("UPDATE demo_operations SET status = 'failed' WHERE operation_id = ?").bind(OPERATION_ID).run();
+    await retryDemoOperation(env, OPERATION_ID);
+
+    // Attempt 1's driver is still alive and reaches its next phase.
+    await expect(runDemoPreparationPhase(env, OPERATION_ID, "checking_template", { attempt: 1 }))
+      .rejects.toMatchObject({ code: "demo_operation_superseded" });
+    expect(await env.DB.prepare("SELECT COUNT(*) AS count FROM demo_operation_phases").first()).toEqual({ count: 0 });
+    expect(await row(env, OPERATION_ID)).toMatchObject({ status: "running", attempt: 2 });
+  });
+
+  it("runs the template check against the real rows and fails the operation on a presenter the template lost", async () => {
+    const { env } = fixture();
+    await startDemoOperation(env, request());
+    const checked = await runDemoPreparationPhase(env, OPERATION_ID, "checking_template", { attempt: 1 });
+    expect(checked).toMatchObject({ outcome: "completed", detail: { templateConnections: 0 } });
+
+    await env.DB.prepare("UPDATE workspace_members SET status = 'suspended' WHERE workspace_id = ? AND user_id = ?")
+      .bind(DEMO_TEMPLATE_WORKSPACE_ID, PRESENTER_ID).run();
+    await env.DB.prepare("UPDATE demo_operation_phases SET status = 'running' WHERE operation_id = ?").bind(OPERATION_ID).run();
+    await expect(runDemoPreparationPhase(env, OPERATION_ID, "checking_template", { attempt: 1 }))
+      .rejects.toMatchObject({ code: "demo_presenter_not_in_template" });
+    expect(await row(env, OPERATION_ID)).toMatchObject({ status: "failed", failed_phase: "checking_template", error_code: "demo_presenter_not_in_template" });
+    const status = await demoOperationStatus(env, OPERATION_ID);
+    expect(status?.phases).toEqual([expect.objectContaining({ phase: "checking_template", status: "failed" })]);
+  });
+
+  it("records a driver that stopped outside a phase, for the attempt that owns the row only", async () => {
+    const { env } = fixture();
+    await startDemoOperation(env, request());
+    await runDemoPreparationPhase(env, OPERATION_ID, "checking_template", { attempt: 1 });
+    await env.DB.prepare("UPDATE demo_operation_phases SET status = 'running', finished_at = NULL WHERE operation_id = ?").bind(OPERATION_ID).run();
+
+    await failDemoPreparationDriver(env, OPERATION_ID, 7, new Error("a stale driver"));
+    expect(await row(env, OPERATION_ID)).toMatchObject({ status: "running", attempt: 1 });
+
+    await failDemoPreparationDriver(env, OPERATION_ID, 1, new Error("step ended by the platform"));
+    expect(await row(env, OPERATION_ID)).toMatchObject({ status: "failed", failed_phase: "checking_template", error_code: "demo_driver_failed" });
+    const status = await demoOperationStatus(env, OPERATION_ID);
+    expect(status?.phases[0]).toMatchObject({ phase: "checking_template", status: "failed", error: { code: "demo_driver_failed" } });
+    // Internal text stays in the log, not on the page.
+    expect(status?.error?.message).not.toContain("platform");
+  });
+
+  it("marks the operation failed when its driver cannot be started", async () => {
+    const { env, create } = fixture();
+    create.mockRejectedValueOnce(new Error("workflow create refused"));
+    await expect(startDemoOperation(env, request())).rejects.toMatchObject({ code: "demo_preparation_launch_failed" });
+    expect(await row(env, OPERATION_ID)).toMatchObject({ status: "failed", error_code: "demo_preparation_launch_failed" });
+    // And Retry is the way back.
+    const retried = await retryDemoOperation(env, OPERATION_ID);
+    expect(retried).toMatchObject({ status: "running", attempt: 2 });
+  });
+
+  it("abandons only with a confirmation, never a published demo, and closes an operation with no workspace", async () => {
+    const { env } = fixture();
+    await startDemoOperation(env, request());
+    await expect(abandonDemoOperation(env, OPERATION_ID, { confirmOperationId: "00000000-0000-7000-8000-00000000dead", actorUserId: null }))
+      .rejects.toMatchObject({ code: "demo_abandon_unconfirmed" });
+
+    await env.DB.prepare("UPDATE demo_operations SET ready_at = ? WHERE operation_id = ?").bind(NOW, OPERATION_ID).run();
+    await expect(abandonDemoOperation(env, OPERATION_ID, { confirmOperationId: OPERATION_ID, actorUserId: null }))
+      .rejects.toMatchObject({ code: "demo_operation_ready" });
+
+    // Allocated but never created: nothing to retire, and the row closes.
+    await env.DB.prepare("UPDATE demo_operations SET ready_at = NULL, workspace_id = ? WHERE operation_id = ?")
+      .bind("00000000-0000-7000-8000-00000000c0de", OPERATION_ID).run();
+    const abandoned = await abandonDemoOperation(env, OPERATION_ID, { confirmOperationId: OPERATION_ID, actorUserId: null });
+    expect(abandoned.status).toBe("abandoned");
+    await expect(retryDemoOperation(env, OPERATION_ID)).rejects.toMatchObject({ code: "demo_operation_not_retryable" });
+  });
+
+  it("is prepared in Global only, and says so when the driver is not bound", async () => {
+    const eu = fixture({ AVALON_REGION: "eu" });
+    await expect(startDemoOperation(eu.env, request())).rejects.toMatchObject({ code: "demo_region_unsupported" });
+    const unbound = fixture({}, { withoutDriver: true });
+    await expect(startDemoOperation(unbound.env, request())).rejects.toMatchObject({ code: "demo_preparation_unavailable" });
+    expect(await unbound.env.DB.prepare("SELECT COUNT(*) AS count FROM demo_operations").first()).toEqual({ count: 0 });
+  });
+});
+
+describe("the operator routes", () => {
+  it("admit only the demos role", async () => {
+    const { env, app } = fixture();
+    const anonymous = await app.request("/internal/demos", {}, env);
+    expect(anonymous.status).toBe(401);
+    const support = await app.request("/internal/demos", { headers: { authorization: `Bearer ${SUPPORT_TOKEN}` } }, env);
+    expect(support.status).toBe(403);
+    await expect(support.json()).resolves.toMatchObject({ error: { code: "operator_role_forbidden" } });
+    const demos = await app.request("/internal/demos", { headers: { authorization: `Bearer ${DEMOS_TOKEN}` } }, env);
+    expect(demos.status).toBe(200);
+    await expect(demos.json()).resolves.toEqual({ operations: [] });
+  });
+
+  it("start, read and list an operation through the real rows, starting its Workflow once", async () => {
+    const { env, app, launched } = fixture();
+    const headers = { authorization: `Bearer ${DEMOS_TOKEN}`, "content-type": "application/json" };
+    const body = JSON.stringify(request());
+    const started = await app.request("/internal/demos", { method: "POST", headers, body }, env);
+    expect(started.status).toBe(200);
+    await expect(started.json()).resolves.toMatchObject({ operationId: OPERATION_ID, status: "running", attempt: 1 });
+    // The route starts the real Workflow binding, with the pointer payload.
+    expect(launched).toEqual([{ id: `demo-preparation:${OPERATION_ID}:1`, params: { region: "global", operationId: OPERATION_ID, attempt: 1 } }]);
+
+    const repeated = await app.request("/internal/demos", { method: "POST", headers, body }, env);
+    expect(repeated.status).toBe(200);
+    expect(launched).toHaveLength(1);
+
+    const read = await app.request(`/internal/demos/${OPERATION_ID}`, { headers }, env);
+    await expect(read.json()).resolves.toMatchObject({ operationId: OPERATION_ID, companyName: "Alto Capital" });
+    const listed = await app.request("/internal/demos", { headers }, env);
+    await expect(listed.json()).resolves.toMatchObject({ operations: [{ operationId: OPERATION_ID }] });
+    const missing = await app.request("/internal/demos/00000000-0000-7000-8000-00000000dead", { headers }, env);
+    expect(missing.status).toBe(404);
+  });
+
+  it("reject a malformed start and an unconfirmed abandon at the boundary", async () => {
+    const { env, app, launched } = fixture();
+    const headers = { authorization: `Bearer ${DEMOS_TOKEN}`, "content-type": "application/json" };
+    const malformed = await app.request("/internal/demos", { method: "POST", headers, body: JSON.stringify({ operationId: "not-a-uuid", companyName: "" }) }, env);
+    expect(malformed.status).toBe(400);
+    expect(launched).toEqual([]);
+
+    await app.request("/internal/demos", { method: "POST", headers, body: JSON.stringify(request()) }, env);
+    const noBody = await app.request(`/internal/demos/${OPERATION_ID}/abandon`, { method: "POST", headers, body: "{}" }, env);
+    expect(noBody.status).toBe(400);
+    const wrong = await app.request(`/internal/demos/${OPERATION_ID}/abandon`, { method: "POST", headers, body: JSON.stringify({ confirmOperationId: "00000000-0000-7000-8000-00000000dead" }) }, env);
+    expect(wrong.status).toBe(409);
+    await expect(wrong.json()).resolves.toMatchObject({ error: { code: "demo_abandon_unconfirmed" } });
+    expect((await row(env, OPERATION_ID)).status).toBe("running");
+  });
+});
