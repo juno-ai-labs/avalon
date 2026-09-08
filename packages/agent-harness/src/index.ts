@@ -99,7 +99,7 @@ export {
   createSkillRuntime,
   type SkillRuntime,
 } from "./skills";
-export { parseSkillMarkdown, type SkillSummary } from "@juno-ai/bind/skills";
+export { codeSkillRef, parseSkillMarkdown, type SkillSummary } from "@juno-ai/bind/skills";
 export {
   MODEL_INFERENCE_DEFAULTS,
   modelDefaultReasoningEffort,
