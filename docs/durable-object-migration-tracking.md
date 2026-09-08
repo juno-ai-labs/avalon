@@ -830,6 +830,14 @@ it does not shape the cost of any run somebody means to make.
 
 ## Changelog
 
+### 2026-09-08 — Retire the temporary Worker class export after the rename
+
+The final rollout stage removes the Worker entrypoint's AutomationDO alias and
+uses SidekickDO in binding types. It requires verified renamed namespaces in both
+regions. The old source-import shim, automation_do schema component, lookup-key
+bytes, routes, and queued-command adapter remain compatibility contracts; none
+are new Cloudflare exports or namespaces.
+
 ### 2026-09-08 — Keep renamed current identities monotonic
 
 Late legacy reports retain their original labels in event history but cannot
