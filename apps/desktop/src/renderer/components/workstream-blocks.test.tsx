@@ -1,3 +1,4 @@
+import { MemberPresentationContext } from '../lib/member-presentation';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MessageExportRequest, MessageExportResult } from '../../common/message-export';
@@ -307,6 +308,35 @@ describe('ElicitationPanel', () => {
 });
 
 describe('MessageBlock human identity', () => {
+  it('repaints existing turns from live profiles while keeping each sender independent', () => {
+    const profile = { displayName: 'Alex Rivera', initials: 'AR', color: 'violet' as const, avatar: 'circle' as const, revision: 1 };
+    const coworker = { ...baseMessage, id: 'coworker-message', author: { ...baseMessage.author!, id: 'user-sam', name: 'Sam' } };
+    const rows = <><MessageBlock {...actions} currentUserId="user-adam" message={baseMessage} /><MessageBlock {...actions} currentUserId="user-adam" message={coworker} /></>;
+    const view = render(<MemberPresentationContext.Provider value={new Map([['user-adam', profile]])}>{rows}</MemberPresentationContext.Provider>);
+    const own = screen.getByLabelText('Message from Alex Rivera');
+    const other = screen.getByLabelText('Message from Sam');
+    const otherAccent = other.style.getPropertyValue('--person-accent');
+    expect(own).toHaveAttribute('data-profile-color', 'violet');
+    expect(own.style.getPropertyValue('--person-accent')).toBe('var(--av-cmp-member-message-violet-dot)');
+    expect(own.style.getPropertyValue('--av-cmp-bubble-human-foreground')).toBe('var(--av-cmp-member-message-violet-foreground)');
+    view.rerender(<MemberPresentationContext.Provider value={new Map([['user-adam', { ...profile, color: 'orange', revision: 2 }]])}>{rows}</MemberPresentationContext.Provider>);
+    expect(screen.getByLabelText('Message from Alex Rivera')).toBe(own);
+    expect(own.style.getPropertyValue('--person-accent')).toBe('var(--av-cmp-member-message-orange-dot)');
+    expect(own.style.getPropertyValue('--av-cmp-bubble-human-foreground')).toBe('var(--av-cmp-member-message-orange-foreground)');
+    expect(other.style.getPropertyValue('--person-accent')).toBe(otherAccent);
+    expect(other).not.toHaveAttribute('data-profile-color');
+  });
+
+  it('uses the current user profile for an optimistic answered question', () => {
+    const profile = { displayName: 'Alex Rivera', initials: 'AR', color: 'rose' as const, avatar: 'circle' as const, revision: 1 };
+    const message: Message = { ...baseMessage, authorType: 'agent', author: undefined, messageType: 'elicitation', text: '', elicitation: { ...singleSelectElicitation, status: 'answered', answer: 'compare' } };
+    render(<MemberPresentationContext.Provider value={new Map([['user-adam', profile]])}><MessageBlock {...actions} currentUserId="user-adam" message={message} /></MemberPresentationContext.Provider>);
+    const row = screen.getByLabelText('Your elicitation response');
+    expect(row).toHaveAttribute('data-profile-color', 'rose');
+    expect(row.style.getPropertyValue('--person-accent')).toBe('var(--av-cmp-member-message-rose-dot)');
+    expect(row.querySelector('.message-author')).toHaveTextContent('Alex Rivera');
+  });
+
   it('renders a completed elicitation as a right-side human response', () => {
     const elicitationMessage: Message = {
       ...baseMessage,

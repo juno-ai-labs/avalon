@@ -1,5 +1,8 @@
+import { AccountProfileEditor } from '../lib/account-profile-editor';
+import { settings } from '../settings/registry';
+import { SettingLabel } from '../settings/setting-label';
 import { MemberPresentationContext } from '../lib/member-presentation';
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState, useMemo, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, Search, X } from 'lucide-react';
 import { PersonalColorSchema, OnboardingJourneySchema, type AccountOnboarding, type OnboardingJourney, type PersonalPresentation } from '@rally/contracts';
@@ -11,6 +14,7 @@ import { OnboardingIntroduction } from '../components/onboarding-introduction';
 import type { Workspace } from '../lib/types';
 import { connectorProviders } from '../lib/connector-catalog';
 
+const ProfileEditorContext = createContext<AccountProfileEditor | null>(null);
 const AccountContext = createContext<AccountOnboarding | null>(null);
 export function useOnboardingAccount(): AccountOnboarding | null { return useContext(AccountContext); }
 
@@ -20,20 +24,35 @@ export function AccountOnboardingGate({ children }: { children: ReactNode }): Re
   const members = useQuery({ queryKey: ['workspace-members'], queryFn: () => api!.getWorkspaceMembers(), enabled: Boolean(api && session?.workspace) });
   const account = useQuery({ queryKey: ['account-onboarding', session?.user.email],
     queryFn: () => desktopBridge().getAccountOnboarding(), enabled: Boolean(session), refetchOnWindowFocus: 'always' });
+  const queryClient = useQueryClient();
+  const editor = useMemo(() => new AccountProfileEditor('',
+    (input) => desktopBridge().updateAccountOnboarding(input),
+    () => desktopBridge().getAccountOnboarding(),
+    (saved) => {
+      queryClient.setQueryData(['account-onboarding', session?.user.email], saved);
+      void queryClient.invalidateQueries({ queryKey: ['workspace-members'] });
+      void queryClient.invalidateQueries({ queryKey: ['workspace'] });
+    }), [queryClient, session?.user.email]);
+  // Pane navigation keeps this gate mounted; sign-out retires the old writer
+  // before queued writes could use a different account's desktop credential.
+  useEffect(() => { editor.start(); return () => editor.stop(); }, [editor]);
+  useEffect(() => { if (account.data) editor.refresh(account.data, session?.user.name); }, [account.data, editor, session?.user.name]);
+  const profileState = useSyncExternalStore(editor.subscribe, editor.getSnapshot);
+  const presentation = { ...profileState.profile, revision: account.data?.revision ?? 0 };
   useEffect(() => {
     const root = document.documentElement;
-    if (account.data?.presentation && session) root.dataset['personalColor'] = account.data.presentation.color;
+    if (session && (account.data?.presentation || profileState.saving || profileState.error)) root.dataset['personalColor'] = profileState.profile.color;
     else delete root.dataset['personalColor'];
-    if (account.data?.presentation?.displayName) updateCurrentUserName?.(account.data.presentation.displayName);
+    if (profileState.profile.displayName?.trim()) updateCurrentUserName?.(profileState.profile.displayName.trim());
     return () => { delete root.dataset['personalColor']; };
-  }, [account.data?.presentation, session, updateCurrentUserName]);
+  }, [account.data?.presentation, profileState, session, updateCurrentUserName]);
   if (!session) return previewed ? <>{children}</> : <OnboardingIntroduction busy={false} error={null} onComplete={() => setPreviewed(true)} />;
   if (account.error && !account.data && session.workspace) return <>{children}</>;
   if (account.error && !account.data) return <OnboardingPage title="Let's pick up where you left off" footer={<><Button onClick={() => void account.refetch()}>Retry</Button><Button onClick={() => void signOut()}>Sign out</Button></>}><InlineError>{account.error.message}</InlineError></OnboardingPage>;
   if (!account.data) return <OnboardingPage title="Opening Rally"><RallyMark /></OnboardingPage>;
   const presentations = new Map((members.data ?? []).flatMap((member) => member.presentation ? [[member.id, member.presentation] as const] : []));
-  if (account.data.presentation) presentations.set(session.user.id, account.data.presentation);
-  return <MemberPresentationContext.Provider value={presentations}><AccountContext.Provider value={account.data}>{account.data.eligible && !account.data.introduced ? <PlatformIntroduction previewed={previewed} /> : children}</AccountContext.Provider></MemberPresentationContext.Provider>;
+  if (account.data.presentation || profileState.saving || profileState.error) presentations.set(session.user.id, presentation);
+  return <MemberPresentationContext.Provider value={presentations}><AccountContext.Provider value={account.data}><ProfileEditorContext.Provider value={editor}>{account.data.eligible && !account.data.introduced ? <PlatformIntroduction previewed={previewed} /> : children}</ProfileEditorContext.Provider></AccountContext.Provider></MemberPresentationContext.Provider>;
 }
 
 export function OnboardingPage({ title, subtitle, children, footer }: { title: string; subtitle?: string; children: ReactNode; footer?: ReactNode }): React.JSX.Element {
@@ -69,7 +88,11 @@ function PlatformIntroduction({ previewed }: { previewed: boolean }): React.JSX.
   return <OnboardingIntroduction signedIn onComplete={() => void complete()} busy={busy} error={error} />;
 }
 
-export function PersonalSetup({ onSaved }: { onSaved?: () => Promise<void> }): React.JSX.Element {
+export function PersonalSetup({ onSaved, variant = 'onboarding', profileDetails }: { onSaved?: () => Promise<void>; variant?: 'onboarding' | 'settings'; profileDetails?: (name: string) => ReactNode }): React.JSX.Element {
+  return variant === 'settings' ? <AccountProfileSettings profileDetails={profileDetails} /> : <OnboardingPersonalSetup onSaved={onSaved} />;
+}
+
+function OnboardingPersonalSetup({ onSaved }: { onSaved?: () => Promise<void> }): React.JSX.Element {
   const account = useOnboardingAccount();
   const { session } = useAppSession();
   const queryClient = useQueryClient();
@@ -97,14 +120,41 @@ export function PersonalSetup({ onSaved }: { onSaved?: () => Promise<void> }): R
     } catch (caught) { setError(caught instanceof Error ? caught.message : 'Could not save your profile.'); await queryClient.invalidateQueries({ queryKey: ['account-onboarding'] }); }
     finally { setBusy(false); }
   };
+  const colorPicker = <div className="personal-colors" role="group" aria-label="Your color">{PersonalColorSchema.options.map((value) => <button type="button" key={value} aria-label={value === 'orange' ? 'Neon yellow' : value} aria-pressed={color === value} style={{ background: personalColor(value), color: ['amber', 'orange', 'green', 'teal'].includes(value) ? 'var(--personal-ink-dark)' : 'var(--personal-ink-light)' }} onClick={() => setColor(value)}>{color === value && <Check size={18} />}</button>)}</div>;
   return <div className="personal-setup">
     <PersonalAvatar color={color} initials={initials} className="personal-setup-preview" />
-    <div className="personal-colors" role="group" aria-label="Your color">{PersonalColorSchema.options.map((value) => <button type="button" key={value} aria-label={value === 'orange' ? 'Neon yellow' : value} aria-pressed={color === value} style={{ background: personalColor(value), color: ['amber', 'orange', 'green', 'teal'].includes(value) ? 'var(--personal-ink-dark)' : 'var(--personal-ink-light)' }} onClick={() => setColor(value)}>{color === value && <Check size={18} />}</button>)}</div>
+    {colorPicker}
     <label className="guided-email-field">Name<input data-saved-value={account?.presentation?.displayName ?? session?.user.name ?? ''} value={name} onChange={(event) => setName(event.target.value)} autoComplete="name" /></label>
     <label className="guided-email-field">Avatar initials<input data-saved-value={account?.presentation?.initials ?? (session?.user.name ?? '').split(/\s+/u).map((part) => part[0]).join('').slice(0, 2).toUpperCase()} value={initials} onChange={(event) => setInitials(event.target.value)} /></label>
     <div className="personal-shell-preview" style={{ '--personal-preview-color': personalColor(color) } as CSSProperties}><aside><PersonalAvatar color={color} initials={initials} /><span>{name} · You</span><i /><i /></aside><div><strong>Your next idea starts here</strong><span>One place for your team to get work done.</span><button type="button" tabIndex={-1}>New work stream</button></div></div>
     {error && <InlineError>{error}</InlineError>}
     <Button className="button-primary" disabled={busy || !name.trim() || !initials.trim()} onClick={() => void save()}>{busy ? 'Saving…' : onSaved ? 'Continue with this look' : 'Save appearance'}</Button>
+  </div>;
+}
+
+function AccountProfileSettings({ profileDetails }: { profileDetails?: (name: string) => ReactNode }): React.JSX.Element {
+  const editor = useContext(ProfileEditorContext);
+  if (!editor) return <InlineError>Account profile is unavailable.</InlineError>;
+  return <AccountProfileFields editor={editor} profileDetails={profileDetails} />;
+}
+
+function AccountProfileFields({ editor, profileDetails }: { editor: AccountProfileEditor; profileDetails?: (name: string) => ReactNode }): React.JSX.Element {
+  const { profile, saving, error } = useSyncExternalStore(editor.subscribe, editor.getSnapshot);
+  const account = useOnboardingAccount();
+  const { session } = useAppSession();
+  return <div className="settings-account-profile">
+    <div className="settings-list-card">
+      <div className="settings-profile-card">
+        <PersonalAvatar color={profile.color} initials={profile.initials} className="settings-account-avatar" />
+        {profileDetails?.(profile.displayName ?? '')}
+      </div>
+      <label className="settings-preference-row"><SettingLabel setting={settings.profileName} /><input autoComplete="name" value={profile.displayName ?? ''} data-saved-value={account?.presentation?.displayName ?? session?.user.name ?? ''} onChange={(event) => editor.update({ displayName: event.target.value })} /></label>
+      <label className="settings-preference-row"><SettingLabel setting={settings.profileInitials} /><input value={profile.initials ?? ''} data-saved-value={account?.presentation?.initials ?? (session?.user.name ?? '').split(/\s+/u).map((part) => part[0]).join('').slice(0, 2).toUpperCase()} onChange={(event) => editor.update({ initials: event.target.value })} /></label>
+      <div className="settings-preference-row"><SettingLabel setting={settings.profileColor} />
+        <div className="personal-colors" role="group" aria-label={settings.profileColor.label}>{PersonalColorSchema.options.map((value) => <button type="button" key={value} aria-label={value === 'orange' ? 'Neon yellow' : value} aria-pressed={profile.color === value} style={{ background: personalColor(value), color: ['amber', 'orange', 'green', 'teal'].includes(value) ? 'var(--personal-ink-dark)' : 'var(--personal-ink-light)' }} onClick={() => editor.update({ color: value })}>{profile.color === value && <Check size={14} />}</button>)}</div>
+      </div>
+    </div>
+    <div className="settings-account-actions" role="status">{error ? <><InlineError>{error}</InlineError><Button onClick={editor.retry}>Retry</Button></> : <small>{saving ? 'Saving…' : 'Changes save automatically'}</small>}</div>
   </div>;
 }
 
