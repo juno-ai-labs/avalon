@@ -345,6 +345,8 @@ as "the caller called nothing" until it is known to mean "the caller waited".
 is not attributable to the object's code until the invocation log's CPU and
 the constructor's timing rows have been read beside it.
 
+Shipped in #607.
+
 ### 2026-08-20 — The per-Worker opt-in is what makes a one-region export possible
 
 **What changed:** Recorded that an OTLP destination is account configuration but

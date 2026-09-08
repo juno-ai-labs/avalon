@@ -789,6 +789,8 @@ owns the evidence and the attributes.
 **Consequences:** The headers are object-to-Worker only. Admission is
 unchanged: they are set after the ticket is consumed and carry no authority.
 
+Shipped in #607.
+
 ### 2026-09-08 — Document personal access frames and cursor recovery
 
 WorkspaceDO pushes one visited row to the same user's sessions. Access/creation
