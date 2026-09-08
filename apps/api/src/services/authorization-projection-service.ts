@@ -1,4 +1,4 @@
-import { asAutomationId, asWorkstreamId, asWorkspaceId, asSubstreamId, IdSchema } from '@rally/contracts';
+import { asAutomationId, asWorkstreamId } from '@rally/contracts';
 import type { Env } from '../env';
 import type { AuthorizationProjectionJob } from '../durable-objects/authorization-projection';
 import { authorizationWorkspace } from './authorization-service';
@@ -35,16 +35,4 @@ export async function projectAuthorization(env: Env, job: AuthorizationProjectio
   const facts = await createResourceObjectPort(env, job.workspaceId, job.parentId, undefined, job.substreamId).readAuthorizationFacts();
   await workspace.applyAuthorizationLocations({ workspaceId: job.workspaceId, parentId: job.parentId, substreamId: job.substreamId,
     parentKind: identity.parent_kind === 'automation' ? 'automation' : 'workstream', ...facts });
-}
-
-/** Negative evidence refreshes canonical observations once per request; it never resets Queue receipts. */
-export async function refreshAuthorizationDiscovery(env: Env, workspaceId: string): Promise<void> {
-  const workspace = await authorizationWorkspace(env, workspaceId);
-  for (const { parentId } of await workspace.authorizationDiscoveryParents({ workspaceId })) {
-    const job: AuthorizationProjectionJob = { type: 'authorization_projection_v1', region: env.AVALON_REGION,
-      workspaceId: asWorkspaceId(workspaceId), parentId: IdSchema.parse(parentId) };
-    await projectAuthorization(env, job, false);
-    const children = await workspace.authorizationDiscoveryInventory({ workspaceId, parentId });
-    for (const substreamId of children) await projectAuthorization(env, { ...job, substreamId: asSubstreamId(substreamId) });
-  }
 }

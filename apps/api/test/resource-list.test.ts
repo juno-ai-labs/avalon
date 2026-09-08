@@ -47,11 +47,10 @@ describe("resource listing", () => {
     const first = await service.list({ limit: 2 });
     expect(first.items.map((resource) => resource.id)).toEqual([firstResourceId, secondResourceId]);
     expect(first.nextCursor).toEqual(expect.any(String));
-    expect(snapshots).toHaveBeenCalledTimes(1);
-    expect(snapshots.mock.calls[0]?.[0]).toMatchObject({ resources: expect.any(Array) });
+    expect(snapshots).not.toHaveBeenCalled();
     expect(facts).toHaveBeenCalledTimes(1);
     expect(facts.mock.calls[0]?.[0].resourceIds).toEqual([firstResourceId, secondResourceId]);
-    expect(writes).toHaveBeenCalledTimes(1);
+    expect(writes).not.toHaveBeenCalled();
 
     const next = await service.list({ limit: 2, cursor: first.nextCursor! });
     expect(next.items.map((resource) => resource.id)).toEqual([thirdResourceId]);
