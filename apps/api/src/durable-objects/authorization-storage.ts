@@ -11,7 +11,7 @@ export const AuthorizationLocationSchema = z.strictObject({
 });
 export type AuthorizationLocation = z.infer<typeof AuthorizationLocationSchema>;
 
-/** Routed only to typed WorkspaceDO methods, never to regional SQL or generic writes. */
+/** Typed-table guard includes inert snapshots until a later migration drops them. */
 export const AUTHORIZATION_STORAGE_TABLES = [
   'authorization_snapshots', 'authorization_locations', 'authorization_inventories',
   'authorization_backfill', 'authorization_backfill_children', 'authorization_delivery',

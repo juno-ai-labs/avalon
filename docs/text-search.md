@@ -454,7 +454,7 @@ budgets require team policy; no arbitrary new caps are introduced here.
 
 Authorization freshness is now a five-minute design goal, not a hard read cutoff.
 Search no longer expires permissions by age or synchronously refreshes the whole
-workspace's attachment inventory. Canonical checks coalesce overlapping work only;
+workspace's attachment inventory. Canonical checks share owner observations within one batch only;
 persistent grant caches are not reused without mutation invalidation. This avoids
 permanent stale grants while keeping the existing Queue discovery and explicit
 partial-results contract. Search latency targets still require production validation.

@@ -99,6 +99,11 @@ describe('authorization SQLite state', () => {
         JSON.stringify(snapshot), Date.now());
     });
     expect(await stub.readAuthorizationSnapshots({ subject: snapshot.subject, resources: [snapshot.resource] })).toEqual([null]);
-    await stub.writeAuthorizationSnapshots([snapshot]);
+    await stub.writeAuthorizationSnapshots([{ ...snapshot,
+      resource: { kind: 'resource', workspaceId, resourceId: '00000000-0000-7000-8000-000000000b06' } }]);
+    await runInDurableObject(stub, (_instance, state) => {
+      const rows = state.storage.sql.exec<{ snapshot_json: string }>('SELECT snapshot_json FROM authorization_snapshots').toArray();
+      expect(rows.map((row) => JSON.parse(row.snapshot_json))).toEqual([snapshot]);
+    });
   });
 });

@@ -9,11 +9,11 @@ participants or become a new canonical owner of memberships.
 | File under `apps/api/src/` | Responsibility |
 | --- | --- |
 | `services/authorization-policy.ts` | Typed addresses, subject, four outcomes, proof composition, evidence validation, `AccessContext` |
-| `services/authorization-service.ts` | Member policy, owner reads, request coalescing, cache validation and HTTP disclosure adapter |
-| `durable-objects/authorization-storage.ts` | Workspace SQLite snapshots, exact attachment locations and migration tables |
+| `services/authorization-service.ts` | Member policy, batch-local owner observations and HTTP disclosure adapter |
+| `durable-objects/authorization-storage.ts` | Exact attachment locations, inventory revision ordering and shipped migration tables |
 | `durable-objects/authorization-projection.ts` | Transactional child outbox and reference-only Queue contract |
 | `services/authorization-projection-service.ts` | Reloads attachment inventories from their owners when jobs execute |
-| `durable-objects/workspace-do.ts` | Snapshot publication, resource facts, migration fan-out and discovery status |
+| `durable-objects/workspace-do.ts` | Legacy snapshot compatibility validation, resource facts, migration fan-out and discovery status |
 | `durable-objects/workstream-do.ts`, `sidekick-do.ts` | Canonical parent/private-child facts; automation author, executor and owning work stream |
 | `authorization-control.ts` | Private operator Service Binding entrypoint |
 
@@ -32,7 +32,7 @@ An alternative attachment location can independently grant access. Denial from
 one location does not override a valid grant from another.
 
 Member proofs include a canonical regional workspace-membership observation,
-shared only while an identical read is in flight. Subsequent checks reload
+shared within one authorization batch. Subsequent checks reload
 canonical facts, including after asynchronous content loading.
 For member reads, a work stream's main SubstreamAgent owns its scope and roster.
 WorkstreamDO adds its canonical private-child membership and ready-state facts.
@@ -56,8 +56,9 @@ passed. Future timestamps and empty grants remain invalid. Five-minute freshness
 is a design goal for propagation and performance, with no code-enforced timeout,
 lease duration, or permission-expiration timer.
 
-Each authorization check loads canonical permission facts. Concurrent identical
-checks share only in-flight work; a later check observes the owner again, including
+Each authorization check loads canonical permission facts. Duplicate resources and shared owners reuse observations within that batch only,
+including completed observations. Every later or concurrent check starts its own
+batch and observes the owner again, including
 the final check after asynchronous content loading. Resource-fact RPCs batch the
 requested resources. The evaluator, typed addresses and four outcomes are shared
 primitives; source loaders remain responsible for their canonical facts.
@@ -68,7 +69,11 @@ do not invalidate decision snapshots. Existing SQLite snapshot tables and Global
 KV bindings remain inert for deployment compatibility. Legacy snapshot RPCs validate
 addresses but return cache misses and accept writes without storing them. A future
 cache needs explicit owner-revision invalidation rather than a time-based lease.
-EU does not access Global KV.
+EU does not access Global KV. Existing SQLite rows are retained but cannot grant
+access and cannot grow through these inert RPCs. After the compatibility rollout,
+remove the legacy RPCs and KV binding and add a new migration dropping
+`authorization_snapshots` and its index; do not edit the shipped migration. The
+typed-table guard continues to protect that table until it is dropped.
 
 The attachment reverse index remains Queue-maintained discovery, never a grant.
 Each positive attachment path is checked against its current canonical owner.
@@ -131,8 +136,9 @@ not a switch controlling which authorization implementation serves the request.
   strict response parsers retain their original wire shape and retryable failure
   for incomplete search, rather than silently misrepresenting partial results.
   Resource page parsers already accept additive fields.
-- Subject, workspace, exact address and policy version must match cached
-  evidence. A record for another user or private child cannot authorize a read.
+- Checks bind canonical observations to the trusted subject, workspace and exact
+  resource address. A record for another user or private child cannot authorize a
+  read. Policy-version validation remains only in the legacy snapshot wire schema.
 - Composition preserves each owner observation; it does not rewrite timestamps.
 - Missing discovery cannot be treated as confirmed absence. Activation before
   coverage is complete would silently omit private-child-only resources.
@@ -167,6 +173,18 @@ number is a permission lease. Queue consumer failures retry and can eventually
 reach the configured activity dead-letter queue; incomplete receipts prevent
 discovery. An unprovisioned registered child therefore requires repair before
 negative attachment evidence is complete; it cannot silently disappear from the backfill.
+
+A dead-lettered projection after discovery completes can leave a newly shared
+resource denied indefinitely, until that projection is repaired or another source
+mutation republishes it. There is no age-triggered self-heal. Repair the failing
+consumer or source first, then replay the reference-only authorization jobs from
+the regional activity dead-letter queue. For a workspace-wide rebuild, trusted
+operator tooling can call `AuthorizationControl.execute({ workspaceId, action:
+"backfill" })`; it invokes `beginAuthorizationBackfill` with refresh enabled by
+default and queues fresh canonical inventories. Poll `action: "status"` until
+coverage completes. This operator binding must be provisioned first; it is not a
+product endpoint. The removed synchronous `refreshAuthorizationDiscovery` helper
+was internal to the Worker and had no operational caller; repair stays asynchronous.
 
 Canonical permission and content reads still cost RPCs. Removing cross-request
 snapshot reuse may increase repeated-query latency; this change does not claim
@@ -211,6 +229,17 @@ reads also initiate missing discovery. Rolling back the serving implementation
 requires a Worker code rollback, not a per-workspace mode change.
 
 ## Changelog
+
+### 2026-09-08 — Scope authorization observations to a single batch
+
+Review identified repeated owner RPCs within a serial resource batch and later
+checks joining an earlier pending observation. Each check now owns a fresh batch,
+retaining owner observations only inside it. This avoids repeated reads of shared
+owners while preserving a new canonical observation after asynchronous work.
+Runtime regressions cover both boundaries and assert that legacy writes leave the
+snapshot table unchanged. Removed unused synchronous discovery RPCs and stale
+cache test scaffolding. Documented indefinite denial after dead-lettered discovery,
+operator repair, and post-rollout cleanup of inert snapshot storage and bindings.
 
 ### 2026-09-08 — Freshness is a design goal, not a read deadline
 
