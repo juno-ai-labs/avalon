@@ -1,4 +1,4 @@
-import { createAccessContext, requireAuthorizedRead } from './authorization-service';
+import { createAccessContext } from './authorization-service';
 import { WorkstreamDirectoryService } from './workstream-directory-service';
 import { logInfo } from '../observability/logger';
 import type { SearchRequest, SearchResult } from '@rally/contracts/search';
@@ -36,15 +36,21 @@ export async function searchWorkspacePage(env: Env, auth: AuthContext, request: 
   const access = createAccessContext(env, auth);
   const conversations = new ConversationService(env, auth);
   const parents = new Map<string, ReturnType<ConversationService['resolveParent']>>();
-  const authorizeConversation = async (parentId: string, substreamId: string) => {
-    const resource = { kind: 'conversation' as const, workspaceId: auth.workspaceId,
-      parentId: IdSchema.parse(parentId), substreamId: asSubstreamId(substreamId) };
-    requireAuthorizedRead(await access.check(resource));
+  const prepareConversationReader = async (parentId: string, substreamId: string) => {
     let parent = parents.get(parentId);
     if (!parent) { parent = conversations.resolveParent(parentId); parents.set(parentId, parent); }
     // Retain the existing automation conversation seating required by its product reader.
     // Policy evaluation itself remains read-only and runs before this compatibility action.
     if ((await parent).kind === 'automation') await conversations.authorizeViewer(parentId, substreamId);
+  };
+  const readableGroups = async <T extends { parentId: string; substreamId: string }>(groups: T[]) => {
+    const decisions = await access.checkMany(groups.map((group) => ({ kind: 'conversation' as const,
+      workspaceId: auth.workspaceId, parentId: IdSchema.parse(group.parentId), substreamId: asSubstreamId(group.substreamId) })));
+    return groups.filter((_, index) => {
+      const decision = decisions[index]!;
+      if (decision.status === 'unavailable') complete = false;
+      return decision.status === 'allowed';
+    });
   };
   const resources = new ResourceService(env, auth, undefined, access);
   const scopes = request.pageSize && ['all', 'messages', 'links'].includes(request.category)
@@ -68,10 +74,10 @@ export async function searchWorkspacePage(env: Env, auth: AuthContext, request: 
         group.candidates.push({ ...candidate, turnId: candidate.source_id.slice(separator + 1) });
         groups.set(key, group);
       }
-      await Promise.all([...groups.values()].map(async (group) => {
+      await Promise.all((await readableGroups([...groups.values()])).map(async (group) => {
         signal?.throwIfAborted();
         try {
-          await authorizeConversation(group.parentId, group.substreamId);
+          await prepareConversationReader(group.parentId, group.substreamId);
           const record = await new WorkstreamObjectClient(env, auth, group.parentId, group.substreamId)
             .searchTurns(group.candidates.map((candidate) => candidate.turnId));
           const validated = new Map<string, SearchResult>();
@@ -90,8 +96,6 @@ export async function searchWorkspacePage(env: Env, auth: AuthContext, request: 
                 turnId: turn.turnId, transcriptSequence: turn.transcriptSequence, range: passage.range },
             });
           }
-          // Hashing is asynchronous too: authorize after all canonical validation.
-          await authorizeConversation(group.parentId, group.substreamId);
           for (const [id, result] of validated) results.set(id, result);
         } catch (error) { omitUnverified(error); }
       }));
@@ -110,10 +114,10 @@ export async function searchWorkspacePage(env: Env, auth: AuthContext, request: 
         group.candidates.push({ candidate, turnId, linkId });
         groups.set(key, group);
       }
-      await Promise.all([...groups.values()].map(async (group) => {
+      await Promise.all((await readableGroups([...groups.values()])).map(async (group) => {
         signal?.throwIfAborted();
         try {
-          await authorizeConversation(group.parentId, group.substreamId);
+          await prepareConversationReader(group.parentId, group.substreamId);
           const record = await new WorkstreamObjectClient(env, auth, group.parentId, group.substreamId)
             .searchLinks(group.candidates.map(({ turnId, linkId }) => ({ turnId, linkId })));
           const validated = new Map<string, SearchResult>();
@@ -128,8 +132,6 @@ export async function searchWorkspacePage(env: Env, auth: AuthContext, request: 
               excerpt: passage.excerpt, excerptStart: passage.excerptStart, highlights: passage.highlights,
               location: { kind: 'link', url: link.url, range: passage.range } });
           }
-          // Hashing is asynchronous too: authorize after all canonical validation.
-          await authorizeConversation(group.parentId, group.substreamId);
           for (const [id, result] of validated) results.set(id, result);
         } catch (error) { omitUnverified(error); }
       }));
@@ -140,10 +142,12 @@ export async function searchWorkspacePage(env: Env, auth: AuthContext, request: 
     if (request.category !== 'all' && request.category !== category) continue;
     sources.push({ source: category, scopeIds: [auth.workspaceId], load: async (candidates) => {
       const results = new Map<string, SearchResult>();
+      const page = await resources.searchTexts(candidates.map((candidate) => candidate.source_id));
+      if (!page.complete) complete = false;
       await Promise.all(candidates.map(async (candidate) => {
         signal?.throwIfAborted();
         try {
-          const record = await resources.searchText(candidate.source_id);
+          const record = page.records.get(candidate.source_id);
           if (!record || Number(record.revision) !== candidate.revision) return;
           const resource = record.resource;
           const actualCategory = resourceSearchCategory(resource.provider, resource.canonicalUrl);

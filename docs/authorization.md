@@ -33,7 +33,8 @@ one location does not override a valid grant from another.
 
 Member proofs include a canonical regional workspace-membership observation,
 shared within one authorization batch. Subsequent checks reload
-canonical facts, including after asynchronous content loading.
+canonical facts. Search keeps its admission decision for the duration of one
+source batch.
 For member reads, a work stream's main SubstreamAgent owns its scope and roster.
 WorkstreamDO adds its canonical private-child membership and ready-state facts.
 An automation supplies its own scope, author, executor and child registry; an
@@ -58,10 +59,20 @@ lease duration, or permission-expiration timer.
 
 Each authorization check loads canonical permission facts. Duplicate resources and shared owners reuse observations within that batch only,
 including completed observations. Every later or concurrent check starts its own
-batch and observes the owner again, including
-the final check after asynchronous content loading. Resource-fact RPCs batch the
+batch and observes the owner again. Search admits each source's candidate batch
+once before loading and formatting its canonical content; it does not recheck
+after each await. Resource-fact RPCs batch the
 requested resources. The evaluator, typed addresses and four outcomes are shared
 primitives; source loaders remain responsible for their canonical facts.
+Automation and inherited workstream identity observations also share this batch
+lifetime. Member search exposes candidate continuation even when no candidate on
+that page is admitted. This preserves bounded page work and explicit continuation;
+it does not promise to conceal the existence of matching index entries. The
+position is a deterministic hash and can be correlated with a known source ID.
+Content and resource details still require admission. This is the member-only
+pagination contract, not a claim that hashing prevents existence inference.
+A resource returns after its first valid attachment grant; unrelated
+alternative locations do not need to be read once access is established.
 
 Cross-request decision snapshots are no longer read or written. Removing their
 expiry alone would have made old grants permanent, because source projection jobs
@@ -229,6 +240,24 @@ reads also initiate missing discovery. Rolling back the serving implementation
 requires a Worker code rollback, not a per-workspace mode change.
 
 ## Changelog
+
+### 2026-09-08 — Clarify observable pagination metadata
+
+Review identified that explicit candidate continuation exposes index progress even
+for a fully rejected page, and deterministic positions can be correlated with known
+IDs. Documented that boundary instead of restoring hidden scans or inventing a scan
+cap. The approved member search design admits content once per batch and permits
+explicit continuation; it does not offer index-existence concealment.
+
+### 2026-09-08 — Use operation-level search admission
+
+Search batches now share one admission decision through canonical content loading,
+instead of repeating checks around awaits. Resource admission stops at the first
+valid attachment path, and automation and inherited-owner facts are memoized within
+the batch. The team explicitly chose to trust correctly implemented platform
+primitives and the agreed propagation model. Repeated checks increased serial RPC
+cost without serving that contract. Every new batch still reads canonical owners;
+there is no cross-request grant cache or code-enforced five-minute expiry.
 
 ### 2026-09-08 — Scope authorization observations to a single batch
 
