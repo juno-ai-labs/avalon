@@ -413,7 +413,7 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
           "SELECT workspace_id FROM workspace_members WHERE user_id = ? AND status = 'active'",
         ).bind(user.id).all<{ workspace_id: string }>();
         await Promise.all(memberships.results.map((row) =>
-          publishWorkspaceSync(this.env, row.workspace_id, ['workspace_profile', 'member_directory']).catch(() => undefined)));
+          publishWorkspaceSync(this.env, row.workspace_id, ['workspace_profile', 'member_directory'])));
       }
     }
     return user;

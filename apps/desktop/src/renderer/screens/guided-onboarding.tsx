@@ -38,7 +38,13 @@ export function AccountOnboardingGate({ children }: { children: ReactNode }): Re
   useEffect(() => { editor.start(); return () => editor.stop(); }, [editor]);
   useEffect(() => { if (account.data) editor.refresh(account.data, session?.user.name); }, [account.data, editor, session?.user.name]);
   const profileState = useSyncExternalStore(editor.subscribe, editor.getSnapshot);
-  const presentation = { ...profileState.profile, revision: account.data?.revision ?? 0 };
+  const profile = profileState.profile;
+  const hasPresentation = Boolean(account.data?.presentation || profileState.saving || profileState.error);
+  const presentations = useMemo(() => {
+    const result = new Map((members.data ?? []).flatMap((member) => member.presentation ? [[member.id, member.presentation] as const] : []));
+    if (session?.user.id && hasPresentation) result.set(session.user.id, { ...profile, revision: account.data?.revision ?? 0 });
+    return result;
+  }, [members.data, session?.user.id, hasPresentation, profile, account.data?.revision]);
   useEffect(() => {
     const root = document.documentElement;
     if (session && (account.data?.presentation || profileState.saving || profileState.error)) root.dataset['personalColor'] = profileState.profile.color;
@@ -50,8 +56,6 @@ export function AccountOnboardingGate({ children }: { children: ReactNode }): Re
   if (account.error && !account.data && session.workspace) return <>{children}</>;
   if (account.error && !account.data) return <OnboardingPage title="Let's pick up where you left off" footer={<><Button onClick={() => void account.refetch()}>Retry</Button><Button onClick={() => void signOut()}>Sign out</Button></>}><InlineError>{account.error.message}</InlineError></OnboardingPage>;
   if (!account.data) return <OnboardingPage title="Opening Rally"><RallyMark /></OnboardingPage>;
-  const presentations = new Map((members.data ?? []).flatMap((member) => member.presentation ? [[member.id, member.presentation] as const] : []));
-  if (account.data.presentation || profileState.saving || profileState.error) presentations.set(session.user.id, presentation);
   return <MemberPresentationContext.Provider value={presentations}><AccountContext.Provider value={account.data}><ProfileEditorContext.Provider value={editor}>{account.data.eligible && !account.data.introduced ? <PlatformIntroduction previewed={previewed} /> : children}</ProfileEditorContext.Provider></AccountContext.Provider></MemberPresentationContext.Provider>;
 }
 

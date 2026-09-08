@@ -164,13 +164,13 @@ onboardingRoutes.patch('/account', zValidator('json', UpdateAccountOnboardingSch
   // suppress realtime delivery for an already-committed Global profile.
   requestDeferral(c)((async () => {
     const memberships = await c.env.DB.prepare(
-      "SELECT workspace_id FROM workspace_members WHERE user_id = ? AND status = 'active'",
+      "SELECT m.workspace_id FROM workspace_members m JOIN workspaces w ON w.id = m.workspace_id WHERE m.user_id = ? AND m.status = 'active' AND w.region = 'global' AND w.abandoned_at IS NULL",
     ).bind(auth.userId).all<{ workspace_id: string }>();
     await Promise.all(memberships.results.map((workspace) =>
       publishWorkspaceSync(c.env, workspace.workspace_id, ['workspace_profile', 'member_directory'])));
   })());
   // Discovery projects the narrow identity preferences into EU and publishes
   // that region's member invalidations after its projection commits.
-  requestDeferral(c)((async () => new PlatformOnboardingService(c.env, auth).state())());
+  requestDeferral(c)(new PlatformOnboardingService(c.env, auth).state());
   return c.json(AccountOnboardingSchema.parse(result));
 });

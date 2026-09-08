@@ -130,6 +130,16 @@ Real external OAuth requires configured provider credentials; onboarding no long
 
 ## Changelog
 
+### 2026-09-08 — Preserve live text and scope profile notifications
+
+Acknowledged text retains typed whitespace locally so a save cannot remove the
+space before a surname. Save-status changes reuse profile identity and the
+member map is memoized. Immediate writes remain intentional for live backend
+updates; only edits arriving during an in-flight save are coalesced. Global
+notifications exclude foreign and abandoned workspaces, and EU publication
+failures propagate rather than disappearing after projection commits.
+
+
 ### 2026-09-08 — Save profile changes immediately
 
 Account profile edits now preview immediately and autosave through one

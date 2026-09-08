@@ -35,6 +35,32 @@ describe('automatic profile writes', () => {
     expect(committed.mock.lastCall?.[0]).toMatchObject({ revision: 3, presentation: { displayName: 'Alex Rivera', initials: 'AR', color: 'violet' } });
   });
 
+  it('keeps spaces in acknowledged text without resending or moving the input caret', async () => {
+    const write = vi.fn(async (input: UpdateAccountOnboarding) => saved(input));
+    const editor = new AccountProfileEditor('Alex Morgan', write, async () => original, () => {});
+    editor.refresh(original);
+    editor.update({ displayName: 'Alex ' });
+    await vi.waitFor(() => expect(editor.getSnapshot().saving).toBe(false));
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(write.mock.calls[0]![0].presentation?.displayName).toBe('Alex');
+    expect(editor.getSnapshot().profile.displayName).toBe('Alex ');
+    editor.update({ displayName: editor.getSnapshot().profile.displayName + 'Rivera' });
+    await vi.waitFor(() => expect(editor.getSnapshot().saving).toBe(false));
+    expect(write.mock.lastCall?.[0].presentation?.displayName).toBe('Alex Rivera');
+    expect(editor.getSnapshot().profile.displayName).toBe('Alex Rivera');
+  });
+
+  it('keeps the profile identity stable across save-status updates', async () => {
+    const pending = deferred<AccountOnboarding>();
+    const editor = new AccountProfileEditor('Alex Morgan', () => pending.promise, async () => original, () => {});
+    editor.refresh(original);
+    editor.update({ color: 'rose' });
+    const profile = editor.getSnapshot().profile;
+    pending.resolve({ ...original, revision: 2, presentation: { ...original.presentation!, color: 'rose', revision: 2 } });
+    await vi.waitFor(() => expect(editor.getSnapshot().saving).toBe(false));
+    expect(editor.getSnapshot().profile).toBe(profile);
+  });
+
   it('keeps invalid drafts local and automatically saves when corrected', async () => {
     const write = vi.fn(async (input: UpdateAccountOnboarding) => saved(input));
     const editor = new AccountProfileEditor('Alex Morgan', write, async () => original, () => {});

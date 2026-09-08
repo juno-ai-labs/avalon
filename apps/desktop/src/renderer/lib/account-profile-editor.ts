@@ -7,6 +7,8 @@ type EditableProfile = Pick<Profile, 'displayName' | 'initials' | 'color'>;
 export class AccountProfileEditor {
   private account: AccountOnboarding | null = null;
   private draft: Partial<EditableProfile> = {};
+  // Acknowledged text keeps its raw input spelling until the user edits it again.
+  private spelling: Partial<Pick<EditableProfile, 'displayName' | 'initials'>> = {};
   private running = false;
   private active = true;
   private listeners = new Set<() => void>();
@@ -32,23 +34,33 @@ export class AccountProfileEditor {
       avatar: 'circle', color: this.account?.presentation?.color ?? 'blue',
       displayName: this.account?.presentation?.displayName ?? this.name,
       initials: this.account?.presentation?.initials ?? this.name.split(/\s+/u).map((part) => part[0]).join('').slice(0, 2).toUpperCase(),
+      ...this.spelling,
       ...this.draft,
     };
   }
 
   private emit(error: string | null = null): void {
-    this.snapshot = { profile: this.profile(), saving: this.running, error };
+    const next = this.profile();
+    const previous = this.snapshot.profile;
+    const profile = (Object.keys(next) as (keyof Profile)[]).every((key) => next[key] === previous[key]) ? previous : next;
+    this.snapshot = { profile, saving: this.running, error };
     this.listeners.forEach((listener) => listener());
   }
 
   refresh(account: AccountOnboarding, name?: string): void {
     if (name !== undefined) this.name = name;
     if (this.account && account.revision <= this.account.revision) return;
+    for (const key of ['displayName', 'initials'] as const) {
+      if (account.presentation?.[key] !== this.account?.presentation?.[key]) delete this.spelling[key];
+    }
     this.account = account;
     this.emit(this.snapshot.error);
   }
 
   update(patch: Partial<EditableProfile>): void {
+    for (const key of ['displayName', 'initials'] as const) {
+      if (key in patch) delete this.spelling[key];
+    }
     this.draft = { ...this.draft, ...patch };
     this.emit();
     void this.flush();
@@ -68,7 +80,7 @@ export class AccountProfileEditor {
         const parsed = PersonalPresentationSchema.safeParse({ ...this.profile(), revision: this.account.revision });
         if (!parsed.success) {
           this.running = false;
-          this.emit(!this.profile().displayName?.trim() ? 'Enter a name.' : !this.profile().initials?.trim() ? 'Enter avatar initials.' : 'Your name must be 255 characters or fewer.');
+          this.emit(!this.profile().displayName?.trim() ? 'Enter a name.' : !this.profile().initials?.trim() ? 'Enter avatar initials.' : parsed.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join('; '));
           return;
         }
         const submitted = { ...this.draft };
@@ -78,7 +90,10 @@ export class AccountProfileEditor {
         if (saved.revision >= this.account.revision) this.account = saved;
         // A response acknowledges only the draft it sent, never later typing.
         for (const key of ['displayName', 'initials', 'color'] as const) {
-          if (key in submitted && this.draft[key] === submitted[key]) delete this.draft[key];
+          if (key in submitted && this.draft[key] === submitted[key]) {
+            if (key !== 'color' && submitted[key] !== saved.presentation?.[key]) this.spelling[key] = submitted[key];
+            delete this.draft[key];
+          }
         }
         if (this.active) this.committed(this.account);
         this.emit();

@@ -2267,8 +2267,9 @@ export function MessageBlock({
       && message.elicitation?.status === 'answered' ? currentUserId : undefined;
   const profile = profileUserId ? presentations.get(profileUserId) : undefined;
   const personStyle = {
-    '--person-accent': profile ? `var(--av-cmp-member-message-${profile.color}-dot)` : turnAccent(message),
+    '--person-accent': profile ? 'var(--av-sys-color-text-default)' : turnAccent(message),
     ...(profile ? {
+      '--person-dot': `var(--av-cmp-member-message-${profile.color}-dot)`,
       '--av-cmp-bubble-human-background': `var(--av-cmp-member-message-${profile.color}-background)`,
       '--av-cmp-bubble-human-foreground': `var(--av-cmp-member-message-${profile.color}-foreground)`,
     } : {}),
