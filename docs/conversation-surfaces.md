@@ -62,6 +62,18 @@ The conversation remains mounted, but hidden panes do not claim window-level
 file pastes or acknowledge reads. `useVisibleReadAcknowledgement` cancels queued
 reads when hidden and rechecks visibility before dispatch.
 
+Human message dots and bubble backgrounds resolve the sender's current account
+color from the live member-presentation context. The same resolution applies
+to answered elicitations and optimistic answers attributed to the current user.
+Profile changes repaint already-loaded turns without rewriting transcript data.
+The `cmp.member-message.<profile-color>` background, foreground, and dot roles
+are defined independently in each appearance; the feed does not infer contrast
+from the stored color name.
+Unprofiled and external senders retain their stable identity-color fallback.
+These bubble overrides apply only inside the conversation feed hosts. Author
+labels use semantic default text while the independently themed dot retains the
+profile hue, so a bright dot cannot make the name unreadable.
+
 The adapter provides canonical ordered turns, loaded coverage, streaming
 blocks, activity timing, attachment actions, retry/stop state, and a stable
 conversation identity, for a work stream's conversation and an automation's
@@ -143,6 +155,13 @@ header-only design left the feed competing with schedules and run history;
 those controls now live entirely outside ConversationSurface. Run history is
 behind More → Run history, while the first view explains how to ask for changes.
 
+
+### 2026-09-08 — Apply live profile colors to message rows
+
+User dots and message bubbles now use the same live sender profile as avatars.
+The previous ID-derived dots and fixed bubble backgrounds ignored account edits.
+Keeping presentation in the shared row lets existing messages repaint on roster
+updates without rewriting historical turns or tinting unrelated surfaces.
 
 ### 2026-09-08 — Remove heading-generated document cards
 

@@ -1,3 +1,4 @@
+import { AccountOnboardingGate } from './guided-onboarding';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { ClientFeatureFlagsSchema } from '@rally/contracts';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -81,6 +82,7 @@ vi.mock('../lib/app-session', () => ({
 }));
 vi.mock('../lib/platform', () => ({
   desktopBridge: () => ({
+    getAccountOnboarding: async () => ({ eligible: false, introduced: true, revision: 1, presentation: null }),
     copyText,
     getApplicationSettings,
     setLockdownMode,
@@ -139,10 +141,11 @@ function renderSettings(
   client = createTestQueryClient(),
   standaloneWindow = false,
 ): void {
+  client.setQueryData(['account-onboarding', 'adam@example.com'], { eligible: false, introduced: true, revision: 1, presentation: null });
   render(
     <Tooltip.Provider>
       <QueryClientProvider client={client}>
-        <WorkspaceSettingsScreen standaloneWindow={standaloneWindow} workspace={nextWorkspace} />
+        <AccountOnboardingGate><WorkspaceSettingsScreen standaloneWindow={standaloneWindow} workspace={nextWorkspace} /></AccountOnboardingGate>
       </QueryClientProvider>
     </Tooltip.Provider>,
   );
