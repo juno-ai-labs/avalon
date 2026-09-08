@@ -1,3 +1,5 @@
+import { WorkstreamAppearanceSchema, WorkstreamAppearancePatchSchema } from "./workstream-appearance";
+export * from "./workstream-appearance";
 import { PersonalPresentationSchema } from './onboarding';
 export * from './onboarding';
 import { z } from "zod";
@@ -560,6 +562,7 @@ export const MESSAGE_TOO_LONG_MESSAGE =
 export const WORKSTREAM_DESCRIPTION_MAX_CHARACTERS = 4_000;
 
 export const WorkstreamSchema = z.object({
+  appearance: WorkstreamAppearanceSchema.optional(),
   id: IdSchema,
   workspaceId: IdSchema,
   title: z.string().min(1).max(180),
@@ -2042,11 +2045,13 @@ export const SubstreamSocketMutationTypeSchema = z.enum([
   "create_message",
   "answer_elicitation",
   "reorder_pending_inputs",
+  "set_workstream_appearance",
   "stop_harness",
   "retry_harness",
 ]);
 
 export const ClientSocketEventSchema = z.discriminatedUnion("type", [
+  z.strictObject({ type: z.literal("set_workstream_appearance"), operationId: IdSchema, appearance: WorkstreamAppearancePatchSchema }),
   z.strictObject({
     type: z.literal("subscribe"),
     afterSequence: z.number().int().nonnegative(),
@@ -2451,6 +2456,7 @@ export const WorkspaceWorkstreamStateEventSchema = z.strictObject({
  * the selected SubstreamAgent feed.
  */
 export const WorkstreamControlMetadataSchema = z.strictObject({
+  appearance: WorkstreamAppearanceSchema.optional(),
   stateVersion: WorkstreamStateVersionSchema,
   /** Independent of workspace viewer/notification projection ordering. */
   privateChildrenWaterline: z.number().int().nonnegative().optional(),
@@ -2550,6 +2556,7 @@ const WorkstreamSocketCommandErrorSchema = z.strictObject({
 });
 
 export const WorkstreamSocketCommandResultSchema = z.union([
+  z.strictObject({ type: z.literal("client_command_succeeded"), command: z.literal("set_workstream_appearance"), operationId: IdSchema }),
   z.strictObject({
     type: z.literal("client_command_succeeded"),
     command: z.literal("create_message"),

@@ -34,6 +34,8 @@ import type { WorkstreamDetail } from '../lib/types';
 import { useRetainedWorkstreamSocket } from '../lib/workstream-socket-pool';
 import { AvatarStack, Badge, Button, IconButton, InlineError, Modal, SocketStatusIndicator, StatusDot, TitleSkeleton } from '../components/primitives';
 import { WorkstreamGlyph } from '../components/workstream-glyph';
+import { WorkstreamAppearancePicker } from '../components/workstream-appearance-picker';
+import type { WorkstreamAppearancePatch } from '@rally/contracts';
 import { WorkstreamSidebar } from '../components/workstream-sidebar';
 import { SubstreamContext } from '../components/substream-context';
 import { ConversationSurface } from './conversation-surface';
@@ -69,6 +71,7 @@ export function WorkstreamHeader({
   onAddParticipant,
   onOpenRail,
   onRename,
+  onAppearanceChange,
   presentUserIds = [],
   currentUserId = null,
   workspaceTarget,
@@ -79,6 +82,7 @@ export function WorkstreamHeader({
   onAddParticipant: () => void;
   onOpenRail: (variant: RailVariant) => void;
   onRename: (title: string) => Promise<void>;
+  onAppearanceChange?: (patch: WorkstreamAppearancePatch) => Promise<void>;
   presentUserIds?: readonly string[];
   currentUserId?: string | null;
   workspaceTarget: WorkspaceTarget | null;
@@ -219,7 +223,7 @@ export function WorkstreamHeader({
         ) : (
           <h1>
             <span className="grokbot-conversation-title">
-              <WorkstreamGlyph id={workstream.id} size={20} />
+              {onAppearanceChange ? <WorkstreamAppearancePicker key={workstream.id} id={workstream.id} appearance={workstream.appearance} size={20} onChange={onAppearanceChange} /> : <WorkstreamGlyph id={workstream.id} appearance={workstream.appearance} size={20} />}
               <span>{workstream.title}</span>
             </span>
           </h1>
@@ -240,7 +244,7 @@ export function WorkstreamHeader({
     <header className="workstream-header window-drag">
       <div className="workstream-header-left window-no-drag">
         <IconButton className="header-menu-button" label="Open navigation" onClick={() => setSidebarOpen(true)}><Menu size={16} /></IconButton>
-        <WorkstreamGlyph id={workstream.id} size={30} />
+        {onAppearanceChange ? <WorkstreamAppearancePicker key={workstream.id} id={workstream.id} appearance={workstream.appearance} size={30} onChange={onAppearanceChange} /> : <WorkstreamGlyph id={workstream.id} appearance={workstream.appearance} size={30} />}
         <div className="workstream-title-block">
           {/* The one place a title arriving on its own is worth announcing. A
               work stream created a second ago is named while its author is
@@ -406,7 +410,7 @@ export function WorkstreamScreen(): React.JSX.Element {
   const selectedSubstreamId = searchParams.get('substream') || '0';
   // Parent chrome remains live even on a direct link into a child. Reuse the
   // retained Main connection rather than deriving its inventory from the child.
-  useRetainedWorkstreamSocket(api, id, Boolean(api && id && selectedSubstreamId !== '0'), 'workstream', '0');
+  const mainConnection = useRetainedWorkstreamSocket(api, id, Boolean(api && id), 'workstream', '0');
   const parent = useQuery<WorkstreamDetail | undefined>({
     queryKey: ['workstream', id], queryFn: async () => undefined, enabled: false,
   });
@@ -535,6 +539,7 @@ export function WorkstreamScreen(): React.JSX.Element {
           onAddParticipant={context.openParticipantDialog}
           onOpenRail={context.openRail}
           onRename={context.rename}
+          onAppearanceChange={mainConnection.setAppearance}
           presentUserIds={context.presentUserIds}
           socketState={context.socketState}
           workspaceTarget={session?.workspace ? {

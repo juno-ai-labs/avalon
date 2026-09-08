@@ -330,6 +330,7 @@ export function mapWorkstreamSummary(workstream: WireWorkstream): WorkstreamSumm
     id: workstream.id,
     title: workstream.title,
     titleStatus: workstream.titleStatus,
+    appearance: workstream.appearance,
     objective: workstream.objective,
     ...(workstream.emailAddress ? { emailAddress: workstream.emailAddress } : {}),
     ...(workstream.createdByUserId ? { createdByUserId: workstream.createdByUserId } : {}),

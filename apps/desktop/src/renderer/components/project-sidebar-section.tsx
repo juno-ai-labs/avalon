@@ -1,35 +1,9 @@
+import { PROJECT_ICONS } from './project-icons';
 import { compareWorkstreamRecency } from '../lib/format';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { IconLock, IconPlus, IconTriangle } from '@tabler/icons-react';
 import clsx from 'clsx';
-import {
-  Briefcase,
-  Building2,
-  Calculator,
-  CalendarDays,
-  ChartNoAxesCombined,
-  ClipboardList,
-  Coins,
-  FileText,
-  Flag,
-  Folder,
-  Globe2,
-  Handshake,
-  Heart,
-  Image as ImageIcon,
-  Lightbulb,
-  ListChecks,
-  Megaphone,
-  Package,
-  Palette,
-  PenTool,
-  Rocket,
-  Star,
-  Target,
-  UserSearch,
-  Users,
-  type LucideIcon,
-} from 'lucide-react';
+
 import { Fragment, useRef, useState, type ReactNode } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
@@ -45,33 +19,7 @@ import { Button, DropdownSelect, IconButton, InlineError, Modal } from './primit
 import { SidebarSkeletonRows } from './sidebar-skeleton';
 import type { WorkstreamSummary } from '../lib/types';
 
-const PROJECT_ICONS: Record<ProjectIconKey, LucideIcon> = {
-  briefcase: Briefcase,
-  target: Target,
-  'calendar-days': CalendarDays,
-  'list-checks': ListChecks,
-  'clipboard-list': ClipboardList,
-  'file-text': FileText,
-  folder: Folder,
-  lightbulb: Lightbulb,
-  star: Star,
-  flag: Flag,
-  rocket: Rocket,
-  'chart-no-axes-combined': ChartNoAxesCombined,
-  calculator: Calculator,
-  coins: Coins,
-  users: Users,
-  'user-search': UserSearch,
-  handshake: Handshake,
-  megaphone: Megaphone,
-  palette: Palette,
-  image: ImageIcon,
-  'pen-tool': PenTool,
-  package: Package,
-  'building-2': Building2,
-  'globe-2': Globe2,
-  heart: Heart,
-};
+
 
 function label(value: string): string {
   if (value === 'orange') return 'Neon yellow';

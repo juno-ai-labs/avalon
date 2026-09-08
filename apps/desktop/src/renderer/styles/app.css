@@ -6666,3 +6666,17 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 :is(.workstream-screen, .automation-chat-surface) .human-message[data-profile-color] .human-message-bubble .markdown-body :is(p, strong, em, code, a) {
   color: var(--av-cmp-bubble-human-foreground);
 }
+
+/* Work-stream identity: fixed palette above an independently scrolling catalog. */
+.workstream-appearance-trigger { display: inline-flex; align-items: center; justify-content: center; padding: 4px; border: 0; border-radius: var(--av-cmp-control-radius); background: transparent; cursor: pointer; flex-shrink: 0; }
+.workstream-appearance-trigger:hover { background: var(--av-sys-color-surface-raised-hover); }
+.workstream-appearance-popup { width: 288px; max-width: calc(100vw - 24px); max-height: var(--radix-dropdown-menu-content-available-height); display: flex; flex-direction: column; padding: 12px; }
+.workstream-appearance-label { color: var(--av-sys-color-text-subtle); font-size: var(--av-cmp-control-font-size); font-weight: 600; padding: 0 2px 8px; }
+.workstream-appearance-colors, .workstream-appearance-icons { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 4px; }
+.workstream-appearance-icons { overflow-y: auto; min-height: 0; max-height: 180px; padding: 2px; }
+.workstream-appearance-choice { color: var(--av-sys-color-text-default); display: flex; align-items: center; justify-content: center; height: 36px; border-radius: var(--av-cmp-control-radius); border: 1px solid transparent; cursor: pointer; outline: none; }
+.workstream-appearance-choice[data-highlighted] { background: var(--av-sys-color-surface-raised-hover); outline: 2px solid var(--av-sys-color-text-subtle); outline-offset: -2px; }
+.workstream-appearance-choice[data-state='checked'] { background: var(--av-sys-color-surface-raised-hover); border-color: var(--av-sys-color-text-default); }
+.workstream-appearance-swatch { height: 20px; width: 20px; border-radius: 50%; }
+.workstream-appearance-divider { height: 1px; flex-shrink: 0; background: var(--av-sys-color-border-default); margin: 12px 0; }
+.workstream-appearance-error { color: var(--av-sys-color-danger-base); font-size: var(--av-cmp-control-font-size); margin: 10px 0 0; }
