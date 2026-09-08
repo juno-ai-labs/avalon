@@ -1,3 +1,4 @@
+import { workstreamRecencyAt } from '../lib/format';
 import { MemberPresentationContext } from '../lib/member-presentation';
 import { SearchModal } from './search-modal';
 import { AttachmentLightbox } from './attachment-lightbox';
@@ -134,7 +135,7 @@ export function workstreamMatchesBatchFilter(
 ): boolean {
   if (!filter.includeSystem && workstream.systemKind != null) return false;
   if (filter.pinned !== undefined && (workstream.pinPosition !== null) !== filter.pinned) return false;
-  const activityAt = Date.parse(workstream.lastActivityAt);
+  const activityAt = Date.parse(filter.recency === 'access' ? workstreamRecencyAt(workstream) : workstream.lastActivityAt);
   if (!Number.isFinite(activityAt)) return false;
   const atOrAfter = filter.lastActivityAt?.atOrAfter;
   const before = filter.lastActivityAt?.before;

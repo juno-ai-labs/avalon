@@ -1434,6 +1434,132 @@ describe("Durable Objects in the Workers runtime", () => {
     return socket;
   }
 
+  it("persists per-user access ordering and pushes it across sessions", async () => {
+    await seedOpenAuthority();
+    const otherUserId = asUserId("00000000-0000-7000-8000-00000000040a");
+    const otherSessionId = `${SESSION_ID}-presence`;
+    await env.DB.batch([
+      env.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
+        VALUES (?, ?, 'active', 'member', '2026-08-26T20:00:00.000Z')`).bind(WORKSPACE_ID, otherUserId),
+      env.DB.prepare(`INSERT INTO sessions
+        (id, user_id, workspace_id, region, revoked_at, expires_at)
+        VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`)
+        .bind(otherSessionId, otherUserId, WORKSPACE_ID),
+    ]);
+    const workspace = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    await workspace.initializeWorkspace(WORKSPACE_ID, "wnam");
+    const at = "2026-08-26T20:00:00.000Z";
+    const common = {
+      kind: "directory_common" as const,
+      title: "Foreground presence",
+      description: "Presence does not follow pooled sockets",
+      preview: "idle",
+      scope: "workspace" as const,
+      state: "idle",
+      systemKind: null,
+      lastActivityAt: at,
+      completedAt: null,
+      archivedAt: null,
+      createdByUserId: null,
+      latestAttentionOrdinal: 0,
+      unreadTrackingStartOrdinal: 0,
+      createdAt: at,
+      updatedAt: at,
+    };
+    const viewer = (userId: string, isParticipant: boolean) => ({
+      kind: "directory_user" as const,
+      userId,
+      isParticipant,
+      unreadCount: 0,
+      youAreMentioned: false,
+      listable: isParticipant,
+      seenAttentionOrdinal: 0,
+      manualUnreadFromOrdinal: null,
+      manualUnreadGeneration: 0,
+      latestMentionAttentionOrdinal: 0,
+    });
+    await workspace.applyWorkstreamDirectoryEffects({
+      workspaceId: WORKSPACE_ID,
+      envelopes: [
+        parentEffectEnvelope(common, "00000000-0000-7000-8000-00000000040b"),
+        parentEffectEnvelope(
+          viewer(USER_ID, true),
+          "00000000-0000-7000-8000-00000000040f",
+        ),
+      ],
+    });
+
+    const newerId = asWorkstreamId("00000000-0000-7000-8000-000000000411");
+    await workspace.applyWorkstreamDirectoryEffects({ workspaceId: WORKSPACE_ID, envelopes: [
+      parentEffectEnvelope({ ...common, title: "Newer unvisited", createdAt: "2026-08-27T20:00:00.000Z",
+        lastActivityAt: "2026-08-28T20:00:00.000Z" },
+      "00000000-0000-7000-8000-000000000412", 1, newerId),
+    ] });
+    const request = { workspaceId: WORKSPACE_ID, userId: USER_ID, limit: 1, includeSystem: false };
+    expect((await workspace.listWorkstreams(request)).items[0]?.id).toBe(newerId);
+    const first = await openWorkspaceSocket(workspace, "00000000-0000-7000-8000-000000000413");
+    const peer = await openWorkspaceSocket(workspace, "00000000-0000-7000-8000-000000000414");
+    const outsider = await openWorkspaceSocket(workspace, "00000000-0000-7000-8000-000000000416", otherSessionId, otherUserId);
+    const outsiderEvents: string[] = [];
+    outsider.addEventListener("message", (event) => { outsiderEvents.push(String(event.data)); });
+    try {
+      const appliedRevision = async (revision: number): Promise<void> => {
+        await vi.waitFor(async () => {
+          const observed = await runInDurableObject(workspace, (_instance, state) =>
+            state.getWebSockets().some((socket) => {
+              const attachment = socket.deserializeAttachment() as { presenceRevision: number };
+              return attachment.presenceRevision === revision;
+            }));
+          expect(observed).toBe(true);
+        });
+      };
+      first.send(JSON.stringify({ type: "set_presence", revision: 1,
+        applicationState: "background", foregroundWorkstreamId: null }));
+      await appliedRevision(1);
+      expect((await workspace.listWorkstreams({ ...request, limit: 20 })).items
+        .find((item) => item.id === WORKSTREAM_ID)?.lastAccessedAt).toBeNull();
+      first.send(JSON.stringify({ type: "set_presence", revision: 2,
+        applicationState: "foreground", foregroundWorkstreamId: null }));
+      await appliedRevision(2);
+      expect((await workspace.listWorkstreams({ ...request, limit: 20 })).items
+        .find((item) => item.id === WORKSTREAM_ID)?.lastAccessedAt).toBeNull();
+      const delivered = nextMessageOfType(peer, "workspace_workstream_recency");
+      first.send(JSON.stringify({ type: "set_presence", revision: 3,
+        applicationState: "foreground", foregroundWorkstreamId: WORKSTREAM_ID }));
+      expect(await delivered).toMatchObject({ workstream:
+        { id: WORKSTREAM_ID, lastAccessedAt: expect.any(String) },
+      });
+      const outsiderBarrier = nextMessageOfType(outsider, "workspace_workstream_page");
+      outsider.send(JSON.stringify({ type: "list_workstreams", requestId: "00000000-0000-7000-8000-000000000417", limit: 20, includeSystem: false }));
+      await outsiderBarrier;
+      expect(outsiderEvents.some((event) => event.includes('"type":"workspace_workstream_recency"'))).toBe(false);
+      await evictDurableObject(workspace);
+      const page = await workspace.listWorkstreams(request);
+      expect(page.items[0]?.id).toBe(WORKSTREAM_ID);
+      expect(page.items[0]?.lastAccessedAt).not.toBeNull();
+      const legacyPage = await workspace.listWorkstreams({ ...request,
+        before: `${Date.parse("2026-08-28T20:00:00.000Z")}:${newerId}` });
+      expect(legacyPage.items[0]?.id).toBe(WORKSTREAM_ID);
+      const next = await workspace.listWorkstreams({ ...request, before: page.nextCursor! });
+      expect(next.items.map((item) => item.id)).toEqual([newerId]);
+      expect((await workspace.listWorkstreams({ ...request, userId: otherUserId })).items[0]?.id).toBe(newerId);
+      const targets = await workspace.batchUpdateTargets({ workspaceId: WORKSPACE_ID, userId: USER_ID,
+        filter: { recency: "access", lastActivityAt: { atOrAfter: page.items[0]!.lastAccessedAt! }, includeSystem: false } });
+      expect(targets.items).toEqual([WORKSTREAM_ID]);
+      await workspace.applyWorkstreamDirectoryEffects({ workspaceId: WORKSPACE_ID, envelopes: [
+        parentEffectEnvelope({ ...common, lastActivityAt: "2099-01-01T00:00:00.000Z" },
+          "00000000-0000-7000-8000-000000000415", 2, newerId),
+      ] });
+      expect((await workspace.listWorkstreams(request)).items[0]?.id).toBe(WORKSTREAM_ID);
+    } finally {
+      first.close();
+      peer.close();
+      outsider.close();
+    }
+  });
+
   it("orders presence across hibernation and clears it when directory visibility changes", async () => {
     await seedOpenAuthority();
     const otherUserId = asUserId("00000000-0000-7000-8000-00000000040a");
@@ -2830,8 +2956,8 @@ describe("Durable Objects in the Workers runtime", () => {
       includeSystem: false,
     })).resolves.toMatchObject({
       items: [
-        { id: workstreamIds[1], pinPosition: null },
         { id: workstreamIds[0], pinPosition: null },
+        { id: workstreamIds[1], pinPosition: null },
         { id: workstreamIds[2], pinPosition: 0 },
       ],
     });

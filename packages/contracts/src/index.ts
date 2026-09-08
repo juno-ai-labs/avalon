@@ -649,6 +649,8 @@ export const WorkstreamSchema = z.object({
    * them. Sort by it; do not store it as an identity.
    */
   pinPosition: z.number().int().nonnegative().nullable().default(null),
+  /** Workspace-owned visit time; omitted by older servers and child-owned responses. */
+  lastAccessedAt: TimestampSchema.nullable().optional(),
   /**
    * People in a personal work stream, for the sidebar facepile. At most
    * {@link WORKSTREAM_SIDEBAR_FACEPILE_LIMIT} ids, newest first, with
@@ -1751,6 +1753,8 @@ export const UpdateWorkstreamRequestSchema = z.object({
  * selects none and `includeSystem` does not reach them.
  */
 export const WorkstreamBatchFilterSchema = z.strictObject({
+  /** Which timestamp the range selects; access falls back to creation for unvisited work streams. */
+  recency: z.enum(["activity", "access"]).optional(),
   lastActivityAt: z.strictObject({
     atOrAfter: TimestampSchema.optional(),
     before: TimestampSchema.optional(),
@@ -2231,6 +2235,17 @@ export const WorkspaceWorkstreamPageEventSchema = z.strictObject({
   requestId: IdSchema,
   ...workspaceWorkstreamPageFields,
 }).superRefine(refineWorkstreamPagePairing);
+
+export const WorkspaceWorkstreamRecencyEventSchema = z.strictObject({
+  type: z.literal("workspace_workstream_recency"),
+  directoryWaterline: z.number().int().nonnegative(),
+  workstream: WorkstreamSchema,
+  stateVersion: WorkspaceWorkstreamStateVersionSchema,
+}).superRefine((event, context) => {
+  if (event.workstream.id !== event.stateVersion.workstreamId) {
+    context.addIssue({ code: "custom", path: ["stateVersion"], message: "must identify the work stream" });
+  }
+});
 
 /**
  * Everything the sidebar paints, sent unprompted when a workspace socket

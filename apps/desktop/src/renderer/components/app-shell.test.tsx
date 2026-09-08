@@ -92,6 +92,15 @@ describe('upsertProjectDirectory', () => {
 });
 
 describe('workstreamMatchesBatchFilter', () => {
+  it('uses visits for access-based archive cleanup and activity for legacy commands', () => {
+    const row = { ...summary('completed'), lastActivityAt: '2026-08-01T00:00:00.000Z',
+      lastAccessedAt: '2026-09-08T00:00:00.000Z' };
+    const range = { lastActivityAt: { atOrAfter: '2026-09-01T00:00:00.000Z' }, includeSystem: false };
+    expect(workstreamMatchesBatchFilter(row, { ...range, recency: 'access' })).toBe(true);
+    expect(workstreamMatchesBatchFilter(row, range)).toBe(false);
+    expect(workstreamMatchesBatchFilter({ ...row, lastActivityAt: row.lastAccessedAt,
+      lastAccessedAt: '2026-08-01T00:00:00.000Z' }, { ...range, recency: 'access' })).toBe(false);
+  });
   it('matches the selected unpinned non-system row against the same half-open range', () => {
     expect(workstreamMatchesBatchFilter(summary('completed'), {
       lastActivityAt: {

@@ -275,13 +275,19 @@ complete topic catalog is:
 | `feature_flags` | Effective client feature gates when a workspace-scoped producer explicitly publishes a change. |
 
 Electron sends `list_workstreams` with a stable request ID, bounded limit,
-optional opaque `(last_activity_at, workstream_id)` cursor, and the system-row preference. WorkspaceDO responds
+optional opaque `(access_or_creation_time, workstream_id)` cursor, and the system-row preference. WorkspaceDO responds
 with `workspace_workstream_page`, the directory waterline, each row's independent
 common/viewer waterlines plus the corresponding UUIDv7 row identities, parsed work-stream rows,
 and the next cursor. Pending page requests survive a transient reconnect
 and reject only when the provider is disposed or the user/session changes. A
 `workstream_directory` sync invalidation refetches these pages; it never asks a
 REST/D1 list endpoint to reconstruct them.
+
+A validated foreground visit persists this user's access time and sends
+`workspace_workstream_recency` only to their subscribed sessions. This contains
+one workstream, its state version, and the directory waterline; system rows are
+included when visited. A cursor whose timestamp differs from its current row
+restarts at page one, so a pre-upgrade activity cursor cannot silently skip rows.
 
 Subscribing is answered with the sidebar itself. The `workspace_sync` event that
 answers `subscribe` carries a `sidebar` field: one `workstream_page` body plus
@@ -688,6 +694,14 @@ the provider's redirect and cannot move; [`security.md`](security.md) records
 what that leaves exposed.
 
 ## Changelog
+
+### 2026-09-08 — Document personal access frames and cursor recovery
+
+WorkspaceDO pushes one visited row to the same user's sessions. Access/creation
+time now defines directory paging, and changed cursor anchors restart the walk.
+This replaces shared-activity ordering without treating background sockets as
+visits or broadcasting personal history to other users.
+
 
 ### 2026-09-06 — Page older history from viewport position
 

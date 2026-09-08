@@ -1,6 +1,6 @@
 # Work-stream pinning
 
-A pinned work stream leaves the recency-sorted sidebar and moves into a
+A pinned work stream leaves the list sorted by last access and moves into a
 **Pinned** section under **Automations**, where it stays until it is unpinned.
 The section is arranged by hand — dragged into order, never sorted — and both the
 pin and the arrangement live on the server, so the same person opening Rally on
@@ -64,6 +64,32 @@ loses its *position*, never its pin.
 All three endpoints answer with the same shape — the caller's whole pinned list,
 in order — so the client replaces what it holds rather than reasoning about which
 row moved.
+
+### Recent work streams
+
+Unpinned work streams sort by **this viewer's last access**, newest first.
+WorkspaceDO stores integer millisecond timestamps in `workspace_workstream_access`,
+keyed by user and work stream. A validated foreground-presence transition records
+an access; background socket prewarming and shared activity do not. An unvisited
+row uses its creation time until the first visit. The timestamp travels as
+`lastAccessedAt`, independently of shared activity and read markers.
+
+The directory page and cursor use the same timestamp, with work-stream ID as the
+tie-breaker. Foreground visits push one `workspace_workstream_recency` row only to
+that user's subscribed sessions. Reconnect reconstructs the order from SQL.
+Desktop applies access and pin fields under the directory waterline, separately
+from the child-owned common and viewer waterlines, so delayed activity snapshots
+cannot erase a visit. Child REST responses omit access metadata; the API mapper
+preserves that omission so ordinary response merges cannot erase a newer visit.
+An absent access field means an older server and retains activity ordering and
+legacy bulk requests; explicit null means an unvisited row on a supporting server.
+A cursor whose timestamp no longer matches its row restarts at page one, covering
+old activity cursors during upgrade and visits made during a paged walk. Project-contained work streams use the same access order.
+
+The recency headings use access time too. Their bulk commands select
+`recency: "access"`; existing activity-based API callers retain their original
+meaning. Notes retain activity-based grouping, and automations keep their own
+section ordering. Pins remain manually ordered.
 
 ### In the sidebar
 
@@ -154,7 +180,7 @@ it repairs. Focus resting anywhere real belongs to whoever put it there.
 - **A work stream is returned exactly once across a WorkspaceDO directory walk.** Pins are
   excluded from the paged query and appended to the first page instead. Leaving
   them in both would return a quiet pin twice — once appended, once on whichever
-  cursor page its `last_activity_at` falls in. Pins are the only rows that leave
+  cursor page its access-or-creation timestamp falls in. Pins are the only rows that leave
   the order: a system work stream is paged like any other when `includeSystem`
   asks for it, and is appended only when it is also pinned.
 - **The sidebar pages.** It requests one page and follows `nextCursor` when the
@@ -162,7 +188,7 @@ it repairs. Focus resting anywhere real belongs to whoever put it there.
   longer holds where anybody looks. Any future merge into the first page has to
   keep the row out of the cursor pages, not merely out of the first one.
 - **The cursor contains recency and work-stream ID.** Timestamps tie; using only
-  `last_activity_at` can skip a row when the next page starts below a tie. The
+  the access-or-creation timestamp can skip a row when the next page starts below a tie. The
   cursor is opaque to Electron and must be returned unchanged.
 - **At most 1,000 pins belong to one person.** The WorkspaceDO transaction counts
   every stored pin, including one currently hidden by visibility, before
@@ -176,11 +202,12 @@ it repairs. Focus resting anywhere real belongs to whoever put it there.
 ## Boundary
 
 This module owns `WorkspaceDO.workspace_workstream_pins`, the three pin endpoints, `pinPosition` on the
-work-stream contract, and the Pinned section of the sidebar. The macOS menu bar
+work-stream contract, `workspace_workstream_access`/`lastAccessedAt`, and the
+Pinned and recent work-stream sections of the sidebar. The macOS menu bar
 item renders a second, read-only view of the same arrangement — its top five —
 and [`menu-bar.md`](menu-bar.md) owns that; it reads `pinPosition` and changes
 nothing. It owns no part of
-what a work stream *is*, who may read it, or how the recent list is sorted.
+what a work stream *is* or who may read it.
 
 It deliberately does not:
 
@@ -253,6 +280,43 @@ collides with itself. Positions are therefore kept unique by how they are
 allocated — `MAX(position) + 1` inside the insert — rather than by the schema.
 
 ## Changelog
+
+### 2026-09-08 — Preserve visit authority across response paths
+
+**What changed:** Visit pushes carry one row, including system rows, instead of
+rebuilding the recent page. Child responses cannot clear workspace-owned visits;
+legacy servers retain activity semantics. One renderer helper owns ordering and
+bulk-route matching and default landing selection, and incompatible cursor
+anchors restart the directory walk.
+
+**Why:** Review exposed response merges that erased visits, mismatched batch
+cleanup, unnecessary per-focus page work, and rollout compatibility gaps.
+
+**Considered and rejected:** Reading access time into every child response adds a
+cross-object read and still permits an older response to overwrite a newer push.
+Defaulting missing access fields to null would erase the legacy/support distinction.
+Workspace-wide invalidation would notify other members about one user's visit.
+
+**Consequences:** Keep live user-scoped pushes for session synchronization. The
+directory waterline orders workspace-owned fields, including visits; it is not a
+read marker. Unvisited rows intentionally use creation time rather than activity.
+
+
+### 2026-09-07 — Order recent work streams by the viewer's access
+
+**What changed:** WorkspaceDO records foreground visits per user, pages by those
+visits, and pushes the saved order to the user's other sessions. Sidebar groups,
+project rows, and group bulk selection use the same access-or-creation timestamp.
+
+**Why:** Shared activity moved rows even when this person had not opened them;
+the requested order must follow the person across sessions.
+
+**Considered and rejected:** Device-local history would disagree between sessions.
+Counting pooled sockets as visits would promote rows the person never viewed.
+
+**Consequences:** Preserve the independent directory waterline for workspace-owned
+access fields, keep pins manual, and do not reinterpret message activity as visits.
+
 
 ### 2026-09-07 — Make startup failure and explicit-route coverage match the real shell
 

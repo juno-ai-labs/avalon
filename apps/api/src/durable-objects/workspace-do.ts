@@ -24,6 +24,7 @@ import {
   WorkspaceAttentionSchema,
   WorkspaceProjectSnapshotEventSchema,
   WorkspaceSidebarListEventSchema,
+  WorkspaceWorkstreamRecencyEventSchema,
   WorkspaceSidebarSchema,
   WorkspaceWorkstreamPageEventSchema,
   WorkspaceWorkstreamStateEventSchema,
@@ -954,6 +955,7 @@ interface WorkspaceDirectoryRow extends Record<string, SqlStorageValue> {
   viewer_waterline: number | null;
   viewer_event_id: string | null;
   pin_position: number | null;
+  last_accessed_at: number | null;
 }
 
 interface WorkspaceConnectorEventRow extends Record<string, SqlStorageValue> {
@@ -2649,6 +2651,15 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
     destination_key TEXT PRIMARY KEY, source_generation INTEGER NOT NULL,
     effective_after_event_sequence INTEGER NOT NULL
   ) STRICT`],
+}, {
+  version: 37,
+  description: "persist each viewer's workstream access history",
+  statements: [`CREATE TABLE workspace_workstream_access (
+    user_id TEXT NOT NULL,
+    workstream_id TEXT NOT NULL REFERENCES workspace_workstream_directory(workstream_id) ON DELETE CASCADE,
+    last_accessed_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, workstream_id)
+  ) STRICT`],
 }];
 
 interface AutomationDirectoryRow extends Record<string, SqlStorageValue> {
@@ -2960,6 +2971,7 @@ function directoryWorkstream(
         }
       : null,
     pinPosition: row.pin_position,
+    lastAccessedAt: iso(row.last_accessed_at),
     ...participantPreview,
   });
 }
@@ -3002,6 +3014,7 @@ function internalDirectoryItem(row: WorkspaceDirectoryRow) {
   };
 }
 
+// Binding 1 is always the viewer user ID; the access join reuses it as ?1.
 const SELECT_WORKSPACE_DIRECTORY = `SELECT directory.workstream_id,
     directory.authority_generation, directory.waterline AS common_waterline,
     directory.source_event_id AS common_event_id, directory.title,
@@ -3015,14 +3028,16 @@ const SELECT_WORKSPACE_DIRECTORY = `SELECT directory.workstream_id,
     viewer.seen_attention_ordinal, viewer.manual_unread_from_ordinal,
     viewer.manual_unread_generation, viewer.latest_mention_attention_ordinal,
     viewer.is_participant, viewer.unseen, viewer.waterline AS viewer_waterline,
-    viewer.source_event_id AS viewer_event_id, pin.position AS pin_position
+    viewer.source_event_id AS viewer_event_id, pin.position AS pin_position, access.last_accessed_at
   FROM workspace_workstream_directory directory
   LEFT JOIN workspace_workstream_viewers viewer
     ON viewer.workstream_id = directory.workstream_id
    AND viewer.user_id = ?
    AND viewer.authority_generation = directory.authority_generation
   LEFT JOIN workspace_workstream_pins pin
-    ON pin.workstream_id = directory.workstream_id AND pin.user_id = ?`;
+    ON pin.workstream_id = directory.workstream_id AND pin.user_id = ?
+  LEFT JOIN workspace_workstream_access access
+    ON access.workstream_id = directory.workstream_id AND access.user_id = ?1`;
 
 /**
  * One regional synchronization and command/control object per workspace.
@@ -3277,6 +3292,39 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         foregroundWorkstreamId: parsed.data.foregroundWorkstreamId,
       } satisfies WorkspaceSocketAttachment);
       if (presenceChanged) this.broadcastPresence();
+      if (presenceChanged && parsed.data.applicationState === "foreground"
+        && parsed.data.foregroundWorkstreamId !== null) {
+        const now = Date.now();
+        const workstreamId = parsed.data.foregroundWorkstreamId;
+        this.state.storage.transactionSync(() => {
+          this.state.storage.sql.exec(
+            `INSERT INTO workspace_workstream_access(user_id, workstream_id, last_accessed_at)
+             VALUES (?, ?, ?) ON CONFLICT(user_id, workstream_id)
+             DO UPDATE SET last_accessed_at = excluded.last_accessed_at`,
+            currentAttachment.userId, workstreamId, now,
+          );
+          this.advanceDirectoryVersion(now);
+        });
+        const row = this.state.storage.sql.exec<WorkspaceDirectoryRow>(
+          `${SELECT_WORKSPACE_DIRECTORY} WHERE directory.workstream_id = ?`,
+          currentAttachment.userId, currentAttachment.userId, workstreamId,
+        ).one();
+        const payload = JSON.stringify(WorkspaceWorkstreamRecencyEventSchema.parse({
+          type: "workspace_workstream_recency",
+          directoryWaterline: this.directoryWaterline(),
+          workstream: mapDirectoryWorkstreams(this.state.storage.sql, [row], currentAttachment.workspaceId)[0],
+          stateVersion: directoryStateVersion(row),
+        }));
+        for (const peer of this.state.getWebSockets()) {
+          const peerAttachment = readAttachment(peer);
+          if (!peerAttachment?.subscribed || peerAttachment.userId !== currentAttachment.userId) continue;
+          try {
+            peer.send(payload);
+          } catch {
+            // Reconnecting reconstructs the saved order from SQLite.
+          }
+        }
+      }
       return;
     }
     if (parsed.data.type === "list_workstreams") {
@@ -6326,6 +6374,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const atOrAfter = filter.lastActivityAt?.atOrAfter;
     const before = filter.lastActivityAt?.before;
     const pinned = filter.pinned;
+    const recency = filter.recency === "access"
+      ? "COALESCE(access.last_accessed_at, directory.source_created_at)"
+      : "directory.last_activity_at";
     return this.state.storage.sql.exec<{ workstream_id: string }>(
       `SELECT directory.workstream_id
          FROM workspace_workstream_directory directory
@@ -6335,11 +6386,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           AND viewer.authority_generation = directory.authority_generation
          LEFT JOIN workspace_workstream_pins pin
            ON pin.workstream_id = directory.workstream_id AND pin.user_id = ?
+         LEFT JOIN workspace_workstream_access access
+           ON access.workstream_id = directory.workstream_id AND access.user_id = ?1
         WHERE directory.archived_at IS NULL
           AND (? = 1 OR directory.system_kind IS NULL)
           AND (directory.scope = 'workspace' OR viewer.is_participant = 1)
-          AND (? IS NULL OR directory.last_activity_at >= ?)
-          AND (? IS NULL OR directory.last_activity_at < ?)
+          AND (? IS NULL OR ${recency} >= ?)
+          AND (? IS NULL OR ${recency} < ?)
           AND (? IS NULL
             OR (? = 1 AND pin.user_id IS NOT NULL)
             OR (? = 0 AND pin.user_id IS NULL))
@@ -8707,7 +8760,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   private listDirectory(request: WorkspaceDirectoryListRequest): WorkspaceDirectoryPage {
-    const cursor = request.before ? directoryCursor(request.before) : null;
+    let cursor = request.before ? directoryCursor(request.before) : null;
+    if (cursor) {
+      const anchor = this.state.storage.sql.exec<WorkspaceDirectoryRow>(
+        `${SELECT_WORKSPACE_DIRECTORY} WHERE directory.workstream_id = ?`,
+        request.userId, request.userId, cursor.workstreamId,
+      ).toArray()[0];
+      // A pre-upgrade activity cursor (or a row visited since paging) no longer
+      // describes this order. Restart the walk rather than skip unseen rows.
+      if (!anchor || (anchor.last_accessed_at ?? anchor.source_created_at) !== cursor.lastActivityAt) cursor = null;
+    }
     const rows = this.state.storage.sql.exec<WorkspaceDirectoryRow>(
       `${SELECT_WORKSPACE_DIRECTORY}
        WHERE directory.archived_at IS NULL AND pin.user_id IS NULL
@@ -8715,9 +8777,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
                                            'waiting_capacity')
          AND (? = 1 OR directory.system_kind IS NULL)
          AND (directory.scope = 'workspace' OR viewer.is_participant = 1)
-         AND (? IS NULL OR directory.last_activity_at < ?
-              OR (directory.last_activity_at = ? AND directory.workstream_id > ?))
-       ORDER BY directory.last_activity_at DESC, directory.workstream_id LIMIT ?`,
+         AND (? IS NULL OR COALESCE(access.last_accessed_at, directory.source_created_at) < ?
+              OR (COALESCE(access.last_accessed_at, directory.source_created_at) = ? AND directory.workstream_id > ?))
+       ORDER BY COALESCE(access.last_accessed_at, directory.source_created_at) DESC, directory.workstream_id LIMIT ?`,
       request.userId,
       request.userId,
       request.includeSystem ? 1 : 0,
@@ -8731,9 +8793,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (hasMore) rows.pop();
     const last = rows.at(-1);
     const nextCursor = hasMore && last
-      ? `${last.last_activity_at}:${last.workstream_id}`
+      ? `${last.last_accessed_at ?? last.source_created_at}:${last.workstream_id}`
       : null;
-    if (!request.before) {
+    if (!cursor) {
       const selected = new Set(rows.map((row) => row.workstream_id));
       const supplemental = [
         ...this.pinnedDirectoryRows(request.userId, request.includeSystem),
