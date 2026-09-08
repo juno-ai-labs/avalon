@@ -1,5 +1,5 @@
 import { ApiError } from "../lib/api-error";
-import { resolveSidekickSkills, sidekickHarnessSkill, sidekickSkillRef } from "./sidekick-skills";
+import { resolveSidekickSkills, sidekickSkillCatalog, sidekickSkillRef } from "./sidekick-skills";
 import type { SidekickSkillSnapshot } from "@rally/contracts";
 import { assertSafePublicUrl } from '../lib/public-web-url';
 import {
@@ -2440,6 +2440,7 @@ export async function runWorkstreamHarness(
     activeRefs: currentSidekickSources.filter((source) => attachedSidekickIds.has(source.id)).map((source) => sidekickSkillRef(source.id)),
   };
   if (!storedSidekickSkills) runtime?.persistentLoop?.saveSidekickSkills(sidekickSnapshot);
+  const sidekickCatalog = sidekickSkillCatalog(sidekickSnapshot.sources);
   const assertSidekickAuthority = async (): Promise<void> => {
     const active = sidekickSnapshot.sources.filter((source) => sidekickSnapshot.activeRefs.includes(sidekickSkillRef(source.id)));
     if (active.length === 0) return;
@@ -3008,10 +3009,13 @@ export async function runWorkstreamHarness(
       // nothing else. What a surface may *do* is settled by the tool loop, so
       // withholding a skill would only hide advice, never authority, and
       // a future general skill would be hidden along with it.
-      skills: [...BUILT_IN_SKILLS, ...sidekickSnapshot.sources.map(sidekickHarnessSkill)],
-      skillActivationHints: sidekickSnapshot.activeRefs,
-      persistSkillActivation: async (ref) => {
-        const source = sidekickSnapshot.sources.find((entry) => sidekickSkillRef(entry.id) === ref);
+      skills: [...BUILT_IN_SKILLS, ...sidekickCatalog.map((entry) => entry.skill)],
+      skillActivationHints: sidekickSnapshot.activeRefs.map((ref) =>
+        sidekickCatalog.find((entry) => entry.durableRef === ref)?.ref ?? ref),
+      persistSkillActivation: async (loadedRef) => {
+        const entry = sidekickCatalog.find((entry) => entry.ref === loadedRef);
+        const source = entry?.source;
+        const ref = entry?.durableRef ?? loadedRef;
         if (source && !sidekickSnapshot.activeRefs.includes(ref)) {
           const allowed = await resolveSidekickSkills(env, input, [source.id], false);
           if (!allowed.some((entry) => entry.id === source.id)) throw new ApiError(403, "sidekick_access_changed", "This Sidekick is no longer available");
