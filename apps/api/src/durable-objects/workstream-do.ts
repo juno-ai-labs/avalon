@@ -2064,6 +2064,13 @@ applyRetirementGate(WorkstreamDO, {
   // The shared classification is inherited from ConversationParentDurableObject;
   // this call is what wraps the doors *this* class overrides for itself.
   drop: {
+    // A visibility question answered, not refused. The artifact host asks this
+    // on every viewer request and treats a throw as a transport fault — it
+    // keeps its cached answer, so a refusal here served a retired work
+    // stream's artifacts to every viewer with a session until the session
+    // expired. Nobody can read a retired work stream, and saying so is the
+    // answer that caller can act on.
+    canReadWorkstream: () => false,
     fetch: () => retiredObjectResponse(),
     webSocketMessage: () => Promise.resolve(),
     webSocketClose: () => Promise.resolve(),

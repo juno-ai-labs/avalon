@@ -19,7 +19,8 @@ import {
   durableObjectStubForWorkspace,
   workspacePlacementAffinity,
 } from "../lib/durable-object-namespace";
-import { logWarn } from "../observability/logger";
+import { isRetirementRefusal } from "../durable-objects/object-retirement";
+import { logInfo, logWarn } from "../observability/logger";
 import {
   AccessRevocationMessageSchema,
   descendantRevocation,
@@ -220,6 +221,22 @@ export async function consumeAccessRevocationQueue(
       await applyAccessRevocation(env, parsed.data);
       message.ack();
     } catch (error) {
+      // A retired object refuses the enumeration a hop asks for
+      // (`listChildren`, `automationIdsOwnedByWorkstream`), and will refuse it
+      // on every redelivery. Retirement closed every socket beneath that object
+      // when it wrote the tombstone, so there is nothing left for this hop to
+      // find: the message is done, not failed.
+      if (isRetirementRefusal(error)) {
+        logInfo(env, "access_revocation_hop_terminal", {
+          workspace_id: parsed.data.workspaceId,
+          user_id: parsed.data.userId,
+          reason: parsed.data.reason,
+          scope: parsed.data.target.scope,
+          outcome: "workspace_retired",
+        });
+        message.ack();
+        return;
+      }
       logWarn(env, "access_revocation_hop_failed", {
         workspace_id: parsed.data.workspaceId,
         user_id: parsed.data.userId,

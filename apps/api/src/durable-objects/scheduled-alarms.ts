@@ -20,6 +20,8 @@
  *
  * `docs/durable-object-alarms.md` is the module document.
  */
+import { WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE } from "@rally/contracts";
+
 import type { Env } from "../env";
 import { InternallyInspectableDurableObject } from "./internally-inspectable-durable-object";
 import {
@@ -702,6 +704,20 @@ export abstract class ScheduledDurableObject<TEnv extends Env = Env>
     // that would do nothing. `armNextAlarm` is inert from here, so nothing
     // re-derives it: this is the last time this object's alarm slot is written.
     await this.ctx.storage.deleteAlarm();
+    // Every socket this object holds, closed with the code the desktop treats
+    // as permanent. The hibernated callbacks are dropped from here, so a socket
+    // left open would stay "connected" — the runtime answers its keepalive
+    // without waking the object — while every frame it sent was discarded, and
+    // the client would never learn the room was gone. `1008` is the close a
+    // client does not reconnect from; an ordinary close would reconnect into a
+    // 409 and keep trying.
+    for (const socket of this.ctx.getWebSockets()) {
+      try {
+        socket.close(WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, "This workspace has been closed");
+      } catch {
+        // A socket already closing has nothing left to close.
+      }
+    }
     return {
       retired: true,
       retiredAt: stored.retiredAt,

@@ -13,6 +13,9 @@ export const WorkspaceRetirementResultSchema = z.strictObject({
   workspaceId: IdSchema,
   complete: z.boolean(),
   remaining: z.number().int().nonnegative(),
+  /** Every work stream and automation in the workspace, over all passes. */
+  parents: z.number().int().nonnegative(),
+  /** Closed by the pass that answered; a resumed pass closes what the last left. */
   retiredParents: z.number().int().nonnegative(),
   retiredChildren: z.number().int().nonnegative(),
   retainedOutbox: z.number().int().nonnegative(),

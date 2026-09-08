@@ -6,7 +6,7 @@ import type { HonoAppEnv } from '../env';
 import { ApiError } from '../lib/api-error';
 import { zValidator } from '../middleware/validation';
 import { retireWorkspaceForOperator } from '../services/workspace-retirement-service';
-import { requireOperatorRole, requireTelemetryOperator } from '../telemetry/operator-auth';
+import { getTelemetryOperator, requireOperatorRole, requireTelemetryOperator } from '../telemetry/operator-auth';
 
 /**
  * The regional API Ace's workspaces tab talks to.
@@ -20,8 +20,11 @@ import { requireOperatorRole, requireTelemetryOperator } from '../telemetry/oper
 const WorkspaceParamSchema = z.strictObject({ workspaceId: z.string().uuid() });
 /**
  * The confirmation the page collected: the operator typed or pasted the id
- * they are closing. Carried to the API so the irreversible call is refused
- * unless the two agree, rather than trusting the page to have asked.
+ * they are closing. Carried to the API and compared with the path, which
+ * catches a page or a script that named one workspace and closed another; it
+ * is a consistency check on the request, not a second confirmation — a caller
+ * that sets both fields to the same id passes it, and the typed ceremony
+ * itself is the page's.
  */
 const RetireBodySchema = z.strictObject({ confirmWorkspaceId: z.string().uuid() });
 
@@ -37,7 +40,9 @@ workspaceOperatorRoutes.post(
     if (c.req.valid('json').confirmWorkspaceId !== workspaceId) {
       throw new ApiError(409, 'workspace_retirement_unconfirmed', 'The confirmation does not name this workspace');
     }
-    const receipt = await retireWorkspaceForOperator(c.env, workspaceId);
+    const receipt = await retireWorkspaceForOperator(c.env, workspaceId, {
+      operatorId: getTelemetryOperator(c).operatorId,
+    });
     return c.json(WorkspaceRetirementResultSchema.parse({ workspaceId, ...receipt }));
   },
 );
