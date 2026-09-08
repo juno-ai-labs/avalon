@@ -132,7 +132,7 @@ const provider = useOpenRouterDouble((call) => {
   }
   if (loadSkillOnNextTurn) {
     loadSkillOnNextTurn = false;
-    return { callTool: { name: "load_skill", arguments: { name: "sidekick-manual-helper" } } };
+    return { callTool: { name: "load_skill", arguments: { name: "sidekick-manual-helper-2" } } };
   }
   return { say: "Done." };
 });
@@ -532,6 +532,11 @@ describe("AutomationDO", () => {
     const draft: AutomationDraft = { ...DEFINITION, definitionVersion: 2, triggers: [], instructions: "First accepted Sidekick instructions." };
     await automationStub().saveDefinition({ ...addressed(), draft, evaluatorRules: null, submittedByRunId: null, actor: actor() });
     await deliverParentEffects(TEST_ENV, automationStub());
+    const earlierId = asAutomationId("00000000-0000-7000-8000-000000000001");
+    const earlier = env.AUTOMATION_DOS.get(env.AUTOMATION_DOS.idFromName(automationDOName("global", WORKSPACE_ID, earlierId)));
+    await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID, scope: "personal", owningWorkstreamId: null, automationId: earlierId });
+    await earlier.saveDefinition({ workspaceId: WORKSPACE_ID, automationId: earlierId, draft, evaluatorRules: null, submittedByRunId: null, actor: actor() });
+    await deliverParentEffects(TEST_ENV, earlier);
     const workstreamId = asWorkstreamId("00000000-0000-7000-8000-00000000ad99");
     const root = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(conversationObjectName("global", WORKSPACE_ID, workstreamId)));
     const auth = { sessionId: SESSION_ID, userId: AUTHOR_ID, workspaceId: WORKSPACE_ID, region: "global", role: "member" };
@@ -551,8 +556,11 @@ describe("AutomationDO", () => {
     ).toArray().map((row) => JSON.parse(row.snapshot_json)));
     await expect.poll(() => root.sidekickAttachments({ workspaceId: WORKSPACE_ID, workstreamId }), { timeout: RUN_SETTLE_TIMEOUT_MS }).toEqual([AUTOMATION_ID]);
     await expect.poll(() => runInDurableObject(root, (_instance, state) => state.storage.sql.exec<{ status: string }>(`SELECT status FROM runs ORDER BY created_at DESC LIMIT 1`).one().status), { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe("completed");
-    expect((await snapshots())[0].sources[0].revision).toBe(1);
-    await automationStub().saveDefinition({ ...addressed(), draft: { ...draft, instructions: "Second accepted Sidekick instructions." }, evaluatorRules: null, submittedByRunId: null, actor: actor() });
+    expect((await snapshots())[0].sources).toContainEqual(expect.objectContaining({ id: AUTOMATION_ID, revision: 1 }));
+    await earlier.remove({ workspaceId: WORKSPACE_ID, automationId: earlierId, actor: actor() });
+    await deliverParentEffects(TEST_ENV, earlier);
+    await evictDurableObject(root);
+    await automationStub().saveDefinition({ ...addressed(), draft: { ...draft, name: "Updated helper", instructions: "Second accepted Sidekick instructions." }, evaluatorRules: null, submittedByRunId: null, actor: actor() });
     const sent = await root.fetch("https://object.test/internal/product", {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ operation: "create_message", auth, input: { text: "Use the attached knowledge.", clientMessageId: "sidekick-again", mentions: [], confirmedParticipantUserIds: [], attachmentIds: [] } }),
@@ -560,11 +568,15 @@ describe("AutomationDO", () => {
     expect(sent.status).toBe(200);
     await expect.poll(async () => (await snapshots()).length, { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(2);
     const admitted = await snapshots();
-    expect(admitted[0].sources[0].instructions).toBe(draft.instructions);
-    expect(admitted[1].sources[0].revision).toBe(2);
+    expect(admitted[0].sources).toContainEqual(expect.objectContaining({ id: AUTOMATION_ID, instructions: draft.instructions }));
+    expect(admitted[1].sources).toContainEqual(expect.objectContaining({ id: AUTOMATION_ID, revision: 2 }));
     expect(admitted[1].activeRefs).toContain(`platform:sidekick-${AUTOMATION_ID}`);
+    expect(await runInDurableObject(root, (_instance, state) => state.storage.sql.exec<{ name: string }>(
+      `SELECT name FROM sidekick_skill_names WHERE sidekick_id = ?`, AUTOMATION_ID,
+    ).one().name)).toBe("sidekick-manual-helper-2");
     await expect.poll(() => provider.calls.some((call) => call.messages.some((message) =>
-      message.role === "system" && promptText(message.content).includes("Second accepted Sidekick instructions."))),
+      message.role === "system" && promptText(message.content).includes("Second accepted Sidekick instructions.")
+      && promptText(message.content).includes('name="sidekick-manual-helper-2"'))),
     { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(true);
     expect(await root.sidekickAttachments({ workspaceId: WORKSPACE_ID, workstreamId, removeId: AUTOMATION_ID })).toEqual([]);
   });

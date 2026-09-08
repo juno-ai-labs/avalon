@@ -2346,6 +2346,7 @@ export async function runWorkstreamHarness(
     /** Object-local authority for the one persistent loop of this substream. */
     persistentLoop?: {
       readSidekickSkills(): SidekickSkillSnapshot | null;
+      assignSidekickSkillNames(sources: SidekickSkillSnapshot["sources"]): Map<string, string>;
       attachedSidekickIds(): string[];
       saveSidekickSkills(snapshot: SidekickSkillSnapshot): void;
       activateSidekickSkill(ref: string): void;
@@ -2440,7 +2441,8 @@ export async function runWorkstreamHarness(
     activeRefs: currentSidekickSources.filter((source) => attachedSidekickIds.has(source.id)).map((source) => sidekickSkillRef(source.id)),
   };
   if (!storedSidekickSkills) runtime?.persistentLoop?.saveSidekickSkills(sidekickSnapshot);
-  const sidekickCatalog = sidekickSkillCatalog(sidekickSnapshot.sources);
+  const sidekickCatalog = sidekickSkillCatalog(sidekickSnapshot.sources,
+    runtime?.persistentLoop?.assignSidekickSkillNames(sidekickSnapshot.sources));
   const assertSidekickAuthority = async (): Promise<void> => {
     const active = sidekickSnapshot.sources.filter((source) => sidekickSnapshot.activeRefs.includes(sidekickSkillRef(source.id)));
     if (active.length === 0) return;
@@ -3010,6 +3012,7 @@ export async function runWorkstreamHarness(
       // withholding a skill would only hide advice, never authority, and
       // a future general skill would be hidden along with it.
       skills: [...BUILT_IN_SKILLS, ...sidekickCatalog.map((entry) => entry.skill)],
+      // Built-in refs share this snapshot and pass through unchanged on retry.
       skillActivationHints: sidekickSnapshot.activeRefs.map((ref) =>
         sidekickCatalog.find((entry) => entry.durableRef === ref)?.ref ?? ref),
       persistSkillActivation: async (loadedRef) => {
