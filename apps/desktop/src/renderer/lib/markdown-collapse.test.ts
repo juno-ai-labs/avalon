@@ -3,7 +3,6 @@ import {
   collapsibleSectionIds,
   markdownDefinitionBlocks,
   splitCollapsibleMarkdown,
-  splitMarkdownH2Document,
   withMarkdownDefinitions,
   type MarkdownCollapsePart,
 } from './markdown-collapse';
@@ -201,64 +200,6 @@ describe('withMarkdownDefinitions', () => {
   });
 });
 
-describe('splitMarkdownH2Document', () => {
-  it('keeps the preamble and splits only at h2 headings', () => {
-    const source = 'Lead.\n\n## Alpha\n\nBody.\n\n### Nested\n\nMore.\n\n## Beta\n\nEnd.\n';
-    const document = splitMarkdownH2Document(source);
-    expect(document.preamble).toBe('Lead.\n\n');
-    expect(document.sections).toEqual([
-      {
-        id: 'document-section-0',
-        title: 'Alpha',
-        heading: '## Alpha\n',
-        body: '\nBody.\n\n### Nested\n\nMore.\n\n',
-      },
-      {
-        id: 'document-section-1',
-        title: 'Beta',
-        heading: '## Beta\n',
-        body: '\nEnd.\n',
-      },
-    ]);
-    expect(document.preamble + document.sections.map((section) => `${section.heading}${section.body}`).join(''))
-      .toBe(source);
-  });
-
-  it('supports setext h2 headings and removes closing hashes from ATX titles', () => {
-    const document = splitMarkdownH2Document('First card\n---\n\nOne.\n\n## Second card ##\n\nTwo.');
-    expect(document.sections.map((section) => section.title)).toEqual(['First card', 'Second card']);
-  });
-
-  it('ignores h2-like text inside code, list items, and blockquotes', () => {
-    const source = [
-      '```md',
-      '## In code',
-      '```',
-      '',
-      '- item',
-      '  ## In a list',
-      '',
-      '> ## In a quote',
-      '',
-      '## Real section',
-      '',
-      'Body.',
-    ].join('\n');
-    const document = splitMarkdownH2Document(source);
-    expect(document.sections).toHaveLength(1);
-    expect(document.sections[0]?.title).toBe('Real section');
-    expect(document.preamble).toContain('## In code');
-    expect(document.preamble).toContain('## In a list');
-    expect(document.preamble).toContain('## In a quote');
-  });
-
-  it('returns the entire source as preamble when there is no h2', () => {
-    expect(splitMarkdownH2Document('# Title\n\n### Detail')).toEqual({
-      preamble: '# Title\n\n### Detail',
-      sections: [],
-    });
-  });
-});
 
 function partsId(part: MarkdownCollapsePart): string | undefined {
   return part.type === 'section' ? part.id : undefined;

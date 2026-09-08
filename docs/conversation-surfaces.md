@@ -114,6 +114,9 @@ local actions; **Speak** uses the regional authenticated stream documented in
 [`message-speech.md`](message-speech.md) and receives the complete stored
 markdown even when the shared renderer has collapsed its sections.
 
+Assistant H2 sections use the shared inline Markdown renderer. There is no
+heading-generated card deck or paged document reader.
+
 ## Testing
 
 Shared components have fixture-level component tests for settled, streaming,
@@ -123,6 +126,18 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-08 — Remove heading-generated document cards
+
+**What changed:** Removed the H2 card parser, stacked cards, modal paging, and
+host opt-in. Assistant responses use the existing inline Markdown path.
+
+**Why:** Product direction explicitly removes the heading card maker, reversing
+the 2026-09-01 section-card decision. Keeping it hidden behind an unused prop
+would retain functionality that was requested to be removed.
+
+**Consequences:** Shared heading collapse and complete-source copy/export remain
+available; H2 headings no longer create cards.
 
 ### 2026-09-08 — Sidekick navigation and attachments
 

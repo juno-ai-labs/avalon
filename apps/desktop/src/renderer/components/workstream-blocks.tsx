@@ -1,5 +1,4 @@
 import clsx from 'clsx';
-import * as Dialog from '@radix-ui/react-dialog';
 import {
   IconBrain,
   IconDeviceDesktop,
@@ -13,14 +12,12 @@ import {
 import type { AutomationPluginActivity } from '@rally/contracts';
 import {
   Check,
-  ChevronLeft,
   ChevronDown,
   ChevronRight,
   CircleAlert,
   Clipboard,
   Copy,
   FileDown,
-  FileText,
   ImageDown,
   LoaderCircle,
   Square,
@@ -54,9 +51,7 @@ import { isComposingKeyEvent } from '../lib/ime';
 import {
   markdownDefinitionBlocks,
   splitCollapsibleMarkdown,
-  splitMarkdownH2Document,
   withMarkdownDefinitions,
-  type MarkdownH2Section,
 } from '../lib/markdown-collapse';
 import { saveMessageExport } from '../lib/message-export';
 import { desktopBridge, desktopServicesAvailable } from '../lib/platform';
@@ -1325,223 +1320,6 @@ export function MarkdownBody({
   );
 }
 
-const DOCUMENT_CARD_WIDTH = 220;
-const DOCUMENT_CARD_HEIGHT = 53;
-const DOCUMENT_CARD_OFFSET = 20;
-
-function mentionsWithin(
-  mentions: readonly MessageMention[],
-  start: number,
-  end: number,
-): MessageMention[] {
-  return mentions.flatMap((mention) => {
-    if (mention.type !== 'connector') return [mention];
-    if (mention.startOffset < start || mention.endOffset > end) return [];
-    return [{
-      ...mention,
-      startOffset: mention.startOffset - start,
-      endOffset: mention.endOffset - start,
-    }];
-  });
-}
-
-interface PositionedDocumentSection {
-  readonly section: MarkdownH2Section;
-  readonly start: number;
-}
-
-function AgentDocumentDeck({
-  citations,
-  mentions,
-  streaming,
-  text,
-  telemetry,
-}: {
-  citations?: CitationContext;
-  mentions: readonly MessageMention[];
-  streaming: boolean;
-  text: string;
-  telemetry?: MessageCopyTelemetry;
-}): React.JSX.Element {
-  const document = useMemo(() => splitMarkdownH2Document(text), [text]);
-  const positioned = useMemo<PositionedDocumentSection[]>(() => {
-    let cursor = document.preamble.length;
-    return document.sections.map((section) => {
-      const positionedSection = { section, start: cursor };
-      cursor += section.heading.length + section.body.length;
-      return positionedSection;
-    });
-  }, [document]);
-  const definitions = useMemo(() => markdownDefinitionBlocks(text), [text]);
-  const [openIndex, setOpenIndex] = useState<number | null>(null);
-  const returnFocus = useRef<HTMLButtonElement | null>(null);
-  const pointerStart = useRef<{ x: number; y: number } | null>(null);
-
-  useEffect(() => {
-    if (openIndex !== null && openIndex >= positioned.length) {
-      setOpenIndex(positioned.length > 0 ? positioned.length - 1 : null);
-    }
-  }, [openIndex, positioned.length]);
-
-  useEffect(() => {
-    if (openIndex === null) return;
-    const pageWithKeyboard = (event: KeyboardEvent): void => {
-      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
-      event.preventDefault();
-      setOpenIndex((current) => {
-        if (current === null) return null;
-        return event.key === 'ArrowRight'
-          ? Math.min(positioned.length - 1, current + 1)
-          : Math.max(0, current - 1);
-      });
-    };
-    window.addEventListener('keydown', pageWithKeyboard);
-    return () => window.removeEventListener('keydown', pageWithKeyboard);
-  }, [openIndex, positioned.length]);
-
-  if (streaming || positioned.length === 0) {
-    return (
-      <MarkdownBody citations={citations} mentions={[...mentions]} streaming={streaming} telemetry={telemetry}>
-        {text}
-      </MarkdownBody>
-    );
-  }
-
-  const active = openIndex === null ? null : positioned[openIndex];
-  const deckWidth = DOCUMENT_CARD_WIDTH + (positioned.length - 1) * DOCUMENT_CARD_OFFSET;
-  const deckHeight = DOCUMENT_CARD_HEIGHT + (positioned.length - 1) * DOCUMENT_CARD_OFFSET;
-  const page = (direction: -1 | 1): void => {
-    setOpenIndex((current) => {
-      if (current === null) return null;
-      return Math.max(0, Math.min(positioned.length - 1, current + direction));
-    });
-  };
-  const finishSwipe = (x: number, y: number): void => {
-    const start = pointerStart.current;
-    pointerStart.current = null;
-    if (!start) return;
-    const horizontal = x - start.x;
-    const vertical = y - start.y;
-    if (Math.abs(horizontal) < 44 || Math.abs(horizontal) <= Math.abs(vertical)) return;
-    page(horizontal < 0 ? 1 : -1);
-  };
-  const activeBodyStart = active ? active.start + active.section.heading.length : 0;
-  const activeBody = active
-    ? withMarkdownDefinitions(active.section.body, definitions)
-    : '';
-
-  return (
-    <div className="agent-document-deck-region">
-      {document.preamble && (
-        <div className="agent-document-preamble">
-          <MarkdownBody
-            citations={citations}
-            mentions={mentionsWithin(mentions, 0, document.preamble.length)}
-            streaming={streaming}
-            telemetry={telemetry}
-          >{document.preamble}</MarkdownBody>
-        </div>
-      )}
-      <div aria-label={`${positioned.length} document sections`} className="agent-document-deck-scroll">
-        <div
-          className="agent-document-deck"
-          style={{ height: deckHeight, width: deckWidth }}
-        >
-          {positioned.map(({ section }, index) => (
-            <button
-              aria-label={`Open section ${index + 1} of ${positioned.length}: ${section.title}`}
-              className="agent-document-card"
-              key={section.id}
-              onClick={(event) => {
-                returnFocus.current = event.currentTarget;
-                setOpenIndex(index);
-              }}
-              style={{
-                left: index * DOCUMENT_CARD_OFFSET,
-                top: index * DOCUMENT_CARD_OFFSET,
-                zIndex: positioned.length - index,
-              }}
-              type="button"
-            >
-              <span aria-hidden="true" className="agent-document-card-icon">
-                <FileText size={24} strokeWidth={1.8} />
-              </span>
-              <span className="agent-document-card-copy">
-                <strong>{section.title}</strong>
-                <span>Section {index + 1} of {positioned.length}</span>
-              </span>
-            </button>
-          ))}
-        </div>
-      </div>
-      <span className="sr-only">{positioned.length} {positioned.length === 1 ? 'section' : 'sections'}</span>
-
-      <Dialog.Root open={active !== null} onOpenChange={(open) => !open && setOpenIndex(null)}>
-        {active && (
-          <Dialog.Portal>
-            <Dialog.Overlay className="attachment-lightbox-overlay" />
-            <Dialog.Content
-              className="agent-document-lightbox"
-              onCloseAutoFocus={(event) => {
-                if (!returnFocus.current) return;
-                event.preventDefault();
-                returnFocus.current.focus();
-              }}
-              onPointerDown={(event) => {
-                pointerStart.current = { x: event.clientX, y: event.clientY };
-              }}
-              onPointerCancel={() => { pointerStart.current = null; }}
-              onPointerUp={(event) => finishSwipe(event.clientX, event.clientY)}
-            >
-              <header className="agent-document-lightbox-header">
-                <div>
-                  <small aria-live="polite">Section {openIndex! + 1} of {positioned.length}</small>
-                  <Dialog.Title>{active.section.title}</Dialog.Title>
-                </div>
-                <nav aria-label="Document sections" className="agent-document-lightbox-navigation">
-                  <button
-                    aria-label="Previous section"
-                    disabled={openIndex === 0}
-                    onClick={() => page(-1)}
-                    type="button"
-                  ><ChevronLeft aria-hidden="true" size={18} /></button>
-                  <button
-                    aria-label="Next section"
-                    disabled={openIndex === positioned.length - 1}
-                    onClick={() => page(1)}
-                    type="button"
-                  ><ChevronRight aria-hidden="true" size={18} /></button>
-                </nav>
-                <Dialog.Close asChild>
-                  <button aria-label="Close document" className="attachment-lightbox-close" type="button">
-                    <X aria-hidden="true" size={20} />
-                  </button>
-                </Dialog.Close>
-              </header>
-              <div className="agent-document-lightbox-scroll">
-                <article className="agent-document-lightbox-page">
-                  {activeBody.trim() ? (
-                    <MarkdownBody
-                      citations={citations}
-                      mentions={mentionsWithin(
-                        mentions,
-                        activeBodyStart,
-                        active.start + active.section.heading.length + active.section.body.length,
-                      )}
-                      telemetry={telemetry}
-                    >{activeBody}</MarkdownBody>
-                  ) : <p className="agent-document-empty-section">This section is empty.</p>}
-                </article>
-              </div>
-              <p className="sr-only">Use the left and right arrow keys, swipe, or use the previous and next buttons to change sections.</p>
-            </Dialog.Content>
-          </Dialog.Portal>
-        )}
-      </Dialog.Root>
-    </div>
-  );
-}
-
 /**
  * What a person can do with a finished turn: copy it, or keep it as a file.
  *
@@ -1667,7 +1445,6 @@ function AssistantMessageActions({ citations, mentions, telemetry, text }: {
 }
 
 export function AssistantMessageContent({
-  documentCards = false,
   citations,
   collapseHeadings = false,
   // The hoisted constant, not `= []`: a per-render array here would feed
@@ -1680,7 +1457,6 @@ export function AssistantMessageContent({
 }: {
   citations?: CitationContext;
   collapseHeadings?: boolean;
-  documentCards?: boolean;
   mentions?: MessageMention[];
   showCopy?: boolean;
   streaming?: boolean;
@@ -1690,17 +1466,7 @@ export function AssistantMessageContent({
   return (
     <>
       {text ? (
-        documentCards
-          ? (
-              <AgentDocumentDeck
-                citations={citations}
-                mentions={mentions}
-                streaming={streaming}
-                telemetry={telemetry}
-                 text={text}
-               />
-             )
-          : <MarkdownBody citations={citations} collapseHeadings={collapseHeadings} mentions={mentions} streaming={streaming} telemetry={telemetry}>{text}</MarkdownBody>
+        <MarkdownBody citations={citations} collapseHeadings={collapseHeadings} mentions={mentions} streaming={streaming} telemetry={telemetry}>{text}</MarkdownBody>
       ) : null}
       {showCopy && !streaming && text && (
         <AssistantMessageActions citations={citations} mentions={mentions} telemetry={telemetry} text={text} />
@@ -2449,8 +2215,6 @@ export function ElicitationPanel({
 
 interface MessageBlockProps {
   onStartSubstream?: (throughTurnId: string) => void;
-  /** The main work-stream feed presents an agent's h2 document as a card deck. */
-  agentDocumentCards?: boolean;
   /**
    * How this transcript resolves and opens a citation. Absent on a surface
    * without a work stream behind it, which is exactly when every citation in a
@@ -2483,7 +2247,6 @@ interface MessageBlockProps {
 
 export function MessageBlock({
   onStartSubstream,
-  agentDocumentCards = false,
   citations,
   collapseHeadings = false,
   currentUserId,
@@ -2628,7 +2391,7 @@ export function MessageBlock({
         {message.contextLabel && <span className="message-context-label">{message.contextLabel}</span>}
         <time dateTime={message.createdAt}>{formatRelative(message.createdAt)}</time>
         {message.workSummary && <span className="message-work-summary">{workSummaryLabel(message.workSummary)}</span>}
-        {!human && collapseHeadings && !agentDocumentCards && <MarkdownCollapseAllButton />}
+        {!human && collapseHeadings && <MarkdownCollapseAllButton />}
         {onStartSubstream && message.transcriptTurnId && message.messageType === 'text'
           && !message.streaming && !message.deliveryState && (
           <button
@@ -2672,7 +2435,6 @@ export function MessageBlock({
           <AssistantMessageContent
             citations={citations}
             collapseHeadings={collapseHeadings}
-            documentCards={agentDocumentCards}
             mentions={message.mentions}
             streaming={message.streaming}
             text={message.text ?? ''}
@@ -2682,7 +2444,7 @@ export function MessageBlock({
       )}
     </article>
   );
-  if (human || !collapseHeadings || agentDocumentCards) return article;
+  if (human || !collapseHeadings) return article;
   // Same repair the body applies, so the header's collapse-all and the
   // body's section wrappers agree on `section-${index}` ids. Mentions are
   // inline links and cannot change the heading count.
