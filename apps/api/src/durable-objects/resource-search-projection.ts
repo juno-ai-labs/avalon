@@ -31,6 +31,30 @@ export const RESOURCE_SEARCH_MIGRATION_STATEMENTS = [
    SELECT id, 1, 1, 0 FROM resources`,
 ];
 
+/** Forward-only replacement: keep this aligned with resourceSearchText/category inputs. */
+export const RESOURCE_SEARCH_CONTENT_UPDATE_MIGRATION = [
+  'DROP TRIGGER resources_search_update',
+  `CREATE TRIGGER resources_search_update AFTER UPDATE ON resources
+    WHEN OLD.provider IS NOT NEW.provider
+      OR OLD.title IS NOT NEW.title
+      OR OLD.canonical_url IS NOT NEW.canonical_url
+      OR OLD.mime_type IS NOT NEW.mime_type
+      OR OLD.content_ref IS NOT NEW.content_ref
+      OR OLD.content_sha256 IS NOT NEW.content_sha256
+      OR OLD.model_mime_type IS NOT NEW.model_mime_type
+      OR OLD.model_content_ref IS NOT NEW.model_content_ref
+      OR OLD.model_content_sha256 IS NOT NEW.model_content_sha256
+      OR (CASE WHEN json_type(OLD.metadata_json, '$.description') = 'text'
+          THEN json_extract(OLD.metadata_json, '$.description') ELSE '' END)
+        IS NOT (CASE WHEN json_type(NEW.metadata_json, '$.description') = 'text'
+          THEN json_extract(NEW.metadata_json, '$.description') ELSE '' END)
+    BEGIN
+      INSERT INTO resource_search_versions(resource_id, revision, pending, not_before)
+      VALUES (NEW.id, 1, 1, 0)
+      ON CONFLICT(resource_id) DO UPDATE SET revision = revision + 1, pending = 1, not_before = 0;
+    END`,
+];
+
 export function resourceSearchRevision(sql: SqlStorage, resourceId: string): number | null {
   return sql.exec<{ revision: number }>('SELECT revision FROM resource_search_versions WHERE resource_id = ?', resourceId)
     .toArray()[0]?.revision ?? null;
