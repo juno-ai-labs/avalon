@@ -19,12 +19,14 @@ import {
   type WorkstreamControlSocketEvent,
 } from "@rally/contracts";
 import type {
+  ConversationEffect,
   ConversationEffectEnvelope,
   ParentEffectEnvelope,
 } from "@rally/contracts/conversation-effects";
 import {
   WorkstreamDirectoryCommonEffectSchema,
   WorkstreamDirectoryUserEffectSchema,
+  isPersonNotificationEffect,
 } from "@rally/contracts/conversation-effects";
 import {
   ConversationParentAuthorityRequestSchema,
@@ -40,6 +42,8 @@ import {
   MutatePrivateChildParticipantRequestSchema,
   MutatePrivateChildParticipantResultSchema,
   PrivateChildPreparationOperationSchema,
+  SetPrivateChildArchivedRequestSchema,
+  SetPrivateChildArchivedResultSchema,
   ReadPrivateChildPreparationRequestSchema,
   SavePreparedPrivateChildContextRequestSchema,
   SavePrivateChildCaptureRequestSchema,
@@ -58,6 +62,8 @@ import {
   type MutatePrivateChildParticipantRequest,
   type MutatePrivateChildParticipantResult,
   type PrivateChildPreparationOperation,
+  type SetPrivateChildArchivedRequest,
+  type SetPrivateChildArchivedResult,
   type ReadPrivateChildPreparationRequest,
   type SavePreparedPrivateChildContextRequest,
   type SavePrivateChildCaptureRequest,
@@ -86,6 +92,7 @@ import type { DurableObjectMigrationPlan } from "./migratable-durable-object";
 import {
   CONVERSATION_CHILDREN_SCHEMA_STATEMENTS,
   ConversationParentDurableObject,
+  aggregateUserProjections,
   type ConversationParentIdentity,
   type DirectoryCommonEffect,
 } from "./conversation-parent-object";
@@ -526,6 +533,24 @@ export const WORKSTREAM_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
     `CREATE INDEX private_child_membership_effects_due_idx
       ON private_child_membership_effects(state, not_before, created_at, operation_id)`,
   ],
+}, {
+  version: 8,
+  description: "let a private child be archived the way its work stream can be",
+  statements: [
+    // A nullable timestamp rather than a fourth `status`. `status` is the
+    // creation state machine — reserved, ready, failed — and archiving is
+    // orthogonal to it: an archived child is a *ready* child that nobody wants
+    // in their sidebar any more. Keeping them apart also means no rebuild.
+    // Widening the `status` CHECK would require replacing a table that
+    // `private_child_preparations` and `private_child_memberships` both
+    // reference with `ON DELETE CASCADE`, and per the SQLite guide a rebuild
+    // runs with foreign-key enforcement on and would take those rows with it.
+    //
+    // The name and the shape are the work stream's own `archived_at`, so the
+    // two read the same way at every layer that already handles one.
+    `ALTER TABLE conversation_children
+       ADD COLUMN archived_at INTEGER CHECK (archived_at IS NULL OR archived_at >= 0)`,
+  ],
 }];
 
 function first<T extends Record<string, SqlStorageValue>>(cursor: SqlStorageCursor<T>): T | null {
@@ -797,8 +822,10 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     this.assertParent(request.workspaceId, request.parentId);
     const substreamId = request.substreamId ?? "0";
     if (substreamId !== "0") {
-      const child = first(this.parentSql.exec<{ status: "reserved" | "ready" | "failed"; version: number | null }>(
-        `SELECT child.status, member.version
+      const child = first(this.parentSql.exec<{
+        status: "reserved" | "ready" | "failed"; version: number | null; archived_at: number | null;
+      }>(
+        `SELECT child.status, child.archived_at, member.version
            FROM conversation_children child
            LEFT JOIN private_child_memberships member
              ON member.substream_id = child.substream_id AND member.user_id = ? AND member.active = 1
@@ -808,7 +835,11 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       return ConversationParentAuthorizeViewerResultSchema.parse({
         authorized: (row.scope === "workspace" || this.isParticipant(request.userId))
           && child?.status === "ready" && child.version !== null,
-        archived: row.archived_at !== null,
+        // Either archive reaches this conversation: the work stream's, which
+        // takes all of its children with it, and the child's own. One field
+        // because every caller downstream already refuses writes and socket
+        // tickets on it, and neither archive means anything different here.
+        archived: row.archived_at !== null || child?.archived_at != null,
         childStatus: child?.status ?? null,
         membershipVersion: child?.version ?? 0,
       });
@@ -1169,6 +1200,67 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     return this.mutatePrivateChildParticipant(input, false);
   }
 
+  /**
+   * Take a private child out of its members' sidebars, or put it back.
+   *
+   * Any active member may archive, which is the same rule that lets any of
+   * them add and remove people: a substream is a room its members share, not
+   * one its creator owns, and the creator has no way to leave it — removing
+   * the last member is refused — so an owner-only archive would leave a
+   * substream nobody could get rid of.
+   *
+   * Archiving does not touch membership or the child's transcript. It is the
+   * work stream's own archive one level down: the row leaves every member's
+   * sidebar, the conversation stops accepting writes, and restoring it brings
+   * back exactly what was there.
+   */
+  async setPrivateChildArchived(
+    input: SetPrivateChildArchivedRequest,
+  ): Promise<SetPrivateChildArchivedResult> {
+    await this.initialized;
+    const request = SetPrivateChildArchivedRequestSchema.parse(input);
+    this.assertParent(request.workspaceId, request.parentId);
+    const now = Date.now();
+    const result = this.state.storage.transactionSync(() => {
+      const child = first(this.parentSql.exec<{ status: string; archived_at: number | null }>(
+        `SELECT status, archived_at FROM conversation_children
+          WHERE substream_id = ? AND kind = 'child'`,
+        request.substreamId,
+      ));
+      if (!child || child.status !== "ready") throw new Error("private_child_not_ready");
+      const actor = first(this.parentSql.exec<{ active: number }>(
+        `SELECT active FROM private_child_memberships WHERE substream_id = ? AND user_id = ?`,
+        request.substreamId, request.actorUserId,
+      ));
+      if (actor?.active !== 1) throw new Error("private_child_participant_required");
+      if ((child.archived_at !== null) === request.archived) {
+        return { outcome: "unchanged" as const, archivedAt: child.archived_at };
+      }
+      const archivedAt = request.archived ? now : null;
+      this.parentSql.exec(
+        `UPDATE conversation_children SET archived_at = ?, updated_at = ? WHERE substream_id = ?`,
+        archivedAt, now, request.substreamId,
+      );
+      // After the update and inside the same transaction, so each member's
+      // recomputed row set reflects the state this call just wrote rather than
+      // the one it left.
+      this.advancePrivateChildrenVersionsFor(request.substreamId, now);
+      return {
+        outcome: request.archived ? "archived" as const : "restored" as const,
+        archivedAt,
+      };
+    });
+    // No socket eviction, deliberately. Archiving is not a revocation: every
+    // member could read this a moment ago and any of them can restore it, so
+    // an open reader keeping its frames until it reconnects costs nothing that
+    // matters. `revokeSocketAccess` stays what it is — the one path for access
+    // actually ending — rather than gaining a second trigger with different
+    // rules. A work stream's own archive relies on the same thing: the row
+    // goes, and the next ticket is refused.
+    if (result.outcome !== "unchanged") await this.broadcastMetadata();
+    return SetPrivateChildArchivedResultSchema.parse(result);
+  }
+
   private privateChildPreparation(operationId: string): PrivateChildPreparationOperation | null {
     const row = first(this.parentSql.exec<PrivateChildPreparationRow>(
       `SELECT preparation.*, child.title,
@@ -1247,11 +1339,16 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     }
     const now = Date.now();
     const result = this.state.storage.transactionSync(() => {
-      const child = first(this.parentSql.exec<{ status: string }>(
-        `SELECT status FROM conversation_children WHERE substream_id = ? AND kind = 'child'`,
+      const child = first(this.parentSql.exec<{ status: string; archived_at: number | null }>(
+        `SELECT status, archived_at FROM conversation_children WHERE substream_id = ? AND kind = 'child'`,
         request.substreamId,
       ));
       if (!child || child.status !== "ready") throw new Error("private_child_not_ready");
+      // Adding somebody to an archived substream would seat them in a room
+      // that is in nobody's sidebar; removing from one is equally moot. Restore
+      // it first. Refused for both directions so the roster of an archived
+      // child is exactly the roster it had when it was archived.
+      if (child.archived_at !== null) throw new Error("private_child_archived");
       const actor = first(this.parentSql.exec<{ active: number }>(
         `SELECT active FROM private_child_memberships WHERE substream_id = ? AND user_id = ?`,
         request.substreamId, request.actorUserId,
@@ -1513,13 +1610,73 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     if (!metadata) this.ensureMetadata(envelope, now);
   }
 
-  /** Private child effects stay at their parent; only the main room reaches workspace-wide surfaces. */
-  protected override forwardsChildEffect(substreamId: string): boolean {
+  /**
+   * Which of a child's effects reach the workspace.
+   *
+   * A private child's *shared* surfaces stay at their parent: its
+   * `directory_common` row and its `activity_event`s never become a workspace
+   * sidebar entry, a digest line or a search hit, because the people who can
+   * read those surfaces are not the people who can read the child.
+   *
+   * Two kinds are addressed to one named person rather than to a surface, and
+   * those do leave. A `mention_notification` and a `participant_notification`
+   * name a recipient who is already an active member of that child, so
+   * carrying them out tells somebody a thing they are entitled to read; the
+   * alternative — the shipped behaviour until now — is that everything said in
+   * a substream is silent, and being tagged there notifies nobody.
+   *
+   * `directory_user` rides along for the same recipient, and is not optional:
+   * a person notification is gated on `projection_keys['user:<recipient>']`
+   * having a committed version (see `enqueueImmutable`), and for a private
+   * child that key is advanced by nothing else. Forwarding the notification
+   * without it makes `enqueueImmutable` throw inside the child's delivery
+   * transaction, which is a poison retry rather than a missing badge. It is
+   * also the right row: `userProjection` below sums a member's own children
+   * into their own parent row, so the work stream lights up for the one person
+   * the substream activity belongs to and for nobody else.
+   *
+   * A child row that this object has already counted keeps forwarding after
+   * the person stops being a member, so the removal's own effect re-publishes
+   * an aggregate that no longer includes it. Dropping it on membership alone
+   * would strand the child's last unread count in their parent row.
+   */
+  protected override forwardsChildEffect(substreamId: string, effect: ConversationEffect): boolean {
+    if (substreamId === "0") return true;
+    if (isPersonNotificationEffect(effect)) {
+      return this.privateChildMemberIsActive(substreamId, effect.recipientUserId);
+    }
+    if (effect.kind === "directory_user") {
+      return this.privateChildMemberIsActive(substreamId, effect.userId)
+        || this.privateChildUserDirectoryExists(substreamId, effect.userId);
+    }
+    return false;
+  }
+
+  /** The shared row is the main conversation's alone; a private child never enters it. */
+  protected override aggregatesChildProjection(substreamId: string): boolean {
     return substreamId === "0";
   }
 
-  protected override aggregatesChildProjection(substreamId: string): boolean {
-    return substreamId === "0";
+  /** A member's own row does include their private children; see `userProjection`. */
+  protected override aggregatesChildUserProjection(): boolean {
+    return true;
+  }
+
+  private privateChildMemberIsActive(substreamId: string, userId: string): boolean {
+    return first(this.parentSql.exec<{ one: number }>(
+      `SELECT 1 AS one FROM private_child_memberships member
+         JOIN conversation_children child ON child.substream_id = member.substream_id
+        WHERE member.substream_id = ? AND member.user_id = ? AND member.active = 1
+          AND child.status = 'ready' AND child.archived_at IS NULL`,
+      substreamId, userId,
+    )) !== null;
+  }
+
+  private privateChildUserDirectoryExists(substreamId: string, userId: string): boolean {
+    return first(this.parentSql.exec<{ one: number }>(
+      `SELECT 1 AS one FROM substream_user_directory WHERE substream_id = ? AND user_id = ?`,
+      substreamId, userId,
+    )) !== null;
   }
 
   protected override childCommonProjections(): DirectoryCommonEffect[] {
@@ -1528,12 +1685,61 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     ).toArray().map((row) => WorkstreamDirectoryCommonEffectSchema.parse(JSON.parse(row.effect_json)));
   }
 
+  /**
+   * One person's row for this work stream: the main conversation plus every
+   * private child they are currently an active member of.
+   *
+   * A child is in exactly one person's aggregate per membership, so a
+   * substream's unread count and mention flag reach the parent row of the
+   * people in it and of nobody else — this is a `user:` projection, and a
+   * non-member's aggregate never sees the child at all. An archived or
+   * not-yet-ready child is excluded the same way it is excluded from
+   * `visiblePrivateChildrenForUser`: it has no row to light up.
+   *
+   * The tombstone matters. Removing somebody from their last child while the
+   * main conversation never published a row for them would otherwise leave
+   * `aggregateUser` with nothing to sum, and it throws on null — during the
+   * removal's own effect, which is exactly when the parent row needs to be
+   * told the count is gone.
+   */
   protected override userProjection(userId: string): z.infer<typeof WorkstreamDirectoryUserEffectSchema> | null {
-    const row = first(this.parentSql.exec<{ effect_json: string }>(
-      `SELECT effect_json FROM substream_user_directory WHERE substream_id = '0' AND user_id = ?`,
+    const rows = this.parentSql.exec<{ effect_json: string }>(
+      // `LEFT JOIN`, not `JOIN`: a work stream that predates the child
+      // registry has no `conversation_children` row for its own main
+      // conversation, and an inner join would drop the main projection —
+      // leaving a person's row derived from their substreams alone, or from
+      // nothing.
+      `SELECT directory.effect_json
+         FROM substream_user_directory directory
+         LEFT JOIN conversation_children child ON child.substream_id = directory.substream_id
+         LEFT JOIN private_child_memberships member
+           ON member.substream_id = directory.substream_id AND member.user_id = directory.user_id
+        WHERE directory.user_id = ?
+          AND (directory.substream_id = '0'
+               OR (member.active = 1 AND child.status = 'ready' AND child.archived_at IS NULL))
+        ORDER BY directory.substream_id`,
+      userId,
+    ).toArray().map((row) => WorkstreamDirectoryUserEffectSchema.parse(JSON.parse(row.effect_json)));
+    if (rows.length > 0) return WorkstreamDirectoryUserEffectSchema.parse(aggregateUserProjections(userId, rows));
+    const known = first(this.parentSql.exec<{ one: number }>(
+      `SELECT 1 AS one FROM substream_user_directory WHERE user_id = ?`,
       userId,
     ));
-    return row ? WorkstreamDirectoryUserEffectSchema.parse(JSON.parse(row.effect_json)) : null;
+    if (!known) return null;
+    return WorkstreamDirectoryUserEffectSchema.parse({
+      kind: "directory_user",
+      userId,
+      isParticipant: false,
+      participantAddedAt: null,
+      unreadCount: 0,
+      youAreMentioned: false,
+      unseen: false,
+      listable: false,
+      seenAttentionOrdinal: 0,
+      manualUnreadFromOrdinal: null,
+      manualUnreadGeneration: 0,
+      latestMentionAttentionOrdinal: 0,
+    });
   }
 
   /** Parent/main participation is never inferred from membership in a private child. */
@@ -1568,12 +1774,44 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     this.upsertMetadata(envelope, aggregate, now);
   }
 
-  protected override onChildUserAggregate(substreamId: string): void {
-    if (substreamId !== "0") return;
+  protected override onChildUserAggregate(substreamId: string, userId: string): void {
+    if (substreamId !== "0") {
+      // A private child's unread and mention state is on the row this person
+      // sees in the middle sidebar, so the clock that publishes those rows has
+      // to move when it changes. It stays this object's local `children:<user>`
+      // clock, never the workspace one; see `advancePrivateChildrenVersion`.
+      this.advancePrivateChildrenVersion(userId, Date.now());
+      return;
+    }
     this.state.storage.sql.exec(
       `UPDATE workstream_metadata SET revision = revision + 1, updated_at = ? WHERE id = 1`,
       Date.now(),
     );
+  }
+
+  /**
+   * Keep the child registry's title the child's own.
+   *
+   * The sidebar reads `conversation_children.title`, which creation seeds from
+   * the reserved title. A rename lands in the child's object, so without this
+   * the registry would need a second write from whatever renamed it — and the
+   * naming agent, which nobody routes through that path, would never converge
+   * at all. The parent still owns discovery; it just believes the child about
+   * what the child is called.
+   */
+  protected override onChildCommonProjection(
+    substreamId: string,
+    effect: DirectoryCommonEffect,
+    now: number,
+  ): void {
+    if (substreamId === "0") return;
+    const changed = this.parentSql.exec<{ substream_id: string }>(
+      `UPDATE conversation_children SET title = ?, updated_at = ?
+        WHERE substream_id = ? AND kind = 'child' AND title IS NOT ?
+       RETURNING substream_id`,
+      effect.title, now, substreamId, effect.title,
+    ).toArray().length === 1;
+    if (changed) this.advancePrivateChildrenVersionsFor(substreamId, now);
   }
 
   protected override afterChildEffects(): Promise<void> {
@@ -1915,6 +2153,8 @@ export class WorkstreamDO extends ConversationParentDurableObject {
         createdByUserId: child.createdByUserId,
         createdAt: iso(child.createdAt),
         updatedAt: iso(child.updatedAt),
+        unreadCount: child.unreadCount,
+        youAreMentioned: child.youAreMentioned,
       })),
       viewer: {
         isParticipant: viewer?.isParticipant ?? false,
@@ -1932,28 +2172,60 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     });
   }
 
+  /**
+   * The private children one person may see, with the attention state their
+   * row needs.
+   *
+   * Unread and mention come from the child's own `directory_user` projection,
+   * which this parent already stores for every child that reports one; without
+   * them a substream row could not say that anything had happened in it, and a
+   * member would have to open every child to find out. A child that has not
+   * reported this person's row yet reads as nothing unread, which is what a
+   * child nobody has written in since it was created actually is.
+   */
   private visiblePrivateChildrenForUser(userId: string): ListVisiblePrivateChildrenResult["children"] {
     return this.parentSql.exec<{
-      substream_id: string; title: string; created_by_user_id: string; created_at: number; updated_at: number;
+      substream_id: string; title: string; created_by_user_id: string;
+      created_at: number; updated_at: number; effect_json: string | null;
     }>(
-      `SELECT child.substream_id, child.title, child.created_by_user_id, child.created_at, child.updated_at
+      `SELECT child.substream_id, child.title, child.created_by_user_id,
+              child.created_at, child.updated_at, directory.effect_json
          FROM conversation_children child
          JOIN private_child_memberships member ON member.substream_id = child.substream_id
-        WHERE child.kind = 'child' AND child.status = 'ready'
+         LEFT JOIN substream_user_directory directory
+           ON directory.substream_id = child.substream_id AND directory.user_id = member.user_id
+        WHERE child.kind = 'child' AND child.status = 'ready' AND child.archived_at IS NULL
           AND member.user_id = ? AND member.active = 1
         ORDER BY child.created_at, child.substream_id`,
       userId,
-    ).toArray().map((child) => ({
-      substreamId: asSubstreamId(child.substream_id),
-      title: child.title,
-      createdByUserId: UserIdSchema.parse(child.created_by_user_id),
-      createdAt: child.created_at,
-      updatedAt: child.updated_at,
-    }));
+    ).toArray().map((child) => {
+      const viewer = child.effect_json === null
+        ? null
+        : WorkstreamDirectoryUserEffectSchema.parse(JSON.parse(child.effect_json));
+      return {
+        substreamId: asSubstreamId(child.substream_id),
+        title: child.title,
+        createdByUserId: UserIdSchema.parse(child.created_by_user_id),
+        createdAt: child.created_at,
+        updatedAt: child.updated_at,
+        unreadCount: viewer?.unreadCount ?? 0,
+        youAreMentioned: viewer?.youAreMentioned ?? false,
+      };
+    });
   }
 
   private advancePrivateChildrenVersion(userId: string, now: number): void {
     this.advanceLocalStateVersion(`children:${userId}`, this.visiblePrivateChildrenForUser(userId), now);
+  }
+
+  /** Every active member of one child hears that its row changed. */
+  private advancePrivateChildrenVersionsFor(substreamId: string, now: number): void {
+    for (const row of this.parentSql.exec<{ user_id: string }>(
+      `SELECT user_id FROM private_child_memberships WHERE substream_id = ? AND active = 1`,
+      substreamId,
+    ).toArray()) {
+      this.advancePrivateChildrenVersion(row.user_id, now);
+    }
   }
 
   /**

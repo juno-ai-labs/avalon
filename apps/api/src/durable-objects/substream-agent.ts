@@ -1211,7 +1211,12 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       throw new Error("private_child_membership_identity_mismatch");
     }
     const now = Date.now();
-    const outcome = this.state.storage.transactionSync(() => {
+    // Read before the commit, because the effects that carry them are built
+    // inside it and an effect callback cannot await a regional round trip.
+    // This is the same preparation `addParticipant` does for the main
+    // conversation's add.
+    const names = await this.product.participantEffectNames(request.actorUserId, request.userId);
+    const { result: outcome } = await this.objectStore.commitWithRegionalEffects(() => {
       const current = this.state.storage.sql.exec<{ version: number; active: number }>(
         `SELECT version, active FROM private_child_membership_authority WHERE user_id = ?`,
         request.userId,
@@ -1250,7 +1255,15 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         );
       }
       return "applied" as const;
-    });
+    }, (_sql, applied) => applied !== "applied" ? [] : this.product.privateChildMembershipEffects({
+      substreamId: request.substreamId,
+      userId: request.userId,
+      actorUserId: request.actorUserId,
+      actorName: names.actorName,
+      recipientName: names.recipientName,
+      active: request.active,
+      now,
+    }));
     if (!request.active && outcome === "applied") this.evictReadersWhoLostLocalAccess();
     return { outcome };
   }

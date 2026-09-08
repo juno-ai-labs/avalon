@@ -2711,6 +2711,21 @@ pre {
 .workstream-substream-branch > .workstream-context-row { flex: 1; min-width: 0; width: auto; }
 .workstream-substream-avatar { align-items: center; display: flex; flex: 0 0 28px; height: 28px; justify-content: center; }
 .workstream-substream-avatar > .avatar { height: 28px; width: 28px; }
+/* The same marker tokens the workspace and account dots use, so an unread
+   substream reads as the same kind of fact at every level of the tree, and the
+   mention colour is the one the status dots already assign that meaning. */
+.workstream-substream-marker {
+  background: var(--av-sys-color-workstream-unread);
+  border-radius: var(--av-cmp-marker-radius);
+  flex: 0 0 var(--av-cmp-marker-inline-size);
+  height: var(--av-cmp-marker-inline-size);
+  width: var(--av-cmp-marker-inline-size);
+}
+.workstream-substream-marker.is-mention { background: var(--av-sys-color-workstream-mentioned); }
+.workstream-context-copy > span.is-unread { font-weight: var(--av-sys-font-weight-emphasis); }
+/* Collapsed to the icon rail there is no room beside the label, so the marker
+   rides the avatar corner rather than disappearing with the text. */
+.workstream-context-sidebar.is-compact .workstream-substream-marker { position: absolute; right: 6px; top: 8px; }
 .workstream-new-substream { border: 1px dashed var(--av-cmp-sidebar-border); color: var(--av-sys-color-text-muted); }
 .workstream-context-row:focus-visible { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: -2px; }
 .workstream-context-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; }

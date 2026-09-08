@@ -2486,6 +2486,13 @@ export const WorkstreamControlMetadataSchema = z.strictObject({
     createdByUserId: UserIdSchema,
     createdAt: TimestampSchema,
     updatedAt: TimestampSchema,
+    /**
+     * This viewer's attention state for the child. Optional because a client
+     * on an older build reads these rows without them, and a substream with
+     * nothing unread is the same row either way.
+     */
+    unreadCount: z.number().int().nonnegative().optional(),
+    youAreMentioned: z.boolean().optional(),
   })).optional(),
   viewer: z.strictObject({
     isParticipant: z.boolean(),

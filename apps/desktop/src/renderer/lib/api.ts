@@ -1703,6 +1703,38 @@ export class RallyApi {
     });
   }
 
+  /**
+   * Rename one substream.
+   *
+   * The work stream's own rename is a `PATCH` on the work stream; this is the
+   * same `PATCH` one level down. Nothing comes back: the child's new title
+   * reaches the sidebar over the control socket, the way every other change to
+   * a substream row does, so a response body here would be a second source of
+   * the same fact.
+   */
+  async renameSubstream(parentId: string, substreamId: string, title: string): Promise<void> {
+    await this.requestVoid(this.substreamPath(parentId, substreamId), {
+      method: 'PATCH', body: { title },
+    });
+  }
+
+  /** Take a substream out of its members' sidebars, or put it back. */
+  async setSubstreamArchived(parentId: string, substreamId: string, archived: boolean): Promise<void> {
+    await this.requestVoid(this.substreamPath(parentId, substreamId), {
+      method: 'PATCH', body: { archived },
+    });
+  }
+
+  async markSubstreamUnread(parentId: string, substreamId: string): Promise<void> {
+    await this.requestVoid(`${this.substreamPath(parentId, substreamId)}/read-state/mark-unread`, {
+      method: 'POST',
+    });
+  }
+
+  private substreamPath(parentId: string, substreamId: string): string {
+    return `/conversations/${encodeURIComponent(parentId)}/substreams/${encodeURIComponent(substreamId)}`;
+  }
+
   async addParticipant(id: string, userId: string): Promise<WorkstreamDetail> {
     await this.request(`/workstreams/${encodeURIComponent(id)}/participants`, {
       method: 'POST',

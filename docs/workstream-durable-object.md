@@ -1641,6 +1641,45 @@ directory write at all.
 
 ## Changelog
 
+### 2026-09-08 — Person-addressed effects leave a private child; its shared ones still do not
+
+**What changed:** `forwardsChildEffect` decides per effect kind rather than per
+substream. `directory_common` and `activity_event` from a private child still
+stop here. `mention_notification` and `participant_notification` are carried on,
+with that recipient's `directory_user` from the same child forwarded ahead of
+them, and `userProjection` sums a person's own active, ready, unarchived
+children into their `user:` aggregate. `aggregatesChildUserProjection` splits
+the per-person question out of `aggregatesChildProjection`. Schema v8 adds
+`conversation_children.archived_at`; `setPrivateChildArchived` moves it,
+`authorizeViewer` reports either archive, and `onChildCommonProjection` keeps
+the registry title the child's own.
+
+**Why:** Everything said in a substream was silent. A person tagged there was
+never told, by any transport, because the gate that keeps a private child out of
+workspace-wide surfaces also caught the two effects addressed to one named
+person — who is already an active member of that child and entitled to read it.
+The shared/person distinction is the real rule; `substreamId === "0"` was a
+proxy for it that happened to be right for the kinds that existed when it was
+written.
+
+**Considered and rejected:** Leaving the notification's projection dependency
+unsatisfied — `enqueueImmutable` throws inside the child's delivery transaction,
+so the child retries the same envelope forever; a poison loop is worse than the
+silence it replaces. Aggregating the child's *common* projection too — that row
+is what every reader of the parent sees, and a private child must not touch it.
+A fourth creation status for archive — `conversation_children` is referenced by
+`private_child_preparations` and `private_child_memberships` with
+`ON DELETE CASCADE`, and a CHECK rebuild runs with foreign-key enforcement on.
+
+**Consequences:** A member's parent row reflects their substreams' unread and
+mention state, and nobody else's, because a `user:` projection is per person.
+Parent participation is still read from Main's projection alone —
+`isParticipant` is unchanged, and inferring it from a child would grant parent
+access. The `user:<user>` version a private child allocates is now forwarded,
+which is what the 2026-09-05 entry below wanted to avoid stranding; its
+`children:<user>` clock is untouched and still never advances the workspace one.
+Any new `ConversationEffect` kind must be classified in `forwardsChildEffect`.
+
 ### 2026-09-08 — Review: the mark stops where the scan stopped, and an aside says what it is
 
 **What changed:** The gap-fill scans `(mark, transcriptThrough()]` — the

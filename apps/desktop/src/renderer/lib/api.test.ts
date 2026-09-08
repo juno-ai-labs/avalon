@@ -440,6 +440,25 @@ describe('Rally API wire adapter', () => {
     await expect(api[method](workstreamId, runId, userId)).rejects.toThrow();
   });
 
+  it('addresses substream management at the substream, not at its work stream', async () => {
+    const fetchMock = vi.fn(async () => new Response(null, { status: 204 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new RallyApi('https://api.rally.test', session);
+    const base = `https://api.rally.test/conversations/${workstreamId}/substreams/${runId}`;
+
+    await expect(api.renameSubstream(workstreamId, runId, 'Renamed')).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenLastCalledWith(base,
+      expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ title: 'Renamed' }) }));
+
+    await expect(api.setSubstreamArchived(workstreamId, runId, true)).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenLastCalledWith(base,
+      expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ archived: true }) }));
+
+    await expect(api.markSubstreamUnread(workstreamId, runId)).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenLastCalledWith(`${base}/read-state/mark-unread`,
+      expect.objectContaining({ method: 'POST' }));
+  });
+
   it('accepts successful 204 responses for note archive endpoints', async () => {
     const fetchMock = vi.fn(async () => new Response(null, { status: 204 }));
     vi.stubGlobal('fetch', fetchMock);

@@ -175,7 +175,28 @@ export const ListVisiblePrivateChildrenResultSchema = z.strictObject({
     createdByUserId: UserIdSchema,
     createdAt: z.number().int().nonnegative(),
     updatedAt: z.number().int().nonnegative(),
+    /** This viewer's attention state for the child, from its own projection. */
+    unreadCount: z.number().int().nonnegative().default(0),
+    youAreMentioned: z.boolean().default(false),
   })),
+});
+
+/**
+ * Archive or restore one private child.
+ *
+ * Archiving is the work stream's own `archived` field one level down, so the
+ * request carries the state to move to rather than naming an action: the same
+ * call restores, and a repeat of either is not an error.
+ */
+export const SetPrivateChildArchivedRequestSchema = z.strictObject({
+  ...ParentAddressed,
+  substreamId: SubstreamIdSchema.refine((value) => value !== "0", "A private child must be nonzero"),
+  actorUserId: UserIdSchema,
+  archived: z.boolean(),
+});
+export const SetPrivateChildArchivedResultSchema = z.strictObject({
+  outcome: z.enum(["archived", "restored", "unchanged"]),
+  archivedAt: z.number().int().nonnegative().nullable(),
 });
 
 export const MutatePrivateChildParticipantRequestSchema = z.strictObject({
@@ -218,3 +239,5 @@ export type ListVisiblePrivateChildrenRequest = z.infer<typeof ListVisiblePrivat
 export type ListVisiblePrivateChildrenResult = z.infer<typeof ListVisiblePrivateChildrenResultSchema>;
 export type MutatePrivateChildParticipantRequest = z.infer<typeof MutatePrivateChildParticipantRequestSchema>;
 export type MutatePrivateChildParticipantResult = z.infer<typeof MutatePrivateChildParticipantResultSchema>;
+export type SetPrivateChildArchivedRequest = z.infer<typeof SetPrivateChildArchivedRequestSchema>;
+export type SetPrivateChildArchivedResult = z.infer<typeof SetPrivateChildArchivedResultSchema>;

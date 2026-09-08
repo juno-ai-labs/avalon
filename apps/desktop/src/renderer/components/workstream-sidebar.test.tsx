@@ -122,6 +122,78 @@ describe('WorkstreamSidebar', () => {
     expect(onSelectSubstream).toHaveBeenLastCalledWith('0');
   });
 
+  it('offers the substream row menu on right-click and names the row each item acts on', async () => {
+    const actions = {
+      onParticipants: vi.fn(), onMarkUnread: vi.fn(), onRename: vi.fn(), onArchive: vi.fn(),
+    };
+    const target = { substreamId: '00000000-0000-7000-8000-000000000099', title: 'Launch risks' };
+    render(<Tooltip.Provider><WorkstreamSidebar
+      workstream={{ ...workstream, privateChildren: [{
+        substreamId: asSubstreamId(target.substreamId), title: target.title, createdByUserId: asUserId(person.id),
+        createdAt: '2026-09-04T00:00:00.000Z', updatedAt: '2026-09-04T00:00:00.000Z',
+      }] }}
+      presentUserIds={[]}
+      onSelectSubstream={vi.fn()}
+      onOpenArtifact={vi.fn()}
+      onParticipants={vi.fn()}
+      onFocusTranscript={vi.fn()}
+      substreamActions={actions}
+    /></Tooltip.Provider>);
+    fireEvent.contextMenu(screen.getByRole('button', { name: /Launch risks/ }));
+    const menu = await screen.findByRole('menu');
+    // The work stream's own items, less the two that place a row in the
+    // workspace directory a private child never enters, plus the roster
+    // control the sidebar section gives a work stream and not a substream.
+    expect(within(menu).getAllByRole('menuitem').map((item) => item.textContent?.trim())).toEqual([
+      'Participants', 'Mark as unread', 'Rename', 'Archive substream',
+    ]);
+    fireEvent.keyDown(menu, { key: 'Escape' });
+    for (const [label, handler] of [
+      ['Participants', actions.onParticipants],
+      ['Mark as unread', actions.onMarkUnread],
+      ['Rename', actions.onRename],
+      ['Archive substream', actions.onArchive],
+    ] as const) {
+      // An open menu takes the row out of the accessibility tree, so each pass
+      // waits for it to come back before opening the menu again.
+      const row = await screen.findByRole('button', { name: /Launch risks/ });
+      fireEvent.contextMenu(row);
+      fireEvent.click(await within(await screen.findByRole('menu')).findByRole('menuitem', { name: label }));
+      expect(handler).toHaveBeenCalledWith(target);
+    }
+  });
+
+  it('marks a substream row unread until it is the row being read', () => {
+    const child = {
+      substreamId: asSubstreamId('00000000-0000-7000-8000-000000000099'), title: 'Launch risks',
+      createdByUserId: asUserId(person.id),
+      createdAt: '2026-09-04T00:00:00.000Z', updatedAt: '2026-09-04T00:00:00.000Z',
+      unreadCount: 3, youAreMentioned: true,
+    };
+    const view = render(<Tooltip.Provider><WorkstreamSidebar
+      workstream={{ ...workstream, privateChildren: [child] }}
+      presentUserIds={[]}
+      onSelectSubstream={vi.fn()}
+      onOpenArtifact={vi.fn()}
+      onParticipants={vi.fn()}
+      onFocusTranscript={vi.fn()}
+    /></Tooltip.Provider>);
+    expect(screen.getByRole('button', { name: 'Go to substream: Launch risks, mentions you' })
+      .querySelector('.workstream-substream-marker.is-mention')).not.toBeNull();
+    // Reading it is what clears it; the row on screen never nags about itself.
+    view.rerender(<Tooltip.Provider><WorkstreamSidebar
+      workstream={{ ...workstream, privateChildren: [child] }}
+      presentUserIds={[]}
+      selectedSubstreamId={child.substreamId}
+      onSelectSubstream={vi.fn()}
+      onOpenArtifact={vi.fn()}
+      onParticipants={vi.fn()}
+      onFocusTranscript={vi.fn()}
+    /></Tooltip.Provider>);
+    expect(screen.getByRole('button', { name: 'Go to substream: Launch risks' })
+      .querySelector('.workstream-substream-marker')).toBeNull();
+  });
+
   it('collapses for available pane width without overwriting the manual preference', () => {
     setup();
     act(() => { width = 703; resized(); });

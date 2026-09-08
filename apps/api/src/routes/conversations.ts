@@ -8,6 +8,7 @@ import {
 } from "@rally/contracts";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
+import { ApiError } from "../lib/api-error";
 import { requestDeferral } from "../lib/defer";
 import { getAuth } from "../middleware/auth";
 import { requestFlowSpan } from "../observability/tracing";
@@ -97,6 +98,43 @@ conversationRoutes.post("/:parentId/substreams/:substreamId/participants/remove"
     return c.json(MutatePrivateChildParticipantResultSchema.parse(await new SubstreamCreationService(c.env, getAuth(c)).changeParticipant(
       param.parentId, param.substreamId, c.req.valid("json"), false,
     )));
+  });
+/**
+ * The substream as a thing you manage, rather than a transcript you read.
+ *
+ * These three are the work stream's own `PATCH /workstreams/:id`,
+ * `POST /workstreams/:id/read-state/mark-unread` and archive, addressed one
+ * level down. Rename and unread are the conversation object's, so they take
+ * the same `WorkstreamObjectClient` the work-stream routes take and differ
+ * only in the substream they name; archive is the parent's, because the row a
+ * substream is discovered through lives there.
+ */
+conversationRoutes.patch("/:parentId/substreams/:substreamId", zValidator("param", substreamSocketParam),
+  zValidator("json", z.strictObject({
+    title: z.string().trim().min(1).max(500).optional(),
+    archived: z.boolean().optional(),
+  }).refine((body) => body.title !== undefined || body.archived !== undefined,
+    "Name what to change")), async (c) => {
+    const param = c.req.valid("param");
+    const body = c.req.valid("json");
+    if (param.substreamId === "0") {
+      throw new ApiError(400, "private_substream_required", "Address the work stream itself to change its main conversation.");
+    }
+    if (body.archived !== undefined) {
+      await new SubstreamCreationService(c.env, getAuth(c)).archive(param.parentId, param.substreamId, body.archived);
+    }
+    if (body.title !== undefined) {
+      const client = await new ConversationService(c.env, getAuth(c)).writableClient(param.parentId, param.substreamId);
+      await client.update({ title: body.title });
+    }
+    return c.body(null, 204);
+  });
+conversationRoutes.post("/:parentId/substreams/:substreamId/read-state/mark-unread",
+  zValidator("param", substreamSocketParam), async (c) => {
+    const param = c.req.valid("param");
+    const client = await new ConversationService(c.env, getAuth(c)).client(param.parentId, false, param.substreamId);
+    await client.markUnread();
+    return c.body(null, 204);
   });
 conversationRoutes.get("/:parentId", zValidator("param", parentParam), async (c) => {
   const parentId = c.req.valid("param").parentId;
