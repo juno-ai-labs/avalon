@@ -297,7 +297,31 @@ describe("Terminal file and command tools", () => {
 
   it.each(["../escape", "/absolute", "dir\\windows", "./../escape"])("rejects a path outside the root: %s", async (filePath) => {
     const { value } = runtime();
-    await expect(createTerminalToolExecutors(value).read_file({ filePath }, context)).rejects.toBeInstanceOf(TerminalToolError);
+    await expect(createTerminalToolExecutors(value).read_file({ filePath }, context)).rejects.toMatchObject({
+      code: "path_outside_root",
+      // The refused value is echoed so the model can see what was wrong.
+      message: expect.stringContaining(filePath),
+    });
+  });
+
+  it.each([".", "./", "./."])("accepts the workspace root as a working directory: %s", async (cwd) => {
+    // `.` normalizes to nothing, and nothing used to read as an escape. The root
+    // is inside the root: a recorded run spent four turns being refused for
+    // naming it, then guessed directory names until stderr leaked the real one.
+    const { value } = runtime();
+    const runCommand = vi.spyOn(value, "runCommand");
+    await expect(createTerminalToolExecutors(value).run_command({ command: "pwd", cwd }, context)).resolves.toMatchObject({
+      output: { state: "completed" },
+    });
+    expect(runCommand).toHaveBeenCalledOnce();
+    expect(runCommand.mock.calls[0]![1]).not.toHaveProperty("cwd");
+  });
+
+  it("refuses the workspace root as a file path with its own code", async () => {
+    const { value } = runtime();
+    const refused = createTerminalToolExecutors(value).read_file({ filePath: "." }, context);
+    await expect(refused).rejects.toBeInstanceOf(TerminalToolError);
+    await expect(refused).rejects.toMatchObject({ code: "invalid_path" });
   });
 
   it("returns nonzero exits as final results and lets repository policy govern standard GitHub CLI writes", async () => {

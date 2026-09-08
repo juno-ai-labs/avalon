@@ -245,26 +245,39 @@ export function requireTerminalEffectIntent(
   throw new TerminalToolError("tool_receipt_missing", message, { reason });
 }
 
-function pathOutsideRoot(field: "filePath" | "cwd"): never {
+// The offending value is echoed back so the model can see what was refused:
+// without it, a model that had already used `/` separators and no `..` reads
+// the old message as confirmation it did nothing wrong and sends the same
+// value again — four times, in one recorded run. The value is model-authored
+// and the schema bounds it at 4,096 bytes, so nothing new is logged or leaked.
+function pathOutsideRoot(field: "filePath" | "cwd", value: string): never {
   throw new TerminalToolError(
     "path_outside_root",
-    "The path must stay inside the terminal workspace. Use a relative path with `/` separators and no `..`.",
-    { field, reason: "Use a workspace-relative path with / separators." },
+    `\`${field}\` must stay inside the terminal workspace, and \`${value}\` does not. Pass a path relative to the workspace root, such as \`notes.md\` or \`out/report.md\`, with no leading \`/\` and no \`..\` segment.${field === "cwd" ? " Omit `cwd` to run in the workspace root." : ""}`,
+    { field, reason: "Use a path relative to the workspace root, with no leading / and no .. segment." },
   );
 }
 
 function safeRelativePath(value: string, field: "filePath" | "cwd"): string {
   if (
-    !value
-    || value.startsWith("/")
+    value.startsWith("/")
     || value.includes("\\")
     || value.includes("\0")
     || value.split("/").some((segment) => segment === "..")
   ) {
-    return pathOutsideRoot(field);
+    return pathOutsideRoot(field, value);
   }
   const normalized = value.split("/").filter((segment) => segment && segment !== ".").join("/");
-  if (!normalized) return pathOutsideRoot(field);
+  if (!normalized) {
+    // `.` and `./` name the workspace root, which is inside the root: a legal
+    // working directory (the runtime's default), and not a file.
+    if (field === "cwd") return "";
+    throw new TerminalToolError(
+      "invalid_path",
+      "`filePath` names the workspace root, not a file. Pass the file's path relative to the workspace root, such as `notes.md` or `out/report.md`.",
+      { field, reason: "Name a file beneath the workspace root." },
+    );
+  }
   return normalized;
 }
 
