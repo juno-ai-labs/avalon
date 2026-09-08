@@ -4,6 +4,7 @@ import {
   DemoOperationStartRequestSchema,
   DemoOperationStatusSchema,
   DemoTemplateSchema,
+  IdSchema,
 } from '@rally/contracts';
 import { Hono } from 'hono';
 import { z } from 'zod';
@@ -19,7 +20,7 @@ import {
   retryDemoOperation,
   startDemoOperation,
 } from '../services/demo-preparation';
-import { requireOperatorRole, requireTelemetryOperator } from '../telemetry/operator-auth';
+import { getTelemetryOperator, requireOperatorRole, requireTelemetryOperator } from '../telemetry/operator-auth';
 
 /**
  * The regional API Ace's Demos page talks to.
@@ -30,7 +31,7 @@ import { requireOperatorRole, requireTelemetryOperator } from '../telemetry/oper
  * delegates, and maps; the rules live in `demo-preparation.ts`.
  */
 
-const OperationParamSchema = z.strictObject({ operationId: z.string().uuid() });
+const OperationParamSchema = z.strictObject({ operationId: IdSchema });
 
 export const demoOperatorRoutes = new Hono<HonoAppEnv>();
 demoOperatorRoutes.use('*', requireTelemetryOperator, requireOperatorRole('demos'));
@@ -46,7 +47,10 @@ demoOperatorRoutes.get('/template', async (c) => {
 });
 
 demoOperatorRoutes.post('/', zValidator('json', DemoOperationStartRequestSchema), async (c) => {
-  const status = await startDemoOperation(c.env, c.req.valid('json'));
+  // The operator's id travels into the region's own log: this creates a
+  // workspace and copies credentials into it, and the region should be able
+  // to say who asked without Ace's logs.
+  const status = await startDemoOperation(c.env, c.req.valid('json'), { operatorId: getTelemetryOperator(c).operatorId });
   return c.json(DemoOperationStatusSchema.parse(status));
 });
 
@@ -69,7 +73,7 @@ demoOperatorRoutes.post(
   async (c) => {
     const status = await abandonDemoOperation(c.env, c.req.valid('param').operationId, {
       confirmOperationId: c.req.valid('json').confirmOperationId,
-      actorUserId: null,
+      operatorId: getTelemetryOperator(c).operatorId,
     });
     return c.json(DemoOperationStatusSchema.parse(status));
   },

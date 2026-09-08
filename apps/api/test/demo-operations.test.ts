@@ -11,6 +11,7 @@ import {
   activeDemoPack,
   demoOperationStatus,
   failDemoPreparationDriver,
+  listDemoOperations,
   retryDemoOperation,
   runDemoPreparationPhase,
   startDemoOperation,
@@ -261,19 +262,70 @@ describe("a demo preparation operation", () => {
   it("abandons only with a confirmation, never a published demo, and closes an operation with no workspace", async () => {
     const { env } = fixture();
     await startDemoOperation(env, request());
-    await expect(abandonDemoOperation(env, OPERATION_ID, { confirmOperationId: "00000000-0000-7000-8000-00000000dead", actorUserId: null }))
+    await expect(abandonDemoOperation(env, OPERATION_ID, { confirmOperationId: "00000000-0000-7000-8000-00000000dead" }))
       .rejects.toMatchObject({ code: "demo_abandon_unconfirmed" });
 
     await env.DB.prepare("UPDATE demo_operations SET ready_at = ? WHERE operation_id = ?").bind(NOW, OPERATION_ID).run();
-    await expect(abandonDemoOperation(env, OPERATION_ID, { confirmOperationId: OPERATION_ID, actorUserId: null }))
+    await expect(abandonDemoOperation(env, OPERATION_ID, { confirmOperationId: OPERATION_ID }))
       .rejects.toMatchObject({ code: "demo_operation_ready" });
 
     // Allocated but never created: nothing to retire, and the row closes.
     await env.DB.prepare("UPDATE demo_operations SET ready_at = NULL, workspace_id = ? WHERE operation_id = ?")
       .bind("00000000-0000-7000-8000-00000000c0de", OPERATION_ID).run();
-    const abandoned = await abandonDemoOperation(env, OPERATION_ID, { confirmOperationId: OPERATION_ID, actorUserId: null });
+    const abandoned = await abandonDemoOperation(env, OPERATION_ID, { confirmOperationId: OPERATION_ID });
     expect(abandoned.status).toBe("abandoned");
     await expect(retryDemoOperation(env, OPERATION_ID)).rejects.toMatchObject({ code: "demo_operation_not_retryable" });
+  });
+
+  it("leaves a failed row untouched when a retry cannot start its driver", async () => {
+    // The row moves only once the driver is known to exist: bumping the
+    // attempt first left a `running` operation nothing was running, with the
+    // diagnosis the operator was reading erased.
+    const { env } = fixture({}, { withoutDriver: true });
+    await env.DB.prepare(
+      `INSERT INTO demo_operations (operation_id, company_name, presenter_user_id, pack_version, cast_json, workspace_id,
+         status, attempt, failed_phase, error_code, error_message, created_at, updated_at)
+       VALUES (?, 'Alto Capital', ?, 'v1', '{}', NULL, 'failed', 1, 'checking_template', 'demo_cast_not_member', 'Sam is not a member', ?, ?)`,
+    ).bind(OPERATION_ID, PRESENTER_ID, NOW, NOW).run();
+    await expect(retryDemoOperation(env, OPERATION_ID)).rejects.toMatchObject({ code: "demo_preparation_unavailable" });
+    expect(await row(env, OPERATION_ID)).toMatchObject({ status: "failed", attempt: 1, failed_phase: "checking_template", error_code: "demo_cast_not_member" });
+  });
+
+  it("orders phases by the pipeline, and lists more operations than one statement can name", async () => {
+    const { env } = fixture();
+    // A retried operation: attempt 1 died copying connections and its row
+    // keeps the older `started_at`; attempt 2 has re-checked the template and
+    // is creating the workspace. The page reads the list in order to find
+    // where the operation is, so the order is the pipeline's — not the
+    // clock's (the stale copy first), not insertion's (the same), and not the
+    // phase name's (`copying` sorts before `creating`), which is what the
+    // unique index would hand back without a sort.
+    await startDemoOperation(env, request());
+    const row = (phase: string, attempt: number, startedAt: string) => env.DB.prepare(
+      `INSERT INTO demo_operation_phases (operation_id, phase, status, attempt, detail_json, started_at, finished_at)
+       VALUES (?, ?, 'running', ?, '{}', ?, NULL)`,
+    ).bind(OPERATION_ID, phase, attempt, startedAt);
+    await env.DB.batch([
+      row("copying_connections", 1, "2026-09-07T12:01:00.000Z"),
+      row("checking_template", 2, "2026-09-07T13:00:00.000Z"),
+      row("creating_workspace", 2, "2026-09-07T13:00:10.000Z"),
+    ]);
+    const status = await demoOperationStatus(env, OPERATION_ID);
+    expect(status?.phases.map((phase) => [phase.phase, phase.attempt])).toEqual([
+      ["checking_template", 2], ["creating_workspace", 2], ["copying_connections", 1],
+    ]);
+
+    // Every operation ever prepared is listed, and D1 refuses a statement past
+    // its bound-parameter ceiling: past a hundred demos the list used to fail
+    // for good, live ones included.
+    const statements = Array.from({ length: 120 }, (_, index) => env.DB.prepare(
+      `INSERT INTO demo_operations (operation_id, company_name, presenter_user_id, pack_version, cast_json, workspace_id,
+         status, attempt, created_at, updated_at)
+       VALUES (?, ?, ?, 'v1', '{}', NULL, 'ready', 1, ?, ?)`,
+    ).bind(`00000000-0000-7000-8000-${String(index + 1).padStart(12, "0")}`, `Company ${index}`, PRESENTER_ID, NOW, NOW));
+    await env.DB.batch(statements);
+    const listed = await listDemoOperations(env);
+    expect(listed).toHaveLength(121);
   });
 
   it("is prepared in Global only, and says so when the driver is not bound", async () => {
@@ -318,6 +370,27 @@ describe("the operator routes", () => {
     await expect(listed.json()).resolves.toMatchObject({ operations: [{ operationId: OPERATION_ID }] });
     const missing = await app.request("/internal/demos/00000000-0000-7000-8000-00000000dead", { headers }, env);
     expect(missing.status).toBe(404);
+  });
+
+  it("answer the template's cast candidates, and retry through the route", async () => {
+    const { env, app, launched } = fixture();
+    const headers = { authorization: `Bearer ${DEMOS_TOKEN}`, "content-type": "application/json" };
+    const template = await app.request("/internal/demos/template", { headers }, env);
+    expect(template.status).toBe(200);
+    const body = await template.json() as { workspaceId: string; pack: { roles: string[] }; members: { userId: string; role: string }[] };
+    expect(body.workspaceId).toBe(DEMO_TEMPLATE_WORKSPACE_ID);
+    expect(body.pack.roles).toEqual(["presenter", "priya", "marcus", "dana"]);
+    // The outsider is not a candidate: only the template's active members are.
+    expect(body.members.map((member) => member.userId).sort()).toEqual([PRESENTER_ID, PRIYA_ID, MARCUS_ID, DANA_ID].sort());
+
+    await app.request("/internal/demos", { method: "POST", headers, body: JSON.stringify(request()) }, env);
+    await env.DB.prepare("UPDATE demo_operations SET status = 'failed', failed_phase = 'seeding_conversations' WHERE operation_id = ?").bind(OPERATION_ID).run();
+    const retried = await app.request(`/internal/demos/${OPERATION_ID}/retry`, { method: "POST", headers }, env);
+    expect(retried.status).toBe(200);
+    await expect(retried.json()).resolves.toMatchObject({ operationId: OPERATION_ID, status: "running", attempt: 2 });
+    expect(launched.map((launch) => launch.id)).toEqual([`demo-preparation:${OPERATION_ID}:1`, `demo-preparation:${OPERATION_ID}:2`]);
+    const unknown = await app.request("/internal/demos/00000000-0000-7000-8000-00000000dead/retry", { method: "POST", headers }, env);
+    expect(unknown.status).toBe(404);
   });
 
   it("reject a malformed start and an unconfirmed abandon at the boundary", async () => {

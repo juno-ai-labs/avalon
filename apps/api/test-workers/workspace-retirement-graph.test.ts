@@ -37,6 +37,7 @@ const TEST_ENV: Env = env;
 
 const ACTOR_ID = asUserId("00000000-0000-7000-8000-00000000e002");
 const OPERATION_ID = "00000000-0000-7000-8000-00000000e003";
+/** The instant the walk is asked to retire at; the register records the same instant. */
 const COMPLETED_AT = "2026-09-05T13:00:00.000Z";
 const FIRST_ROOM_ID = "00000000-0000-7000-8000-00000000e201";
 
@@ -258,11 +259,10 @@ describe("workspace retirement graph", () => {
 
     const receipt = await retireWorkspaceGraph(TEST_ENV, {
       workspaceId,
-      retiredAt: Date.now(),
+      retiredAt: Date.parse(COMPLETED_AT),
       operationId: OPERATION_ID,
       actorUserId: null,
       reason: "demo_replaced",
-      completedAt: COMPLETED_AT,
     });
 
     expect(receipt.retiredParents).toBe(0);
@@ -394,14 +394,13 @@ describe("workspace retirement graph", () => {
 
     const receipt = await retireWorkspaceGraph(TEST_ENV, {
       workspaceId,
-      retiredAt: Date.now(),
+      retiredAt: Date.parse(COMPLETED_AT),
       operationId: OPERATION_ID,
       // An internal actor, never the author of what is being closed. The spike
       // impersonated an automation's author to make its transitions go through,
       // which put a person's name on work they did not do.
       actorUserId: null,
       reason: "demo_replaced",
-      completedAt: COMPLETED_AT,
     });
 
     expect(receipt.failed).toEqual([]);
@@ -421,11 +420,10 @@ describe("workspace retirement graph", () => {
     // Re-running a finished retirement is a no-op rather than a second walk.
     const again = await retireWorkspaceGraph(TEST_ENV, {
       workspaceId,
-      retiredAt: Date.now(),
+      retiredAt: Date.parse(COMPLETED_AT),
       operationId: OPERATION_ID,
       actorUserId: null,
       reason: "demo_replaced",
-      completedAt: COMPLETED_AT,
     });
     expect(again.retiredParents).toBe(0);
     expect(again.complete).toBe(true);
