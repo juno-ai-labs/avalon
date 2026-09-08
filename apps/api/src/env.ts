@@ -29,7 +29,7 @@ import type { ArtifactHostDO } from "./durable-objects/artifact-host-do";
 import type { SubstreamAgent } from "./durable-objects/substream-agent";
 import type { WorkspaceDO } from "./durable-objects/workspace-do";
 import type { WorkstreamDO } from "./durable-objects/workstream-do";
-import type { AutomationDO } from "./durable-objects/automation-do";
+import type { SidekickDO } from "./durable-objects/sidekick-do";
 import type { DurableObjectMigrationReport } from "@rally/contracts/durable-object-migrations";
 import type { TelemetryOperatorPrincipal } from './telemetry/operator-auth';
 import type { DocumentProcessingRpcBinding } from './services/document-processing-contract';
@@ -62,7 +62,7 @@ export interface Env {
   // both. Either way they fall back to the model variables below.
   FLAGS?: Flagship;
   SUBSTREAM_AGENTS: DurableObjectNamespace<SubstreamAgent>;
-  AUTOMATION_DOS: DurableObjectNamespace<AutomationDO>;
+  AUTOMATION_DOS: DurableObjectNamespace<SidekickDO>;
   WORKSTREAM_DOS: DurableObjectNamespace<WorkstreamDO>;
   WORKSPACE_DOS: DurableObjectNamespace<WorkspaceDO>;
   CRASH_SYMBOLICATOR: DurableObjectNamespace<CrashSymbolicatorContainer>;
@@ -338,7 +338,7 @@ const EnvContractSchema = z.object({
   TERMINAL_PROVIDER: binding<TerminalProviderRpcBinding>().optional(),
   TELEMETRY_DELIVERY: binding<TelemetryDeliveryRpcBinding>().optional(),
   SUBSTREAM_AGENTS: binding<DurableObjectNamespace<SubstreamAgent>>(),
-  AUTOMATION_DOS: binding<DurableObjectNamespace<AutomationDO>>(),
+  AUTOMATION_DOS: binding<DurableObjectNamespace<SidekickDO>>(),
   WORKSTREAM_DOS: binding<DurableObjectNamespace<WorkstreamDO>>(),
   WORKSPACE_DOS: binding<DurableObjectNamespace<WorkspaceDO>>(),
   CRASH_SYMBOLICATOR: binding<DurableObjectNamespace<CrashSymbolicatorContainer>>(),
