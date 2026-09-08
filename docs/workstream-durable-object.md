@@ -518,7 +518,14 @@ the recovery authority for all of those durations.
 
 `substream_loops` is the child-local execution coordinator. Its executing row
 names the activation, epoch, lease owner, lease deadline, cycle, step, and Bind
-state revision. Recovery keeps the activation and cycle, increments only the
+state revision. It also carries `transcript_projected_through`: the highest
+transcript sequence the Bind projection has considered. Every conversation turn
+at or below it is in the projection or was deliberately left out; every one
+above it has not been looked at, and the next text admission appends those
+first — scanning to the transcript's live high-water at preparation, and
+advancing the mark to that high-water, never to the admitted turn's own
+sequence, which is allocated afterwards. An elicitation answer scans nothing
+and advances nothing. Recovery keeps the activation and cycle, increments only the
 execution epoch after the old lease expires, and resumes from persisted Bind
 state. Compaction generation is a separate Bind projection value and never
 changes the loop cycle or makes a pending steer stale.
@@ -1634,6 +1641,52 @@ directory write at all.
 
 ## Changelog
 
+### 2026-09-08 — Review: the mark stops where the scan stopped, and an aside says what it is
+
+**What changed:** The gap-fill scans `(mark, transcriptThrough()]` — the
+transcript's live high-water at preparation — rather than
+`(mark, input.admitted_after_transcript_sequence]`, and the persisted mark
+advances to that scanned high-water rather than to the promoted input's own
+sequence. An elicitation answer's drain, which scans nothing, now advances
+nothing. The scan is a filtered read (`conversation`, `human`/`external`,
+`text`) hydrated in bound-parameter chunks, with one provenance lookup for the
+whole range. A gap-filled turn is rendered with a header — said to the room,
+not to Rally, by a named author — and its mentions carry ids only.
+`projectParticipantModelMessage` again projects an external turn that is only
+an attachment.
+
+**Why:** Three reviewers found the same defect this change fixes, on the
+window it left open. `admitted_after_transcript_sequence` is the high-water at
+*reservation*; the input's own sequence is allocated at *promotion*; a turn
+written between the two — someone talking while a steer waits for a safe
+step, or while an activation's alarm is on its way — was never scanned, and
+the mark then moved above it. The same held for every elicitation answer: no
+scan, and a mark advanced past whatever was said while the question was open.
+The unfiltered range hydrated every turn since the last admission into `IN`
+lists the engine refuses past 100 parameters, so a day of side chat would have
+wedged the room on its next admission. And a gap-filled turn rendered exactly
+like a request, in the tool-capable turn, with no author — the model could act
+on something one person said to another.
+
+**Considered and rejected:** Advancing the mark to the admission fence and
+keeping the fence as the scan bound — still skips the window, and the mark
+merely stops short of it. Gap-filling around an elicitation answer's tool
+result — a user message between a tool call and its result changes the
+protocol; the turns wait for the next text input, which appends them after the
+result. Resolving mention display names from other turns' author snapshots —
+the object holds no roster, and the canonical text already carries the typed
+name; ids only is the honest rendering.
+
+**Consequences:** The mark can be below a turn already in the projection —
+the promoted input — and that turn is skipped on the next scan by its
+`participant_turn` provenance, not by the mark. Anything that reads the mark
+as "the last admitted turn" is wrong. A gap-filled turn and an admitted turn
+share a text shape and a provenance key and deliberately not a header; a
+change to either header is a change to what the model reads in every
+multi-person room. The backlog a first admission after a long quiet stretch
+appends is unbounded and is a decision the team has not made — a ceiling
+belongs here, as a named constant, when there is a reason to set one.
+
 ### 2026-09-08 — Keep access updates local to one directory row
 
 Review exposed unnecessary full-page rebuilding on foreground changes and
@@ -1700,6 +1753,40 @@ Main. A separate aggregation hook preserves automation lifecycle callbacks even
 when forwarding is disabled. Parent access is checked at prepared-content and
 confirmation commits, and readiness checks all undelivered membership rows,
 including deferred retries rather than only the currently due batch.
+
+### 2026-09-05 — The loop records how far into the transcript it has looked
+
+**What changed:** Schema v45 adds `substream_loops.transcript_projected_through`,
+backfilled to the transcript's high-water mark for every existing room. When a
+pending input is appended to the Bind projection — at activation or at a safe
+step — the object first appends every human or external text turn above the
+mark that the projection does not already hold, then the input, and advances
+the mark in the same transaction (the bound and the advance were corrected on
+review; the entry above says how). The runtime reports the mark, not
+`transcriptThrough()`, as the sequence a compaction checkpoint covers.
+
+**Why:** A message that started no run was a canonical turn and nothing else,
+and the projection is never re-read from the transcript after bootstrap. The
+turn rendered for everyone and the model never saw it. The pending-input drain
+already knew how to append a participant turn without an activation input; what
+was missing was a record of which turns it had never been asked to append.
+
+**Considered and rejected:** Deriving the mark from the facts already in the
+projection — bootstrap groups consecutive tool turns into one fact, so there is
+no one-fact-per-turn to read a sequence back from. Starting the backfill at
+zero — that surfaces every side conversation a room has ever had into the
+model's context on its first activation after deploy. Gap-filling around an
+elicitation answer — the answer is a tool result that must directly follow its
+tool call, so those inputs neither gap-fill nor advance the mark; the turns fall
+to the next text input.
+
+**Consequences:** The provenance the gap-fill writes is identical to the
+drain's (`participant_turn`, the turn id, revision 1), and that identity is what
+deduplicates a turn that was itself a pending input. A turn with no text block
+is skipped, which is safe because anything with an attachment starts a run.
+Anything that changes how a pending input's Bind payload is built has to change
+`projectParticipantTextMessage` too, or the same person's turn will render two
+ways.
 
 ### 2026-09-04 — WorkstreamDO owns private child preparation and membership
 
