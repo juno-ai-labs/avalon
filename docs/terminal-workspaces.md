@@ -652,6 +652,48 @@ update lag before changing the default.
 
 ## Changelog
 
+### 2026-09-08 — The workspace root is a legal working directory, and the tools say where the root is
+
+**What changed:** `safeRelativePath` accepts `.` and `./` as `cwd` (the
+runtime's default, the workspace root) instead of refusing them as
+`path_outside_root`; a `filePath` that names the root is refused as
+`invalid_path` with its own message. The `path_outside_root` error now echoes
+the refused value, gives two accepted examples, and says to omit `cwd` for the
+root. The nine tools' path descriptions say "relative to the workspace root"
+rather than "workspace-relative", `cwd` says how to name the root, and
+`publish_resource` says in both its description and its `not_found` error that
+it alone resolves against `$AVALON_RESOURCE_DIR` (`/workspace/.rally-output`).
+The Terminal system message gains one sentence naming `/workspace` as the root
+and `$AVALON_RESOURCE_DIR` as the one exception.
+
+**Why:** A recorded document-generating run (2026-09-08, `gpt-5.6-terra`)
+wasted eight of its twenty-six tool calls on this. The model sent `cwd: "."`,
+`"./"`, and `"<file>/.."` to name the root and was refused four times; the
+message said to use `/` separators and no `..`, which it had already done, so
+it read as confirmation and the model retried, then guessed `work`, `tmp`, and
+`workspace` as directory names until a `cd` failure leaked the real root. It
+then published a file it had written under the workspace root and got
+`not_found`, because publication resolves against the output directory and
+only the publish side said so. Each failed call is a full model round trip,
+about nine seconds here; the run was four minutes. The normalization treated
+an empty result as an escape, but the boundary checks (`..`, a leading `/`,
+backslash, NUL) run separately and the sandbox re-checks with `realpath`, so
+accepting the root weakens nothing.
+
+**Considered and rejected:** Stating the root only in the system message. The
+error is what the model reads at the moment it is wrong, and
+[`agent-tools.md`](agent-tools.md) records the same retry loop for a blank
+cursor: an error that names neither the offending value nor the accepted form
+is retried. Truncating the echoed value with a new cap: the schema already
+bounds it at 4,096 bytes, so no new limit was needed.
+
+**Consequences:** `cwd: ""` reaches the runtime as an omitted `cwd`. Anything
+that adds a path parameter to a Terminal tool states which root it is relative
+to in the parameter's own description; the one-root rule is stated once in
+the system message and the exception once. The Terminal system message is
+asserted verbatim in `terminal-contract.test.ts`, so a wording change edits
+both.
+
 ### 2026-09-08 — Both regions create sandboxes from the Rally-owned snapshot
 
 **What changed:** `DAYTONA_TERMINAL_SNAPSHOT` is `rally-terminal-1` in both

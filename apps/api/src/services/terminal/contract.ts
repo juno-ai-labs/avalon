@@ -8,7 +8,7 @@ import type { ToolDefinition } from "@rally/contracts";
 import { z } from "zod";
 
 export const TERMINAL_PLUGIN_ID = "rally:terminal";
-export const TERMINAL_PLUGIN_SYSTEM_MESSAGE = "You have a Linux sandbox with Bash, Python, JavaScript (Node.js), TypeScript, and SQLite. Use these tools when code is the clearest reliable way to calculate, transform data, analyze files, validate a repository, or create a graph, image, dataset, report, archive, or artifact. Prefer Bash for simple CLI/file pipelines, Python for analysis and generated artifacts, JavaScript/TypeScript for Node and web-shaped data, and SQLite for relational transforms. Supported installers are apt/dpkg, pip/uv, and npm/pnpm. Use `sudo apt-get` for system packages; do not install another runtime or manager, and report an unsupported requirement. Use `terminal_run_command` with `ls`, `find`, `rg --files`, and `rg` for discovery and search. To work in an authorized GitHub repository, choose the exact owner/name yourself and call `terminal_checkout_repository`; use GitHub repository search first when needed, and set `requiredRemoteAccess` to `full_access` when the task needs a git push or to open a pull request. Permissions are a durable ceiling: choosing `read_only` keeps the sandbox credential read-only even when connector policy permits full access. The checkout result's `remoteAccess` is the remote boundary: `read_only` allows local edits and commits but its credential cannot push with git or mutate GitHub; `full_access` provides a repository-scoped credential for ordinary `git` and `gh` commands. Before initial repository access Rally creates or restores `$AVALON_GIT_BRANCH` and switches to it. Later tools attempt to restore that branch; if an in-progress merge, rebase, bisect, or local edit prevents the switch, inspect and repair Git state before pushing. Stay on the prepared branch, commit normally, push only that branch, and create or update its pull request against `$AVALON_GIT_BASE_BRANCH`; do not push the default branch or another ref. For deliberate text changes, read the file first with `terminal_read_file` and use `terminal_edit_file` or `terminal_apply_patch` to edit the file; use `terminal_write_file` only for intentional complete replacement or for writing a new file. To create a durable artifact/file/document visible and readable to the user, write the final stable file beneath `$AVALON_RESOURCE_DIR`, then call `terminal_publish_resource` with a path relative to that directory. Publishing the same path again updates that same artifact rather than creating a second one, so revise an artifact by editing its file and republishing its path. A nonzero command exit, timeout, cancellation, or output limit is a failed tool response whose `state` and `terminationReason` must be inspected; never infer success from the tool call alone.";
+export const TERMINAL_PLUGIN_SYSTEM_MESSAGE = "You have a Linux sandbox with Bash, Python, JavaScript (Node.js), TypeScript, and SQLite. Use these tools when code is the clearest reliable way to calculate, transform data, analyze files, validate a repository, or create a graph, image, dataset, report, archive, or artifact. Prefer Bash for simple CLI/file pipelines, Python for analysis and generated artifacts, JavaScript/TypeScript for Node and web-shaped data, and SQLite for relational transforms. Supported installers are apt/dpkg, pip/uv, and npm/pnpm. Use `sudo apt-get` for system packages; do not install another runtime or manager, and report an unsupported requirement. Use `terminal_run_command` with `ls`, `find`, `rg --files`, and `rg` for discovery and search. The workspace root is `/workspace`: it is the default working directory, and every file path and `cwd` is relative to it, except `terminal_publish_resource`, whose path is relative to `$AVALON_RESOURCE_DIR` (`/workspace/.rally-output`). To work in an authorized GitHub repository, choose the exact owner/name yourself and call `terminal_checkout_repository`; use GitHub repository search first when needed, and set `requiredRemoteAccess` to `full_access` when the task needs a git push or to open a pull request. Permissions are a durable ceiling: choosing `read_only` keeps the sandbox credential read-only even when connector policy permits full access. The checkout result's `remoteAccess` is the remote boundary: `read_only` allows local edits and commits but its credential cannot push with git or mutate GitHub; `full_access` provides a repository-scoped credential for ordinary `git` and `gh` commands. Before initial repository access Rally creates or restores `$AVALON_GIT_BRANCH` and switches to it. Later tools attempt to restore that branch; if an in-progress merge, rebase, bisect, or local edit prevents the switch, inspect and repair Git state before pushing. Stay on the prepared branch, commit normally, push only that branch, and create or update its pull request against `$AVALON_GIT_BASE_BRANCH`; do not push the default branch or another ref. For deliberate text changes, read the file first with `terminal_read_file` and use `terminal_edit_file` or `terminal_apply_patch` to edit the file; use `terminal_write_file` only for intentional complete replacement or for writing a new file. To create a durable artifact/file/document visible and readable to the user, write the final stable file beneath `$AVALON_RESOURCE_DIR`, then call `terminal_publish_resource` with a path relative to that directory. Publishing the same path again updates that same artifact rather than creating a second one, so revise an artifact by editing its file and republishing its path. A nonzero command exit, timeout, cancellation, or output limit is a failed tool response whose `state` and `terminationReason` must be inspected; never infer success from the tool call alone.";
 
 export const TERMINAL_TOOL_NAMES = [
   "read_file",
@@ -122,7 +122,7 @@ const definitions: Record<TerminalToolName, ToolDefinition> = {
     idempotency: "safe",
     timeoutMs: TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS + 30_000,
     inputSchema: objectSchema({
-      filePath: pathProperty("Relative UTF-8 text-file path using / separators."),
+      filePath: pathProperty("UTF-8 text-file path relative to the workspace root, using / separators, no leading / and no .. segment."),
       offset: { type: "integer", minimum: 1, description: "One-based starting line. Defaults to 1." },
       limit: { type: "integer", minimum: 1, maximum: 1_000, default: 200, description: "Number of lines to return, at most 1,000 and 256 KiB." },
     }, ["filePath"]),
@@ -135,7 +135,7 @@ const definitions: Record<TerminalToolName, ToolDefinition> = {
     idempotency: "record_before_execute",
     timeoutMs: TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS + 60_000,
     inputSchema: objectSchema({
-      filePath: pathProperty("Relative existing UTF-8 text-file path using / separators."),
+      filePath: pathProperty("Existing UTF-8 text-file path relative to the workspace root, using / separators, no leading / and no .. segment."),
       oldString: { type: "string", maxLength: 1_048_576, description: "Exact current text to replace." },
       newString: { type: "string", maxLength: 1_048_576, description: "Replacement text." },
       replaceAll: { type: "boolean", default: false, description: "Replace every exact match instead of requiring one unique match." },
@@ -149,7 +149,7 @@ const definitions: Record<TerminalToolName, ToolDefinition> = {
     idempotency: "record_before_execute",
     timeoutMs: TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS + 60_000,
     inputSchema: objectSchema({
-      filePath: pathProperty("Relative UTF-8 text-file path using / separators."),
+      filePath: pathProperty("UTF-8 text-file path relative to the workspace root, using / separators, no leading / and no .. segment."),
       content: { type: "string", maxLength: 10 * 1_048_576, description: "Complete new file content; the resulting file may not exceed 10 MiB." },
     }, ["filePath", "content"]),
   },
@@ -173,7 +173,7 @@ const definitions: Record<TerminalToolName, ToolDefinition> = {
     timeoutMs: TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS + 930_000,
     inputSchema: objectSchema({
       command: { type: "string", minLength: 1, maxLength: 32 * 1_024, description: "One non-interactive Bash script fragment." },
-      cwd: pathProperty("Optional workspace-relative working directory."),
+      cwd: pathProperty("Optional working directory relative to the workspace root. Omit it to run in the root; pass a subdirectory such as out or src/app. A leading / or a .. segment is refused."),
       timeoutMs: { type: "integer", minimum: 1, maximum: 900_000, default: 120_000, description: "Command wall-clock deadline in milliseconds." },
       description: { type: "string", minLength: 1, maxLength: 240, description: "Short participant-facing activity label; it does not affect execution." },
     }, ["command"]),
@@ -202,7 +202,7 @@ const definitions: Record<TerminalToolName, ToolDefinition> = {
       additionalProperties: false,
       properties: {
         resourceId: { type: "string", format: "uuid", description: "Currently visible work-stream resource ID." },
-        destinationPath: pathProperty("Explicit workspace-relative destination path. For a site resource this names the directory root to materialize the tree into."),
+        destinationPath: pathProperty("Explicit destination path relative to the workspace root. For a site resource this names the directory root to materialize the tree into."),
         overwrite: { type: "boolean", default: false, description: "Replace an existing destination only when intentional. For a site this replaces the whole destination directory rather than merging into it, so files a later version deleted do not survive." },
       },
       required: ["resourceId"],
@@ -214,13 +214,13 @@ const definitions: Record<TerminalToolName, ToolDefinition> = {
   },
   publish_resource: {
     name: "publish_resource",
-    description: "Publish one stable non-empty regular file, or a whole directory, beneath AVALON_RESOURCE_DIR as a generated work-stream resource. filePath is relative to that output directory, not the repository. A directory with index.js at its root publishes as a live site Rally hosts and serves; one with index.html at its root publishes as a live static site; any other directory publishes as one downloadable archive. The result's publishKind says which of file, site, or archive it became. Publishing the same filePath again updates that resource in place — new content, and a new title when displayName is given — instead of creating a second one, so republish the same path to revise it and choose a different path for a different thing.",
+    description: "Publish one stable non-empty regular file, or a whole directory, beneath AVALON_RESOURCE_DIR as a generated work-stream resource. filePath is relative to that output directory (/workspace/.rally-output), not the workspace root that read_file and write_file use, so write or copy the finished file beneath AVALON_RESOURCE_DIR before publishing it. A directory with index.js at its root publishes as a live site Rally hosts and serves; one with index.html at its root publishes as a live static site; any other directory publishes as one downloadable archive. The result's publishKind says which of file, site, or archive it became. Publishing the same filePath again updates that resource in place — new content, and a new title when displayName is given — instead of creating a second one, so republish the same path to revise it and choose a different path for a different thing.",
     capability: "terminal.resource.publish",
     mode: "write",
     idempotency: "provider_key",
     timeoutMs: TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS + 120_000,
     inputSchema: objectSchema({
-      filePath: pathProperty("Path relative to AVALON_RESOURCE_DIR. A file path publishes that file; a directory path publishes the whole tree beneath it."),
+      filePath: pathProperty("Path relative to AVALON_RESOURCE_DIR (/workspace/.rally-output), not to the workspace root. A file path publishes that file; a directory path publishes the whole tree beneath it."),
       displayName: { type: "string", minLength: 1, maxLength: 300, description: "Optional participant-visible resource title." },
       description: { type: "string", maxLength: 2_000, description: "Optional participant-visible description." },
     }, ["filePath"]),
