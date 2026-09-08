@@ -200,7 +200,6 @@ describe('withMarkdownDefinitions', () => {
   });
 });
 
-
 function partsId(part: MarkdownCollapsePart): string | undefined {
   return part.type === 'section' ? part.id : undefined;
 }
