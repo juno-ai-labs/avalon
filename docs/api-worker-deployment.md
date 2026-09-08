@@ -20,13 +20,14 @@ the [WorkerEntrypoint RPC model](https://developers.cloudflare.com/workers/runti
 [RPC lifecycle and disposal](https://developers.cloudflare.com/workers/runtime-apis/rpc/lifecycle/),
 and [Versions and gradual deployments](https://developers.cloudflare.com/workers/configuration/versions-and-deployments/gradual-deployments/).
 
-## Sidekick compatibility deployment
+## Sidekick staged deployment
 
-The Sidekick implementation ships both class exports while the regional
-`AUTOMATION_DOS` bindings still name `AutomationDO` at migration tag v9. This
-release performs the compatibility stage only. The separate class-rename release
-must follow verified deployments in both regions and update migration-tracker
-class reporting and force dispatch alongside `renamed_classes` and bindings.
+PR #583 deploys both class exports while retaining `AutomationDO` at v9. After
+verifying that release in both regions, deploy the tracker with both class names
+accepted, then apply the API rename release EU first and Global second. It appends
+v10, updates the binding class and migration-report identity, and accepts queued
+legacy commands through a compatibility dispatcher. Only after namespace IDs and
+existing objects are verified may a third release remove the old Worker export.
 See [the lifecycle rollout](automation-lifecycle.md#class-rename-deployment).
 
 ## Where the code lives
@@ -302,6 +303,14 @@ catalog reads plus sixteen small KV writes; inference performs only the KV reads
 for Azure-bound models in its route plan.
 
 ## Changelog
+
+### 2026-09-08 — Stage the Sidekick namespace rename with operational compatibility
+
+Append the class rename only after the dual-export release is verified. Keep
+`automation_do` schema history and object-name bytes, and translate already-queued
+legacy commands so strict owner class checks do not turn the rollout into a dead
+letter backlog. The tracker accepts both labels before either regional rename;
+removing the old Worker export remains a separately verified third deployment.
 
 ### 2026-09-08 — Keep the Sidekick rename behind a verified compatibility release
 
