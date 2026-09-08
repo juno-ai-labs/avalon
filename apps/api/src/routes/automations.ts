@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { zValidator } from "../middleware/validation";
 import {
   AutomationDetailSchema,
+  type AutomationDetail,
   AutomationRunSchema,
   AutomationExecutionPrincipalClaimSchema,
   AutomationSummarySchema,
@@ -25,9 +26,20 @@ const AutomationRunPageSchema = z.object({ items: z.array(AutomationRunSchema) }
 const CreatedAutomationSchema = z.object({ automationId: IdSchema });
 const StartedRunSchema = z.object({ runId: IdSchema, reused: z.boolean() });
 
-export const automationRoutes = new Hono<HonoAppEnv>();
+/** Older installed clients cannot parse empty or explicit-email trigger lists. */
+export function legacyAutomationDetail(detail: AutomationDetail) {
+  if (!detail.currentDefinition) return detail;
+  const triggers = detail.currentDefinition.triggers.filter((trigger) => trigger.type !== "inbound_email");
+  return { ...detail, currentDefinition: { ...detail.currentDefinition,
+    triggers: triggers.length ? triggers : [{ type: "manual" as const }],
+  } };
+}
+
+function createAutomationRoutes(sidekicks: boolean) {
+const detailResponse = (detail: AutomationDetail) => sidekicks ? detail : legacyAutomationDetail(detail);
+const automationRoutes = new Hono<HonoAppEnv>();
 automationRoutes.get("/", async (c) =>
-  c.json(AutomationPageSchema.parse(await new AutomationService(c.env, getAuth(c))[c.req.path.includes("/sidekicks") ? "listSidekicks" : "list"]())));
+  c.json(AutomationPageSchema.parse(await new AutomationService(c.env, getAuth(c))[sidekicks ? "listSidekicks" : "list"]())));
 // "New automation": the object and its conversation, and nothing else. The
 // draft is written in that conversation, so there is no body.
 automationRoutes.post("/", async (c) =>
@@ -42,9 +54,9 @@ automationRoutes.get("/workstream/:workstreamId", zValidator("param", z.object({
     .listForWorkstream(c.req.valid("param").workstreamId),
 )));
 automationRoutes.get("/:id", zValidator("param", idParam), async (c) =>
-  c.json(AutomationDetailSchema.parse(
+  c.json(AutomationDetailSchema.parse(detailResponse(
     await new AutomationService(c.env, getAuth(c)).detail(c.req.valid("param").id),
-  )));
+  ))));
 automationRoutes.post("/:id/run", zValidator("param", idParam), zValidator("header", runHeaders), async (c) => c.json(
   StartedRunSchema.parse(await new AutomationService(c.env, getAuth(c)).runNow(
     c.req.valid("param").id,
@@ -56,9 +68,9 @@ automationRoutes.post("/:id/run", zValidator("param", idParam), zValidator("head
 // automation, every later time it re-applies an edit. Takes no body: the
 // definition is on the object, written by its conversation.
 automationRoutes.post("/:id/accept", zValidator("param", idParam), async (c) =>
-  c.json(AutomationDetailSchema.parse(
+  c.json(AutomationDetailSchema.parse(detailResponse(
     await new AutomationService(c.env, getAuth(c)).apply(c.req.valid("param").id),
-  )));
+  ))));
 // The claimant is always the caller, so this body is empty by design: a field
 // naming somebody else would let one person lend a colleague's credentials to a
 // standing automation.
@@ -72,3 +84,8 @@ automationRoutes.post("/:id/resume", zValidator("param", idParam), async (c) => 
 automationRoutes.delete("/:id", zValidator("param", idParam), async (c) => { await new AutomationService(c.env, getAuth(c)).delete(c.req.valid("param").id); return c.body(null, 204); });
 automationRoutes.get("/:id/runs", zValidator("param", idParam), async (c) =>
   c.json(AutomationRunPageSchema.parse(await new AutomationService(c.env, getAuth(c)).runs(c.req.valid("param").id))));
+
+return automationRoutes;
+}
+export const automationRoutes = createAutomationRoutes(false);
+export const sidekickRoutes = createAutomationRoutes(true);

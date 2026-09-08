@@ -234,6 +234,7 @@ export const ExternalEventRegistrationProjectionV1Schema = z.strictObject({
   schemaVersion: z.literal(1),
   workspaceId: IdSchema.brand<"WorkspaceId">(),
   destination: ExternalEventDestinationSchema,
+  sourceGeneration: z.number().int().nonnegative().optional(),
   evaluators: z.array(ExternalEventEvaluatorV1Schema),
 });
 

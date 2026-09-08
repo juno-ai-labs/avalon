@@ -462,6 +462,8 @@ describe('WorkspaceSocketProvider', () => {
       ['digest-schedule'],
       ['automation'],
       ['automation-draft'],
+      ['sidekicks-library'],
+      ['attached-sidekicks'],
       ['note'],
       ['resources'],
       ['workstream-context'],
@@ -1063,6 +1065,8 @@ describe('WorkspaceSocketProvider', () => {
     const automationId = '00000000-0000-7000-8000-000000000005';
     queryClient.setQueryData(['automation', automationId], { id: automationId, currentDefinition: null });
     queryClient.setQueryData(['automation-runs', automationId], []);
+    queryClient.setQueryData(['sidekicks-library'], []);
+    queryClient.setQueryData(['attached-sidekicks', 'room'], []);
     const getWorkspaceSocketTicket = vi.fn(async () => ({
       url: 'wss://api.rally.test/socket/workspaces/workspace-1',
       ticket: 'workspace-ticket',
@@ -1107,6 +1111,8 @@ describe('WorkspaceSocketProvider', () => {
 
     expect(queryClient.getQueryState(['automation', automationId])?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(['automation-runs', automationId])?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(['sidekicks-library'])?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(['attached-sidekicks', 'room'])?.isInvalidated).toBe(true);
   });
 
   it('drops a sidebar list whose version is not newer than the one applied', async () => {

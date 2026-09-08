@@ -6,7 +6,7 @@ import type { AutomationDetail, AutomationRun } from '../lib/types';
 import { formatRelative } from '../lib/format';
 import { Badge, Button, IconButton, InlineError, StatusDot } from './primitives';
 
-export type AutomationHeaderAction = 'apply' | 'pause' | 'resume' | 'delete' | 'run';
+export type AutomationHeaderAction = 'pause' | 'resume' | 'delete' | 'run';
 
 export interface AutomationHeaderProps {
   automation: AutomationDetail;
@@ -19,32 +19,11 @@ export interface AutomationHeaderProps {
   /** The action in flight, so its button reads as busy and the rest stay put. */
   pending?: AutomationHeaderAction | null;
   error?: string | undefined;
-  onApply: () => void;
   onPause: () => void;
   onResume: () => void;
   /** Runs the deletion once the person has confirmed it; a rejection stays in the dialog. */
   onDelete: () => Promise<void>;
   onRunNow: () => void;
-}
-
-/**
- * Whether Create or Apply may be pressed.
- *
- * The definition is written by the conversation below and submitted in
- * revisions; only a ready one may be applied, and re-applying the revision
- * that is already running would do nothing. Both facts are on the detail, so
- * the button reads them rather than guessing from lifecycle alone: a draft
- * whose chat has not finished asking is a draft with nothing to create yet.
- */
-export function automationApplyEnabled(automation: Pick<
-  AutomationDetail,
-  'currentDefinition' | 'currentDefinitionRevision' | 'acceptedDefinitionRevision' | 'lifecycle'
->): boolean {
-  // A pause is lifted by Resume and by nothing else; the object refuses an
-  // apply while paused rather than resuming as a side effect of an edit.
-  return automation.lifecycle !== 'paused'
-    && automation.currentDefinition?.ready === true
-    && automation.currentDefinitionRevision !== automation.acceptedDefinitionRevision;
 }
 
 const lifecycleLabel: Record<AutomationDetail['lifecycle'], string> = {

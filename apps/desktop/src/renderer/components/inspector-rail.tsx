@@ -27,7 +27,6 @@ import { desktopBridge } from '../lib/platform';
 import { reportTelemetryProductIntent } from '../lib/telemetry';
 import type {
   ResourceVersion,
-  WorkstreamAutomationSummary,
   WorkstreamDetail,
   WorkstreamResource,
 } from '../lib/types';
@@ -82,17 +81,13 @@ interface InspectorRailProps {
    * a pending fetch to `[]` tells somebody the room owns nothing while the
    * answer is still on its way.
    */
-  workstreamAutomations?: WorkstreamAutomationSummary[];
   /** Set when the list could not be loaded, so absence is not read as none. */
-  workstreamAutomationsError?: string | undefined;
   /** Opens one in the automation surface. Absent where there is nowhere to go. */
-  onOpenWorkstreamAutomation?: (automationId: string) => void;
   /**
    * Whether the context lists the automations this parent owns. Only a work
    * stream owns any; an automation's own conversation shows no such section
    * rather than an empty one.
    */
-  automationsSection?: boolean;
   onAddParticipant?: () => void;
   onAddResource?: () => void;
   onDetachResource?: (resource: WorkstreamResource) => void | Promise<void>;
@@ -212,10 +207,6 @@ function ContextContent({
   | 'attachedSidekicks'
   | 'attachedSidekicksError'
   | 'onRemoveSidekick'
-  | 'workstreamAutomations'
-  | 'workstreamAutomationsError'
-  | 'onOpenWorkstreamAutomation'
-  | 'automationsSection'
   | 'onAddParticipant'
   | 'onAddResource'
   | 'onToggleWatch'

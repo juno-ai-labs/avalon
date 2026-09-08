@@ -2,7 +2,7 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { AutomationDetail } from '../lib/types';
-import { AutomationHeader, automationApplyEnabled } from './automation-header';
+import { AutomationHeader } from './automation-header';
 
 const definition: NonNullable<AutomationDetail['currentDefinition']> = {
   name: 'Weekly changelog',
@@ -41,7 +41,6 @@ const draft: AutomationDetail = {
 
 function actions() {
   return {
-    onApply: vi.fn<() => void>(),
     onPause: vi.fn<() => void>(),
     onResume: vi.fn<() => void>(),
     onDelete: vi.fn<() => Promise<void>>(async () => undefined),
@@ -59,43 +58,6 @@ function renderHeader(automation: AutomationDetail, overrides: Partial<React.Com
   return handlers;
 }
 
-describe('automationApplyEnabled', () => {
-  it('is off before the conversation has submitted a definition', () => {
-    expect(automationApplyEnabled(draft)).toBe(false);
-  });
-
-  it('is off while the submitted definition still has an open question', () => {
-    expect(automationApplyEnabled({
-      ...draft,
-      currentDefinition: { ...definition, ready: false },
-      currentDefinitionRevision: 1,
-    })).toBe(false);
-  });
-
-  it('is on for a ready revision that is not the one running', () => {
-    expect(automationApplyEnabled({
-      ...draft,
-      currentDefinition: definition,
-      currentDefinitionRevision: 1,
-    })).toBe(true);
-    expect(automationApplyEnabled({
-      ...draft,
-      currentDefinition: definition,
-      currentDefinitionRevision: 2,
-      acceptedDefinitionRevision: 1,
-    })).toBe(true);
-  });
-
-  it('is off once the running revision is the current one', () => {
-    expect(automationApplyEnabled({
-      ...draft,
-      currentDefinition: definition,
-      currentDefinitionRevision: 1,
-      acceptedDefinitionRevision: 1,
-    })).toBe(false);
-  });
-});
-
 describe('AutomationHeader', () => {
   it('shows the conversational draft without an activation button', () => {
     renderHeader(draft);
@@ -108,7 +70,7 @@ describe('AutomationHeader', () => {
   });
 
   it('shows the generated description and triggers without manual publication', () => {
-    const handlers = renderHeader({
+    renderHeader({
       ...draft,
       currentDefinition: definition,
       currentDefinitionRevision: 1,
@@ -120,7 +82,6 @@ describe('AutomationHeader', () => {
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Weekly changelog');
     expect(screen.getByRole('list', { name: 'Triggers' })).toHaveTextContent('Every Monday at 9:00 AM');
     expect(screen.queryByRole('button', { name: 'Create' })).toBeNull();
-    expect(handlers.onApply).not.toHaveBeenCalled();
   });
 
   it('shows saved state and never offers Apply changes', () => {
@@ -141,9 +102,8 @@ describe('AutomationHeader', () => {
     expect(screen.getByText('weekly-changelog@automation.rallywith.ai')).toBeInTheDocument();
     unmount();
 
-    const handlers = renderHeader({ ...active, currentDefinitionRevision: 2 });
+    renderHeader({ ...active, currentDefinitionRevision: 2 });
     expect(screen.queryByRole('button', { name: 'Apply changes' })).toBeNull();
-    expect(handlers.onApply).not.toHaveBeenCalled();
   });
 
   it('offers Pause on an active automation and Resume on a paused one', () => {
@@ -176,12 +136,6 @@ describe('AutomationHeader', () => {
     fireEvent.pointerDown(screen.getByRole('button', { name: 'More Sidekick actions' }), { button: 0, ctrlKey: false });
     expect(await screen.findByRole('menuitem', { name: 'Run now' })).toHaveAttribute('aria-disabled', 'true');
     expect(paused.onRunNow).not.toHaveBeenCalled();
-    expect(automationApplyEnabled({
-      lifecycle: 'active',
-      currentDefinition: definition,
-      currentDefinitionRevision: 2,
-      acceptedDefinitionRevision: 1,
-    })).toBe(true);
   });
 
   it('deletes only after the confirmation dialog, and keeps a failure in it', async () => {

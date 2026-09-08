@@ -165,7 +165,7 @@ export class AutomationService {
    * workspace directory, and false when it cannot answer, which only ever
    * withholds the room's standing rather than granting anything.
    */
-  private async actorRequest(automationId: string): Promise<{
+  async actorRequest(automationId: string): Promise<{
     workspaceId: ReturnType<typeof asWorkspaceId>;
     automationId: string;
     actor: AutomationActor;

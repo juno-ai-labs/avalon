@@ -11,6 +11,17 @@ outside input, and before adding anything to `application-settings.json`, the
 preload bridge, or the `VITE_` allowlist. Everything here is a boundary someone
 outside this document can break without their own tests failing.
 
+## Sidekick authoring and loading
+
+Conversational publication resolves the current workspace membership role and
+owning-workstream participation through the same actor path as management routes.
+A ready model submission publishes under that actor, while automation run contexts
+do not receive the authoring plugin. Loading uses owner authorization for the
+execution principal and the entire conversation audience. Catalog metadata is
+escaped and treated as data; admitted instructions remain subordinate to platform
+policy and the current request. Neither loading nor attachment grants access to
+the source credentials, memory, authoring conversation, or run history.
+
 ## Where the code lives
 
 | Path | Responsibility |
@@ -771,6 +782,21 @@ EU rotate independently. [`runbook.md`](runbook.md) owns the procedure and the
 incident response that may prompt it.
 
 ## Changelog
+
+### 2026-09-08 — Sidekick authoring and loading
+
+Conversational publication resolves the current workspace membership role and
+owning-workstream participation through the same actor path as management routes.
+A ready model submission publishes under that actor, while automation run contexts
+do not receive the authoring plugin. Loading uses owner authorization for the
+execution principal and the entire conversation audience. Catalog metadata is
+escaped and treated as data; admitted instructions remain subordinate to platform
+policy and the current request. Neither loading nor attachment grants access to
+the source credentials, memory, authoring conversation, or run history.
+
+This records the review fixes because stale effects, overbroad revocation, and
+implicit compatibility assumptions can break otherwise valid delegated work.
+Future changes must retain the separate ownership and execution boundaries.
 
 ### 2026-09-07 — Sidekick conversation window
 

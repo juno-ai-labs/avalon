@@ -15,6 +15,15 @@ hierarchy, schemas, sockets, and effects — belong to
 [`workstream-durable-object.md`](workstream-durable-object.md) and, for
 automations, [`automation-lifecycle.md`](automation-lifecycle.md).
 
+## Sidekick publication recovery
+
+Sidekick publication commits its accepted revision, stored `loadable`, and a
+`sidekick_publication` alarm before running external effects. The alarm retries
+unapplied effects at the durable boundary. Registration replacements carry the
+owner generation; an equal-generation replay returns the original event cutoff
+and a stale generation cannot replace current registrations. Lifecycle checks
+remain separate from this effect-ordering fence.
+
 ## Where the code lives
 
 | Path | Responsibility |
@@ -466,6 +475,19 @@ emitted, and `$workers.durableObjectId` is the platform-owned correlation
 field.
 
 ## Changelog
+
+### 2026-09-08 — Sidekick publication recovery
+
+Sidekick publication commits its accepted revision, stored `loadable`, and a
+`sidekick_publication` alarm before running external effects. The alarm retries
+unapplied effects at the durable boundary. Registration replacements carry the
+owner generation; an equal-generation replay returns the original event cutoff
+and a stale generation cannot replace current registrations. Lifecycle checks
+remain separate from this effect-ordering fence.
+
+This records the review fixes because stale effects, overbroad revocation, and
+implicit compatibility assumptions can break otherwise valid delegated work.
+Future changes must retain the separate ownership and execution boundaries.
 
 ### 2026-09-03: The automation object stores a run entry per occurrence
 

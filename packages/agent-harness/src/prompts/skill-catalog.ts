@@ -8,10 +8,14 @@ export interface RenderPromptSkillCatalogInput {
   maxCatalogTokens?: number;
 }
 
+function catalogText(value: string): string {
+  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replace(/[\r\n]+/gu, " ");
+}
+
 function skillLine(skill: SkillSummary, namesOnly: boolean): string {
-  if (namesOnly) return `- ${skill.name}`;
-  const hint = skill.whenToUse ? ` — ${skill.whenToUse}` : "";
-  return `- ${skill.name}: ${skill.description}${hint}`;
+  if (namesOnly) return `- ${catalogText(skill.name)}`;
+  const hint = skill.whenToUse ? ` — ${catalogText(skill.whenToUse)}` : "";
+  return `- ${catalogText(skill.name)}: ${catalogText(skill.description)}${hint}`;
 }
 
 /**

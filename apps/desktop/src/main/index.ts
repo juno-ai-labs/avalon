@@ -4185,7 +4185,7 @@ async function createSidekicksWindow(sidekickId?: string): Promise<void> {
   const target = new URL(rendererUrl('sidekicks'));
   if (sidekickId) target.hash = `/sidekicks/${sidekickId}`;
   if (sidekicksWindow && !sidekicksWindow.isDestroyed()) {
-    if (sidekickId) await loadRenderer(sidekicksWindow, target.toString(), 'sidekicks');
+    if (sidekicksWindow.webContents.getURL() !== target.toString()) await loadRenderer(sidekicksWindow, target.toString(), 'sidekicks');
     if (sidekicksWindow.isMinimized()) sidekicksWindow.restore();
     sidekicksWindow.show();
     sidekicksWindow.focus();

@@ -207,6 +207,9 @@ async function registerWorkstreamWatch(workstreamId: string): Promise<void> {
 
 async function registerAutomation(): Promise<void> {
   await workspace().applyExternalEventRegistrations({
+    sourceGeneration: await runInDurableObject(automation(), (_instance, state) => state.storage.sql.exec<{ registration_generation: number }>(
+        `UPDATE automation SET registration_generation = registration_generation + 1 WHERE id = 1 RETURNING registration_generation`,
+      ).one().registration_generation),
     schemaVersion: 1,
     workspaceId: WORKSPACE_ID,
     destination: { kind: "automation", automationId: AUTOMATION_ID },
@@ -329,6 +332,22 @@ beforeEach(async () => {
 });
 
 describe("external event routing", () => {
+  it("rejects stale registration effects and keeps retry activation boundaries stable", async () => {
+    const project = (sourceGeneration: number, eventType: string) => workspace().applyExternalEventRegistrations({
+      schemaVersion: 1, workspaceId: WORKSPACE_ID, sourceGeneration,
+      destination: { kind: "automation", automationId: AUTOMATION_ID },
+      evaluators: [{ evaluatorId: sourceGeneration === 2 ? "00000000-0000-7000-8000-0000000009b0" : "00000000-0000-7000-8000-0000000009b1",
+        source: { connectorType: "slack", connectionId: CONNECTION_ID, eventType }, when: { kind: "always" } }],
+    });
+    const accepted = await project(2, "slack.message.posted");
+    await ingestSlackEvent(EVENT_ID, "registration-retry");
+    expect(await project(2, "slack.message.posted")).toEqual(accepted);
+    await project(1, "slack.reaction.added");
+    const result = await match(EVENT_ID);
+    expect(result.deliveries).toHaveLength(1);
+    expect(result.deliveries[0]?.registrationId).toBe("00000000-0000-7000-8000-0000000009b0");
+  });
+
   it("matches one event to every destination once, whatever the Queue redelivers", async () => {
     await registerWorkstreamWatch(WORKSTREAM_ONE);
     await registerWorkstreamWatch(WORKSTREAM_TWO);
