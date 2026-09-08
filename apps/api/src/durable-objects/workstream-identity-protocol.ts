@@ -24,6 +24,7 @@ export type IdentityOperation = keyof WorkstreamIdentityStorage;
 export type IdentityObjectPort = ObjectPortOf<WorkstreamIdentityStorage>;
 
 const DISPATCHED_OPERATIONS = [
+  "readAuthorizationFacts",
   "identity",
   "participants",
   "provision",

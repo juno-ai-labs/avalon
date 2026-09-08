@@ -1,0 +1,181 @@
+import { z } from 'zod';
+import { IdSchema, SubstreamIdSchema, WorkspaceIdSchema, UserIdSchema } from '@rally/contracts';
+
+/** Product policy: ordinary read authority can lag a change by at most five minutes. */
+export const AUTHORIZATION_FRESHNESS_MS = 300_000;
+export const AUTHORIZATION_POLICY_VERSION = 1;
+
+export const AuthorizationResourceSchema = z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('conversation'), workspaceId: WorkspaceIdSchema,
+    parentId: IdSchema, substreamId: SubstreamIdSchema }),
+  z.strictObject({ kind: z.literal('resource'), workspaceId: WorkspaceIdSchema, resourceId: IdSchema }),
+  z.strictObject({ kind: z.literal('memory'), workspaceId: WorkspaceIdSchema, scopeId: IdSchema }),
+]);
+export type AuthorizationResource = z.infer<typeof AuthorizationResourceSchema>;
+
+export const AuthorizationSubjectSchema = z.strictObject({
+  workspaceId: WorkspaceIdSchema,
+  userId: UserIdSchema.nullable(),
+  /** Host-owned execution identity; never a model-supplied user ID. */
+  delegation: z.string().nullable(),
+});
+export type AuthorizationSubject = z.infer<typeof AuthorizationSubjectSchema>;
+
+export const ConversationAuthorizationRequestSchema = z.strictObject({
+  workspaceId: WorkspaceIdSchema, parentId: IdSchema, userId: UserIdSchema,
+  substreamIds: z.array(SubstreamIdSchema),
+});
+export type ConversationAuthorizationRequest = z.infer<typeof ConversationAuthorizationRequestSchema>;
+
+export const AuthorizationEvidenceSchema = z.strictObject({
+  owner: z.string(),
+  revision: z.string(),
+  validatedAt: z.number().int().nonnegative(),
+});
+export type AuthorizationEvidence = z.infer<typeof AuthorizationEvidenceSchema>;
+
+export const AuthorizationDenialReasonSchema = z.enum([
+  'workspace_mismatch', 'workspace_membership_required', 'outside_delegation', 'not_participant', 'private_child_membership_required',
+  'resource_not_shared', 'connection_not_accessible', 'memory_scope_not_accessible',
+]);
+export const AuthorizationDecisionSchema = z.discriminatedUnion('status', [
+  z.strictObject({ status: z.literal('allowed'), evidence: z.array(AuthorizationEvidenceSchema).nonempty() }),
+  z.strictObject({ status: z.literal('denied'), reason: AuthorizationDenialReasonSchema,
+    evidence: z.array(AuthorizationEvidenceSchema) }),
+  z.strictObject({ status: z.literal('not_found'), resource: AuthorizationResourceSchema,
+    evidence: z.array(AuthorizationEvidenceSchema).nonempty() }),
+  z.strictObject({ status: z.literal('unavailable'),
+    reason: z.enum(['authority_unavailable', 'projection_incomplete', 'evidence_expired']), retryable: z.literal(true) }),
+]);
+export type AuthorizationDecision = z.infer<typeof AuthorizationDecisionSchema>;
+
+/** A small explicit policy algebra, not a user-programmable graph language. */
+export type ReadPolicy =
+  | { kind: 'fact'; granted: boolean; reason: z.infer<typeof AuthorizationDenialReasonSchema>; evidence: AuthorizationEvidence }
+  | { kind: 'all'; policies: readonly ReadPolicy[] }
+  | { kind: 'any'; policies: readonly ReadPolicy[]; reason: z.infer<typeof AuthorizationDenialReasonSchema> };
+
+export function evidenceExpiresAt(evidence: readonly AuthorizationEvidence[]): number {
+  return evidence.length ? Math.min(...evidence.map((item) => item.validatedAt + AUTHORIZATION_FRESHNESS_MS)) : 0;
+}
+
+export function decisionIsFresh(decision: AuthorizationDecision, now: number): boolean {
+  return decision.status !== 'unavailable' && decision.evidence.length > 0
+    && decision.evidence.every((item) => item.validatedAt <= now)
+    && now < evidenceExpiresAt(decision.evidence);
+}
+
+/** Every serving strategy evaluates these same predicates. Alternative grants retain their own proof. */
+export function evaluateReadPolicy(policy: ReadPolicy, now: number): AuthorizationDecision {
+  if (policy.kind === 'fact') {
+    const decision: AuthorizationDecision = policy.granted
+      ? { status: 'allowed', evidence: [policy.evidence] }
+      : { status: 'denied', reason: policy.reason, evidence: [policy.evidence] };
+    return decisionIsFresh(decision, now) ? decision
+      : { status: 'unavailable', reason: 'evidence_expired', retryable: true };
+  }
+  const decisions = policy.policies.map((item) => evaluateReadPolicy(item, now));
+  if (policy.kind === 'any') {
+    const granted = decisions.find((decision) => decision.status === 'allowed');
+    if (granted) return granted;
+    const unavailable = decisions.find((decision) => decision.status === 'unavailable');
+    if (unavailable) return unavailable;
+    return { status: 'denied', reason: policy.reason,
+      evidence: decisions.flatMap((decision) => decision.status === 'denied' ? decision.evidence : []) };
+  }
+  const denied = decisions.find((decision) => decision.status === 'denied');
+  if (denied) return denied;
+  const unavailable = decisions.find((decision) => decision.status === 'unavailable');
+  if (unavailable) return unavailable;
+  const evidence = decisions.flatMap((decision) => decision.status === 'allowed' ? decision.evidence : []);
+  // An empty conjunction must never become a grant without authority evidence.
+  return evidence.length ? { status: 'allowed', evidence }
+    : { status: 'unavailable', reason: 'projection_incomplete', retryable: true };
+}
+
+export function authorizationResourceKey(resource: AuthorizationResource): string {
+  switch (resource.kind) {
+    case 'conversation': return JSON.stringify([resource.workspaceId, resource.kind, resource.parentId, resource.substreamId]);
+    case 'resource': return JSON.stringify([resource.workspaceId, resource.kind, resource.resourceId]);
+    case 'memory': return JSON.stringify([resource.workspaceId, resource.kind, resource.scopeId]);
+  }
+}
+
+export const AuthorizationSnapshotSchema = z.strictObject({
+  policyVersion: z.literal(AUTHORIZATION_POLICY_VERSION),
+  subject: AuthorizationSubjectSchema,
+  resource: AuthorizationResourceSchema,
+  decision: AuthorizationDecisionSchema,
+});
+export type AuthorizationSnapshot = z.infer<typeof AuthorizationSnapshotSchema>;
+
+export interface AuthorizationResolver {
+  checkMany(subject: AuthorizationSubject, resources: readonly AuthorizationResource[]): Promise<AuthorizationDecision[]>;
+}
+
+/** Trusted server context. It carries restrictions, never accepts asserted permission IDs. */
+export class AccessContext {
+  constructor(
+    readonly subject: AuthorizationSubject,
+    private readonly resolver: AuthorizationResolver,
+    private readonly restrictions: readonly ReadonlySet<string>[] = [],
+  ) {}
+
+  within(resources: readonly AuthorizationResource[]): AccessContext {
+    return new AccessContext(this.subject, this.resolver,
+      [...this.restrictions, new Set(resources.map(authorizationResourceKey))]);
+  }
+
+  async check(resource: AuthorizationResource): Promise<AuthorizationDecision> {
+    const [decision] = await this.checkMany([resource]);
+    if (!decision) throw new Error('authorization_resolver_missing_decision');
+    return decision;
+  }
+
+  async checkMany(resources: readonly AuthorizationResource[]): Promise<AuthorizationDecision[]> {
+    const admitted: AuthorizationResource[] = [];
+    const indices: number[] = [];
+    const results: AuthorizationDecision[] = [];
+    resources.forEach((resource, index) => {
+      if (resource.workspaceId !== this.subject.workspaceId) {
+        results[index] = { status: 'denied', reason: 'workspace_mismatch', evidence: [] };
+      } else if (!this.restrictions.every((set) => set.has(authorizationResourceKey(resource)))) {
+        results[index] = { status: 'denied', reason: 'outside_delegation', evidence: [] };
+      } else { admitted.push(resource); indices.push(index); }
+    });
+    if (admitted.length) {
+      const decisions = await this.resolver.checkMany(this.subject, admitted);
+      if (decisions.length !== admitted.length) throw new Error('authorization_resolver_cardinality_mismatch');
+      const now = Date.now();
+      decisions.forEach((decision, index) => {
+        // A fast member of a batch can expire while another owner is still responding.
+        results[indices[index]!] = decision.status !== 'unavailable'
+          && !(decision.status === 'denied' && decision.evidence.length === 0)
+          && !decisionIsFresh(decision, now)
+          ? { status: 'unavailable', reason: 'evidence_expired', retryable: true } : decision;
+      });
+    }
+    return results;
+  }
+
+  /** Completeness is explicit: failures are never silently dropped into an empty list. */
+  async readableScopes(resources: readonly AuthorizationResource[]) {
+    const decisions = await this.checkMany(resources);
+    return { complete: decisions.every((decision) => decision.status !== 'unavailable'),
+      items: resources.flatMap((resource, index) => decisions[index]?.status === 'allowed' ? [resource] : []),
+      decisions };
+  }
+}
+
+/** Source composition retains one access context and admits each returned resource separately. */
+export class AuthorizedView<T> {
+  constructor(private readonly access: AccessContext,
+    private readonly sources: readonly (() => Promise<readonly { resource: AuthorizationResource; value: T }[]>)[]) {}
+
+  async read() {
+    const candidates = (await Promise.all(this.sources.map((source) => source()))).flat();
+    const result = await this.access.readableScopes(candidates.map((candidate) => candidate.resource));
+    return { complete: result.complete, decisions: result.decisions,
+      items: candidates.flatMap((candidate, index) => result.decisions[index]?.status === 'allowed' ? [candidate.value] : []) };
+  }
+}
