@@ -4010,7 +4010,7 @@ describe("Durable Objects in the Workers runtime", () => {
     }
   });
 
-  it("serves complete WorkstreamDO metadata and pushes changes after hibernation", async () => {
+  it.each([false, true])("serves compatible WorkstreamDO metadata after hibernation (appearance support: %s)", async (supportsAppearance) => {
     await seedOpenAuthority();
     const stub = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
       workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
@@ -4018,6 +4018,7 @@ describe("Durable Objects in the Workers runtime", () => {
     const at = "2026-08-17T20:00:00.000Z";
     const common = {
       kind: "directory_common" as const,
+      appearance: { icon: "rocket" as const, color: "purple" as const },
       title: "Socket metadata",
       description: "Owned by the non-agent work-stream object",
       preview: "Metadata preview",
@@ -4057,7 +4058,7 @@ describe("Durable Objects in the Workers runtime", () => {
     expect(initialized.accepted).toHaveLength(2);
 
     const ticketId = "00000000-0000-7000-8000-000000000108";
-    const response = await stub.fetch("https://workstream.test/socket", {
+    const response = await stub.fetch(`https://workstream.test/socket${supportsAppearance ? "?workstreamAppearance=1" : ""}`, {
       headers: {
         Upgrade: "websocket",
         "x-rally-workspace-id": WORKSPACE_ID,
@@ -4080,7 +4081,7 @@ describe("Durable Objects in the Workers runtime", () => {
     const snapshot = nextMessage(socket);
     socket.send(JSON.stringify({ type: "subscribe" }));
     const initialMetadata = JSON.parse(String((await snapshot).data)) as {
-      metadata: { stateVersion: { commonEventId: string; viewerEventId: string | null } };
+      metadata: { appearance?: unknown; stateVersion: { commonEventId: string; viewerEventId: string | null } };
     };
     expect(initialMetadata).toMatchObject({
       type: "workstream_metadata",
@@ -4107,6 +4108,8 @@ describe("Durable Objects in the Workers runtime", () => {
         },
       },
     });
+    expect(initialMetadata.metadata.appearance).toEqual(supportsAppearance ? common.appearance : undefined);
+    expect(Object.hasOwn(initialMetadata.metadata, "appearance")).toBe(supportsAppearance);
     expect(initialMetadata.metadata.stateVersion.commonEventId).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
     );
@@ -4114,13 +4117,17 @@ describe("Durable Objects in the Workers runtime", () => {
       /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
     );
 
+    await evictDurableObject(stub);
     const pushed = nextMessage(socket);
     const update = await stub.receiveChildEffects({
       substreamId: "0",
       envelopes: [childEffectEnvelope({ ...common, title: "Renamed from another client" }, "socket-common-2", 2)],
     });
     expect(update.accepted).toHaveLength(1);
-    expect(JSON.parse(String((await pushed).data))).toMatchObject({
+    const pushedMetadata = JSON.parse(String((await pushed).data)) as typeof initialMetadata;
+    expect(pushedMetadata.metadata.appearance).toEqual(supportsAppearance ? common.appearance : undefined);
+    expect(Object.hasOwn(pushedMetadata.metadata, "appearance")).toBe(supportsAppearance);
+    expect(pushedMetadata).toMatchObject({
       type: "workstream_metadata",
       metadata: { title: "Renamed from another client" },
     });

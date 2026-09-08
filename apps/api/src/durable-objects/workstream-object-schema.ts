@@ -21,7 +21,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 46;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 47;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -2908,6 +2908,10 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
        ) STRICT`,
     ],
   },
+
+  { version: 47, description: "shared workstream appearance", statements: [
+    `ALTER TABLE workstream ADD COLUMN appearance_json TEXT CHECK (appearance_json IS NULL OR json_valid(appearance_json))`,
+  ] },
 ];
 
 /**

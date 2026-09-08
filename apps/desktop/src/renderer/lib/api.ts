@@ -330,6 +330,7 @@ export function mapWorkstreamSummary(workstream: WireWorkstream): WorkstreamSumm
     id: workstream.id,
     title: workstream.title,
     titleStatus: workstream.titleStatus,
+    appearance: workstream.appearance,
     objective: workstream.objective,
     ...(workstream.emailAddress ? { emailAddress: workstream.emailAddress } : {}),
     ...(workstream.createdByUserId ? { createdByUserId: workstream.createdByUserId } : {}),
@@ -1796,7 +1797,7 @@ export class RallyApi {
   }
 
   getWorkstreamControlSocketTicket(id: string, requestId?: string): Promise<SocketTicket> {
-    return this.request(`/workstreams/${encodeURIComponent(id)}/control-socket`, {
+    return this.request(`/workstreams/${encodeURIComponent(id)}/control-socket?workstreamAppearance=1`, {
       schema: socketTicketSchema,
       ...(requestId ? { requestId } : {}),
     });

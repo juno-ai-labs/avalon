@@ -212,6 +212,7 @@ function headerElement(
         currentUserId={overrides.currentUserId ?? null}
         grokBotMode={overrides.grokBotMode ?? false}
         onAddParticipant={vi.fn()}
+        onAppearanceChange={vi.fn().mockResolvedValue(undefined)}
         // The screen opens the rail through the same store action.
         onOpenRail={(variant) => useUiStore.getState().openRail(variant)}
         onRename={overrides.onRename ?? (async () => undefined)}

@@ -125,6 +125,14 @@ without changing avatar or project colors. Components select a profile role;
 they do not decide text contrast from a hard-coded list of hues.
 
 
+### 2026-09-08 — Identity palette keys are stable; shades are appearance-specific
+
+Projects and work streams store semantic color keys and resolve the shared
+`sys.color.project.*` tokens. Each appearance may tune its values independently
+for contrast. The registry no longer describes those shades as fixed across
+appearances: stable identity means preserving the saved key, not identical RGB
+values in light and dark. Existing palette values are unchanged.
+
 ### 2026-09-07 — Replace the stale orange palette with Rally neon yellow
 
 Rally uses #ccff00, matching the public site's primary brand color. Both desktop
