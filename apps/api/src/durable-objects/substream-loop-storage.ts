@@ -57,7 +57,9 @@ export interface SubstreamLoopRow extends Record<string, SqlStorageValue> {
    * Not the transcript's high-water mark, and not the last admitted input:
    * every conversation turn at or below it is either in the projection or was
    * deliberately left out of it, and every one above it has not been looked at.
-   * Advanced when an admission is appended, to that admission's own sequence.
+   * Advanced when an admission is appended, to the high-water the gap-fill
+   * scanned before it — never to the admitted turn's own sequence, which is
+   * allocated after the scan. An elicitation answer advances it not at all.
    */
   transcript_projected_through: number;
   created_at: number;

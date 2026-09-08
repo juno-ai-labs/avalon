@@ -67,27 +67,56 @@ export function participantModelMessageContent(
  * takes. It cannot need them — a message carrying an attachment always starts
  * a run, so it reaches the loop as a pending input with its payload already
  * built. Keeping one function for the text shape is what guarantees the two
- * paths render the same author and the same mentions the same way.
+ * paths render the text and the mentions block the same way.
+ *
+ * `overheard` is the one difference, and it is deliberate: a turn the room's
+ * addressing classifier judged to be conversation between people is rendered
+ * as that — said to the room, by a named author, not a request to Rally — so
+ * the model reads it as context and never as an instruction it was handed. An
+ * admitted request carries no such header.
  */
 export function projectParticipantTextMessage(input: Pick<
   ParticipantModelProjectionInput,
   "author" | "text" | "mentions"
->): ModelMessage | null {
+> & {
+  overheard?: { authorDisplayName: string | null };
+}): ModelMessage | null {
   const content = participantModelMessageContent(input.text, input.mentions);
   if (content.trim().length === 0) return null;
   if (input.author.type === "external") {
-    const actor = input.author.actor;
+    return externalAttributedMessage(input.author.actor, content, input.overheard !== undefined);
+  }
+  if (input.overheard) {
     return {
       role: "user",
       content: [
-        `EXTERNALLY ATTRIBUTED ${actor.provider.toLocaleUpperCase()} WORKSPACE MEMBER REQUEST`,
-        `Display name: ${actor.displayName}`,
-        `Provider member ID: ${actor.providerUserId}`,
+        OVERHEARD_HEADER,
+        `Author: ${input.overheard.authorDisplayName ?? "a workspace member"}`,
         content,
       ].join("\n"),
     };
   }
   return { role: "user", content };
+}
+
+/** Deterministic, and decidable by a small model: this is not a request. */
+const OVERHEARD_HEADER = "SAID TO THE ROOM, NOT TO RALLY";
+
+function externalAttributedMessage(
+  actor: { provider: string; displayName: string; providerUserId: string },
+  content: string,
+  overheard = false,
+): ModelMessage {
+  return {
+    role: "user",
+    content: [
+      `EXTERNALLY ATTRIBUTED ${actor.provider.toLocaleUpperCase()} WORKSPACE MEMBER ${
+        overheard ? "MESSAGE, SAID TO THE ROOM, NOT TO RALLY" : "REQUEST"}`,
+      `Display name: ${actor.displayName}`,
+      `Provider member ID: ${actor.providerUserId}`,
+      content,
+    ].join("\n"),
+  };
 }
 
 export async function projectParticipantModelMessage(
@@ -100,9 +129,11 @@ export async function projectParticipantModelMessage(
   if (input.messageType !== "text") return null;
   const content = participantModelMessageContent(input.text, input.mentions);
   if (content.trim().length === 0 && input.attachments.length === 0) return null;
-  if (input.author.type === "external" || input.attachments.length === 0) {
-    return projectParticipantTextMessage(input);
-  }
+  // An external author's attachments have never reached the model; the
+  // attribution is what it reads, and a message that is only an attachment
+  // still projects as it always has.
+  if (input.author.type === "external") return externalAttributedMessage(input.author.actor, content);
+  if (input.attachments.length === 0) return projectParticipantTextMessage(input);
   const sources = [...input.attachments];
   const parts = input.includeAttachmentContents
     ? await buildAttachmentModelParts(env.PAYLOADS, sources, {

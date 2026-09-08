@@ -148,6 +148,8 @@ Stream and checkpoint events for participant loops carry that same sequence.
 
 Before starting a loop, a lightweight classifier returns `agent_action`, `human_only`, `both`, or `uncertain` with confidence and a terse rationale code. Explicit Rally/connector mentions and clear work requests invoke the harness. Social acknowledgement and human-only coordination can remain unanswered — including a message aimed at a teammate: the caller passes the display names of the people the message mentions (`humanMentions`, resolved from validated mention rows), and the prompt rules that a message telling or asking a mentioned person something is that person's to act on, even mid-task, unless it also asks Rally for work. The same signal gates the deterministic fast paths: an opening imperative short-circuits to `agent_action` only while the message mentions nobody, since "Please review the deck @Alex" hands the work to Alex, not to Rally. Uncertain messages invoke only when an active task or explicit tool context exists. The label is not exposed in the UI.
 
+A message that invokes nothing is still a turn the model reads. The conversation object appends every such human or external text turn to the loop's projection at the next text admission, in transcript order, ahead of the input that follows it — rendered with a header saying it was said to the room, not to Rally, and naming its author, so the model reads it as context rather than as a request ([`workstream-durable-object.md`](workstream-durable-object.md)). An elicitation answer carries no such fill; the turns said while the question was open wait for the next text input.
+
 ### Naming
 
 A work stream is created under a provisional title — the first non-empty line of its objective — and named by a separate one-shot structured call a moment afterwards. The naming agent gets the objective and the opening message as bounded user-role data: the request is what is being named, never an instruction it follows, and a request asking for a particular name has no more authority than any other outside content. Reasoning is switched off rather than left to the model's default, because the model is relabelling text it has already been handed in full — asking for the lowest *effort* would switch thinking on for a model that does none.
@@ -1262,12 +1264,15 @@ changing the embedding model still requires rebuilding its projection.
 ### 2026-09-05 — A human turn that started no run still reaches the model
 
 **What changed:** The conversation object appends every unprojected human or
-external text turn to the persistent Bind projection at the next admission,
-ahead of the admitted input, using the same `protocol_user_appended` transition
-and the same `participant_turn` provenance the pending-input drain uses. The
-loop records `transcript_projected_through`, the highest transcript sequence the
-projection has considered, and the run reports that mark — not the transcript's
-high-water mark — as what a compaction checkpoint covers.
+external text turn to the persistent Bind projection at the next text
+admission, ahead of the admitted input, using the same `protocol_user_appended`
+transition and the same `participant_turn` provenance the pending-input drain
+uses, rendered under a header that says it was said to the room and by whom.
+The loop records `transcript_projected_through`, the highest transcript
+sequence the projection has considered — advanced to what each admission's
+scan covered, never to the admitted turn's own sequence — and the run reports
+that mark, not the transcript's high-water mark, as what a compaction
+checkpoint covers.
 
 **Why:** A message the addressing classifier judged to be conversation between
 people was written to the canonical transcript and nowhere else. It rendered for
