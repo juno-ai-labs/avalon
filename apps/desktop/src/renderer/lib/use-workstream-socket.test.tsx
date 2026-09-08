@@ -135,6 +135,7 @@ async function flushPromises(): Promise<void> {
 function stubAnimationFrames(): { flush: () => Promise<void> } {
   const queue = new Map<number, FrameRequestCallback>();
   let nextId = 0;
+  let frameTime = performance.now();
   vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback): number => {
     nextId += 1;
     queue.set(nextId, callback);
@@ -149,7 +150,8 @@ function stubAnimationFrames(): { flush: () => Promise<void> } {
         const pending = [...queue.values()];
         queue.clear();
         await act(async () => {
-          for (const callback of pending) callback(performance.now());
+          frameTime = Math.max(frameTime + 1000 / 60, performance.now());
+          for (const callback of pending) callback(frameTime);
         });
       }
     },

@@ -1,53 +1,41 @@
 import type { Message } from './types';
 import type { StreamCursor } from './workstream-socket-resume';
 
-/**
- * Paced reveal for streamed agent text — see `docs/streaming-reveal.md`.
- *
- * The wire batches model tokens into a frame roughly every 100ms
- * (`createSequencedStreamDeltaBatcher`), so text arrives in ~12-character
- * bursts at ~8Hz while the display paints at 60Hz: measured against the
- * running client, 85% of painted frames revealed nothing and the rest revealed
- * a burst, which reads as text arriving a line at a time. These functions
- * decouple the two clocks: the socket appends everything it receives to
- * `StreamCursor.receivedText`, and an animation-frame loop reveals a prefix of
- * it at a rate that tracks the backlog, so the visible text grows a few
- * characters per painted frame instead of a burst per wire frame.
- */
-
-/**
- * The reveal's smoothing window. Each painted frame reveals
- * `elapsed / STREAM_REVEAL_DRAIN_MS` of the *remaining* backlog, so the
- * backlog decays exponentially — roughly 6% per 60Hz frame, halving about
- * every 190ms — rather than draining linearly in one window: under a steady
- * stream the visible text lags the wire by about one window's worth, and an
- * outsized burst (a 2,048-character frame, a stalled tab catching up) is
- * substantially caught up within half a second and within a few characters
- * inside ~1.5s. Derived from the wire cadence rather than guessed: the
- * work-stream batcher (`createSequencedStreamDeltaBatcher`) coalesces for up
- * to 100ms (`maxDelayMs`) and the measured inter-arrival p95 against the
- * running client was 133ms, so the window must exceed that or the buffer
- * empties between frames and the reveal stalls-then-bursts — the exact
- * cadence this module exists to remove. Twice the measured p95, rounded,
- * keeps the buffer occupied through ordinary jitter while holding the
- * steady-state added latency under a third of a second.
- */
-export const STREAM_REVEAL_DRAIN_MS = 270;
-
-/** What one frame's elapsed time is taken to be before there is a previous frame. */
+/** The wire batches for 100ms; use that cadence until arrivals teach us otherwise. */
+export const STREAM_REVEAL_DRAIN_MS = 100;
 const FIRST_FRAME_MS = 17;
 
-/**
- * How many characters a reveal tick may show, given the backlog and the time
- * since the last tick. Proportional to both, so a large burst (a 2,048-char
- * frame, a stalled tab catching up) drains quickly while a steady stream
- * reveals a near-constant few characters per frame; the floor of one character
- * keeps a trickle moving rather than parking it below the rounding threshold.
- */
-export function revealBudget(backlog: number, elapsedMs: number): number {
-  if (backlog <= 0) return 0;
-  const proportional = Math.ceil((backlog * elapsedMs) / STREAM_REVEAL_DRAIN_MS);
-  return Math.min(backlog, Math.max(1, proportional));
+/** Update only for accepted, nonempty text deltas, never replayed frames. */
+export function recordStreamArrival(
+  previous: StreamCursor['pacing'],
+  characters: number,
+  backlog: number,
+  now: number,
+): NonNullable<StreamCursor['pacing']> {
+  const elapsed = previous ? Math.max(0, now - previous.lastArrivalAt) : STREAM_REVEAL_DRAIN_MS;
+  // Weight by elapsed time so co-delivered packets cannot manufacture a huge
+  // rate. Accumulate their characters until there is a measurable interval.
+  const pending = (previous?.pendingCharacters ?? 0) + characters;
+  if (previous && elapsed === 0) return { ...previous, pendingCharacters: pending, drawRate: Math.max(previous.drawRate, backlog / previous.cadenceMs) };
+  const weight = elapsed / (STREAM_REVEAL_DRAIN_MS + elapsed);
+  const cadenceMs = previous
+    ? previous.cadenceMs + weight * (elapsed - previous.cadenceMs)
+    : STREAM_REVEAL_DRAIN_MS;
+  const measuredRate = pending / elapsed;
+  const rate = previous
+    ? previous.rate + weight * (measuredRate - previous.rate)
+    : measuredRate;
+  return {
+    lastArrivalAt: now, cadenceMs, rate, pendingCharacters: 0,
+    // Hold the catch-up rate through the packet's drain, avoiding a slow tail.
+    drawRate: Math.max(rate, backlog / cadenceMs),
+    credit: previous?.credit ?? 0,
+  };
+}
+
+/** Fractional UTF-16 units; callers carry the remainder across painted frames. */
+export function revealBudget(backlog: number, elapsedMs: number, rate = backlog / STREAM_REVEAL_DRAIN_MS): number {
+  return Math.min(backlog, Math.max(0, rate * elapsedMs));
 }
 
 /**
@@ -88,15 +76,21 @@ export function advanceStreamReveal(
     const backlog = cursor.receivedText.length - cursor.revealed;
     if (backlog <= 0) {
       cursor.lastRevealAt = null;
+      if (cursor.pacing) cursor.pacing.credit = 0;
       continue;
     }
     const elapsed = cursor.lastRevealAt === null
       ? FIRST_FRAME_MS
       : Math.max(0, now - cursor.lastRevealAt);
-    const budget = revealBudget(backlog, elapsed);
+    const pacing = cursor.pacing ??= recordStreamArrival(undefined, backlog, backlog, now);
+    const available = revealBudget(backlog, elapsed, pacing.drawRate)
+      + pacing.credit;
+    const budget = Math.min(backlog, Math.max(0, Math.floor(available)));
+    cursor.lastRevealAt = now;
+    pacing.credit = available - budget;
     if (budget > 0) {
       cursor.revealed = alignRevealBoundary(cursor.receivedText, cursor.revealed + budget);
-      cursor.lastRevealAt = now;
+      pacing.credit -= cursor.revealed - (cursor.receivedText.length - backlog) - budget;
       changed = true;
     }
     if (cursor.receivedText.length > cursor.revealed) backlogRemains = true;
@@ -112,6 +106,7 @@ export function flushStreamReveal(cursors: ReadonlyMap<string, StreamCursor>): b
     if (cursor.revealed < cursor.receivedText.length) {
       cursor.revealed = cursor.receivedText.length;
       cursor.lastRevealAt = null;
+      if (cursor.pacing) cursor.pacing.credit = 0;
       changed = true;
     }
   }
