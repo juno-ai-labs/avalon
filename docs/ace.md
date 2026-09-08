@@ -312,7 +312,7 @@ variable.
 The workspaces tab presents `RALLY_OPERATOR_TOKEN` to the Global regional API
 and `RALLY_EU_OPERATOR_TOKEN` to the EU one — two encrypted secrets, each
 mapped to the `demos` operator role by that region's own
-`TELEMETRY_OPERATORS_JSON` and known to no other region, so one leaked token is
+`DEMO_OPERATORS_JSON` and known to no other region, so one leaked token is
 destructive authority in one jurisdiction rather than both. That role can
 retire a workspace and nothing else — every regional operator router names the
 roles it admits, so the telemetry router refuses `demos` and the retirement
@@ -350,7 +350,7 @@ runtime `ACE_FLAGSHIP_API_TOKEN`, and `ACE_RALLY_OPERATOR_TOKEN` and
 `ACE_RALLY_EU_OPERATOR_TOKEN` — the Rally operator tokens the workspaces tab
 presents to Global and to EU, installed as the `RALLY_OPERATOR_TOKEN` and
 `RALLY_EU_OPERATOR_TOKEN` secrets. Each value must be present in that region's
-`TELEMETRY_OPERATORS_JSON` under the `demos` role, which is a regional API
+`DEMO_OPERATORS_JSON` under the `demos` role, which is a regional API
 secret ([`runbook.md`](runbook.md)), and in no other region's; otherwise the
 page answers "operator authentication invalid". The GitHub secret keeps its historical name to
 avoid a credential-name migration, while the token stored in it now needs
