@@ -459,6 +459,17 @@ budgets require team policy; no arbitrary new caps are introduced here.
 
 ## Changelog
 
+### 2026-09-08 — Seek pending resource projections by deadline
+
+WorkspaceDO migration 39 adds a partial `(not_before, resource_id)` index for
+pending resource-search revisions. The next-deadline read avoids scanning all
+completed watermarks, and dispatch uses the same deadline/identity order. Queue
+batch size, failure delay, revision fences, and retained deletion watermarks stay
+unchanged. The billing investigation found roughly 71,000 reads even with zero
+pending rows; disabling search or deleting completed watermarks would sacrifice
+freshness or stale-write protection. New writes still reset the deadline, and
+publication must clear only the revision it actually sent.
+
 ### 2026-09-08 — Preserve the results latency boundary across empty pages
 
 Review caught an empty candidate page ending the search trace as completed. The
@@ -477,6 +488,7 @@ Hidden refill scans also made response work unpredictable. We trust the platform
 canonical authorization and content stores; subsequent requests authorize again.
 Source revision validation remains required, and this change makes no production
 latency claim.
+
 
 ### 2026-09-08 — Remove age-triggered authorization stalls
 
@@ -512,6 +524,7 @@ inventories populated by queued backfill. This replaces repeated work-stream dis
 with canonical checks along known child paths, retaining source text validation
 and a five-minute bound on permission evidence. See [authorization](authorization.md)
 for rollout controls and the distinction between denial and unavailable authority.
+
 
 ### 2026-09-07 — Search review corrections
 

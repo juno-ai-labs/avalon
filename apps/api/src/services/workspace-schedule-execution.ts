@@ -254,20 +254,23 @@ const MAINTENANCE_TASKS: Record<string, (ctx: WorkspaceScheduleContext) => Promi
  * among them — and a Node test that runs them needs the object's ledger, not
  * a regional snapshot.
  */
-const SCHEDULE_TARGET_QUERIES: readonly { sql: string; scoped: boolean }[] = [
+const SCHEDULE_TARGET_QUERIES: readonly { kind: WorkspaceScheduleTargetKind; sql: string; scoped: boolean }[] = [
   {
+    kind: "schedule",
     scoped: true,
     sql: `SELECT 'schedule' AS target_kind, id, next_run_at AS due_at
             FROM schedules
            WHERE workspace_id = ?1 AND enabled = 1 AND next_run_at IS NOT NULL`,
   },
   {
+    kind: "watch",
     scoped: true,
     sql: `SELECT 'watch' AS target_kind, id, next_poll_at AS due_at
             FROM resource_watches
            WHERE workspace_id = ?1 AND enabled = 1 AND next_poll_at IS NOT NULL`,
   },
   {
+    kind: "maintenance",
     scoped: true,
     sql: `SELECT 'maintenance' AS target_kind, 'resource_objects' AS id, MIN(created_at) AS due_at
             FROM resource_object_deletion_outbox pending
@@ -288,6 +291,7 @@ const SCHEDULE_TARGET_QUERIES: readonly { sql: string; scoped: boolean }[] = [
           HAVING COUNT(*) > 0`,
   },
   {
+    kind: "maintenance",
     scoped: true,
     // Counts exactly what `reapExpiredDraftResources` removes. A draft a work
     // stream has linked is kept on purpose, and counting it here would leave
@@ -308,6 +312,7 @@ const SCHEDULE_TARGET_QUERIES: readonly { sql: string; scoped: boolean }[] = [
            HAVING COUNT(*) > 0`,
   },
   {
+    kind: "maintenance",
     scoped: true,
     // Aliases cannot be minted in SQL, so a resource created before the column
     // existed — or whose creation path could not finish its own allocation —
@@ -316,17 +321,20 @@ const SCHEDULE_TARGET_QUERIES: readonly { sql: string; scoped: boolean }[] = [
             FROM resources WHERE workspace_id = ?1 AND slug IS NULL HAVING COUNT(*) > 0`,
   },
   {
+    kind: "maintenance",
     scoped: false,
     sql: `SELECT 'maintenance' AS target_kind, 'note_objects' AS id, MIN(created_at) AS due_at
             FROM note_resource_deletion_outbox HAVING COUNT(*) > 0`,
   },
   {
+    kind: "maintenance",
     scoped: true,
     sql: `SELECT 'maintenance' AS target_kind, 'note_privacy' AS id, MIN(created_at) AS due_at
             FROM note_privacy_change_outbox
            WHERE workspace_id = ?1 AND processed_at IS NULL HAVING COUNT(*) > 0`,
   },
   {
+    kind: "maintenance",
     scoped: true,
     sql: `SELECT 'maintenance' AS target_kind, 'memory_index' AS id,
                  MIN(CASE WHEN status = 'processing' THEN lease_expires_at ELSE available_at END)
@@ -335,6 +343,7 @@ const SCHEDULE_TARGET_QUERIES: readonly { sql: string; scoped: boolean }[] = [
            WHERE workspace_id = ?1 AND status != 'completed' HAVING COUNT(*) > 0`,
   },
   {
+    kind: "maintenance",
     // One entry for four tables: `SlackAgentService.maintainIngress` reaps all
     // of them in one pass, so three more entries would schedule three alarms
     // that call the same function. Each arm counts a row at the instant that
@@ -360,6 +369,7 @@ const SCHEDULE_TARGET_QUERIES: readonly { sql: string; scoped: boolean }[] = [
             ) HAVING MIN(due_at) IS NOT NULL`,
   },
   {
+    kind: "maintenance",
     // The sweep loads a link only through a connection that is not disabled
     // (`loadDurableObjectStaleUnfurls`), so a disabled connection's links are
     // not counted here either: a row the sweep never loads never advances.
@@ -384,21 +394,24 @@ const SCHEDULE_TARGET_QUERIES: readonly { sql: string; scoped: boolean }[] = [
  */
 export async function workspaceScheduleTargets(
   ctx: WorkspaceScheduleContext,
+  kinds: readonly WorkspaceScheduleTargetKind[] = ["schedule", "watch", "maintenance", "terminal"],
 ): Promise<WorkspaceScheduleTarget[]> {
   // Run rather than batched: a batch is one transaction, and these are ten
   // independent reads that nothing else depends on being consistent with each
   // other — the alarm re-derives them on every change anyway.
   const workspaceTargets = await Promise.all(
-    SCHEDULE_TARGET_QUERIES.map((query) => {
+    SCHEDULE_TARGET_QUERIES.filter((query) => kinds.includes(query.kind)).map((query) => {
       const statement = ctx.workspaceEnv.DB.prepare(query.sql);
       return (query.scoped ? statement.bind(ctx.workspaceId) : statement).all<AlarmTargetRow>();
     }),
   );
   const [workstreamTargets, notificationTarget] = await Promise.all([
-    ctx.directory.workstreamScheduleTargets({ workspaceId: ctx.workspaceId }),
-    ctx.notificationIntents.notificationIntentMaintenanceTarget({
-      workspaceId: asWorkspaceId(ctx.workspaceId),
-    }),
+    kinds.includes("terminal")
+      ? ctx.directory.workstreamScheduleTargets({ workspaceId: ctx.workspaceId })
+      : { items: [] },
+    kinds.includes("maintenance")
+      ? ctx.notificationIntents.notificationIntentMaintenanceTarget({ workspaceId: asWorkspaceId(ctx.workspaceId) })
+      : { dueAt: null },
   ]);
   return [
     ...workspaceTargets.flatMap((result) => result.results).map((row) => ({
