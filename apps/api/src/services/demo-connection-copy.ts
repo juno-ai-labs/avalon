@@ -51,12 +51,31 @@ const CLONED_COLUMNS = [
   "model_plugin_id",
 ] as const;
 
+/**
+ * Providers whose grant may be held by the template and every demo at once.
+ *
+ * A copy shares the template's upstream grant. That is safe only for a
+ * provider that neither rotates the refresh token on use nor revokes the
+ * grant remotely when one holder disconnects: Google does neither, and
+ * disabling a Google connection is local (`connection-service.ts`,
+ * `mayRevokeRemotely`). For every other provider the demo's owner — the
+ * presenter — would hold a Disconnect button that calls the provider's
+ * revoke endpoint on the grant the template and every other live demo share.
+ * Such a connection is skipped and reported, so the operator hears "the demo
+ * has no Linear" before the meeting rather than the template losing Linear
+ * during one. The PRD's product behavior draws the same line for rotation
+ * ("a connector whose provider rotates refresh tokens on use cannot be shared
+ * this way"); this is where it is enforced, and where remote revocation was
+ * added to it.
+ */
+const SHAREABLE_CONNECTOR_TYPES: ReadonlySet<string> = new Set(["google"]);
+
 /** Why a template connection was left behind. */
 export const SkippedConnectionSchema = z.strictObject({
   sourceConnectionId: z.string().min(1),
   connectorType: z.string().min(1),
   displayName: z.string(),
-  reason: z.literal("personal_scope"),
+  reason: z.enum(["personal_scope", "shared_grant"]),
 });
 export type SkippedConnection = z.infer<typeof SkippedConnectionSchema>;
 
@@ -129,6 +148,15 @@ export async function copyTemplateConnections(
         connectorType: source.connector_type,
         displayName: source.display_name,
         reason: "personal_scope",
+      }));
+      continue;
+    }
+    if (!SHAREABLE_CONNECTOR_TYPES.has(source.connector_type)) {
+      skipped.push(SkippedConnectionSchema.parse({
+        sourceConnectionId: source.id,
+        connectorType: source.connector_type,
+        displayName: source.display_name,
+        reason: "shared_grant",
       }));
       continue;
     }
