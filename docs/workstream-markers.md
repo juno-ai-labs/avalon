@@ -1,6 +1,6 @@
 # Work-stream markers
 
-Every work stream shows each person one coloured dot, and this is what decides
+Each work stream can show a person one coloured dot, and this is what decides
 which colour it is. Eight states compete for that dot: five belong to the run
 (`running`, `needs_input`, `completed`, `stopped`, `failed`) and three belong
 to the reader alone — **unread**, **mentioned**, and **unseen**, a
@@ -101,6 +101,12 @@ instead, that is one line: move `failed` above `unread` in `MARKER_PRECEDENCE`
 and update `workstreamNeedsAttention`, which today lists a failed run only when
 a mention or an unseen membership puts it there.
 
+### Sidebar
+
+The sidebar omits the dot and its tooltip when the ranked marker is `completed`.
+Unread, mentioned, and unseen markers still appear on completed work streams
+when those personal states win the ranking.
+
 ### Needs attention
 
 The home screen's **Needs attention** section holds the work streams that name
@@ -126,7 +132,7 @@ own state — so `app.css` carries a colour for those three and nothing else.
 
 ## Invariants
 
-- **One marker per work stream per person.** Every surface calls
+- **At most one marker per work stream per person.** Every surface calls
   `workstreamMarkerStatus`; nothing reads `harnessStatus` to colour a dot. A
   surface that decided for itself would show one work stream two different
   colours on two screens, which reads as a bug in the data.
@@ -246,6 +252,12 @@ the requested first-stream landing; skipping unseen or unread rooms would select
 different destination from the sidebar. Explicit deep links retain an inert
 intermediate route while resolving, to avoid opening an unrelated conversation.
 
+### 2026-09-07 — Omit completed markers in the sidebar
+
+The sidebar hides the completed marker and its tooltip at the user's request.
+This is a sidebar presentation rule, so the shared ranking and other surfaces
+retain completion status. Personal attention markers on completed work streams
+must remain visible; hiding every row whose run completed would lose them.
 
 ### 2026-08-24 — Needs attention drops plain unread
 
