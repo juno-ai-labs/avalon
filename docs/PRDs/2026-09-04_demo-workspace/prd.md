@@ -3,8 +3,7 @@
 > Created 2026-09-04.
 >
 > An internal operator prepares a fresh, populated workspace for each Rally
-> demo; any number can be live, and one is retired when its operator closes it.
-> Companion: [state.md](state.md).
+> demo and retires its predecessor. Companion: [state.md](state.md).
 > Standing contract: [the Rally implementation brief](../2026-08-05_avalon-implementation-brief/prd.md).
 > Evidence: [the spike report, beginning at §0](research.md#0-re-verified-against-main-rally-12710--read-this-first),
 > kept in this folder so it cannot outlive its source. The code it describes is
@@ -15,9 +14,9 @@
 
 A presenter opens `CompanyName-demo` and finds the prepared conversations,
 people, documents, and attention markers ready to show. Every demo uses a new
-workspace, and any number can be live at once. An operator creates one with
-**New demo** and retires one from Ace's workspaces tab when it is done; nothing
-clears or rewinds a workspace, and no demo knows about another.
+workspace. The operator retires the previous demo and creates another; nothing
+clears or rewinds the old workspace. The one control says **New demo**, not
+**Reset**, and the predecessor is retired only once its successor is ready.
 
 A hand-built `demo-template` workspace holds three demo Google accounts and the
 workspace-scoped connections each demo copies, credentials included, so a
@@ -77,12 +76,19 @@ old objects quiet and prove that an already-queued delivery cannot revive them.
 2. **In-place clearing or reset — rejected for this feature.** A new workspace
    identity avoids undoing transcripts, receipts, loop state, and delayed effects
    beneath an identity that is still receiving work.
-3. **Fake tool history — rejected.** No synthetic connector plugins, recorded
+3. **Background connector activity during a demo — excluded.** A demo answers
+   a question when the presenter asks one; it does not poll, run watches, accept
+   webhook ingress, hydrate resources on a schedule, send outbound notifications,
+   or start work of its own. The demo accounts' providers are a source the
+   presenter can query, not an event stream that can interrupt a presentation
+   with mail arriving or a document changing. Nothing here restricts a tool call
+   the presenter's own turn makes, or the token refresh that call needs.
+4. **Fake tool history — rejected.** No synthetic connector plugins, recorded
    tool results, manufactured plugin activity rows, or simulated durations are
    retained from the spike. Stale tool names in a *seeded* transcript become
    misleading context on continuation; a live turn's own tool calls carry the
    current names and are not affected by this.
-4. **A template editor, arbitrary workspace copier, and automated reaper —
+5. **A template editor, arbitrary workspace copier, and automated reaper —
    deferred.** One manually maintained template and one versioned pack suffice.
    Retirement preserves old data; it is not deletion or a retention promise.
 
@@ -96,52 +102,56 @@ selected Rally member. Customers and ordinary workspace owners do not receive
 demo administration controls. The regional backend repeats operator
 authorization; a workspace name ending in `-demo` grants no authority.
 
-The page lists every live demo and offers **New demo**, which asks for the
-company name and presenter and creates one more. Demos are independent: any
-number can be live, nothing about an existing one changes what runs, and
-retiring one is a separate action. The display name is always
-`CompanyName-demo`; two demos may share a name but never a workspace or object
-ID. Everything binds to exact IDs, not a lookup by name.
+The page offers one control, **New demo**, which asks for the company name and
+presenter. There is no second operation: whether a predecessor exists changes
+only what the page warns about, not what runs. Where one does exist, the page
+names it and its workspace ID and states that it becomes unavailable once the
+replacement is ready. The new display name is always `CompanyName-demo`; a
+successor may share that name but never its workspace or object IDs. The
+operation binds to exact IDs, not a lookup by name.
 
-**Retirement is an operator action on any workspace.** Ace's workspaces tab
-retires whatever workspace ID the operator names, demo or not, behind the same
-Access policy that admits the operator to Ace. It is not gated on the demo
-register — that gate was built and dropped as bookkeeping — and it is not a name
-check. Because it is irreversible and unguarded by anything but the operator,
-the page's confirmation makes the operator type or paste the workspace ID rather
-than click beside a name.
+**Only a workspace this feature created can be retired through this surface.**
+Preparation records each demo it publishes, and retirement accepts a target only
+if it appears in that record; an operator-supplied ID that does not is refused,
+whatever it names. This is the enforcement, and it is deliberately not a name
+check — a workspace called `Acme-demo` is an ordinary customer workspace unless
+this feature made it, and a demo renamed by hand is still a demo. `demo-template`
+is never in the record, because it is built by hand rather than published, so the
+same rule excludes it without a second mechanism. There is no operator control
+anywhere in Rally that retires an arbitrary workspace.
 
-The operator initiates one durable operation per demo. Repeated submission of
-that operation returns its existing progress and result rather than preparing a
-second workspace; two different operations are two demos. This is operation
-identity, not a concurrency limit.
+The operator initiates one durable operation. Repeated submission of that
+operation returns its existing progress and result. Competing replacement
+requests for the same predecessor resolve to the existing replacement or a
+visible conflict; they cannot independently retire and publish different
+successors. This is operation identity, not a guessed concurrency limit.
 
 | State | What the operator sees | What the presenter can open |
 | --- | --- | --- |
 | Empty | Company and presenter selection; **New demo** | No new demo yet |
-| Checking template | Required accounts, pack, and connection configuration are being checked | Every live demo |
-| Creating workspace | New workspace identity has been allocated | Every live demo |
-| Copying connections / Seeding conversations | Current phase and completed items from actual receipts | Every live demo |
-| Waiting for workspace | Which expected rooms or viewer states have not arrived | Every live demo |
+| Checking template | Required accounts, pack, and connection configuration are being checked | The existing demo, if any |
+| Creating workspace | New workspace identity has been allocated | The existing demo, if any |
+| Copying connections / Seeding conversations | Current phase and completed items from actual receipts | The existing demo, if any |
+| Waiting for workspace | Which expected rooms or viewer states have not arrived | The existing demo, if any |
+| Retiring previous demo | The exact predecessor and completed retirement steps | The new demo; the predecessor becomes unavailable |
 | Ready | `CompanyName-demo` and **Open in Rally** | The populated home screen and sidebar |
-| Failed | Failed phase, actionable reason, operation ID, and recovery action | Every live demo, unaffected |
+| Failed | Failed phase, actionable reason, operation ID, and recovery action | The existing demo, which is still usable |
 | Offline | Last known phase labelled as stale; reconnect to retrieve progress | No locally inferred success |
 
 There is no estimated completion time or fabricated percentage. Closing Ace
 does not cancel the operation or erase progress. An operator reconnects to the
 same operation. A known failure is visible immediately; ordinary projection
 delay remains **Waiting for workspace**. The operator can abandon an unfinished
-candidate, which retires that candidate and touches nothing else.
+candidate, which retires that candidate and leaves any predecessor untouched.
 
-**Demos are concurrent, and preparation never retires anything.** A failed
-preparation costs nothing: every other demo stays exactly as it was. Several
-live demos share nothing but the template they were copied from — each holds
-its own workspace, objects and connection rows — and that is safe for the one
-reason that matters: Google does not rotate a refresh token on use, so any
-number of copies of one grant refresh independently. A provider that rotates on
-refresh cannot be shared this way and does not go in the template. The one
-untested edge is N presenters querying the same Google account at once against
-that account's rate limits; nobody can measure it, and the failure will show.
+**A predecessor is retired only after its successor reaches Ready.** Retirement
+is irreversible, so performing it first would mean any failure in allocation,
+connection copying, seeding, or projection left the operator with no demo at
+all — possibly shortly before one is needed. Preparing first inverts that: a
+failed preparation costs nothing and the predecessor stays usable. The cost is a
+bounded window in which two demo workspaces exist, which the design already
+tolerates, since names may repeat, IDs never do, and a candidate is withheld
+from discovery until Ready.
 
 Preparation is a real admission state. Candidate demos are withheld from normal
 workspace discovery and switching until Ready, and an early direct activation
@@ -307,9 +317,9 @@ expectations while polling and publishes Ready only after they all match.
 
 ### Retirement and stranded effects
 
-Preparation checks that the template and pack are usable and prepares a demo to
-Ready. Retirement is a separate operator action against any workspace: a
-monotonic, receipt-backed operation whose retries resume unfinished steps after
+Replacement checks that the template and pack are usable, prepares the
+successor to Ready, and only then closes the predecessor. Retirement is a
+monotonic, receipt-backed operation; retries resume unfinished steps after
 interruption or eviction. It is not the spike's straight-line best-effort walk.
 
 1. Close regional admission using the existing abandonment semantics, without
@@ -396,111 +406,14 @@ drop path requires separate evidence.
 The work-stream, participation, and regional contracts remain unchanged.
 Prepared conversations use the same durable multiplayer objects; viewing does
 not add a participant, and connections retain their normal owner and scope.
-The exception is the seeding seam: a seeded assistant turn's words come from a
-script rather than a provider. Everything else about a demo workspace, its
-connectors included, behaves exactly as any workspace does. It adds no customer
-reset capability, global inbox, general replay clock, or permission for a model
-to fabricate tool receipts.
+The exception is an explicitly internal demo execution mode: seeded turns come
+from a script rather than a provider, and background connector activity is
+suppressed. Connector tools themselves behave normally for a live turn. It adds
+no customer reset capability, global inbox, general replay clock, or permission
+for a model to fabricate tool receipts.
 
 ## Decision log
 
-- **September 7: what the review changed, and what it cut.** One migration and
-  one table: the register is the operation row. One driver at a time: the
-  attempt number fences every write, a Workflow step never retries, and a
-  driver that dies is recorded; Retry is the recovery for a failed and for a
-  stalled preparation. The presenter must be a template member. Retirement
-  checks the region owns the workspace; abandon takes a typed operation id.
-  Rally's seeded prose cites only what the people said, because a seeded run
-  makes no tool call and the one real run in a demo inherits that transcript.
-  **Cut, and recorded as such:** access revocation on retirement — the
-  "revoke old workspace access" step of retirement — is not built. Picking it
-  back up needs a retirement `reason` value the revocation mechanism accepts
-  and a per-member fan-out it does not have today; retirement closes every
-  socket through the objects instead, so a session that survives it can open
-  nothing.
-- **September 7: the seed decides addressing, and it says one thing.** The
-  retained seam is a `seed` on the message: pack version, action id, and either
-  one assistant turn or `null`. Its presence skips the classifier, and the turn's
-  presence is what starts the run — not `forcedHarnessOrigin`, so there is one
-  statement of intent per seeded line rather than two that can disagree. One
-  turn rather than a script of turns because seeded history carries no tool
-  calls, and without them Bind asks the provider once; the seam refuses a second
-  request rather than repeating the turn. `say` completes the run; `ask` opens a
-  real room-addressed elicitation and parks it on `needs_input`.
-- **September 7: the cast acts under its own principal.** Cast members never
-  sign in, so the seeder acts as them under a `demo_seed` auth principal that the
-  room verifies against current membership exactly as it verifies a connector
-  ingress. A distinct value rather than a reuse of `connector`, so a seeded run's
-  authorization record says who acted.
-- **September 7: no Open in Rally link, until the desktop has a home
-  destination.** The deep-link contract addresses a workspace only with a
-  destination inside it, and there is no home-screen destination. The Demos
-  page names the workspace to switch to; a link the desktop would reject is
-  not built.
-- **September 7: the operation is rows plus a Workflow that only points at
-  them.** `demo_operations` is the identity and the receipts; the Workflow's
-  payload is the operation id and attempt, re-read on arrival, and every phase
-  is idempotent so its retry and the operator's retry both resume. The
-  workspace id is allocated onto the row before creation. The workspace is
-  created through onboarding as the presenter's own without minting a session.
-  The wait is a loop of Workflow steps, bounded by a round count derived from
-  the platform's published steps-per-instance limit, and fails as
-  `demo_projection_wait_exhausted` with the last round's gaps kept; a shorter
-  ceiling remains the team's to set, and would be a constant in the driver,
-  not a variable.
-- **September 7: Ace reaches the regional API with the operator credential in
-  a `demos` role.** One secret per region, `TELEMETRY_OPERATORS_JSON`, holds
-  every operator token for that region; the role is what isolates, every
-  operator router names the roles it admits, and Ace holds one `demos` token
-  per region rather than one value in both.
-- **September 7: readiness expectations are derived where honest and stated
-  where not.** The manifest derives the room set, seats, final state, listing
-  order and ids from the pack and the receipts. The per-viewer flags — new,
-  unread, mentioned — and the home screen's count are stated in the pack's
-  `expect` section, because they depend on who opened what and the seeder's own
-  reads open rooms for the cast; the schema checks the listed rooms against the
-  rooms the pack makes visible to that viewer. The placeholder pack verifies the
-  presenter alone. Notification delivery is not a readiness precondition.
-- **September 7: receipts follow confirmation, and replay is by derived id.** A
-  `demo_seed_receipts` row is written once the action's run settled as specified,
-  the line was admitted, or the resource is attached. The client message id and
-  resource id of every seeded write are derived from the operation and action,
-  so a replay after a crash meets the production path's own receipt instead of
-  writing twice.
-- **September 5: a retired object is fenced at every method, not at the edge.**
-  The spike's best-effort walk could not stop a write that reached `SubstreamAgent`
-  or a `WorkstreamDO` directly, and neither can a check at the API edge. Every
-  callable method of the five classes that can belong to a workspace is replaced
-  with one that consults a tombstone in the object's own SQLite. Unclassified
-  refuses; retirement's own machinery, revocation and read-only inspection are
-  permitted; an effect already handed to the Queue answers a terminal
-  acknowledgement rather than throwing.
-- **September 5: a permit covers a call, not a method name.** The first version
-  permitted names, and every permitted entry point then refused itself on the
-  first private helper it reached — five separately, including access revocation
-  on every class that has it and the runtime recovery every rebuilt
-  `SubstreamAgent` runs. A permitted method now runs against a receiver with the
-  gate lifted, which cannot be reached by anything the runtime admits alongside
-  it. The re-entrancy flag this originally rejected stays rejected, for the
-  reason it was rejected.
-- **September 5: retirement is not gated on the register.** An earlier entry
-  here had `retireWorkspaceGraph` refuse a workspace absent from
-  `demo_workspaces`. Withdrawn the same day, on review: Ace's Access policy
-  already admits the operator, and a tool that retires any workspace was what
-  was actually wanted. The register still records what this feature made and
-  what is live; it authorizes nothing. The cost is stated plainly — an
-  irreversible close of a customer workspace is one confirmation away — and the
-  confirmation is built to make the operator name the workspace.
-- **September 5: demos are concurrent.** "The current demo" and "retire the
-  predecessor once the successor is Ready" are gone. New demo creates one;
-  retirement is a separate action; every reader of the register takes a list.
-- **September 5: no demo mode.** Background connector suppression is dropped
-  before being built. A demo's connectors behave like anyone's.
-- **September 5: a personal connection in the template is not copied.** Copies
-  are workspace-scoped so the presenter can use them; rewriting a personal
-  connection that way shares one person's refresh token with everybody in the
-  demo. It is skipped and reported instead, so an operator learns the demo has no
-  Slack before the meeting rather than during it.
 - **September 5: side conversation reaches the model, in the product.** The
   spike found that a human message admitted without starting a run never
   entered the agent's context, and asked whether it should. It should: the
@@ -508,24 +421,250 @@ to fabricate tool receipts.
   appends the unseen turns at the next admission. Fixed in the conversation
   object rather than in the pack, because it was wrong in every room with more
   than one person in it, and the pack format assumes it.
-- **September 5: the closing half ships without a caller.** Retirement, the
-  register and connection copying are complete and tested; no route, queue
-  consumer or workflow reaches them yet. The durable operation the phase states
-  and the recovery action need is the thing that will, and it is part of the Ace
-  work rather than of this half.
-- **September 8: retirement takes any workspace, and lands on its own.**
-  Supersedes the **Product behavior** paragraph "Only a workspace this feature
-  created can be retired through this surface" and acceptance item 9's
-  refusals "for `demo-template`, for an ordinary customer workspace, for one an
-  operator renames to end in `-demo`, and for a plausible but unknown workspace
-  ID". Decided in review of the combined branch: the register-as-authorization
-  was bookkeeping for a surface one Access policy already admits, and an
-  operator tool that can close any workspace is what was wanted. The typed
-  workspace-id confirmation in Ace, and the regional refusal of an id the
-  region's own table does not hold, replace it. Retirement shipped ahead of the
-  demo feature, in its own pull request and with its own document,
-  [`workspace-retirement.md`](../../workspace-retirement.md), because it is the
-  one change with a production footprint.
+
+### 2026-09-05 — A retired object is fenced at every method, not at the edge
+
+**Decided:** Every callable method of the object classes that can belong to a
+workspace consults a tombstone in the object's own SQLite. Unclassified
+refuses; retirement's own machinery, revocation and read-only inspection are
+permitted; an effect already handed to the Queue answers a terminal
+acknowledgement rather than throwing. A permit covers a *call*, not a method
+name: a permitted method runs against a receiver with the gate lifted, so the
+private helpers it reaches do not refuse it.
+
+**Why:** The spike's best-effort walk could not stop a write that reached a
+room object or an agent directly, and neither can a check at the API edge. The
+first version permitted names, and every permitted entry point then refused
+itself on the first private helper it reached.
+
+**Changes:** Design decision 5 as agreed; this is how it is built. Owned by
+[`workspace-retirement.md`](../../workspace-retirement.md). Shipped in
+[#593](https://github.com/juno-ai-labs/avalon/pull/593).
+
+### 2026-09-05 — Retirement is not gated on the register
+
+**Decided:** Withdrawn the same day it was built: `retireWorkspaceGraph` no
+longer refuses a workspace absent from the demo register. The register records
+what this feature made and what is published; it authorizes nothing.
+
+**Why:** Ace's Access policy already admits the operator, and a tool that
+retires any workspace was what was actually wanted. The cost is stated plainly
+— an irreversible close of a customer workspace is one confirmation away — and
+the confirmation is built to make the operator name the workspace.
+
+**Changes:** Supersedes the **Product behavior** paragraph "Only a workspace
+this feature created can be retired through this surface" and the refusals in
+acceptance item 9 "for `demo-template`, for an ordinary customer workspace, for
+one an operator renames to end in `-demo`, and for a plausible but unknown
+workspace ID". Shipped in [#593](https://github.com/juno-ai-labs/avalon/pull/593).
+
+### 2026-09-05 — Demos are concurrent, and retirement is its own action
+
+**Decided:** "The current demo" and "retire the predecessor once the successor
+is Ready" are gone. **New demo** creates one more; retirement is a separate
+operator action from Ace's workspaces tab; every reader of the register takes
+a list; preparation never retires anything.
+
+**Why:** Demos run concurrently — two presenters, two prospects, the same
+afternoon — so a single current demo was the wrong shape, and a preparation
+that closes another workspace on success couples two things that should not
+know about each other.
+
+**Changes:** Supersedes design decision 11, the **Product behavior** paragraphs
+on the predecessor and the replacement window, the phase table's "Retiring
+previous demo" row, and acceptance item 5's "retire W1" step, which becomes an
+ordinary retirement. Shipped in
+[#593](https://github.com/juno-ai-labs/avalon/pull/593) and
+[#594](https://github.com/juno-ai-labs/avalon/pull/594).
+
+### 2026-09-05 — No demo mode
+
+**Decided:** Background connector suppression is dropped before being built. A
+demo's connectors poll, watch and notify like anyone's.
+
+**Why:** The branching was judged not worth it: scheduled work is something a
+demo might want to show, and a demo that behaves like any other workspace is
+simpler to reason about than one with a second set of rules. A presenter
+interrupted by mail arriving is a pack and account-hygiene concern.
+
+**Changes:** Non-goal 3 is withdrawn (the numbering stays, so
+[`research.md`](research.md)'s "non-goal 4" still names fake tool history);
+design decision 9 and the **Security and trust model** paragraph on demo mode
+are superseded; "Failure to establish this mode blocks Ready" no longer
+applies. Shipped in [#594](https://github.com/juno-ai-labs/avalon/pull/594).
+
+### 2026-09-05 — A personal connection in the template is not copied
+
+**Decided:** Copies are workspace-scoped so the presenter can use them; a
+personal connection is skipped and reported rather than rewritten as
+workspace-scoped.
+
+**Why:** Rewriting one shares one person's refresh token with everybody in the
+demo. The operator learns "the demo has no Slack" before the meeting rather
+than during it.
+
+**Changes:** Refines design decision 10. Shipped in
+[#594](https://github.com/juno-ai-labs/avalon/pull/594).
+
+### 2026-09-07 — The seed decides addressing, and it says one thing
+
+**Decided:** The retained seam is a `seed` on the message: pack version, action
+id, and either one assistant turn or `null`. Its presence skips the addressing
+classifier, and the turn's presence is what starts the run — not
+`forcedHarnessOrigin`. One turn rather than a script of turns; the seam refuses
+a second provider request rather than repeating the turn. `say` completes the
+run; `ask` opens a real room-addressed elicitation and parks on `needs_input`.
+Cast members act under a `demo_seed` auth principal the room verifies against
+current membership exactly as it verifies a connector ingress.
+
+**Why:** One statement of intent per seeded line rather than two that can
+disagree. Seeded history carries no tool calls, and without them Bind asks the
+provider once; the spike's first adapter repeated the turn and wedged the
+runtime. A distinct principal value so a seeded run's authorization record
+says who acted.
+
+**Changes:** Nothing in the agreed scope; this is how **Agent behavior** is
+built. Shipped in [#594](https://github.com/juno-ai-labs/avalon/pull/594).
+
+### 2026-09-07 — Receipts follow confirmation, and replay is by derived id
+
+**Decided:** A `demo_seed_receipts` row is written once the action's run
+settled as specified, the line was admitted, or the resource is attached. The
+client message id and resource id of every seeded write are derived from the
+operation and action.
+
+**Why:** A replay after a crash meets the production path's own receipt
+instead of writing twice, and a receipt written at admission would let a run
+that failed count as seeded.
+
+**Changes:** Nothing in the agreed scope. Shipped in
+[#594](https://github.com/juno-ai-labs/avalon/pull/594).
+
+### 2026-09-07 — Readiness expectations are derived where honest and stated where not
+
+**Decided:** The manifest derives the room set, seats, final state, listing
+order and ids from the pack and the receipts. The per-viewer flags — new,
+unread, mentioned — and the home screen's count are stated in the pack's
+`expect` section; the schema checks the listed rooms against the rooms the pack
+makes visible to that viewer. The placeholder pack verifies the presenter
+alone. Notification delivery is not a readiness precondition.
+
+**Why:** The flags depend on who opened what, and the seeder's own reads open
+rooms for the cast, so a derivation would encode the seeder's reading habits
+as product truth.
+
+**Changes:** Refines design decision 4. Shipped in
+[#594](https://github.com/juno-ai-labs/avalon/pull/594).
+
+### 2026-09-07 — The operation is rows plus a Workflow that only points at them
+
+**Decided:** `demo_operations` is the identity and the receipts; the
+Workflow's payload is the operation id and attempt, re-read on arrival; every
+phase is idempotent. The workspace id is allocated onto the row before
+creation, and the workspace is created through onboarding as the presenter's
+own without minting a session. The wait is a loop of Workflow steps bounded by
+a round count derived from the platform's published steps-per-instance limit,
+and fails as `demo_projection_wait_exhausted` with the last round's gaps kept.
+One migration, one table: the register is the operation row. One driver at a
+time: the attempt number fences every write, a step never retries, a driver
+that dies is recorded, and Retry is the next attempt.
+
+**Why:** A Workflow gives durability and retry; the rows give identity and
+receipts; idempotent phases make the two agree. A session minted for the
+presenter by an operator would be a credential nobody signed in for. A
+shorter wait ceiling remains the team's to set, and would be a constant in
+the driver, not a variable.
+
+**Changes:** Design decision 7 as agreed. The **Open questions** proposal of a
+`DEMO_PROJECTION_WAIT_TIMEOUT_MS` variable is not built: the platform's limit
+bounds the wait, and a ceiling of the team's own goes in code. Supersedes the
+2026-09-05 note that the closing half shipped without a caller — this is the
+caller. Shipped in [#594](https://github.com/juno-ai-labs/avalon/pull/594).
+
+### 2026-09-07 — Ace reaches the regional API with the operator credential in a `demos` role
+
+**Decided:** One secret per region, `TELEMETRY_OPERATORS_JSON`, holds every
+operator token for that region; the `demos` role is what isolates; every
+operator router names the roles it admits; Ace holds one `demos` token per
+region rather than one value in both.
+
+**Why:** A second secret with the same shape would be a second thing to rotate
+for no isolation gained. One value in both jurisdictions was destructive
+authority in both from one leak.
+
+**Changes:** Nothing in the agreed scope. Shipped in
+[#593](https://github.com/juno-ai-labs/avalon/pull/593) and
+[#594](https://github.com/juno-ai-labs/avalon/pull/594).
+
+### 2026-09-07 — No Open in Rally link, until the desktop has a home destination
+
+**Decided:** The Demos page names the workspace to switch to; no link is
+built.
+
+**Why:** The deep-link contract addresses a workspace only with a destination
+inside it, and there is no home-screen destination; a link the desktop would
+reject is worse than a sentence.
+
+**Changes:** The Ready row of the **Product behavior** phase table loses its
+**Open in Rally** button until the desktop gains a home destination
+([`multiple-workspaces.md`](../../multiple-workspaces.md#workspace-addressed-handoffs)).
+Shipped in [#594](https://github.com/juno-ai-labs/avalon/pull/594).
+
+### 2026-09-07 — Access revocation on retirement is cut
+
+**Decided:** The "revoke old workspace access" step of retirement is not
+built. Retirement closes every socket through the objects and fences every D1
+authority read instead, so a session that survives it can open nothing.
+
+**Why:** Picking it up needs a retirement `reason` value the revocation
+mechanism accepts and a per-member fan-out it does not have today.
+
+**Changes:** Cuts that step from **Product behavior**'s retirement sequence.
+To pick it back up: the reason value and the fan-out. Shipped without it in
+[#593](https://github.com/juno-ai-labs/avalon/pull/593).
+
+### 2026-09-08 — Retirement lands on its own, ahead of the demo
+
+**Decided:** Retirement — the tombstone, the gate, the walk, the operator door
+and Ace's workspaces tab — ships in its own pull request with its own document,
+[`workspace-retirement.md`](../../workspace-retirement.md), before the
+preparation feature.
+
+**Why:** It is the one change with a production footprint — a gate on every
+object method — and reviewing and observing it under an additive feature
+nothing runs until an operator starts it would have hidden it.
+
+**Changes:** Nothing in the agreed scope; the order of delivery. Shipped in
+[#593](https://github.com/juno-ai-labs/avalon/pull/593).
+
+### 2026-09-08 — What a demo may share, and what a retry can reach
+
+**Decided:** Only a Google connection is copied from the template; a
+connection of any other provider is skipped and reported as `shared_grant`. A
+seeded run that fails ends the operation: Retry replays the action into the
+same turn and the same failed run, so the way back is Abandon and a new
+operation. Abandon claims the operation row before it retires anything. A
+candidate is withheld from its members while it is unpublished, whatever its
+status, so an abandoned one never appears. EU binds no preparation Workflow,
+and the binding is outside the boot contract in every region. A Ready demo
+reaches its presenter through the account menu, which lists workspaces only
+while their `multiple-workspaces-enabled` flag is on.
+
+**Why:** A copy shares the template's upstream grant, and for every provider
+but Google the presenter's Disconnect would revoke that grant remotely — for
+the template and every live demo at once; Google's disconnect is local. The
+seeded turn is written once by a derived id, so a retry cannot re-run it. A
+check-then-act abandon raced a driver publishing Ready. A missing binding
+must be the tool's 503, never a region-wide fault.
+
+**Changes:** Narrows the 2026-09-07 operation entry's "Retry is the next
+attempt" to every failure but a seeded run's own. Refines design decision 8:
+the copied connections are Google's. **Product behavior**'s rule that a
+connector whose provider rotates refresh tokens on use "is not included until
+that is settled" is now enforced by the copier rather than by hand, and it
+widened: a provider whose disconnect revokes remotely is not included either.
+Shipped in
+[#594](https://github.com/juno-ai-labs/avalon/pull/594).
 
 ## Key design decisions
 
@@ -561,22 +700,20 @@ to fabricate tool receipts.
    demo that cannot answer a follow-up is a worse demo, and the two questions
    are unrelated. Seeded history still carries no tool calls, because stale tool
    names mislead a continued turn; a live turn's own calls use current names.
-9. **September 5: no demo mode.** An earlier draft suppressed background
-   connector activity in a demo. Withdrawn: it adds a second set of rules to
-   every connector path for a benefit — no mail arriving mid-presentation —
-   that is really pack and account hygiene, and scheduled work is something a
-   demo may want to show. A demo's connectors behave like anyone's.
+9. **Background connector activity stays suppressed.** Live answers are worth
+   having; a demo that polls, accepts webhooks, or fires notifications can
+   interrupt a presentation with mail arriving or a document changing, and can
+   start work in a workspace nobody is watching. The line is drawn between work
+   a demo starts by itself and work a presenter asks for.
 10. **Connections are workspace-scoped.** The presenter opens a demo as
    themselves and owns none of the cast's connections; a personal connection is
    usable only by its owner, so personal copies would leave the presenter with
    no connectors at all. Rally's connection scope is unrelated to Google's
    sharing model, so this costs nothing.
-11. **September 5: demos are concurrent, and retirement is its own action.**
-   The one-at-a-time model — prepare a successor, then retire the predecessor —
-   was replaced: New demo creates one, any number can be live, and an operator
-   retires one from Ace's workspaces tab when it is done. Retiring any
-   workspace, not only a registered demo, was chosen over the register gate as
-   bookkeeping a single Access policy already covers.
+11. **The successor is prepared before the predecessor is retired.** Retirement
+   is irreversible, so retiring first turns any preparation failure into having
+   no demo. The rejected alternative — retire first, so only one demo exists at
+   a time — bought tidiness at the price of the failure that actually hurts.
 12. **One elicitation contract.** A question is addressed to the room. Making
    elicitations targetable at one participant is a product change with its own
    audience and semantics, and this feature does not need it.
@@ -643,6 +780,15 @@ logs. Use the existing envelope and key-rotation rules in
 [connectors](../../connectors.md#authorization-model). Preparation reads a
 template envelope through the non-writing helper, so copying a demo never
 modifies the template it read.
+
+Demo mode suppresses **background** connector activity: polling, watches,
+scheduled hydration, connection tests and repair, outbound notifications, and
+scheduled work, and ingress cannot start demo work. It does not restrict a tool
+call the presenter's own turn makes, or the token refresh that call needs — that
+traffic is the point of copying credentials at all. The distinction is between
+work a demo starts by itself and work a person asks for while presenting: the
+first can interrupt a demo, the second is the demo. A prompt telling the model
+which to do is not this boundary. Failure to establish this mode blocks Ready.
 
 A demo therefore holds working credentials to the demo Google accounts and to
 nothing else. That containment rests on the template holding only those
@@ -816,11 +962,11 @@ Test deadlines are not product readiness guarantees.
   different setup task from Drive and Gmail. Whether the first pack includes it
   is open.
 - **Wait policy — handed to the team, not guessed.** There is no promised
-  preparation deadline. As built, the wait ends at a round count derived from
-  Cloudflare's published steps-per-instance limit and moves the operation to a
-  visible wait-exceeded state with the last gaps kept; a shorter ceiling, if
-  the team wants one, is a constant in the driver, never a variable, and must
-  never report Ready. Queue delay can otherwise leave
+  preparation deadline. A proposed `DEMO_PROJECTION_WAIT_TIMEOUT_MS` is defined
+  once at the readiness coordinator, defaults to the open value `+Infinity`
+  with a finiteness guard (`LIMIT UNSET`), and, if configured, moves the operation
+  to a visible wait-exceeded state with resumable verification. It must never
+  report Ready or pass infinity to a timer. Queue delay can otherwise leave
   repeated reads running until an operator intervenes; choosing a deadline
   trades that cost against falsely failing a healthy but slow projection.
   The team supplies any finite deadline and polling cadence using

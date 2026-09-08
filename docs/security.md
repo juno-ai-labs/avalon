@@ -815,6 +815,26 @@ incident response that may prompt it.
 
 ## Changelog
 
+### 2026-09-08 — The demo seeder acts as a cast member without a session
+
+**What changed:** `ProductAuthSchema.principal` accepts `demo_seed` beside
+`connector`. Only server code constructs it, the message route's request
+schema has no `seed` field, the room verifies it against current membership
+as it verifies a connector ingress, and every socket-ticket issuer refuses
+it. The `demos` operator role now also reaches the demo preparation routes.
+A demo receives copies of the template's Google connections only; a
+connection of any other provider is skipped and reported, because a copy
+shares the upstream grant and the presenter's Disconnect would revoke it
+remotely for the template and every live demo.
+
+**Why:** The cast never signs in, and a session minted for them would be a
+credential nobody holds. A distinct principal value rather than a reuse of
+`connector` so a seeded run's authorization record says who acted. Google's
+disconnect is local (`connection-service.ts`, `mayRevokeRemotely`), which is
+the one property that makes a shared grant safe to hold in several
+workspaces. [`demo-workspaces.md`](demo-workspaces.md#security-and-trust-model)
+owns both.
+
 ### 2026-09-08 — The `demos` role moves to its own secret
 
 **What changed:** The `demos` operator role is read from `DEMO_OPERATORS_JSON`,

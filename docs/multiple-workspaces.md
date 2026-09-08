@@ -393,7 +393,13 @@ workspace_id)`. Regional membership and product state retain their existing
 workspace IDs and gain only the nullable `workspaces.abandoned_at` lifecycle
 column. `platform_workspace_operations` journals UUIDv7 create/accept operations;
 the desktop retains one operation ID until its request reaches a terminal
-answer, so a transport retry reaches the same journal row.
+answer, so a transport retry reaches the same journal row. The regional create
+path has a second caller: demo preparation creates the presenter's workspace
+through `createWorkspaceForMember` — the same rows, journal, placement check and
+object initialization as `create`, with no session — journaled under the demo
+operation's own id, which Ace mints as a random UUID. The journal keys on the
+id's identity, not its version
+([`demo-workspaces.md`](demo-workspaces.md#preparing-a-demo)).
 
 The desktop's encrypted version-2 envelope stores one identity credential and a
 map of regional workspace credentials. Its presentation file stores only the
@@ -420,6 +426,18 @@ encrypts the complete account set, while sign-out erases it locally before
 best-effort remote revocation.
 
 ## Changelog
+
+### 2026-09-08 — Demo preparation creates a workspace without a session
+
+**What changed:** `RegionalOnboardingService.createWorkspaceForMember` is the
+session-less sibling of `create`, journaled under the caller's operation id;
+demo preparation is its one caller. The candidate filter withholds an
+unpublished demo whatever its status, so an abandoned one never appears.
+
+**Why:** A demo workspace is the presenter's own — owner membership, journal,
+placement and object exactly as if they had created it — but a session minted
+on their behalf by an operator is a credential nobody signed in for. Owned by
+[`demo-workspaces.md`](demo-workspaces.md).
 
 ### 2026-09-07 — Discovery withholds the demo template and an unpublished candidate
 

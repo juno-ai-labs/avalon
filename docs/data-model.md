@@ -1035,8 +1035,8 @@ unshipped file and is the place a further schema change goes until it ships.
 ### 2026-09-07 — The preparation operation's rows
 
 **What changed:** `demo_operations` and `demo_operation_phases` in regional D1
-(`0101` as written; folded into `0099` before release, see above), one
-migration because they are one thing: the operation and its phases.
+(`0101` as written; folded into `0100_demo_workspaces.sql` before release, see
+above), one migration because they are one thing: the operation and its phases.
 
 **Why:** The Demos page shows an operation's current phase, its completed
 items and its failure from real receipts, and resumes it by id. Those receipts
@@ -1047,7 +1047,8 @@ operation has to exist before the workspace it makes. Owned by
 ### 2026-09-07 — The seeder's receipts
 
 **What changed:** `demo_seed_receipts` in regional D1 (`0100` as written;
-folded into `0099` before release, see above), keyed by operation and action,
+folded into `0100_demo_workspaces.sql` before release, see above), keyed by
+operation and action,
 referencing the register's `operation_id` and `workspaces(id)`, with `run_outcome` closed to the two outcomes a seeded run
 may settle in. `runs.execution_context_json` in a seeded room's object gains an
 optional `seed`.
