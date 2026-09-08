@@ -3104,8 +3104,15 @@ pre {
 .citation-card-text { display: flex; flex-direction: column; min-width: 0; }
 .citation-card-title { font-size: 14px; font-weight: 540; line-height: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .citation-card-kind { color: var(--av-sys-color-text-muted); font-size: 12px; letter-spacing: 0; line-height: 16px; text-transform: none; }
-.citation-card-row { display: flex; gap: 6px; margin: var(--av-sys-space-prose-gap) 0; max-width: 560px; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: thin; }
+/* A run of embeds wraps rather than scrolls. The sideways scroller hid the
+   third of three published files behind a scrollbar nobody noticed, and a
+   reader who has to scroll to learn what was delivered has not been shown it.
+   A file card takes the row's full width, so a run of files reads as a list
+   with whole titles; an image tile keeps its intrinsic width and wraps, which
+   is the shape the row was made for. */
+.citation-card-row { display: flex; flex-wrap: wrap; gap: 6px; margin: var(--av-sys-space-prose-gap) 0; max-width: 560px; }
 .citation-card-row .citation-card { flex: 0 0 auto; margin: 0; }
+.citation-card-row .citation-card.is-file { flex: 1 1 100%; width: 100%; }
 
 /* The grounding pill. It costs one character of line width and no vertical
    space at all, which is the whole reason the trailing source list is not
