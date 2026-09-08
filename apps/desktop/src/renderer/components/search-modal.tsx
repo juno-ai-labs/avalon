@@ -112,7 +112,7 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect 
   const results = open && normalized && settledQuery === normalized && (!response.isFetching || response.isFetchingNextPage) && (!response.isError || continuationFailed)
     ? [...new Map((response.data?.pages.flatMap((page) => page.results) ?? []).map((result) => [result.id, result])).values()] : [];
   useEffect(() => {
-    if (!open || !normalized || settledQuery !== normalized || response.isFetching || !response.isFetched || (results.length === 0 && response.hasNextPage && !response.isError)) return;
+    if (!open || !normalized || settledQuery !== normalized || response.isFetching || !response.isFetched) return;
     const current = trace.current;
     if (!current) return;
     // Two animation frames put the completion boundary after the committed result paint.
@@ -127,12 +127,6 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect 
   const loadMore = () => {
     if (open && settledQuery === normalized && response.hasNextPage && !response.isFetching && (!response.isError || continuationFailed)) void response.fetchNextPage({ cancelRefetch: false });
   };
-  useEffect(() => {
-    // A fully rejected candidate page is not an empty search. Follow its cursor
-    // until a current authorized result is visible or the provider is exhausted.
-    if (open && settledQuery === normalized && response.hasNextPage && !response.isFetching
-      && !response.isError && results.length === 0) void response.fetchNextPage();
-  }, [open, settledQuery, normalized, response.hasNextPage, response.isFetching, response.isError, response.fetchNextPage, results.length, response.data?.pages.length]);
   const active = Math.min(selected, Math.max(0, results.length - 1));
   useEffect(() => {
     list.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
