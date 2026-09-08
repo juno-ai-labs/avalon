@@ -20,7 +20,7 @@ import {
   retryDemoOperation,
   startDemoOperation,
 } from '../services/demo-preparation';
-import { getTelemetryOperator, requireOperatorRole, requireTelemetryOperator } from '../telemetry/operator-auth';
+import { getOperator, requireDemoOperator, requireOperatorRole } from '../telemetry/operator-auth';
 
 /**
  * The regional API Ace's Demos page talks to.
@@ -34,7 +34,7 @@ import { getTelemetryOperator, requireOperatorRole, requireTelemetryOperator } f
 const OperationParamSchema = z.strictObject({ operationId: IdSchema });
 
 export const demoOperatorRoutes = new Hono<HonoAppEnv>();
-demoOperatorRoutes.use('*', requireTelemetryOperator, requireOperatorRole('demos'));
+demoOperatorRoutes.use('*', requireDemoOperator, requireOperatorRole('demos'));
 
 demoOperatorRoutes.get('/', async (c) => {
   c.header('Cache-Control', 'no-store');
@@ -50,7 +50,7 @@ demoOperatorRoutes.post('/', zValidator('json', DemoOperationStartRequestSchema)
   // The operator's id travels into the region's own log: this creates a
   // workspace and copies credentials into it, and the region should be able
   // to say who asked without Ace's logs.
-  const status = await startDemoOperation(c.env, c.req.valid('json'), { operatorId: getTelemetryOperator(c).operatorId });
+  const status = await startDemoOperation(c.env, c.req.valid('json'), { operatorId: getOperator(c).operatorId });
   return c.json(DemoOperationStatusSchema.parse(status));
 });
 
@@ -73,7 +73,7 @@ demoOperatorRoutes.post(
   async (c) => {
     const status = await abandonDemoOperation(c.env, c.req.valid('param').operationId, {
       confirmOperationId: c.req.valid('json').confirmOperationId,
-      operatorId: getTelemetryOperator(c).operatorId,
+      operatorId: getOperator(c).operatorId,
     });
     return c.json(DemoOperationStatusSchema.parse(status));
   },
