@@ -14,6 +14,19 @@ function rule(selector: string): string | null {
   return ruleWithin(stylesheet, selector);
 }
 
+describe('capsule composer stacking', () => {
+  // This guards the CSS contract; actual pointer hit-testing is verified in Electron.
+  it('keeps both capsule control areas above the spanning attachment input shell', () => {
+    const controls = rule(':is(.workstream-screen, .new-chat-screen) .is-message-capsule :is(.composer-tools, .composer-submit-area)');
+    expect(controls).toContain('position: relative;');
+    expect(controls).toContain('z-index: 1;');
+    expect(rule('.composer-input-shell')).toContain('position: relative;');
+    expect(rule('.composer-input-shell')).not.toContain('z-index:');
+    expect(rule(':is(.workstream-screen, .new-chat-screen) .workstream-composer.is-message-capsule.has-attachments .composer-input-shell'))
+      .toContain('grid-column: 1 / -1;');
+  });
+});
+
 describe('secondary surface focus and layout', () => {
   it('keeps Terminal selection and keyboard focus distinguishable from resting borders', () => {
     expect(rule('.terminal-network-modes > label:has(input:checked)')).toContain('var(--av-sys-color-text-default)');
