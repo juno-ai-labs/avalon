@@ -15,6 +15,11 @@ chat alike and withheld from a run, and a run's loop reads its definition from
 the parent by revision at start. See
 [`automation-lifecycle.md`](automation-lifecycle.md).
 
+Sidekick submission returns to the conversation loop after publication. The model
+acknowledges the save, and conversational completion requires a persisted final
+assistant turn. The generic `completedByTool` harness outcome does not exempt a
+SubstreamAgent run from that terminalization requirement.
+
 ## Sidekick trust and activation
 
 The host resolves Sidekick candidates once and persists their accepted instruction
@@ -1203,6 +1208,16 @@ silently return every test to the shared key while each still passes alone.
 
 ## Changelog
 
+### 2026-09-08 — Publication returns to the conversation for its final response
+
+Remove the ready submission's terminal tool halt and ask the model to acknowledge
+the save. Live Sidekick validation showed the earlier `completedByTool` adapter
+handling did not satisfy the final-turn requirement in `terminalizeHarnessAttempt`:
+publication succeeded but the run failed. The runtime invariant remains intact;
+the authoring tool now follows the normal conversational completion path. The
+real workerd authoring regression fails on the old halt and verifies both the
+published definition and completed run with its persisted final reply.
+
 ### 2026-09-08 — Sidekick trust and activation
 
 The host resolves Sidekick candidates once and persists their accepted instruction
@@ -1257,6 +1272,11 @@ reads the seed. Later runs and recovered/compacted loops use their durable Bind
 projection exactly as before.
 
 ### 2026-09-04: A run a tool ended is completed, not an empty answer
+
+**Superseded for conversational authoring on 2026-09-08:** the adapter behavior
+below did not remove the terminalizer's final-turn requirement. Sidekick submission
+now returns to the model for a closing response; completed conversation runs must
+have that durable final turn.
 
 **What changed:** `HarnessOutcome` gains `completedByTool`, set when a tool's
 `halt: "completed"` ends the loop. The host's terminal result reads a
