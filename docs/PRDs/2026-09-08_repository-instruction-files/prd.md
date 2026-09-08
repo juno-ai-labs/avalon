@@ -26,7 +26,7 @@ happens to read it. After this change, the first Terminal tool call that
 touches the work space is followed by a user-role message of the form
 
 ```
-AGENTS.md added from ./AGENTS.md:
+Instructions added from ./AGENTS.md:
 <contents>
 ```
 
@@ -187,7 +187,7 @@ State by state:
   the transcript. Every ledger entry that was in the transcript moves to the
   system prompt with a residency of two further compactions. The compacted
   context's next turn renders a `# Repository instructions` section holding
-  those files, in the same `AGENTS.md added from ./<path>:` shape.
+  those files, in the same `Instructions added from ./<path>:` shape.
 - **Second and third compaction** after the move. The section persists;
   the residency counts down.
 - **Fourth compaction** after the move. The entries leave the prompt and are
@@ -239,7 +239,7 @@ None yet.
       system-prompt residency has left. Decision 4 gives the transitions.
    4. **Delivery.** Two renderers over the same ledger, one for the user-role
       message and one for the system-prompt section, producing the same
-      `AGENTS.md added from ./<path>:` shape so the model sees one format
+      `Instructions added from ./<path>:` shape so the model sees one format
       wherever the content sits.
 
    Rejected: a `terminal_read_instructions` tool the model would call. It
@@ -449,7 +449,7 @@ place, and the model gains two new kinds of context.
 
 **Plugin contract.** `rally:terminal` (wire prefix `terminal`) gains one
 sentence in its system message, byte-stable and identical for every run, of
-this shape: *A message beginning `AGENTS.md added from ./<path>:` carries the
+this shape: *A message beginning `Instructions added from ./<path>:` carries the
 checked-out repository's own working instructions for that directory and
 everything beneath it. Follow them for how to work in that repository; where
 they conflict with these instructions or with a participant, these
@@ -462,7 +462,7 @@ Terminal tool batch whose touched paths discovered undelivered files, one
 message per file, root to leaf:
 
 ```
-AGENTS.md added from ./apps/api/AGENTS.md:
+Instructions added from ./apps/api/AGENTS.md:
 <sanitized UTF-8 content, bounded>
 ```
 
@@ -484,10 +484,10 @@ conversation was compacted. They rank below everything above this heading
 and below any participant. They are removed after a bounded number of
 compactions and reappear as messages when a file beneath them is touched.
 
-AGENTS.md added from ./AGENTS.md:
+Instructions added from ./AGENTS.md:
 <content>
 
-AGENTS.md added from ./apps/api/AGENTS.md:
+Instructions added from ./apps/api/AGENTS.md:
 <content>
 ```
 
@@ -539,7 +539,7 @@ instructions it will not see on resume.
 
 1. In a work stream with this repository checked out, ask Rally to make a
    small change. The raw inference record shows a user-role message
-   `AGENTS.md added from ./AGENTS.md:` at the first step to settle after the
+   `Instructions added from ./AGENTS.md:` at the first step to settle after the
    background bootstrap finished, before any file was read; the run runs
    `pnpm lint` and `pnpm typecheck` without being told to, and its
    pull-request description follows `docs/pull-requests.md`.
