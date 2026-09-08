@@ -187,6 +187,8 @@ async function browserOnboardingSession(
   return installBrowserSession(raw, browserGlobalApiBaseUrl());
 }
 
+let browserSidekicksWindow: Window | null = null;
+
 const browserBridge: RallyDesktopBridge = {
   async getRuntimeConfig() {
     return {
@@ -474,6 +476,23 @@ const browserBridge: RallyDesktopBridge = {
   },
   async popOutArtifact(request) {
     window.open(request.url, '_blank', 'noopener,noreferrer');
+  },
+  async openSidekicks(sidekickId) {
+    const target = new URL(window.location.href);
+    target.searchParams.set('surface', 'sidekicks');
+    target.hash = sidekickId ? `/sidekicks/${encodeURIComponent(sidekickId)}` : '/sidekicks';
+    if (browserSidekicksWindow && !browserSidekicksWindow.closed) {
+      browserSidekicksWindow.location.href = target.toString();
+      browserSidekicksWindow.focus();
+      return;
+    }
+    // Open a same-origin blank window, sever its opener before navigating, and
+    // retain our reference: noopener would discard the named-window reuse.
+    browserSidekicksWindow = window.open('about:blank', 'rally-sidekicks');
+    if (browserSidekicksWindow) {
+      browserSidekicksWindow.opener = null;
+      browserSidekicksWindow.location.href = target.toString();
+    }
   },
   async openSettings(section) {
     const target = section ? `/settings?section=${encodeURIComponent(section)}` : '/settings';

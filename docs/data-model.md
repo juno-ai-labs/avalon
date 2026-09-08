@@ -32,6 +32,10 @@ relationally queried.
 Read it before adding a table, a column, or a migration, and before assuming that
 knowing an object's ID is enough to read it — it never is.
 
+## Sidekick loading and attachment storage
+
+SidekickDO migration 3 adds automation.loadable, atomically maintained with the accepted revision. WorkspaceDO migration 35 projects this value, using null for unresolved legacy eligibility. Substream migration 43 adds sidekick_attachments and sidekick_execution_skills for conversation ownership and retry-stable instruction snapshots. Existing namespace lookup keys remain unchanged.
+
 ## Where the code lives
 
 | Path | Responsibility |
@@ -59,7 +63,7 @@ WorkspaceDO migration 33 owns `resource_search_versions`: a retained resource re
 
 Account presentation and new-user eligibility are added by migration 0099.
 Global identity owns the revisioned name, initials, avatar and color, projected
-narrowly to EU. WorkspaceDO migrations 34 and 35 own resumable per-person
+narrowly to EU. WorkspaceDO migration 34 owns resumable per-person
 onboarding and confirmed connector selections. See [new-user onboarding](new-user-onboarding.md).
 
 - `users` stores Google identity subjects and display information, plus the
@@ -450,7 +454,8 @@ column catalog; what follows is only what WorkspaceDO still holds.
   resource, indexed on `(connection, event type, resource, state)` for
   candidate selection and on `(destination kind, destination key, state)` for
   replacement. A destination's set is replaced whole by
-  `applyExternalEventRegistrations`, with no generation, version, or hash;
+  `applyExternalEventRegistrations`, ordered by the destination generation in
+  `external_registration_generations`;
   `effective_after_event_sequence` is the cutoff, so an event admitted before
   the call is never matched by a rule that did not exist when it arrived.
   Removed rows are reaped after a day.
@@ -889,6 +894,20 @@ perform the regional audit/control write explicitly through
 
 ## Changelog
 
+### 2026-09-08 — Order Sidekick registration replacement
+
+Sidekick owner migration 4 stores `registration_generation`; WorkspaceDO migration
+36 stores the latest per-destination generation and activation cutoff. A stale
+publication tail previously could reinstall old predicates after new acceptance.
+Equal-generation retries now preserve the boundary and empty replacements retain
+the fence. These are object-owned SQLite migrations, not regional D1 migrations.
+The Cloudflare class stays `AutomationDO` for the compatibility deployment.
+
+### 2026-09-07 — Sidekick loading and attachment storage
+
+SidekickDO migration 3 adds automation.loadable, atomically maintained with the accepted revision. WorkspaceDO migration 35 projects this value, using null for unresolved legacy eligibility. Substream migration 43 adds sidekick_attachments and sidekick_execution_skills for conversation ownership and retry-stable instruction snapshots. Existing namespace lookup keys remain unchanged.
+
+This composes knowledge with existing execution machinery while keeping one Sidekick identity and preserving authorization boundaries.
 ### 2026-09-07 — Persist new-user identity and learning progress
 
 Onboarding needs the same appearance and resumable setup across sessions.

@@ -2636,9 +2636,23 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   version: 34,
   description: 'resumable new-user onboarding with scoped connector selections',
   statements: [ONBOARDING_JOURNEY_SQL],
+}, {
+  version: 35,
+  description: "project the authoritative Sidekick loading capability",
+  statements: [
+    `ALTER TABLE automation_directory ADD COLUMN loadable INTEGER CHECK (loadable IN (0, 1))`,
+  ],
+}, {
+  version: 36,
+  description: "fence external evaluator replacements by owning object generation",
+  statements: [`CREATE TABLE external_registration_generations (
+    destination_key TEXT PRIMARY KEY, source_generation INTEGER NOT NULL,
+    effective_after_event_sequence INTEGER NOT NULL
+  ) STRICT`],
 }];
 
 interface AutomationDirectoryRow extends Record<string, SqlStorageValue> {
+  loadable: number | null;
   automation_id: string;
   lifecycle: "draft" | "active" | "paused";
   scope: "personal" | "workspace" | "workstream";
@@ -2652,7 +2666,8 @@ interface AutomationDirectoryRow extends Record<string, SqlStorageValue> {
 function automationSummary(row: AutomationDirectoryRow): AutomationSummary {
   return {
     id: row.automation_id,
-    name: row.title || "New automation",
+    loadable: row.loadable === 1,
+    name: row.title || "New Sidekick",
     description: row.description,
     emailAddress: null,
     scope: row.scope,
@@ -4075,8 +4090,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       this.state.storage.sql.exec(
         `INSERT INTO automation_directory
            (automation_id, workspace_id, author_user_id, source_version, payload_hash,
-            lifecycle, scope, owning_workstream_id, title, description, next_run_at, projected_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            lifecycle, scope, owning_workstream_id, title, description, next_run_at, projected_at, loadable)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(automation_id) DO UPDATE SET
            author_user_id = excluded.author_user_id,
            source_version = excluded.source_version,
@@ -4087,7 +4102,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
            title = excluded.title,
            description = excluded.description,
            next_run_at = excluded.next_run_at,
-           projected_at = excluded.projected_at`,
+           projected_at = excluded.projected_at,
+           loadable = excluded.loadable`,
         effect.automationId,
         request.workspaceId,
         effect.authorUserId,
@@ -4100,6 +4116,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         effect.description,
         epoch(effect.nextRunAt),
         Date.now(),
+        effect.loadable === undefined ? null : effect.loadable ? 1 : 0,
       );
       this.state.storage.sql.exec(
         `UPDATE workspace_sidebar_list_state
@@ -4142,6 +4159,41 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return { items: this.listSidebarAutomations(request.workspaceId, request.userId, 250) };
   }
 
+  /** Internal candidates only; every result must pass the Sidekick owner's read gate. */
+  async sidekickSkillCandidates(input: unknown): Promise<string[]> {
+    await this.initialized;
+    const request = z.strictObject({ workspaceId: WorkspaceIdSchema }).parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return this.state.storage.sql.exec<{ automation_id: string }>(
+      `SELECT automation_id FROM automation_directory WHERE workspace_id = ? AND lifecycle = 'active' AND loadable = 1 ORDER BY automation_id`,
+      request.workspaceId,
+    ).toArray().map((row) => row.automation_id);
+  }
+
+  /** Library discovery is an index; the owning object authorizes content reads. */
+  async listSidekickDirectory(input: unknown): Promise<{ items: AutomationSummary[] }> {
+    await this.initialized;
+    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, userId: UserIdSchema }).parse(input);
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
+      throw new ApiError(403, "sidekick_directory_access_denied", "You cannot list this workspace's Sidekicks");
+    }
+    const candidates = this.state.storage.sql.exec<AutomationDirectoryRow & { author_user_id: string }>(
+      `SELECT * FROM automation_directory WHERE workspace_id = ? AND lifecycle <> 'deleted'
+       ORDER BY title COLLATE NOCASE, automation_id`, request.workspaceId,
+    ).toArray();
+    const items: AutomationSummary[] = [];
+    for (const row of candidates) {
+      const accessible = row.scope === "workspace"
+        || (row.scope === "personal" && row.author_user_id === request.userId)
+        || (row.owning_workstream_id !== null && (await this.workstreamParticipant({
+          workspaceId: request.workspaceId, workstreamId: row.owning_workstream_id, userId: request.userId,
+        })).participant);
+      if (accessible) items.push(automationSummary(row));
+    }
+    return { items };
+  }
+
   /**
    * The automations one work stream owns, for that work stream's rail.
    *
@@ -4169,7 +4221,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       throw new ApiError(403, "automation_directory_access_denied", "You cannot list this room's automations");
     }
     const rows = this.state.storage.sql.exec<AutomationDirectoryRow>(
-      `SELECT automation_id, lifecycle, scope, owning_workstream_id, title, description,
+      `SELECT automation_id, loadable, lifecycle, scope, owning_workstream_id, title, description,
               next_run_at, projected_at
          FROM automation_directory
         WHERE owning_workstream_id = ? AND lifecycle <> 'deleted'
@@ -4182,6 +4234,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         const summary = automationSummary(row);
         return {
           id: summary.id,
+          loadable: summary.loadable,
           name: summary.name,
           description: summary.description,
           emailAddress: summary.emailAddress,
@@ -4261,8 +4314,19 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       const destinationKey = destinationKind === "automation"
         ? `automation:${request.destination.automationId}`
         : `workstream:${request.destination.workstreamId}:${request.destination.substreamId}:${request.destination.resourceId}`;
+      const previous = this.state.storage.sql.exec<{ source_generation: number; effective_after_event_sequence: number }>(
+        `SELECT source_generation, effective_after_event_sequence FROM external_registration_generations WHERE destination_key = ?`, destinationKey,
+      ).toArray()[0];
+      if (previous && (request.sourceGeneration === undefined || request.sourceGeneration <= previous.source_generation)) {
+        return { effectiveAfterEventSequence: previous.effective_after_event_sequence };
+      }
       const now = Date.now();
       const cutoff = this.latestConnectorEventSequence();
+      if (request.sourceGeneration !== undefined) this.state.storage.sql.exec(
+        `INSERT INTO external_registration_generations VALUES (?, ?, ?)
+         ON CONFLICT(destination_key) DO UPDATE SET source_generation = excluded.source_generation, effective_after_event_sequence = excluded.effective_after_event_sequence`,
+        destinationKey, request.sourceGeneration, cutoff,
+      );
       this.state.storage.sql.exec(
         `UPDATE workspace_external_event_registrations
             SET state = 'removed', updated_at = ?
@@ -4279,8 +4343,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
               connection_id, connector_type, event_type, resource_id, evaluator_json,
               destination_kind, automation_id, workstream_id, substream_id,
               destination_resource_id, state, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)`,
-          uuidV7(),
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+           ON CONFLICT(registration_id) DO UPDATE SET state = 'active', effective_after_event_sequence = excluded.effective_after_event_sequence, updated_at = excluded.updated_at`,
+          request.sourceGeneration === undefined ? uuidV7() : evaluator.evaluatorId,
           destinationKey,
           request.workspaceId,
           cutoff,
@@ -8694,7 +8759,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    */
   private listSidebarAutomations(workspaceId: string, userId: string, limit = SIDEBAR_LIST_LIMIT): AutomationSummary[] {
     return this.state.storage.sql.exec<AutomationDirectoryRow>(
-      `SELECT automation_id, lifecycle, scope, owning_workstream_id, title, description,
+      `SELECT automation_id, loadable, lifecycle, scope, owning_workstream_id, title, description,
               next_run_at, projected_at
          FROM automation_directory
         WHERE workspace_id = ? AND lifecycle <> 'deleted'

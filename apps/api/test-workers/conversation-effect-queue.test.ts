@@ -42,7 +42,7 @@ import type { WorkstreamObjectProductService } from "../src/durable-objects/work
 import {
   consumeEffectBodies,
   deliverChildEffects,
-  deliverParentEffects,
+  deliverParentEffectsInOrder,
   pendingChildEffects,
   pendingParentEffects,
 } from "./helpers/conversation-effects";
@@ -303,7 +303,7 @@ describe("a conversation object's outbox", () => {
       expect(envelope).toMatchObject({ kind: "parent_effect", parentKind: "workstream", parentId: LEG_WORKSTREAM_ID });
     }
 
-    const parentDelivered = await deliverParentEffects(env, parent);
+    const parentDelivered = await deliverParentEffectsInOrder(env, parent);
     const directory = await runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec<{
       workstream_id: string;
       title: string;
@@ -379,7 +379,7 @@ describe("a parent with two children", () => {
     expect(queued.map((envelope) => envelope.sourceVersion)).toEqual([2]);
     expect(queued.at(-1)?.effect).toMatchObject({ kind: "directory_user", unreadCount: 2, listable: true });
 
-    await deliverParentEffects(env, parent);
+    await deliverParentEffectsInOrder(env, parent);
     const viewer = await runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec<{
       unread_count: number;
       waterline: number;

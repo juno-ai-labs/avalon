@@ -254,10 +254,10 @@ describe('Rally API wire adapter', () => {
     await expect(api.acceptAutomation(automationId)).resolves.toMatchObject({ acceptedDefinitionRevision: 1 });
     await expect(api.getAutomationRuns(automationId)).resolves.toEqual([expect.objectContaining({ id: runId })]);
 
-    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(`https://api.rally.test/automations/${automationId}/accept`);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(`https://api.rally.test/sidekicks/${automationId}/accept`);
     expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: 'POST' });
     expect(fetchMock.mock.calls[0]?.[1]?.body).toBeUndefined();
-    expect(String(fetchMock.mock.calls[1]?.[0])).toBe(`https://api.rally.test/automations/${automationId}/runs`);
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe(`https://api.rally.test/sidekicks/${automationId}/runs`);
   });
 
   it('tells the person to restart Rally when a plain response does not match its schema', async () => {

@@ -977,6 +977,18 @@ Three GitHub Actions workflows carry the mechanical part of this procedure. They
   document's history and in the `automation-lifecycle.md` changelog.
 - `.github/workflows/release-desktop-macos.yml` freezes the version-bumped release commit and runs lint, typecheck, the full test suite, and the release invariants on Ubuntu before it claims macOS; the Apple runner then guards the tag, runs the packaged Crashpad fixture, builds, signs, notarizes, staples, and verifies the macOS package, checks both regional APIs, publishes the immutable payloads, promotes the release manifest, records the release config on `main`, and deploys the landing site from `main`'s then-current tip. The health gate can be bypassed only through the `skip_health_gate` dispatch input. It runs automatically on a merge to `main` matching its cheap admission filter; the Ubuntu planner rejects contract-only changes outside the desktop's derived import closure before bumping or claiming macOS. A manual dispatch names an existing tag. Nothing triggers on a tag.
 
+### Deploying the Sidekick class rename
+
+The current release is the compatibility stage: deploy both exports using the
+existing v9 `AutomationDO` binding in EU and Global, then verify existing object
+IDs, schedules, addresses, history, and old links. A separate change may append
+the Cloudflare class-rename migration and update both binding class names plus
+migration tracking and force dispatch. Verify both regions again before removing
+the old export. Keep `:automation:` lookup bytes unchanged. After the rename,
+recovery uses a compatible forward deployment; do not point bindings back at the
+old class or replay historical migration tags. No local build proves this rollout
+has happened in production.
+
 ### Debugging an automation
 
 An automation is one `AutomationDO` per automation, named

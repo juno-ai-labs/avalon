@@ -32,7 +32,7 @@ export function DeleteAutomationDialog({ target, onClose, onConfirm }: DeleteAut
       await onConfirm();
       onClose();
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : 'The automation could not be deleted.');
+      setError(failure instanceof Error ? failure.message : 'The Sidekick could not be deleted.');
     } finally {
       setDeleting(false);
     }
@@ -51,7 +51,7 @@ export function DeleteAutomationDialog({ target, onClose, onConfirm }: DeleteAut
         if (!open) close();
       }}
       open={target !== null}
-      title={target?.status === 'draft' ? 'Delete draft' : 'Delete automation'}
+      title={target?.status === 'draft' ? 'Delete draft' : 'Delete Sidekick'}
     >
       <p className="modal-copy">
         {target?.status === 'draft' ? (
@@ -65,7 +65,7 @@ export function DeleteAutomationDialog({ target, onClose, onConfirm }: DeleteAut
                 said before it: deleting enqueues an archive for
                 every work stream the automation's runs created, so
                 the runs leave with it. */}
-            <strong>{target?.name}</strong> stops running and leaves the sidebar for good.
+            <strong>{target?.name}</strong> is deleted from your Sidekicks for good.
             Every past run — and the work stream each one created — is archived with it, and
             Rally has no way to bring them back.
           </>

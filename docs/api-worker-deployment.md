@@ -20,6 +20,15 @@ the [WorkerEntrypoint RPC model](https://developers.cloudflare.com/workers/runti
 [RPC lifecycle and disposal](https://developers.cloudflare.com/workers/runtime-apis/rpc/lifecycle/),
 and [Versions and gradual deployments](https://developers.cloudflare.com/workers/configuration/versions-and-deployments/gradual-deployments/).
 
+## Sidekick compatibility deployment
+
+The Sidekick implementation ships both class exports while the regional
+`AUTOMATION_DOS` bindings still name `AutomationDO` at migration tag v9. This
+release performs the compatibility stage only. The separate class-rename release
+must follow verified deployments in both regions and update migration-tracker
+class reporting and force dispatch alongside `renamed_classes` and bindings.
+See [the lifecycle rollout](automation-lifecycle.md#class-rename-deployment).
+
 ## Where the code lives
 
 | Surface | Entrypoint and config | Responsibility |
@@ -293,6 +302,13 @@ catalog reads plus sixteen small KV writes; inference performs only the KV reads
 for Azure-bound models in its route plan.
 
 ## Changelog
+
+### 2026-09-08 — Keep the Sidekick rename behind a verified compatibility release
+
+The regional configurations retain AutomationDO at v9 while both exports ship.
+A documented prerequisite beside a target rename was insufficient: merge-driven
+deployment would execute the rename immediately. A separate follow-up now owns
+that migration and its tracker updates after both regions are verified.
 
 ### 2026-09-06 — Bundle and share the search tokenizer
 
