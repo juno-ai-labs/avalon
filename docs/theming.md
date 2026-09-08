@@ -116,6 +116,15 @@ serves only generated IDs and enforces the cache's size and integrity checks.
 
 ## Changelog
 
+### 2026-09-08 — Give member messages independent appearance roles
+
+Human message colors use `cmp.member-message.<profile-color>.background`,
+`foreground`, and `dot`. Both appearance files declare all eight profiles.
+These roles preserve the current colors while allowing light and dark tuning
+without changing avatar or project colors. Components select a profile role;
+they do not decide text contrast from a hard-coded list of hues.
+
+
 ### 2026-09-07 — Replace the stale orange palette with Rally neon yellow
 
 Rally uses #ccff00, matching the public site's primary brand color. Both desktop
