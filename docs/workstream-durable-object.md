@@ -1520,7 +1520,7 @@ onto `runs.state` forward only.
 | Table group | Meaning and relationships |
 | --- | --- |
 | `_sql_schema_migrations`, `object_versions` | Schema versions and the applied-migration receipts. |
-| `object_retirement` | Singleton tombstone, conversation-object schema v46; shared constant, see `WorkspaceDO`. |
+| `object_retirement` | Singleton tombstone, conversation-object schema v48; shared constant, see `WorkspaceDO`. |
 | `workstream`, `substream_agent_identity`, `substreams` | Local root/authority, immutable external child identity, and LLM-array context metadata. The root's `workstream_key` is the parent id and `parent_kind` (v39, default `workstream`) says which kind; `origin_type`, `automation_subscription_id`, `automation_run_id`, and `planned_for` are dead columns, never written or projected, kept because the runtime-compat triggers in `workstream-runtime-compat-schema.ts` name them inside released migration hashes. Existing main data uses local context `0`. |
 | `participants`, `member_attention` | Participation and personal read/mention waterlines; active workspace membership remains D1 authority. |
 | `participant_transcript_turns`, `participant_transcript_blocks`, `participant_transcript_attachments`, `participant_transcript_mentions`, `transcript_facts`, `transcript_payloads`, `content_refs` | One provider-neutral semantic order whose canonical turns reference content-addressed payloads plus exact attachment, mention, and large-content joins. Accepted human and assistant content, identity, and order never change. One stable tool turn may advance only its explicit lifecycle from started to terminal; a different turn under the same client id remains an ignored replay. Terminal residual-receipt repair asynchronously prepares the replacement payload, then commits its fact and tool metadata synchronously so alarm/reaper settlement cannot leave a started card behind. Tool UI rows project only as complete assistant-call/tool-result pairs; pending messages have no canonical order and enter Bind only through the persistent loop's delivery transaction. |
@@ -1656,9 +1656,9 @@ directory write at all.
 ### 2026-09-08 — Every object under a workspace can be retired
 
 **What changed:** Each of the four object classes gains the `object_retirement`
-tombstone table (WorkspaceDO 40, WorkstreamDO 8, SidekickDO 5,
-conversation-object v46) and WorkspaceDO gains `workspace_retirement_graph`
-(41); the shared parent base gains `childrenForRetirement`. Every callable
+tombstone table (WorkspaceDO 41, WorkstreamDO 8, SidekickDO 5,
+conversation-object v48) and WorkspaceDO gains `workspace_retirement_graph`
+(42); the shared parent base gains `childrenForRetirement`. Every callable
 method of these classes is wrapped by the retirement gate at module load.
 `SubstreamAgent`'s runtime recovery is a prototype method rather than a
 constructor-bound closure, and returns at once on a retired object.
