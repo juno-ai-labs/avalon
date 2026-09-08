@@ -25,6 +25,16 @@ live object of it is sent one queue message that wakes it. The rest of this
 document is in two halves — what the tracker observes, and what it can make
 happen.
 
+## Sidekick compatibility rollout
+
+Sidekick source code currently deploys through the `AutomationDO` compatibility
+export and continues reporting that deployed class to the tracker. Both regional
+configs remain at v9. A later class-rename release must change tracker class
+contracts, report identities, inventory grouping, and force-migration dispatch
+together with the regional binding; changing only the Cloudflare class would
+strand the operational migration view. Verify existing objects in both regions
+before that release and retain the old export until verification completes.
+
 ## Where the code lives
 
 | Path | Responsibility |
@@ -811,6 +821,20 @@ radius of a misclick. It sits an order of magnitude above the largest class, so
 it does not shape the cost of any run somebody means to make.
 
 ## Changelog
+
+### 2026-09-08 — Sidekick compatibility rollout
+
+Sidekick source code currently deploys through the `AutomationDO` compatibility
+export and continues reporting that deployed class to the tracker. Both regional
+configs remain at v9. A later class-rename release must change tracker class
+contracts, report identities, inventory grouping, and force-migration dispatch
+together with the regional binding; changing only the Cloudflare class would
+strand the operational migration view. Verify existing objects in both regions
+before that release and retain the old export until verification completes.
+
+This records the review fixes because stale effects, overbroad revocation, and
+implicit compatibility assumptions can break otherwise valid delegated work.
+Future changes must retain the separate ownership and execution boundaries.
 
 ### 2026-09-03: AutomationDO joins the tracked fleet and AutomationAgent leaves it
 

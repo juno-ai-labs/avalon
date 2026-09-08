@@ -500,6 +500,7 @@ export function mapWorkstreamAutomationSummary(
 ): WorkstreamAutomationSummary {
   return {
     id: automation.id,
+    loadable: automation.loadable,
     name: automation.name,
     description: automation.description,
     ...(automation.emailAddress ? { emailAddress: automation.emailAddress } : {}),
@@ -947,7 +948,7 @@ export class RallyApi {
    * client that never held it.
    */
   async acceptAutomation(id: string): Promise<AutomationDetail> {
-    const raw = await this.request(`/automations/${encodeURIComponent(id)}/accept`, {
+    const raw = await this.request(`/sidekicks/${encodeURIComponent(id)}/accept`, {
       method: 'POST',
       schema: WireAutomationDetailSchema,
     });
@@ -963,19 +964,19 @@ export class RallyApi {
   async claimAutomationExecutionPrincipal(
     id: string,
   ): Promise<z.infer<typeof wireExecutionPrincipalClaimSchema>> {
-    return this.request(`/automations/${encodeURIComponent(id)}/execution-principal`, {
+    return this.request(`/sidekicks/${encodeURIComponent(id)}/execution-principal`, {
       method: 'POST',
       schema: wireExecutionPrincipalClaimSchema,
     });
   }
 
   async getAutomation(id: string, signal?: AbortSignal): Promise<AutomationDetail> {
-    const raw = await this.request(`/automations/${encodeURIComponent(id)}`, { schema: WireAutomationDetailSchema, signal });
+    const raw = await this.request(`/sidekicks/${encodeURIComponent(id)}`, { schema: WireAutomationDetailSchema, signal });
     return mapAutomationDetail(raw);
   }
 
   async getAutomationRuns(id: string, signal?: AbortSignal): Promise<AutomationRun[]> {
-    const page = await this.request(`/automations/${encodeURIComponent(id)}/runs`, {
+    const page = await this.request(`/sidekicks/${encodeURIComponent(id)}/runs`, {
       schema: wireAutomationRunPageSchema,
       signal,
     });
@@ -983,12 +984,12 @@ export class RallyApi {
   }
 
   async setAutomationStatus(id: string, action: 'pause' | 'resume'): Promise<AutomationDetail> {
-    await this.requestVoid(`/automations/${encodeURIComponent(id)}/${action}`, { method: 'POST' });
+    await this.requestVoid(`/sidekicks/${encodeURIComponent(id)}/${action}`, { method: 'POST' });
     return this.getAutomation(id);
   }
 
   async deleteAutomation(id: string): Promise<void> {
-    await this.requestVoid(`/automations/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    await this.requestVoid(`/sidekicks/${encodeURIComponent(id)}`, { method: 'DELETE' });
   }
 
   /**
@@ -998,7 +999,7 @@ export class RallyApi {
   async runAutomation(id: string): Promise<{ runId: string; reused: boolean }> {
     const idempotencyKey = this.pendingRunKeys.get(id) ?? crypto.randomUUID();
     this.pendingRunKeys.set(id, idempotencyKey);
-    const result = await this.request(`/automations/${encodeURIComponent(id)}/run`, {
+    const result = await this.request(`/sidekicks/${encodeURIComponent(id)}/run`, {
       method: 'POST',
       headers: { 'Idempotency-Key': idempotencyKey },
       schema: runNowResponseSchema,

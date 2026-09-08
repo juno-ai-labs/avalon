@@ -280,6 +280,7 @@ class ToolSelectionStatement {
 
   async first<T>(): Promise<T | null> {
     const sql = this.sql.replace(/\s+/gu, " ").trim();
+    if (sql.includes("SELECT role FROM workspace_members")) return { role: "member" } as T;
     if (sql.includes("FROM workspace_members wm")) {
       expect(this.values).toEqual([WORKSPACE_ID, USER_ID]);
       return { status: this.database.memberStatus } as T;

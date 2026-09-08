@@ -1414,16 +1414,13 @@ export function ConversationSurface({
   const acceptProposedAutomation = useMutation({
     mutationFn: (automationId: string) => api!.acceptAutomation(automationId),
     onSuccess: (_detail, automationId) => {
-      void queryClient.invalidateQueries({ queryKey: ['workstream-automations', id] });
+      void queryClient.invalidateQueries({ queryKey: ['sidekicks-library'] });
       void queryClient.invalidateQueries({ queryKey: ['automation', automationId] });
     },
   });
 
-  // A room's automations are listed in its rail and nowhere else, so this is
-  // the only fetch that can answer "what does this work stream run". Gated on
-  // the rail being open for the same reason the versions query is: a closed
-  // panel refetching is work nobody can see. Only a work stream owns
-  // automations; an automation's own conversation has no such list.
+  // Loaded main-stream attachments belong in the rail; owned Sidekicks are
+  // managed through the dedicated library. Fetch only while the rail is open.
   const attachedSidekicks = useQuery({
     queryKey: ['attached-sidekicks', id],
     queryFn: ({ signal }) => api!.getAttachedSidekicks(id!, signal),
@@ -2039,7 +2036,6 @@ export function ConversationSurface({
         } } : {})}
         dropTarget={railDrop}
         {...(api ? { loadResourceContent: loadResourceContent } : {})}
-        automationsSection={parentKind === 'workstream'}
         error={watchResource.error?.message
           ?? detachResource.error?.message
           ?? refreshResource.error?.message
@@ -2053,7 +2049,6 @@ export function ConversationSurface({
           onToggleWatch: (resource: WorkstreamResource, enabled: boolean) => watchResource.mutate({ resource, enabled }),
         } : {})}
         onOpenResourceVersion={openResourceVersion}
-        onOpenWorkstreamAutomation={(automationId) => void navigate(`/automations/${automationId}`)}
         refreshingResourceId={refreshResource.isPending ? refreshResource.variables?.id ?? null : null}
         resourceVersions={resourceVersions.data}
         resourceVersionsError={resourceVersions.error?.message}

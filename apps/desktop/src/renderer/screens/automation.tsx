@@ -84,7 +84,6 @@ function AutomationDetailScreen({ id }: { id: string }): React.JSX.Element {
   const act = useMutation({
     mutationFn: async (action: AutomationHeaderAction) => {
       switch (action) {
-        case 'apply': return queryClient.setQueryData(['automation', id], await api!.acceptAutomation(id));
         case 'pause': return queryClient.setQueryData(['automation', id], await api!.setAutomationStatus(id, 'pause'));
         case 'resume': return queryClient.setQueryData(['automation', id], await api!.setAutomationStatus(id, 'resume'));
         case 'run': return api!.runAutomation(id);
@@ -92,6 +91,7 @@ function AutomationDetailScreen({ id }: { id: string }): React.JSX.Element {
       }
     },
     onSuccess: (_result, action) => {
+      void queryClient.invalidateQueries({ queryKey: ['sidekicks-library'] });
       if (action === 'delete') {
         // Replacing rather than pushing, so Back cannot return to an
         // automation that is no longer served.
@@ -124,7 +124,6 @@ function AutomationDetailScreen({ id }: { id: string }): React.JSX.Element {
         <div className="sidekick-detail-heading"><Link className="sidekick-back" to="/sidekicks">← Sidekicks</Link><AutomationHeader
           automation={detail}
           error={act.error?.message}
-          onApply={() => act.mutate('apply')}
           onDelete={() => act.mutateAsync('delete').then(() => undefined)}
           onPause={() => act.mutate('pause')}
           onResume={() => act.mutate('resume')}

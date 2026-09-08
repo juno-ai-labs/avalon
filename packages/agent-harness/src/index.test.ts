@@ -5962,6 +5962,8 @@ describe("agent harness", () => {
       followUpQuestion: null,
       ready: true
     });
+    expect(__testing.automationJsonSchema.properties.triggers).not.toHaveProperty("minItems");
+    expect(__testing.automationJsonSchema.properties.triggers.items.properties.type.enum).toContain("inbound_email");
     const schema = JSON.stringify(__testing.automationJsonSchema);
     expect(schema).not.toContain('"oneOf"');
     expect(schema).toContain('"ready"');

@@ -2642,6 +2642,13 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   statements: [
     `ALTER TABLE automation_directory ADD COLUMN loadable INTEGER CHECK (loadable IN (0, 1))`,
   ],
+}, {
+  version: 36,
+  description: "fence external evaluator replacements by owning object generation",
+  statements: [`CREATE TABLE external_registration_generations (
+    destination_key TEXT PRIMARY KEY, source_generation INTEGER NOT NULL,
+    effective_after_event_sequence INTEGER NOT NULL
+  ) STRICT`],
 }];
 
 interface AutomationDirectoryRow extends Record<string, SqlStorageValue> {
@@ -4307,8 +4314,19 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       const destinationKey = destinationKind === "automation"
         ? `automation:${request.destination.automationId}`
         : `workstream:${request.destination.workstreamId}:${request.destination.substreamId}:${request.destination.resourceId}`;
+      const previous = this.state.storage.sql.exec<{ source_generation: number; effective_after_event_sequence: number }>(
+        `SELECT source_generation, effective_after_event_sequence FROM external_registration_generations WHERE destination_key = ?`, destinationKey,
+      ).toArray()[0];
+      if (previous && (request.sourceGeneration === undefined || request.sourceGeneration <= previous.source_generation)) {
+        return { effectiveAfterEventSequence: previous.effective_after_event_sequence };
+      }
       const now = Date.now();
       const cutoff = this.latestConnectorEventSequence();
+      if (request.sourceGeneration !== undefined) this.state.storage.sql.exec(
+        `INSERT INTO external_registration_generations VALUES (?, ?, ?)
+         ON CONFLICT(destination_key) DO UPDATE SET source_generation = excluded.source_generation, effective_after_event_sequence = excluded.effective_after_event_sequence`,
+        destinationKey, request.sourceGeneration, cutoff,
+      );
       this.state.storage.sql.exec(
         `UPDATE workspace_external_event_registrations
             SET state = 'removed', updated_at = ?
@@ -4325,8 +4343,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
               connection_id, connector_type, event_type, resource_id, evaluator_json,
               destination_kind, automation_id, workstream_id, substream_id,
               destination_resource_id, state, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)`,
-          uuidV7(),
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+           ON CONFLICT(registration_id) DO UPDATE SET state = 'active', effective_after_event_sequence = excluded.effective_after_event_sequence, updated_at = excluded.updated_at`,
+          request.sourceGeneration === undefined ? uuidV7() : evaluator.evaluatorId,
           destinationKey,
           request.workspaceId,
           cutoff,
