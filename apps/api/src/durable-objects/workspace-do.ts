@@ -113,6 +113,13 @@ import {
 import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
 import { evaluateExternalEventPredicate } from "../services/external-event-evaluator";
 import { automationDOName, workspaceDOName } from "./names";
+import {
+  OBJECT_RETIREMENT_SCHEMA_STATEMENTS,
+  applyRetirementGate,
+  droppedEnvelopeReceipts,
+  readObjectRetirement,
+  retiredObjectResponse,
+} from "./object-retirement";
 import { reportScheduledAlarmAttempt } from "./scheduled-alarm-report";
 import {
   WorkspaceDirectoryApplyRequestSchema,
@@ -2666,7 +2673,35 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   ],
 }, { version: 40, description: "project shared workstream appearance", statements: [
   `ALTER TABLE workspace_workstream_directory ADD COLUMN appearance_json TEXT CHECK (appearance_json IS NULL OR json_valid(appearance_json))`,
-] }];
+] }, {
+  version: 41,
+  description: "record a permanent retirement tombstone",
+  statements: [
+    // A retired workspace never reopens, and the fence in front of every
+    // method here reads this table. It lives in the object rather than D1
+    // because the gate answers during constructor recovery, before anything
+    // else this object could consult is admitted.
+    ...OBJECT_RETIREMENT_SCHEMA_STATEMENTS,
+  ],
+}, {
+  version: 42,
+  description: "record the object graph retirement walks",
+  statements: [
+    // Captured before the tombstone and read after it. Once this workspace is
+    // retired its directories refuse, so a walk that re-derived its descendants
+    // from them would find nothing on the second pass and call itself finished.
+    // `retired_at` is the receipt: completion is the absence of NULLs here
+    // rather than a flag somebody sets, so a child that failed leaves the walk
+    // visibly incomplete and resumable.
+    `CREATE TABLE workspace_retirement_graph (
+      parent_kind TEXT NOT NULL CHECK (parent_kind IN ('workstream', 'automation')),
+      parent_id TEXT NOT NULL,
+      recorded_at INTEGER NOT NULL,
+      retired_at INTEGER,
+      PRIMARY KEY (parent_kind, parent_id)
+    ) STRICT`,
+  ],
+}];
 
 interface AutomationDirectoryRow extends Record<string, SqlStorageValue> {
   loadable: number | null;
@@ -9550,4 +9585,181 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       analyticsWorkspaceId: role.analytics_workspace_id ?? null,
     } : null;
   }
+
+  /**
+   * Close this workspace and record what closing it has to reach.
+   *
+   * Order is the whole point. The enumeration happens first, while the
+   * directories still answer, and the tombstone lands in the same call — so
+   * there is no window in which a caller writes into a workspace that is half
+   * closed, and no second pass that reads an empty directory and concludes
+   * there was nothing to retire.
+   *
+   * Idempotent by the same table. A resumed operation re-enters here and gets
+   * the graph the first pass recorded, receipts included, rather than a fresh
+   * and emptier one.
+   */
+  async beginWorkspaceRetirement(input: {
+    retiredAt: number;
+    operationId: string;
+    actorUserId: string | null;
+    reason: string;
+  }): Promise<{ nodes: { parentKind: "workstream" | "automation"; parentId: string }[] }> {
+    await this.initialized;
+    const sql = this.state.storage.sql;
+    // `INSERT OR IGNORE` rather than a replace: a node already receipted keeps
+    // its receipt, so resuming never un-retires what the last pass finished.
+    this.state.storage.transactionSync(() => {
+      const now = Date.now();
+      for (const row of sql.exec<{ workstream_id: string }>(
+        "SELECT workstream_id FROM workspace_workstream_directory",
+      ).toArray()) {
+        sql.exec(
+          `INSERT OR IGNORE INTO workspace_retirement_graph
+             (parent_kind, parent_id, recorded_at, retired_at)
+           VALUES ('workstream', ?, ?, NULL)`,
+          row.workstream_id,
+          now,
+        );
+      }
+      for (const row of sql.exec<{ automation_id: string }>(
+        "SELECT automation_id FROM automation_directory",
+      ).toArray()) {
+        sql.exec(
+          `INSERT OR IGNORE INTO workspace_retirement_graph
+             (parent_kind, parent_id, recorded_at, retired_at)
+           VALUES ('automation', ?, ?, NULL)`,
+          row.automation_id,
+          now,
+        );
+      }
+    });
+    await this.retireObject(input);
+    return { nodes: this.retirementGraphNodes() };
+  }
+
+  /** One descendant confirmed retired. Terminal: a replay does not reopen it. */
+  async recordRetiredNode(input: {
+    parentKind: "workstream" | "automation";
+    parentId: string;
+  }): Promise<{ remaining: number; complete: boolean }> {
+    await this.initialized;
+    this.state.storage.sql.exec(
+      `UPDATE workspace_retirement_graph
+          SET retired_at = ?
+        WHERE parent_kind = ? AND parent_id = ? AND retired_at IS NULL`,
+      Date.now(),
+      input.parentKind,
+      input.parentId,
+    );
+    return this.retirementProgress();
+  }
+
+  /**
+   * What the walk has left.
+   *
+   * Read after the tombstone, which is why it is permitted: an operator asking
+   * why a retirement is stuck, and the walk itself deciding whether to keep
+   * going, both need an answer from an object that refuses everything else.
+   */
+  async workspaceRetirementProgress(): Promise<{
+    remaining: number;
+    complete: boolean;
+    nodes: { parentKind: "workstream" | "automation"; parentId: string; retired: boolean }[];
+  }> {
+    await this.initialized;
+    const progress = this.retirementProgress();
+    const nodes = this.state.storage.sql.exec<{
+      parent_kind: "workstream" | "automation";
+      parent_id: string;
+      retired_at: number | null;
+    }>(
+      `SELECT parent_kind, parent_id, retired_at FROM workspace_retirement_graph
+        ORDER BY parent_kind, parent_id`,
+    ).toArray();
+    return {
+      ...progress,
+      nodes: nodes.map((node) => ({
+        parentKind: node.parent_kind,
+        parentId: node.parent_id,
+        retired: node.retired_at !== null,
+      })),
+    };
+  }
+
+  private retirementGraphNodes(): { parentKind: "workstream" | "automation"; parentId: string }[] {
+    return this.state.storage.sql.exec<{
+      parent_kind: "workstream" | "automation";
+      parent_id: string;
+    }>(
+      `SELECT parent_kind, parent_id FROM workspace_retirement_graph
+        ORDER BY parent_kind, parent_id`,
+    ).toArray().map((row) => ({ parentKind: row.parent_kind, parentId: row.parent_id }));
+  }
+
+  private retirementProgress(): { remaining: number; complete: boolean } {
+    const rows = this.state.storage.sql.exec<{ remaining: number; total: number }>(
+      `SELECT COUNT(*) FILTER (WHERE retired_at IS NULL) AS remaining,
+              COUNT(*) AS total
+         FROM workspace_retirement_graph`,
+    ).toArray();
+    const remaining = rows[0]?.remaining ?? 0;
+    // Completeness is "this workspace was enumerated and nothing is left", and
+    // the tombstone is what says the enumeration happened —
+    // `beginWorkspaceRetirement` writes it in the same call that records the
+    // graph. Reading it from the row count instead confused "nothing recorded
+    // yet" with "nothing to record", so a demo with no work streams and no
+    // automations reported incomplete on the first pass and on every pass
+    // after it, and its register row could never be marked retired.
+    const enumerated = readObjectRetirement(this.state.storage.sql) !== null;
+    return { remaining, complete: enumerated && remaining === 0 };
+  }
+
 }
+
+applyRetirementGate(WorkspaceDO, {
+  permit: [
+    // Retirement's own walk. These read and write the recorded graph, which
+    // only exists to be usable once the tombstone has closed everything else,
+    // so refusing them would leave the walk unable to find its descendants or
+    // report that it had reached them.
+    // Only the entry points. A permit carries the whole call beneath it, so the
+    // private helpers these reach need no entry of their own.
+    "beginWorkspaceRetirement",
+    "recordRetiredNode",
+    "workspaceRetirementProgress",
+  ],
+  drop: {
+    // Already handed to the Queue before the tombstone landed. The consumer
+    // parses `accepted` to decide the message is done; anything else leaves it
+    // redelivering an effect no object will ever apply.
+    applyWorkstreamDirectoryEffects: ([input]) => ({
+      accepted: droppedEnvelopeReceipts(input),
+      directoryChanged: false,
+    }),
+    // `replayed` is this receiver's terminal answer — it already means "this
+    // changed nothing, do not send it again", which is exactly true here.
+    applyWorkstreamRegionalEffect: () => ({ replayed: true, notificationIntentId: null }),
+    // The third queue-driven receiver, and the one that was missed. The
+    // activity consumer calls all three side by side; this one refused, so its
+    // message retried with backoff until it dead-lettered — the exact loop the
+    // other two exist to avoid. `applied: false` is its ordinary "nothing
+    // changed" answer, which is true of a workspace that is closed.
+    applyAutomationDirectory: () => ({ applied: false }),
+    // A visibility question answered rather than refused, as on `WorkstreamDO`:
+    // nobody can read anything in a retired workspace, and a caller that asks
+    // can act on `false` where it cannot act on a throw.
+    canReadWorkstream: () => false,
+    // An HTTP door refuses in the protocol it speaks rather than by throwing,
+    // so a caller reads a status instead of a 500 it has to guess about.
+    fetch: () => retiredObjectResponse(),
+    // Hibernated socket callbacks. The socket is already dead to the product;
+    // throwing here would only turn a quiet close into an error nobody reads.
+    webSocketMessage: () => Promise.resolve(),
+    webSocketClose: () => Promise.resolve(),
+    webSocketError: () => Promise.resolve(),
+    // The platform retries an alarm that throws. A retired object answers the
+    // wake by doing nothing and arming nothing, which is what quiet means.
+    alarm: () => Promise.resolve(),
+  },
+});

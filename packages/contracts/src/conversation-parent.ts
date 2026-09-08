@@ -190,6 +190,31 @@ export const MutatePrivateChildParticipantResultSchema = z.strictObject({
   membershipVersion: z.number().int().positive(),
 });
 
+/**
+ * The same listing, asked by a caller that is about to close this parent.
+ *
+ * Retirement needs "this object was never built" and "this object disagrees
+ * about which parent it is" as *answers*, not exceptions. Deciding either by
+ * comparing an error message across an RPC boundary is one rename away from
+ * permanently tombstoning a parent without walking its children.
+ */
+export const ConversationParentRetirementChildrenResultSchema = z.discriminatedUnion("status", [
+  z.strictObject({
+    status: z.literal("ok"),
+    children: z.array(z.strictObject({
+      substreamId: SubstreamIdSchema,
+      kind: z.enum(["main", "child"]),
+      createdAt: z.number().int().nonnegative(),
+    })),
+  }),
+  /** Named by a directory, never materialized. It has no children by construction. */
+  z.strictObject({ status: z.literal("missing") }),
+  /** Built, and holding a different identity than the directory row that named it. */
+  z.strictObject({ status: z.literal("identity_mismatch") }),
+]);
+export type ConversationParentRetirementChildrenResult =
+  z.infer<typeof ConversationParentRetirementChildrenResultSchema>;
+
 export type ConversationParentAuthorizeViewerRequest =
   z.infer<typeof ConversationParentAuthorizeViewerRequestSchema>;
 export type ConversationParentAuthorizeViewerResult =

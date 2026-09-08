@@ -20,10 +20,13 @@ function app(): Hono<HonoAppEnv> {
   return instance;
 }
 
+const demosToken = 'demos-operator-token-0123456789abcdef0123456789abcdef';
+
 function operatorConfig(): string {
   return JSON.stringify({
     [securityToken]: { operatorId: securityId, role: 'security' },
     [supportToken]: { operatorId: supportId, role: 'support' },
+    [demosToken]: { operatorId: '0198a229-ef99-7000-8000-00000000000d', role: 'demos' },
   });
 }
 
@@ -32,6 +35,17 @@ function authorization(token: string): HeadersInit {
 }
 
 describe('regional telemetry operator routes', () => {
+  it("refuses the demos role at the router, so Ace's credential reaches no telemetry route", async () => {
+    // `demos` is a role of the same credential map; the isolation the role
+    // exists for holds only if this router names the roles it admits.
+    const environment = createTestEnv({ AVALON_REGION: 'global', LOG_LEVEL: 'error', TELEMETRY_OPERATORS_JSON: operatorConfig() });
+    for (const [method, path] of [['GET', '/internal/telemetry/status'], ['GET', '/internal/telemetry/eu/crash-issues'], ['POST', '/internal/telemetry/replay']] as const) {
+      const response = await app().request(path, { method, headers: authorization(demosToken) }, environment);
+      expect(response.status, `${method} ${path}`).toBe(403);
+      await expect(response.json()).resolves.toMatchObject({ error: { code: 'operator_role_forbidden' } });
+    }
+  });
+
   it('fails closed for missing and invalid server-configured operator credentials', async () => {
     const environment = createTestEnv({
       AVALON_REGION: 'global',
