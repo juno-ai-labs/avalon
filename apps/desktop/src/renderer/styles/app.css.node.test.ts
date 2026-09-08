@@ -49,7 +49,7 @@ describe('work-stream context sidebar layout', () => {
     expect(rule('.conversation-layout > .workstream-screen')).toContain('flex: 1');
     expect(rule('.workstream-context-sidebar')).toContain('position: relative');
     expect(rule('.workstream-context-sidebar')).toContain('min-width: 0');
-    expect(rule('.workstream-context-sidebar.is-compact')).toContain('flex-basis: 88px');
+    expect(rule('.workstream-context-sidebar.is-compact')).toContain('flex-basis: 96px');
     expect(rule('.workstream-context-scroll')).toContain('overflow-y: auto');
     expect(rule('.workstream-context-row:focus-visible')).toContain('var(--av-sys-color-focus-default)');
   });
