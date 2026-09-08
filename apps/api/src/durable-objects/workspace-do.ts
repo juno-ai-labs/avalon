@@ -3014,6 +3014,7 @@ function internalDirectoryItem(row: WorkspaceDirectoryRow) {
   };
 }
 
+// Binding 1 is always the viewer user ID; the access join reuses it as ?1.
 const SELECT_WORKSPACE_DIRECTORY = `SELECT directory.workstream_id,
     directory.authority_generation, directory.waterline AS common_waterline,
     directory.source_event_id AS common_event_id, directory.title,
@@ -3299,15 +3300,20 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           this.state.storage.sql.exec(
             `INSERT INTO workspace_workstream_access(user_id, workstream_id, last_accessed_at)
              VALUES (?, ?, ?) ON CONFLICT(user_id, workstream_id)
-             DO UPDATE SET last_accessed_at = MAX(last_accessed_at, excluded.last_accessed_at)`,
+             DO UPDATE SET last_accessed_at = excluded.last_accessed_at`,
             currentAttachment.userId, workstreamId, now,
           );
           this.advanceDirectoryVersion(now);
         });
+        const row = this.state.storage.sql.exec<WorkspaceDirectoryRow>(
+          `${SELECT_WORKSPACE_DIRECTORY} WHERE directory.workstream_id = ?`,
+          currentAttachment.userId, currentAttachment.userId, workstreamId,
+        ).one();
         const payload = JSON.stringify(WorkspaceWorkstreamRecencyEventSchema.parse({
           type: "workspace_workstream_recency",
-          ...this.listDirectory({ workspaceId: currentAttachment.workspaceId,
-            userId: currentAttachment.userId, limit: SIDEBAR_LIST_LIMIT, includeSystem: false }),
+          directoryWaterline: this.directoryWaterline(),
+          workstream: mapDirectoryWorkstreams(this.state.storage.sql, [row], currentAttachment.workspaceId)[0],
+          stateVersion: directoryStateVersion(row),
         }));
         for (const peer of this.state.getWebSockets()) {
           const peerAttachment = readAttachment(peer);
@@ -8754,7 +8760,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   private listDirectory(request: WorkspaceDirectoryListRequest): WorkspaceDirectoryPage {
-    const cursor = request.before ? directoryCursor(request.before) : null;
+    let cursor = request.before ? directoryCursor(request.before) : null;
+    if (cursor) {
+      const anchor = this.state.storage.sql.exec<WorkspaceDirectoryRow>(
+        `${SELECT_WORKSPACE_DIRECTORY} WHERE directory.workstream_id = ?`,
+        request.userId, request.userId, cursor.workstreamId,
+      ).toArray()[0];
+      // A pre-upgrade activity cursor (or a row visited since paging) no longer
+      // describes this order. Restart the walk rather than skip unseen rows.
+      if (!anchor || (anchor.last_accessed_at ?? anchor.source_created_at) !== cursor.lastActivityAt) cursor = null;
+    }
     const rows = this.state.storage.sql.exec<WorkspaceDirectoryRow>(
       `${SELECT_WORKSPACE_DIRECTORY}
        WHERE directory.archived_at IS NULL AND pin.user_id IS NULL
@@ -8780,7 +8795,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const nextCursor = hasMore && last
       ? `${last.last_accessed_at ?? last.source_created_at}:${last.workstream_id}`
       : null;
-    if (!request.before) {
+    if (!cursor) {
       const selected = new Set(rows.map((row) => row.workstream_id));
       const supplemental = [
         ...this.pinnedDirectoryRows(request.userId, request.includeSystem),

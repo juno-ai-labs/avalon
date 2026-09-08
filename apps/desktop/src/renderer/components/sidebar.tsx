@@ -1,3 +1,4 @@
+import { workstreamRecencyAt } from '../lib/format';
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Tooltip from '@radix-ui/react-tooltip';
@@ -1074,7 +1075,7 @@ export function Sidebar({
     const now = new Date();
     const next = nextRecencyBoundary([
       ...unpinnedWorkstreams.map((workstream) => ({
-        lastActivityAt: workstream.lastAccessedAt ?? workstream.createdAt ?? workstream.lastActivityAt,
+        lastActivityAt: workstreamRecencyAt(workstream),
       })),
       ...visibleNotes,
     ], now);
@@ -1090,7 +1091,7 @@ export function Sidebar({
       ...unpinnedWorkstreams.map((workstream) => ({
         type: 'workstream' as const,
         id: `workstream:${workstream.id}`,
-        lastActivityAt: workstream.lastAccessedAt ?? workstream.createdAt ?? workstream.lastActivityAt,
+        lastActivityAt: workstreamRecencyAt(workstream),
         workstream,
       })),
       ...visibleNotes.map((note) => ({
@@ -1183,7 +1184,10 @@ export function Sidebar({
     update: WorkstreamBatchUpdate,
     visible: readonly RecentSidebarItem[],
   ): void => {
-    const filter = { ...recencyGroupBatchFilter(label, new Date()), recency: 'access' as const };
+    const filter = { ...recencyGroupBatchFilter(label, new Date()),
+      ...(visibleWorkstreams.some((workstream) => workstream.lastAccessedAt !== undefined)
+        ? { recency: 'access' as const } : {}),
+    };
     const generation = batchPreviewGeneration.current + 1;
     batchPreviewGeneration.current = generation;
     const seeded = visibleBatchCounts(visible, workspace.currentUser.id);

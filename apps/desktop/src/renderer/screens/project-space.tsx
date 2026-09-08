@@ -1,3 +1,4 @@
+import { compareWorkstreamRecency } from '../lib/format';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Archive, FileText, FolderPlus, Plus, RotateCcw, Trash2, UserPlus } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
@@ -79,10 +80,7 @@ export function ProjectSpaceScreen(): React.JSX.Element {
   if (!project) return <EmptyState title="Project not found" description="It may have been archived or you may no longer have access." />;
   const members = (workstreams.data ?? [])
     .filter((workstream) => project.workstreamIds.includes(workstream.id))
-    .sort((left, right) => (
-      new Date(right.lastActivityAt).getTime() - new Date(left.lastActivityAt).getTime()
-      || left.id.localeCompare(right.id)
-    ));
+    .sort(compareWorkstreamRecency);
   const activeParticipantIds = new Set(project.participants
     .filter((participant) => participant.state === 'active')
     .map((participant) => participant.userId));

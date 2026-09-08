@@ -1501,18 +1501,47 @@ describe("Durable Objects in the Workers runtime", () => {
     expect((await workspace.listWorkstreams(request)).items[0]?.id).toBe(newerId);
     const first = await openWorkspaceSocket(workspace, "00000000-0000-7000-8000-000000000413");
     const peer = await openWorkspaceSocket(workspace, "00000000-0000-7000-8000-000000000414");
+    const outsider = await openWorkspaceSocket(workspace, "00000000-0000-7000-8000-000000000416", otherSessionId, otherUserId);
+    const outsiderEvents: string[] = [];
+    outsider.addEventListener("message", (event) => { outsiderEvents.push(String(event.data)); });
     try {
-      const delivered = nextMessageOfType(peer, "workspace_workstream_recency");
+      const appliedRevision = async (revision: number): Promise<void> => {
+        await vi.waitFor(async () => {
+          const observed = await runInDurableObject(workspace, (_instance, state) =>
+            state.getWebSockets().some((socket) => {
+              const attachment = socket.deserializeAttachment() as { presenceRevision: number };
+              return attachment.presenceRevision === revision;
+            }));
+          expect(observed).toBe(true);
+        });
+      };
       first.send(JSON.stringify({ type: "set_presence", revision: 1,
+        applicationState: "background", foregroundWorkstreamId: null }));
+      await appliedRevision(1);
+      expect((await workspace.listWorkstreams({ ...request, limit: 20 })).items
+        .find((item) => item.id === WORKSTREAM_ID)?.lastAccessedAt).toBeNull();
+      first.send(JSON.stringify({ type: "set_presence", revision: 2,
+        applicationState: "foreground", foregroundWorkstreamId: null }));
+      await appliedRevision(2);
+      expect((await workspace.listWorkstreams({ ...request, limit: 20 })).items
+        .find((item) => item.id === WORKSTREAM_ID)?.lastAccessedAt).toBeNull();
+      const delivered = nextMessageOfType(peer, "workspace_workstream_recency");
+      first.send(JSON.stringify({ type: "set_presence", revision: 3,
         applicationState: "foreground", foregroundWorkstreamId: WORKSTREAM_ID }));
-      expect(await delivered).toMatchObject({ items: [
+      expect(await delivered).toMatchObject({ workstream:
         { id: WORKSTREAM_ID, lastAccessedAt: expect.any(String) },
-        { id: newerId, lastAccessedAt: null },
-      ] });
+      });
+      const outsiderBarrier = nextMessageOfType(outsider, "workspace_workstream_page");
+      outsider.send(JSON.stringify({ type: "list_workstreams", requestId: "00000000-0000-7000-8000-000000000417", limit: 20, includeSystem: false }));
+      await outsiderBarrier;
+      expect(outsiderEvents.some((event) => event.includes('"type":"workspace_workstream_recency"'))).toBe(false);
       await evictDurableObject(workspace);
       const page = await workspace.listWorkstreams(request);
       expect(page.items[0]?.id).toBe(WORKSTREAM_ID);
       expect(page.items[0]?.lastAccessedAt).not.toBeNull();
+      const legacyPage = await workspace.listWorkstreams({ ...request,
+        before: `${Date.parse("2026-08-28T20:00:00.000Z")}:${newerId}` });
+      expect(legacyPage.items[0]?.id).toBe(WORKSTREAM_ID);
       const next = await workspace.listWorkstreams({ ...request, before: page.nextCursor! });
       expect(next.items.map((item) => item.id)).toEqual([newerId]);
       expect((await workspace.listWorkstreams({ ...request, userId: otherUserId })).items[0]?.id).toBe(newerId);
@@ -1527,6 +1556,7 @@ describe("Durable Objects in the Workers runtime", () => {
     } finally {
       first.close();
       peer.close();
+      outsider.close();
     }
   });
 

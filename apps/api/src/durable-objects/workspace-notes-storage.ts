@@ -381,6 +381,7 @@ function noteRangeBound(value: string | undefined): string | null {
   return new Date(parsed).toISOString();
 }
 
+// Notes remain activity-grouped even when the workstream half selects by access.
 function noteBatchBindings(
   workspaceId: string,
   userId: string,
