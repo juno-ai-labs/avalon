@@ -1634,6 +1634,20 @@ directory write at all.
 
 ## Changelog
 
+### 2026-09-07 — Save sidebar visits in WorkspaceDO
+
+**What changed:** Migration 37 adds per-user work-stream access rows. Validated
+foreground transitions persist the server time and push a directory page to that
+user's sessions; paging uses access time with creation time for unvisited rows.
+
+**Why:** The sidebar should follow a person's visits across sessions. Shared
+activity and device-local history cannot express that order.
+
+**Consequences:** Access state belongs to WorkspaceDO, outside child-owned viewer
+projection writes. The complete ordering contract lives in
+[work-stream pinning](workstream-pinning.md#recent-work-streams).
+
+
 ### 2026-09-08 — Sidekick durable boundaries
 
 Substream migration 43 adds `sidekick_attachments` (conversation-owned, deduplicated

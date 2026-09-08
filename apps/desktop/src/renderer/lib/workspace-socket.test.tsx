@@ -628,6 +628,70 @@ describe('WorkspaceSocketProvider', () => {
     }]);
   });
 
+  it('applies pushed access history and rejects a delayed older page', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const getWorkspaceSocketTicket = vi.fn(async () => ({
+      url: 'wss://api.rally.test/socket/workspaces/workspace-1', ticket: 'workspace-ticket',
+      protocols: socketTicketProtocols('workspace-ticket'),
+    }));
+    render(<QueryClientProvider client={queryClient}><WorkspaceSocketProvider
+      api={{ getWorkspaceSocketTicket }} workspaceId="00000000-0000-7000-8000-000000000001">
+      <div /></WorkspaceSocketProvider></QueryClientProvider>);
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    const page = {
+      type: 'workspace_workstream_recency',
+      directoryWaterline: 7,
+      nextCursor: null,
+      stateVersions: [{
+        workstreamId: '00000000-0000-7000-8000-000000000002',
+        commonEventId: '00000000-0000-7000-8000-000000000007',
+        viewerEventId: '00000000-0000-7000-8001-000000000004',
+        authorityGeneration: 1,
+        commonWaterline: 7,
+        viewerWaterline: 4,
+      }],
+      items: [{
+        id: '00000000-0000-7000-8000-000000000002',
+        workspaceId: '00000000-0000-7000-8000-000000000001',
+        title: 'Socket-owned directory',
+        titleStatus: 'settled',
+        objective: 'Served by WorkspaceDO SQL',
+        emailAddress: null,
+        createdByUserId: '00000000-0000-7000-8000-000000000003',
+        harnessStatus: 'running',
+        latestAttentionSequenceNumber: 4,
+        readThroughSequenceNumber: 2,
+        manualUnreadFromSequenceNumber: null,
+        manualUnreadGeneration: 0,
+        hasUnread: true,
+        youAreMentioned: true,
+        firstUnreadSequenceNumber: 3,
+        lastActivityAt: '2026-08-17T20:00:00.000Z',
+        createdAt: '2026-08-17T19:00:00.000Z',
+        updatedAt: '2026-08-17T20:00:00.000Z',
+        archivedAt: null,
+        scope: 'workspace',
+        systemKind: null,
+        nextPendingWakeup: null,
+        pinPosition: null,
+        participantUserIds: [],
+        participantExtraCount: 0,
+      }],
+    };
+    const access = '2026-09-07T20:00:00.000Z';
+    act(() => socket.message({ ...page, directoryWaterline: 8,
+      items: page.items.map((item) => ({ ...item, lastAccessedAt: access })) }));
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.lastAccessedAt).toBe(access);
+    act(() => socket.message({ ...page, directoryWaterline: 9,
+      items: page.items.map((item) => ({ ...item, lastAccessedAt: '2026-09-08T20:00:00.000Z' })) }));
+    act(() => socket.message(page));
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.lastAccessedAt)
+      .toBe('2026-09-08T20:00:00.000Z');
+  });
+
   it('pages the authoritative work-stream directory over the workspace socket', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();

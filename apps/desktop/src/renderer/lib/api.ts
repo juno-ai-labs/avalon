@@ -352,6 +352,7 @@ export function mapWorkstreamSummary(workstream: WireWorkstream): WorkstreamSumm
       ? { ...workstream.nextPendingWakeup }
       : null,
     pinPosition: workstream.pinPosition,
+    lastAccessedAt: workstream.lastAccessedAt,
     participantUserIds: [...workstream.participantUserIds],
     participantExtraCount: workstream.participantExtraCount,
     preview: workstream.objective,

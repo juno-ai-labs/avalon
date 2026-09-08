@@ -1073,7 +1073,9 @@ export function Sidebar({
   useEffect(() => {
     const now = new Date();
     const next = nextRecencyBoundary([
-      ...unpinnedWorkstreams,
+      ...unpinnedWorkstreams.map((workstream) => ({
+        lastActivityAt: workstream.lastAccessedAt ?? workstream.createdAt ?? workstream.lastActivityAt,
+      })),
       ...visibleNotes,
     ], now);
     const timer = window.setTimeout(
@@ -1088,7 +1090,7 @@ export function Sidebar({
       ...unpinnedWorkstreams.map((workstream) => ({
         type: 'workstream' as const,
         id: `workstream:${workstream.id}`,
-        lastActivityAt: workstream.lastActivityAt,
+        lastActivityAt: workstream.lastAccessedAt ?? workstream.createdAt ?? workstream.lastActivityAt,
         workstream,
       })),
       ...visibleNotes.map((note) => ({
@@ -1181,7 +1183,7 @@ export function Sidebar({
     update: WorkstreamBatchUpdate,
     visible: readonly RecentSidebarItem[],
   ): void => {
-    const filter = recencyGroupBatchFilter(label, new Date());
+    const filter = { ...recencyGroupBatchFilter(label, new Date()), recency: 'access' as const };
     const generation = batchPreviewGeneration.current + 1;
     batchPreviewGeneration.current = generation;
     const seeded = visibleBatchCounts(visible, workspace.currentUser.id);
