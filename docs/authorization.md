@@ -65,7 +65,13 @@ after each await. Resource-fact RPCs batch the
 requested resources. The evaluator, typed addresses and four outcomes are shared
 primitives; source loaders remain responsible for their canonical facts.
 Automation and inherited workstream identity observations also share this batch
-lifetime. A resource returns after its first valid attachment grant; unrelated
+lifetime. Member search exposes candidate continuation even when no candidate on
+that page is admitted. This preserves bounded page work and explicit continuation;
+it does not promise to conceal the existence of matching index entries. The
+position is a deterministic hash and can be correlated with a known source ID.
+Content and resource details still require admission. This is the member-only
+pagination contract, not a claim that hashing prevents existence inference.
+A resource returns after its first valid attachment grant; unrelated
 alternative locations do not need to be read once access is established.
 
 Cross-request decision snapshots are no longer read or written. Removing their
@@ -234,6 +240,14 @@ reads also initiate missing discovery. Rolling back the serving implementation
 requires a Worker code rollback, not a per-workspace mode change.
 
 ## Changelog
+
+### 2026-09-08 — Clarify observable pagination metadata
+
+Review identified that explicit candidate continuation exposes index progress even
+for a fully rejected page, and deterministic positions can be correlated with known
+IDs. Documented that boundary instead of restoring hidden scans or inventing a scan
+cap. The approved member search design admits content once per batch and permits
+explicit continuation; it does not offer index-existence concealment.
 
 ### 2026-09-08 — Use operation-level search admission
 

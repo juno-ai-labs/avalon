@@ -76,7 +76,9 @@ changes discard old pages.
 
 Requests opt into pagination with `pageSize` and continue with `nextCursor`, the
 last consumed Turbopuffer id boundary (stable hash order, not relevance or
-recency). This opaque position is never an authorization grant. Each page obtains
+recency). This deterministic position is never an authorization grant.
+Continuation exposes matching index progress even if the page has no admitted
+results; it does not guarantee a readable match on a subsequent page. Each page obtains
 readable conversation scopes from WorkspaceDO and filters retrieval by those
 scopes. Each source admits its candidate batch once through `checkMany`, then
 loads canonical content without repeating authorization after asynchronous reads.
@@ -91,7 +93,11 @@ workspace membership check remain unchanged. No search-result cache or permissio
 cache is introduced.
 
 The user-facing targets are p50 <= 500ms and p90 <= 1000ms from the last
-keystroke to painted results, including debounce. `renderer_perf_flow` with
+keystroke to painted results, including debounce. An empty page with continuation
+is not a completed first-result flow: its trace stays open until a result or
+terminal response, including time the user spends before continuing. A terminal
+empty search is a completed no-match response, not evidence of fast result delivery.
+Empty intermediate pages do not satisfy the results latency target. `renderer_perf_flow` with
 `flow=workspace_search` measures debounce, request, and paint through the existing
 regional telemetry path. Optional paginated response timings expose scope,
 Turbopuffer retrieval, canonical hydration, and server duration; the backend also
@@ -452,6 +458,14 @@ through Queue failure rather than silent truncation. Document-size and capture
 budgets require team policy; no arbitrary new caps are introduced here.
 
 ## Changelog
+
+### 2026-09-08 — Preserve the results latency boundary across empty pages
+
+Review caught an empty candidate page ending the search trace as completed. The
+trace now stays open across explicit continuation, including user wait time; the
+empty-page copy says Continue searching without promising readable matches. This
+keeps the latency goal tied to the actual product outcome. Candidate continuation
+metadata remains observable under the member-only pagination contract.
 
 ### 2026-09-08 — Admit search batches once and expose continuation
 
