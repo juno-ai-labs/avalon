@@ -6573,16 +6573,17 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 .grokbot-shell .sidebar-rail-actions .sidebar-search > svg { width: 19px; height: 19px; }
 .grokbot-shell .sidebar-rail-actions .sidebar-search:hover { background: var(--av-cmp-row-background-hover); }
 /* Sidekick library and profile use the same identity glyph as sidebar tiles. */
-.sidekicks-library { padding: 64px 48px 40px; height: 100%; overflow: auto; }
+.sidekicks-library { padding: 64px 48px 40px; height: 100%; overflow: auto; scrollbar-gutter: stable; }
 .sidekicks-library-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; margin-bottom: 40px; }
 .sidekicks-library-heading h1 { margin: 0; font-size: 28px; font-weight: 600; letter-spacing: -.5px; }
 .sidekicks-library-heading p { margin: 8px 0 0; font-size: 15px; color: var(--av-sys-color-text-muted); }
 .sidekicks-library-heading .button { border-radius: var(--av-sys-size-radius-pill); text-decoration: none; flex-shrink: 0; padding: 10px 18px; }
 .sidekicks-library-controls .sidebar-search { height: auto; min-height: 44px; width: 100%; margin: 0; border-radius: var(--av-sys-size-radius-pill); padding: 12px 16px; }
-.sidekick-filters, .sidekick-view-switch { display: flex; gap: 8px; }
+.sidekick-filters { display: flex; gap: 8px; }
 .sidekick-filters { flex-wrap: wrap; margin: 16px 0 36px; }
 .sidekick-filters button, .sidekick-view-switch button { border: 0; border-radius: var(--av-sys-size-radius-pill); background: var(--av-sys-color-surface-raised-hover); color: var(--av-sys-color-text-muted); font: inherit; padding: 8px 16px; }
 .sidekick-filters button[aria-pressed=true], .sidekick-view-switch button[aria-pressed=true] { background: var(--av-sys-color-text-default); color: var(--av-sys-color-text-on-inverse); }
+.sidekick-filters button:hover, .sidekick-view-switch button:hover { box-shadow: inset 0 0 0 1px var(--av-sys-color-border-default); }
 .sidekick-results-heading { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
 .sidekick-results-heading h2 { font-size: 18px; font-weight: 500; margin: 0; }
 .sidekick-results-heading > span { font-size: 13px; color: var(--av-sys-color-text-muted); }
@@ -6600,7 +6601,7 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 .sidekick-back { display: inline-flex; align-items: center; gap: 4px; padding: 8px; border-radius: var(--av-sys-size-radius-pill); color: var(--av-sys-color-text-muted); text-decoration: none; }
 .sidekick-back:hover { background: var(--av-sys-color-surface-raised-hover); color: var(--av-sys-color-text-default); }
 .sidekick-detail-body { display: grid; grid-template-columns: 340px minmax(0, 1fr); min-height: 0; }
-.sidekick-profile { overflow: auto; border-right: 1px solid var(--av-sys-color-border-subtle); }
+.sidekick-profile { overflow: auto; scrollbar-gutter: stable; border-right: 1px solid var(--av-sys-color-border-subtle); }
 .sidekick-conversation { min-width: 0; min-height: 0; }
 .sidekick-conversation-heading { padding: 24px 28px 16px; }
 .sidekick-conversation-heading h2 { margin: 0; font-size: 16px; font-weight: 500; }
@@ -6610,10 +6611,14 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   .sidekicks-library { padding: 56px 24px 24px; }
   .sidekicks-library-heading { flex-wrap: wrap; gap: 16px; margin-bottom: 28px; }
   .sidekicks-library-list { grid-template-columns: minmax(0, 1fr); }
-  .sidekick-detail-body { grid-template-columns: minmax(0, 1fr); }
+  }
+/* Same host measurement drives layout and conversation visibility. */
+.sidekick-detail[data-compact=true] {
+  .sidekick-detail-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+  .sidekick-profile, .sidekick-conversation { grid-area: 1 / 1; min-height: 0; }
   .sidekick-view-switch { display: flex; gap: 4px; }
   .sidekick-view-switch button { padding: 6px 10px; font-size: 12px; }
-  .sidekick-detail[data-view=conversation] .sidekick-profile, .sidekick-detail[data-view=details] .sidekick-conversation { display: none; }
+  &[data-view=conversation] .sidekick-profile, &[data-view=details] .sidekick-conversation { visibility: hidden; pointer-events: none; }
   .sidekick-profile { border-right: 0; }
   .sidekick-navigation { padding-inline: 12px; }
 }
