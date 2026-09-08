@@ -1,11 +1,13 @@
 import {
   asAutomationId,
   asSubstreamId,
+  asWorkspaceId,
   asWorkstreamId,
   type WorkspaceId,
 } from "@rally/contracts";
 
 import type { Env } from "../env";
+import { ApiError } from "../lib/api-error";
 import {
   automationDOName,
   conversationObjectName,
@@ -212,3 +214,28 @@ export async function retireWorkspaceGraph(
   return receipt;
 }
 
+/**
+ * Retire a workspace on an operator's word, in the region this Worker runs in.
+ *
+ * The walk itself infers nothing from an id, which is right for the walk and
+ * wrong for a door: an id no workspace in this region owns would be "retired"
+ * as a set of brand-new empty objects holding tombstones, and the operator told
+ * it succeeded while the real workspace, in the other region, stayed open. So
+ * the door checks the row first.
+ */
+export async function retireWorkspaceForOperator(
+  env: Env,
+  workspaceId: string,
+): Promise<WorkspaceRetirementReceipt> {
+  const owned = await env.DB.prepare(
+    "SELECT id FROM workspaces WHERE id = ? AND region = ?",
+  ).bind(workspaceId, env.AVALON_REGION).first<{ id: string }>();
+  if (!owned) throw new ApiError(404, "workspace_not_found", "No workspace with this id in this region");
+  return retireWorkspaceGraph(env, {
+    workspaceId: asWorkspaceId(workspaceId),
+    retiredAt: Date.now(),
+    operationId: crypto.randomUUID(),
+    actorUserId: null,
+    reason: "operator_retirement",
+  });
+}
