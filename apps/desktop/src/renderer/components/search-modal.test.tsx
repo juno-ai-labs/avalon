@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { describe, expect, it, vi } from 'vitest';
+import { focusManager, QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { SearchResult } from '@rally/contracts/search';
 import { ApiError } from '../lib/api';
 import { SearchModal } from './search-modal';
@@ -22,6 +22,7 @@ function setup(search: React.ComponentProps<typeof SearchModal>['search']) {
   return { onSelect, onOpenChange, client };
 }
 describe('workspace search modal', () => {
+  afterEach(() => { focusManager.setFocused(undefined); });
   it('keeps verified results visible, marks an incomplete page and retries it', async () => {
     const search = vi.fn().mockResolvedValueOnce({ results: [result], complete: false })
       .mockResolvedValue({ results: [result], complete: true });
@@ -69,6 +70,7 @@ describe('workspace search modal', () => {
       await screen.findByText('Continue searching');
       await act(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
       expect(end).not.toHaveBeenCalled();
+      await act(async () => { focusManager.setFocused(false); focusManager.setFocused(true); });
       expect(search).toHaveBeenCalledTimes(1);
       expect(screen.queryByText('No results')).not.toBeInTheDocument();
       fireEvent.click(screen.getByRole('button', { name: 'Load more results' }));
