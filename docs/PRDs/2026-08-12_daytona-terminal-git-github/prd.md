@@ -1110,7 +1110,13 @@ bounded-run, visible-action, and external-write requirements remain unchanged.
 
 ## Decision log
 
-None yet.
+- 2026-09-08 — The Terminal path error texts quoted in this document are
+  superseded by the adopting pull request #606: `.` and `./` are accepted for
+  `cwd` (the workspace root), a `filePath` naming the root is refused as
+  `invalid_path`, `path_outside_root` echoes the refused value and names the
+  root the parameter is relative to, and `publish_resource` says it alone
+  resolves against `$AVALON_RESOURCE_DIR`. The current contract lives in
+  [`docs/terminal-workspaces.md`](../../terminal-workspaces.md), not here.
 
 ## Key design decisions
 

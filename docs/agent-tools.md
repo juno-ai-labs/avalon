@@ -257,6 +257,13 @@ Two different jobs:
   the structured failure `data` as well. A small model can branch on a stable
   code and follow a direct instruction; it cannot infer a recovery path from a
   500, “stale revision”, or a vague noun phrase.
+- **A refusal echoes the value it refused and names the accepted form.** The
+  two retry loops this repository has recorded — a blank pagination cursor,
+  and a Terminal path naming the workspace root — both came from refusals that
+  named neither, so the model read the message as confirmation of what it had
+  already done and sent the same value again. Bound the echo by the
+  parameter's own schema limit and pass it through whatever sanitizer the
+  tool's other output gets.
 
   **`summary` is not model-visible.** A successful tool message serializes
   `output`; a typed failure serializes its model-visible `error` sentence plus
@@ -649,8 +656,11 @@ the archive fallback's own recovery. No publish-time code validation is promised
 `index.js` runs at serve time and nowhere else.
 
 Every path uses `/` separators, is relative to `/workspace`, and rejects an
-absolute path, backslash, NUL, or `..`. `publish_resource.filePath` is instead
-relative to the host-provided `AVALON_RESOURCE_DIR`. Discovery uses
+absolute path, backslash, NUL, or `..`; `.` names the root and is accepted for
+`cwd` (which may also be omitted), while a `filePath` naming the root is
+refused as `invalid_path`. `publish_resource.filePath` is instead relative to
+the host-provided `AVALON_RESOURCE_DIR` (`/workspace/.rally-output`), and its
+refusals say so rather than pointing at the workspace root. Discovery uses
 `terminal_run_command` with `pwd`, `ls`, `find`, `rg --files`, or `rg`; a
 duplicate `list_files` tool would spend context while teaching the model less
 than the CLI it already knows.
@@ -659,7 +669,7 @@ Common failures are designed as loop repairs:
 
 | Code/path | Model-visible recovery |
 | --- | --- |
-| `not_found`, `path_outside_root`, `not_text_file` | Inspect with `pwd` and `ls -la`/`find`, use one relative path, or inspect binary metadata with `file`; do not guess another path. |
+| `not_found`, `path_outside_root`, `invalid_path`, `not_text_file` | The refusal echoes the value it refused, names the root that parameter is relative to, and gives the accepted form; act on that rather than guessing another path. Omit `cwd` (or pass `.`) for the workspace root. For `not_found` on publication, write or copy the file beneath `AVALON_RESOURCE_DIR` first. Inspect with `pwd` and `ls -la`/`find`, or inspect binary metadata with `file`. |
 | `match_not_found`, `match_not_unique` | Call `terminal_read_file` again, copy exact current text with enough surrounding context, then rebuild the edit; use `replaceAll` only when every match should change. This is the revision-drift recovery. |
 | `patch_does_not_apply`, `patch_invalid` | Re-read every affected file and regenerate the whole context-bearing patch; no partial patch is reported as successful. |
 | `destination_exists` | Choose a new import destination or set `overwrite: true` only after confirming replacement is intended. |
@@ -864,6 +874,24 @@ future agent tool or plugin, not just this family.
   untrusted.
 
 ## Changelog
+
+### 2026-09-08 — A refusal echoes the value it refused
+
+**What changed:** Principle 5 gains the rule that an error refusing a
+caller-supplied value echoes that value and names the accepted form. The
+Terminal path registry lists `invalid_path`, says `.` is accepted for `cwd`,
+and says `publish_resource` refusals name the output directory rather than the
+workspace root.
+
+**Why:** A recorded run (2026-09-08) sent `cwd: "."` and was refused four
+times as `path_outside_root` by a message that said to use `/` separators and
+no `..` — which it had already done — so the model retried, then guessed
+directory names. The 2026-09-02 blank-cursor loop was the same shape. Two
+instances of one class earn a principle rather than a third changelog entry.
+
+**Consequences:** An echoed value is model-authored and reaches the
+transcript, so it is bounded and sanitized like the tool's other output; a
+new refusal without an echo is a review finding.
 
 ### 2026-09-03 — The cursor rule is both halves, and it holds across every connector
 

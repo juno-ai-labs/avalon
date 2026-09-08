@@ -66,8 +66,11 @@ model not to install another runtime or manager.
 ### Files and commands
 
 The model receives `read_file`, `edit_file`, `write_file`, `apply_patch`, and
-`run_command`. File paths are workspace-relative and their syntax is validated
-before provider I/O. For reads, writes, and generated publication, symlink/root
+`run_command`. File paths are relative to the workspace root, `/workspace`,
+which `cwd` may name as `.` or leave out; `publish_resource` alone resolves its
+path against `$AVALON_RESOURCE_DIR` (`/workspace/.rally-output`). Path syntax
+is validated before provider I/O, and a refusal echoes the value it refused,
+names the root the parameter is relative to, and gives the accepted form. For reads, writes, and generated publication, symlink/root
 containment is checked inside the same sandbox command that inspects or replaces
 the requested file, instead of by a separate provider command immediately
 before it. `ls`, `find`, and `rg` through
@@ -664,7 +667,16 @@ rather than "workspace-relative", `cwd` says how to name the root, and
 `publish_resource` says in both its description and its `not_found` error that
 it alone resolves against `$AVALON_RESOURCE_DIR` (`/workspace/.rally-output`).
 The Terminal system message gains one sentence naming `/workspace` as the root
-and `$AVALON_RESOURCE_DIR` as the one exception.
+and `$AVALON_RESOURCE_DIR` as the one exception. Review of the adopting pull
+request (#606) added: the refusal names the root the parameter is relative to,
+so a refused `publish_resource` path is pointed at the output directory rather
+than the workspace root; it names the parameter the tool actually has
+(`destinationPath` for imports, the patch itself for `apply_patch`); an empty
+`cwd` is accepted like `.`; the echoed value is cut to the path schema's
+4,096 limit and passed through `sanitizeTerminalOutput`, since it reaches the
+transcript; and `/workspace` and `/workspace/.rally-output` are exported once
+from `contract.ts` and used by the runtime and the coordinator, with the
+prompt's literals pinned to them by test.
 
 **Why:** A recorded document-generating run (2026-09-08, `gpt-5.6-terra`)
 wasted eight of its twenty-six tool calls on this. The model sent `cwd: "."`,
@@ -687,12 +699,14 @@ cursor: an error that names neither the offending value nor the accepted form
 is retried. Truncating the echoed value with a new cap: the schema already
 bounds it at 4,096 bytes, so no new limit was needed.
 
-**Consequences:** `cwd: ""` reaches the runtime as an omitted `cwd`. Anything
-that adds a path parameter to a Terminal tool states which root it is relative
-to in the parameter's own description; the one-root rule is stated once in
-the system message and the exception once. The Terminal system message is
-asserted verbatim in `terminal-contract.test.ts`, so a wording change edits
-both.
+**Consequences:** `cwd: ""` and `cwd: "."` reach the runtime as an omitted
+`cwd`. Anything that adds a path parameter to a Terminal tool states which
+root it is relative to in the parameter's own description and passes that root
+to `safeRelativePath`, so its refusal names the right one. The one-root rule
+is stated once in the system message and the exception once. The Terminal
+system message is asserted verbatim in `terminal-contract.test.ts`, and its
+directory literals are pinned to the exported constants, so a wording change
+edits both and a moved directory fails the test rather than the prompt.
 
 ### 2026-09-08 — Both regions create sandboxes from the Rally-owned snapshot
 
