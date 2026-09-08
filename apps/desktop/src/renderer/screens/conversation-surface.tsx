@@ -560,7 +560,18 @@ export interface ConversationHeaderContext {
   detail: WorkstreamDetail;
   socketState: SocketState;
   presentUserIds: readonly string[];
-  openParticipantDialog: () => void;
+  /**
+   * Open the roster dialog on one conversation. Defaults to the caller's own
+   * subject — the sidebar means the work stream, the header means whatever is
+   * selected — and a substream row names itself, because managing a substream
+   * from the sidebar must not silently act on its parent.
+   *
+   * Both implementations ignore a non-string argument. A zero-argument callback
+   * is assignable to `onClick`, so passing this straight to a button hands it a
+   * React event as the substream id — which types check, renders, and then
+   * poisons a query key with a DOM node.
+   */
+  openParticipantDialog: (substreamId?: string) => void;
   openRail: (variant: RailVariant) => void;
   rename: (title: string) => Promise<void>;
 }
@@ -1827,6 +1838,22 @@ export function ConversationSurface({
     ...displayedDetail, resources: [], participants: [], viewers: [],
   };
   const resourceManagementDetail = resourcePreview?.workstreamScoped ? sidebarDetail : displayedDetail;
+  // The roster the dialog shows is the one belonging to the conversation it
+  // was opened on, which is not always the one on screen: a substream row's
+  // menu can name a substream the reader has not selected. Read from the cache
+  // by that conversation's own key rather than from whatever is displayed, so
+  // the list can never disagree with the target the buttons act on. A
+  // substream nobody has opened yet has no cached detail and starts empty,
+  // which the backend then reconciles — adding somebody already in it answers
+  // `unchanged`.
+  const participantDialogRoster = participantDialogSubstreamId === '0'
+    ? (renderSidebar ? sidebarDetail.participants : displayedDetail.participants)
+    : participantDialogSubstreamId === substreamId
+      ? displayedDetail.participants
+      : queryClient.getQueryData<WorkstreamDetail>(
+        workstreamDetailQueryKey(id, participantDialogSubstreamId),
+      )?.participants ?? [];
+
   const discoveredResources = [...new Map(
     (availableResources.data?.pages.flatMap((page) => page.items) ?? []).map((resource) => [resource.id, resource]),
   ).values()];
@@ -1841,7 +1868,7 @@ export function ConversationSurface({
         detail: sidebarDetail,
         socketState,
         presentUserIds: presenceUserIdsByWorkstream[id] ?? [],
-        openParticipantDialog: () => { setParticipantDialogSubstreamId('0'); setParticipantDialogOpen(true); },
+        openParticipantDialog: (target) => { setParticipantDialogSubstreamId(typeof target === 'string' ? target : '0'); setParticipantDialogOpen(true); },
         openRail,
         rename: (title) => renameWorkstream.mutateAsync(title).then(() => undefined),
         openArtifact: sidebarCitations.openPreview,
@@ -1852,7 +1879,7 @@ export function ConversationSurface({
         detail: displayedDetail,
         socketState,
         presentUserIds: presenceUserIdsByWorkstream[id] ?? [],
-        openParticipantDialog: () => { setParticipantDialogSubstreamId(substreamId); setParticipantDialogOpen(true); },
+        openParticipantDialog: (target) => { setParticipantDialogSubstreamId(typeof target === 'string' ? target : substreamId); setParticipantDialogOpen(true); },
         openRail,
         rename: (title) => renameWorkstream.mutateAsync(title).then(() => undefined),
       })}
@@ -2046,7 +2073,7 @@ export function ConversationSurface({
 
       <AddParticipantDialog
         privateSubstream={participantDialogSubstreamId !== '0'}
-        current={participantDialogSubstreamId === '0' && renderSidebar ? sidebarDetail.participants : displayedDetail.participants}
+        current={participantDialogRoster}
         error={addParticipant.error?.message ?? removeParticipant.error?.message}
         members={members.data ?? []}
         onAdd={(member) => {

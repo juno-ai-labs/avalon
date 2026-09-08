@@ -13,7 +13,7 @@ import {
   bootstrapWorkstreamRuntimeEnvironment,
   provisionWorkstreamObject,
 } from "../src/services/workstream-runtime-database";
-import { deliverEffectsToWorkspace, deliverChildEffects } from "./helpers/conversation-effects";
+import { deliverEffectsToWorkspace, deliverChildEffects, pendingParentEffects } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
 import { useOpenRouterDouble } from "./helpers/openrouter-double";
 import { post, seedParticipantMessage, seedWorkspaceControlPlane } from "./helpers/substream-fixture";
@@ -36,9 +36,20 @@ const creatorAuth: AuthContext = {
 const otherAuth: AuthContext = { ...creatorAuth, userId: OTHER_ID, sessionId: "other-session" };
 
 useHeldEffectQueue();
-const provider = useOpenRouterDouble((call) => ({ say: call.stream
-  ? "The child used its frozen context."
-  : JSON.stringify({ summary: "A frozen source summary." }) }));
+// Two non-streaming callers reach the provider on these paths, and they parse
+// different schemas: the context summariser, and the addressing classifier
+// that a message in a room with more than one person passes through. The
+// double answers by the schema the request asked for, so a test can send a
+// real message into a substream that has somebody else in it.
+const provider = useOpenRouterDouble((call) => {
+  if (call.stream) return { say: "The child used its frozen context." };
+  const schemaName = (call.body as { response_format?: { json_schema?: { name?: string } } })
+    .response_format?.json_schema?.name;
+  if (schemaName === "message_addressing") {
+    return { say: JSON.stringify({ classification: "human_only", confidence: 0.9, rationaleCode: "human_coordination" }) };
+  }
+  return { say: JSON.stringify({ summary: "A frozen source summary." }) };
+});
 
 function parent() {
   return env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
@@ -155,6 +166,121 @@ describe("substream preparation on workerd", () => {
     await expect(Promise.resolve(parent().savePreparedPrivateChildContext({
       workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, operationId, preparedContext: prepared.preparedContext!,
     }))).rejects.toThrow("private_child_preparation_forbidden");
+  });
+
+  it("carries a substream mention out to its recipient and keeps every shared surface at the parent", async () => {
+    // The defect this covers: `forwardsChildEffect` answered
+    // `substreamId === "0"` for every kind, so a mention written in a
+    // substream reached the parent's outbox and stopped there. Nobody was ever
+    // told they had been tagged in a substream, by Slack or by mail.
+    const service = new SubstreamCreationService(TEST_ENV, creatorAuth);
+    const operationId = "00000000-0000-7000-8000-00000000ce31";
+    await service.prepare(WORKSTREAM_ID, { operationId, title: "Mentioning child", throughTurnId: "source-turn-1" });
+    const substreamId = (await service.confirm(WORKSTREAM_ID, operationId)).substreamId;
+    await service.changeParticipant(WORKSTREAM_ID, substreamId, {
+      userId: OTHER_ID, operationId: "00000000-0000-7000-8000-00000000ce32",
+    }, true);
+    const child = conversation(substreamId);
+    // Everything the seating produced, out of the way: what follows must be
+    // the mention's own effects.
+    await deliverChildEffects(TEST_ENV, child);
+    await runInDurableObject(parent(), (_instance, state) =>
+      state.storage.sql.exec(`DELETE FROM durable_outbox`));
+
+    const text = "@Other take a look at this";
+    const sent = await post(child, "/internal/product", {
+      operation: "create_message", auth: creatorAuth, input: {
+        text, clientMessageId: "substream-mention", attachmentIds: [], confirmedParticipantUserIds: [],
+        mentions: [{ type: "person", userId: OTHER_ID, connectorType: null, startOffset: 0, endOffset: "@Other".length }],
+        // Skips the addressing classifier, whose own model routing is not what
+        // this test is about; the delivery effects it stands in front of are
+        // identical either way.
+        forcedHarnessOrigin: "test_mention",
+      },
+    });
+    expect(sent.status).toBe(200);
+    // A submitted message is pending until the transcript promotes it, and
+    // the delivery effects — the viewer rows and the mention — are written in
+    // that same transaction.
+    await runDurableObjectAlarm(child);
+    await deliverChildEffects(TEST_ENV, child);
+
+    const forwarded = await pendingParentEffects(parent());
+    const mention = forwarded.find((envelope) => envelope.effect.kind === "mention_notification");
+    expect(mention?.effect).toMatchObject({
+      kind: "mention_notification",
+      recipientUserId: OTHER_ID,
+      authorUserId: CREATOR_ID,
+      // Canonicalised on the way in, which is what the mail and the Slack DM
+      // then render; the assertion follows the payload rather than the input.
+      messageText: expect.stringContaining("take a look at this"),
+      // The substream's own name, not its parent's: an inbox that says where
+      // this happened has to name the conversation the reader can open.
+      workstreamTitleSnapshot: "Mentioning child",
+    });
+    // Delivery is gated on the recipient's own directory row having reached
+    // the workspace, and for a private child nothing else advances that key.
+    // Forwarding the notification without it is a poison retry, not a missing
+    // badge, so the row has to be queued *ahead* of it rather than merely
+    // queued.
+    expect(mention?.requiredProjectionVersion).toBeGreaterThan(0);
+    const viewerIndex = forwarded.findIndex((envelope) => envelope.effect.kind === "directory_user"
+      && envelope.effect.userId === OTHER_ID);
+    expect(viewerIndex).toBeGreaterThanOrEqual(0);
+    expect(viewerIndex).toBeLessThan(forwarded.indexOf(mention!));
+    // Everything addressed to a surface rather than a person stays here: a
+    // private child is in no feed, no digest and no workspace sidebar row.
+    expect(forwarded.some((envelope) => envelope.effect.kind === "activity_event")).toBe(false);
+    expect(forwarded.some((envelope) => envelope.effect.kind === "directory_common")).toBe(false);
+    expect(await runInDurableObject(parent(), (_instance, state) =>
+      state.storage.sql.exec<{ title: string }>(`SELECT title FROM workstream_metadata WHERE id = 1`).one().title,
+    )).toBe("Source");
+
+    // The member's own substream row carries the mention too, so the sidebar
+    // can say which substream wants them without their opening each one.
+    expect((await parent().listVisiblePrivateChildren({
+      workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, userId: OTHER_ID,
+    })).children).toEqual([expect.objectContaining({ substreamId, youAreMentioned: true })]);
+  });
+
+  it("tells somebody they were added to a substream, under an identity the main room cannot collide with", async () => {
+    // Seat the same person in the main room first. Both seatings are that
+    // person's first, so both carry epoch 0 — which is what made the two
+    // identities collide while the parent id alone scoped them, and a
+    // collision here is a hash conflict the parent retries forever.
+    const seated = await post(conversation(), "/internal/product", {
+      operation: "add_participant", auth: creatorAuth, userId: OTHER_ID,
+    });
+    expect(seated.status).toBe(200);
+    const roomAdd = (await deliverChildEffects(TEST_ENV, conversation()))
+      .find((envelope) => envelope.effect.kind === "participant_notification");
+    expect(roomAdd).toBeDefined();
+
+    const service = new SubstreamCreationService(TEST_ENV, creatorAuth);
+    const operationId = "00000000-0000-7000-8000-00000000ce33";
+    await service.prepare(WORKSTREAM_ID, { operationId, title: "Seating child", throughTurnId: "source-turn-1" });
+    const substreamId = (await service.confirm(WORKSTREAM_ID, operationId)).substreamId;
+    await service.changeParticipant(WORKSTREAM_ID, substreamId, {
+      userId: OTHER_ID, operationId: "00000000-0000-7000-8000-00000000ce34",
+    }, true);
+    const childAdd = (await deliverChildEffects(TEST_ENV, conversation(substreamId)))
+      .find((envelope) => envelope.effect.kind === "participant_notification");
+    expect(childAdd?.effect).toMatchObject({
+      kind: "participant_notification",
+      recipientUserId: OTHER_ID,
+      actorUserId: CREATOR_ID,
+      workstreamTitleSnapshot: "Seating child",
+    });
+    const roomIntent = roomAdd?.effect.kind === "participant_notification" ? roomAdd.effect.intentId : null;
+    const childIntent = childAdd?.effect.kind === "participant_notification" ? childAdd.effect.intentId : null;
+    expect(childIntent).not.toBe(roomIntent);
+    expect(childIntent).toContain(substreamId);
+    // And it leaves the parent, which is the point of telling them at all.
+    // Matched on the substream's own intent id, not just the recipient: the
+    // main room's add is queued here too and would answer for it.
+    expect((await pendingParentEffects(parent())).some((envelope) =>
+      envelope.effect.kind === "participant_notification"
+      && envelope.effect.intentId === childIntent)).toBe(true);
   });
 
   it("executes the first child instruction against its frozen seed without reading later Main messages", async () => {

@@ -7,7 +7,9 @@ copy running work, or send an instruction on the creator's behalf.
 
 The platform currently uses summary-based context with
 `google/gemini-2.5-flash-lite` and creator-only membership. These are shared
-platform policies, not controls offered to the user.
+platform policies, not controls offered to the user. Membership is creator-only
+at *creation*; a member adds and removes people afterwards, and any member can
+archive the substream.
 
 ## Where the code lives
 
@@ -21,7 +23,8 @@ platform policies, not controls offered to the user.
 | `apps/api/src/durable-objects/workstream-transcript-storage.ts` | Frozen source export and immutable inert child seed. |
 | `apps/api/src/durable-objects/substream-context-transfer.ts` | Frame-sized initial-context snapshot transfer. |
 | `apps/api/src/services/substream-initial-context.ts` | Inert seed to model-context conversion. |
-| `apps/desktop/src/renderer/screens/workstream.tsx` | Main/child navigation and prepare-preview-confirm dialog. |
+| `apps/desktop/src/renderer/screens/workstream.tsx` | Main/child navigation, the prepare-preview-confirm dialog, and the substream rename/archive dialogs. |
+| `apps/desktop/src/renderer/components/workstream-sidebar.tsx` | Child rows, their attention markers and their right-click management menu. |
 | `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Authoritative baseline, initial-context assembly and readiness. |
 
 ## How it works
@@ -34,6 +37,15 @@ labels. A creator absent from the available roster uses a conversation icon
 rather than invented identity. A completed
 main-feed message also offers **New substream** with that message as the cutoff.
 Both enter the same creation flow; there is no context-strategy picker.
+
+A child row carries this viewer's own unread and mention markers, and answers a
+right-click with **Participants**, **Mark as unread**, **Rename** and **Archive
+substream**. Those are the work stream's own row menu less Pin and Add to
+project, which place a row in the workspace directory that a private child never
+enters, and less Make private, which a substream has no other state to be in.
+Participants is the addition: a work stream manages its roster from the sidebar
+section below, and a substream has no section of its own. Right-click rather
+than a visible control, because the row is a navigation target first.
 
 Every section of the center sidebar belongs to the parent work stream. Switching
 substreams changes the conversation, not the sidebar's artifact inventory,
@@ -88,6 +100,28 @@ the first model context without becoming executable historical work.
 - Parent visibility **and** explicit child membership are required. Parent
   participants cannot enumerate or open someone else's private child; adding a
   child member does not grant parent or sibling access.
+- A private child's **shared** surfaces stop at its parent; its **person-
+  addressed** effects do not. `directory_common` and `activity_event` never
+  reach the workspace, so a substream is in no feed, digest, search result or
+  workspace sidebar row. `mention_notification` and `participant_notification`
+  do reach it, because each names one recipient who is already an active member
+  of that child. A new effect kind must be classified deliberately: forwarding a
+  surface effect leaks the child, and holding a person effect is the silence
+  this subsystem shipped with.
+- A person notification is gated on `projection_keys['user:<recipient>']`, so
+  the recipient's `directory_user` from that same child is forwarded ahead of
+  it. Nothing else advances that key for a private child, and forwarding the
+  notification without it throws inside the child's delivery transaction —
+  a poison retry, not a missing badge.
+- A member's own parent row sums the children **that member** belongs to. A
+  `user:` projection is per person, so a substream's unread and mention state
+  reaches the parent row of the people in it and of nobody else. Parent
+  participation is still never inferred from a child: `isParticipant` reads
+  Main's projection alone.
+- Archiving is `archived_at` on the child registry, not a fourth creation
+  status. It removes the child from every member's sidebar and refuses its
+  writes and socket tickets through the same path a work stream's own archive
+  takes; it changes no membership and deletes nothing.
 - One operation pins one capture, recipe, child ID and membership receipt.
   Replanning a retry would silently change the context the creator reviewed.
 - Context installation writes no live transcript turn, pending input or run.
@@ -114,11 +148,15 @@ the first model context without becoming executable historical work.
 
 ## Boundary
 
-This subsystem owns child creation from main substream `0` of a work stream.
+This subsystem owns child creation from main substream `0` of a work stream, and
+the child's lifecycle after it: membership, rename, archive and discovery.
 It does not create children from children, expose strategy selection, inherit
 participants by default, create another email route, or auto-run the child.
 Prepared context is immutable; normal new messages remain editable according to
-the existing transcript rules.
+the existing transcript rules. A canonical link addresses the work stream and
+carries no substream, so **Copy work stream link** on a child row copies the
+parent's link; a substream-addressed link is a change to
+[workstream links](workstream-links.md), not to this subsystem.
 
 The parent owns child discovery and membership; the child owns its transcript,
 seed and execution. [Workstream Durable Object](workstream-durable-object.md)
@@ -133,6 +171,12 @@ completed part is reused rather than intentionally regenerated. No automatic
 strategy/model fallback changes the reviewed meaning. A lost response can be
 retried with the same operation ID; mismatched title or cutoff is a conflict.
 Confirmation cannot be cancelled after its durable claim; it can be resumed.
+
+A membership change refused by the parent is answered in prose the person in
+the dialog can act on — a member has to be in the work stream before they can be
+in one of its substreams, an archived substream keeps the roster it had, and a
+substream keeps at least one participant. Unmapped, those reached the client as
+an anonymous 500.
 
 Source access is checked before capture and again after preparation. Reserved,
 failed or incompletely installed children never become readable. Membership
@@ -178,8 +222,20 @@ human review interval. Instrumented targets are not asserted achievements.
   reaches a provider double through the real loop, checks the frozen seed and
   new child instruction, and excludes a later conflicting Main message.
 - `apps/api/test-workers/conversation-parent-contract.test.ts`: private child
-  readiness, membership and authority fences. Mutation proof removes readiness
-  from admission.
+  readiness, membership and authority fences; archive removing a child from
+  every member's sidebar while refusing its writes and tickets and restoring
+  whole; rename converging through the child's own shared projection. Mutation
+  proofs remove readiness from admission, drop the archive filter from
+  discovery, stop reporting a child's archive through `authorizeViewer`, invert
+  the child test in the title convergence, and unmap the refusal that a
+  substream member must already be in the work stream.
+- `apps/api/test-workers/substream-creation-runtime.test.ts` also covers the
+  two person-addressed effects: a mention written in a substream reaching the
+  parent's outbox behind the recipient's own viewer row while every shared
+  effect stays, and a substream seating notifying under an identity the main
+  room's seating of the same person cannot collide with. Mutation proofs stop
+  forwarding person notifications, which silences both, and drop the substream
+  from the participant identity scope, which restores the collision.
 - Desktop socket, sidebar, draft, navigation and performance suites exercise
   cache isolation, recovery and operation correlation. Real Electron QA is
   additionally required for expanded/compact sidebar, preview, child navigation,
@@ -190,6 +246,63 @@ Run the focused suites with the package-local Vitest paths per
 substitute for real-provider latency or window-level acceptance.
 
 ## Changelog
+
+### 2026-09-08 — A substream can be joined, left alone, and heard from
+
+**What changed:** Three things a substream could not do, and one it did wrongly.
+A member is added or removed through a right-click menu on the child row, which
+also renames the substream and archives it (`archived_at` on
+`conversation_children`, migration v8). A `mention_notification` or
+`participant_notification` produced inside a private child now leaves its
+parent, carrying the recipient's `directory_user` ahead of it; being added to a
+substream produces that notification at all, which it never did. A member's own
+parent row now sums the private children that member is in, so a substream's
+unread and mention state reaches the sidebar.
+
+**Why:** The reported symptom was one person unable to reach a substream they
+had been "added" to, and getting no notification for the mentions in it. Every
+part of that was real and none of it was one bug. The membership API, its route
+and its client all existed and worked; the only affordances that called them
+sat in a header branch disabled by `grokBotMode` and a rail behind
+`RIGHT_SIDEBAR_ENABLED = false`, so the one reachable control managed the parent
+and adding somebody to a substream was impossible from the product. Separately,
+`forwardsChildEffect` answered `substreamId === "0"` for every effect kind, so
+everything a substream produced stopped at its parent — correct for the shared
+surfaces it was written for, and wrong for the two kinds addressed to one named
+person, who is by construction already a member. Nothing tested it. A substream,
+meanwhile, could not be archived or left: removing the last member is refused,
+so a substream created by accident was permanent.
+
+**Considered and rejected:** Making the sidebar's people row follow the
+selection — that reverses the 2026-09-05 decision that the shared chrome belongs
+to the parent, and a row that silently changes which conversation it manages is
+worse than no row. A fourth `conversation_children.status` for archived —
+archiving is orthogonal to the creation state machine, and widening that CHECK
+means rebuilding a table two others reference with `ON DELETE CASCADE`, which
+per [the SQLite guide](durable-object-sqlite.md) runs with enforcement on and
+takes their rows with it. Evicting sockets on archive — archiving is not a
+revocation; every member could read it a moment ago and any of them can restore
+it, and `revokeSocketAccess` should not grow a second trigger with different
+rules. Forwarding the notification without the child's viewer row — the
+`enqueueImmutable` gate then throws inside the child's delivery transaction,
+which is a poison retry rather than a missing badge. A substream-addressed
+canonical link — the link format has no substream segment, and inventing one
+belongs to [workstream links](workstream-links.md).
+
+**Consequences:** `forwardsChildEffect` is now a decision per effect *kind*, and
+a new kind has to be classified in it; the invariant above says which way, and
+getting it wrong either leaks a private child into workspace surfaces or
+silences it. The parent aggregates a child's user projection but never its
+common one, which is why `aggregatesChildUserProjection` exists beside
+`aggregatesChildProjection` — the two questions had one answer only while the
+answer was always no. This supersedes the "child projections do not aggregate
+Main viewers" half of the 2026-09-05 entry below: the hazard it named was a
+`user:<user>` version allocated and never forwarded, and the fix here is to
+forward it rather than to stop allocating it. `children:<user>` remains a
+separate local clock and still never advances the workspace notification clock.
+A child's registry title converges from the child's own `directory_common`
+through `onChildCommonProjection`, so the naming agent and a person renaming it
+land in the same place and neither needs a second write.
 
 ### 2026-09-05 — Review closes authority, delivery and ordering gaps
 

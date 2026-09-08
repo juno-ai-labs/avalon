@@ -34,7 +34,8 @@ import type { WorkstreamDetail } from '../lib/types';
 import { useRetainedWorkstreamSocket } from '../lib/workstream-socket-pool';
 import { AvatarStack, Badge, Button, IconButton, InlineError, Modal, SocketStatusIndicator, StatusDot, TitleSkeleton } from '../components/primitives';
 import { WorkstreamGlyph } from '../components/workstream-glyph';
-import { WorkstreamSidebar } from '../components/workstream-sidebar';
+import { WorkstreamSidebar, type SubstreamRowTarget } from '../components/workstream-sidebar';
+import { useDebugEnabled } from '../lib/use-debug-enabled';
 import { SubstreamContext } from '../components/substream-context';
 import { ConversationSurface } from './conversation-surface';
 
@@ -413,6 +414,15 @@ export function WorkstreamScreen(): React.JSX.Element {
   const children = useQuery<WorkstreamChildDirectory | undefined>({
     queryKey: ['workstream-children', id], queryFn: async () => undefined, enabled: false,
   });
+  const debugEnabled = useDebugEnabled();
+  // One target per dialog rather than one shared "menu target": both can be
+  // open in sequence on different rows, and a single slot would make cancelling
+  // one clear the other's subject out from under it.
+  const [renameTarget, setRenameTarget] = useState<SubstreamRowTarget | null>(null);
+  const [renameTitle, setRenameTitle] = useState('');
+  const [archiveTarget, setArchiveTarget] = useState<SubstreamRowTarget | null>(null);
+  const [substreamPending, setSubstreamPending] = useState(false);
+  const [substreamMenuError, setSubstreamMenuError] = useState<string | null>(null);
   const [creation, setCreation] = useState<{ operationId: string; parentId: string; title: string; throughTurnId: string | null; preparationWaitMs: number } | null>(null);
   const [preview, setPreview] = useState<SubstreamPreparationPreview | null>(null);
   const [creationError, setCreationError] = useState<string | null>(null);
@@ -426,6 +436,57 @@ export function WorkstreamScreen(): React.JSX.Element {
     if (substreamId === '0') next.delete('substream');
     else next.set('substream', substreamId);
     setSearchParams(next, { replace: true });
+  };
+  /**
+   * The three substream menu actions that reach the API.
+   *
+   * None of them writes to a cache. A substream row is published by
+   * WorkstreamDO over the control socket — its title, its unread state and
+   * whether it is there at all — so the row updates when the object says it
+   * did, the same way it does when somebody else makes the change. An
+   * optimistic copy here would be a second source of the same fact and would
+   * have to be unwound on every failure.
+   */
+  const markSubstreamUnread = async (child: SubstreamRowTarget): Promise<void> => {
+    if (!api) return;
+    try {
+      await api.markSubstreamUnread(id, child.substreamId);
+    } catch (error) {
+      setSubstreamMenuError(error instanceof Error ? error.message : 'That substream could not be marked unread.');
+    }
+  };
+  const submitSubstreamRename = async (): Promise<void> => {
+    const target = renameTarget;
+    const title = renameTitle.trim();
+    if (!api || !target || !title || substreamPending) return;
+    if (title === target.title) { setRenameTarget(null); return; }
+    setSubstreamPending(true);
+    setSubstreamMenuError(null);
+    try {
+      await api.renameSubstream(id, target.substreamId, title);
+      setRenameTarget(null);
+    } catch (error) {
+      setSubstreamMenuError(error instanceof Error ? error.message : 'That substream could not be renamed.');
+    } finally {
+      setSubstreamPending(false);
+    }
+  };
+  const submitSubstreamArchive = async (): Promise<void> => {
+    const target = archiveTarget;
+    if (!api || !target || substreamPending) return;
+    setSubstreamPending(true);
+    setSubstreamMenuError(null);
+    try {
+      await api.setSubstreamArchived(id, target.substreamId, true);
+      setArchiveTarget(null);
+      // An archived substream stops being readable, so a reader left on it
+      // would be looking at a conversation the next socket ticket refuses.
+      if (selectedSubstreamId === target.substreamId) selectSubstream('0');
+    } catch (error) {
+      setSubstreamMenuError(error instanceof Error ? error.message : 'That substream could not be archived.');
+    } finally {
+      setSubstreamPending(false);
+    }
   };
   const resetCreation = (): void => {
     creationRef.current = null;
@@ -526,6 +587,20 @@ export function WorkstreamScreen(): React.JSX.Element {
           onOpenArtifact={context.openArtifact}
           onParticipants={context.openParticipantDialog}
           onFocusTranscript={context.focusTranscript}
+          substreamActions={{
+            // Select first: managing a substream is done while looking at it,
+            // and it is what makes the roster dialog read the conversation the
+            // buttons act on rather than the one that happened to be open.
+            onParticipants: (child) => {
+              selectSubstream(child.substreamId);
+              context.openParticipantDialog(child.substreamId);
+            },
+            onMarkUnread: (child) => void markSubstreamUnread(child),
+            onRename: (child) => { setRenameTarget(child); setRenameTitle(child.title); setSubstreamMenuError(null); },
+            onArchive: (child) => { setArchiveTarget(child); setSubstreamMenuError(null); },
+            debugEnabled,
+            workspace: session?.workspace ? { id: session.workspace.id, region: session.workspace.region } : undefined,
+          }}
         />
       )}
       renderHeader={(context) => (
@@ -564,6 +639,55 @@ export function WorkstreamScreen(): React.JSX.Element {
         <p>Context from the main conversation</p>
         <SubstreamContext context={preview.context} />
       </div>}
+    </Modal>
+    <Modal
+      footer={<>
+        <Button disabled={substreamPending} onClick={() => setRenameTarget(null)}>Cancel</Button>
+        <Button
+          className="button-primary"
+          disabled={substreamPending || !renameTitle.trim() || renameTitle.trim() === renameTarget?.title}
+          onClick={() => void submitSubstreamRename()}
+        >Rename</Button>
+      </>}
+      onOpenChange={(open) => { if (!open) setRenameTarget(null); }}
+      open={Boolean(renameTarget)}
+      title="Rename substream"
+    >
+      {substreamMenuError && <InlineError>{substreamMenuError}</InlineError>}
+      <form onSubmit={(event) => { event.preventDefault(); void submitSubstreamRename(); }}>
+        <label className="form-field">
+          <span>Title</span>
+          <input autoFocus disabled={substreamPending} onChange={(event) => setRenameTitle(event.target.value)} value={renameTitle} />
+        </label>
+      </form>
+    </Modal>
+    <Modal
+      footer={<>
+        <Button disabled={substreamPending} onClick={() => setArchiveTarget(null)}>Cancel</Button>
+        <Button className="button-danger" disabled={substreamPending} onClick={() => void submitSubstreamArchive()}>Archive</Button>
+      </>}
+      onOpenChange={(open) => { if (!open) setArchiveTarget(null); }}
+      open={Boolean(archiveTarget)}
+      title="Archive substream"
+    >
+      {/* Says what actually happens, and does not promise more than the code
+          does: unlike a work stream, a substream is recoverable, and claiming
+          otherwise would make people keep dead rows rather than tidy them. */}
+      <p className="modal-copy">
+        <strong>{archiveTarget?.title}</strong> leaves the sidebar for everyone in it, and stops
+        accepting messages. Nothing is deleted and the conversation is kept.
+      </p>
+      {substreamMenuError && <InlineError>{substreamMenuError}</InlineError>}
+    </Modal>
+    {/* The two menu actions with no dialog of their own still owe the reader
+        an answer when they fail. */}
+    <Modal
+      footer={<Button onClick={() => setSubstreamMenuError(null)}>Close</Button>}
+      onOpenChange={(open) => { if (!open) setSubstreamMenuError(null); }}
+      open={Boolean(substreamMenuError) && !renameTarget && !archiveTarget}
+      title="That could not be updated"
+    >
+      <InlineError>{substreamMenuError}</InlineError>
     </Modal>
     </>
   );

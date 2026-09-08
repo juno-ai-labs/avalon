@@ -266,6 +266,36 @@ export abstract class ConversationParentDurableObject extends ScheduledDurableOb
     return true;
   }
 
+  /**
+   * Whether a child's per-person row belongs in this parent's `user:`
+   * aggregate, asked separately from the shared row above.
+   *
+   * The two questions have different answers for a work stream: a private
+   * child must never reach the common row, which every reader of the parent
+   * sees, but its member's own row is exactly where that child's unread and
+   * mention state belongs. Defaults to the shared answer, so a parent that
+   * does not care about the distinction states it once.
+   */
+  protected aggregatesChildUserProjection(substreamId: string): boolean {
+    return this.aggregatesChildProjection(substreamId);
+  }
+
+  /**
+   * A child published its own shared row; still inside the transaction, and
+   * called for every child whether or not this parent aggregates or forwards
+   * it. The registry a parent keeps beside the projections — a child's title,
+   * say — converges here rather than through a second write path.
+   */
+  protected onChildCommonProjection(
+    _substreamId: string,
+    _effect: DirectoryCommonEffect,
+    _now: number,
+  ): void {
+    void _substreamId;
+    void _effect;
+    void _now;
+  }
+
   /** Log fields naming this object, for the outbox drain's records. */
   protected abstract parentLogFields(): Record<string, unknown>;
 
@@ -392,6 +422,7 @@ export abstract class ConversationParentDurableObject extends ScheduledDurableOb
       const forwards = this.forwardsChildEffect(substreamId, envelope.effect);
       if (envelope.effect.kind === "directory_common") {
         this.upsertChildProjection("common", substreamId, null, envelope, now);
+        this.onChildCommonProjection(substreamId, envelope.effect, now);
         if (this.aggregatesChildProjection(substreamId)) {
           const aggregate = this.aggregateCommon();
           this.onChildCommonAggregate(substreamId, aggregate, envelope, now);
@@ -399,7 +430,7 @@ export abstract class ConversationParentDurableObject extends ScheduledDurableOb
         }
       } else if (envelope.effect.kind === "directory_user") {
         this.upsertChildProjection("user", substreamId, envelope.effect.userId, envelope, now);
-        if (this.aggregatesChildProjection(substreamId)) {
+        if (this.aggregatesChildUserProjection(substreamId)) {
           const aggregate = this.aggregateUser(envelope.effect.userId);
           this.onChildUserAggregate(substreamId, envelope.effect.userId, aggregate, envelope, now);
           if (forwards) this.enqueueProjection(`user:${envelope.effect.userId}`, aggregate, now);
