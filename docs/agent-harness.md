@@ -1259,7 +1259,7 @@ Future changes must retain the separate ownership and execution boundaries.
 
 ### 2026-09-07 — Sidekick instruction sources
 
-The host resolves stored-loadable Sidekicks against execution and conversation audiences. Model-facing skill names use kebab-case Sidekick names (`sidekick-brand-voice`) with integer suffixes only for collisions (`sidekick-brand-voice-2`). Snapshot order fixes that mapping across retries; durable activation refs and attachments retain canonical Sidekick IDs. Per-execution snapshots and loaded refs live in the owning substream; main-conversation loads also attach the Sidekick for future executions. Loading adds instructions, never credentials or access to the Sidekick memory scope.
+The host resolves stored-loadable Sidekicks against execution and conversation audiences. Stable Sidekick IDs identify skills. Per-execution snapshots and loaded refs live in the owning substream; main-conversation loads also attach the Sidekick for future executions. Loading adds instructions, never credentials or access to the Sidekick memory scope.
 
 This composes knowledge with existing execution machinery while keeping one Sidekick identity and preserving authorization boundaries.
 
