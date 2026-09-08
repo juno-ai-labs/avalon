@@ -671,3 +671,10 @@ stay fixed at the bottom.
 Hover a public stream icon and then move onto its globe in both appearances.
 The globe stays visible and only the stream preview opens; the public badge
 has an accessible label rather than a competing nested tooltip.
+
+When a narrow window forces navigation into compact mode, its Expand control
+is disabled and double-clicking the edge must preserve the saved expanded
+preference. Widening the window restores expansion. Clicking either separator
+must focus it so ArrowLeft/ArrowRight can immediately resize it. Public stream
+links expose their visibility as an accessible description; the compact center
+sidebar's bottom toggle is centered in the same icon column as its rows.

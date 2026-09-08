@@ -156,7 +156,9 @@ describe('WorkstreamSidebar', () => {
     handle.setPointerCapture = vi.fn();
     handle.releasePointerCapture = vi.fn();
     fireEvent.pointerDown(handle, { clientX: 563, pointerId: 1, button: 0 });
+    expect(handle).toHaveFocus();
     fireEvent.pointerMove(handle, { clientX: 643, pointerId: 1 });
+    expect(document.querySelector('.sidebar-drag-guide')).not.toBeNull();
     expect(handle).toHaveAttribute('aria-valuenow', '360');
     expect(localStorage.getItem('rally.workstream-sidebar-width')).toBe('360');
     expect(localStorage.getItem('rally.sidebar-width')).toBeNull();
@@ -181,6 +183,7 @@ describe('WorkstreamSidebar', () => {
     fireEvent.pointerMove(handle, { clientX: 520, pointerId: 1 });
     expect(handle).toHaveAttribute('aria-valuenow', '240');
     fireEvent.pointerCancel(handle, { pointerId: 1 });
+    expect(document.querySelector('.sidebar-drag-guide')).toBeNull();
     fireEvent.pointerMove(handle, { clientX: 650, pointerId: 1 });
     expect(handle).toHaveAttribute('aria-valuenow', '240');
     expect(screen.getByRole('complementary')).not.toHaveClass('is-resizing');
