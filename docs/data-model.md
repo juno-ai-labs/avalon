@@ -978,7 +978,7 @@ work uses ordinary workstream creation and the existing durable agent loop.
 
 **What changed:** `object_retirement` in the SQLite of all four object classes
 that can belong to a workspace, and `workspace_retirement_graph` in WorkspaceDO.
-Conversation-object schema v46 carries the tombstone, after the loop's v45.
+Conversation-object schema v48 carries the tombstone, after `main`'s v46 and v47.
 
 **Why:** A demo workspace is replaced rather than cleared, and "replaced" has to
 mean an object that can never write again — including after eviction, when the
