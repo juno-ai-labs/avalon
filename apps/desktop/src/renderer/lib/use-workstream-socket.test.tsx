@@ -1059,6 +1059,41 @@ describe('useWorkstreamSocket', () => {
     await expect(admission).resolves.toEqual(acceptedTurn);
   });
 
+  it('orders appearance choices and never sends queued choices to a newly selected room', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const workstreamId = '00000000-0000-7000-8000-000000000631';
+    const api = socketApiWith({ getSocketTicket: vi.fn(async () => ({
+      url: `wss://api.rally.test/workstreams/${workstreamId}`,
+      ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket'),
+    })) });
+    const { result, rerender } = renderHook(({ id }) => useWorkstreamSocket(api, id, true), {
+      initialProps: { id: workstreamId }, wrapper: createWrapper(),
+    });
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    const color = result.current.setAppearance({ color: 'purple' });
+    const icon = result.current.setAppearance({ icon: 'rocket' });
+    await flushPromises();
+    const commands = sentFrames(socket).filter((frame) => frame.type === 'set_workstream_appearance');
+    expect(commands).toHaveLength(1);
+    const first = commands[0]!;
+    act(() => socket.message({ type: 'client_command_succeeded', command: 'set_workstream_appearance', operationId: first.operationId }));
+    await color;
+    await flushPromises();
+    expect(sentFrames(socket).filter((frame) => frame.type === 'set_workstream_appearance')).toHaveLength(2);
+    const queued = result.current.setAppearance({ color: 'blue' });
+    const rejectedIcon = expect(icon).rejects.toMatchObject({ code: 'workstream_socket_unavailable' });
+    const rejectedQueued = expect(queued).rejects.toMatchObject({ code: 'workstream_socket_unavailable' });
+    rerender({ id: '00000000-0000-7000-8000-000000000632' });
+    await flushPromises();
+    await rejectedIcon;
+    await rejectedQueued;
+    const next = FakeWebSocket.instances.at(-1)!;
+    act(() => next.open());
+    expect(sentFrames(next).filter((frame) => frame.type === 'set_workstream_appearance')).toEqual([]);
+  });
+
   it('sends child-local commands to the addressed substream and resends them until receipt', async () => {
     vi.useFakeTimers();
     vi.spyOn(Math, 'random').mockReturnValue(0);

@@ -1658,6 +1658,13 @@ workerd Sidekick load/restore test in `automation-do.test.ts` verifies that a
 renamed Sidekick retains its original name in the next execution.
 
 
+### 2026-09-08 — Shared work-stream appearance
+
+Main accepts idempotent partial appearance commands on its existing socket. The
+write and receipt share the common-effect transaction, and both control and
+workspace projections carry the stored icon and color. This replaces generated-only
+identity without adding a second mutation transport. See [work-stream appearance](workstream-appearance.md).
+
 ### 2026-09-08 — Review: the mark stops where the scan stopped, and an aside says what it is
 
 **What changed:** The gap-fill scans `(mark, transcriptThrough()]` — the
