@@ -16,6 +16,7 @@ import {
   TERMINAL_NETWORK_MANIFEST_VERSION,
 } from "./network-policy";
 import type { ResourcePortFactory } from "../../runtime/resource-port";
+import { TERMINAL_OUTPUT_ROOT } from "./contract";
 import type { TerminalPortFactory } from "./object-port";
 import {
   TERMINAL_OPERATION_LEASE_MS,
@@ -606,7 +607,7 @@ export class TerminalSandboxCoordinator {
         workstreamId: context.workstreamId,
         generation: row.generation,
         domainAllowList: domains,
-        environment: { AVALON_RESOURCE_DIR: "/workspace/.rally-output" },
+        environment: { AVALON_RESOURCE_DIR: TERMINAL_OUTPUT_ROOT },
       });
     } catch {
       try {
