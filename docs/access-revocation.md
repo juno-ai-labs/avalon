@@ -287,15 +287,16 @@ Callers: any Worker code that ends access calls `publishAccessRevocation`. The
   read, not the object-local one.
 - **Genuinely not covered:** a block's visibility narrowing within a dashboard
   the reader still has access to. That closes on their next reconnect.
-- **A hop against a retired workspace still closes its sockets.** A retired
-  workspace refuses almost every method it has, and `revokeSocketAccess` is one
-  of the handful it deliberately does not: a workspace nobody can reach must
-  still be able to drop the connections it is holding, and a throw here would
-  retry and dead-letter one message per retired object — spending this module's
-  own monitoring signal on a condition somebody designed. The permit covers the
-  whole call rather than that one method name, so the private helpers each
-  implementation reaches on its way to the sockets are covered too. See
-  [`workspace-retirement.md`](workspace-retirement.md).
+- **A hop against a retired workspace is done, not failed.** Retirement closes
+  every socket an object holds when it writes the tombstone, so a hop that
+  reaches a retired object has nothing left to find. `revokeSocketAccess` is
+  permitted on every gated class, and the permit covers the whole call rather
+  than that one method name; the enumerations the other hops ask for
+  (`listChildren`, `automationIdsOwnedByWorkstream`) stay refused, and the
+  consumer acknowledges that refusal through `isRetirementRefusal` rather than
+  retrying it — a retry would dead-letter one message per retired object,
+  spending this module's own monitoring signal on a condition somebody designed.
+  See [`workspace-retirement.md`](workspace-retirement.md#background-callers).
 - **A revocation is not versioned.** A message names `(workspaceId, userId)` and
   nothing more, so one delayed or dead-letter-replayed message can close sockets
   belonging to a membership that was since restored. Admission decides what
@@ -357,6 +358,28 @@ would be a way into somebody else's workspace.
 
 ## Changelog
 
+### 2026-09-08 — A retired object's refusal ends the hop
+
+**What changed:** `consumeAccessRevocationQueue` acknowledges a message whose
+hop met a `workspace_retired` refusal (`isRetirementRefusal`), logging
+`access_revocation_hop_terminal`. Retirement itself now closes every socket an
+object holds, so the permit on `revokeSocketAccess` is no longer what keeps a
+retired workspace's sockets closed.
+
+**Why:** The `automation` and `workstream_automations` hops call `listChildren`
+and `automationIdsOwnedByWorkstream`, neither permitted; and the workspace hop
+against a retired workspace — which `reapExpiredSessions` publishes on every
+expired session — answered with its automation ids, so every retired workspace
+with an automation and a session produced a dead letter by construction.
+
+**Considered and rejected:** Permitting the two enumerations — they are product
+reads, and the same class of defect recurs with the next method this consumer
+calls; a rule at the consumer holds for all of them.
+
+**Consequences:** A new hop kind needs no permit; its refusal is acknowledged.
+A retired workspace still receives revocation messages for its expired
+sessions, each acknowledged with one info line.
+
 ### 2026-09-08 — Remove the authorization freshness deadline
 
 The user changed five-minute freshness from a hard bound to a design goal after
@@ -393,8 +416,11 @@ this module uses as its monitoring.
 
 **Consequences:** A hop against a retired object succeeds and closes what it
 finds; a *new* method this consumer starts calling on those objects is refused by
-default and must be named in the gate's permit list, which is in
-[`workspace-retirement.md`](workspace-retirement.md).
+default. The classification lives in `ALWAYS_PERMITTED_METHODS` in
+`durable-objects/object-retirement.ts` and in each class's `applyRetirementGate`
+call; [`workspace-retirement.md`](workspace-retirement.md) explains the
+dispositions. (Superseded on 2026-09-08: the consumer now acknowledges a
+refusal rather than needing every method it calls permitted.)
 
 ### 2026-09-04 — Private-child removal has a durable local revocation leg
 
