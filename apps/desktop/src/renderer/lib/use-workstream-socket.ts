@@ -39,7 +39,7 @@ import {
   type RealtimeSocket,
   type RealtimeSocketHandshakePhaseEvent,
 } from './realtime-socket';
-import { advanceStreamReveal, applyRevealedText, flushStreamReveal } from './streaming-reveal';
+import { advanceStreamReveal, applyRevealedText, flushStreamReveal, recordStreamArrival } from './streaming-reveal';
 import {
   reportTelemetryProductIntent,
   type WorkstreamSocketStartReason,
@@ -314,7 +314,15 @@ export function applyStreamingSocketEvent(
     completed: false,
     receivedText,
     revealed,
-    lastRevealAt: cursor?.lastRevealAt ?? null,
+    lastRevealAt: !paced || replacesAttempt ? null : cursor?.lastRevealAt ?? null,
+    pacing: !paced ? undefined : event.type === 'stream_delta' && event.delta.length > 0
+      ? recordStreamArrival(
+          replacesAttempt ? undefined : cursor?.pacing,
+          event.delta.length,
+          receivedText.length - revealed,
+          performance.now(),
+        )
+      : replacesAttempt ? undefined : cursor?.pacing,
   });
   const visibleText = receivedText.slice(0, revealed);
 
@@ -974,10 +982,10 @@ export function useWorkstreamSocket(
     let revealFrame: number | null = null;
     const scheduleReveal = (): void => {
       if (revealFrame !== null || closedByEffect) return;
-      revealFrame = window.requestAnimationFrame(() => {
+      revealFrame = window.requestAnimationFrame((now) => {
         revealFrame = null;
         if (closedByEffect) return;
-        const { changed, backlogRemains } = advanceStreamReveal(streamCursors, performance.now());
+        const { changed, backlogRemains } = advanceStreamReveal(streamCursors, now);
         if (changed) {
           queryClient.setQueryData<TranscriptOverlay[]>(overlaysQueryKey, (current) =>
             mapTranscriptOverlayMessages(current, (messages) => applyRevealedText(messages, streamCursors)));
