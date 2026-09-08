@@ -848,7 +848,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
           LEFT JOIN private_child_memberships member ON member.substream_id = child.substream_id AND member.user_id = ?
           WHERE child.substream_id = ? AND child.kind = 'child'`, request.userId, substreamId));
       return { substreamId, exists: substreamId === '0' ? main.exists : Boolean(child),
-        ready: substreamId === '0' || child?.status === 'ready',
+        ready: substreamId === '0' || child?.status === 'ready', failed: child?.status === 'failed',
         member: substreamId === '0' || child?.active === 1, version: child?.version ?? 0 };
     });
     return { exists: true as const, main, children, validatedAt: Date.now(),

@@ -14,7 +14,7 @@ export const AUTHORIZATION_PROJECTION_MIGRATION = [
     ['INSERT', 'UPDATE', 'DELETE'].map((operation) => `CREATE TRIGGER authorization_${table}_${operation.toLowerCase()}
       AFTER ${operation === 'UPDATE' && table === 'workstream' ? 'UPDATE OF scope' : operation} ON ${table} BEGIN
         INSERT INTO authorization_projection_outbox(id, revision, not_before) VALUES (1, 1, 0)
-        ON CONFLICT(id) DO UPDATE SET revision = revision + 1, not_before = 0;
+        ON CONFLICT(id) DO UPDATE SET revision = revision + 1;
       END`)),
   `INSERT INTO authorization_projection_outbox(id, revision, not_before)
    SELECT 1, 1, 0 WHERE EXISTS (SELECT 1 FROM workstream)`,
@@ -32,7 +32,24 @@ export async function flushAuthorizationProjection(sql: SqlStorage, queue: Queue
     sql.exec('DELETE FROM authorization_projection_outbox WHERE id = 1 AND revision = ?', row.revision);
   } catch (error) {
     // Match the established regional outbox dispatch retry, rather than hot-looping an alarm.
-    sql.exec('UPDATE authorization_projection_outbox SET not_before = ? WHERE id = 1 AND revision = ?', Date.now() + 5_000, row.revision);
+    sql.exec('UPDATE authorization_projection_outbox SET not_before = ? WHERE id = 1', Date.now() + 5_000);
+    throw error;
+  }
+}
+
+/** Preserve same-key intent accepted while the previous batch is in flight. */
+export async function flushAuthorizationDeliveries(sql: SqlStorage, queue: Queue, now: number): Promise<void> {
+  // Cloudflare Queue sendBatch accepts at most 100 messages.
+  const rows = sql.exec<{ job_key: string; payload_json: string; revision: number }>(
+    'SELECT job_key, payload_json, revision FROM authorization_delivery WHERE not_before <= ? ORDER BY job_key LIMIT 100', now,
+  ).toArray();
+  if (!rows.length) return;
+  try {
+    await queue.sendBatch(rows.map((row) => ({ body: AuthorizationProjectionJobSchema.parse(JSON.parse(row.payload_json)) })));
+    for (const row of rows) sql.exec('DELETE FROM authorization_delivery WHERE job_key = ? AND revision = ?', row.job_key, row.revision);
+  } catch (error) {
+    // A newer revision is still waiting on the same unavailable Queue; defer it too.
+    for (const row of rows) sql.exec('UPDATE authorization_delivery SET not_before = ? WHERE job_key = ?', now + 5_000, row.job_key);
     throw error;
   }
 }

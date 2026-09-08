@@ -1,6 +1,7 @@
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import { WorkspaceIdSchema } from '@rally/contracts';
 import { z } from 'zod';
+import { parseRpcInput } from './lib/rpc-contracts';
 import type { Env } from './env';
 import { authorizationWorkspace } from './services/authorization-service';
 import { resolveInspectionWorkspaceRoute } from './engineering-inspection-routes';
@@ -11,7 +12,8 @@ const CommandSchema = z.strictObject({ workspaceId: WorkspaceIdSchema,
 /** Private operator Service Binding only. No product HTTP route exposes migration controls. */
 export class AuthorizationControl extends WorkerEntrypoint<Env> {
   async execute(input: unknown) {
-    const command = CommandSchema.parse(input);
+    const command = parseRpcInput(CommandSchema, input, 'authorizationControl');
+    // Validate here to return a structured retryable outcome before stub routing can throw.
     const route = await resolveInspectionWorkspaceRoute(this.env, command.workspaceId);
     if (!route) return { status: 'unavailable' as const, reason: 'workspace_route_unavailable' as const, retryable: true };
     const workspace = await authorizationWorkspace(this.env, command.workspaceId);

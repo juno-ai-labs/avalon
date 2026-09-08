@@ -1,5 +1,5 @@
 import { asUserId, asWorkspaceId } from "@rally/contracts";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import type { AuthContext } from "../src/env";
 import { ResourceService } from "../src/services/resource-service";
@@ -37,6 +37,9 @@ describe("resource listing", () => {
       [secondResourceId, 'ReleaseA100x', '2026-08-01T11:00:00.000Z'],
       [thirdResourceId, 'Older result', '2026-08-01T10:00:00.000Z'],
     ]) insert.run(id!, workspaceId, title!, at!, at!);
+    const snapshots = vi.spyOn(workspace.instance, 'readAuthorizationSnapshots');
+    const facts = vi.spyOn(workspace.instance, 'authorizationResourceFacts');
+    const writes = vi.spyOn(workspace.instance, 'writeAuthorizationSnapshots');
     const service = new ResourceService(createTestEnv({
       DB: sqliteD1(regional), APP_ENV: 'test', AVALON_REGION: 'global',
       WORKSPACE_DOS: testWorkspaceObjectBinding(workspace.instance, ['executeRuntimeSql', 'readAuthorizationSnapshots', 'writeAuthorizationSnapshots', 'authorizationResourceFacts']),
@@ -44,6 +47,12 @@ describe("resource listing", () => {
     const first = await service.list({ limit: 2 });
     expect(first.items.map((resource) => resource.id)).toEqual([firstResourceId, secondResourceId]);
     expect(first.nextCursor).toEqual(expect.any(String));
+    expect(snapshots).toHaveBeenCalledTimes(1);
+    expect(snapshots.mock.calls[0]?.[0]).toMatchObject({ resources: expect.any(Array) });
+    expect(facts).toHaveBeenCalledTimes(1);
+    expect(facts.mock.calls[0]?.[0].resourceIds).toEqual([firstResourceId, secondResourceId]);
+    expect(writes).toHaveBeenCalledTimes(1);
+
     const next = await service.list({ limit: 2, cursor: first.nextCursor! });
     expect(next.items.map((resource) => resource.id)).toEqual([thirdResourceId]);
     expect(next.nextCursor).toBeNull();
