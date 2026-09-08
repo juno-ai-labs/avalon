@@ -139,6 +139,21 @@ would retain functionality that was requested to be removed.
 **Consequences:** Shared heading collapse and complete-source copy/export remain
 available; H2 headings no longer create cards.
 
+### 2026-09-08 — Keep composer controls above attachment drafts
+
+The workstream and new-chat capsule composers' tool and submit areas explicitly
+stack above the input shell, which is positioned for its highlight overlay.
+Attachments expand that shell across the controls' grid row, allowing the
+textarea to intercept clicks on Send and composer actions even with short or
+empty text. The reported case was a long pasted chat; Enter still submitted.
+Keeping the controls above the shell preserves the existing layout and send
+guards instead of changing submission behavior. The control areas' padding also
+receives pointer hits rather than placing the caret in the textarea underneath.
+The CSS contract test guards the scoped stacking declarations; verify pointer
+clicks in a real window because DOM-only tests cannot detect this overlap.
+
+Shipped in #591.
+
 ### 2026-09-08 — Sidekick navigation and attachments
 
 The main-window `/sidekicks` adapter opens the dedicated library and returns the

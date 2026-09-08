@@ -5891,6 +5891,13 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 
 :is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-toolbar { display: contents; }
 
+/* Attachments expand the positioned input shell across the controls' grid row.
+   Raise the controls above that shell so the textarea cannot intercept clicks. */
+:is(.workstream-screen, .new-chat-screen) .is-message-capsule :is(.composer-tools, .composer-submit-area) {
+  position: relative;
+  z-index: 1;
+}
+
 :is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-tools {
   align-self: end;
   grid-column: 1;
