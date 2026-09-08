@@ -1,3 +1,5 @@
+import { Buffer } from "node:buffer";
+
 export interface TerminalSnapshotProbe {
   id: "bash" | "python" | "javascript" | "typescript" | "sqlite" | "apt" | "dpkg" | "pip" | "uv" | "npm" | "pnpm" | "git" | "git-ca" | "gh" | "sudo";
   command: string;
@@ -83,10 +85,12 @@ export function terminalManagedSnapshotBootstrapCommand(): string {
  * `unknown instruction: sudo`. Quoting does not help: the shell would honour the
  * quotes, but the Dockerfile parser splits the line before any shell sees it.
  *
- * Base64 sidesteps the whole class — the encoded form has no newlines, no
- * quotes, and no shell metacharacters, so it survives whatever quoting the
- * provider applies while keeping the script byte-identical to the one the
- * runtime would have run.
+ * Base64 sidesteps the whole class — the encoded form has no newlines and no
+ * quotes, and its only non-alphanumerics (`+`, `/`, `=`) are inert as an
+ * unquoted `echo` argument, so it survives whatever quoting the provider
+ * applies while keeping the script byte-identical to the one the runtime would
+ * have run. It is deliberately left unquoted: a quote is exactly what the
+ * provider's own quoting could then mangle.
  */
 export function terminalSnapshotImageBuildCommand(): string {
   const encoded = Buffer.from(terminalManagedSnapshotBootstrapCommand(), "utf8").toString("base64");
