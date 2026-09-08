@@ -268,7 +268,11 @@ export class MigrationRegistry extends DurableObject<Env> {
          (component, region, class_name, latest_version, worker_version_id, observed_at)
        VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT(component, region) DO UPDATE SET
-         class_name = excluded.class_name,
+         class_name = CASE
+           WHEN component_versions.class_name = 'SidekickDO'
+             AND excluded.class_name = 'AutomationDO' THEN component_versions.class_name
+           ELSE excluded.class_name
+         END,
          observed_at = excluded.observed_at,
          worker_version_id = CASE
            WHEN excluded.latest_version >= component_versions.latest_version
@@ -294,7 +298,11 @@ export class MigrationRegistry extends DurableObject<Env> {
        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
        ON CONFLICT(object_id) DO UPDATE SET
          object_name = COALESCE(excluded.object_name, durable_objects.object_name),
-         class_name = excluded.class_name,
+         class_name = CASE
+           WHEN durable_objects.class_name = 'SidekickDO'
+             AND excluded.class_name = 'AutomationDO' THEN durable_objects.class_name
+           ELSE excluded.class_name
+         END,
          component = excluded.component,
          region = excluded.region,
          app_env = excluded.app_env,
