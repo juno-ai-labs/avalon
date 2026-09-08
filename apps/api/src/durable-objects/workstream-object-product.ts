@@ -18,6 +18,7 @@ import {
   WorkstreamSchema,
   WorkstreamWorkflowInputSchema,
   workstreamParticipantPreview,
+  DemoSeedSchema,
   type Elicitation,
   type Message,
   type ResourceRelationshipType,
@@ -149,6 +150,13 @@ export const WorkstreamObjectCreateMessageInputSchema = z.object({
   expectedToolInvocationId: z.string().uuid().optional(),
   slackOrigin: z.unknown().optional(),
   slackSearchAuthorization: z.unknown().optional(),
+  /**
+   * Present on a demo seed action, and what decides its addressing — see
+   * `DemoSeedSchema`. Reaches the object only over its internal RPC: the
+   * message route's request schema has no such field, so nothing a client
+   * sends can carry one.
+   */
+  seed: DemoSeedSchema.optional(),
 }).refine((value) => value.text.trim().length > 0 || value.attachmentIds.length > 0, {
   message: "A message must include text or an attachment",
 });
@@ -215,6 +223,12 @@ export const InitializeWorkstreamObjectInputSchema = z.strictObject({
   slackSearchAuthorization: z.unknown().optional(),
   telemetryOperationId: z.string().uuid().optional(),
   telemetrySubjectUserId: z.string().uuid().optional(),
+  /**
+   * Present when a demo seed opens the work stream. An opening message always
+   * starts a run, so the seed's turn is what that run says; a seed that says
+   * nothing is refused rather than left to reach a provider.
+   */
+  seed: DemoSeedSchema.optional(),
   reason: z.string().min(1).max(80),
 });
 
@@ -1008,6 +1022,13 @@ export class WorkstreamObjectProductService {
     workflowInput: WorkstreamWorkflowInput;
   }> {
     const input = InitializeWorkstreamObjectInputSchema.parse(rawInput);
+    if (input.seed && input.seed.assistant === null) {
+      throw new ApiError(
+        422,
+        "demo_seed_opening_without_script",
+        "An opening message always starts a run, so its seed must say what the run says",
+      );
+    }
     if (auth.workspaceId !== input.workspaceId || auth.userId !== input.creatorUserId) {
       throw new ApiError(403, "workstream_create_denied", "The work stream cannot be created for this identity");
     }
@@ -1399,6 +1420,9 @@ export class WorkstreamObjectProductService {
       } : {}),
       ...(input.telemetryOperationId ? { telemetryOperationId: input.telemetryOperationId } : {}),
       ...(input.telemetrySubjectUserId ? { telemetrySubjectUserId: input.telemetrySubjectUserId } : {}),
+      // Rides the execution receipt, so the run this create starts answers
+      // from the seed rather than reaching a provider.
+      ...(input.seed ? { seed: input.seed } : {}),
       reason: input.reason,
     };
   }
@@ -3860,7 +3884,16 @@ export class WorkstreamObjectProductService {
       .flatMap((mention) => mention.type === "connector" && mention.connectorType
         ? [mention.connectorType] : []);
     let shouldInvoke = Boolean(input.forcedHarnessOrigin) || participantCount <= 1 || attachmentRows.length > 0;
-    if (!shouldInvoke) {
+    if (input.seed) {
+      // A seed action states its addressing outcome instead of being classified.
+      // A scripted assistant turn means this message starts a run; `null` means
+      // it starts none — whatever the room's size or the message's attachments
+      // would otherwise force. Admitting a human message in a multi-person room
+      // otherwise asks a *model* whether it addresses Rally, and seeding a
+      // scripted conversation cannot wait on a live guess about each line when
+      // the pack is the authority on which lines start a run.
+      shouldInvoke = input.seed.assistant !== null;
+    } else if (!shouldInvoke) {
       const activeTask = this.loops.loop()?.status === "executing";
       const classification = await classifyWorkstreamMessage(this.env, {
         workspaceId: auth.workspaceId,
@@ -4054,13 +4087,16 @@ export class WorkstreamObjectProductService {
               auth.userId,
               ...confirmedParticipantUserIds,
             ]),
-            reason: input.forcedHarnessOrigin ?? "human_message",
+            reason: input.forcedHarnessOrigin ?? (input.seed ? "demo_seed" : "human_message"),
             parentHarnessRunId: input.parentHarnessRunId ?? null,
             expectedLatestHarnessRunId: input.expectedLatestHarnessRunId ?? null,
             expectedToolInvocationId: input.expectedToolInvocationId ?? null,
             telemetryOperationId: input.telemetryOperationId ?? null,
             slackOrigin: input.slackOrigin ?? null,
             slackSearchAuthorization: input.slackSearchAuthorization ?? null,
+            // The only carrier available: a message-started run's execution
+            // context is rebuilt from this blob at activation.
+            seed: input.seed ?? null,
           }),
           attachmentsJson: JSON.stringify(attachmentDescriptors),
           mentionsJson: JSON.stringify(mentions),
