@@ -25,15 +25,15 @@ live object of it is sent one queue message that wakes it. The rest of this
 document is in two halves — what the tracker observes, and what it can make
 happen.
 
-## Sidekick compatibility rollout
+## Sidekick class rename
 
-Sidekick source code currently deploys through the `AutomationDO` compatibility
-export and continues reporting that deployed class to the tracker. Both regional
-configs remain at v9. A later class-rename release must change tracker class
-contracts, report identities, inventory grouping, and force-migration dispatch
-together with the regional binding; changing only the Cloudflare class would
-strand the operational migration view. Verify existing objects in both regions
-before that release and retain the old export until verification completes.
+The renamed owner reports class `SidekickDO` while retaining component
+`automation_do`, so the component schema head and object-ID history remain the
+same. The tracker recognizes both `AutomationDO` and `SidekickDO`. Deploy that
+reader compatibility before the regional API rename. API dispatch accepts either
+name and translates a queued `AutomationDO` command to `SidekickDO` before the
+owner's strict class guard. Namespace inventory and newer reports update each
+existing object row; historical reports retain their original class name.
 
 ## Where the code lives
 
@@ -821,6 +821,14 @@ radius of a misclick. It sits an order of magnitude above the largest class, so
 it does not shape the cost of any run somebody means to make.
 
 ## Changelog
+
+### 2026-09-08 — Stage the Sidekick namespace rename with operational compatibility
+
+Append the class rename only after the dual-export release is verified. Keep
+`automation_do` schema history and object-name bytes, and translate already-queued
+legacy commands so strict owner class checks do not turn the rollout into a dead
+letter backlog. The tracker accepts both labels before either regional rename;
+removing the old Worker export remains a separately verified third deployment.
 
 ### 2026-09-08 — Sidekick compatibility rollout
 

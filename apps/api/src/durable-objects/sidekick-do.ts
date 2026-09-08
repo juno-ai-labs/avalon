@@ -387,7 +387,7 @@ export class SidekickDO extends ConversationParentDurableObject {
   protected override migrationPlan(): DurableObjectMigrationPlan {
     return {
       component: MIGRATION_COMPONENT,
-      className: "AutomationDO",
+      className: "SidekickDO",
       migrations: AUTOMATION_DO_SCHEMA_MIGRATIONS,
     };
   }

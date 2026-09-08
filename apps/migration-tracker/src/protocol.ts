@@ -240,7 +240,8 @@ export const REPORTING_CLASSES = [
   "SubstreamAgent",
   "WorkstreamDO",
   "WorkspaceDO",
-  "AutomationDO",
+  "AutomationDO", // Kept for pre-rename inventory and queued commands.
+  "SidekickDO",
 ] as const;
 
 export const MigrationRunRequestSchema = z.object({

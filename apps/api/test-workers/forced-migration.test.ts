@@ -174,7 +174,15 @@ describe("forceMigration", () => {
 
   it("has a dispatcher for every class the tracker may name", () => {
     expect(Object.keys(migrationCommandDispatchers(env)).sort())
-      .toEqual(["AutomationDO", "SubstreamAgent", "WorkspaceDO", "WorkstreamDO"]);
+      .toEqual(["AutomationDO", "SidekickDO", "SubstreamAgent", "WorkspaceDO", "WorkstreamDO"]);
+  });
+
+  it("accepts renamed and already-queued legacy Sidekick migration commands", async () => {
+    const objectId = env.AUTOMATION_DOS.idFromName("global:00000000-0000-7000-8000-000000000001:automation:00000000-0000-7000-8000-000000000002").toString();
+    for (const className of ["AutomationDO", "SidekickDO"]) {
+      const result = await applyMigrationCommand(env, command({ className, objectId }));
+      expect(result).toMatchObject({ className: "SidekickDO", schemaVersion: MIGRATION_COMMAND_HEADS.SidekickDO });
+    }
   });
 
   it("refuses a class this Worker does not deploy", async () => {
