@@ -82,13 +82,35 @@ export async function pendingParentEffects(stub: DurableObjectStub): Promise<Par
   return rows.map((row) => ParentEffectEnvelopeSchema.parse(JSON.parse(row.payload_json)));
 }
 
+/**
+ * Deliver a batch the way the Queue does: again, until nothing asks to be.
+ *
+ * `consumeActivityQueue` processes a batch with `Promise.all`, so the effects in
+ * one delivery are applied concurrently and in no particular order. A
+ * `directory_user` effect that reaches the workspace before the
+ * `directory_common` effect creating the row it references fails its foreign key
+ * and retries — which is the Queue's designed recovery, not a defect, and the
+ * next delivery applies it. Treating the first retry as fatal asserted an
+ * ordering the system does not promise, and failed roughly one full suite run in
+ * four, on whichever interleaving the scheduler happened to pick.
+ *
+ * Bounded, because a message that never settles is a real failure and the point
+ * of a test helper is to say so: the effects here converge in two deliveries.
+ */
+async function deliverUntilSettled(env: Env, envelopes: unknown[], label: string): Promise<void> {
+  for (let delivery = 1; delivery <= 3; delivery += 1) {
+    const result = await consumeEffectBodies(env, envelopes);
+    if (result.retried === 0) return;
+  }
+  throw new Error(`${label} effect delivery never settled in 3 deliveries`);
+}
+
 /** Child outbox → consumer → parent `receiveChildEffects`. Returns what was delivered. */
 export async function deliverChildEffects(env: Env, child: DurableObjectStub): Promise<ConversationEffectEnvelope[]> {
   const rows = await pendingRows(child, "conversation_effect");
   const envelopes = rows.map((row) => ConversationEffectEnvelopeSchema.parse(JSON.parse(row.payload_json)));
   if (envelopes.length === 0) return envelopes;
-  const result = await consumeEffectBodies(env, envelopes);
-  if (result.retried > 0) throw new Error(`conversation effect delivery retried ${result.retried} message(s)`);
+  await deliverUntilSettled(env, envelopes, "conversation");
   await deleteRows(child, rows);
   return envelopes;
 }
@@ -98,8 +120,7 @@ export async function deliverParentEffects(env: Env, parent: DurableObjectStub):
   const rows = await pendingRows(parent, "parent_effect");
   const envelopes = rows.map((row) => ParentEffectEnvelopeSchema.parse(JSON.parse(row.payload_json)));
   if (envelopes.length === 0) return envelopes;
-  const result = await consumeEffectBodies(env, envelopes);
-  if (result.retried > 0) throw new Error(`parent effect delivery retried ${result.retried} message(s)`);
+  await deliverUntilSettled(env, envelopes, "parent");
   await deleteRows(parent, rows);
   return envelopes;
 }

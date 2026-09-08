@@ -29,6 +29,7 @@ import { workOpportunityRoutes } from "./routes/work-opportunities";
 import { slackIngressRoutes } from "./routes/slack";
 import { authenticatedTelemetryRoutes, publicTelemetryRoutes } from "./routes/telemetry";
 import { telemetryOperatorRoutes } from './routes/telemetry-operations';
+import { workspaceOperatorRoutes } from './routes/workspace-operations';
 import {
   isAllowedGitHubIngressRoute,
   isSharedGitHubIngress,
@@ -125,6 +126,7 @@ export function createApp(): Hono<HonoAppEnv> {
   app.route("/slack", slackIngressRoutes);
   app.route("/telemetry", publicTelemetryRoutes);
   app.route('/internal/telemetry', telemetryOperatorRoutes);
+  app.route('/internal/workspaces', workspaceOperatorRoutes);
 
   const identityApi = new Hono<HonoAppEnv>();
   identityApi.use("*", requireIdentityAuth);

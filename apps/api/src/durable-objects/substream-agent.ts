@@ -196,6 +196,11 @@ import {
   ScheduledDurableObject,
   type ScheduledAlarm,
 } from "./scheduled-alarms";
+import {
+  applyRetirementGate,
+  readObjectRetirement,
+  retiredObjectResponse,
+} from "./object-retirement";
 import type { DurableObjectMigrationPlan } from "./migratable-durable-object";
 import {
   InitializeWorkstreamObjectInputSchema,
@@ -877,7 +882,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private harnessRuns!: WorkstreamHarnessRunStorage;
   /** Schema, repositories, and identity required to admit and snapshot a feed. */
   private readonly storageReady: Promise<void>;
-  private readonly runtimeRecoveryAttempt: () => Promise<void>;
   private runtimeRecovery: Promise<void> | null = null;
   private get initialized(): Promise<void> {
     return this.startRuntimeRecovery();
@@ -987,10 +991,42 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         this.ensurePersistentLoop();
       }
     });
-    // Lease repair and alarm derivation protect execution, not feed reads. Keep
-    // them durable and single-flight, but do not hold a cold socket upgrade
-    // behind the storage alarm round trip once its schema is usable.
-    this.runtimeRecoveryAttempt = () => this.storageReady.then(() => inDurableObjectPhase(
+    const initialRecovery = this.initialized;
+    this.state.waitUntil(initialRecovery.catch((error) => {
+      // Read through a guard: this closure holds the raw receiver, outside the
+      // construction window, so on a retired object the id read itself is
+      // refused — and a throw inside a `waitUntil` callback is an unhandled
+      // rejection rather than the warning this exists to write.
+      let substreamId = "unknown";
+      try {
+        substreamId = this.externalSubstreamId();
+      } catch {
+        // Logged as unknown rather than not at all.
+      }
+      logWarn(this.env, "substream_runtime_recovery_failed", {
+        substream_id: substreamId,
+        reason: error instanceof Error ? error.message : "unknown",
+      });
+    }));
+    // Exact text ping/pong frames are answered by the runtime without waking a
+    // hibernated object, so keepalives do not accrue Durable Object duration.
+    this.state.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
+  }
+
+  /**
+   * Lease repair and alarm derivation for an isolate that replaced another.
+   *
+   * A prototype method rather than a closure the constructor binds, and the
+   * reason is retirement. This runs *outside* the construction window on
+   * purpose — a cold socket upgrade must not wait on the storage alarm round
+   * trip — so on a retired object it meets the gate, and the gate can only lift
+   * itself for a call whose receiver it supplied. A closure over the
+   * constructor's `this` is invisible to that, and is refused on the first
+   * private helper it touches — which is what left a retired agent unreachable
+   * after its first eviction.
+   */
+  private runtimeRecoveryAttempt(): Promise<void> {
+    return this.storageReady.then(() => inDurableObjectPhase(
       this.env,
       "runtime_recovery",
       {
@@ -999,12 +1035,19 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         latestVersion: latestMigrationVersion(WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS),
       },
       async () => {
+      // Nothing to recover on a retired object, and nothing this may write.
+      // The permit that lets recovery run at all carries the whole call, so
+      // without this the lease repair below wrote rows and the alarm sync
+      // re-derived wake reasons into `_internal_durable_alarms` on every
+      // rebuild of a closed agent — a retired object "writing again", and the
+      // one path by which a cleared alarm index could refill.
+      if (readObjectRetirement(this.state.storage.sql) !== null) return;
       // Still-live local leases belong to the isolate this one replaced, so
       // their runs are recoverable now. Already-expired rows stay with the
       // ordinary stale-run reaper.
       const recoveryStartedAt = Date.now();
       const recoverableAttempts = expireLocalAttemptLeasesFromPreviousInstance(
-        state.storage,
+        this.state.storage,
         recoveryStartedAt,
       );
       for (const attempt of recoverableAttempts) {
@@ -1055,16 +1098,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       await this.armNextAlarm();
       },
     ));
-    const initialRecovery = this.initialized;
-    this.state.waitUntil(initialRecovery.catch((error) => {
-      logWarn(this.env, "substream_runtime_recovery_failed", {
-        substream_id: this.externalSubstreamId(),
-        reason: error instanceof Error ? error.message : "unknown",
-      });
-    }));
-    // Exact text ping/pong frames are answered by the runtime without waking a
-    // hibernated object, so keepalives do not accrue Durable Object duration.
-    this.state.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
   }
 
   /**
@@ -6803,3 +6836,26 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     return this.objectStore.commitRealtimeEvent(unsequencedEvent, requestedSequence);
   }
 }
+
+applyRetirementGate(SubstreamAgent, {
+  permit: [
+    // Construction, arriving late. This object recovers its runtime lazily on
+    // first access rather than in its constructor, so the window
+    // `blockConcurrencyWhile` opens for the others closes before this runs.
+    // It is the same category — making the object exist — and refusing it
+    // fences the object out of existence rather than out of use. What recovery
+    // must not do, re-arm an alarm, is prevented by those methods being inert.
+    "startRuntimeRecovery",
+  ],
+  drop: {
+    fetch: () => retiredObjectResponse(),
+    // Hibernated socket callbacks. The socket is already dead to the product;
+    // throwing here would only turn a quiet close into an error nobody reads.
+    webSocketMessage: () => Promise.resolve(),
+    webSocketClose: () => Promise.resolve(),
+    webSocketError: () => Promise.resolve(),
+    // The platform retries an alarm that throws. A retired object answers the
+    // wake by doing nothing and arming nothing, which is what quiet means.
+    alarm: () => Promise.resolve(),
+  },
+});

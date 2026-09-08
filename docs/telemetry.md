@@ -684,6 +684,16 @@ inspect a raw payload or dump through logs. Replay is region- and role-restricte
 preserves the original event ID/hash/deadline, and records only fixed audit codes.
 The operator HTTP surface authenticates against a per-region secret map, derives
 the operator ID/role server-side, and never accepts either value from a request.
+The same code verifies a second map, `DEMO_OPERATORS_JSON`, for the `demos`
+role Ace presents to the workspace retirement route
+([`workspace-retirement.md`](workspace-retirement.md#the-operator-door)); the
+two secrets are set and rotated independently and neither surface reads the
+other's. `requireOperatorFrom(secret)` only verifies the credential, and each
+operator router narrows to the roles it admits with `requireOperatorRole` — the
+telemetry router names `support` and `security` — so a route added here
+inherits the refusal, and a `demos` principal that somehow lands in the
+telemetry map still reaches nothing. Collapsing a router back to the verifier
+alone would hand every token in its map every route.
 
 ## Performance and cost
 
@@ -700,6 +710,39 @@ the dry-run evidence; change batching or sampling only after measuring those
 signals, never by weakening policy or deadline tests.
 
 ## Changelog
+
+### 2026-09-08 — The `demos` credential leaves the telemetry map
+
+**What changed:** `requireTelemetryOperator` is one instance of
+`requireOperatorFrom(secret)`; the other, `requireDemoOperator`, reads
+`DEMO_OPERATORS_JSON`. `TELEMETRY_OPERATORS_JSON` holds telemetry roles only
+again. The context accessor is `getOperator`.
+
+**Why:** The entry below rejected a separate secret on rotation cost. The
+cost that actually arrived was the opposite one: a secret cannot be read back,
+the telemetry map had been set by someone else, and adding Ace's token meant
+overwriting tokens nobody could name. Owned by
+[`workspace-retirement.md`](workspace-retirement.md#changelog).
+
+**Consequences:** This surface's secret is touched only for this surface. The
+role narrowing stays, so a misfiled token is refused either way.
+
+### 2026-09-08 — The operator credential map carries a role this surface refuses
+
+**What changed:** `OperatorPrincipalSchema` in `telemetry/operator-auth.ts`
+gains the `demos` role, and `requireOperatorRole` narrows each router to the
+roles it admits; `telemetry-operations.ts` names `support` and `security`.
+
+**Why:** Workspace retirement ([`workspace-retirement.md`](workspace-retirement.md))
+needed an operator credential that can retire and nothing else. A second
+secret with the same shape is a second thing to rotate for no isolation gained;
+the role is what isolates, and only if every surface names the roles it admits.
+
+**Considered and rejected:** A separate `WORKSPACE_OPERATORS_JSON` — the
+rotation cost above.
+
+**Consequences:** Adding an operator router means naming its roles. A role added
+to the map reaches no surface until a router names it.
 
 ### 2026-09-07 — Search review corrections
 
