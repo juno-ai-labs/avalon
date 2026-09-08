@@ -113,6 +113,8 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect 
     ? [...new Map((response.data?.pages.flatMap((page) => page.results) ?? []).map((result) => [result.id, result])).values()] : [];
   useEffect(() => {
     if (!open || !normalized || settledQuery !== normalized || response.isFetching || !response.isFetched) return;
+    // Keep time-to-results open across explicit continuation, including the user's wait.
+    if (!response.isError && results.length === 0 && response.hasNextPage) return;
     const current = trace.current;
     if (!current) return;
     // Two animation frames put the completion boundary after the committed result paint.
@@ -207,7 +209,7 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect 
         {results.length === 0 && <div className="rally-search-state" role="status">
           {!normalized ? 'Search messages, links, artifacts, and files'
             : (response.isFetching || settledQuery !== normalized) ? 'Searching…'
-            : response.isError ? 'Search could not be completed. Please try again.' : response.hasNextPage ? 'More results are available' : incomplete ? 'No verified results available' : 'No results'}
+            : response.isError ? 'Search could not be completed. Please try again.' : response.hasNextPage ? 'Continue searching' : incomplete ? 'No verified results available' : 'No results'}
         </div>}
       </Dialog.Content>
     </Dialog.Portal>

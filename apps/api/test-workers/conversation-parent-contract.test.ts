@@ -533,7 +533,7 @@ describe("conversation parent contract", () => {
     expect(identities).toHaveBeenCalledTimes(2);
   });
 
-  it("uses the admitted search snapshot without rechecking after content hashing", async () => {
+  it("returns an admitted result when access is revoked mid-request and denies the next request", async () => {
     await seedRoom(PERSONAL_ROOM_ID, "personal", [AUTHOR_ID, PARTICIPANT_ID]);
     const text = 'needle revocation boundary';
     await runInDurableObject(conversation(PERSONAL_ROOM_ID), async (_instance, state) => {

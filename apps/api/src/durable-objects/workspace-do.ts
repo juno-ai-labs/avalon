@@ -3150,7 +3150,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return json({ error: "not_found" }, 404);
   }
 
-  /** Canonical search rows for a batch already admitted by the authorization primitive. */
+  /** Callers must pass only IDs admitted by the authorization primitive; this snapshot query applies no visibility predicates. */
   async resourceSearchRecords(input: unknown): Promise<Array<Record<string, SqlStorageValue>>> {
     await this.initialized;
     const request = z.strictObject({ workspaceId: WorkspaceIdSchema, resourceIds: z.array(IdSchema) }).parse(input);

@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { SearchResult } from '@rally/contracts/search';
 import { ApiError } from '../lib/api';
 import { SearchModal } from './search-modal';
+import * as perfTrace from '../lib/perf-trace';
 
 const result: SearchResult = {
   id: 'message-1', category: 'messages', title: 'Customer research', sourceLabel: 'Customer research',
@@ -54,18 +55,27 @@ describe('workspace search modal', () => {
     expect(onSelect).toHaveBeenCalledWith(result);
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
-  it('waits for explicit continuation after an empty candidate page', async () => {
-    const search = vi.fn<React.ComponentProps<typeof SearchModal>['search']>()
-      .mockResolvedValueOnce({ results: [], nextCursor: 'next' })
-      .mockResolvedValueOnce({ results: [result], nextCursor: null });
-    setup(search);
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'danil' } });
-    await screen.findByText('More results are available');
-    expect(search).toHaveBeenCalledTimes(1);
-    expect(screen.queryByText('No results')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Load more results' }));
-    await screen.findByRole('option');
-    expect(search).toHaveBeenLastCalledWith({ query: 'danil', category: 'all', pageSize: 7, cursor: 'next' }, expect.any(AbortSignal));
+  it('waits for explicit continuation and measures through the first result paint', async () => {
+    const end = vi.fn();
+    const trace = vi.spyOn(perfTrace, 'startPerfTrace').mockReturnValue({
+      traceId: 'search-test', mark: vi.fn(), annotate: vi.fn(), end, step: async (_name, run) => run(),
+    });
+    try {
+      const search = vi.fn<React.ComponentProps<typeof SearchModal>['search']>()
+        .mockResolvedValueOnce({ results: [], nextCursor: 'next' })
+        .mockResolvedValueOnce({ results: [result], nextCursor: null });
+      setup(search);
+      fireEvent.change(screen.getByRole('combobox'), { target: { value: 'danil' } });
+      await screen.findByText('Continue searching');
+      await act(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+      expect(end).not.toHaveBeenCalled();
+      expect(search).toHaveBeenCalledTimes(1);
+      expect(screen.queryByText('No results')).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: 'Load more results' }));
+      await screen.findByRole('option');
+      expect(search).toHaveBeenLastCalledWith({ query: 'danil', category: 'all', pageSize: 7, cursor: 'next' }, expect.any(AbortSignal));
+      await waitFor(() => expect(end).toHaveBeenCalledWith({ outcome: 'completed' }));
+    } finally { trace.mockRestore(); }
   });
 
   it('keeps the first page visible while loading a continuation and preserves result order', async () => {
