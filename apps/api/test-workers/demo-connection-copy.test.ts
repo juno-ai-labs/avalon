@@ -96,7 +96,7 @@ async function seedTemplateConnection(
   workspaceId: string,
   connectionId: string,
   storedKeyVersion: number,
-  owner: { scope: "workspace" | "personal"; ownerUserId: string | null; modelPluginId?: string } = {
+  owner: { scope: "workspace" | "personal"; ownerUserId: string | null; modelPluginId?: string; connectorType?: string } = {
     scope: "workspace",
     ownerUserId: null,
   },
@@ -113,11 +113,12 @@ async function seedTemplateConnection(
        display_name, encrypted_credentials, credential_iv, credential_key_version,
        granted_scopes_json, status, cursor_json, config_json, model_plugin_id,
        created_at, updated_at
-     ) VALUES (?, ?, 'google', ?, ?, 'alex-demo@example.com',
+     ) VALUES (?, ?, ?, ?, ?, 'alex-demo@example.com',
                'Google', ?, ?, ?, '["drive.read"]', 'healthy', '{}', '{}', ?, ?, ?)`,
   ).bind(
     connectionId,
     workspaceId,
+    owner.connectorType ?? "google",
     owner.scope,
     owner.ownerUserId,
     sealed.ciphertext,
@@ -253,6 +254,41 @@ describe("demo connection copying", () => {
       "SELECT COUNT(*) AS n FROM connector_connections WHERE workspace_id = ?",
     ).bind(demoId).first<{ n: number }>();
     expect(rows?.n).toBe(1);
+  });
+
+  it("leaves a connection whose provider revokes remotely behind, so a demo's Disconnect cannot kill the template's grant", async () => {
+    // A copy shares the template's upstream grant. Google disables locally;
+    // every other adapter with `revoke` calls the provider, and the presenter
+    // owns the demo's Disconnect button. Such a connection is skipped and
+    // reported rather than copied and hoped about.
+    const { templateId, demoId, connectionId } = freshPair();
+    const linearId = `${connectionId.slice(0, -1)}f`;
+    const keyed = envWithKeys("2");
+    await claimWorkspaceIdentity(templateId);
+    await claimWorkspaceIdentity(demoId);
+    const sourceDb = workspaceRuntimeDatabase(keyed, templateId);
+    const destinationDb = workspaceRuntimeDatabase(keyed, demoId);
+    await seedTemplateConnection(sourceDb, templateId, connectionId, 2);
+    await seedTemplateConnection(sourceDb, templateId, linearId, 2, {
+      scope: "workspace", ownerUserId: null, modelPluginId: "linear", connectorType: "linear",
+    });
+
+    const result = await copyTemplateConnections(keyed, {
+      sourceWorkspaceId: templateId,
+      destinationWorkspaceId: demoId,
+      sourceDb,
+      destinationDb,
+      now: NOW,
+    });
+
+    expect(result.copied.map((entry) => entry.sourceConnectionId)).toEqual([connectionId]);
+    expect(result.skipped).toEqual([
+      { sourceConnectionId: linearId, connectorType: "linear", displayName: "Google", reason: "shared_grant" },
+    ]);
+    const rows = await destinationDb.prepare(
+      "SELECT connector_type FROM connector_connections WHERE workspace_id = ?",
+    ).bind(demoId).all<{ connector_type: string }>();
+    expect((rows.results ?? []).map((row) => row.connector_type)).toEqual(["google"]);
   });
 
   it("does not create a second set of connections on a resumed preparation", async () => {
