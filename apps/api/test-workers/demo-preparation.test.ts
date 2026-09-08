@@ -188,9 +188,11 @@ async function seedControlPlane(): Promise<void> {
     )`),
   ]);
   // The template's object, with one workspace-scoped connection to copy. A
-  // generic webhook, because it is the one connector the test Worker always
-  // registers: the run child's harness loads every connection in the
-  // workspace, and a type the Worker is not configured for fails the run.
+  // Google connection, the shape a real template holds and the one provider
+  // whose grant may be shared (`demo-connection-copy.ts`). The test Worker
+  // registers Google with placeholder credentials (`wrangler.test.jsonc`)
+  // because the run child's harness loads every connection in the workspace,
+  // and a type the Worker is not configured for fails the run.
   await workspaceStub(DEMO_TEMPLATE_WORKSPACE_ID).initializeWorkspace(asWorkspaceId(DEMO_TEMPLATE_WORKSPACE_ID), "wnam");
   const sealed = await encryptString(JSON.stringify({ refreshToken: "demo-refresh-token" }), CREDENTIALS_KEY, TEMPLATE_CONNECTION_ID);
   await workspaceRuntimeDatabase(preparationEnv(), DEMO_TEMPLATE_WORKSPACE_ID).prepare(
@@ -199,12 +201,9 @@ async function seedControlPlane(): Promise<void> {
        display_name, encrypted_credentials, credential_iv, credential_key_version,
        granted_scopes_json, status, cursor_json, config_json, model_plugin_id,
        created_at, updated_at
-     ) VALUES (?, ?, 'generic_webhook', 'workspace', NULL, 'deploy-hook',
-               'Deploy hook', ?, ?, 1, '[]', 'healthy', '{}', ?, 'plugin_webhook', ?, ?)`,
-  ).bind(
-    TEMPLATE_CONNECTION_ID, DEMO_TEMPLATE_WORKSPACE_ID, sealed.ciphertext, sealed.iv,
-    JSON.stringify({ eventTypes: ["deploy.finished"] }), NOW, NOW,
-  ).run();
+     ) VALUES (?, ?, 'google', 'workspace', NULL, 'drive@alto.example',
+               'Google Drive', ?, ?, 1, '[]', 'healthy', '{}', '{}', 'plugin_google', ?, ?)`,
+  ).bind(TEMPLATE_CONNECTION_ID, DEMO_TEMPLATE_WORKSPACE_ID, sealed.ciphertext, sealed.iv, NOW, NOW).run();
 }
 
 function directoryRank(kind: ParentEffectEnvelope["effect"]["kind"]): number {
@@ -272,7 +271,7 @@ describe("preparing a demo", () => {
       .toEqual({ ready_at: null });
 
     const copied = await runDemoPreparationPhase(prepEnv, OPERATION_ID, "copying_connections", options);
-    expect(copied.detail).toMatchObject({ copied: [{ connectorType: "generic_webhook", displayName: "Deploy hook" }], skipped: [] });
+    expect(copied.detail).toMatchObject({ copied: [{ connectorType: "google", displayName: "Google Drive" }], skipped: [] });
 
     const seeded = await runDemoPreparationPhase(prepEnv, OPERATION_ID, "seeding_conversations", options);
     const receipts = await demoSeedReceipts(env.DB, OPERATION_ID);
