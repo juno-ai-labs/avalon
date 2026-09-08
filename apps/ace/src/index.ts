@@ -1,5 +1,6 @@
 import { ProductFeatureFlagKeySchema } from '@rally/contracts';
 import { Hono } from 'hono';
+import { z } from 'zod';
 import { accessFailureMessage, readAccessConfiguration, verifyAccessRequest, type AccessPrincipal } from './access';
 import { listDeadLetterQueues, peekDeadLetterQueue } from './cloudflare-queue-admin';
 import { searchUsers, searchWorkspaces } from './directory';
@@ -18,6 +19,7 @@ import {
   ModelValidationRequestSchema,
 } from './protocol';
 import { consumeFlagChanges } from './queues';
+import { relayRegionalError, retireWorkspace } from './regional-api';
 
 type AceHono = { Bindings: Env; Variables: { principal: AccessPrincipal } };
 const app = new Hono<AceHono>();
@@ -134,6 +136,54 @@ app.put('/api/models/:role', async (c) => {
     agent_role: role.data,
   }));
   return c.json({ flag });
+});
+
+/**
+ * The workspaces tab. Ace holds nothing here: the route asks the regional API
+ * over the operator credential and relays its answer, and a regional refusal
+ * reaches the page as the code and message the API gave, so an operator reads
+ * "no workspace with this id in this region" rather than "request failed".
+ * Writes are same-origin, like every other write in Ace.
+ */
+const UuidSchema = z.string().uuid();
+const RetireRequestSchema = z.strictObject({
+  region: z.enum(['global', 'eu']),
+  confirmWorkspaceId: z.string().uuid(),
+});
+
+function sameOrigin(c: { req: { header(name: string): string | undefined; url: string } }): boolean {
+  const origin = c.req.header('origin');
+  return Boolean(origin) && origin === new URL(c.req.url).origin;
+}
+
+app.post('/api/workspaces/:workspaceId/retire', async (c) => {
+  if (!sameOrigin(c)) return c.json({ error: 'same_origin_required', message: 'Writes are accepted from the Ace page only.' }, 403);
+  const workspaceId = UuidSchema.safeParse(c.req.param('workspaceId'));
+  const body = RetireRequestSchema.safeParse(await c.req.json().catch(() => null));
+  if (!workspaceId.success || !body.success) {
+    return c.json({ error: 'invalid_retirement_request', message: 'The request needs the region and the typed workspace id.' }, 400);
+  }
+  // Refused here as well as regionally: the confirmation is the whole of the
+  // protection on an irreversible close, and the page is not trusted to have
+  // asked for it.
+  if (body.data.confirmWorkspaceId !== workspaceId.data) {
+    return c.json({ error: 'workspace_retirement_unconfirmed', message: 'Type the workspace id to confirm.' }, 409);
+  }
+  try {
+    const receipt = await retireWorkspace(c.env, {
+      region: body.data.region,
+      workspaceId: workspaceId.data,
+      confirmWorkspaceId: body.data.confirmWorkspaceId,
+    });
+    console.log(JSON.stringify({
+      event: 'ace_workspace_retired',
+      actor_subject: c.get('principal').subject,
+      workspace_id: workspaceId.data,
+      region: body.data.region,
+      complete: receipt.complete,
+    }));
+    return c.json(receipt);
+  } catch (error) { return relayRegionalError(error); }
 });
 
 app.all('/api/*', (c) => c.json({ error: 'not_found' }, 404));

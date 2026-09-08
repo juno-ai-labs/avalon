@@ -58,6 +58,8 @@ button { cursor: pointer; }
 .ace-button { border-radius: 8px; font-size: 12px; font-weight: 750; padding: 10px 15px; }
 .ace-button-primary { background: #ff5b28; border: 0; color: white; }
 .ace-button-primary:hover { background: #e84a18; }
+.ace-button-danger { background: #d9472b; border: 0; color: white; }
+.ace-button-danger:hover:not(:disabled) { background: #b8371f; }
 .ace-button-secondary { background: #fffefa; border: 1px solid #d6d5d0; color: #29394a; }
 .ace-button-quiet { background: transparent; border: 0; color: #8a6460; font-size: 10px; margin-left: auto; padding: 6px; }
 .ace-button:disabled { opacity: .55; }
@@ -196,3 +198,23 @@ input, select { background: #fff; border: 1px solid #d6d6d1; border-radius: 6px;
 .model-preservation { color: #788492; font-size: 10px; line-height: 1.5; margin: 14px 2px; }
 @media (max-width: 900px) { .ace-shell { grid-template-columns: 72px 245px minmax(500px, 1fr); } .primary-nav .brand strong, .primary-nav nav button { font-size: 0; } .primary-nav { padding-inline: 12px; } .primary-nav footer div { display: none; } .brand { justify-content: center; padding-inline: 0; } .primary-nav nav button { justify-content: center; } .primary-nav nav i { font-size: 16px; } }
 @media (max-width: 680px) { .ace-shell { display: block; } .primary-nav { align-items: center; flex-direction: row; height: 64px; padding: 10px 16px; } .brand { padding: 0; } .primary-nav nav { display: flex; margin-left: 20px; } .primary-nav nav button { font-size: 12px; } .primary-nav footer { border: 0; margin-left: auto; padding: 0; } .flag-list, .model-list, .queue-list { border-bottom: 1px solid #ddd; border-right: 0; } .flag-list header, .model-list > header, .queue-list > header { padding: 18px 20px; } .flags, .models, .queues { display: flex; gap: 8px; overflow-x: auto; } .flags > button, .models > button, .queues > button { min-width: 240px; } .flag-list > footer, .model-list > footer, .queue-list > footer { display: none; } .editor-header, .default-section, .targeting, .model-editor-header, .model-purpose, .model-routing, .queue-detail-header, .queue-messages { padding-left: 20px; padding-right: 20px; } .default-section, .model-purpose { align-items: flex-start; gap: 18px; } .flag-controls { align-items: stretch; flex-direction: column; } .condition-grid { grid-template-columns: 1fr; } .rule-result { align-items: flex-start; flex-wrap: wrap; } .rollout { margin-left: 0; } .fallback-row { align-items: start; grid-template-columns: 24px 1fr; } .fallback-actions { grid-column: 2; } .queue-metrics { padding: 0 20px; } .queue-source { padding-inline: 20px; } }
+
+/* Workspaces: the queue page's list-and-detail shape, with a typed confirmation. */
+.workspaces > button { grid-template-columns: minmax(34px, auto) 1fr 10px; }
+.workspaces > button.retired strong { color: #8a94a0; text-decoration: line-through; }
+.demo-id { color: #7b8792; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+.retire-form { border-color: #efc7bc; }
+.retire-consequence { color: #5a2416; font-size: 12px; margin: 0; }
+.demo-receipt-title { font-size: 13px; margin: 0 0 6px; }
+.demo-form { background: #fffefa; border: 1px solid #d9d8d2; border-radius: 10px; padding: 22px 24px; display: grid; gap: 14px; }
+.demo-form label { display: grid; gap: 6px; font-size: 12px; }
+.demo-form label > span { color: #788492; font-size: 10px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; }
+.demo-form input, .demo-form select { border: 1px solid #d6d5d0; border-radius: 7px; padding: 9px 11px; background: #fff; }
+.demo-form-note { color: #7d8791; font-size: 11px; margin: 0; }
+.demo-form-note code { font-size: 10px; }
+.demo-form-actions { display: flex; gap: 10px; }
+.retire-form { margin-top: 22px; }
+.demo-receipt { margin-top: 18px; border: 1px solid #d9d8d2; border-radius: 10px; }
+.workspace-list .queue-list-actions label { display: grid; gap: 6px; font-size: 12px; }
+.workspace-list .queue-list-actions label > span { color: #788492; font-size: 10px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; }
+.workspace-list .queue-list-actions input { border: 1px solid #d6d5d0; border-radius: 7px; padding: 9px 11px; width: 100%; }
