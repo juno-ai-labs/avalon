@@ -57,7 +57,7 @@ import { logStructuredEvent, logWarn } from "../observability/logger";
  * `CrashSymbolicatorContainer` is absent because it is a container rather than a
  * migrated object; it runs no schema and has nothing to force. Add a class here
  * in the same change that adds it to the Worker, and to `REPORTING_CLASSES` in
- * `apps/migration-tracker/src/registry.ts`, which is what decides whether the
+ * `apps/migration-tracker/src/protocol.ts`, which is what decides whether the
  * tracker offers it at all.
  */
 export function migrationCommandDispatchers(env: Env): Record<
@@ -71,7 +71,10 @@ export function migrationCommandDispatchers(env: Env): Record<
       durableObjectStubById(env, env.WORKSTREAM_DOS, objectId).forceMigration(command),
     WorkspaceDO: (objectId, command) =>
       durableObjectStubById(env, env.WORKSPACE_DOS, objectId).forceMigration(command),
+    // Commands already queued under the old class retain the same namespace.
     AutomationDO: (objectId, command) =>
+      durableObjectStubById(env, env.AUTOMATION_DOS, objectId).forceMigration({ ...command, className: "SidekickDO" }),
+    SidekickDO: (objectId, command) =>
       durableObjectStubById(env, env.AUTOMATION_DOS, objectId).forceMigration(command),
   };
 }
@@ -89,6 +92,7 @@ export const MIGRATION_COMMAND_HEADS: Readonly<Record<string, number>> = {
   WorkstreamDO: latestMigrationVersion(WORKSTREAM_DO_SCHEMA_MIGRATIONS),
   WorkspaceDO: latestMigrationVersion(WORKSPACE_DO_SCHEMA_MIGRATIONS),
   AutomationDO: latestMigrationVersion(AUTOMATION_DO_SCHEMA_MIGRATIONS),
+  SidekickDO: latestMigrationVersion(AUTOMATION_DO_SCHEMA_MIGRATIONS),
 };
 
 /**

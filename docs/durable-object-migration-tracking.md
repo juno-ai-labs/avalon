@@ -1,7 +1,7 @@
 # Durable Object migration tracking
 
 Rally runs four migrated Durable Object classes across two regional Workers,
-`SubstreamAgent`, `WorkstreamDO`, `WorkspaceDO`, and `AutomationDO`, and each
+`SubstreamAgent`, `WorkstreamDO`, `WorkspaceDO`, and `SidekickDO`, and each
 object applies its own SQLite migration history in its constructor. Nothing in
 Cloudflare's account model can answer the question that follows from that:
 **which objects are on which schema version, and which of them are broken?** A
@@ -25,15 +25,23 @@ live object of it is sent one queue message that wakes it. The rest of this
 document is in two halves — what the tracker observes, and what it can make
 happen.
 
-## Sidekick compatibility rollout
+## Sidekick class rename
 
-Sidekick source code currently deploys through the `AutomationDO` compatibility
-export and continues reporting that deployed class to the tracker. Both regional
-configs remain at v9. A later class-rename release must change tracker class
-contracts, report identities, inventory grouping, and force-migration dispatch
-together with the regional binding; changing only the Cloudflare class would
-strand the operational migration view. Verify existing objects in both regions
-before that release and retain the old export until verification completes.
+The renamed owner reports class `SidekickDO` while retaining component
+`automation_do`, so the component schema head and object-ID history remain the
+same. The tracker recognizes both `AutomationDO` and `SidekickDO`. Deploy that
+reader compatibility before the regional API rename. API dispatch accepts either
+name and translates a queued `AutomationDO` command to `SidekickDO` before the
+owner's strict class guard. Namespace inventory and newer reports update each
+existing object row; historical reports retain their original class name. Once
+observed as SidekickDO, current object and component labels cannot be reverted
+by a legacy report, even when a sweep preceded the first report.
+
+The third release removes only the old Worker entrypoint export. Keep report
+acceptance and command translation until legacy queued messages and retained
+inventory no longer require them; removing those adapters during the rename
+would defeat their compatibility purpose. The source import shim can be removed
+when its internal callers have migrated independently of the deployed binding.
 
 ## Where the code lives
 
@@ -821,6 +829,24 @@ radius of a misclick. It sits an order of magnitude above the largest class, so
 it does not shape the cost of any run somebody means to make.
 
 ## Changelog
+
+### 2026-09-08 — Keep renamed current identities monotonic
+
+Late legacy reports retain their original labels in event history but cannot
+replace a current SidekickDO object or component label with AutomationDO.
+Queue delivery is unordered, so accepting both names without this guard could
+hide renamed objects from the operator's exact-class migration selection.
+Chronology alone is insufficient for objects discovered by a namespace sweep
+before their first report. Namespace sweeps remain authoritative.
+
+
+### 2026-09-08 — Stage the Sidekick namespace rename with operational compatibility
+
+Append the class rename only after the dual-export release is verified. Keep
+`automation_do` schema history and object-name bytes, and translate already-queued
+legacy commands so strict owner class checks do not turn the rollout into a dead
+letter backlog. The tracker accepts both labels before either regional rename;
+removing the old Worker export remains a separately verified third deployment.
 
 ### 2026-09-08 — Sidekick compatibility rollout
 
