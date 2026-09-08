@@ -279,19 +279,20 @@ export class ProjectService {
       ).bind(this.auth.workspaceId).all<{ user_id: string }>()).results.map((row) => row.user_id)
       : participantUserIds;
     const uniqueReaderIds = [...new Set(readerIds)];
+    const readers = uniqueReaderIds.map((userId) => new ResourceService(this.env, { ...this.auth, userId: asUserId(userId) }));
     for (const resourceId of resourceIds) {
-      await Promise.all(uniqueReaderIds.map(async (userId) => {
+      for (const reader of readers) {
         try {
           // ResourceService routes product reads through WorkspaceDO and applies
           // every connector, note, upload, and inbound-email visibility rule.
           // Reusing it avoids a parallel audience model and any query of the
           // retired D1 product tables.
-          await new ResourceService(this.env, { ...this.auth, userId: asUserId(userId) }).get(resourceId);
+          await reader.get(resourceId);
         } catch (error) {
           if (!(error instanceof ApiError) || error.status !== 404) throw error;
           throw new ApiError(422, "project_resource_audience_mismatch", "Every project participant must be able to read a default resource");
         }
-      }));
+      }
     }
   }
 

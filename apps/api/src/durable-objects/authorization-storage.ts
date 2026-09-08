@@ -19,6 +19,7 @@ export const AUTHORIZATION_STORAGE_TABLES = [
 
 export const AUTHORIZATION_STORAGE_MIGRATION = [
   `CREATE TABLE authorization_snapshots (cache_key TEXT PRIMARY KEY, snapshot_json TEXT NOT NULL, validated_at INTEGER NOT NULL) STRICT`,
+  `CREATE INDEX authorization_snapshots_expiry_idx ON authorization_snapshots(validated_at)`,
   `CREATE TABLE authorization_locations (parent_id TEXT NOT NULL, substream_id TEXT NOT NULL,
      parent_kind TEXT NOT NULL, resource_id TEXT NOT NULL, PRIMARY KEY(parent_id, substream_id, resource_id)) STRICT`,
   `CREATE INDEX authorization_locations_resource_idx ON authorization_locations(resource_id, parent_id, substream_id)`,
@@ -28,11 +29,11 @@ export const AUTHORIZATION_STORAGE_MIGRATION = [
      completed INTEGER NOT NULL DEFAULT 0) STRICT`,
   `CREATE TABLE authorization_backfill_children (parent_id TEXT NOT NULL, substream_id TEXT NOT NULL,
      completed INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(parent_id, substream_id)) STRICT`,
-  `CREATE TABLE authorization_delivery (job_key TEXT PRIMARY KEY, payload_json TEXT NOT NULL, not_before INTEGER NOT NULL) STRICT`,
+  `CREATE TABLE authorization_delivery (job_key TEXT PRIMARY KEY, payload_json TEXT NOT NULL, not_before INTEGER NOT NULL, revision INTEGER NOT NULL DEFAULT 1) STRICT`,
 ];
 
 export function authorizationSnapshotKey(subject: AuthorizationSubject, resource: AuthorizationResource): string {
-  return JSON.stringify([subject, authorizationResourceKey(resource)]);
+  return JSON.stringify([subject.workspaceId, subject.userId, subject.delegation, authorizationResourceKey(resource)]);
 }
 
 /** SQLite owns snapshot publication ordering; cache delivery can never renew evidence. */
@@ -48,10 +49,13 @@ export class AuthorizationStorage {
     return parsed.success && decisionIsFresh(parsed.data.decision, now) ? parsed.data : null;
   }
 
+  pruneExpired(now: number): void {
+    this.storage.sql.exec('DELETE FROM authorization_snapshots WHERE validated_at <= ?', now - AUTHORIZATION_FRESHNESS_MS);
+  }
+
   write(snapshot: AuthorizationSnapshot): void {
     if (!decisionIsFresh(snapshot.decision, Date.now()) || snapshot.decision.status === 'unavailable') return;
     const validatedAt = Math.min(...snapshot.decision.evidence.map((evidence) => evidence.validatedAt));
-    this.storage.sql.exec('DELETE FROM authorization_snapshots WHERE validated_at <= ?', Date.now() - AUTHORIZATION_FRESHNESS_MS);
     this.storage.sql.exec(`INSERT INTO authorization_snapshots(cache_key, snapshot_json, validated_at) VALUES (?, ?, ?)
       ON CONFLICT(cache_key) DO UPDATE SET snapshot_json = excluded.snapshot_json, validated_at = excluded.validated_at
       WHERE excluded.validated_at > authorization_snapshots.validated_at`,

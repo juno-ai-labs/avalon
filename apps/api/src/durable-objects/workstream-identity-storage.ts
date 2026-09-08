@@ -85,10 +85,11 @@ export class WorkstreamIdentityStorage {
     const participant = this.participants().find((row) => row.user_id === input.userId);
     return {
       exists: Boolean(identity),
+      archived: identity?.archived_at != null,
       scope: identity?.scope === 'workspace' ? 'workspace' as const : 'personal' as const,
       participant: Boolean(participant && participant.removed_at === null),
       validatedAt: Date.now(),
-      revision: JSON.stringify([identity?.updated_at ?? null, participant?.added_at ?? null, participant?.removed_at ?? null]),
+      revision: JSON.stringify([identity?.updated_at ?? null, identity?.archived_at ?? null, participant?.added_at ?? null, participant?.removed_at ?? null]),
     };
   }
 
