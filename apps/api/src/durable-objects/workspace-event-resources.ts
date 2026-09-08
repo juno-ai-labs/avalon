@@ -1,4 +1,7 @@
-/** Resolve a closed provider relationship set through the existing identity index. */
+/**
+ * Resolve provider relationships through the identity index.
+ * The caller must first assert the owning Durable Object's workspace identity.
+ */
 export function resolveWorkspaceEventResources(sql: SqlStorage, input: {
   workspaceId: string;
   connectionId: string;
@@ -6,8 +9,8 @@ export function resolveWorkspaceEventResources(sql: SqlStorage, input: {
   providerResourceId: string | null;
   entityKeys: readonly string[];
 }): string[] {
-  // One JSON binding supports the event schema's full key set within SQLite's
-  // variable limit. IN drives exact identity seeks; a correlated OR scans every
+  // One JSON binding avoids increasing SQLite's bound-variable count with
+  // the number of provider keys. IN drives exact identity seeks; a correlated OR scans every
   // resource in the connection once for every incoming event.
   const keys = [...new Set([input.providerResourceId, ...input.entityKeys]
     .filter((key): key is string => key !== null))];

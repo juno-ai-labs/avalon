@@ -95,6 +95,27 @@ export interface WorkspaceScheduleContext {
 /** Every kind of thing a workspace alarm can be waiting on. */
 export type WorkspaceScheduleTargetKind = "schedule" | "watch" | "maintenance" | "terminal";
 
+export const WORKSPACE_SCHEDULE_ALARM_KINDS: readonly WorkspaceScheduleTargetKind[] = [
+  "schedule", "watch", "maintenance", "terminal",
+];
+
+/** Every compatibility-port source declares its complete set, including cascades. */
+export const WORKSPACE_ALARM_SOURCE_KINDS: ReadonlyMap<string, readonly WorkspaceScheduleTargetKind[]> = new Map([
+  ["schedules", ["schedule"]],
+  ["resource_watches", ["watch"]],
+  ["resources", ["maintenance", "watch"]],
+  ["resource_versions", ["maintenance"]],
+  ["resource_object_deletion_outbox", ["maintenance"]],
+  ["note_resource_deletion_outbox", ["maintenance"]],
+  ["note_privacy_change_outbox", ["maintenance"]],
+  ["memory_index_outbox", ["maintenance"]],
+  ["slack_ingress_jobs", ["maintenance"]],
+  ["slack_agent_thread_claims", ["maintenance"]],
+  ["slack_agent_pending_prompts", ["maintenance"]],
+  ["slack_link_challenges", ["maintenance"]],
+  ["slack_unfurled_links", ["maintenance"]],
+]);
+
 export interface WorkspaceScheduleTarget {
   kind: WorkspaceScheduleTargetKind;
   /** A schedule id, a watch id, a maintenance task name, or a work-stream id. */
@@ -104,7 +125,6 @@ export interface WorkspaceScheduleTarget {
 }
 
 interface AlarmTargetRow {
-  target_kind: WorkspaceScheduleTargetKind;
   id: string;
   due_at: string;
 }
@@ -258,21 +278,21 @@ const SCHEDULE_TARGET_QUERIES: readonly { kind: WorkspaceScheduleTargetKind; sql
   {
     kind: "schedule",
     scoped: true,
-    sql: `SELECT 'schedule' AS target_kind, id, next_run_at AS due_at
+    sql: `SELECT id, next_run_at AS due_at
             FROM schedules
            WHERE workspace_id = ?1 AND enabled = 1 AND next_run_at IS NOT NULL`,
   },
   {
     kind: "watch",
     scoped: true,
-    sql: `SELECT 'watch' AS target_kind, id, next_poll_at AS due_at
+    sql: `SELECT id, next_poll_at AS due_at
             FROM resource_watches
            WHERE workspace_id = ?1 AND enabled = 1 AND next_poll_at IS NOT NULL`,
   },
   {
     kind: "maintenance",
     scoped: true,
-    sql: `SELECT 'maintenance' AS target_kind, 'resource_objects' AS id, MIN(created_at) AS due_at
+    sql: `SELECT 'resource_objects' AS id, MIN(created_at) AS due_at
             FROM resource_object_deletion_outbox pending
            WHERE pending.workspace_id = ?1
              AND (pending.cleanup_eligible = 1
@@ -300,7 +320,7 @@ const SCHEDULE_TARGET_QUERIES: readonly { kind: WorkspaceScheduleTargetKind; sql
     // `durable-objects/workspace-resources-storage.ts`, spelled in SQL on this
     // side of the authority boundary — the two must move together, or the
     // alarm fires for drafts the reap will not take.
-    sql: `SELECT 'maintenance' AS target_kind, 'expired_drafts' AS id,
+    sql: `SELECT 'expired_drafts' AS id,
                  strftime('%Y-%m-%dT%H:%M:%SZ', MIN(created_at), '+24 hours', '+1 second') AS due_at
             FROM resources
            WHERE workspace_id = ?1 AND provider = 'avalon_upload'
@@ -317,26 +337,26 @@ const SCHEDULE_TARGET_QUERIES: readonly { kind: WorkspaceScheduleTargetKind; sql
     // Aliases cannot be minted in SQL, so a resource created before the column
     // existed — or whose creation path could not finish its own allocation —
     // waits here. Counts exactly the rows the pass names.
-    sql: `SELECT 'maintenance' AS target_kind, 'resource_slugs' AS id, MIN(created_at) AS due_at
+    sql: `SELECT 'resource_slugs' AS id, MIN(created_at) AS due_at
             FROM resources WHERE workspace_id = ?1 AND slug IS NULL HAVING COUNT(*) > 0`,
   },
   {
     kind: "maintenance",
     scoped: false,
-    sql: `SELECT 'maintenance' AS target_kind, 'note_objects' AS id, MIN(created_at) AS due_at
+    sql: `SELECT 'note_objects' AS id, MIN(created_at) AS due_at
             FROM note_resource_deletion_outbox HAVING COUNT(*) > 0`,
   },
   {
     kind: "maintenance",
     scoped: true,
-    sql: `SELECT 'maintenance' AS target_kind, 'note_privacy' AS id, MIN(created_at) AS due_at
+    sql: `SELECT 'note_privacy' AS id, MIN(created_at) AS due_at
             FROM note_privacy_change_outbox
            WHERE workspace_id = ?1 AND processed_at IS NULL HAVING COUNT(*) > 0`,
   },
   {
     kind: "maintenance",
     scoped: true,
-    sql: `SELECT 'maintenance' AS target_kind, 'memory_index' AS id,
+    sql: `SELECT 'memory_index' AS id,
                  MIN(CASE WHEN status = 'processing' THEN lease_expires_at ELSE available_at END)
                    AS due_at
             FROM memory_index_outbox
@@ -351,7 +371,7 @@ const SCHEDULE_TARGET_QUERIES: readonly { kind: WorkspaceScheduleTargetKind; sql
     // expired or was consumed — the same constant the reap binds — and the
     // rest at their own horizons.
     scoped: true,
-    sql: `SELECT 'maintenance' AS target_kind, 'slack_ingress' AS id, MIN(due_at) AS due_at
+    sql: `SELECT 'slack_ingress' AS id, MIN(due_at) AS due_at
             FROM (
               SELECT MIN(CASE
                        WHEN status = 'processing' THEN lease_expires_at
@@ -374,7 +394,7 @@ const SCHEDULE_TARGET_QUERIES: readonly { kind: WorkspaceScheduleTargetKind; sql
     // (`loadDurableObjectStaleUnfurls`), so a disabled connection's links are
     // not counted here either: a row the sweep never loads never advances.
     scoped: false,
-    sql: `SELECT 'maintenance' AS target_kind, 'slack_unfurls' AS id,
+    sql: `SELECT 'slack_unfurls' AS id,
                  strftime('%Y-%m-%dT%H:%M:%SZ', MIN(link.refreshed_at), '+5 minutes', '+1 second') AS due_at
             FROM slack_unfurled_links link
            WHERE link.shared_at >= datetime('now', '-30 days')
@@ -394,15 +414,16 @@ const SCHEDULE_TARGET_QUERIES: readonly { kind: WorkspaceScheduleTargetKind; sql
  */
 export async function workspaceScheduleTargets(
   ctx: WorkspaceScheduleContext,
-  kinds: readonly WorkspaceScheduleTargetKind[] = ["schedule", "watch", "maintenance", "terminal"],
+  kinds: readonly WorkspaceScheduleTargetKind[] = WORKSPACE_SCHEDULE_ALARM_KINDS,
 ): Promise<WorkspaceScheduleTarget[]> {
   // Run rather than batched: a batch is one transaction, and these are ten
   // independent reads that nothing else depends on being consistent with each
   // other — the alarm re-derives them on every change anyway.
   const workspaceTargets = await Promise.all(
-    SCHEDULE_TARGET_QUERIES.filter((query) => kinds.includes(query.kind)).map((query) => {
+    SCHEDULE_TARGET_QUERIES.filter((query) => kinds.includes(query.kind)).map(async (query) => {
       const statement = ctx.workspaceEnv.DB.prepare(query.sql);
-      return (query.scoped ? statement.bind(ctx.workspaceId) : statement).all<AlarmTargetRow>();
+      const result = await (query.scoped ? statement.bind(ctx.workspaceId) : statement).all<AlarmTargetRow>();
+      return result.results.map((row) => ({ kind: query.kind, id: row.id, dueAt: row.due_at }));
     }),
   );
   const [workstreamTargets, notificationTarget] = await Promise.all([
@@ -414,11 +435,7 @@ export async function workspaceScheduleTargets(
       : { dueAt: null },
   ]);
   return [
-    ...workspaceTargets.flatMap((result) => result.results).map((row) => ({
-      kind: row.target_kind,
-      id: row.id,
-      dueAt: row.due_at,
-    })),
+    ...workspaceTargets.flat(),
     ...workstreamTargets.items.map((target) => ({
       kind: target.kind as WorkspaceScheduleTargetKind,
       id: target.workstreamId,
