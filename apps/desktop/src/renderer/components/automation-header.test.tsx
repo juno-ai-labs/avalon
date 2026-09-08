@@ -99,11 +99,21 @@ describe('AutomationHeader', () => {
     );
     expect(screen.queryByRole('button', { name: 'Apply changes' })).toBeNull();
     expect(screen.getByText('Active')).toBeInTheDocument();
-    expect(screen.getByText('weekly-changelog@automation.rallywith.ai')).toBeInTheDocument();
+    const email = screen.getByText('weekly-changelog@automation.rallywith.ai');
+    expect(email).not.toBeVisible();
+    fireEvent.click(screen.getByText('Email this Sidekick'));
+    expect(email).toBeVisible();
     unmount();
 
     renderHeader({ ...active, currentDefinitionRevision: 2 });
     expect(screen.queryByRole('button', { name: 'Apply changes' })).toBeNull();
+  });
+
+  it('shows the next scheduled time even without current trigger summaries', () => {
+    renderHeader({ ...draft, lifecycle: 'active', nextRunAt: '2026-09-08T12:00:00.000Z', triggerSummaries: [] });
+    expect(screen.getByText('When to expect it')).toBeVisible();
+    expect(screen.getByText(/^Next /)).toBeVisible();
+    expect(screen.queryByRole('list', { name: 'Triggers' })).toBeNull();
   });
 
   it('offers Pause on an active automation and Resume on a paused one', () => {
@@ -207,7 +217,7 @@ describe('AutomationHeader', () => {
     const runs = within(dialog).getByRole('list', { name: 'Runs' });
     expect(runs).toHaveTextContent('Scheduled');
     expect(runs).toHaveTextContent('Three pull requests merged.');
-    expect(runs).toHaveTextContent('completed');
+    expect(runs).toHaveTextContent('Latest run completed');
     fireEvent.click(within(dialog).getByRole('button', { name: 'Close dialog' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Run history' })).toBeNull());
     expect(screen.queryByRole('list', { name: 'Runs' })).toBeNull();

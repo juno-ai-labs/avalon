@@ -242,6 +242,8 @@ describe('citation card image preview', () => {
  */
 describe('scrollbar gutter reservation on the always-tall scrollers', () => {
   it.each([
+    ['.sidekick-profile'],
+    ['.sidekicks-library'],
     ['.transcript-scroll'],
     ['.rail-scroll'],
     ['.settings-navigation'],
