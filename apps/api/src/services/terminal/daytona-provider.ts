@@ -291,13 +291,21 @@ export function createDaytonaTerminalProvider(
    * tidying its read secrets failed. That trade is the wrong way round: a
    * leftover secret is scoped to a sandbox that no longer exists, while an
    * undeleted sandbox is real money and a real authority surface. Teardown
-   * proceeds regardless.
+   * proceeds regardless. Revocation does not get that tolerance: a caller
+   * clearing read access must know the secrets are gone, so its listing
+   * failure still propagates.
    */
-  const clearReadSecrets = async (idOrName: string): Promise<void> => {
+  const clearReadSecrets = async (
+    idOrName: string,
+    options: { tolerateListFailure: boolean },
+  ): Promise<void> => {
     if (!client.secret) return;
     const prefix = secretPrefix(idOrName);
-    const page = await measureRequest("secret.list", () => client.secret!.list({ name: prefix, limit: 20 }))
-      .catch(() => null);
+    const list = (): Promise<{ items: { id: string; name: string }[] } | null> => measureRequest(
+      "secret.list",
+      () => client.secret!.list({ name: prefix, limit: 20 }),
+    );
+    const page = options.tolerateListFailure ? await list().catch(() => null) : await list();
     if (!page) return;
     await Promise.all(page.items
       .filter((secret) => secret.name.startsWith(prefix))
@@ -415,7 +423,7 @@ export function createDaytonaTerminalProvider(
         );
         phase = "verify";
         const verified = await measureRequest("process.execute_utility", () => observed!.process!.executeCommand!(
-          `bash -lc ${shellQuote(terminalSnapshotProbeCommand())}`,
+          `bash -lc ${shellQuote(terminalSnapshotProbeCommand({ requireGitCa: expectedDomainAllowList.length > 0 }))}`,
           undefined,
           undefined,
           120,
@@ -459,6 +467,7 @@ export function createDaytonaTerminalProvider(
             : elapsed(readbackFinishedAt, installFinishedAt),
           verifyMs: phase === "verify" ? elapsed(installFinishedAt, finishedAt) : 0,
           installedCapabilities,
+          missingCapabilities,
         });
         if (observed?.delete) {
           await measureRequest("sandbox.delete", () => observed!.delete!(60, true)).catch(() => undefined);
@@ -510,7 +519,7 @@ export function createDaytonaTerminalProvider(
     async deleteSandbox(idOrName) {
       const sandbox = await load(idOrName);
       if (!sandbox.delete) throw new Error("Daytona sandbox does not support delete");
-      await clearReadSecrets(sandbox.id);
+      await clearReadSecrets(sandbox.id, { tolerateListFailure: true });
       try {
         await measureRequest("sandbox.delete", () => sandbox.delete!(60, true));
         forget(sandbox);
@@ -569,7 +578,7 @@ export function createDaytonaTerminalProvider(
     async clearGitHubReadAccess(idOrName) {
       const sandbox = await load(idOrName);
       if (sandbox.updateSecrets) await measureRequest("sandbox.update_secrets", () => sandbox.updateSecrets!({}));
-      await clearReadSecrets(sandbox.id);
+      await clearReadSecrets(sandbox.id, { tolerateListFailure: false });
     },
     async readFile(idOrName, path) {
       const sandbox = await load(idOrName);

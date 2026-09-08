@@ -1,5 +1,5 @@
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -10,6 +10,7 @@ import {
   terminalBaselineHostAcceptanceCommand,
   terminalManagedSnapshotBootstrapCommand,
   terminalPackageManagerAcceptanceCommand,
+  terminalProbeRunnerCommand,
   terminalSnapshotImageBuildCommand,
   terminalSnapshotProbeCommand,
 } from "../src/services/terminal/snapshot-manifest";
@@ -36,7 +37,7 @@ describe("Terminal snapshot manifest", () => {
     expect(TERMINAL_SNAPSHOT_PROBES.every((probe) => probe.command.length > 0)).toBe(true);
   });
 
-  it("fails the provider probe on the first missing runtime and emits no secrets", () => {
+  it("probes every promised runtime from the pinned command text and emits no secrets", () => {
     const command = terminalSnapshotProbeCommand();
     expect(command).toContain("set -euo pipefail");
     expect(command).toContain("python3 -c");
@@ -104,6 +105,51 @@ describe("Terminal snapshot manifest", () => {
     expect(command).toContain("AVALON_PROBE_MISSING=");
     expect(command).toContain("exit 1");
     expect(command).toContain("trap 'rm -rf -- \"$probe_results\"' EXIT");
+  });
+
+  it("executes the probe runner and fails closed naming every missing capability", () => {
+    // The sweep after `wait` is what makes a failing probe fatal, and a string
+    // match on "exit 1" survives the sweep being broken. Run the generated
+    // script with probes that pass and fail, against a temporary workspace root.
+    const root = mkdtempSync(join(tmpdir(), "avalon-probe-root-"));
+    try {
+      mkdirSync(join(root, ".rally", "tmp"), { recursive: true });
+      mkdirSync(join(root, ".rally-output"), { recursive: true });
+      const run = (probes: readonly { id: string; command: string }[]): { status: number; stdout: string } => {
+        const result = spawnSync("bash", ["-c", terminalProbeRunnerCommand(probes, root)], { encoding: "utf8" });
+        return { status: result.status ?? -1, stdout: result.stdout };
+      };
+
+      const failing = run([
+        { id: "alpha", command: "true" },
+        { id: "beta", command: "false" },
+        { id: "gamma", command: "command -v definitely-not-installed-xyz" },
+      ]);
+      expect(failing.status).toBe(1);
+      expect(failing.stdout).toContain("AVALON_PROBE_MISSING=beta gamma");
+
+      const passing = run([{ id: "alpha", command: "true" }, { id: "beta", command: "true" }]);
+      expect(passing.status).toBe(0);
+      expect(passing.stdout).toContain("alpha:ok");
+      expect(passing.stdout).toContain("beta:ok");
+      // The EXIT trap removes the marker directory on both paths.
+      expect(readdirSync(join(root, ".rally", "tmp"))).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("requires the Git CA only for a sandbox created with a domain allow list", () => {
+    // A Trusted-only sandbox is intercepted and Daytona advertises the CA to it;
+    // one that lacks the bundle would pass the optional probe and fail at its
+    // first Git operation. The full-internet probes keep the optional form.
+    const optional = TERMINAL_SNAPSHOT_PROBES.find((entry) => entry.id === "git-ca")!.command;
+    expect(terminalSnapshotProbeCommand()).toContain(optional);
+    expect(terminalSnapshotProbeCommand({ requireGitCa: false })).toContain(optional);
+    const required = terminalSnapshotProbeCommand({ requireGitCa: true });
+    expect(required).not.toContain(optional);
+    expect(required).toContain('test -n "${CURL_CA_BUNDLE:-}" && test -f "$CURL_CA_BUNDLE"');
+    expect(required.split("\n").filter((line) => line.includes("git-ca:ok"))).toHaveLength(1);
   });
 
   it("accepts an absent Git CA and still rejects a broken one", () => {
