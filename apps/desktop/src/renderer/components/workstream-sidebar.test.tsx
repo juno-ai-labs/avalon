@@ -46,12 +46,23 @@ describe('WorkstreamSidebar', () => {
     const sidebar = screen.getByRole('complementary', { name: 'Work-stream sidebar' });
     const buttons = within(sidebar).getAllByRole('button');
     expect(buttons.map((button) => button.getAttribute('aria-label'))).toEqual([
-      'Collapse work-stream sidebar', 'Go to conversation: Launch preparation', 'Open Launch draft.md', 'Manage work-stream participants',
+      'Go to conversation: Launch preparation', 'Open Launch draft.md', 'Manage work-stream participants', 'Collapse work-stream sidebar',
     ]);
     expect(screen.queryByText('Source ticket')).not.toBeInTheDocument();
     expect(screen.queryByText('Substreams')).not.toBeInTheDocument();
     expect(screen.getByText('document · v2')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Go to conversation: Launch preparation' }).querySelector('svg, img')).toBeNull();
+  });
+
+  it('toggles from the right edge and labels the main conversation with its title', () => {
+    setup();
+    expect(screen.getByText('Launch preparation')).toBeInTheDocument();
+    expect(screen.queryByText('Main log')).not.toBeInTheDocument();
+    const edge = screen.getByRole('separator', { name: 'Resize work-stream sidebar' });
+    fireEvent.doubleClick(edge);
+    expect(edge).toHaveAttribute('aria-valuenow', '96');
+    fireEvent.doubleClick(edge);
+    expect(edge).toHaveAttribute('aria-valuenow', '280');
   });
 
   it('opens artifacts only on click with the clicked button as the preview focus return target', () => {
@@ -104,7 +115,7 @@ describe('WorkstreamSidebar', () => {
     const child = screen.getByRole('button', { name: /Launch risks/ });
     expect(await within(child).findByText('AL')).toBeInTheDocument();
     const sidebar = screen.getByRole('complementary');
-    const navigation = within(sidebar).getAllByRole('button').slice(1, 4);
+    const navigation = within(sidebar).getAllByRole('button').slice(0, 3);
     expect(navigation.map((button) => button.getAttribute('aria-label'))).toEqual([
       'Go to conversation: Launch preparation', 'Go to substream: Launch risks', 'New substream',
     ]);
@@ -164,9 +175,9 @@ describe('WorkstreamSidebar', () => {
     handle.setPointerCapture = vi.fn();
     fireEvent.pointerDown(handle, { clientX: 560, pointerId: 1, button: 0 });
     fireEvent.pointerMove(handle, { clientX: 489, pointerId: 1 });
-    expect(handle).toHaveAttribute('aria-valuenow', '88');
+    expect(handle).toHaveAttribute('aria-valuenow', '96');
     fireEvent.pointerMove(handle, { clientX: 499, pointerId: 1 });
-    expect(handle).toHaveAttribute('aria-valuenow', '88');
+    expect(handle).toHaveAttribute('aria-valuenow', '96');
     fireEvent.pointerMove(handle, { clientX: 520, pointerId: 1 });
     expect(handle).toHaveAttribute('aria-valuenow', '240');
     fireEvent.pointerCancel(handle, { pointerId: 1 });
@@ -183,7 +194,7 @@ describe('WorkstreamSidebar', () => {
     for (let index = 0; index < 20; index++) fireEvent.keyDown(handle, { key: 'ArrowRight' });
     expect(handle).toHaveAttribute('aria-valuenow', '400');
     act(() => { width = 700; resized(); });
-    expect(handle).toHaveAttribute('aria-valuenow', '88');
+    expect(handle).toHaveAttribute('aria-valuenow', '96');
     fireEvent.keyDown(handle, { key: 'ArrowRight' });
     expect(handle).toHaveAttribute('aria-valuenow', '240');
     for (let index = 0; index < 20; index++) fireEvent.keyDown(handle, { key: 'ArrowRight' });
