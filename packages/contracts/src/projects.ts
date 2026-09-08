@@ -43,6 +43,25 @@ export const PROJECT_COLOR_KEYS = [
   "pink",
 ] as const;
 
+/**
+ * Colors a picker may offer. `orange` stays in `PROJECT_COLOR_KEYS` so stored
+ * appearances remain valid; it is not selectable because its neon-yellow paint
+ * fails contrast on chips. `paintProjectColor` maps leftover `orange` to gold.
+ */
+export const PROJECT_COLOR_CHOICES = [
+  "gray",
+  "brown",
+  "red",
+  "yellow",
+  "green",
+  "teal",
+  "cyan",
+  "blue",
+  "indigo",
+  "purple",
+  "pink",
+] as const;
+
 export const ProjectIdSchema = z.string().uuid().brand<"ProjectId">();
 export type ProjectId = z.infer<typeof ProjectIdSchema>;
 export const asProjectId = (value: string): ProjectId => ProjectIdSchema.parse(value);
@@ -51,6 +70,12 @@ export const ProjectIconKeySchema = z.enum(PROJECT_ICON_KEYS);
 export type ProjectIconKey = z.infer<typeof ProjectIconKeySchema>;
 export const ProjectColorKeySchema = z.enum(PROJECT_COLOR_KEYS);
 export type ProjectColorKey = z.infer<typeof ProjectColorKeySchema>;
+export type ProjectColorChoice = (typeof PROJECT_COLOR_CHOICES)[number];
+
+/** Resolve a stored identity key to the token a chip may paint. */
+export function paintProjectColor(key: ProjectColorKey): ProjectColorChoice {
+  return key === "orange" ? "yellow" : key;
+}
 export const ProjectScopeSchema = z.enum(["personal", "workspace"]);
 export type ProjectScope = z.infer<typeof ProjectScopeSchema>;
 export const ProjectStatusSchema = z.enum([

@@ -125,6 +125,16 @@ without changing avatar or project colors. Components select a profile role;
 they do not decide text contrast from a hard-coded list of hues.
 
 
+### 2026-09-08 — Retire neon yellow from identity pickers
+
+The `orange` identity swatch is no longer offered. Its neon paint failed chip
+contrast, and retuning it toward `#ffff3c` did not fix that. Stored `orange`
+remains valid and now paints as gold `yellow` (`#ca8a04`) in both appearances,
+matching the remaining Yellow swatch. Brand fills stay `#ccff00`. Member-message
+`orange` tokens match amber so leftover personal-accent bubbles are not lime.
+Pickers use `PROJECT_COLOR_CHOICES` / `PERSONAL_COLOR_CHOICES`; do not delete
+`orange` from the stored registries.
+
 ### 2026-09-08 — Soften the neon-yellow identity swatch
 
 Work-stream chips that use the legacy `orange` key were painting Rally's brand

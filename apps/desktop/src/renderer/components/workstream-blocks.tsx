@@ -10,7 +10,7 @@ import {
   IconWorldSearch,
   type TablerIcon,
 } from '@tabler/icons-react';
-import type { AutomationPluginActivity } from '@rally/contracts';
+import { paintPersonalColor, type AutomationPluginActivity } from '@rally/contracts';
 import {
   Check,
   ChevronDown,
@@ -2266,12 +2266,13 @@ export function MessageBlock({
     : message.authorType === 'agent' && !message.author && message.messageType === 'elicitation'
       && message.elicitation?.status === 'answered' ? currentUserId : undefined;
   const profile = profileUserId ? presentations.get(profileUserId) : undefined;
+  const paintedColor = profile ? paintPersonalColor(profile.color) : undefined;
   const personStyle = {
     '--person-accent': profile ? 'var(--av-sys-color-text-default)' : turnAccent(message),
-    ...(profile ? {
-      '--person-dot': `var(--av-cmp-member-message-${profile.color}-dot)`,
-      '--av-cmp-bubble-human-background': `var(--av-cmp-member-message-${profile.color}-background)`,
-      '--av-cmp-bubble-human-foreground': `var(--av-cmp-member-message-${profile.color}-foreground)`,
+    ...(paintedColor ? {
+      '--person-dot': `var(--av-cmp-member-message-${paintedColor}-dot)`,
+      '--av-cmp-bubble-human-background': `var(--av-cmp-member-message-${paintedColor}-background)`,
+      '--av-cmp-bubble-human-foreground': `var(--av-cmp-member-message-${paintedColor}-foreground)`,
     } : {}),
   } as React.CSSProperties;
   if (message.messageType === 'thought') return <div className="transcript-event" id={`message-${message.id}`}><ThoughtBlock message={message} /></div>;

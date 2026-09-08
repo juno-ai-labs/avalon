@@ -1,10 +1,10 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { PROJECT_COLOR_KEYS, WORKSTREAM_ICON_KEYS, type WorkstreamAppearance, type WorkstreamAppearancePatch } from '@rally/contracts';
+import { PROJECT_COLOR_CHOICES, WORKSTREAM_ICON_KEYS, paintProjectColor, type WorkstreamAppearance, type WorkstreamAppearancePatch } from '@rally/contracts';
 import { useEffect, useRef, useState } from 'react';
 import { WORKSTREAM_ICON_COMPONENTS, WorkstreamGlyph, workstreamAppearance } from './workstream-glyph';
 
 function label(key: string): string {
-  return key === 'orange' ? 'Neon yellow' : key.split('-').map((part) => part[0]?.toUpperCase() + part.slice(1)).join(' ');
+  return key.split('-').map((part) => part[0]?.toUpperCase() + part.slice(1)).join(' ');
 }
 
 type PendingChoice = {
@@ -68,8 +68,8 @@ export function WorkstreamAppearancePicker({ id, appearance, size, onChange }: {
     <DropdownMenu.Portal>
       <DropdownMenu.Content className="menu-content workstream-appearance-popup" align="start" sideOffset={8} collisionPadding={12} aria-label="Work-stream appearance">
         <DropdownMenu.Label className="workstream-appearance-label">Color</DropdownMenu.Label>
-        <DropdownMenu.RadioGroup value={selected.color ?? ''} className="workstream-appearance-colors" aria-label="Color">
-          {PROJECT_COLOR_KEYS.map((color) => <DropdownMenu.RadioItem key={color} value={color} aria-label={label(color)} title={label(color)} className="workstream-appearance-choice" onSelect={(event) => { event.preventDefault(); change({ color }); }}>
+        <DropdownMenu.RadioGroup value={paintProjectColor(selected.color ?? generated.color)} className="workstream-appearance-colors" aria-label="Color">
+          {PROJECT_COLOR_CHOICES.map((color) => <DropdownMenu.RadioItem key={color} value={color} aria-label={label(color)} title={label(color)} className="workstream-appearance-choice" onSelect={(event) => { event.preventDefault(); change({ color }); }}>
             <span className="workstream-appearance-swatch" style={{ background: `var(--av-sys-color-project-${color})` }} />
           </DropdownMenu.RadioItem>)}
         </DropdownMenu.RadioGroup>

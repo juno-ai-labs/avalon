@@ -1,15 +1,15 @@
 import { useEffect, useRef, type CSSProperties } from 'react';
 import { onboardingMotion } from '../lib/onboarding-motion';
-import type { PersonalPresentation } from '@rally/contracts';
+import { paintPersonalColor, type PersonalPresentation } from '@rally/contracts';
 
 export const personalColorTokens = {
-  blue: 'blue', teal: 'cyan', green: 'green', amber: 'yellow', orange: 'orange', rose: 'pink', violet: 'purple', slate: 'gray',
+  blue: 'blue', teal: 'cyan', green: 'green', amber: 'yellow', rose: 'pink', violet: 'purple', slate: 'gray',
 } as const;
 export function personalColor(color: PersonalPresentation['color']): string {
-  return `var(--av-sys-color-project-${personalColorTokens[color]})`;
+  return `var(--av-sys-color-project-${personalColorTokens[paintPersonalColor(color)]})`;
 }
 export function personalColorInk(color: PersonalPresentation['color']): string {
-  return ['amber', 'orange', 'green', 'teal'].includes(color) ? 'var(--personal-ink-dark)' : 'var(--personal-ink-light)';
+  return ['amber', 'green', 'teal'].includes(paintPersonalColor(color)) ? 'var(--personal-ink-dark)' : 'var(--personal-ink-light)';
 }
 export function PersonalAvatar({ color = 'blue', avatar = 'circle', className = '', style, motion, land = false, initials }: {
   initials?: string;

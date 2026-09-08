@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { MemoryRouter, NavLink, Route, Routes, useLocation } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 import {
-  PROJECT_COLOR_KEYS,
+  PROJECT_COLOR_CHOICES,
   PROJECT_ICON_KEYS,
   ProjectSummarySchema,
   type ProjectSummary,
@@ -152,10 +152,11 @@ describe('the Projects sidebar section', () => {
       const name = icon.split('-').map((part) => `${part[0]!.toUpperCase()}${part.slice(1)}`).join(' ');
       expect(within(dialog).getByRole('button', { name })).toBeInTheDocument();
     }
-    for (const color of PROJECT_COLOR_KEYS) {
-      const name = color === 'orange' ? 'Neon yellow' : `${color[0]!.toUpperCase()}${color.slice(1)}`;
+    for (const color of PROJECT_COLOR_CHOICES) {
+      const name = `${color[0]!.toUpperCase()}${color.slice(1)}`;
       expect(within(dialog).getByRole('button', { name })).toBeInTheDocument();
     }
+    expect(within(dialog).queryByRole('button', { name: 'Neon yellow' })).not.toBeInTheDocument();
     expect(within(dialog).getByRole('button', { name: 'Gray' })).toHaveAttribute('aria-pressed', 'true');
     for (const icon of PROJECT_ICON_KEYS) {
       const name = icon.split('-').map((part) => `${part[0]!.toUpperCase()}${part.slice(1)}`).join(' ');
