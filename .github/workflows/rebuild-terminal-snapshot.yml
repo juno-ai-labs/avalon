@@ -70,21 +70,34 @@ jobs:
         run: |
           set -euo pipefail
           for name in DAYTONA_API_KEY DAYTONA_API_URL DAYTONA_TARGET \
-            TERMINAL_SNAPSHOT_BASE_IMAGE TERMINAL_PROBE_REDIRECT_URL \
-            TERMINAL_PROBE_PRIVATE_DNS_URL; do
+            TERMINAL_PROBE_REDIRECT_URL TERMINAL_PROBE_PRIVATE_DNS_URL; do
             if [ -z "${!name:-}" ]; then
               echo "$name is not configured for this environment" >&2
               exit 1
             fi
           done
 
+      # The dispatch input reaches the shell through the environment, never by
+      # expression interpolation into the script: an interpolated input is
+      # shell-injectable, in a job that holds the Daytona key. The name is also
+      # held to the character set a snapshot, a branch, and the config value can
+      # carry, which keeps the perl rewrite below from writing anything but a
+      # name into both regions' production configs.
       - name: Name this week's snapshot
         id: snapshot
+        env:
+          REQUESTED_NAME: ${{ inputs.snapshot_name }}
         run: |
           set -euo pipefail
-          name="${{ inputs.snapshot_name }}"
+          name="${REQUESTED_NAME:-}"
           if [ -z "$name" ]; then
-            name="rally-terminal-$(date -u +%Y%m%d)"
+            # Minute-stamped so a same-day re-run after a transient failure does
+            # not collide with a snapshot, branch, or pull request that exists.
+            name="rally-terminal-$(date -u +%Y%m%d-%H%M)"
+          fi
+          if ! printf '%s' "$name" | grep -Eq '^[a-z0-9][a-z0-9._-]{0,62}$'; then
+            echo "snapshot_name must match ^[a-z0-9][a-z0-9._-]{0,62}$" >&2
+            exit 1
           fi
           echo "name=$name" >> "$GITHUB_OUTPUT"
           echo "Building $name"
@@ -112,9 +125,17 @@ jobs:
       # team already works, so adoption is one merge and a rollback is one
       # revert — while still keeping a human between a rebuilt image and every
       # new work-stream sandbox.
+      # A pull request opened with `GITHUB_TOKEN` starts no workflows, so it
+      # would get no CI — and it is the one automated change to both regions'
+      # production config, which `deploy-api.yml` ships on merge. A fine-grained
+      # token with contents and pull-requests write on this repository, stored
+      # as `TERMINAL_SNAPSHOT_PR_TOKEN` in the `api-production` environment,
+      # makes the opened pull request run CI like any other. Without it the job
+      # still opens the pull request and says so in the step summary.
       - name: Open the adoption pull request
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.TERMINAL_SNAPSHOT_PR_TOKEN || secrets.GITHUB_TOKEN }}
+          PR_TOKEN_CONFIGURED: ${{ secrets.TERMINAL_SNAPSHOT_PR_TOKEN != '' }}
           SNAPSHOT: ${{ steps.snapshot.outputs.name }}
         run: |
           set -euo pipefail
@@ -123,7 +144,7 @@ jobs:
               's/("DAYTONA_TERMINAL_SNAPSHOT":\s*)"[^"]*"/$1 . chr(34) . $ENV{SNAPSHOT} . chr(34)/e' \
               "$config"
           done
-          if git diff --quiet; then
+          if git diff --quiet -- apps/api/wrangler.global.jsonc apps/api/wrangler.eu.jsonc; then
             echo "Both regions already run \`$SNAPSHOT\`; nothing to adopt." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
@@ -132,7 +153,10 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -b "$branch"
-          git commit -aqm "Daytona Snapshot Upgrade: adopt $SNAPSHOT"
+          # By path: `-a` would sweep anything the build or the gate left in the
+          # tree into a production-config pull request.
+          git add apps/api/wrangler.global.jsonc apps/api/wrangler.eu.jsonc
+          git commit -qm "Daytona Snapshot Upgrade: adopt $SNAPSHOT"
           git push -u origin "$branch"
 
           # The label is what makes these findable as a series rather than one
@@ -165,3 +189,6 @@ jobs:
           BODY
           )"
           echo "Opened the adoption pull request for \`$SNAPSHOT\`." >> "$GITHUB_STEP_SUMMARY"
+          if [ "$PR_TOKEN_CONFIGURED" != "true" ]; then
+            echo "It was opened with GITHUB_TOKEN, so CI did not start on it: push an empty commit or close and reopen it to run the checks. Set TERMINAL_SNAPSHOT_PR_TOKEN in the api-production environment to avoid this." >> "$GITHUB_STEP_SUMMARY"
+          fi

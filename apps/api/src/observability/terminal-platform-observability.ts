@@ -41,6 +41,7 @@ export function recordTerminalPlatformObservation(
   observation: TerminalProviderOperationMeasurement,
 ): void {
   const capabilities = [...new Set(observation.installedCapabilities)].sort();
+  const missing = [...new Set(observation.missingCapabilities ?? [])].sort();
   const fields = {
     operation: observation.operation,
     state: observation.outcome,
@@ -54,6 +55,7 @@ export function recordTerminalPlatformObservation(
     verification_duration_ms: finiteNonNegative(observation.verifyMs),
     installed_capabilities: capabilities.length > 0 ? capabilities.join(",") : "none",
     installed_capability_count: capabilities.length,
+    missing_capabilities: missing.length > 0 ? missing.join(",") : "none",
   };
 
   logStructuredEvent(

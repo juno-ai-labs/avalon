@@ -30,7 +30,10 @@
 import { Daytona, Image } from "@daytona/sdk";
 
 import { parseTerminalRegionConfiguration } from "../src/services/terminal/contract";
-import { terminalSnapshotImageBuildCommand } from "../src/services/terminal/snapshot-manifest";
+import {
+  TERMINAL_SNAPSHOT_BASE_IMAGE,
+  terminalSnapshotImageBuildCommand,
+} from "../src/services/terminal/snapshot-manifest";
 
 const configuration = parseTerminalRegionConfiguration(process.env);
 if (configuration.capability !== "supported") {
@@ -40,15 +43,10 @@ if (configuration.capability !== "supported") {
   );
 }
 
-// Required rather than defaulted: the manifest probes fifteen capabilities, and
-// a base guessed wrong here fails closed at provider acceptance instead of
-// quietly shipping a sandbox missing a runtime the model is told it has.
-const baseImage = process.env.TERMINAL_SNAPSHOT_BASE_IMAGE?.trim();
-if (!baseImage) {
-  throw new Error(
-    "TERMINAL_SNAPSHOT_BASE_IMAGE is required: the Daytona base image this snapshot is built from",
-  );
-}
+// The base is pinned in the manifest so a change to it is a reviewed diff; the
+// environment overrides it for a one-off build. Either way the acceptance gate
+// is what proves the result carries every capability the model is told it has.
+const baseImage = process.env.TERMINAL_SNAPSHOT_BASE_IMAGE?.trim() || TERMINAL_SNAPSHOT_BASE_IMAGE;
 
 const daytona = new Daytona({
   apiKey: configuration.apiKey,
@@ -56,17 +54,27 @@ const daytona = new Daytona({
   target: configuration.target,
 });
 
-const image = Image.base(baseImage).runCommands(terminalSnapshotImageBuildCommand());
+// Daytona keys built images by Dockerfile content: a build whose Dockerfile
+// matches an earlier one hands that image back in about a second, with no build
+// log — the image reference is the SHA-256 of the Dockerfile, which is how this
+// was noticed on 2026-09-07. The weekly rebuild exists to pick up the base
+// image's fixes, so every build has to be a real build. A build-time stamp makes
+// each Dockerfile unique; it also reaches every sandbox as an environment
+// variable, so a sandbox can say which build it came from.
+const builtAt = new Date().toISOString();
+const image = Image.base(baseImage)
+  .env({ RALLY_TERMINAL_SNAPSHOT_BUILT_AT: builtAt })
+  .runCommands(terminalSnapshotImageBuildCommand());
 
-process.stdout.write(`Building Terminal snapshot ${configuration.snapshot} from ${baseImage}\n`);
+process.stdout.write(`Building Terminal snapshot ${configuration.snapshot} from ${baseImage} (built-at ${builtAt})\n`);
 
-await daytona.snapshot.create(
+const created = await daytona.snapshot.create(
   { name: configuration.snapshot, image },
   { onLogs: (line: string) => process.stdout.write(`${line}\n`) },
 );
 
 process.stdout.write(
-  `\nBuilt Terminal snapshot ${configuration.snapshot}.\n`
+  `\nBuilt Terminal snapshot ${created.name} (id ${created.id}, state ${created.state}, created ${created.createdAt}, base ${baseImage}).\n`
   + "It is not adopted yet. Run the real-provider acceptance gate against it first:\n"
   + "  pnpm --filter @rally/api terminal:verify-provider\n",
 );

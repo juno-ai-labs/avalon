@@ -233,7 +233,7 @@ describe("Terminal Bind integration", () => {
           tool_call_id: `${R}:plugin:terminal:activation:2`,
         },
       ]);
-    });
+    }, { timeout: 5_000 });
     info.mockRestore();
   });
 
@@ -267,7 +267,7 @@ describe("Terminal Bind integration", () => {
     await vi.waitFor(() => {
       expect(rows().filter((row) => row.event === "terminal_plugin_activation_finished"))
         .toMatchObject([{ tool_call_id: `${R}:plugin:terminal:activation:1`, state: "completed" }]);
-    });
+    }, { timeout: 5_000 });
     info.mockRestore();
   });
 
@@ -288,6 +288,7 @@ describe("Terminal Bind integration", () => {
         domainAllowList: request.domainAllowList,
       };
     });
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
     const plugin = await createAvalonTerminalPlugin(env, input, undefined, {
       provider: sandboxProvider,
     });
@@ -301,7 +302,15 @@ describe("Terminal Bind integration", () => {
     })).resolves.toBeUndefined();
 
     releaseCreate();
-    await vi.waitFor(() => expect(sandboxProvider.createSandbox).toHaveBeenCalledOnce());
+    // Wait for the activation to settle, not merely for the provider call: the
+    // fixture's databases close in afterEach, and a continuation still running
+    // then would fail underneath the next test rather than this one.
+    await vi.waitFor(() => {
+      expect(sandboxProvider.createSandbox).toHaveBeenCalledOnce();
+      expect(info.mock.calls.map(([entry]) => entry as Record<string, unknown>)
+        .filter((entry) => entry.event === "terminal_plugin_activation_finished"))
+        .toMatchObject([{ state: "completed" }]);
+    }, { timeout: 5_000 });
   });
 
   it("prepares a selected repository during activation", async () => {
@@ -361,7 +370,7 @@ describe("Terminal Bind integration", () => {
         objectStore,
         "SELECT bootstrapped_sandbox_generation FROM terminal_repository",
       )).toEqual({ bootstrapped_sandbox_generation: 1 });
-    });
+    }, { timeout: 5_000 });
 
     await expect(plugin!.tools.find((tool) => tool.definition.name === "read_file")!.execute!(
       { filePath: "README.md", offset: 1, limit: 200 },
@@ -433,6 +442,56 @@ describe("Terminal Bind integration", () => {
         signal: new AbortController().signal,
       },
     )).rejects.toMatchObject({ code: "repository_access_revoked" });
+    expect(sandboxProvider.createSandbox).toHaveBeenCalledOnce();
+    expect(sandboxProvider.runUtilityCommand).not.toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ operation: "file.inspect" }),
+    );
+  });
+
+  it("rejects a tool already waiting on the activation's acquisition when repository access was revoked", async () => {
+    // The acquisition is shared: activation registers it and the next Terminal
+    // tool awaits the same promise. Evicting the cache after preparation fails
+    // never reaches a waiter already holding that promise — it would proceed
+    // with a sandbox whose repository authorization is gone — so preparation
+    // rejects the promise itself. Sandbox creation is parked so the tool is in
+    // flight before the rejection happens; with eviction it would start a
+    // second acquisition instead.
+    const { database, objectStore, env, input } = fixture("supported");
+    selectRepository(database, objectStore);
+    database.exec(`UPDATE connector_connections SET status = 'disabled' WHERE id = '${CONNECTION}'`);
+    const sandboxProvider = provider();
+    let releaseCreate = (): void => undefined;
+    const created = new Promise<void>((resolve) => { releaseCreate = () => resolve(); });
+    vi.mocked(sandboxProvider.createSandbox).mockImplementation(async (request) => {
+      await created;
+      return {
+        id: `sandbox-${request.generation}`,
+        name: request.stableName,
+        state: "running" as const,
+        domainAllowList: request.domainAllowList,
+      };
+    });
+    const plugin = await createAvalonTerminalPlugin(env, input, undefined, {
+      provider: sandboxProvider,
+      readGateway: readGateway(),
+    });
+
+    await plugin!.onActivate!({
+      workspaceId: W, workstreamId: S, harnessRunId: R,
+      executionPrincipal: { type: "user", userId: U }, signal: new AbortController().signal,
+    });
+    const waiting = plugin!.tools.find((tool) => tool.definition.name === "read_file")!.execute!(
+      { filePath: "README.md", offset: 1, limit: 200 },
+      {
+        workspaceId: W, workstreamId: S, harnessRunId: R, toolCallId: "read-while-provisioning",
+        executionPrincipal: { type: "user", userId: U }, signal: new AbortController().signal,
+      },
+    );
+    await vi.waitFor(() => expect(sandboxProvider.createSandbox).toHaveBeenCalledOnce(), { timeout: 5_000 });
+    releaseCreate();
+
+    await expect(waiting).rejects.toMatchObject({ code: "repository_access_revoked" });
     expect(sandboxProvider.createSandbox).toHaveBeenCalledOnce();
     expect(sandboxProvider.runUtilityCommand).not.toHaveBeenCalledWith(
       expect.any(String),
@@ -522,6 +581,7 @@ describe("Terminal Bind integration", () => {
 
   it("keeps the complete plugin visible while the emergency breaker blocks provider operations", async () => {
     const { env, input } = fixture("supported", true);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const tools = await __integrationTesting.loadHarnessTools(env, input);
     const plugin = tools.plugins.find((candidate) => candidate.canonicalId === "rally:terminal");
     expect(plugin?.tools).toHaveLength(9);
@@ -543,5 +603,13 @@ describe("Terminal Bind integration", () => {
       code: "sandbox_unavailable",
       details: { reason: "Wait for an operator to re-enable Terminal before trying another tool." },
     });
+    // The background acquisition that activation started fails the same way,
+    // and its only record is the finished row at warn: nothing reaches the
+    // model from here, and nothing posts to operators.
+    await vi.waitFor(() => {
+      expect(warn.mock.calls.map(([entry]) => entry as Record<string, unknown>)
+        .filter((entry) => entry.event === "terminal_plugin_activation_finished"))
+        .toMatchObject([{ state: "failed", code: "sandbox_unavailable" }]);
+    }, { timeout: 5_000 });
   });
 });

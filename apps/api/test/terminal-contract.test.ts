@@ -126,7 +126,7 @@ describe("Terminal plugin contract", () => {
     // current with Daytona's base, both change this value. A region drifting onto
     // a different snapshot is the thing worth failing on, because the two would
     // then run different toolchains while sharing one acceptance gate.
-    expect(globalVars.DAYTONA_TERMINAL_SNAPSHOT).toBeTruthy();
+    expect(globalVars.DAYTONA_TERMINAL_SNAPSHOT).toMatch(/^[a-z0-9][a-z0-9._-]*$/u);
     expect(euVars.DAYTONA_TERMINAL_SNAPSHOT).toBe(globalVars.DAYTONA_TERMINAL_SNAPSHOT);
   });
 });
