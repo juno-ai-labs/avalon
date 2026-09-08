@@ -4,6 +4,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WorkstreamSummary } from '../lib/types';
 import { WorkstreamLandingScreen } from './workstream-landing';
 
+const socket = vi.hoisted(() => ({ state: 'connecting' }));
+vi.mock('../lib/workspace-socket', () => ({ useWorkspaceSocket: () => socket }));
+
 const directory = vi.hoisted(() => ({ data: undefined as WorkstreamSummary[] | undefined, error: null as Error | null }));
 vi.mock('../lib/use-workstreams-query', () => ({ useWorkstreamsQuery: () => directory }));
 
@@ -28,7 +31,7 @@ function Router({ initial = '/' }: { initial?: string }): React.JSX.Element {
 }
 
 describe('default work-stream landing', () => {
-  beforeEach(() => { directory.data = undefined; directory.error = null; });
+  beforeEach(() => { directory.data = undefined; directory.error = null; socket.state = 'connecting'; });
 
   it('waits for the directory and opens the first pin, not the newest arrival', async () => {
     const view = render(<Router />);
@@ -54,10 +57,11 @@ describe('default work-stream landing', () => {
     expect(await screen.findByTestId('destination')).toHaveTextContent('/workstreams/new');
   });
 
-  it.each(['/workstreams/new', '/workstreams/linked'])('preserves explicit destination %s', async initial => {
-    directory.data = [stream('first', 0, '2026-09-05')];
-    render(<Router initial={initial} />);
-    expect(await screen.findByTestId('destination')).toHaveTextContent(initial);
+  it('surfaces a failed opening socket before the directory query is enabled', () => {
+    socket.state = 'unavailable';
+    render(<Router />);
+    expect(screen.getByText(/Unable to connect to your workspace/u)).toBeVisible();
+    expect(screen.queryByTestId('destination')).toBeNull();
   });
 
   it('does not treat a directory failure as an empty workspace', () => {

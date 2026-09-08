@@ -1133,7 +1133,7 @@ describe('single-platform desktop identity routing', () => {
     }));
     expect(await screen.findByText('global:Workspace A')).toBeVisible();
     await waitFor(() => expect(bridge.openSettings).toHaveBeenCalledWith('connections'));
-    expect(window.location.hash).toBe('#/');
+    expect(window.location.hash).toBe('#/workstreams/new');
   });
 
   it.each([

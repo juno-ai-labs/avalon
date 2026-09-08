@@ -774,10 +774,11 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       const open = async (): Promise<void> => {
         const entered = await enterDeepLinkWorkspace(target);
         // A changed workspace must never leave a resource route from the old
-        // workspace behind it. Resource actions below immediately replace this
-        // safe landing; separate-window actions leave it ready when they close.
+        // workspace behind it. Keep this intermediate route inert while the
+        // resource action resolves; the default landing would open an unrelated
+        // conversation before the deep-link destination arrives.
         if (entered.workspaceChanged) {
-          window.location.hash = '/';
+          window.location.hash = '/workstreams/new';
         }
         await action(entered.api);
       };

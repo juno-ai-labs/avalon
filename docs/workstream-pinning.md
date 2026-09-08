@@ -254,6 +254,15 @@ allocated — `MAX(position) + 1` inside the insert — rather than by the schem
 
 ## Changelog
 
+### 2026-09-07 — Make startup failure and explicit-route coverage match the real shell
+
+The landing now surfaces an unavailable workspace socket even before the list
+query is enabled. Query errors alone cannot report a failed opening connection.
+Explicit New and work-stream destinations are covered through the actual app
+route table; cross-workspace deep links keep an inert composer route while their
+resource action resolves, so the default landing cannot open an unrelated room.
+
+
 ### 2026-09-05 — Open the first sidebar work stream by default
 
 Startup and workspace activation now resolve the root route from the shared
@@ -264,7 +273,7 @@ This replaces the unconditional new-workstream landing because returning members
 should enter their existing conversations. Explicit New actions and deep links
 retain their destinations, and later directory updates never redirect an open
 conversation. The landing component tests cover ordering, pending/empty/error
-states and explicit routes; session tests cover cross-workspace route reset.
+states; app-route tests cover explicit destinations and session tests cover cross-workspace route reset.
 
 ### 2026-09-04 — Retire numbered navigation, retain pin ordering
 
