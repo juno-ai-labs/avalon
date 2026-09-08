@@ -434,8 +434,9 @@ function workstreamHarnessTerminalResult(input: {
   }
   if (stoppedByUser) return { status: "stopped", ...durableTurn };
   if (outcome.status === "completed" && streamedText && finalTurnId) return { status: "completed", finalTurnId };
-  // A tool ended the run (a ready draft submitted, for one): the work is in
-  // the tool's effect, and a model that wrote nothing after it has not failed.
+  // Preserve the harness's tool-ended outcome here. The conversation
+  // terminalizer separately requires a durable final turn; Sidekick submission
+  // returns to the model for that reply rather than taking this path.
   if (outcome.status === "completed" && outcome.completedByTool) return { status: "completed", ...durableTurn };
   if (outcome.status === "completed") {
     return {
