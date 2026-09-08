@@ -338,6 +338,9 @@ retrieval without a query embedding throws `search_embedding_required`. Provider
 write/query failures become content-free errors. The HTTP route returns a generic
 503 rather than exposing provider payloads. A nonexistent namespace is empty
 before its first write; other provider failures are not treated as empty results.
+A malformed canonical resource revision also fails the entire search response with
+503; its content-free diagnostic code is `search_resource_revision_invalid`, so
+operators can distinguish snapshot shape drift from an index/provider failure.
 
 Turbopuffer requires a valid embedding for live documents in a vector-enabled
 namespace. Callers must retain failed projection work for retry. The service does
@@ -465,7 +468,12 @@ budgets require team policy; no arbitrary new caps are introduced here.
 A second review of PR #600 found that coercing a missing revision to the string
 undefined could silently discard every resource result, and the test only checked
 string length. Revisions now parse as integers, and the workerd test compares them
-with the canonical revision RPC. Updated older invariant, boundary, and failure-mode
+with the canonical revision RPC. Malformed-value unit cases exercise the named
+error. The current inner join and integer column already prevent malformed stored
+revisions; this guards future snapshot shape drift, not a reproduced production
+outage. Skipping malformed rows was rejected because it recreates silent result
+loss. Search owns its no-refetch-on-focus policy, so the focus regression test uses
+a default QueryClient and fails when that production option is removed. Updated older invariant, boundary, and failure-mode
 sections that still described hidden refill and post-await checks, superseded by
 PR #600's operation-level admission and explicit pagination. Legacy array clients
 can return zero without continuation; this is the documented compatibility trade-off.

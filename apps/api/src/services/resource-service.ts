@@ -1,7 +1,6 @@
-import { z } from 'zod';
 import { createAccessContext, requireAuthorizedRead } from './authorization-service';
 import type { AccessContext } from './authorization-policy';
-import { resourceSearchText } from './resource-search-text';
+import { resourceSearchRevision, resourceSearchText } from './resource-search-text';
 import { ConnectorError, type ConnectorConnectionContext } from "@rally/connectors";
 import {
   classifyAttachmentKind,
@@ -298,7 +297,7 @@ export class ResourceService {
     const rows = allowed.length ? await (await this.workspaceDirectory()).resourceSearchRecords({ workspaceId: this.auth.workspaceId,
       resourceIds: allowed.map((address) => address.resourceId) }) : [];
     const records = await Promise.all(rows.map(async (row) => {
-      const revision = z.number().int().parse(row.search_revision);
+      const revision = resourceSearchRevision(row.search_revision);
       return { resource: this.toResource(row), text: await resourceSearchText(this.env, row), revision: String(revision) };
     }));
     return { records: new Map(records.map((record) => [record.resource.id, record])),

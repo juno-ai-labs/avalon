@@ -105,6 +105,8 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect 
     staleTime: 0,
     gcTime: 0,
     retry: false,
+    // Focus changes must not restart candidate pages while the reader is choosing.
+    refetchOnWindowFocus: false,
   });
   const incomplete = settledQuery === normalized && response.data?.pages.some((page) => page.complete === false);
   const continuationFailed = response.isFetchNextPageError

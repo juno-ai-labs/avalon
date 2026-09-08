@@ -16,8 +16,7 @@ const result: SearchResult = {
 function setup(search: React.ComponentProps<typeof SearchModal>['search']) {
   const onSelect = vi.fn();
   const onOpenChange = vi.fn();
-  // Match App.tsx: focusing the window must not refetch an admitted search page.
-  const client = new QueryClient({ defaultOptions: { queries: { refetchOnWindowFocus: false } } });
+  const client = new QueryClient();
   render(<QueryClientProvider client={client}><SearchModal workspaceId="workspace:user"
     open onOpenChange={onOpenChange} onSelect={onSelect} search={search} /></QueryClientProvider>);
   return { onSelect, onOpenChange, client };

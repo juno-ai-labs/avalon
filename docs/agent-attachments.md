@@ -44,7 +44,7 @@ source of truth for retry, replay, and compaction recovery.
 
 ### Member search projection
 
-The member Files and Artifacts tabs search resource names, descriptions, and full available text derivatives through Turbopuffer. `resource-search-text.ts` defines the canonical field order for both indexing and match offsets. The source adapter returns this text to the shared Queue Worker pipeline; attachments have no separate chunking or embedding policy. Resource triggers enqueue reindexing when extraction or metadata changes; missing derivatives do not silently become truncated bodies. Search rechecks current resource and attachment authority before displaying excerpts. See [text search](text-search.md).
+The member Files and Artifacts tabs search resource names, descriptions, and full available text derivatives through Turbopuffer. `resource-search-text.ts` defines the canonical field order for both indexing and match offsets. The source adapter returns this text to the shared Queue Worker pipeline; attachments have no separate chunking or embedding policy. Resource triggers enqueue reindexing when extraction or metadata changes; missing derivatives do not silently become truncated bodies. Search admits each resource batch through current resource and attachment authority before loading canonical excerpts. See [text search](text-search.md).
 
 ### Kind and schema selection
 
@@ -617,6 +617,12 @@ terms rather than duplicating attachment text. Future changes must preserve thos
 cheap discovery and continuation paths.
 
 ## Changelog
+
+### 2026-09-08 — Align search admission wording
+
+Updated attachment search to describe PR #600's batch-level admission rather than
+implying another authority check after loading excerpts. Opening a result continues
+to use the resource API's own current authorization checks.
 
 ### 2026-09-05 — Member search projection
 
