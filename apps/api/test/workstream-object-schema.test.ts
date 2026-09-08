@@ -88,6 +88,7 @@ const EXPECTED_TABLES = [
   "elicitation_requests",
   "inference_attempts",
   "member_attention",
+  "object_retirement",
   "object_versions",
   "participant_transcript_attachments",
   "participant_transcript_blocks",

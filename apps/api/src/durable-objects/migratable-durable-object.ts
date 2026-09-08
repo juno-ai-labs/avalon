@@ -22,6 +22,13 @@
 import type { DurableObjectMigrationCommand } from "@rally/contracts/durable-object-migrations";
 import { DurableObject } from "cloudflare:workers";
 
+import {
+  beginConstructorWindow,
+  beginObjectConstruction,
+  endConstructorWindow,
+  endObjectConstruction,
+} from "./object-retirement";
+
 import type { Env } from "../env";
 import { inDurableObjectPhase } from "../observability/tracing";
 import {
@@ -52,6 +59,22 @@ export interface DurableObjectMigrationPlan {
 export abstract class MigratableDurableObject<TEnv extends Env = Env>
   extends DurableObject<TEnv> {
   private readonly constructorStartedAt = Date.now();
+
+  constructor(ctx: DurableObjectState, env: TEnv) {
+    super(ctx, env);
+    // Opened here, before any subclass constructor body runs, because a
+    // subclass must call `super()` first. Everything construction touches is
+    // therefore inside the window — including the methods a constructor calls
+    // directly, which is the class of thing that cannot be enumerated safely.
+    // Three were found one at a time before this moved: `migrationsReady`,
+    // `startRuntimeRecovery`, and `wakeMainSubstream`.
+    //
+    // It is safe to open here for the reason it was safe before: nothing
+    // external is admitted until the constructor's `blockConcurrencyWhile`
+    // resolves, so no product call can take it. It closes when that promise
+    // settles, in `initializeDurableObject` below.
+    beginConstructorWindow(this);
+  }
   /** This class's schema: its component key, its class name, its migrations. */
   protected abstract migrationPlan(): DurableObjectMigrationPlan;
 
@@ -73,6 +96,13 @@ export abstract class MigratableDurableObject<TEnv extends Env = Env>
    * a newly-added object cannot silently recreate the cold-wake blind spot.
    */
   protected initializeDurableObject(run: () => Promise<void>): Promise<void> {
+    // Re-opened for this call's own duration, not only for the constructor's.
+    // `run` is a closure over the raw instance, so nothing the gate does to a
+    // receiver can reach inside it — the window is the only thing that can.
+    // The justification is the same one that makes the window safe at all:
+    // `blockConcurrencyWhile` admits no other event, so there is no window a
+    // product call could take, wherever this is called from.
+    beginObjectConstruction(this);
     const plan = this.migrationPlan();
     return this.ctx.blockConcurrencyWhile(() => inDurableObjectPhase(
       this.env,
@@ -84,7 +114,17 @@ export abstract class MigratableDurableObject<TEnv extends Env = Env>
         startedAt: this.constructorStartedAt,
       },
       run,
-    ));
+    )).finally(() => {
+      // Closed whether construction succeeded or threw. A half-built object
+      // that stayed inside the window would be a permanently ungated one —
+      // which is also why every gated class must reach this method from its
+      // constructor. The refusal tests are what prove they do: if the window
+      // leaked, a retired object would answer a product call.
+      endObjectConstruction(this);
+      // And the constructor's own opening, which the first of these to settle
+      // is what releases. Idempotent, so a second call here changes nothing.
+      endConstructorWindow(this);
+    });
   }
 
   /**
