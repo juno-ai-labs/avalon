@@ -237,6 +237,16 @@ existing rows as seen.
 
 ## Changelog
 
+### 2026-09-07 — Default startup opens a real conversation
+
+Startup selects the first sidebar work stream and opens it through the normal
+conversation route. That open settles unseen, and visible messages are acknowledged
+under the existing focus, visibility, and transcript-position rules. This follows
+the requested first-stream landing; skipping unseen or unread rooms would select a
+different destination from the sidebar. Explicit deep links retain an inert
+intermediate route while resolving, to avoid opening an unrelated conversation.
+
+
 ### 2026-08-24 — Needs attention drops plain unread
 
 **What changed:** `workstreamNeedsAttention` no longer lists a work stream for

@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DesktopSession } from '../common/desktop';
 import { SessionGate } from './App';
+import { setCachedWorkstreams } from './lib/workstreams-cache';
 import { ApiError } from './lib/api';
 import {
   abandonPendingWorkstreamFeedOpen,
@@ -34,6 +35,7 @@ vi.mock('./lib/app-session', () => ({
 }));
 vi.mock('./lib/workspace-socket', () => ({
   WorkspaceSocketProvider: ({ children }: { children: React.ReactNode }) => children,
+  useWorkspaceSocket: () => ({ state: 'connected', sidebarConnect: null }),
 }));
 vi.mock('./screens/onboarding', () => ({
   BootScreen: () => <div>boot screen</div>,
@@ -59,6 +61,7 @@ const identitySession: DesktopSession = {
 
 function renderGate(): void {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  setCachedWorkstreams(queryClient, []);
   render(<QueryClientProvider client={queryClient}><SessionGate /></QueryClientProvider>);
 }
 
@@ -99,6 +102,20 @@ describe('SessionGate identity-first ordering', () => {
 
     expect(await screen.findByText('main workspace UI')).toBeVisible();
     expect(sessionState.getOnboardingState).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['/workstreams/new', 'main workspace UI'],
+    ['/workstreams/00000000-0000-7000-8000-000000000031', 'workstream'],
+  ])('preserves explicit route %s', async (route, destination) => {
+    window.history.replaceState({}, '', `/#${route}`);
+    sessionState.session = {
+      ...identitySession,
+      workspace: { id: 'workspace-1', name: 'Rally Studio', region: 'global', role: 'owner' },
+    };
+    renderGate();
+    expect(await screen.findByText(destination)).toBeVisible();
+    expect(window.location.hash).toBe(`#${route}`);
   });
 
   it('renders the dedicated meeting surface without the workspace shell', async () => {
