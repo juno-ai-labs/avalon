@@ -18,6 +18,10 @@ const reviewerModels = new Map([
 	['review-gpt-56-sol-cline', 'gpt-5.6-sol'],
 	['review-gpt-56-terra-cline', 'gpt-5.6-terra'],
 ]);
+const enabledReviewers = new Set([
+	'review-gpt-56-sol-cline',
+	'review-gpt-56-terra-cline',
+]);
 
 async function readWorkflow() {
 	return readFile(workflowPath, 'utf8');
@@ -64,6 +68,15 @@ test('workflow contains only the expected Azure Cline reviewers', async () => {
 	assert.doesNotMatch(acknowledge, /opencode/u);
 });
 
+test('only Sol and Terra can run, including trusted comment requests', async () => {
+	const jobs = workflowJobs(await readWorkflow());
+	const admission = "(github.event_name == 'pull_request' && github.event.pull_request.draft == false) || (github.event_name == 'issue_comment' && github.event.issue.pull_request != null && contains(fromJSON('[\"OWNER\", \"MEMBER\", \"COLLABORATOR\"]'), github.event.comment.author_association) && contains(github.event.comment.body, '/cline review'))";
+	for (const jobName of reviewerModels.keys()) {
+		const condition = jobs.get(jobName).match(/^ {4}if: >-\n((?: {6}.+\n)+)/mu)?.[1].trim().replace(/\s+/gu, ' ');
+		assert.equal(condition, enabledReviewers.has(jobName) ? admission : `false && ( ${admission} )`, jobName);
+	}
+});
+
 test('each Azure reviewer preserves the proven Monad Cline harness', async () => {
 	const jobs = workflowJobs(await readWorkflow());
 
@@ -100,7 +113,8 @@ test('each Azure reviewer preserves the proven Monad Cline harness', async () =>
 		assert.match(review, new RegExp(`--modelid ${model.replaceAll('.', '\\.')}`, 'u'));
 		assert.match(review, /^ {6}CLINE_NO_AUTO_UPDATE: "1"$/mu);
 		assert.match(review, /^ {8}run: npm install -g cline@3\.0\.47$/mu);
-		assert.match(review, /^ {4}timeout-minutes: 30$/mu);
+		const isTerra = jobName === 'review-gpt-56-terra-cline';
+		assert.match(review, new RegExp(`^ {4}timeout-minutes: ${enabledReviewers.has(jobName) ? 60 : 30}$`, 'mu'));
 
 		const stepNames = [...review.matchAll(/^ {6}- name: (.+)$/gmu)].map(
 			(match) => match[1],
@@ -133,8 +147,11 @@ test('each Azure reviewer preserves the proven Monad Cline harness', async () =>
 		assert.match(modelReview, /GH_TOKEN: \$\{\{ github\.token \}\}/u);
 		assert.match(modelReview, /CLINE_COMMAND_PERMISSIONS/u);
 		assert.match(modelReview, /PROMPT=\$\(cat <<EOF/u);
-		assert.match(modelReview, /You have 15 minutes \(wall clock\)\./u);
+		assert.match(modelReview, new RegExp(`You have ${isTerra ? 60 : 15} minutes \\(wall clock\\)\\.`, 'u'));
 		assert.doesNotMatch(modelReview, /You have 20 minutes \(wall clock\)\./u);
+		if (isTerra) {
+			assert.match(modelReview, /Give each sub-agent a 15-minute budget\./u);
+		}
 		assert.match(
 			modelReview,
 			/cline --cwd "\$GITHUB_WORKSPACE" --auto-approve true "\$PROMPT"/u,
