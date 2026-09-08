@@ -293,12 +293,17 @@ retiring anything; an abandon whose walk could not finish is asked again and
 returns to the objects that remain. A published demo is retired from the
 workspaces tab like any other workspace.
 
-**The operator API is behind the operator credential, in its own role.** Each
-region's `TELEMETRY_OPERATORS_JSON` holds a token in the `demos` role, which
-can start, read, retry and abandon preparations, read the template's cast
-candidates, and retire a workspace — and nothing else. Every operator router
-names the roles it admits, so the telemetry router refuses `demos` and this
-router refuses the telemetry roles. Retirement takes the confirmation the page
+**The operator API is behind the operator credential, in its own role and its
+own secret.** Each region's `DEMO_OPERATORS_JSON` holds a token in the `demos`
+role, which can start, read, retry and abandon preparations, read the
+template's cast candidates, and retire a workspace — and nothing else. It is a
+secret of its own, the same shape as the telemetry surface's
+`TELEMETRY_OPERATORS_JSON` and parsed by the same code, so setting or rotating
+Ace's token never touches the telemetry tokens
+([`workspace-retirement.md`](workspace-retirement.md#changelog) records why).
+Every operator router names the secret it reads and the roles it admits, so
+the telemetry router refuses `demos`, this router refuses the telemetry
+roles, and a token filed in the wrong secret is refused either way. Retirement takes the confirmation the page
 collected — the operator typed or pasted the id — and refuses unless it names
 the workspace, and refuses an id this region's `workspaces` table does not
 hold, so the irreversible call cannot be made by a page that forgot to ask nor
@@ -574,6 +579,22 @@ the cast discussed is answerable. That was a product defect in every
 multi-person room, not a demo concern, and it is fixed where it lived.
 
 ## Changelog
+
+### 2026-09-08 — The demo routes read `DEMO_OPERATORS_JSON`
+
+**What changed:** `demo-operations.ts` verifies Ace's token with
+`requireDemoOperator`, against the per-region `DEMO_OPERATORS_JSON` secret,
+not the telemetry map; the route test refuses a telemetry token as invalid
+and a `support` principal filed in the demo map by role.
+
+**Why:** Decided in [#593](https://github.com/juno-ai-labs/avalon/pull/593)
+and recorded in [`workspace-retirement.md`](workspace-retirement.md#changelog):
+a Worker secret cannot be read back, and adding the `demos` role to a
+telemetry secret somebody else had set meant overwriting tokens nobody could
+name. These routes follow the retirement route to the same secret.
+
+**Consequences:** Operators set `DEMO_OPERATORS_JSON` in Global before the
+first demo; `TELEMETRY_OPERATORS_JSON` is never touched for this feature.
 
 ### 2026-09-08 — Review: what a demo may share, what a retry can reach, and where the driver is bound
 

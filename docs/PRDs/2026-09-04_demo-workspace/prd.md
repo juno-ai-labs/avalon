@@ -666,6 +666,24 @@ widened: a provider whose disconnect revokes remotely is not included either.
 Shipped in
 [#594](https://github.com/juno-ai-labs/avalon/pull/594).
 
+### 2026-09-08 — Ace's credential has a secret of its own
+
+**Decided:** The `demos` operator token is read from a per-region secret of
+its own, `DEMO_OPERATORS_JSON`, with the same shape as the telemetry
+surface's map. It no longer lives in `TELEMETRY_OPERATORS_JSON`.
+
+**Why:** Reverses the 2026-09-07 entry's "one secret per region holds every
+operator token". A Worker secret cannot be read back, the telemetry map had
+been set by someone else with tokens nobody could name, and adding Ace's
+token meant overwriting all of them. Two credentials set by different people
+for different surfaces should not share a value; the role narrowing that
+isolates the surfaces is unchanged.
+
+**Changes:** Nothing in the agreed scope; **Provider configuration** gains one
+secret to set per region. Shipped in
+[#593](https://github.com/juno-ai-labs/avalon/pull/593) and
+[#594](https://github.com/juno-ai-labs/avalon/pull/594).
+
 ## Key design decisions
 
 1. **September 4: real time and fresh identities.** No backdating and no resets.
