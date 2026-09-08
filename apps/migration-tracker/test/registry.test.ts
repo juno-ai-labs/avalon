@@ -137,6 +137,41 @@ beforeEach(async () => {
 });
 
 describe("recordReport", () => {
+  it("keeps a renamed Sidekick in one object row and forceable under its new class", async () => {
+    const result = await withRegistry((registry) => {
+      record(registry, report({ className: "AutomationDO", component: "automation_do", occurredAt: 1000 }));
+      record(registry, report({ className: "SidekickDO", component: "automation_do", occurredAt: 2000 }));
+      return { page: registry.listObjects(ObjectQuerySchema.parse({})), selection: registry.migrationTargets({ className: "SidekickDO" }) };
+    });
+    expect(result.page.total).toBe(1);
+    expect(result.page.objects[0]).toMatchObject({ className: "SidekickDO", component: "automation_do", status: "current" });
+    expect(result.selection.targets).toHaveLength(1);
+    expect(result.selection.targets[0]?.objectId).toBe(objectId("a"));
+  });
+
+  it("keeps the renamed class when legacy reports arrive after reports or a sweep", async () => {
+    const result = await withRegistry((registry) => {
+      record(registry, report({ className: "SidekickDO", component: "automation_do", occurredAt: 2000 }));
+      registry.recordSweep(sweep({ namespaces: [{
+        namespaceId: "sidekick-namespace", scriptName: "avalon-api-global",
+        className: "SidekickDO", usesSqlite: true,
+        objects: [{ objectId: objectId("b"), hasStoredData: true }],
+      }] }));
+      record(registry,
+        report({ className: "AutomationDO", component: "automation_do", occurredAt: 1000 }),
+        report({ objectId: objectId("b"), className: "AutomationDO", component: "automation_do", occurredAt: 1000 }),
+      );
+      return {
+        overview: registry.overview(),
+        selection: registry.migrationTargets({ className: "SidekickDO" }),
+        page: registry.listObjects(ObjectQuerySchema.parse({})),
+      };
+    });
+    expect(result.overview.components[0]?.className).toBe("SidekickDO");
+    expect(result.page.objects.map((object) => object.className)).toEqual(["SidekickDO", "SidekickDO"]);
+    expect(result.selection.targets).toHaveLength(2);
+  });
+
   it("records a successful migration and marks the object current", async () => {
     const page = await withRegistry((registry) => {
       record(registry, report());
