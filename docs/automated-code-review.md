@@ -1,8 +1,9 @@
 # Automated code review
 
-Rally's automated code review workflow runs five independent Cline reviewers
-against pull requests using models served by Azure AI Foundry. It is an
-Azure-only extraction of Monad's proven reviewer workflow: OpenCode and
+Rally's automated code review workflow runs two independent Cline reviewers,
+GPT-5.6 Sol and GPT-5.6 Terra, against pull requests using models served by Azure
+AI Foundry. DeepSeek, Grok, and Kimi remain configured but disabled for all
+triggers. It is an Azure-only extraction of Monad's proven reviewer workflow: OpenCode and
 OpenRouter-backed jobs are intentionally absent.
 
 ## Where the code lives
@@ -15,23 +16,24 @@ OpenRouter-backed jobs are intentionally absent.
 ## How it works
 
 The workflow starts through `pull_request` when a pull request is opened,
-reopened, or marked ready for review. Each reviewer excludes drafts from that
-automatic path. A repository owner, member, or collaborator can request a fresh
-review by commenting `/cline review`; a small acknowledgment job reacts with
-eyes while the reviewers run.
+reopened, or marked ready for review. Each enabled reviewer excludes drafts from
+that automatic path. DeepSeek, Grok, and Kimi have an unconditional false job
+gate, including for trusted comment requests. A repository owner, member, or
+collaborator can request a fresh review by commenting `/cline review`; a small
+acknowledgment job reacts with eyes while the reviewers run.
 
 The workflow contains five separate Azure Cline jobs. The first three were
 copied from `juno-ai-labs/monad` at commit
 `8eac60499845f00afaa2db6dd41b1578c169436b`; the two GPT-5.6 jobs are Rally
 copies of that same shape:
 
-| Job | Azure deployment/model identifier |
-| --- | --- |
-| `review-deepseek-cline` | `DeepSeek-V4-Pro` |
-| `review-grok-46-azure-cline` | `grok-4.6` |
-| `review-kimi-cline` | `Kimi-K2.6` |
-| `review-gpt-56-sol-cline` | `gpt-5.6-sol` |
-| `review-gpt-56-terra-cline` | `gpt-5.6-terra` |
+| Job | Azure deployment/model identifier | Status | Job / prompt budget |
+| --- | --- | --- | --- |
+| `review-deepseek-cline` | `DeepSeek-V4-Pro` | Disabled | 30 / 15 minutes |
+| `review-grok-46-azure-cline` | `grok-4.6` | Disabled | 30 / 15 minutes |
+| `review-kimi-cline` | `Kimi-K2.6` | Disabled | 30 / 15 minutes |
+| `review-gpt-56-sol-cline` | `gpt-5.6-sol` | Enabled | 60 / 15 minutes |
+| `review-gpt-56-terra-cline` | `gpt-5.6-terra` | Enabled | 60 / 60 minutes |
 
 The two GPT-5.6 deployments run as separate jobs rather than one, for the same
 reason the other three do: a reviewer's value is an independent read of the
@@ -47,14 +49,16 @@ model writes `$GITHUB_WORKSPACE/cline-review.md`; a fixed later step checks the
 path and scans it for credentials before posting it.
 
 The workflow intentionally does not run on `synchronize`. New commits do not
-spend five more model calls automatically; use the comment command when the
+start another review round automatically; use the comment command when the
 updated head is ready.
 
 ## Invariants
 
-- The only reviewers are the DeepSeek V4 Pro, Grok 4.6, Kimi K2.6, GPT-5.6 Sol,
-  and GPT-5.6 Terra Azure Cline jobs. Grok 4.6 replaced Monad's imported Grok
-  4.3 job; the five jobs otherwise retain the same duplicated harness shape.
+- Only GPT-5.6 Sol and GPT-5.6 Terra may run. DeepSeek V4 Pro, Grok 4.6,
+  and Kimi K2.6 retain their harness definitions behind an unconditional false
+  job gate, so neither automatic nor comment-triggered runs spend their budget.
+  Grok 4.6 replaced Monad's imported Grok 4.3 job; the five jobs otherwise retain
+  the same duplicated harness shape.
   OpenRouter credentials, providers, and jobs do not belong here.
 - The automatic trigger is `pull_request`, and every reviewer explicitly
   rejects drafts. The comment trigger accepts only pull request comments from
@@ -86,9 +90,12 @@ Global and EU runtime boundary does not apply.
 
 ## Failure modes and limits
 
-- Each reviewer job times out after 30 minutes, while its prompt tells the
-  reviewer it has 15 minutes. The acknowledgment job times out after two
-  minutes.
+- Sol has a 60-minute job timeout and a 15-minute prompt budget. Terra has a
+  60-minute job timeout and a 60-minute prompt budget, explicitly requested after
+  the reviewer audit. Terra's prompt gives each sub-agent a 15-minute budget.
+  Setup and posting share that job ceiling; the prompt is
+  advisory, not a separate timer. Disabled jobs retain their 30/15-minute values.
+  The acknowledgment job times out after two minutes.
 - A newer run of the same reviewer for the same pull request cancels its older
   run. Because command detection uses substring matching, quoting
   `/cline review` in an ordinary comment also starts reviewers.
@@ -104,10 +111,12 @@ Global and EU runtime boundary does not apply.
 ## Testing
 
 `pnpm test:scripts` runs
-`scripts/azure-reviewer-workflow.test.mjs`. It checks that only the five Azure
-jobs exist and that each retains Monad's positional prompt, checkout placement,
-automatic approval, permissions, fixed post path, 30-minute job ceiling, and
-15-minute reviewer-facing budget.
+`scripts/azure-reviewer-workflow.test.mjs`. It checks the five retained Azure job
+definitions, the exact admission gates that enable only Sol and Terra, and each
+job's positional prompt, checkout placement, automatic approval, permissions,
+fixed post path, and individual job/prompt budgets. Terra is pinned to 60/60
+minutes with a 15-minute budget for each sub-agent, Sol to 60/15, and disabled
+jobs to 30/15.
 
 Run the repository quality gates after any workflow change:
 
@@ -155,6 +164,57 @@ Use the Actions run for checkout, installation, endpoint-validation, provider,
 and model errors.
 
 ## Changelog
+
+### 2026-09-08 — Give Terra's sub-agents individual budgets
+
+**What changed:** Terra's review prompt now instructs it to give each sub-agent
+a 15-minute budget.
+
+**Why:** The team requested an explicit budget for delegated reviews within
+Terra's existing 60-minute overall budget.
+
+**Considered and rejected:** Reducing Terra's overall budget would also reduce
+the time available to coordinate and synthesize the reviews.
+
+**Consequences:** The sub-agent budget is a prompt instruction, not an enforced
+timer. Terra's overall budget and the other reviewers' prompts are unchanged.
+
+### 2026-09-08 — Extend Sol's job ceiling without changing its prompt
+
+**What changed:** Sol's GitHub Actions timeout is 60 minutes. Its prompt still
+says 15 minutes; the workflow contract tests pin those values independently.
+
+**Why:** The team requested additional execution time for Sol without telling
+the model about that additional budget.
+
+**Considered and rejected:** Updating Sol's prompt to 60 minutes would contradict
+the requested separation between the runner ceiling and model-facing budget.
+
+**Consequences:** Sol can continue until the 60-minute job ceiling, including
+setup and publication, while still being instructed to finish its review within
+15 minutes. Terra and the disabled reviewer gates are unchanged.
+
+### 2026-09-08 — Disable three reviewers and extend Terra's budget
+
+**What changed:** DeepSeek, Kimi, and Grok are disabled at the job gate for both
+automatic and trusted comment triggers. Sol remains enabled. Terra's job timeout
+and reviewer-facing prompt budget are both 60 minutes. Tests pin the enabled set
+and each budget.
+
+**Why:** The latest-50-PR audit found substantial review noise and unreliable
+Grok delivery. The team requested those three lanes stop running and explicitly
+chose a longer Terra budget after its repeated 30-minute timeouts.
+
+**Considered and rejected:** Keeping the three lanes available through the
+comment command would not satisfy disabling them from running. Removing their
+harness definitions would make a future deliberate re-enable harder to review.
+Increasing every reviewer's timeout would exceed the requested scope.
+
+**Consequences:** New review rounds run only Sol and Terra once this workflow is
+in the ref used by the trigger. Already-running jobs and old workflow reruns keep
+their original configuration. Re-enabling a lane requires changing its gate and
+the enabled-set test; Terra's larger budget is not a claim that its reliability
+problem is fixed.
 
 ### 2026-09-01 — Reviewer job and prompt budgets separated
 
