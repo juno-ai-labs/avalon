@@ -1,26 +1,40 @@
 import type { Message } from './types';
 import type { StreamCursor } from './workstream-socket-resume';
 
-/** The wire batches for 100ms; use that cadence until arrivals teach us otherwise. */
-export const STREAM_REVEAL_DRAIN_MS = 100;
+/** The wire's 100ms batch interval seeds cadence and sets the estimator's weighting timescale. */
+export const STREAM_REVEAL_CADENCE_MS = 100;
 const FIRST_FRAME_MS = 17;
 
-/** Update only for accepted, nonempty text deltas, never replayed frames. */
+/**
+ * Update only for accepted, nonempty text deltas, never replayed frames.
+ * `characters` and `backlog` count UTF-16 code units, matching string slicing.
+ */
 export function recordStreamArrival(
   previous: StreamCursor['pacing'],
   characters: number,
   backlog: number,
   now: number,
 ): NonNullable<StreamCursor['pacing']> {
-  const elapsed = previous ? Math.max(0, now - previous.lastArrivalAt) : STREAM_REVEAL_DRAIN_MS;
+  // A drained buffer has no active arrival clock. Retain its cadence rather
+  // than teaching the estimator how long the provider was idle. Packet size
+  // still updates the rate, so a resumed fast stream can accelerate immediately.
+  const elapsed = previous?.lastArrivalAt != null
+    ? Math.max(0, now - previous.lastArrivalAt)
+    : previous?.cadenceMs ?? STREAM_REVEAL_CADENCE_MS;
   // Weight by elapsed time so co-delivered packets cannot manufacture a huge
   // rate. Accumulate their characters until there is a measurable interval.
   const pending = (previous?.pendingCharacters ?? 0) + characters;
-  if (previous && elapsed === 0) return { ...previous, pendingCharacters: pending, drawRate: Math.max(previous.drawRate, backlog / previous.cadenceMs) };
-  const weight = elapsed / (STREAM_REVEAL_DRAIN_MS + elapsed);
+  if (previous && elapsed === 0) {
+    return {
+      ...previous,
+      pendingCharacters: pending,
+      drawRate: Math.max(previous.drawRate, backlog / previous.cadenceMs),
+    };
+  }
+  const weight = elapsed / (STREAM_REVEAL_CADENCE_MS + elapsed);
   const cadenceMs = previous
     ? previous.cadenceMs + weight * (elapsed - previous.cadenceMs)
-    : STREAM_REVEAL_DRAIN_MS;
+    : STREAM_REVEAL_CADENCE_MS;
   const measuredRate = pending / elapsed;
   const rate = previous
     ? previous.rate + weight * (measuredRate - previous.rate)
@@ -34,7 +48,7 @@ export function recordStreamArrival(
 }
 
 /** Fractional UTF-16 units; callers carry the remainder across painted frames. */
-export function revealBudget(backlog: number, elapsedMs: number, rate = backlog / STREAM_REVEAL_DRAIN_MS): number {
+export function revealBudget(backlog: number, elapsedMs: number, rate: number): number {
   return Math.min(backlog, Math.max(0, rate * elapsedMs));
 }
 
@@ -52,6 +66,16 @@ export function alignRevealBoundary(text: string, index: number): number {
   if (index >= text.length) return text.length;
   const preceding = text.charCodeAt(index - 1);
   return preceding >= 0xd800 && preceding <= 0xdbff ? index + 1 : index;
+}
+
+/** Park on the last drawing tick, not on a future tick that may never run. */
+function parkStreamReveal(cursor: StreamCursor): void {
+  cursor.lastRevealAt = null;
+  if (cursor.pacing) {
+    cursor.pacing.credit = 0;
+    cursor.pacing.lastArrivalAt = null;
+    cursor.pacing.pendingCharacters = 0;
+  }
 }
 
 /**
@@ -75,8 +99,7 @@ export function advanceStreamReveal(
     if (cursor.completed) continue;
     const backlog = cursor.receivedText.length - cursor.revealed;
     if (backlog <= 0) {
-      cursor.lastRevealAt = null;
-      if (cursor.pacing) cursor.pacing.credit = 0;
+      parkStreamReveal(cursor);
       continue;
     }
     const elapsed = cursor.lastRevealAt === null
@@ -89,11 +112,18 @@ export function advanceStreamReveal(
     cursor.lastRevealAt = now;
     pacing.credit = available - budget;
     if (budget > 0) {
-      cursor.revealed = alignRevealBoundary(cursor.receivedText, cursor.revealed + budget);
-      pacing.credit -= cursor.revealed - (cursor.receivedText.length - backlog) - budget;
+      const previousRevealed = cursor.revealed;
+      cursor.revealed = alignRevealBoundary(cursor.receivedText, previousRevealed + budget);
+      pacing.credit -= cursor.revealed - previousRevealed - budget;
       changed = true;
     }
-    if (cursor.receivedText.length > cursor.revealed) backlogRemains = true;
+    if (cursor.receivedText.length > cursor.revealed) {
+      backlogRemains = true;
+    } else {
+      // This is the last scheduled tick: there may never be an empty-buffer
+      // tick to do cleanup. Neither drawing nor estimation may bank idle time.
+      parkStreamReveal(cursor);
+    }
   }
   return { changed, backlogRemains };
 }
@@ -105,10 +135,9 @@ export function flushStreamReveal(cursors: ReadonlyMap<string, StreamCursor>): b
     if (cursor.completed) continue;
     if (cursor.revealed < cursor.receivedText.length) {
       cursor.revealed = cursor.receivedText.length;
-      cursor.lastRevealAt = null;
-      if (cursor.pacing) cursor.pacing.credit = 0;
       changed = true;
     }
+    parkStreamReveal(cursor);
   }
   return changed;
 }

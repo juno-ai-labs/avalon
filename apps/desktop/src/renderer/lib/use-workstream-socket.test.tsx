@@ -132,7 +132,7 @@ async function flushPromises(): Promise<void> {
  * and `flush` pumps them until the reveal loop stops re-arming, i.e. until
  * every streaming message shows everything it has received.
  */
-function stubAnimationFrames(): { flush: () => Promise<void> } {
+function stubAnimationFrames(): { flush: () => Promise<void>; step: (now: number) => Promise<void> } {
   const queue = new Map<number, FrameRequestCallback>();
   let nextId = 0;
   let frameTime = performance.now();
@@ -145,6 +145,14 @@ function stubAnimationFrames(): { flush: () => Promise<void> } {
     queue.delete(id);
   });
   return {
+    async step(now: number): Promise<void> {
+      const pending = [...queue.values()];
+      queue.clear();
+      frameTime = now;
+      await act(async () => {
+        for (const callback of pending) callback(now);
+      });
+    },
     async flush(): Promise<void> {
       for (let round = 0; round < 100_000 && queue.size > 0; round += 1) {
         const pending = [...queue.values()];
@@ -1978,6 +1986,9 @@ describe('useWorkstreamSocket', () => {
       createdAt: '2026-07-31T19:20:00.000Z',
     }], workstreamId, cursors);
 
+    expect(cursors.get('turn-cold-join')?.pacing).toBeUndefined();
+    expect(cursors.get('turn-cold-join')?.lastRevealAt).toBeNull();
+
     // Catch-up may overlap the checkpoint when a frame lands during snapshot
     // loading. Its Bind cursor prevents the prefix being appended twice.
     transcript = applyStreamingSocketEvent(transcript, {
@@ -2280,6 +2291,45 @@ describe('useWorkstreamSocket', () => {
     ]);
     expect(live.filter((message) => message.messageType === 'text').map((message) => message.text))
       .toEqual(['I will check. ', 'Here is the result.']);
+  });
+
+  it.each([250, 2000, 10000])('paces a new packet after a drained %ims gap without bursting or crawling', async (gap) => {
+    let now = 0;
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const frames = stubAnimationFrames();
+    const queryClient = new QueryClient();
+    const workstreamId = '00000000-0000-7000-8000-000000000701';
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
+      })),
+    });
+    renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    const deliver = (sequence: number) => act(() => socket.message({
+      type: 'stream_delta', sequence, occurredAt: '2026-08-23T12:00:00.100Z',
+      streamId: '00000000-0000-7000-8000-000000000702', turnId: 'turn-paced', transcriptSequence: 1,
+      epoch: 0, streamSeq: sequence, reset: false, delta: 'abcdefghij',
+    }));
+    deliver(1);
+    for (now = 17; now <= 119; now += 17) await frames.step(now);
+    expect(overlayMessages(queryClient, workstreamId)[0]?.text).toBe('abcdefghij');
+    // No frame is scheduled while drained. Deliver after the idle interval,
+    // then exercise the first frame and the full next packet interval.
+    now = gap;
+    deliver(2);
+    now += 17;
+    await frames.step(now);
+    const prefix = overlayMessages(queryClient, workstreamId)[0]?.text ?? '';
+    expect(prefix.length).toBeGreaterThan(10);
+    expect(prefix.length).toBeLessThan(20);
+    for (now += 17; now <= gap + 119; now += 17) await frames.step(now);
+    expect(overlayMessages(queryClient, workstreamId)[0]?.text).toBe('abcdefghijabcdefghij');
   });
 
   it('holds streamed text back and reveals it across animation frames', async () => {
@@ -2948,6 +2998,9 @@ describe('useWorkstreamSocket', () => {
     }, workstreamId, cursors, { paced: true });
     // Partially reveal the first attempt, then let a reset replace it.
     cursors.get('turn-retry')!.revealed = 9;
+    cursors.get('turn-retry')!.lastRevealAt = 123;
+    cursors.get('turn-retry')!.pacing.credit = 0.75;
+    cursors.get('turn-retry')!.pacing.cadenceMs = 400;
     transcript = applyStreamingSocketEvent(transcript, {
       type: 'stream_delta',
       sequence: 2,
@@ -2967,6 +3020,8 @@ describe('useWorkstreamSocket', () => {
     expect(cursors.get('turn-retry')).toMatchObject({
       receivedText: 'A fresh attempt.',
       revealed: 0,
+      lastRevealAt: null,
+      pacing: { credit: 0, cadenceMs: 100, drawRate: 'A fresh attempt.'.length / 100 },
     });
   });
 
