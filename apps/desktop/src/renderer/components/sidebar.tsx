@@ -613,6 +613,7 @@ function WorkstreamRow({
                   navigation element's class resolver untouched. */}
               <div className="sidebar-workstream-preview-anchor">
                 <NavLink
+            aria-description={workstream.scope === 'workspace' ? 'Public work stream' : undefined}
             aria-describedby={previewOpen ? `workstream-preview-${workstream.id}` : undefined}
             aria-label={[naming ? 'Rally is naming this work stream' : workstream.title, drag?.position].filter(Boolean).join(', ')}
             className={({ isActive }) => clsx(
@@ -962,6 +963,7 @@ export function Sidebar({
   const setSidebarOpen = useUiStore((state) => state.setSidebarOpen);
   const setSidebarCollapsed = useUiStore((state) => state.setSidebarCollapsed);
   const setSidebarWidth = useUiStore((state) => state.setSidebarWidth);
+  const forcedCompact = compact && !sidebarCollapsed;
   const effectiveSidebarWidth = compact ? COLLAPSED_SIDEBAR_WIDTH : sidebarWidth;
   const openPublicPage = useCallback(async (path: string): Promise<void> => {
     const bridge = desktopBridge();
@@ -1600,27 +1602,26 @@ export function Sidebar({
           </NavLink>}
         </div>
 
-
         <nav
           className="sidebar-scroll"
           onClick={() => setSidebarOpen(false)}
           onScroll={loadMoreWhenNearBottom}
           ref={scrollRef}
         >
-        {compact && (
-          <div className="sidebar-rail-actions window-no-drag">
-            <SidebarSearch mode="button" onClick={onOpenSearch} disabled={!onOpenSearch} aria-label="Search workspace" />
-            <NavLink
-              aria-label="New chat"
-              className={({ isActive }) => clsx('sidebar-new-button sidebar-rail-new-button window-no-drag', isActive && 'is-active')}
-              onClick={() => markSurfaceEntrypoint('sidebar_new')}
-              state={location.pathname === '/workstreams/new' ? undefined : { returnTo: location.pathname }}
-              to="/workstreams/new"
-            >
-              <Plus aria-hidden="true" size={19} strokeWidth={1.6} />
-            </NavLink>
-          </div>
-        )}
+          {compact && (
+            <div className="sidebar-rail-actions window-no-drag">
+              <SidebarSearch mode="button" onClick={onOpenSearch} disabled={!onOpenSearch} aria-label="Search workspace" />
+              <NavLink
+                aria-label="New chat"
+                className={({ isActive }) => clsx('sidebar-new-button sidebar-rail-new-button window-no-drag', isActive && 'is-active')}
+                onClick={() => markSurfaceEntrypoint('sidebar_new')}
+                state={location.pathname === '/workstreams/new' ? undefined : { returnTo: location.pathname }}
+                to="/workstreams/new"
+              >
+                <Plus aria-hidden="true" size={19} strokeWidth={1.6} />
+              </NavLink>
+            </div>
+          )}
 
           {!compact && <div className="sidebar-commandbar window-no-drag">
             <SidebarSearch mode="button" onClick={onOpenSearch} disabled={!onOpenSearch} aria-label="Search workspace" />
@@ -1922,7 +1923,7 @@ export function Sidebar({
             </DropdownMenu.Content>
           </DropdownMenu.Portal>
         </DropdownMenu.Root>}
-          <IconButton className="window-no-drag" label={compact ? 'Expand navigation' : 'Collapse navigation'} aria-expanded={!compact} onClick={() => setSidebarCollapsed(!sidebarCollapsed)}>
+          <IconButton className="window-no-drag" label={compact ? 'Expand navigation' : 'Collapse navigation'} aria-expanded={!compact} disabled={forcedCompact} title={forcedCompact ? 'Widen the window to expand navigation' : undefined} onClick={() => setSidebarCollapsed(!sidebarCollapsed)}>
             {compact ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
           </IconButton>
         </div>
@@ -1934,7 +1935,7 @@ export function Sidebar({
           aria-valuemin={COLLAPSED_SIDEBAR_WIDTH}
           aria-valuenow={effectiveSidebarWidth}
           className={clsx('sidebar-resizer', pointerNearEdge && 'is-near')}
-          onDoubleClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+          onDoubleClick={() => { if (!forcedCompact) setSidebarCollapsed(!sidebarCollapsed); }}
           onKeyDown={(event) => {
             if (event.key === 'ArrowLeft' && !compact) {
               resizeSidebar(sidebarWidth > MIN_SIDEBAR_WIDTH
@@ -1946,6 +1947,7 @@ export function Sidebar({
           onPointerDown={(event) => {
             if (event.button !== 0) return;
             event.preventDefault();
+            event.currentTarget.focus();
             event.currentTarget.setPointerCapture(event.pointerId);
             grabOffset.current = event.clientX - effectiveSidebarWidth;
             setResizing(true);

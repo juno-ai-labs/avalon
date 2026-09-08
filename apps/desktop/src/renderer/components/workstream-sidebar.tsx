@@ -172,6 +172,7 @@ export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstrea
         onPointerDown={(event) => {
           if (event.button !== 0) return;
           event.preventDefault();
+          event.currentTarget.focus();
           const bounds = sidebar.current?.getBoundingClientRect();
           if (!bounds) return;
           drag.current = { pointerId: event.pointerId, offset: event.clientX - bounds.right };
