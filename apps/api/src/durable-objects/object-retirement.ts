@@ -45,13 +45,45 @@ import { DurableObject } from "cloudflare:workers";
 /** The code a product operation against a retired object refuses with. */
 export const RETIREMENT_REFUSAL_CODE = "workspace_retired";
 
+/**
+ * What a caller reads when a retired object refuses it.
+ *
+ * A sentence with the next action, not the bare code: the same text reaches a
+ * model when a tool call meets a closed workspace, and a model given only
+ * `workspace_retired` retries. The code stays in the message in parentheses,
+ * which is the form `diagnosticErrorCode` extracts, so a consumer's log line
+ * still says `workspace_retired` and the sentence says why.
+ */
+export const RETIREMENT_REFUSAL_MESSAGE =
+  `This workspace has been closed permanently (${RETIREMENT_REFUSAL_CODE}); nothing in it accepts reads or writes any more, so do not retry.`;
+
 export class RetirementRefusedError extends Error {
   readonly code = RETIREMENT_REFUSAL_CODE;
 
   constructor(readonly method: string) {
-    super(RETIREMENT_REFUSAL_CODE);
+    super(RETIREMENT_REFUSAL_MESSAGE);
     this.name = "RetirementRefusedError";
   }
+}
+
+/**
+ * Whether an error is a retired object's refusal, on either side of an RPC.
+ *
+ * `instanceof` does not survive the Durable Object boundary — the runtime
+ * rebuilds the error on the caller's side — but the `code` property and the
+ * name do, and either is enough. Every background caller that can meet a
+ * retired object reads this before deciding whether its message is retried:
+ * a refusal is terminal for a Queue message, a Workflow step, or a cron pass,
+ * because the object will answer the same way on every redelivery, and a retry
+ * loop that ends in the dead-letter queue spends the one signal this
+ * repository treats as its monitoring on a state somebody designed.
+ */
+export function isRetirementRefusal(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as { code?: unknown; name?: unknown; message?: unknown };
+  if (candidate.code === RETIREMENT_REFUSAL_CODE) return true;
+  if (candidate.name === "RetirementRefusedError") return true;
+  return typeof candidate.message === "string" && candidate.message.includes(`(${RETIREMENT_REFUSAL_CODE})`);
 }
 
 /**
@@ -202,10 +234,16 @@ export type DropResultFactory = (args: readonly unknown[]) => unknown;
  *
  * These are the reason retirement can finish at all: the two entry points that
  * write and read the tombstone, the revocation that closes sockets against a
- * dead workspace, the Access-gated read-only inspection an operator uses to see
- * what was left behind, the promise the constructor already holds, and the
- * schema machinery — a migration is not a product write, and refusing one would
- * dead-letter the forced-migration queue once per retired object, permanently.
+ * dead workspace, the Access-gated operator SQL surface, the promise the
+ * constructor already holds, and the schema machinery — a migration is not a
+ * product write, and refusing one would dead-letter the forced-migration queue
+ * once per retired object, permanently.
+ *
+ * `runInspectionSql` is not read-only, and the permit is deliberate: it is the
+ * repair door (`docs/engineering-mcp.md`), and the one way an operator can
+ * inspect or correct what a retired object holds — including the tombstone
+ * itself. It is the single path by which a retired object can be written, and
+ * `docs/workspace-retirement.md` names it as such.
  *
  * A permit names an *entry point*, and it carries the whole call: see
  * {@link unfencedView}.
@@ -248,6 +286,8 @@ export const ALWAYS_INERT_METHODS: readonly string[] = [
 
 /** `null` rather than `undefined`: every inert mutator's answer reads as "nothing armed". */
 const INERT: DropResultFactory = () => Promise.resolve(null);
+/** `cancelScheduledAlarmKind` answers a count; on a retired object nothing was armed to cancel. */
+const INERT_COUNT: DropResultFactory = () => Promise.resolve(0);
 
 export interface RetirementPolicy {
   /** Runs normally on a retired object. Retirement's own machinery and read-only inspection. */
@@ -414,7 +454,7 @@ export function applyRetirementGate(
   for (const name of ALWAYS_PERMITTED_METHODS) dispositions.set(name, "permit");
   for (const name of ALWAYS_INERT_METHODS) {
     dispositions.set(name, "drop");
-    drops[name] = INERT;
+    drops[name] = name === "cancelScheduledAlarmKind" ? INERT_COUNT : INERT;
   }
   for (const name of policy.permit ?? []) dispositions.set(name, "permit");
   for (const [name, factory] of Object.entries(policy.drop ?? {})) {
@@ -653,7 +693,7 @@ export function droppedEnvelopeReceipts(
  * A caller reading this can tell a retired workspace from a routing mistake.
  */
 export function retiredObjectResponse(): Response {
-  return new Response(JSON.stringify({ error: RETIREMENT_REFUSAL_CODE }), {
+  return new Response(JSON.stringify({ error: RETIREMENT_REFUSAL_CODE, message: RETIREMENT_REFUSAL_MESSAGE }), {
     status: 409,
     headers: { "content-type": "application/json" },
   });

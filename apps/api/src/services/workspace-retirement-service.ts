@@ -15,17 +15,17 @@ import {
   workstreamDOName,
 } from "../durable-objects/names";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
-import { logInfo, logWarn } from "../observability/logger";
+import { diagnosticErrorCode, logInfo, logWarn } from "../observability/logger";
 import { ConversationParentRetirementChildrenResultSchema } from "@rally/contracts";
 
 /**
  * Walking a workspace's object graph and closing every object in it.
  *
- * The order is children before parents, and it is not a preference. A parent
- * asked to list its children after it has been retired refuses, so a walk that
- * closed the parent first would have no way to find what was underneath it —
- * and the child, still open, would go on holding a socket and an alarm in a
- * workspace nobody can reach.
+ * The order is children before parents, and it is not a preference. A parent's
+ * product reads refuse once it is retired; the walk's own read of its children
+ * is permitted so a resumed pass can ask again, but a walk that closed the
+ * parent first would still leave the child open — holding a socket and an
+ * alarm in a workspace nobody can reach — until the pass came back for it.
  *
  * Everything here is resumable because nothing here holds state. The graph, the
  * receipts, and the notion of "finished" all live in WorkspaceDO, which is
@@ -52,11 +52,21 @@ export interface WorkspaceRetirementInput {
    */
   actorUserId: string | null;
   reason: string;
+  /**
+   * The operator who asked, for the log lines this pass writes. Not a user of
+   * the workspace and not the tombstone's `actorUserId`, which names a Rally
+   * user: the tombstone says the workspace was closed by an operator, and the
+   * `workspace_retirement_pass` log says which one.
+   */
+  operatorId?: string;
 }
 
 export interface WorkspaceRetirementReceipt {
   complete: boolean;
   remaining: number;
+  /** Every work stream and automation the graph recorded, over all passes. */
+  parents: number;
+  /** Closed by this pass. A resumed pass closes only what the last one left. */
   retiredParents: number;
   retiredChildren: number;
   /** Effects the closed objects still hold and will never publish. */
@@ -108,6 +118,7 @@ export async function retireWorkspaceGraph(
   const receipt: WorkspaceRetirementReceipt = {
     complete: false,
     remaining: progress.remaining,
+    parents: progress.nodes.length,
     retiredParents: 0,
     retiredChildren: 0,
     retainedOutbox: 0,
@@ -126,8 +137,10 @@ export async function retireWorkspaceGraph(
         ? await durableObjectStubForWorkspace(env, env.AUTOMATION_DOS, input.workspaceId, parentName)
         : await durableObjectStubForWorkspace(env, env.WORKSTREAM_DOS, input.workspaceId, parentName);
 
-      // Asked before the parent is closed. After it, this refuses — which is
-      // the whole reason children go first rather than being discovered later.
+      // Asked before the parent is closed, so its children go first. The read
+      // is permitted on a retired parent as well: a pass that died between
+      // retiring the parent and writing its receipt has to be able to ask
+      // again, or that node stays unreceipted forever.
       //
       // The retirement-specific read, because two of the three outcomes are not
       // failures and neither is decidable from an error message. A parent the
@@ -179,16 +192,22 @@ export async function retireWorkspaceGraph(
       // Recorded, not swallowed. The node keeps its NULL receipt, so the
       // operation reports incomplete and the next pass returns to exactly this
       // node instead of the walk deciding the workspace is closed.
+      // The stable code where one exists, so the receipt carries something an
+      // operator can read and a later change can match on, rather than raw
+      // runtime text. An error with no message still names the node.
+      const reason = diagnosticErrorCode(error, "workspace_retirement_node_failed");
       receipt.failed.push({
         parentKind: node.parentKind,
         parentId: node.parentId,
-        error: error instanceof Error ? error.message : String(error),
+        error: reason,
       });
       logWarn(env, "workspace_retirement_node_failed", {
-        workspaceId: input.workspaceId,
-        operationId: input.operationId,
-        parentKind: node.parentKind,
-        parentId: node.parentId,
+        workspace_id: input.workspaceId,
+        operation_id: input.operationId,
+        operator_id: input.operatorId ?? null,
+        parent_kind: node.parentKind,
+        parent_id: node.parentId,
+        reason,
       });
     }
   }
@@ -200,15 +219,20 @@ export async function retireWorkspaceGraph(
   receipt.remaining = settled.remaining;
   receipt.complete = settled.complete;
 
+  // The region's own record of who closed this workspace. The tombstone names
+  // an operator retirement; this line names the operator, and it is the one
+  // place in the region that does.
   logInfo(env, "workspace_retirement_pass", {
-    workspaceId: input.workspaceId,
-    operationId: input.operationId,
+    workspace_id: input.workspaceId,
+    operation_id: input.operationId,
+    operator_id: input.operatorId ?? null,
     complete: receipt.complete,
     remaining: receipt.remaining,
-    retiredParents: receipt.retiredParents,
-    retiredChildren: receipt.retiredChildren,
-    retainedOutbox: receipt.retainedOutbox,
-    failedNodes: receipt.failed.length,
+    parents: receipt.parents,
+    retired_parents: receipt.retiredParents,
+    retired_children: receipt.retiredChildren,
+    retained_outbox: receipt.retainedOutbox,
+    failed_nodes: receipt.failed.length,
   });
 
   return receipt;
@@ -226,16 +250,30 @@ export async function retireWorkspaceGraph(
 export async function retireWorkspaceForOperator(
   env: Env,
   workspaceId: string,
+  operator: { operatorId: string },
 ): Promise<WorkspaceRetirementReceipt> {
   const owned = await env.DB.prepare(
     "SELECT id FROM workspaces WHERE id = ? AND region = ?",
   ).bind(workspaceId, env.AVALON_REGION).first<{ id: string }>();
   if (!owned) throw new ApiError(404, "workspace_not_found", "No workspace with this id in this region");
+  // The D1 side of "closed", written before any object is. The objects' gate
+  // stops every read and write that reaches them, but authentication, the
+  // member list, invitations and the connection list are D1 reads that never
+  // reach an object — and `workspaces.abandoned_at` is the fence every one of
+  // those already applies (`0098_multiple_workspaces.sql`: "a closed workspace
+  // is retained for operator reversal, but every normal authority read fences
+  // it"). Without it a retired workspace still admitted sign-in and still sent
+  // invitation email. Idempotent, so a resumed pass leaves the first instant.
+  const retiredAt = Date.now();
+  await env.DB.prepare(
+    "UPDATE workspaces SET abandoned_at = ?, updated_at = ? WHERE id = ? AND region = ? AND abandoned_at IS NULL",
+  ).bind(new Date(retiredAt).toISOString(), new Date(retiredAt).toISOString(), workspaceId, env.AVALON_REGION).run();
   return retireWorkspaceGraph(env, {
     workspaceId: asWorkspaceId(workspaceId),
-    retiredAt: Date.now(),
+    retiredAt,
     operationId: crypto.randomUUID(),
     actorUserId: null,
     reason: "operator_retirement",
+    operatorId: operator.operatorId,
   });
 }

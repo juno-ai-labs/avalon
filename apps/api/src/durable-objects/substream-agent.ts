@@ -198,6 +198,7 @@ import {
 } from "./scheduled-alarms";
 import {
   applyRetirementGate,
+  readObjectRetirement,
   retiredObjectResponse,
 } from "./object-retirement";
 import type { DurableObjectMigrationPlan } from "./migratable-durable-object";
@@ -992,8 +993,18 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     });
     const initialRecovery = this.initialized;
     this.state.waitUntil(initialRecovery.catch((error) => {
+      // Read through a guard: this closure holds the raw receiver, outside the
+      // construction window, so on a retired object the id read itself is
+      // refused — and a throw inside a `waitUntil` callback is an unhandled
+      // rejection rather than the warning this exists to write.
+      let substreamId = "unknown";
+      try {
+        substreamId = this.externalSubstreamId();
+      } catch {
+        // Logged as unknown rather than not at all.
+      }
       logWarn(this.env, "substream_runtime_recovery_failed", {
-        substream_id: this.externalSubstreamId(),
+        substream_id: substreamId,
         reason: error instanceof Error ? error.message : "unknown",
       });
     }));
@@ -1024,6 +1035,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         latestVersion: latestMigrationVersion(WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS),
       },
       async () => {
+      // Nothing to recover on a retired object, and nothing this may write.
+      // The permit that lets recovery run at all carries the whole call, so
+      // without this the lease repair below wrote rows and the alarm sync
+      // re-derived wake reasons into `_internal_durable_alarms` on every
+      // rebuild of a closed agent — a retired object "writing again", and the
+      // one path by which a cleared alarm index could refill.
+      if (readObjectRetirement(this.state.storage.sql) !== null) return;
       // Still-live local leases belong to the isolate this one replaced, so
       // their runs are recoverable now. Already-expired rows stay with the
       // ordinary stale-run reaper.

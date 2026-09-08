@@ -9746,6 +9746,10 @@ applyRetirementGate(WorkspaceDO, {
     // other two exist to avoid. `applied: false` is its ordinary "nothing
     // changed" answer, which is true of a workspace that is closed.
     applyAutomationDirectory: () => ({ applied: false }),
+    // A visibility question answered rather than refused, as on `WorkstreamDO`:
+    // nobody can read anything in a retired workspace, and a caller that asks
+    // can act on `false` where it cannot act on a throw.
+    canReadWorkstream: () => false,
     // An HTTP door refuses in the protocol it speaks rather than by throwing,
     // so a caller reads a status instead of a 500 it has to guess about.
     fetch: () => retiredObjectResponse(),

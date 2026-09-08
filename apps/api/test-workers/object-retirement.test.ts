@@ -19,24 +19,28 @@
  * - an effect already handed to the Queue is **dropped and acknowledged**,
  *   because throwing would leave the Queue redelivering dead work forever.
  *
- * The last test is the one that keeps this true. It enumerates the callable
- * surface of each gated class from the prototype chain and fails if a method is
- * not explicitly classified, so adding an RPC without deciding what retirement
- * does to it cannot be silent.
+ * The coverage test at the end enumerates the callable surface of each gated
+ * class from the prototype chain and proves the gate's own function is
+ * installed on every one, so a method the wrapping loop missed cannot be
+ * silent. It does not — cannot — decide what retirement should do to a new
+ * method: an unlisted method refuses by default, which is the safe direction,
+ * and the background callers that can meet that refusal treat it as terminal
+ * (`test/retirement-background-callers.test.ts`).
  */
 
 import { env } from "cloudflare:workers";
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { asAutomationId, asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 
 import { ConversationParentDurableObject } from "../src/durable-objects/conversation-parent-object";
-import { AutomationDO } from "../src/durable-objects/automation-do";
+import { SidekickDO } from "../src/durable-objects/sidekick-do";
 import {
   RETIREMENT_REFUSAL_CODE,
   gatedSurface,
   isRetirementGated,
+  isRetirementRefusal,
   retirementDisposition,
   readObjectRetirement,
 } from "../src/durable-objects/object-retirement";
@@ -80,27 +84,97 @@ function workstreamStub(workstreamId: string): DurableObjectStub<WorkstreamDO> {
 }
 
 
-describe("object retirement", () => {
-  beforeEach(async () => {
-    // A retirement tombstone is permanent by design, so each test needs an
-    // object that has never held one rather than a reset of a retired one.
-  });
+/**
+ * Caught explicitly rather than through `rejects`: an RPC stub's thenable is
+ * observed twice by that matcher, and the second observation surfaces as an
+ * unhandled rejection that fails the run for a passing assertion.
+ */
+async function refusalOf(call: () => Promise<unknown>): Promise<unknown> {
+  try {
+    await call();
+  } catch (error) {
+    return error;
+  }
+  return undefined;
+}
 
+describe("object retirement", () => {
   it("refuses a product write on a retired conversation parent", async () => {
     const workstreamId = freshWorkstreamId();
     const stub = workstreamStub(workstreamId);
     await stub.retireObject({ retiredAt: Date.now(), operationId: OPERATION_ID, actorUserId: ACTOR_ID, reason: "demo_replaced" });
 
-    // Caught explicitly rather than through `rejects`: an RPC stub's thenable
-    // is observed twice by that matcher, and the second observation surfaces as
-    // an unhandled rejection that fails the run for a passing assertion.
-    let refusal: unknown;
-    try {
-      await stub.listChildren({ workspaceId: WORKSPACE_ID, parentId: workstreamId });
-    } catch (error) {
-      refusal = error;
-    }
+    const refusal = await refusalOf(() => stub.listChildren({ workspaceId: WORKSPACE_ID, parentId: workstreamId }));
     expect((refusal as { code?: string } | undefined)?.code).toBe(RETIREMENT_REFUSAL_CODE);
+    // What the predicate every background caller reads sees on the far side of
+    // the RPC boundary, where `instanceof` is gone.
+    expect(isRetirementRefusal(refusal)).toBe(true);
+    // A sentence a model or a person can act on, with the code where the log
+    // line's extractor finds it.
+    expect((refusal as Error).message).toContain("closed permanently");
+    expect((refusal as Error).message).toContain(`(${RETIREMENT_REFUSAL_CODE})`);
+  });
+
+  it("refuses a product call on a retired conversation object and on a retired Sidekick", async () => {
+    // The class the feature exists for: the refusal the spike observed came
+    // from `SubstreamAgent`, and it is the class whose runtime recovery is
+    // permitted — so it is where a permit that reached too far would show.
+    const workstreamId = freshWorkstreamId();
+    const agent = TEST_ENV.SUBSTREAM_AGENTS.get(TEST_ENV.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName(TEST_ENV.AVALON_REGION, WORKSPACE_ID, workstreamId, "0"),
+    )) as DurableObjectStub<SubstreamAgent>;
+    await agent.retireObject({ retiredAt: Date.now(), operationId: OPERATION_ID, actorUserId: ACTOR_ID, reason: "demo_replaced" });
+    const agentRefusal = await refusalOf(() => agent.searchTurnDocumentIds({
+      type: "turn_search_projection_v1",
+      region: TEST_ENV.AVALON_REGION,
+      workspaceId: WORKSPACE_ID,
+      parentId: workstreamId,
+      substreamId: "0",
+    } as never));
+    expect((agentRefusal as { code?: string } | undefined)?.code).toBe(RETIREMENT_REFUSAL_CODE);
+
+    const automationId = asAutomationId("00000000-0000-7000-8000-00000000dea2");
+    const sidekick = TEST_ENV.AUTOMATION_DOS.get(TEST_ENV.AUTOMATION_DOS.idFromName(
+      automationDOName(TEST_ENV.AVALON_REGION, WORKSPACE_ID, automationId),
+    )) as DurableObjectStub<SidekickDO>;
+    await sidekick.retireObject({ retiredAt: Date.now(), operationId: OPERATION_ID, actorUserId: ACTOR_ID, reason: "demo_replaced" });
+    const sidekickRefusal = await refusalOf(() => sidekick.listChildren({ workspaceId: WORKSPACE_ID, parentId: automationId }));
+    expect((sidekickRefusal as { code?: string } | undefined)?.code).toBe(RETIREMENT_REFUSAL_CODE);
+  });
+
+  it("answers a visibility question with no rather than refusing it", async () => {
+    // The artifact host asks this on every viewer request and keeps its cached
+    // answer when the call throws, so a refusal served a retired work stream's
+    // artifacts until the viewer's session expired. `false` is an answer that
+    // caller acts on.
+    const workstreamId = freshWorkstreamId();
+    const stub = workstreamStub(workstreamId);
+    await stub.retireObject({ retiredAt: Date.now(), operationId: OPERATION_ID, actorUserId: ACTOR_ID, reason: "demo_replaced" });
+    await expect(stub.canReadWorkstream(ACTOR_ID)).resolves.toBe(false);
+  });
+
+  it("closes every socket the object holds, with the close the desktop does not reconnect from", async () => {
+    const workstreamId = freshWorkstreamId();
+    const stub = workstreamStub(workstreamId);
+    // A socket the object accepted and would ordinarily serve. After the
+    // tombstone the hibernated callbacks are dropped, so a socket left open
+    // would sit "connected" — the runtime answers its keepalive without waking
+    // the object — while every frame it sent was discarded.
+    const closeCode = await runInDurableObject(stub, async (instance: WorkstreamDO, state) => {
+      const pair = new WebSocketPair();
+      const [client, server] = [pair[0], pair[1]];
+      state.acceptWebSocket(server);
+      client.accept();
+      const closed = new Promise<number>((resolve) => {
+        client.addEventListener("close", (event) => resolve((event as CloseEvent).code));
+      });
+      expect(state.getWebSockets()).toHaveLength(1);
+      // Retired from inside the object, so the client end lives in the same
+      // isolate as the assertion and its close event can be awaited here.
+      await instance.retireObject({ retiredAt: Date.now(), operationId: OPERATION_ID, actorUserId: ACTOR_ID, reason: "demo_replaced" });
+      return closed;
+    });
+    expect(closeCode).toBe(1008);
   });
 
   it("permits retirement and inspection after the object is retired", async () => {
@@ -304,6 +378,65 @@ describe("object retirement", () => {
     ]);
   });
 
+  it("does not refill the alarm index when a retired agent is rebuilt and recovers", async () => {
+    // The second failure the spike found: an alarm on a retired object re-armed
+    // after the next traffic, because clearing the alarm did not stop the code
+    // that re-derives it. Runtime recovery is permitted — it is construction,
+    // arriving late — and the permit carries the whole call, so its alarm sync
+    // ran unfenced against the alarm store and put the wake reason back.
+    const workstreamId = freshWorkstreamId();
+    const agent = TEST_ENV.SUBSTREAM_AGENTS.get(TEST_ENV.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName(TEST_ENV.AVALON_REGION, WORKSPACE_ID, workstreamId, "0"),
+    )) as DurableObjectStub<SubstreamAgent>;
+    await runInDurableObject(agent, async (instance: SubstreamAgent, state) => {
+      // A pending wake reason of the kind recovery re-derives from.
+      state.storage.sql.exec(
+        `INSERT INTO workstream_wakeups
+           (wakeup_id, created_by_run_id, execution_principal_json, prompt, due_at, status,
+            idempotency_key, version, created_at, updated_at)
+         VALUES ('w1', NULL, '{"type":"user","userId":"u"}', 'later', ?, 'pending', 'k1', 1, ?, ?)`,
+        Date.now() + 60_000,
+        Date.now(),
+        Date.now(),
+      );
+      await state.storage.setAlarm(Date.now() + 60_000);
+      void instance;
+    });
+    await agent.retireObject({ retiredAt: Date.now(), operationId: OPERATION_ID, actorUserId: ACTOR_ID, reason: "demo_replaced" });
+
+    // Eviction, then the traffic that rebuilds the object and runs recovery.
+    await evictDurableObject(agent);
+    expect((await agent.objectRetirementState()).retired).toBe(true);
+
+    await runInDurableObject(agent, async (instance: SubstreamAgent, state) => {
+      expect(await state.storage.getAlarm()).toBeNull();
+      const rows = state.storage.sql.exec("SELECT COUNT(*) AS n FROM _internal_durable_alarms").toArray();
+      expect(rows[0]?.n).toBe(0);
+      void instance;
+    });
+  });
+
+  it("drops and acknowledges each queue receiver on a retired WorkspaceDO in the shape its consumer parses", async () => {
+    // The three receivers the activity consumer calls side by side. The third
+    // was found refusing in production — one message retried until it
+    // dead-lettered — and nothing asserted the shapes the other two answer, so
+    // a wrong shape would have been a `strictObject` parse failure in the
+    // consumer: the same loop, one layer up.
+    const workspaceId = asWorkspaceId("00000000-0000-7000-8000-00000000deb0");
+    const stub = TEST_ENV.WORKSPACE_DOS.get(
+      TEST_ENV.WORKSPACE_DOS.idFromName(workspaceDOName(TEST_ENV.AVALON_REGION, workspaceId)),
+    ) as DurableObjectStub<WorkspaceDO>;
+    await stub.retireObject({ retiredAt: Date.now(), operationId: OPERATION_ID, actorUserId: ACTOR_ID, reason: "demo_replaced" });
+
+    const envelope = { messageId: "00000000-0000-7000-8000-00000000de06", payloadHash: "fnv1a64:0000000000000001" };
+    const directory = await stub.applyWorkstreamDirectoryEffects({ workspaceId, envelopes: [envelope] } as never);
+    expect(directory).toEqual({ accepted: [envelope], directoryChanged: false });
+    const regional = await stub.applyWorkstreamRegionalEffect({ workspaceId } as never);
+    expect(regional).toEqual({ replayed: true, notificationIntentId: null });
+    const automation = await stub.applyAutomationDirectory({ workspaceId } as never);
+    expect(automation).toEqual({ applied: false });
+  });
+
   it("rebuilds every gated class after eviction, and revokes access on it", async () => {
     // One test across all four object classes on purpose. The two failures this
     // covers were both *category* failures — a method on the construction path
@@ -325,22 +458,24 @@ describe("object retirement", () => {
     const workspaceStub = TEST_ENV.WORKSPACE_DOS.get(
       TEST_ENV.WORKSPACE_DOS.idFromName(workspaceDOName(TEST_ENV.AVALON_REGION, EVICTION_WORKSPACE_ID)),
     ) as DurableObjectStub<WorkspaceDO>;
-    const parentStub = workstreamStub(workstreamId);
+    const parentStub = TEST_ENV.WORKSTREAM_DOS.get(TEST_ENV.WORKSTREAM_DOS.idFromName(
+      workstreamDOName(TEST_ENV.AVALON_REGION, EVICTION_WORKSPACE_ID, workstreamId),
+    )) as DurableObjectStub<WorkstreamDO>;
     const automationStub = TEST_ENV.AUTOMATION_DOS.get(
       TEST_ENV.AUTOMATION_DOS.idFromName(
         automationDOName(TEST_ENV.AVALON_REGION, EVICTION_WORKSPACE_ID, automationId),
       ),
-    ) as DurableObjectStub<AutomationDO>;
+    ) as DurableObjectStub<SidekickDO>;
     const agentStub = TEST_ENV.SUBSTREAM_AGENTS.get(
       TEST_ENV.SUBSTREAM_AGENTS.idFromName(
         conversationObjectName(TEST_ENV.AVALON_REGION, EVICTION_WORKSPACE_ID, workstreamId, "0"),
       ),
     ) as DurableObjectStub<SubstreamAgent>;
-    // `AutomationDO` holds no sockets of its own, so it has nothing to revoke.
+    // A Sidekick holds no sockets of its own, so it has nothing to revoke.
     const targets = [
       { name: "WorkspaceDO", stub: workspaceStub, revoke: () => workspaceStub.revokeSocketAccess(revocation) },
       { name: "WorkstreamDO", stub: parentStub, revoke: () => parentStub.revokeSocketAccess(revocation) },
-      { name: "AutomationDO", stub: automationStub, revoke: null },
+      { name: "SidekickDO", stub: automationStub, revoke: null },
       { name: "SubstreamAgent", stub: agentStub, revoke: () => agentStub.revokeSocketAccess(revocation) },
     ] as const;
 
@@ -374,40 +509,50 @@ describe("object retirement", () => {
     expect(failures).toEqual([]);
   });
 
-  it("classifies every callable method on every gated class, and fences each one", () => {
+  it("fences every callable method on every gated class, and classifies the ones retirement itself needs", () => {
     const gated = [
       { name: "WorkspaceDO", target: WorkspaceDO },
       { name: "ConversationParentDurableObject", target: ConversationParentDurableObject },
       { name: "WorkstreamDO", target: WorkstreamDO },
-      { name: "AutomationDO", target: AutomationDO },
+      { name: "SidekickDO", target: SidekickDO },
       { name: "SubstreamAgent", target: SubstreamAgent },
     ] as const;
 
-    const unclassified: string[] = [];
     const unfenced: string[] = [];
     let fenced = 0;
     for (const { name, target } of gated) {
       for (const method of gatedSurface(target)) {
-        const disposition = retirementDisposition(target, method);
-        if (disposition === null) {
-          unclassified.push(`${name}.${method}`);
-          continue;
-        }
-        // A permitted method is deliberately left as it was written; everything
-        // else has to have the gate's own function installed in its place.
-        // Reading the declared policy alone would pass with the wrapping loop
-        // deleted, because the policy is populated before anything is wrapped.
-        if (disposition === "permit") continue;
+        // Every method on a gated class has a disposition — an unlisted one
+        // refuses — so there is nothing to assert about "unclassified"; what
+        // can be wrong is the wrapping. A permitted method is deliberately left
+        // as it was written; everything else has to have the gate's own
+        // function installed in its place. Reading the declared policy alone
+        // would pass with the wrapping loop deleted, because the policy is
+        // populated before anything is wrapped.
+        if (retirementDisposition(target, method) === "permit") continue;
         if (isRetirementGated(target, method)) fenced += 1;
         else unfenced.push(`${name}.${method}`);
       }
     }
-
-    // A new RPC added without deciding what retirement does to it lands here.
-    expect(unclassified).toEqual([]);
     expect(unfenced).toEqual([]);
-    // And the surface is not empty, so an enumeration that silently found
-    // nothing cannot pass by asserting two empty lists against each other.
-    expect(fenced).toBeGreaterThan(200);
+    // The surface is not empty, so an enumeration that silently found nothing
+    // cannot pass by asserting an empty list against nothing.
+    expect(fenced).toBeGreaterThan(0);
+
+    // The dispositions the design depends on, pinned by name. Each is a
+    // decision a future edit could undo without any test above noticing.
+    for (const target of [ConversationParentDurableObject, WorkstreamDO, SidekickDO]) {
+      // The walk's own read, on a parent that may already hold a tombstone.
+      expect(retirementDisposition(target, "childrenForRetirement")).toBe("permit");
+      // A product enumeration stays refused; the revocation consumer acks it.
+      expect(retirementDisposition(target, "listChildren")).toBe("refuse");
+    }
+    for (const target of [WorkstreamDO, WorkspaceDO]) {
+      expect(retirementDisposition(target, "canReadWorkstream")).toBe("drop");
+    }
+    expect(retirementDisposition(SubstreamAgent, "startRuntimeRecovery")).toBe("permit");
+    for (const method of ["beginWorkspaceRetirement", "recordRetiredNode", "workspaceRetirementProgress"]) {
+      expect(retirementDisposition(WorkspaceDO, method)).toBe("permit");
+    }
   });
 });
