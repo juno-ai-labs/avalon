@@ -540,7 +540,7 @@ describe('Sidebar work-stream markers', () => {
     expect(screen.queryByRole('region', { name: 'Get started with Rally' })).not.toBeInTheDocument();
   });
 
-  it('uses the compact status-dot pattern for every work stream', () => {
+  it('uses compact status dots except for completed work streams', () => {
     render(
       <MemoryRouter initialEntries={['/workstreams/input']}>
         <Tooltip.Provider>
@@ -563,9 +563,9 @@ describe('Sidebar work-stream markers', () => {
 
     expect(screen.getByRole('link', { name: /Board decision/u }).querySelector('.status-needs_input .status-dot')).not.toBeNull();
     expect(screen.getByRole('link', { name: /Pricing restructure/u }).querySelector('.status-running .status-dot')).not.toBeNull();
-    expect(screen.getByRole('link', { name: /Missing sidebar row/u }).querySelector('.status-completed .status-dot')).not.toBeNull();
+    expect(screen.getByRole('link', { name: /Missing sidebar row/u }).querySelector('.workstream-row-status')).toBeNull();
     expect(screen.getByRole('link', { name: /Monday review/u }).querySelector('.status-scheduled .status-dot')).not.toBeNull();
-    expect(screen.getByRole('link', { name: /PostHog follow-up/u }).querySelector('.status-completed .status-dot')).not.toBeNull();
+    expect(screen.getByRole('link', { name: /PostHog follow-up/u }).querySelector('.workstream-row-status')).toBeNull();
     expect(document.querySelector('.sidebar-automation-marker')).toBeNull();
     expect(screen.queryByRole('img', { name: /Automation-generated/u })).not.toBeInTheDocument();
     expect(document.querySelector('.brand-lockup')).toBeNull();
