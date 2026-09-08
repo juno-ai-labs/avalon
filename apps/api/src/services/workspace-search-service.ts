@@ -28,6 +28,11 @@ export async function searchWorkspace(env: Env, auth: AuthContext, request: Sear
 export async function searchWorkspacePage(env: Env, auth: AuthContext, request: SearchRequest, signal?: AbortSignal) {
   signal?.throwIfAborted();
   const started = performance.now();
+  let complete = true;
+  const omitUnverified = (error: unknown) => {
+    if (error instanceof ApiError && error.code === 'authorization_unavailable') { complete = false; return; }
+    if (!denied(error)) throw error;
+  };
   const access = createAccessContext(env, auth);
   const conversations = new ConversationService(env, auth);
   const parents = new Map<string, ReturnType<ConversationService['resolveParent']>>();
@@ -88,7 +93,7 @@ export async function searchWorkspacePage(env: Env, auth: AuthContext, request: 
           // Hashing is asynchronous too: authorize after all canonical validation.
           await authorizeConversation(group.parentId, group.substreamId);
           for (const [id, result] of validated) results.set(id, result);
-        } catch (error) { if (!denied(error)) throw error; }
+        } catch (error) { omitUnverified(error); }
       }));
       return results;
     } });
@@ -126,7 +131,7 @@ export async function searchWorkspacePage(env: Env, auth: AuthContext, request: 
           // Hashing is asynchronous too: authorize after all canonical validation.
           await authorizeConversation(group.parentId, group.substreamId);
           for (const [id, result] of validated) results.set(id, result);
-        } catch (error) { if (!denied(error)) throw error; }
+        } catch (error) { omitUnverified(error); }
       }));
       return results;
     } });
@@ -152,7 +157,7 @@ export async function searchWorkspacePage(env: Env, auth: AuthContext, request: 
             excerpt: passage.excerpt, excerptStart: passage.excerptStart, highlights: passage.highlights,
             location: { kind: 'resource', resourceId: resource.id, mimeType: resource.mimeType, range: passage.range },
           });
-        } catch (error) { if (!denied(error)) throw error; }
+        } catch (error) { omitUnverified(error); }
       }));
       return results;
     } });
@@ -168,6 +173,6 @@ export async function searchWorkspacePage(env: Env, auth: AuthContext, request: 
   logInfo(env, 'search_response_timing', { scope_ms: scopeMs, retrieval_ms: retrievalMs,
     hydration_ms: hydrationMs, duration_ms: performance.now() - started, result_count: result.results.length,
     paginated: Boolean(request.pageSize), continuation: Boolean(request.cursor) });
-  return request.pageSize ? { ...result, timings: { scopeMs, retrievalMs, hydrationMs,
-    serverMs: performance.now() - started } } : result;
+  return request.pageSize ? { ...result, complete, timings: { scopeMs, retrievalMs, hydrationMs,
+    serverMs: performance.now() - started } } : { ...result, complete };
 }

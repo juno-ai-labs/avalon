@@ -9,7 +9,7 @@ participants or become a new canonical owner of memberships.
 
 | File under `apps/api/src/` | Responsibility |
 | --- | --- |
-| `services/authorization-policy.ts` | Typed addresses, subject, four outcomes, proof composition, five-minute bound, `AccessContext`, `AuthorizedView` |
+| `services/authorization-policy.ts` | Typed addresses, subject, four outcomes, proof composition, five-minute bound, `AccessContext` |
 | `services/authorization-service.ts` | Member policy, owner reads, request coalescing, cache validation and HTTP disclosure adapter |
 | `durable-objects/authorization-storage.ts` | Workspace SQLite snapshots, exact attachment locations and migration tables |
 | `durable-objects/authorization-projection.ts` | Transactional child outbox and reference-only Queue contract |
@@ -22,10 +22,10 @@ participants or become a new canonical owner of memberships.
 
 A trusted request creates one `AccessContext`. Addresses identify a workspace
 and either a conversation `(parentId, substreamId)`, a resource ID, or a memory
-scope ID. `within()` intersects restrictions; calling it twice cannot restore a
-resource removed by the first restriction. `readableScopes()` and
-`AuthorizedView.read()` use the same checks as direct reads and report whether
-all candidates could be evaluated. An incomplete list is not an empty success.
+scope ID. `checkMany()` returns one exact decision per candidate;
+`readableScopes()` additionally reports whether all candidates could be evaluated.
+Unused narrowing and source-view helpers are omitted until a production caller
+needs them.
 
 Policies are ordinary TypeScript `fact`, `all` and `any` expressions. There is no
 policy interpreter, customer-supplied graph language or hosted policy service.
@@ -120,7 +120,17 @@ not a switch controlling which authorization implementation serves the request.
   `unavailable`. `denied` includes a policy reason; `not_found` means a canonical
   owner established absence; `unavailable` carries a retryable reason.
 - Only disclosure adapters collapse denial and absence into a concealed HTTP
-  404. Unavailable authority is HTTP 503, never an empty search page.
+  404. Direct reads with unavailable authority return HTTP 503. Search and resource
+  lists omit unverified candidates, return verified rows with `complete: false`,
+  and retain normal pagination. Completeness describes evaluated candidates,
+  not whether more pages exist. The desktop marks partial results and offers a
+  retry; it does not describe an unverified empty page as "No results". No IDs,
+  counts, or source metadata from omitted candidates are returned. Provider-wide
+  retrieval errors, cancellation, and failed request authentication still fail
+  the request. The desktop advertises `supportsPartialResults: true`: older
+  strict response parsers retain their original wire shape and retryable failure
+  for incomplete search, rather than silently misrepresenting partial results.
+  Resource page parsers already accept additive fields.
 - Subject, workspace, exact address and policy version must match cached
   evidence. A record for another user or private child cannot authorize a read.
 - The shortest evidence lifetime governs a conjunction. A newer attachment
@@ -168,7 +178,7 @@ is inferred from local tests.
 ## Testing
 
 `test/authorization-policy.test.ts` covers composition, alternate grants,
-attenuation, exact expiration, future timestamps and explicit incomplete lists.
+workspace isolation, exact expiration, future timestamps and explicit incomplete lists.
 `test-workers/authorization-storage.test.ts` uses real SQLite migrations for
 out-of-order inventory delivery, snapshot expiry and discovery completion.
 `test-workers/conversation-parent-contract.test.ts` exercises stale roster
@@ -204,12 +214,27 @@ requires a Worker code rollback, not a per-workspace mode change.
 
 ## Changelog
 
+### 2026-09-07 — Preserve the workstream access-history migration
+
+Main claimed WorkspaceDO migration 37 for personal workstream access history.
+Moved the unmerged authorization migration to 38, preserving both schemas and
+main's migration ledger. SubstreamAgent authorization remains migration 44.
+
+### 2026-09-07 — Return verified partial results and remove unused helpers
+
+The team chose useful verified results over failing a whole list for one
+unavailable authority. Lists now expose `complete: false`; direct reads retain
+retryable failure. Desktop search and resource pickers label incompleteness and
+retry without exposing unverified candidates. Removed unused `within()` and
+`AuthorizedView` rather than carrying an API without a production caller.
+
+
 ### 2026-09-07 — Preserve Sidekick migrations during rebase
 
 Main moved the automation implementation into SidekickDO and claimed the next
 object migration numbers. Authorization facts now live on SidekickDO behind the
 existing AutomationDO compatibility export. Authorization uses WorkspaceDO
-migration 37 and SubstreamAgent migration 44, preserving main's published schemas.
+migration 38 and SubstreamAgent migration 44, preserving main's published schemas.
 
 ### 2026-09-07 — Verify review findings against canonical authority
 

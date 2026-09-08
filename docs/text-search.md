@@ -12,6 +12,8 @@ does not deploy this code or backfill dormant objects.
 The core [authorization primitive](authorization.md) owns the optional migrated
 member read path and exact attachment discovery. Deployment enables this path
 for every workspace; incomplete attachment evidence initiates queued discovery.
+Search returns verified matches with `complete: false` if any candidate has
+unavailable authority; the desktop labels partial results and offers retry.
 
 ## Where the code lives
 
@@ -447,6 +449,16 @@ through Queue failure rather than silent truncation. Document-size and capture
 budgets require team policy; no arbitrary new caps are introduced here.
 
 ## Changelog
+
+### 2026-09-07 — Preserve verified results during partial authority failures
+
+Search now omits candidates with unavailable authorization and reports
+`complete: false`, following the team's decision to retain useful verified
+results. The modal labels partial pages and offers retry, including when no
+verified matches remain. Request authentication, cancellation and provider-wide
+retrieval failures retain their error behavior; unverified IDs and metadata are
+never returned.
+
 
 ### 2026-09-07 — Remove authorization rollout gates
 

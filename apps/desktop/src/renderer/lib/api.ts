@@ -202,7 +202,7 @@ export interface MentionIdentity {
 }
 
 const wirePinnedWorkstreamsSchema = z.object({ items: z.array(WireWorkstreamSchema) });
-const wireResourcePageSchema = CursorPageSchema(WireResourceSchema);
+const wireResourcePageSchema = CursorPageSchema(WireResourceSchema).extend({ complete: z.boolean().optional() });
 const wireNotePageSchema = z.object({
   items: z.array(WireNoteSummarySchema),
   nextCursor: WireNoteCursorSchema.nullable(),
@@ -683,7 +683,7 @@ export class RallyApi {
   }
 
   searchWorkspace(request: SearchRequest, signal?: AbortSignal): Promise<SearchResponse> {
-    return this.request('/search', { method: 'POST', body: request, schema: SearchResponseSchema, signal });
+    return this.request('/search', { method: 'POST', body: { ...request, supportsPartialResults: true }, schema: SearchResponseSchema, signal });
   }
 
   private async request<T>(path: string, options: RequestOptions<T>): Promise<T> {
@@ -1641,7 +1641,7 @@ export class RallyApi {
       schema: wireResourcePageSchema,
       ...(input.signal ? { signal: input.signal } : {}),
     });
-    return { items: page.items.map(mapResource), nextCursor: page.nextCursor };
+    return { items: page.items.map(mapResource), nextCursor: page.nextCursor, ...(page.complete !== undefined ? { complete: page.complete } : {}) };
   }
 
   async attachResource(parentId: string, resourceId: string): Promise<WorkstreamDetail> {

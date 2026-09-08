@@ -21,6 +21,25 @@ function setup(search: React.ComponentProps<typeof SearchModal>['search']) {
   return { onSelect, onOpenChange, client };
 }
 describe('workspace search modal', () => {
+  it('keeps verified results visible, marks an incomplete page and retries it', async () => {
+    const search = vi.fn().mockResolvedValueOnce({ results: [result], complete: false })
+      .mockResolvedValue({ results: [result], complete: true });
+    setup(search);
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'danil' } });
+    expect(await screen.findByRole('option')).toHaveTextContent('Alex Danilowicz');
+    expect(screen.getByText('Some results are unavailable.')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry search' }));
+    await waitFor(() => expect(screen.queryByText('Some results are unavailable.')).not.toBeInTheDocument());
+    expect(screen.getByRole('option')).toBeVisible();
+  });
+
+  it('does not present an entirely unverified page as no matches', async () => {
+    setup(async () => ({ results: [], complete: false }));
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'danil' } });
+    expect(await screen.findByText('No verified results available')).toBeVisible();
+    expect(screen.queryByText('No results')).not.toBeInTheDocument();
+  });
+
   it('queries the selected source and opens the highlighted canonical result with Enter', async () => {
     const search = vi.fn(async () => ({ results: [result] }));
     const { onSelect, onOpenChange } = setup(search);
