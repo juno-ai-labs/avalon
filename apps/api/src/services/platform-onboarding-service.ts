@@ -20,12 +20,17 @@ import { ApiError } from "../lib/api-error";
 import { sha256 } from "../lib/crypto";
 import {
   deriveWorkspacePlacementAffinity,
+  fallbackWorkspacePlacementAffinity,
   durableObjectStubForWorkspace,
   isWorkspacePlacementAffinityForRegion,
   type WorkspacePlacementAffinity,
 } from "../lib/durable-object-namespace";
 import { workspaceDOName } from "../durable-objects/names";
 import { AuthService } from "./auth-service";
+import {
+  demoWorkspaceAdmission,
+  withheldDemoWorkspaceIds,
+} from "./demo-workspace-visibility";
 import { acceptInvitationForUser, declineInvitationForUser } from "./workspace-service";
 import {
   PreferenceProjectionSchema,
@@ -291,9 +296,18 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
          ORDER BY i.created_at DESC LIMIT 100`,
       ).bind(identity.email, nowIso(), this.env.AVALON_REGION).all<InvitationDiscoveryRow>(),
     ]);
+    const memberships = (workspaceResult.results ?? []).map(mapWorkspace);
+    // Two workspaces a member holds but is not offered: the demo template, and a
+    // demo still being prepared. Both are withheld from the list rather than
+    // from the membership — the template's operator still maintains it, and a
+    // candidate becomes ordinary the moment it is published.
+    const withheld = await withheldDemoWorkspaceIds(
+      this.env.DB,
+      memberships.map((workspace) => workspace.id),
+    );
     return regionalDiscoverySchema.parse({
       region: this.env.AVALON_REGION,
-      workspaces: (workspaceResult.results ?? []).map(mapWorkspace),
+      workspaces: memberships.filter((workspace) => !withheld.has(workspace.id)),
       invitations: (invitationResult.results ?? []).map(mapPendingInvitation),
     });
   }
@@ -305,6 +319,14 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
     await applyRegionalPreferenceProjection(this.env, user.id, input.preference);
     await this.requirePlacementAffinity(input.workspaceId, input.placementAffinity);
     await this.requireMembership(user.id, input.workspaceId);
+    // Preparation is a real admission state, not a rendering detail: activating
+    // a candidate before it is published shows a half-seeded sidebar and lets
+    // somebody open a room the pack has not finished writing. The template is
+    // deliberately still activatable — the filter above is a discovery filter,
+    // not its security gate, and an operator maintains it by opening it.
+    if (await demoWorkspaceAdmission(this.env.DB, input.workspaceId) === "preparing") {
+      throw new ApiError(409, "demo_workspace_preparing", "This demo is still being prepared");
+    }
     await this.initializeWorkspaceObject(input.workspaceId, input.placementAffinity);
     // Activation is a read/verify plus fresh session issue. It intentionally
     // does not claim the action journal because the binding's operation may
@@ -326,6 +348,58 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
       return new AuthService(this.env).createRegionalSession(user.id, input.workspaceId);
     }
 
+    await this.createOwnedWorkspace(user.id, input);
+    return new AuthService(this.env).createRegionalSession(user.id, input.workspaceId);
+  }
+
+  /**
+   * Create a workspace for a member who already exists in this region, with no
+   * session minted for them.
+   *
+   * The demo preparation's path: the presenter is a regional user, and a demo
+   * workspace is created *for* them — as its owner, through the same rows,
+   * journal, placement check and object initialization as `create` — without
+   * anybody signing in. A session here would be a login credential minted on
+   * somebody's behalf by an operator, which is not something preparation may
+   * do. Idempotent through the journal exactly as `create` is: a replay of the
+   * same operation returns to the same workspace.
+   */
+  async createWorkspaceForMember(input: {
+    operationId: string;
+    workspaceId: WorkspaceId;
+    name: string;
+    userId: string;
+  }): Promise<void> {
+    const user = await this.env.DB.prepare(
+      "SELECT id, platform_user_id, google_subject, email FROM users WHERE id = ?",
+    ).bind(input.userId).first<RegionalUserRow>();
+    if (!user?.platform_user_id) {
+      throw new ApiError(404, "regional_user_not_found", "The member is not known in this region");
+    }
+    const placementAffinity = fallbackWorkspacePlacementAffinity(this.env.AVALON_REGION);
+    const reference: OperationReference & { name: string; placementAffinity: WorkspacePlacementAffinity } = {
+      operationId: input.operationId,
+      workspaceId: input.workspaceId,
+      identity: { platformUserId: user.platform_user_id },
+      name: input.name,
+      placementAffinity,
+    };
+    const replay = await this.loadOperation(input.operationId);
+    if (replay) {
+      this.assertOperation(replay, reference, "create", null);
+      await this.requireMembership(user.id, input.workspaceId);
+      await this.requirePlacementAffinity(input.workspaceId, placementAffinity);
+      await this.initializeWorkspaceObject(input.workspaceId, placementAffinity);
+      return;
+    }
+    await this.createOwnedWorkspace(user.id, reference);
+  }
+
+  /** The rows, the journal entry, the checks, and the object — for both creators above. */
+  private async createOwnedWorkspace(
+    userId: string,
+    input: OperationReference & { name: string; placementAffinity: WorkspacePlacementAffinity },
+  ): Promise<void> {
     const at = nowIso();
     const slugBase = input.name.toLowerCase().replace(/[^a-z0-9]+/gu, "-").replace(/^-|-$/gu, "").slice(0, 40) || "workspace";
     const slug = `${slugBase}-${input.workspaceId.slice(0, 8)}`;
@@ -342,7 +416,7 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
         this.env.AVALON_REGION,
         this.env.AVALON_REGION === "eu" ? "Europe/London" : "America/Los_Angeles",
         input.placementAffinity,
-        user.id,
+        userId,
         at,
         at,
       ),
@@ -351,13 +425,12 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
          SELECT ?, ?, 'owner', 'active', ?
          WHERE EXISTS (SELECT 1 FROM workspaces WHERE id = ? AND region = ?)
          ON CONFLICT(workspace_id, user_id) DO UPDATE SET status = 'active'`,
-      ).bind(input.workspaceId, user.id, at, input.workspaceId, this.env.AVALON_REGION),
+      ).bind(input.workspaceId, userId, at, input.workspaceId, this.env.AVALON_REGION),
       this.operationStatement(input, "create", null, at),
     ]);
-    await this.requireMembership(user.id, input.workspaceId);
+    await this.requireMembership(userId, input.workspaceId);
     await this.requirePlacementAffinity(input.workspaceId, input.placementAffinity);
-    await this.initializeWorkspaceObject(input.workspaceId, input.placementAffinity);
-    return new AuthService(this.env).createRegionalSession(user.id, input.workspaceId);
+    await this.initializeWorkspaceObject(asWorkspaceId(input.workspaceId), input.placementAffinity);
   }
 
   async accept(rawInput: RegionalAcceptInput): Promise<Session> {
@@ -569,7 +642,7 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
 
   private assertOperation(
     row: OperationRow,
-    input: RegionalActionInput,
+    input: OperationReference,
     action: OperationRow["action"],
     invitationId: string | null,
   ): void {
@@ -584,7 +657,7 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
   }
 
   private operationStatement(
-    input: RegionalActionInput,
+    input: OperationReference,
     action: OperationRow["action"],
     invitationId: string | null,
     at = nowIso(),
@@ -618,6 +691,18 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
 }
 
 type RegionalActionInput = RegionalActivateInput | RegionalCreateInput | RegionalAcceptInput;
+
+/**
+ * What the onboarding journal keys an action on: the person, the operation,
+ * and the workspace. Every regional action input carries these; the demo
+ * preparation's create carries only these, because it has no platform identity
+ * payload to hand over — the presenter is already a regional user.
+ */
+interface OperationReference {
+  operationId: string;
+  workspaceId: string;
+  identity: { platformUserId: string };
+}
 
 export interface PlatformBindingRow {
   platform_user_id: string;
