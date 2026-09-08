@@ -139,6 +139,15 @@ would retain functionality that was requested to be removed.
 **Consequences:** Shared heading collapse and complete-source copy/export remain
 available; H2 headings no longer create cards.
 
+### 2026-09-08 — Keep composer controls above attachment drafts
+
+The capsule composer's tool and submit areas explicitly stack above its textarea.
+With an attachment, the textarea spans their grid row; a long pasted draft could
+intercept clicks on the visible Send button while Enter still submitted. Keeping
+the controls above that shared row preserves the existing layout and send guards
+instead of changing submission behavior. Verify pointer clicks in a real window:
+DOM-only tests cannot detect this overlap.
+
 ### 2026-09-08 — Sidekick navigation and attachments
 
 The main-window `/sidekicks` adapter opens the dedicated library and returns the
