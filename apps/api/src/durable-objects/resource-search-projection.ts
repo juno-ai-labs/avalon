@@ -44,7 +44,7 @@ export async function publishResourceSearch(sql: SqlStorage, env: Env, workspace
   if (!searchIndexingConfigured(env)) return;
   // The existing activity Queue accepts at most 100 messages in one batch.
   const rows = sql.exec<{ resource_id: string; revision: number }>(
-    'SELECT resource_id, revision FROM resource_search_versions WHERE pending = 1 AND not_before <= ? ORDER BY resource_id LIMIT 100', Date.now(),
+    'SELECT resource_id, revision FROM resource_search_versions WHERE pending = 1 AND not_before <= ? ORDER BY not_before, resource_id LIMIT 100', Date.now(),
   ).toArray();
   if (!rows.length) return;
   try {

@@ -198,7 +198,9 @@ own pending wake-ups).
 
 `WorkspaceDO.refreshSchedule(workspaceId)` is called after any mutation that can
 move a due time — including automatically from `executeRuntimeSql` when a
-statement touches one of the alarm-source tables. It reconciles four kinds:
+statement touches one of the alarm-source tables. Automatic refreshes reconcile
+only the affected kinds, preserving unrelated entries; explicit repair and the
+post-drain refresh reconcile all four kinds:
 
 | Kind | Key | Source |
 | --- | --- | --- |
@@ -475,6 +477,23 @@ emitted, and `$workers.durableObjectId` is the platform-owned correlation
 field.
 
 ## Changelog
+
+### 2026-09-08 — Index pending resources and reconcile only affected alarm kinds
+
+WorkspaceDO migration 39 adds partial indexes for expired upload drafts and
+resources without slugs. The maintenance queries retain their link/reservation
+exclusions and deadlines, but no longer visit every completed resource when no
+work remains. Runtime SQL writes now derive and reconcile only their source
+kinds, including watch removal when a resource deletion cascades; typed note,
+Slack, memory, and digest writes do the same. The public
+repair operation and post-drain recovery still reconcile all kinds.
+
+The billing investigation found each empty resource maintenance query reading
+about 71,000 rows, repeatedly behind unrelated writes. Caching due times or
+skipping no-op replays was rejected: durable source rows must remain authoritative,
+and a replay must repair a previous failed post-commit refresh. A scoped reconcile
+must preserve other kinds and surviving retry gates. New alarm-source tables must
+be assigned the kind their writes can change.
 
 ### 2026-09-08 — Sidekick publication recovery
 
