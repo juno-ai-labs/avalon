@@ -166,7 +166,7 @@ describe('AutomationHeader', () => {
     expect(handlers.onDelete).toHaveBeenCalledTimes(2);
   });
 
-  it('lists the runs it is given, with their status, and says when there are none', () => {
+  it('keeps runs off the initial page and shows them only through More and Run history', async () => {
     const active: AutomationDetail = {
       ...draft,
       status: 'active',
@@ -178,6 +178,11 @@ describe('AutomationHeader', () => {
     const { unmount } = render(
       <Tooltip.Provider><AutomationHeader automation={active} runs={[]} {...actions()} /></Tooltip.Provider>,
     );
+    expect(screen.queryByText('No runs yet')).toBeNull();
+    expect(screen.queryByRole('dialog', { name: 'Run history' })).toBeNull();
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'More Sidekick actions' }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Run history' }));
+    expect(await screen.findByRole('dialog', { name: 'Run history' })).toBeVisible();
     expect(screen.getByText('No runs yet')).toBeInTheDocument();
     unmount();
 
@@ -194,9 +199,17 @@ describe('AutomationHeader', () => {
         createdAt: '2026-09-01T09:00:00.000Z',
       }],
     });
-    const runs = screen.getByRole('list', { name: 'Runs' });
+    expect(screen.queryByRole('list', { name: 'Runs' })).toBeNull();
+    expect(screen.queryByText('Three pull requests merged.')).toBeNull();
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'More Sidekick actions' }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Run history' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Run history' });
+    const runs = within(dialog).getByRole('list', { name: 'Runs' });
     expect(runs).toHaveTextContent('Scheduled');
     expect(runs).toHaveTextContent('Three pull requests merged.');
     expect(runs).toHaveTextContent('completed');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close dialog' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Run history' })).toBeNull());
+    expect(screen.queryByRole('list', { name: 'Runs' })).toBeNull();
   });
 });

@@ -1,10 +1,11 @@
+import { AutomationGlyph } from './workstream-glyph';
 import { useState } from 'react';
-import { CirclePause, Ellipsis, Mail, Play, Trash2 } from 'lucide-react';
+import { CirclePause, Ellipsis, History, Mail, Play, Trash2 } from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { DeleteAutomationDialog } from './delete-automation-dialog';
 import type { AutomationDetail, AutomationRun } from '../lib/types';
 import { formatRelative } from '../lib/format';
-import { Badge, Button, IconButton, InlineError, StatusDot } from './primitives';
+import { Badge, Button, IconButton, InlineError, Modal, StatusDot } from './primitives';
 
 export type AutomationHeaderAction = 'pause' | 'resume' | 'delete' | 'run';
 
@@ -50,15 +51,7 @@ function runStatus(run: AutomationRun): React.ComponentProps<typeof StatusDot>['
   return run.status === 'pending' ? 'scheduled' : run.status;
 }
 
-/**
- * The strip above an automation's conversation: what it is, where it stands in
- * its lifecycle, and the few things a person does to it from outside the chat.
- *
- * The draft itself is written in the conversation, so the header carries no
- * editor. Create and Apply are one button: the first press creates the
- * automation from its ready definition, every later press re-applies an edit,
- * and the label says which.
- */
+/** Sidekick profile, lifecycle controls, and activity beside its authoring conversation. */
 export function AutomationHeader({
   automation,
   runs,
@@ -79,29 +72,23 @@ export function AutomationHeader({
   const hasTriggers = automation.runnable ?? ((definition?.triggers.length ?? 0) > 0);
   const canRun = automation.lifecycle === 'active' && hasTriggers;
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [showRunHistory, setShowRunHistory] = useState(false);
   return (
-    <header className="workstream-header automation-header window-drag">
+    <div className="automation-header">
+      <span className="sidekick-profile-glyph"><AutomationGlyph id={automation.id} /></span>
       <div className="automation-header-row">
         <div className="workstream-header-left window-no-drag">
           <div className="workstream-title-block">
-            <div className="workstream-title-line">
+            <div className="automation-title-line">
               <h1>{name}</h1>
               <Badge className={`automation-lifecycle is-${automation.lifecycle}`}>
                 {lifecycleLabel[automation.lifecycle]}
               </Badge>
               <Badge className="scope-badge">{scopeLabel(automation.scope)}</Badge>
             </div>
-            <div className="workstream-subtitle">
-              {error ? <InlineError>{error}</InlineError> : (
-                <>
-                  <span>{description}</span>
-                  {automation.emailAddress && (
-                    <span className="automation-header-email" title={automation.emailAddress}>
-                      <Mail aria-hidden="true" size={11} /> {automation.emailAddress}
-                    </span>
-                  )}
-                </>
-              )}
+            <div className="automation-description">
+              {description}
+              {error && <InlineError>{error}</InlineError>}
             </div>
           </div>
         </div>
@@ -125,7 +112,10 @@ export function AutomationHeader({
                 {hasTriggers && <DropdownMenu.Item className="menu-item" disabled={!canRun || pending !== null} onSelect={onRunNow}>
                   <Play size={14} /> {pending === 'run' ? 'Starting…' : 'Run now'}
                 </DropdownMenu.Item>}
-                <DropdownMenu.Separator className="menu-separator" />
+                {(hasTriggers || listedRuns.length > 0) && <DropdownMenu.Item className="menu-item" onSelect={() => setShowRunHistory(true)}>
+                  <History size={14} /> Run history
+                </DropdownMenu.Item>}
+                {(hasTriggers || listedRuns.length > 0) && <DropdownMenu.Separator className="menu-separator" />}
                 <DropdownMenu.Item
                   className="menu-item menu-item-danger"
                   disabled={pending !== null}
@@ -143,17 +133,19 @@ export function AutomationHeader({
           />
         </div>
       </div>
-      <div className="automation-header-details window-no-drag">
+      <div className="automation-header-details">
         {automation.triggerSummaries.length > 0 && (
-          <ul aria-label="Triggers" className="automation-header-triggers">
+          <section className="sidekick-profile-section"><h2>When to expect it</h2><ul aria-label="Triggers" className="automation-header-triggers">
             {automation.triggerSummaries.map((summary) => <li key={summary}>{summary}</li>)}
-          </ul>
+          </ul>{automation.nextRunAt && <p className="automation-runs-next">Next {formatRelative(automation.nextRunAt)}</p>}</section>
         )}
-        {(hasTriggers || listedRuns.length > 0) && <details className="automation-runs">
-          <summary>
-            Runs{listedRuns.length > 0 ? ` (${listedRuns.length})` : ''}
-            {automation.nextRunAt && <span className="automation-runs-next"> · Next {formatRelative(automation.nextRunAt)}</span>}
-          </summary>
+        <section className="sidekick-profile-section sidekick-guidance">
+          <h2>Make it work for you</h2>
+          <p>Ask for changes in the conversation. Try “Keep it short” or “Use a more casual tone.”</p>
+        </section>
+        {automation.emailAddress && <details className="sidekick-profile-section sidekick-email-details"><summary>Email this Sidekick</summary><span className="automation-header-email"><Mail aria-hidden="true" size={14} /><span>{automation.emailAddress}</span></span></details>}
+      </div>
+      <Modal open={showRunHistory} onOpenChange={setShowRunHistory} title="Run history" description="Technical details for troubleshooting this Sidekick.">
           {runsError ? (
             <p className="automation-runs-empty">Could not load runs</p>
           ) : listedRuns.length === 0 ? (
@@ -177,8 +169,7 @@ export function AutomationHeader({
               ))}
             </ul>
           )}
-        </details>}
-      </div>
-    </header>
+      </Modal>
+    </div>
   );
 }

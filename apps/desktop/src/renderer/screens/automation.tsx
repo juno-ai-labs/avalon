@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
+import { SidekickDetailLayout } from '../components/sidekick-detail-layout';
 import { AutomationHeader, type AutomationHeaderAction } from '../components/automation-header';
 import { Button, EmptyState, OpeningState } from '../components/primitives';
 import { useAppSession } from '../lib/app-session';
@@ -117,23 +118,23 @@ function AutomationDetailScreen({ id }: { id: string }): React.JSX.Element {
   if (!automation.data) return <OpeningState label="Opening Sidekick…" />;
   const detail = automation.data;
   return (
-    <ConversationSurface
-      parentId={id}
-      parentKind="automation"
-      renderHeader={() => (
-        <div className="sidekick-detail-heading"><Link className="sidekick-back" to="/sidekicks">← Sidekicks</Link><AutomationHeader
-          automation={detail}
-          error={act.error?.message}
-          onDelete={() => act.mutateAsync('delete').then(() => undefined)}
-          onPause={() => act.mutate('pause')}
-          onResume={() => act.mutate('resume')}
-          onRunNow={() => act.mutate('run')}
-          pending={act.isPending ? act.variables : null}
-          runs={runs.data}
-          runsError={runs.error?.message}
-        /></div>
-      )}
-      substreamId="0"
-    />
+    <SidekickDetailLayout key={id} overview={<AutomationHeader
+      automation={detail}
+      error={act.error?.message}
+      onDelete={() => act.mutateAsync('delete').then(() => undefined)}
+      onPause={() => act.mutate('pause')}
+      onResume={() => act.mutate('resume')}
+      onRunNow={() => act.mutate('run')}
+      pending={act.isPending ? act.variables : null}
+      runs={runs.data}
+      runsError={runs.error?.message}
+    />}>
+      <ConversationSurface
+        parentId={id}
+        parentKind="automation"
+        renderHeader={() => <header className="sidekick-conversation-heading"><h2>What would you like your Sidekick to do?</h2><p>Tell it what you need or ask for a change, in your own words.</p></header>}
+        substreamId="0"
+      />
+    </SidekickDetailLayout>
   );
 }

@@ -48,8 +48,8 @@ Sidekick authoring uses the shared conversation surface in a separate library wi
   hooks for one conversation, keyed by the parent id and substream. Its
   composer draft is `workstreamDraftKey` over the parent id, whichever kind of
   parent that is. `screens/workstream.tsx` renders it for a work stream;
-  `screens/automation.tsx` renders `components/automation-header.tsx` through
-  `renderHeader` over it with `parentKind: "automation"` and `substreamId:
+  `screens/automation.tsx` renders `components/automation-header.tsx` in a sibling profile pane
+  through `SidekickDetailLayout`, with a short conversation heading over the feed with `parentKind: "automation"` and `substreamId:
   "0"`. Tool rows are not rendered one per call: they collapse into one row per plugin, which
   [`plugin-activity-rows.md`](plugin-activity-rows.md) owns entirely. The
   retired automation-draft adapter kept a row per call, which is the divergence
@@ -126,6 +126,16 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-08 — Separate Sidekick management from its conversation
+
+SidekickDetailLayout owns a scrollable profile beside the shared conversation,
+with Conversation/Details switches on narrow windows. Switching hides a pane
+without unmounting it, preserving composer drafts and socket ownership. The
+header-only design left the feed competing with schedules and run history;
+those controls now live entirely outside ConversationSurface. Run history is
+behind More → Run history, while the first view explains how to ask for changes.
+
 
 ### 2026-09-08 — Remove heading-generated document cards
 

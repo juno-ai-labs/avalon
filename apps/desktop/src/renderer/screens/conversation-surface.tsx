@@ -1953,7 +1953,7 @@ export function ConversationSurface({
             <EmptyState
               title="Ready to begin"
               description={parentKind === 'automation'
-                ? 'What would you like to delegate? Teach your Sidekick what it should know or do.'
+                ? 'Tell your Sidekick what you’d like help with. You can ask for changes as you go.'
                 : 'Send a message to start work in this stream.'}
             />
           ) : (
@@ -2006,7 +2006,7 @@ export function ConversationSurface({
         <div className="composer-stack">
           <WorkstreamComposer
             api={api ?? undefined}
-            placeholder={parentKind === 'automation' ? 'Teach your Sidekick…' : 'Message the work stream…'}
+            placeholder={parentKind === 'automation' ? 'Ask your Sidekick…' : 'Message the work stream…'}
             attachments={attachmentDraft.attachments}
             error={sendError ?? attachmentDraft.error ?? attachResource.error?.message ?? stop.error?.message ?? retry.error?.message}
             fileInputRef={fileInputRef}
