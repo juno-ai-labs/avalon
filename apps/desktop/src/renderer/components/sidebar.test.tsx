@@ -299,6 +299,63 @@ describe('Sidebar work-stream markers', () => {
     expect(navigation).not.toHaveClass('is-resizing');
   });
 
+  // The handle is drawn at the sidebar's trailing edge, so while a collapse is
+  // still travelling that edge is ahead of the width the state holds. Taking the
+  // offset from the state leaves the drag wrong by whatever the animation had
+  // left to run — and wrong for its whole length, not just the first frame.
+  it('grabs the edge where it is drawn rather than where it is heading', () => {
+    useUiStore.getState().setSidebarCollapsed(true);
+    function Navigation() {
+      const compact = useUiStore((state) => state.sidebarCollapsed);
+      return <Sidebar {...defaultActions} compact={compact} conversationOnly automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} />;
+    }
+    render(<MemoryRouter><Tooltip.Provider><Navigation /></Tooltip.Provider></MemoryRouter>);
+    const resizer = screen.getByRole('separator', { name: 'Resize navigation' });
+    resizer.setPointerCapture = vi.fn();
+    // Mid-collapse: heading for the 96px rail, still drawn at 184px.
+    layOutPanelAt(184);
+
+    fireEvent.pointerDown(resizer, { button: 0, clientX: 185, pointerId: 4 });
+    fireEvent.pointerMove(window, { clientX: 305, pointerId: 4 });
+
+    // 120px of pointer travel from a 184px edge is a 304px sidebar. Measured
+    // from the 96px target instead, the same travel asks for 216px — under the
+    // 220px expand threshold, so the sidebar would not have moved at all.
+    expect(resizer).toHaveAttribute('aria-valuenow', '304');
+    fireEvent.pointerUp(window, { pointerId: 4 });
+  });
+
+  // Held arrow keys are the keyboard's drag: the same width written over and
+  // over. Animating each step leaves the edge behind the width the collapse
+  // threshold is judged against, so the sidebar snaps to the rail at a width
+  // the reader never saw. The suppression lasts exactly as long as the key.
+  it('suppresses the collapse animation while an arrow key is held', () => {
+    useUiStore.getState().setSidebarCollapsed(false);
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar {...defaultActions} conversationOnly automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+    const resizer = screen.getByRole('separator', { name: 'Resize navigation' });
+    const navigation = screen.getByRole('complementary', { name: 'Rally navigation' });
+    expect(navigation).not.toHaveClass('is-resizing');
+
+    fireEvent.keyDown(resizer, { key: 'ArrowLeft' });
+    expect(navigation).toHaveClass('is-resizing');
+    fireEvent.keyDown(resizer, { key: 'ArrowLeft' });
+    expect(navigation).toHaveClass('is-resizing');
+
+    fireEvent.keyUp(resizer, { key: 'ArrowLeft' });
+    expect(navigation).not.toHaveClass('is-resizing');
+
+    // A key that does not resize leaves the width alone, so it must not claim
+    // the gesture either.
+    fireEvent.keyDown(resizer, { key: 'Tab' });
+    expect(navigation).not.toHaveClass('is-resizing');
+  });
+
   it('names compact links and connects their hover descriptions to the link', async () => {
     const item = workstream('compact-preview', 'Named compact destination', 'completed');
     render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} compact conversationOnly automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[item]} /></Tooltip.Provider></MemoryRouter>);
@@ -483,6 +540,14 @@ describe('Sidebar work-stream markers', () => {
     expect(resizer).not.toHaveClass('is-near');
   });
 
+  // Where the sidebar is actually drawn. The grab measures the panel rather than
+  // reading the width state, so jsdom — which lays nothing out and reports every
+  // rect as zero — has to be told, and these tests are about geometry.
+  function layOutPanelAt(right: number): void {
+    vi.spyOn(screen.getByRole('complementary', { name: 'Rally navigation' }), 'getBoundingClientRect')
+      .mockReturnValue({ bottom: 900, height: 900, left: 0, right, toJSON: () => ({}), top: 0, width: right, x: 0, y: 0 });
+  }
+
   // The handle stands in a strip beside the sidebar rather than on its edge, so
   // a grab at the far side of that strip must still move the sidebar by what
   // the pointer moves rather than snapping the edge out to meet it.
@@ -497,6 +562,7 @@ describe('Sidebar work-stream markers', () => {
 
     const resizer = screen.getByRole('separator', { name: 'Resize navigation' });
     resizer.setPointerCapture = vi.fn();
+    layOutPanelAt(300);
 
     fireEvent.pointerDown(resizer, { clientX: 318, pointerId: 3 });
     expect(resizer).toHaveFocus();
