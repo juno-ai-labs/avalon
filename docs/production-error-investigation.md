@@ -265,6 +265,15 @@ Common examples include:
   long root span does not identify the slow application phase on its own.
 - **A compatibility resource name is read as deployment age.** A name that
   still contains `avalon` may be an intentionally retained identifier.
+- **A slow step that wraps a Durable Object call is read as the object's
+  work.** The caller's step and the platform's binding span both include the
+  object's activation — placement, storage, and the constructor — before the handler. Constructor spans cover initialization but not the
+  preceding platform wait.
+  The object's own flow row, the constructor's `durable_object_initialization`
+  row on the same invocation, and the invocation log's `cpuTimeMs` say whether
+  the object was slow or was being woken; on a feed upgrade
+  `rally.socket.room_outside_accept_ms` carries the time outside acceptance,
+  including constructor/readiness and queueing.
 
 The recent WorkspaceDO alarm investigation is the canonical example. The
 pre-work recovery arm once created an immediately due second alarm. Cloudflare
@@ -323,6 +332,21 @@ hypothesis.
 5. Compare failures with the matching successful-invocation denominator and,
    when relevant, group slow successes by phase/kind before changing scheduling
    behaviour.
+
+### A slow call into a Durable Object
+
+1. Compare the object's own flow duration with the caller's step. A large
+   difference means time outside that handler, including constructor/storage
+   readiness and input-gate queueing; it does not establish a platform fault.
+2. Inspect constructor phases and overlapping handlers first. Workerd's clock
+   does not advance during synchronous work, so also read invocation CPU time.
+3. Filter invocation logs by `$workers.durableObjectId` for the window. Long,
+   low-CPU invocations ending together around initialization are evidence
+   consistent with activation waits, to correlate with the constructor phases.
+4. Check the preceding socket close, alarm, RPC, and idle interval to understand
+   why the object might have been cold. On feed upgrades, use
+   `rally.socket.room_outside_accept_ms` and instance age as supporting context;
+   neither proves which concurrent call woke the object.
 
 ### “The socket disconnected”
 

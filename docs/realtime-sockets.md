@@ -541,6 +541,11 @@ attachments may contain obsolete capability fields; they are ignored on restore.
   request URLs into stores this repository cannot redact; a ticket in the query
   is a live credential in all of them. Break this and the credential is back in
   the invocation log, the 90-day Logpush export, and every trace span.
+- **A room diagnostic never reaches the client handshake.** The room reports
+  its accept duration and instance age to the edge on the 101 it answers with;
+  the edge records them and strips both before negotiating the subprotocol. A
+  header the client did not ask for on a handshake is a header a future reader
+  will trust.
 - **Only the sentinel is echoed.** Returning the ticket would move it from a
   request header to a response header and undo the change. `ticketId` is not the
   ticket: it is the `jti` a replay check already refuses a second use of, and it
@@ -711,6 +716,15 @@ Child archive admission uses the same `parent_archived` ticket field as parent a
 
 ## Changelog
 
+### 2026-09-09 — Strip diagnostics even when malformed
+
+Header presence now controls stripping, independently of numeric parsing, to
+keep malformed values off both subprotocol and legacy query-ticket handshakes.
+Real workerd verifies both paths. The proposed activation attribute is now
+`room_outside_accept_ms` because constructor work and queueing also contribute.
+
+PR #607.
+
 ### 2026-09-08 — Enforce pushed child archive locally
 
 **What changed:** The archive admission flag also covers private children; already-open commands consult their local lifecycle mirror.
@@ -766,6 +780,25 @@ parent's entry, which is the one the header renders, rather than the child's.
 The harness status and attention advances were deliberately left on their own
 writers, because they are substream-owned and a child's value must not reach
 the parent's list row.
+
+### 2026-09-08 — The room says how long its accept took, so the edge can say what it waited for
+
+**What changed:** An accepted feed upgrade's 101 carries two internal headers
+from the SubstreamAgent, its accept duration and its instance age. The edge
+turns them into `rally.socket.room_accept_ms`,
+`rally.socket.room_activation_ms`, and `rally.socket.room_instance_age_ms` on
+the upgrade flow and strips both before the handshake is negotiated.
+
+**Why:** Three opens of one work stream took 2.9–12.6 s with the edge's
+`room_upgrade` step as the slowest and the room's own accept at 119–214 ms; the
+rest was the platform activating a cold object before its constructor, which
+no span in the room can see. [`performance-tracing.md`](performance-tracing.md#what-room_upgrade-contains)
+owns the evidence and the attributes.
+
+**Consequences:** The headers are object-to-Worker only. Admission is
+unchanged: they are set after the ticket is consumed and carry no authority.
+
+Shipped in #607.
 
 ### 2026-09-08 — Document personal access frames and cursor recovery
 

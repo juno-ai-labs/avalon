@@ -128,6 +128,17 @@ export abstract class MigratableDurableObject<TEnv extends Env = Env>
   }
 
   /**
+   * Milliseconds since this instance's constructor began.
+   *
+   * Uses workerd's clock, which advances across I/O rather than during
+   * synchronous work. A small age suggests a recently created instance; it
+   * does not identify which concurrent call woke it or measure CPU time.
+   */
+  protected instanceAgeMs(): number {
+    return Math.max(0, Date.now() - this.constructorStartedAt);
+  }
+
+  /**
    * Apply this object's schema and tell the tracker what happened.
    *
    * The one call every constructor makes, in place of its own
