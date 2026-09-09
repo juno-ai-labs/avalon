@@ -148,7 +148,11 @@ local optimistic rows are reconciled by stable client turn IDs.
 Finished assistant turns also share the action row. Copy and export remain
 local actions; **Speak** uses the regional authenticated stream documented in
 [`message-speech.md`](message-speech.md) and receives the complete stored
-markdown even when the shared renderer has collapsed its sections.
+markdown even when the shared renderer has collapsed its sections. **New
+substream** closes that row, and a person's own settled turn carries the same
+control alone in a row beneath its bubble; both are described in
+[`substream-creation.md`](substream-creation.md). The row owns the hover fade —
+a control inside it must not carry its own.
 
 Assistant H2 sections use the shared inline Markdown renderer. There is no
 heading-generated card deck or paged document reader.
@@ -162,6 +166,20 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-09 — The per-message substream cutoff joins the action row
+
+**What changed:** The **New substream** control moved out of the message identity
+line into the turn's action row, last after Copy, Speak, Image and PDF, with a
+one-control row under a person's own bubble for the same action.
+
+**Why:** The identity line answers who spoke and when; an action wedged between
+the author, the timestamp and the turn's labels competed with that. Everything
+else a settled turn can be asked to do already lives in the action row.
+
+**Consequences:** A control added to either row inherits the row's hover fade and
+must not declare its own opacity — nesting the two multiplies them and renders
+the inner control paler than its neighbours.
 
 ### 2026-09-09 — A substream's initial identifies it in the collapsed rail
 

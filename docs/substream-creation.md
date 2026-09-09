@@ -34,7 +34,10 @@ apart: the work stream's own tinted icon for the main conversation, a Tabler
 Compact hides the titles and swaps a child's branch line for the first character
 of its title. It retains the existing sidebar colors, row sizing, drag width and
 icon-only collapse. A completed
-main-feed message also offers **New substream** with that message as the cutoff.
+main-feed message also offers **New substream** with that message as the cutoff:
+last in the assistant turn's action row, after Copy, Speak, Image and PDF, and in
+a row of its own under a person's own bubble. Both placements appear on hover,
+alongside the other things a settled turn can be asked to do.
 Both enter the same creation flow; there is no context-strategy picker.
 
 Every section of the center sidebar belongs to the parent work stream. Switching
@@ -225,6 +228,28 @@ Run the focused suites with the package-local Vitest paths per
 substitute for real-provider latency or window-level acceptance.
 
 ## Changelog
+
+### 2026-09-09 — Move the message cutoff into the turn's action row
+
+**What changed:** The per-message **New substream** control left the identity
+line and joined the turn's action row — last after Copy, Speak, Image and PDF on
+an assistant turn, and alone in a row under a person's own bubble. Its hover fade
+now belongs to whichever row holds it.
+
+**Why:** In the identity line it sat between the author, the time and the turn's
+labels, where a reader looking for who spoke and when had to read past an action;
+the action row is already where a settled turn's verbs live, and starting a
+substream is one of them. The fade moved because the button kept its own hover
+opacity inside a row that already fades: the two multiplied and rendered this one
+button visibly paler than the four beside it.
+
+**Considered and rejected:** Moving it only on assistant turns, which would have
+left the same action in two different places depending on who spoke. A future
+change should keep the two placements' metrics identical — the control takes the
+action row's font size and padding so it reads as one of that row's buttons — and
+must keep the label unbroken (`white-space: nowrap`), because its two words wrap
+mid-control in a narrow row.
+
 
 ### 2026-09-08 — Review fixes for lifecycle and command boundaries
 
