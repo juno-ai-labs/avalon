@@ -743,19 +743,77 @@ describe('message header meta typography', () => {
   });
 
   /**
-   * The identity line over a person's turn stops where the bubble's top edge
-   * does, so the name and time sit over the flat of the pill rather than over
-   * the round of its corner. That is one number in two rules, and a literal
-   * copied into either drifts the first time the corner is tuned — a few pixels
-   * on one line, which is exactly what a screenshot pass looks past.
+   * The substream control appears in both action rows, so the rows share one set
+   * of button metrics. Restating them per row is not merely duplication: inside
+   * the agent's row `.agent-message-actions button` outranks the control's own
+   * class, so a per-row copy silently wins there and loses under the bubble, and
+   * tuning one row moves the control on Rally's turn while leaving it behind on
+   * the person's.
    */
-  it('insets the human identity line by the bubble corner it is named once for', () => {
+  /**
+   * The defect this PR's action-row move introduced and then fixed: the control
+   * carried its own hover opacity into a row that already fades, the two
+   * multiplied, and it settled paler and later than the four buttons beside it.
+   * The fix is the deletion of a declaration, so this is where it is held —
+   * nothing in the DOM says what opacity a pixel ended up at.
+   */
+  it('leaves the hover fade to the row that holds the control', () => {
+    expect(rule('.message-start-substream')).not.toContain('opacity');
+    expect(rule('.agent-message-actions')).toContain('opacity: 0;');
+    expect(rule('.human-message-actions')).toContain('opacity: 0;');
+  });
+
+  it('gives both action rows one set of button metrics', () => {
+    const shared = rule(':is(.agent-message-actions, .human-message-actions) button');
+    expect(shared).not.toBeNull();
+    expect(shared).toContain('font-size: 10px;');
+    expect(shared).toContain('padding: 2px;');
+    expect(rule('.agent-message-actions button')).toBeNull();
+  });
+
+  /**
+   * The identity line over a person's turn, and the action row under it, stop
+   * where the bubble's top edge does, so the name, the time and the actions sit
+   * over the flat of the pill rather than over the round of its corner. That is
+   * one number in four rules, and a literal copied into any of them drifts the
+   * first time the corner is tuned — a few pixels on one line, which is exactly
+   * what a screenshot pass looks past.
+   */
+  it('insets the human identity line and action row by the bubble corner they are named once for', () => {
     const block = rule(':is(.workstream-screen, .automation-chat-surface) .human-message');
     expect(block).toContain('--turn-bubble-radius:');
     expect(rule(':is(.workstream-screen, .automation-chat-surface) .human-message-bubble'))
       .toContain('border-radius: var(--turn-bubble-radius);');
     expect(rule(':is(.workstream-screen, .automation-chat-surface) .human-message > header'))
       .toContain('padding-inline-end: var(--turn-bubble-radius);');
+    expect(rule(':is(.workstream-screen, .automation-chat-surface) .human-message .human-message-actions'))
+      .toContain('padding-inline-end: var(--turn-bubble-radius);');
+  });
+
+  /**
+   * A theme that wants a different corner restates the token, not the corner.
+   * The work-stream theme wrote `18px` onto the bubble and onto the header's
+   * padding instead, which held only while those two literals agreed: the
+   * action row, reading the token, came out inset by the shared 14px against an
+   * 18px corner.
+   */
+  it('lets the work-stream theme move the corner by the token rather than by a literal', () => {
+    const themed = rule('.workstream-screen .human-message');
+    expect(themed).not.toBeNull();
+    expect(themed).toContain('--turn-bubble-radius:');
+    // The two token declarations tie on specificity — `:is()` takes its most
+    // specific argument — so source order is what makes the theme's value win.
+    // Without this, moving the theme rule above the shared one keeps every
+    // assertion here green while restoring the 4px drift they exist to prevent.
+    expect(stylesheet.indexOf('.workstream-screen .human-message {'))
+      .toBeGreaterThan(stylesheet.indexOf(':is(.workstream-screen, .automation-chat-surface) .human-message {'));
+    expect(rule('.workstream-screen .human-message-bubble'))
+      .toContain('border-radius: var(--turn-bubble-radius);');
+    // On the value, not one spelling of the property: a literal creeping back
+    // as `padding-inline-end: 18px` — now the file's usual spelling, and so the
+    // likelier regression — would pass a check that only banned `padding-right`.
+    expect(rule('.workstream-screen .human-message > header'))
+      .not.toMatch(/padding(-right|-inline-end)?:/u);
   });
 });
 
