@@ -2,6 +2,7 @@ import {
   AutomationDraftSchema,
   AutomationScopeSchema,
   AutomationSetEvaluatorRulesInputV1Schema,
+  DemoSeedSchema,
   IdSchema,
   UserIdSchema,
   WorkspaceExternalEventSchema,
@@ -68,6 +69,23 @@ export const AutomationRunNowRequestSchema = z.strictObject({
   idempotencyKey: z.string().min(8).max(120),
 });
 export type AutomationRunNowRequest = z.infer<typeof AutomationRunNowRequestSchema>;
+
+/**
+ * A demo's request for one run whose model bytes come from its pack.
+ *
+ * Deliberately not a field on `AutomationRunNowRequest`: that shape is what a
+ * client's `POST /sidekicks/:id/run` body reaches, and a seed there would let a
+ * member write their own Sidekick's output into its run history. This shape is
+ * reachable only from the demo seeder. The occurrence key comes from the pack
+ * and the action, so replaying a half-finished seeding answers from the run it
+ * already admitted rather than running a second briefing.
+ */
+export const AutomationRunSeededRequestSchema = z.strictObject({
+  ...Addressed,
+  actor: AutomationActorSchema,
+  seed: DemoSeedSchema,
+});
+export type AutomationRunSeededRequest = z.infer<typeof AutomationRunSeededRequestSchema>;
 
 export const AutomationOwningRoomArchivedRequestSchema = z.strictObject({
   ...Addressed,

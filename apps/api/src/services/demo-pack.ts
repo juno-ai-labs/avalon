@@ -2,9 +2,10 @@
  * The conversation pack, and the plan the seeder plays from it.
  *
  * A pack is versioned data behind a schema: a cast of roles, and an ordered
- * list of steps that create rooms, say things in them as cast members, and
- * attach documents. Roles are bound to real accounts only when a demo is
- * prepared, so one pack serves every demo and the pack never names a user id.
+ * list of steps that create rooms, say things in them as cast members, attach
+ * documents, and publish Sidekicks. Roles are bound to real accounts only when a
+ * demo is prepared, so one pack serves every demo and the pack never names a
+ * user id.
  * What Rally says in a seeded room is part of the step that starts the run
  * (`assistant`) — prose that carries its findings itself, with no tool call
  * behind it, because a seeded transcript records nothing Rally did not do.
@@ -21,7 +22,9 @@
 import { z } from "zod";
 
 import {
+  DemoSeedSayTurnSchema,
   DemoSeedTurnSchema,
+  IanaTimezoneSchema,
   MESSAGE_MAX_CHARACTERS,
   type DemoSeed,
   type DemoSeedTurn,
@@ -105,12 +108,57 @@ const UploadStepSchema = z.strictObject({
   content: z.string().min(1),
 });
 
+/**
+ * A Sidekick the demo already has, published and on a schedule.
+ *
+ * It belongs to no room: it is created by `createAutomation` like the one a
+ * person makes from the Sidekicks library, it owns its own authoring
+ * conversation, and no later step refers back to it. That is why this step
+ * carries no `room` key while every other step does.
+ *
+ * The definition's four prose fields are the ones a drafting conversation would
+ * have produced, written here instead so a demo does not depend on a live model
+ * to have a Sidekick in it. `schedule` is the recurrence, and its `timezone` is
+ * always named: a demo is presented in a zone somebody chose, and leaving it
+ * null would resolve it against whichever persona happens to be cast as the
+ * author, whose account has no zone of its own.
+ */
+const SidekickStepSchema = z.strictObject({
+  kind: z.literal("sidekick"),
+  id: StepIdSchema,
+  as: DemoPackRoleSchema,
+  /** `personal` is the author's alone; `workspace` is offered to every member. */
+  scope: z.enum(["personal", "workspace"]),
+  name: z.string().min(1).max(140),
+  description: z.string().min(1).max(1200),
+  overview: z.string().min(1).max(3000),
+  instructions: z.string().min(1).max(12000),
+  schedule: z.strictObject({
+    rrule: z.string().min(1),
+    timezone: IanaTimezoneSchema,
+    summary: z.string().min(1),
+  }),
+  /**
+   * One run it has already made, so the demo has something to look at before
+   * the schedule first fires. Absent: it is published and has never run. Only
+   * a `say`, because a Sidekick run has no room to park a question in.
+   */
+  firstRun: DemoSeedSayTurnSchema.optional(),
+});
+
 export const DemoPackStepSchema = z.discriminatedUnion("kind", [
   CreateWorkstreamStepSchema,
   MessageStepSchema,
   UploadStepSchema,
+  SidekickStepSchema,
 ]);
 export type DemoPackStep = z.infer<typeof DemoPackStepSchema>;
+
+/** The steps that happen inside a room, which is every step but a Sidekick's. */
+type DemoPackRoomStep = Exclude<DemoPackStep, { kind: "sidekick" }>;
+function isRoomStep(step: DemoPackStep): step is DemoPackRoomStep {
+  return step.kind !== "sidekick";
+}
 
 function mentionedRoles(text: string): string[] {
   return [...text.matchAll(MENTION_TOKEN)].map((match) => match[1]!);
@@ -173,6 +221,7 @@ export interface DemoPackRoomFacts {
 export function packRoomFacts(steps: readonly DemoPackStep[]): Map<string, DemoPackRoomFacts> {
   const rooms = new Map<string, DemoPackRoomFacts>();
   steps.forEach((step, index) => {
+    if (!isRoomStep(step)) return;
     const text = step.kind === "create_workstream" ? step.openingMessage : step.kind === "message" ? step.text : "";
     const mentions = mentionedRoles(text);
     if (step.kind === "create_workstream") {
@@ -205,6 +254,41 @@ export function packRoomFacts(steps: readonly DemoPackStep[]): Map<string, DemoP
 /** The rooms one viewer is offered: every workspace-scoped one, and every one they are in. */
 export function visibleRoomsFor(role: DemoPackRole, rooms: Iterable<DemoPackRoomFacts>): DemoPackRoomFacts[] {
   return [...rooms].filter((facts) => facts.scope === "workspace" || facts.seated.includes(role));
+}
+
+/** What the steps say about one Sidekick, once every step has been applied. */
+export interface DemoPackSidekickFacts {
+  /** The step's id, which is also its action id on the receipt. */
+  stepId: string;
+  name: string;
+  scope: "personal" | "workspace";
+  author: DemoPackRole;
+  /** Whether the pack seeded a first run for it. */
+  hasFirstRun: boolean;
+}
+
+/** The Sidekicks a pack publishes, in pack order. */
+export function packSidekickFacts(steps: readonly DemoPackStep[]): DemoPackSidekickFacts[] {
+  return steps.filter((step) => step.kind === "sidekick").map((step) => ({
+    stepId: step.id,
+    name: step.name,
+    scope: step.scope,
+    author: step.as,
+    hasFirstRun: step.firstRun !== undefined,
+  }));
+}
+
+/**
+ * The Sidekicks one viewer is offered: every workspace-scoped one, and every
+ * personal one they authored. The same shape as `visibleRoomsFor`, and the same
+ * reason: the readiness barrier compares against what this viewer will actually
+ * be shown, not against everything the pack made.
+ */
+export function visibleSidekicksFor(
+  role: DemoPackRole,
+  sidekicks: readonly DemoPackSidekickFacts[],
+): DemoPackSidekickFacts[] {
+  return sidekicks.filter((facts) => facts.scope === "workspace" || facts.author === role);
 }
 
 /**
@@ -259,6 +343,8 @@ export const DemoPackSchema = z.strictObject({
   /** Who is in each room so far: the creator, the seated, and the mentioned. */
   const seated = new Map<string, Set<string>>();
   const asked = new Set<string>();
+  /** Sidekick names, folded, so two cannot collide in the directory. */
+  const sidekickNames = new Set<string>();
   pack.steps.forEach((step, index) => {
     const path = ["steps", index];
     if (ids.has(step.id)) {
@@ -270,6 +356,28 @@ export const DemoPackSchema = z.strictObject({
       if (!roles.has(role)) {
         context.addIssue({ code: "custom", path, message: `Role "${role}" is not in the cast` });
       }
+    }
+    if (step.kind === "sidekick") {
+      // A Sidekick is in no room, so none of the room rules below apply to it.
+      // Its own prose names people the same way Rally's does — by token,
+      // expanded when the cast is bound — so an unbound one is refused here for
+      // the same reason: it is dereferenced mid-seeding, long after the last
+      // point at which refusing costs nothing.
+      const spoken = [step.description, step.overview, step.instructions, step.firstRun?.text ?? ""];
+      for (const role of spoken.flatMap(mentionedRoles)) {
+        if (!roles.has(role)) {
+          context.addIssue({ code: "custom", path, message: `The Sidekick's prose names role "${role}", which is not in the cast` });
+        }
+      }
+      const name = step.name.trim().toLowerCase();
+      if (sidekickNames.has(name)) {
+        // The directory lists Sidekicks by title and the barrier matches a
+        // viewer's row by name, so two under one name would make one of them
+        // unverifiable.
+        context.addIssue({ code: "custom", path: [...path, "name"], message: `Two Sidekicks are named "${step.name}"` });
+      }
+      sidekickNames.add(name);
+      return;
     }
     const text = step.kind === "create_workstream" ? step.openingMessage : step.kind === "message" ? step.text : null;
     const mentions = text === null ? [] : mentionedRoles(text);
@@ -419,13 +527,17 @@ function resolveMentions(text: string, cast: DemoCast): ResolvedText {
 
 interface ActionBase {
   actionId: string;
-  room: string;
   /** The cast member who does this, by user id. */
   actorUserId: string;
 }
 
+/** An action inside a room, which is every action but a Sidekick's. */
+interface RoomActionBase extends ActionBase {
+  room: string;
+}
+
 export type DemoSeedAction =
-  | (ActionBase & {
+  | (RoomActionBase & {
       kind: "create_workstream";
       title: string;
       scope: "workspace" | "personal";
@@ -434,19 +546,33 @@ export type DemoSeedAction =
       mentions: Mention[];
       seed: DemoSeed;
     })
-  | (ActionBase & {
+  | (RoomActionBase & {
       kind: "message";
       text: string;
       mentions: Mention[];
       confirmedParticipantUserIds: string[];
       seed: DemoSeed;
     })
-  | (ActionBase & {
+  | (RoomActionBase & {
       kind: "upload";
       title: string;
       fileName: string;
       mimeType: "text/markdown" | "text/plain";
       content: string;
+    })
+  | (ActionBase & {
+      kind: "sidekick";
+      scope: "personal" | "workspace";
+      /** The definition to publish, with every role token expanded to a name. */
+      definition: {
+        name: string;
+        description: string;
+        overview: string;
+        instructions: string;
+      };
+      schedule: { rrule: string; timezone: string; summary: string };
+      /** The one run to seed, or null when the pack seeded none. */
+      firstRun: DemoSeed | null;
     });
 
 /**
@@ -512,6 +638,21 @@ export function planDemoSeed(pack: DemoPack, cast: DemoCast): DemoSeedAction[] {
           mimeType: step.mimeType,
           content: step.content,
         };
+      case "sidekick":
+        return {
+          kind: "sidekick",
+          actionId: step.id,
+          actorUserId: actor.userId,
+          scope: step.scope,
+          definition: {
+            name: step.name,
+            description: resolveRoleNames(step.description, cast),
+            overview: resolveRoleNames(step.overview, cast),
+            instructions: resolveRoleNames(step.instructions, cast),
+          },
+          schedule: step.schedule,
+          firstRun: step.firstRun ? seed(step, step.firstRun) : null,
+        };
     }
   });
 }
@@ -522,8 +663,9 @@ const DECISION_MEMO_TITLE = "Insights pricing — decision memo";
  * The pack the feature is built and proved against.
  *
  * It carries the two scenarios the spike settled — the decision memo and the
- * multiplayer renewal — and nothing else: the spike's onboarding-email room was
- * invented to test a third directory row and is not approved copy. The cast
+ * multiplayer renewal — plus the standing Sidekick a demo is expected to open
+ * with, and nothing else: the spike's onboarding-email room was invented to test
+ * a third directory row and is not approved copy. The cast
  * roles, their names, and the third scenario are open inputs the PRD hands to
  * the team; this pack is what runs until they arrive, and swapping it is a
  * data change behind the schema above.
@@ -700,6 +842,64 @@ export const PLACEHOLDER_DEMO_PACK = {
           "Include Insights at the $4k Growth uplift",
           "Keep Insights as a separate $12k add-on and hold the line",
         ],
+      },
+    },
+    {
+      kind: "sidekick",
+      id: "morning-briefing",
+      as: "priya",
+      // Workspace-scoped, so every member is offered it and the presenter finds
+      // it in their Sidekick strip without anybody having shared it.
+      scope: "workspace",
+      name: "Morning briefing",
+      description: "Posts a short briefing each weekday morning on what moved overnight and what needs a decision today.",
+      overview: [
+        "Every weekday at 9am Pacific, this Sidekick reads the work streams it can see and",
+        "writes one short briefing: what changed since yesterday, what is waiting on somebody,",
+        "and which decisions have a date attached. It states what it found and stops; it does",
+        "not chase people or answer on their behalf.",
+      ].join(" "),
+      instructions: [
+        "Each weekday morning, write one briefing for the workspace.",
+        "",
+        "Cover, in this order, and only from what the work streams actually say:",
+        "",
+        "1. Decisions with a date. Name the decision, who owns it, and the date.",
+        "2. Anything waiting on a person, with who it is waiting on.",
+        "3. What moved since the previous briefing.",
+        "",
+        "Keep it under 200 words. Every claim must come from a work stream you can read —",
+        "if a number or a date is not written down somewhere, leave it out rather than",
+        "estimating it. Say plainly when there is nothing to report.",
+      ].join("\n"),
+      schedule: {
+        // Weekdays at 9am in the zone the demo is presented in.
+        rrule: "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR;BYHOUR=9;BYMINUTE=0;BYSECOND=0",
+        timezone: "America/Los_Angeles",
+        summary: "Every weekday at 9:00am Pacific",
+      },
+      // One briefing it has already written, so the demo shows a Sidekick that
+      // has done something rather than one that is merely configured. It cites
+      // only what the two rooms above hold, for the same reason their own
+      // assistant turns do: a seeded run makes no tool call, so anything it
+      // claims to have read has to be something the seeded history contains.
+      firstRun: {
+        kind: "say",
+        text: [
+          "**Two decisions have a date on them.**",
+          "",
+          "The Northgate renewal is the near one: the 60-day notice window opens in eleven",
+          "days, and the room is split on what Insights costs at renewal — @{dana} would hold",
+          "the line item and give up the 6% uplift, @{priya} would not pull Insights, and",
+          "@{marcus} wants a number on the order form. It is waiting on a commercial call.",
+          "",
+          "Insights pricing itself is the other. The memo recommends folding Insights into",
+          "Growth at a $4k uplift, which clears the $31k ARPA floor and reaches the Q4 target",
+          "at 41 attached accounts against 18 for the add-on. TID-431 is the blocker, not the",
+          "price: billing has no bundle SKU, so the first bundled deal is a manual invoice.",
+          "",
+          "Nothing else moved overnight.",
+        ].join("\n"),
       },
     },
   ],

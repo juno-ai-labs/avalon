@@ -160,9 +160,16 @@ async function seedControlPlane(): Promise<void> {
     )`),
     env.DB.prepare(`CREATE TABLE demo_seed_receipts (
       operation_id TEXT NOT NULL, action_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
-      kind TEXT NOT NULL, room TEXT NOT NULL, workstream_id TEXT NOT NULL, turn_id TEXT,
+      kind TEXT NOT NULL, room TEXT, workstream_id TEXT, sidekick_id TEXT, sidekick_run_id TEXT,
+      turn_id TEXT,
       harness_run_id TEXT, run_outcome TEXT, elicitation_id TEXT, resource_id TEXT,
-      completed_at TEXT NOT NULL, PRIMARY KEY (operation_id, action_id)
+      completed_at TEXT NOT NULL, PRIMARY KEY (operation_id, action_id),
+      CHECK (
+        CASE kind
+          WHEN 'sidekick' THEN room IS NULL AND workstream_id IS NULL AND sidekick_id IS NOT NULL
+          ELSE room IS NOT NULL AND workstream_id IS NOT NULL AND sidekick_id IS NULL
+        END
+      )
     )`),
     // The same columns and constraints as `0100`, minus the references to
     // `users` and `workspaces` this suite does not need — and, as in
@@ -204,14 +211,22 @@ function directoryRank(kind: ParentEffectEnvelope["effect"]["kind"]): number {
   return kind === "directory_common" ? 0 : 1;
 }
 
-/** The directory effects of every seeded room, through the real consumer; see demo-readiness.test.ts. */
-async function deliverDirectoryEffects(workspaceId: string, workstreamIds: string[]): Promise<void> {
-  for (const workstreamId of workstreamIds) {
-    const roomStub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
-      conversationObjectName("global", asWorkspaceId(workspaceId), workstreamId as never),
+/**
+ * The directory effects of one seeded conversation parent, through the real
+ * consumer; see demo-readiness.test.ts. `substreamId` names the child whose
+ * effects report up to it: a room's own conversation, or a Sidekick's one
+ * seeded run.
+ */
+async function deliverDirectoryEffects(
+  workspaceId: string,
+  parents: { parentKind: "workstream" | "automation"; parentId: string; substreamId?: string }[],
+): Promise<void> {
+  for (const { parentKind, parentId, substreamId } of parents) {
+    const childStub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", asWorkspaceId(workspaceId), parentId, (substreamId ?? "0") as never),
     ));
-    await deliverChildEffects(env, roomStub);
-    const parent = parentStubFor(env, "global", { workspaceId, parentKind: "workstream", parentId: workstreamId });
+    await deliverChildEffects(env, childStub);
+    const parent = parentStubFor(env, "global", { workspaceId, parentKind, parentId });
     const directory = (await pendingParentEffects(parent))
       .filter((envelope) => envelope.effect.kind.startsWith("directory_"))
       .sort((left, right) => directoryRank(left.effect.kind) - directoryRank(right.effect.kind));
@@ -292,8 +307,18 @@ describe("preparing a demo", () => {
       ]),
     });
 
-    const rooms = [...new Set(receipts.map((receipt) => receipt.workstreamId))];
-    await deliverDirectoryEffects(workspaceId, rooms);
+    await deliverDirectoryEffects(workspaceId, [
+      ...new Set(receipts.flatMap((receipt) => receipt.workstreamId ?? [])),
+    ].map((parentId) => ({ parentKind: "workstream" as const, parentId })));
+    // The pack's Sidekick reports up the same two legs: its seeded run to the
+    // Sidekick, and the Sidekick to the workspace.
+    await deliverDirectoryEffects(workspaceId, receipts
+      .filter((receipt) => receipt.kind === "sidekick")
+      .map((receipt) => ({
+        parentKind: "automation" as const,
+        parentId: receipt.sidekickId!,
+        ...(receipt.sidekickRunId ? { substreamId: receipt.sidekickRunId } : {}),
+      })));
 
     const ready = await runDemoPreparationPhase(prepEnv, OPERATION_ID, "waiting_for_workspace", options);
     expect(ready.outcome).toBe("ready");

@@ -1,6 +1,19 @@
 import { z } from "zod";
 
 /**
+ * One assistant turn whose whole content is text. The run completes.
+ *
+ * Named on its own because a Sidekick's seeded run may only ever be this one:
+ * a briefing that ended in a question would park a scheduled run on an
+ * elicitation with nobody in the room to answer it.
+ */
+export const DemoSeedSayTurnSchema = z.strictObject({
+  kind: z.literal("say"),
+  text: z.string().min(1).max(20_000),
+});
+export type DemoSeedSayTurn = z.infer<typeof DemoSeedSayTurnSchema>;
+
+/**
  * What a seeded run says instead of inferring it.
  *
  * A demo workspace's history is written through Rally's ordinary paths, and a
@@ -8,7 +21,8 @@ import { z } from "zod";
  * same Bind loop, the same reserved turn and the same settlement. The one thing
  * that differs is where the model's bytes come from — the run's provider `fetch`
  * is answered from this script instead of from OpenRouter. This is that script,
- * carried on the message that starts the run and, from there, on the run's own
+ * carried on the message that starts the run — or, for a seeded Sidekick's one
+ * briefing, on the run row the Sidekick admits — and from there on the run's own
  * execution context. `docs/demo-workspaces.md` owns the feature.
  *
  * Exactly one turn, deliberately. A seeded run makes no tool calls — a stale
@@ -20,11 +34,7 @@ import { z } from "zod";
  * than repeating the turn.
  */
 export const DemoSeedTurnSchema = z.discriminatedUnion("kind", [
-  /** One assistant turn whose whole content is text. The run completes. */
-  z.strictObject({
-    kind: z.literal("say"),
-    text: z.string().min(1).max(20_000),
-  }),
+  DemoSeedSayTurnSchema,
   /**
    * One assistant turn that ends in a blocking question, through the real
    * `core_request_elicitation` tool with the arguments it validates. It is
@@ -47,7 +57,8 @@ export type DemoSeedTurn = z.infer<typeof DemoSeedTurnSchema>;
  * Its presence is what makes a message a seed action. The object then decides
  * addressing from `assistant` rather than by asking a classifier model: `null`
  * says this human turn starts no run, a turn says it starts one that answers
- * from the turn. Pack and action identity are what a log line or a stuck run is
+ * from the turn. A Sidekick's seeded run carries the same object with a `say`
+ * turn; there is no human message in front of it, so `null` is refused there. Pack and action identity are what a log line or a stuck run is
  * traced back to. There is deliberately no instant here — a seeded fact is
  * stamped with the real clock like any other.
  */

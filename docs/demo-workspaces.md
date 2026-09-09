@@ -31,9 +31,9 @@ page calls. **Open questions** below says what remains.
 | `apps/api/src/services/demo-workspace-register.ts` | The walk's one write into the register: `markDemoWorkspaceRetired` stamps `retired_at` on the operation row. Not an authorization input, and nothing reads through it. |
 | `apps/api/src/services/demo-connection-copy.ts` | Copying template connections into a demo, with credential re-encryption; `SHAREABLE_CONNECTOR_TYPES` is the list of providers whose grant may be shared. |
 | `apps/api/src/services/demo-workspace-visibility.ts` | The template and unpublished-candidate filter, applied in regional discovery and activation. `DEMO_TEMPLATE_WORKSPACE_ID`, the template's UUID, is declared here and nowhere else. |
-| `apps/api/src/services/demo-pack.ts` | The pack schema and its playability rules, the planner that binds a pack to a cast, the default name each role is offered under, and the placeholder pack. |
+| `apps/api/src/services/demo-pack.ts` | The pack schema and its playability rules, the planner that binds a pack to a cast, the default name each role is offered under, and the placeholder pack — its two rooms and its standing Sidekick. |
 | `apps/api/src/services/demo-personas.ts` | The cast who do not exist: minting one regional user per role per operation from the name the operator typed, and proving a cast id is this operation's own persona. |
-| `apps/api/src/services/demo-seeder.ts` | Plays one action at a time through the production write paths, waits for its run to settle as specified, and records the receipt. |
+| `apps/api/src/services/demo-seeder.ts` | Plays one action at a time through the production write paths, waits for its run to settle as specified, and records the receipt. `sidekickDraft` is the definition a Sidekick step publishes. |
 | `apps/api/src/services/demo-seed-provider.ts` | The `fetch` a seeded run's harness config carries: answers the run's one inference request from the seed and refuses the next. |
 | `apps/api/src/services/demo-readiness.ts` | The manifest of what every verified viewer should find, derived from the pack and the receipts, and the one comparison against their real directory, attention and canonical reads. |
 | `apps/api/src/services/demo-preparation.ts` | The operation: its rows, start/retry/abandon, and the five idempotent phase functions the Workflow's steps call. |
@@ -42,6 +42,7 @@ page calls. **Open questions** below says what remains.
 | `packages/contracts/src/demo-operations.ts` | The operation on the wire: the start request, the status Ace renders, the template's cast candidates, and the Workflow's pointer payload. |
 | `packages/contracts/src/demo-seed.ts` | `DemoSeedSchema`: what a seed action carries, and the one field a run's execution context gains. |
 | `packages/db/migrations/0100_demo_workspaces.sql` | The operation's row — which is also the register of published workspaces — its per-phase receipts, and the seeder's receipts. |
+| `packages/db/migrations/0101_demo_seed_sidekicks.sql` | Widens those receipts for an action that is in no room. |
 
 ## How it works
 
@@ -139,20 +140,41 @@ workspace and leaves its personas behind, seated nowhere.
 ### Seeding a demo from a pack
 
 A pack is versioned data behind a schema: a cast of *roles*, and ordered steps
-that create rooms, say things in them as cast members, and attach documents.
-Roles are bound to real workspace members only when a demo is prepared, so the
-pack never names a user id and one pack serves every demo. What Rally says in a
-room is part of the step that starts the run — `assistant`, a single turn that is
-either prose (`say`) or a question (`ask`). The schema refuses, before the first
-write, a room used before it is created, a line from somebody not in the room, a
-mention of somebody not in the cast, and a room that carries on after its
-question. The placeholder pack carries the two scenarios the spike settled, the
-decision memo and the multiplayer renewal, and nothing else.
+that create rooms, say things in them as cast members, attach documents, and
+publish Sidekicks. Roles are bound to real workspace members only when a demo is
+prepared, so the pack never names a user id and one pack serves every demo. What
+Rally says in a room is part of the step that starts the run — `assistant`, a
+single turn that is either prose (`say`) or a question (`ask`). The schema
+refuses, before the first write, a room used before it is created, a line from
+somebody not in the room, a mention of somebody not in the cast, a room that
+carries on after its question, and two Sidekicks under one name. The placeholder
+pack carries the two scenarios the spike settled — the decision memo and the
+multiplayer renewal — and one standing Sidekick, and nothing else.
+
+**A Sidekick step is the one step that is in no room.** It is created by
+`createAutomation`, the same call "New Sidekick" makes, and published by
+`saveDefinition`, the same call a drafting conversation makes when a person
+accepts what it wrote — so a demo has a real published Sidekick without
+depending on a live model to have drafted one. The step carries the definition's
+prose, the recurrence, and optionally one `say` turn: the briefing the Sidekick
+has already written. The recurrence always names its zone. A calendar trigger
+may leave that null in general, and it then resolves against the account the
+Sidekick runs for — which here is a persona minted for this demo, with no zone
+of its own. A demo is presented in a zone somebody chose, so the pack states it.
+
+That briefing is produced by an ordinary Sidekick run through `runSeeded`, whose
+model bytes come from the seed exactly as a seeded message's do
+([`automation-lifecycle.md`](automation-lifecycle.md)). The run's recorded
+trigger is `manual`, naming the author, because that is what happened: the
+schedule did not fire it, and saying it did would be the fabricated history this
+feature refuses everywhere else. The first scheduled run is the demo's own, at
+the pack's hour, in the pack's zone.
 
 **Every seeded fact is written by the production path that writes it for a
 person, as the cast member who did it.** A room by the creation service, a line
 by the room's own message admission, a document by the resource upload and
-`attach_resource`, and an assistant turn by an ordinary harness run. Nothing in
+`attach_resource`, a Sidekick by `createAutomation` and `saveDefinition`, and an
+assistant turn by an ordinary harness run. Nothing in
 this module writes a transcript row, and none of those paths know they were
 seeding. A cast member acts under the `demo_seed` auth principal: no session,
 because the cast never signs in, and the object verifies their current
@@ -194,10 +216,10 @@ destination id it produced: the room, the human turn, the run and how it
 settled, the resource, the elicitation. Preparation resumes from the receipts,
 and the readiness barrier builds its expected manifest from them. Replaying
 an action is safe by construction rather than by care: the client message id of
-every seeded turn and the resource id of every seeded document are derived from
-the operation and the action, so a replay after a crash meets the production
-path's own receipt for the same request and comes back as what it already
-wrote.
+every seeded turn, the resource id of every seeded document, the id of every
+seeded Sidekick and the occurrence key of its briefing are derived from the
+operation and the action, so a replay after a crash meets the production path's
+own receipt for the same request and comes back as what it already wrote.
 
 ### Waiting for the workspace
 
@@ -217,14 +239,19 @@ described. The pack's `expect` section names the viewers to verify and the
 per-viewer flags nothing can derive from the steps — new, unread, mentioned, and
 the home screen's count and reason — because those depend on who opened what,
 and the seeder reads a room as the cast member who acted in it, which opens it
-for them. The schema checks that a viewer's listed rooms are exactly the rooms
+for them. Which Sidekicks a viewer is offered carries no such flags — it follows
+from scope and authorship alone — so it is derived rather than stated, and
+`expect` says nothing about them. The schema checks that a viewer's listed rooms are exactly the rooms
 the pack makes visible to them: every workspace-scoped room, and every room they
 were seated in.
 
 **The comparison reads as each viewer, through the ordinary surfaces.** The
 directory read the sidebar makes, following pagination until the directory says
-there are no more pages, and the attention read the home screen makes — both as
-that person, both non-opening. Canonical content — the room's state, the open
+there are no more pages, the Sidekicks list the library makes, and the attention
+read the home screen makes — all as that person, all non-opening. A Sidekick is
+Ready when its row is listed, active, at the scope the pack gave it, with a next
+run — which is what proves the schedule was armed rather than merely accepted —
+and, when the pack seeded a briefing, with that briefing in its history. Canonical content — the room's state, the open
 question, the attached resources, the participants — is read as the room's
 creator, who opened the room by seeding it, and never as the presenter, whose
 unopened state is the demo. Every mismatch is reported as a named gap (a room
@@ -531,9 +558,10 @@ has to register it the same way or watch the seeding phase fail.
 | Where | Table | Holds |
 | --- | --- | --- |
 | Regional D1 | `demo_operations` | One row per preparation: company, presenter, pack version, cast, the allocated workspace, status, attempt, the failed phase and reason, and the instants the workspace was published and closed. The register of published workspaces is this table. |
-| Regional D1 | `demo_seed_receipts` | One row per confirmed seed action: its kind and room, and the work stream, turn, run and outcome, elicitation, and resource it produced. |
+| Regional D1 | `demo_seed_receipts` | One row per confirmed seed action: its kind, the room it was in and the work stream, turn, run and outcome, elicitation, and resource it produced — or, for a Sidekick, which belongs to no room, the Sidekick and the one run seeded for it. A CHECK keeps each kind's identity complete rather than letting a row be half of both. |
 | Regional D1 | `demo_operation_phases` | One row per phase per operation: status, attempt, a small detail object the page renders, and the error when there is one. |
 | A seeded run's `runs.execution_context_json` | `seed` | The pack version, action id, and the one assistant turn the harness answers the run from. |
+| `SidekickDO` | `runs.seed_json` | The same object, on a seeded Sidekick run, from admission until `provisionRun` puts it in the execution context above. Null on every run production makes. |
 
 The operation rows live in D1 because they answer a regional question — which
 workspaces are ours, and which are published — asked by callers that have no
@@ -629,6 +657,48 @@ the cast discussed is answerable. That was a product defect in every
 multi-person room, not a demo concern, and it is fixed where it lived.
 
 ## Changelog
+
+### 2026-09-09 — A demo opens on a Sidekick that has already run
+
+**What changed:** A pack can publish a Sidekick. `sidekick` is a fourth step
+kind, and the only one that is in no room: it carries the definition's prose, a
+recurrence with its zone, and optionally one `say` turn — a briefing the Sidekick
+has already written. The seeder plays it through `createAutomation` and
+`saveDefinition`, then starts that briefing as an ordinary Sidekick run whose
+model bytes come from the seed. Migration `0101` widens the seed receipts for a
+row with no room, adding the Sidekick and its run and a CHECK that keeps each
+kind's identity complete. The readiness barrier now also reads each viewer's
+Sidekicks list, and is not Ready until the row is listed, active, at its scope,
+with a next run, and showing the seeded briefing.
+
+The placeholder pack gains one: a workspace-scoped **Morning briefing**, authored
+by the product lead, running weekdays at 9am `America/Los_Angeles`, with one
+briefing behind it that cites only what the pack's two rooms hold.
+
+**Why:** A demo that shows only conversations shows half the product. What was
+asked for is a standing Sidekick on a daily schedule, and a Sidekick that is
+merely configured demonstrates nothing — the presenter cannot see what it
+produces until its schedule fires, which in a demo prepared at 2pm is tomorrow.
+
+**Two alternatives were rejected.** Running the briefing against the real model
+during preparation would make every demo's opening screen depend on inference
+nobody can replay, and would fail in a sandbox with no provider key. Writing the
+run's rows directly would put a briefing in the history that no run produced,
+which is the fabricated history this feature refuses everywhere else. Reusing the
+run path with a scripted provider is the only version where the briefing is a
+real run.
+
+**What a future change has to respect.** The seed reaches a Sidekick run through
+`runSeeded`, which is a separate method from `runNow` on purpose — `runNow` is
+what `POST /sidekicks/:id/run` reaches, and a seed on that request shape would
+let a member script their own Sidekick's output and keep it as history. Keep the
+two request shapes apart. The recurrence's zone stays required in the pack: a
+null one resolves against the persona the Sidekick runs as, which has no zone.
+And a seeded run is now the gate on admission-time memory recall — that recall
+used to be skipped by looking at the run's reason, which for a Sidekick run is
+its trigger's, so the seed itself decides. A run carrying a seed must reach no
+provider but the seam; the seeder's test proves that by refusing at the
+OpenRouter double.
 
 ### 2026-09-09 — The cast is named, not cast from the company directory
 
