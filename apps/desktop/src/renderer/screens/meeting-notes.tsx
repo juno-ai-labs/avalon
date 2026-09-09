@@ -863,9 +863,7 @@ export function MeetingNotesScreen(): React.JSX.Element {
     ? 'Finalizing transcript…'
     : permissionPreparing || dictation.state === 'requesting'
     ? 'Requesting audio access…'
-    : dictation.state === 'connecting'
-      ? 'Connecting transcription…'
-      : dictation.state === 'transcribing'
+    : dictation.state === 'transcribing'
         ? 'Updating notes…'
         : paused
           ? 'Paused'
@@ -1011,7 +1009,7 @@ export function MeetingNotesScreen(): React.JSX.Element {
         ) : (
           <Button
             className="meeting-start-button"
-            disabled={loading || !note || readOnly || finalizing || permissionPreparing || ['requesting', 'connecting', 'transcribing', 'finalizing'].includes(dictation.state)}
+            disabled={loading || !note || readOnly || finalizing || permissionPreparing || ['requesting', 'transcribing', 'finalizing'].includes(dictation.state)}
             onClick={() => void startRecording()}
           >
             <span aria-hidden="true" className="meeting-start-dot" /> {permissionRecoveryTarget ? 'Retry recording' : 'Start recording'}
