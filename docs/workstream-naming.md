@@ -137,17 +137,39 @@ header's picker offers, so nothing the model can choose is a mark a person could
 not have chosen themselves.
 
 **Every key in that catalog carries one or two sentences describing it**, and the
-prompt renders all of them. The first sentence says what the icon *draws* and the
-second says what work it fits, because a key on its own tells a model nothing: it
-has never seen this catalog, and `spline`, `aperture` and `component` name
-drawings rather than subjects. Descriptions are free to be reworded; the keys
-are stored values and cannot change without a migration, which is why the two sit
-in the same file but are separate structures. A `Record` keyed by the icon type
-makes the set exhaustive by construction — adding a key without describing it
-does not compile.
+prompt renders all of them. A key on its own tells a model nothing — it has never
+seen this catalog, and `spline`, `aperture` and `component` name drawings rather
+than subjects — so each line names what the icon depicts and then how it is
+drawn: *"A camera aperture: a ring of straight, angled blades that overlap and
+spiral inward, leaving a small opening at the centre."*
 
-The prompt names one fallback, `sparkles`, for work no icon suits, so that case
-resolves deliberately instead of by stretching the nearest icon.
+**A description says what the icon draws and stops there.** None of them says
+what kind of work an icon is for, and none should. Which mark suits a work stream
+is the model's call, made with the request in front of it and the whole catalog
+to compare against; a usage note in the catalog is that call taken in advance by
+whoever last edited the file, and it narrows the icon to the subjects that person
+happened to list. The prompt says the same thing to the model in as many words,
+so it does not read the descriptions as a lookup table. A test asserts no
+description contains usage language, because this would come back one line at a
+time.
+
+**Naming the thing is part of describing it, and geometry alone is not enough.**
+The line for `coins` says it is two coins before it says one is face on and one
+is behind it at an angle. A version that gave only the geometry — two overlapping
+discs, ticked lines above an unticked one — left the model to work out what the
+shapes *were*, and it put `list-checks` on an invoice reconciliation. Say what a
+person would call the thing, then how it is drawn; that is a fact about the
+picture, not an opinion about its use.
+
+The only two opinions the product keeps about *choosing* are in the prompt, where
+[`writing-prompts.md`](writing-prompts.md) requires them: the tie-break when two
+marks suit, and one fallback, `sparkles`, for work none of them suits, so that
+case resolves deliberately instead of by stretching the nearest icon.
+
+Descriptions are free to be reworded; the keys are stored values and cannot
+change without a migration, which is why the two sit in the same file but are
+separate structures. A `Record` keyed by the icon type makes the set exhaustive
+by construction — adding a key without describing it does not compile.
 
 **A generated icon is written only where no icon is stored.** This is a stricter
 rule than the one on the title, and it has to be, because the fence that protects
@@ -338,7 +360,9 @@ ordinary work-stream update and belongs to the object's product service.
 - `packages/agent-harness/src/prompts.test.ts` asserts a description line for
   every key in the catalog, not a sample of them. A key added without one fails
   to compile first; this is what catches one described in a way the prompt never
-  renders.
+  renders. It also asserts that no description contains usage language — the
+  rule that a description is a drawing and not a lookup table is one nothing else
+  enforces, and it would erode one line at a time.
 - `apps/api/test-workers/durable-object-runtime.test.ts` covers the other half on
   real workerd — *"pushes a generated name to a participant who never opened the
   work stream"* runs the naming statement through the runtime port and asserts the
@@ -384,10 +408,32 @@ enum on a request that was being made anyway.
 The descriptions are the part that makes it work rather than a nicety. The keys
 are drawings, not subjects — `spline`, `aperture`, `component`, `boxes` — and a
 model handed the bare list picks by word association with the request. Each
-description says what the icon draws first and what work it fits second, and
-`sparkles` is named in the prompt as the answer for work no icon suits, so the
-general case resolves deliberately instead of stretching whichever key sounds
-nearest.
+description says what the mark draws and nothing more; `sparkles` is named in
+the prompt as the answer for work no mark suits, so the general case resolves
+deliberately instead of stretching whichever key sounds nearest.
+
+**The descriptions deliberately do not say what each icon is *for*.** A first
+draft paired every drawing with the kind of work it fits, which reads as helpful
+and is not: it hands the model a lookup table built by whoever last edited the
+file, so an icon is only ever chosen for the subjects that person thought to
+list, and a request outside them gets the nearest listed word rather than the
+best mark. The model has the request and the whole catalog, which is strictly
+more than the catalog's author had. Describing the drawing and leaving the
+matching to it is also what keeps the catalog cheap to extend: a new icon needs
+a sentence about its shape, not a survey of the work it might stand for. The
+only opinions kept are the two the prompt owes a medium model under
+[`writing-prompts.md`](writing-prompts.md) — the tie-break, and the fallback.
+
+Taking the usage half out was tried twice. Removing it *and* reducing each line
+to geometry made the picks worse — twelve varied requests replayed through the
+production model put a checklist on an invoice reconciliation and a bullseye on
+a 500-error investigation — because the model was being asked to identify the
+object as well as match it. Naming the object and keeping the geometry recovered
+it: the same twelve came back with a palette on a rebrand, a calendar on a board
+meeting, a handshake on a contract negotiation, a circuit board on a TLS audit,
+and `sparkles` on the 500-error investigation, which is the right answer because
+the catalog holds no mark for debugging. That is the shape to keep — name the
+thing, describe the drawing, say nothing about the work.
 
 **Considered and rejected:** A second model call for the icon, after the name.
 It is a second reading of the same request that agrees with the first only by
@@ -410,9 +456,14 @@ change to make is provenance on the appearance — an icon source alongside the
 key, which is what `title_status` already is for the title.
 
 **Consequences:** The catalog is now model-visible, so adding an icon means
-adding its description in the same edit — the `Record` will not compile
-otherwise — and the golden prompt hashes in `prompts.test.ts` move whenever
-either changes. The naming request's system message grew by the catalog, which
+adding a description of its *drawing* in the same edit — the `Record` will not
+compile otherwise, and a test rejects a description that says what the icon is
+for — and the golden prompt hashes in `prompts.test.ts` move whenever either
+changes. **The replay that checked the picks is not in the repository**: it was
+a scratch script that rendered `renderWorkstreamNameMessages` from the tree and
+sent twelve varied requests to the production model, so the results quoted above
+are a record of a measurement rather than something a reader can re-run, and it
+belongs to the same family as the naming replay described further down. The naming request's system message grew by the catalog, which
 is fixed text on a prompt-cached call rather than per-call context. Nothing may
 assume a work stream Rally named has an icon: naming can fail, the model can
 answer off-catalog, and a person may have chosen one first.

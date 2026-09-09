@@ -118,7 +118,7 @@ describe("prompt renderers", () => {
           objective: "Draft an email to Danny sharing the Rally download link.",
           openingMessage: "Draft an email to Danny sharing the Rally download link, and ask him to add Alex to the Tuesday call.",
         }),
-        hash: "18eae9aa53aaf650db4e586954f27154acf2ddc5844f2676efcc292ed32dde26",
+        hash: "4283251f6ac7cf69559472fe23a602802dfde1def36349287b302e80fe11e710",
       },
       workstreamNameFromConversation: {
         actual: renderWorkstreamNameMessages({
@@ -129,7 +129,7 @@ describe("prompt renderers", () => {
             { author: "person", text: "Use founder@example.com and mention the Tuesday call." },
           ],
         }),
-        hash: "22a91d0faaa0d51fa555bcbe657841f54b2ab48d3ffa77c96df2e7243a7ce78b",
+        hash: "60c3c85b33d6f69db0c880b5d3aa042a3302e143eda92d10322f27aa7b6df576",
       },
       workstreamDescription: {
         actual: renderWorkstreamDescriptionMessages({
@@ -548,17 +548,27 @@ describe("prompt renderers", () => {
     expect(policy).toContain("keep naming the work the request opened");
 
     // The icon is a closed set the schema enforces, so the prompt owes the
-    // model a definition for each one — a bare key says nothing about the mark
-    // a person will see. Every key is described, the description says what the
-    // icon draws, and the fallback is named so a work stream no icon suits
-    // still gets a deliberate answer rather than the nearest stretch.
+    // model a description of each one — a bare key says nothing about the mark
+    // a person will see. Every key is described, and only the tie-break and the
+    // fallback say anything about choosing, so a work stream no mark suits gets
+    // a deliberate answer rather than the nearest stretch.
     for (const icon of WORKSTREAM_ICON_KEYS) {
       expect(policy).toContain(`- ${icon}: ${WORKSTREAM_ICON_DESCRIPTIONS[icon]}`);
     }
     expect(new Set(WORKSTREAM_ICON_KEYS).size).toBe(WORKSTREAM_ICON_KEYS.length);
     expect(policy).toContain("Choose an icon as well, by its exact key from the catalog below");
-    expect(policy).toContain("take the more specific one");
+    expect(policy).toContain("what suits this work is yours to judge");
+    expect(policy).toContain("take the one that is more specific to this work");
     expect(policy).toContain(`take \`${DEFAULT_WORKSTREAM_ICON_KEY}\``);
+
+    // A description says what the mark draws and stops there. Guidance about
+    // when to reach for an icon narrows it to the cases whoever wrote the line
+    // thought of, and it is the model — which has the request — that should be
+    // matching. This catches a usage note creeping back in one description at a
+    // time, which is how it would happen.
+    for (const description of Object.values(WORKSTREAM_ICON_DESCRIPTIONS)) {
+      expect(description).not.toMatch(/\b(fits|use (it|this) for|suits|for work|choose (it|this) (for|when)|when the)\b/iu);
+    }
 
     // The opening message is dropped where it would only repeat the objective,
     // which is what it holds on the ordinary path — the objective is derived

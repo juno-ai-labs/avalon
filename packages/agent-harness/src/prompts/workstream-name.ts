@@ -42,6 +42,11 @@ const MAX_CONTEXT_MESSAGE_CHARACTERS = 600;
  * array's, which is deterministic, so the system message stays byte-stable
  * across renders the way [`writing-prompts.md`](../../../../docs/writing-prompts.md)
  * requires.
+ *
+ * Each line is a description of a drawing and carries no guidance about when to
+ * use it. That is deliberate: the model has the request and the whole catalog,
+ * which is more than the catalog's author had, so the matching is left to it and
+ * only the tie-break and the fallback are stated above.
  */
 const ICON_CATALOG = WORKSTREAM_ICON_KEYS
   .map((key) => `- ${key}: ${WORKSTREAM_ICON_DESCRIPTIONS[key]}`)
@@ -59,7 +64,7 @@ Thirty characters leaves room for the distinguishing detail and little else, so 
 
 Spell people, products, files, and identifiers exactly as the request spells them, and never add a specific the request does not contain — when it is vague, name what it does contain and stop there.
 
-Choose an icon as well, by its exact key from the catalog below. Each line is one key, what the icon draws, and the work it fits. Match the icon to what the work is about — the subject it turns on, the same detail the name leads with — and not to a word that happens to appear in the request. Where two icons fit, take the more specific one; where none does, take \`${DEFAULT_WORKSTREAM_ICON_KEY}\`, which is the mark for work no other icon describes, rather than stretching one that nearly fits.
+Choose an icon as well, by its exact key from the catalog below. Each line is one key and a description of the mark it draws — what suits this work is yours to judge, not something the catalog states. Choose against what the work is about, the same detail the name leads with, and not against a word that happens to appear in the request. Where two marks suit it, take the one that is more specific to this work; where none does, take \`${DEFAULT_WORKSTREAM_ICON_KEY}\` rather than stretching one that nearly fits.
 
 ${ICON_CATALOG}
 
