@@ -1,10 +1,8 @@
 # Early-access launch copy
 
-Source: product owner’s text supplied in this task on 2026-09-09, following the
-Google document reference. The pasted text is the source used for implementation;
-the Google document has not been read. Landing and first-email copy are supplied here for the companion
-implementation PR. Outreach, ads, personal posts, and launch checks below are planning
-material, not sent messages or completed launch work.
+Source: product owner’s text supplied on 2026-09-09. The landing page and
+acknowledgement use the wording below. Outreach, ads and personal posts are
+separate drafts; the launch checklist records their prerequisites.
 
 ## Landing page
 
@@ -141,4 +139,4 @@ If that sounds familiar, we’re opening early access → [link]
 The first five checks expand the supplied “Do these workflows work, are they in
 the onboarding?” and “Inspiration page with recorded demos” into concrete launch
 acceptance. Sender verification is the deployment prerequisite for the supplied
-From address. None of these checks has been completed by applying the copy.
+From address. Applying the copy alone does not satisfy the launch checklist.
