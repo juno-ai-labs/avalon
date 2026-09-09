@@ -125,15 +125,16 @@ as a glyph stroke rather than vanishing into a dark sidebar. `gray`, `brown`,
 `yellow` and `teal` keep their tokens but left the picker. `#ccff00` is no longer
 a palette entry: it stays `sys.color.brand.base` and nothing else. A new
 `sys.color.project.edge` gives every swatch a hairline, and the
-`cmp.member-message.*` fills now reference the palette instead of restating its
-hexes.
+the `cmp.member-message.*` tokens are gone, message bubbles reading the palette
+directly.
 
 **Why:** The previous palette carried the brand lime in a slot named `orange`,
 so the one colour that must stay reserved for the brand was also a colour any
 person could paint a project. Separating them is the point of the change; the
 ring ordering is what lets the picker close into an oval rather than reading as
 two unrelated rows. The `cmp.member-message.*` hexes were duplicating palette
-values by hand and had already drifted, which is why they became references.
+values by hand and had already drifted, which is why they were removed rather
+than repointed.
 
 The palette is now a vocabulary rather than a menu. `PALETTE_KEYS` is every
 colour with a token; `PROJECT_COLOR_KEYS` is the ring, which is what projects and
@@ -153,8 +154,9 @@ palette colour now, so message bubbles read the palette directly.
 
 **Consequences:** The label "Neon yellow" is gone — the 2026-09-07 entry below is
 superseded on that point, and `orange` is an actual orange now. Ink is no longer
-guessed from a list of four dark fills: `PROJECT_COLOR_INK` in `@rally/contracts`
-is the table, black wins on every fill but `black` itself, and
+guessed from a list of four dark fills: `PALETTE_INK` in `@rally/contracts`
+is the table, black wins on every fill but the three darkest — `black`, and the
+retained `gray` and `brown` — and
 `palette.css.node.test.ts` recomputes it from the token values in both
 appearances. A fill whose contrast flips must move the table in the same change
 or that test fails.

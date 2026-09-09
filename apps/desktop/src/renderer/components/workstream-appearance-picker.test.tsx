@@ -30,8 +30,12 @@ describe('work stream appearance picker', () => {
   it('restores server state and reports a failed save', async () => {
     render(<WorkstreamAppearancePicker id="room" appearance={{ icon: 'atom', color: 'blue' }} size={20} onChange={vi.fn().mockRejectedValue(new Error('offline'))} />);
     openPicker();
-    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Blue' }));
+    // A different swatch than the stored one, or there is no optimistic state to
+    // roll back and the final assertion passes whether or not the failed choice
+    // is retired.
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Red' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Couldn’t update');
+    expect(screen.getByRole('menuitemradio', { name: 'Red' })).toHaveAttribute('aria-checked', 'false');
     expect(screen.getByRole('menuitemradio', { name: 'Blue' })).toHaveAttribute('aria-checked', 'true');
   });
   it('keeps a saved preview through unrelated metadata and retires it when the value arrives', async () => {

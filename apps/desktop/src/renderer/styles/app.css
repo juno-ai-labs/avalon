@@ -5267,7 +5267,7 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 .workstream-appearance-label { color: var(--av-sys-color-text-subtle); font-size: var(--av-cmp-control-font-size); font-weight: 600; padding: 0 2px 8px; }
 .workstream-appearance-colors, .workstream-appearance-icons { display: grid; gap: 4px; }
 .workstream-appearance-icons { grid-template-columns: repeat(6, minmax(0, 1fr)); }
-/* See PROJECT_COLOR_COLUMNS — the swatch grid is eight wide so the second
+/* See PROJECT_COLOR_COLUMNS — the swatch grid is seven wide so the second
    row can run back the other way and meet the first at both ends. */
 .workstream-appearance-colors { grid-template-columns: repeat(7, minmax(0, 1fr)); }
 .workstream-appearance-icons { overflow-y: auto; min-height: 0; max-height: 180px; padding: 2px; }

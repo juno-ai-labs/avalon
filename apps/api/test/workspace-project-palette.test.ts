@@ -70,7 +70,19 @@ describe("workspace project palette", () => {
     const held = statements
       .map((statement) => /^CREATE TABLE (\w+)_v45_hold AS SELECT \* FROM \1$/.exec(statement)?.[1])
       .filter((table): table is string => table !== undefined);
-    expect(held.length).toBeGreaterThan(0);
+
+    // Named rather than derived. Deriving the list from the migration makes this
+    // test agree with whatever the migration happens to hold, so dropping a
+    // table from PROJECT_CASCADE_DEPENDENTS would leave it green while that
+    // table's rows cascade away. This is the closure of `projects`, written out.
+    expect([...held].sort()).toEqual([
+      "project_default_resource_publications",
+      "project_default_resource_targets",
+      "project_default_resources",
+      "project_participants",
+      "project_workstream_memberships",
+      "workspace_project_order",
+    ]);
 
     const dropIndex = statements.findIndex((statement) => statement === "DROP TABLE projects");
     expect(dropIndex).toBeGreaterThan(0);

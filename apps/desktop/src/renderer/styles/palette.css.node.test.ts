@@ -8,6 +8,8 @@ import {
   PALETTE_KEYS,
   PERSONAL_COLOR_KEYS,
   PROJECT_COLOR_KEYS,
+  PersonalColorSchema,
+  personalColorKey,
 } from '@rally/contracts';
 
 import { PROJECT_COLOR_COLUMNS, projectColorCells } from '../lib/project-palette';
@@ -111,5 +113,18 @@ describe('project palette', () => {
     expect(whiteAccents).toEqual(['black']);
     expect(onboarding).toContain("html[data-personal-color] { --av-sys-color-accent-on: var(--personal-ink-dark); }");
     expect(onboarding).toContain("html[data-personal-color='black'], html[data-personal-color='slate'] { --av-sys-color-accent-on: var(--personal-ink-light); }");
+  });
+
+  it('given every accent a person can hold, when onboarding.css is read, then each resolves to the token the contract gives', () => {
+    // `data-personal-color` is written verbatim from the stored value, and the
+    // rules below it feed `--personal-color` into `color-mix()`. A missing
+    // selector leaves the variable unset, which yields nothing rather than
+    // failing loudly, so the app chrome quietly loses its accent while the
+    // avatar and the message bubble — which resolve through `personalColorKey()`
+    // in TypeScript — keep theirs. Every option, retired names included.
+    for (const option of PersonalColorSchema.options) {
+      const rule = `html[data-personal-color='${option}'] { --personal-color: var(--av-sys-color-project-${personalColorKey(option)}); }`;
+      expect(onboarding, `no accent rule for "${option}" matching personalColorKey()`).toContain(rule);
+    }
   });
 });
