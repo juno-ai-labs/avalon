@@ -93,6 +93,14 @@ describe('realtimeSocketTargetAllowed', () => {
     }, apiBaseUrls)).toBe(false);
   });
 
+  it('allows the control appearance capability without allowing arbitrary query data', () => {
+    expect(realtimeSocketTargetAllowed({ ...openInput(), url: `${openInput().url}?workstreamAppearance=1` }, apiBaseUrls)).toBe(true);
+    for (const query of ['ticket=leaked', 'workstreamAppearance=0', 'workstreamAppearance=1&ticket=leaked', 'workstreamAppearance=1&workstreamAppearance=1', 'other=1']) {
+      expect(realtimeSocketTargetAllowed({ ...openInput(), url: `${openInput().url}?${query}` }, apiBaseUrls)).toBe(false);
+    }
+    expect(realtimeSocketTargetAllowed({ ...openInput('substream_feed'), url: `${openInput('substream_feed').url}?workstreamAppearance=1` }, apiBaseUrls)).toBe(false);
+  });
+
   it('admits a feed by its conversation, whichever parent it has, and nothing older', () => {
     const automationId = '00000000-0000-7000-8000-000000000009';
     const runId = '00000000-0000-7000-8000-000000000010';
