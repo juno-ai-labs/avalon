@@ -35,11 +35,11 @@ knowing an object's ID is enough to read it — it never is.
 Migration 0101 adds Global pre-workspace `access_requests` and hashed
 `download_grants`. Their lifecycle and regional boundaries are in
 [private access](private-access.md). The shared migration creates empty EU schema;
-public acquisition writes only in Global. Migration 0102 adds nullable
-`expires_at`: null retains single-use admission, while a UTC deadline permits
-repeat downloads until expiry. `used_at` remains the first-use timestamp. Migration 0103 adds nullable
-`acknowledgement_from` to freeze the authored sender for new requests; legacy
-rows preserve transactional sender resolution.
+public acquisition writes only in Global. Nullable `expires_at` selects single-use
+admission or repeat downloads until a UTC deadline. `used_at` retains first use.
+Required `acknowledgement_from` freezes the authored sender; permanent provider
+rejection is terminal until operator intervention. The optional rate guard uses
+`access_request_rate_buckets` only when a finite threshold is configured.
 
 ## Personal work-stream access history
 
