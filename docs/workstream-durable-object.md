@@ -260,7 +260,7 @@ where its state rolls up; its parent does, through the contract in
 
 | RPC | Answers | `WorkstreamDO` | `AutomationDO` |
 | --- | --- | --- | --- |
-| `authorizeViewer({workspaceId, parentId, userId})` | `{authorized, archived}` | `scope = 'workspace'`, or the person's aggregated viewer row says participant; `archived` from `workstream_metadata.archived_at` | scope `workspace`, the author, the run-as principal, or, for a room's automation, `WorkspaceDO.workstreamParticipant`; `archived` when the owning room is archived; a deleted automation answers unauthorized |
+| `authorizeViewer({workspaceId, parentId, userId})` | `{authorized, archived}` | `scope = 'workspace'`, or the person's Main viewer row says participant; `archived` from `workstream_metadata.archived_at` | scope `workspace`, the author, the run-as principal, or, for a room's automation, `WorkspaceDO.workstreamParticipant`; `archived` when the owning room is archived; a deleted automation answers unauthorized |
 | `authority({workspaceId, parentId})` | `{exists, authorityGeneration, archived}` | from `workstream_metadata` | from the automation row; `archived` when deleted or the owning room is archived |
 | `reserveChild({workspaceId, parentId, substreamId, kind, createdByUserId, authorityGeneration, directory?})` | `{reserved: true, authorityGeneration}`, idempotent on `(parentId, substreamId)` | inserts `conversation_children`; for `"0"` with `directory` it also creates the provisional `workstream_metadata` row and delivers the provisional directory row to WorkspaceDO synchronously | inserts `conversation_children` |
 | `receiveChildEffects({substreamId, envelopes})` | `{accepted: [{messageId, payloadHash}]}` | shared | shared |
@@ -914,12 +914,11 @@ and refuses a replay whose hash differs, and WorkspaceDO does the same in
 `workspace_workstream_effect_receipts`. A redelivery older than the receipt
 window converges on the per-key waterlines instead.
 
-The parent stores the latest common and per-user projection from each child and
-computes one aggregate. Common state uses a deterministic state priority
-(`canonicalState`); last activity is the maximum child timestamp; completion is
-when every child has completed. Viewer unread counts sum across children, while
-participation, listability, unseen, and "You Are Mentioned" are logical ORs
-(`aggregateUserProjections`). The parent numbers its own projections: an
+The parent stores the latest common and per-user projection from each child.
+WorkstreamDO derives its workspace directory, attention and participant state
+from Main (`0`) only. Private-child ordinals are independent and must never be
+summed or ORed into Main. AutomationDO may aggregate its children's execution
+state locally. The parent numbers its own projections: an
 envelope's `sourceVersion` on the parent leg is the parent's waterline for that
 projection key, not any child's, because two children numbering independently
 could not be compared at the workspace. Every changed aggregate partition gets
@@ -931,8 +930,14 @@ with a message id prefixed by the substream, and a person notification records
 the recipient's viewer projection version as `requiredProjectionVersion` so it
 cannot be delivered before that person's directory row has landed.
 
-`WorkstreamDO` forwards everything its children say. `AutomationDO` forwards
-nothing: an automation's conversation and its runs are not workspace rooms, so
+`WorkstreamDO` forwards Main effects, plus mention and participant-added
+notifications addressed to current private-child members. It stamps these with
+the child ID, preserving the child's title and notification identity. Child
+common projections update only the private-child title registry; child activity
+and viewer state do not enter shared surfaces. Before forwarding a person
+notification, it ensures an unchanged Main viewer projection (or a neutral
+nonparticipant projection) supplies the existing delivery barrier. `AutomationDO`
+forwards nothing: an automation's conversation and its runs are not workspace rooms, so
 their directory, activity, and notification effects are receipted, applied to
 the parent's own projections, and dropped. What the workspace hears from an
 automation is the automation's own `directory_automation` row, enqueued by the
@@ -1060,9 +1065,10 @@ emitted are deliberately not re-enqueued, because a notification is versioned on
 a projection key it only reads and would be refused under a new payload hash.
 
 Mention intent delivery rechecks current D1 membership and WorkspaceDO-owned
-destination state only after WorkspaceDO reports the required viewer-directory
-version. This prevents an out-of-order notification from emailing someone whose
-access or listability was removed. Delivery compute remains a regional
+destination state and waits for the required viewer-directory version. Child
+notifications additionally check WorkstreamDO's current child membership and
+archive state. That child authorization permits delivery without Main listability;
+it never grants Main participation or changes its unread state. Delivery compute remains a regional
 Worker/service, but intent, attempt, idempotency key, frozen destination, and
 provider receipt are WorkspaceDO rows. They must not be copied into a child.
 
@@ -1652,6 +1658,18 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-09-08 — Forward child notifications without merging attention
+
+WorkstreamDO now forwards person notifications from private children and stores
+child archive state. Child title projections update the child registry only.
+Previously the forwarding gate dropped every child notification. Reusing child
+viewer aggregation was rejected because child attention ordinals cannot be
+compared to Main and child membership must not grant Main permissions. The
+existing notification dependency instead carries unchanged Main state or a
+neutral viewer row. Delivery reuses current child membership and archive checks;
+command admission checks archive for open child sockets without changing socket
+revocation or adding polling.
 
 ### 2026-09-08 — Every object under a workspace can be retired
 

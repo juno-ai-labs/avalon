@@ -1704,6 +1704,24 @@ export class RallyApi {
     });
   }
 
+  /** The child's title converges over its feed and parent control sockets. */
+  async renameSubstream(parentId: string, substreamId: string, title: string): Promise<void> {
+    await this.requestVoid(this.substreamPath(parentId, substreamId), {
+      method: 'PATCH', body: { title },
+    });
+  }
+
+  /** Take a substream out of its members' sidebars, or put it back. */
+  async setSubstreamArchived(parentId: string, substreamId: string, archived: boolean): Promise<void> {
+    await this.requestVoid(this.substreamPath(parentId, substreamId), {
+      method: 'PATCH', body: { archived },
+    });
+  }
+
+  private substreamPath(parentId: string, substreamId: string): string {
+    return `/conversations/${encodeURIComponent(parentId)}/substreams/${encodeURIComponent(substreamId)}`;
+  }
+
   async addParticipant(id: string, userId: string): Promise<WorkstreamDetail> {
     await this.request(`/workstreams/${encodeURIComponent(id)}/participants`, {
       method: 'POST',

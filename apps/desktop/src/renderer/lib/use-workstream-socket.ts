@@ -1578,7 +1578,7 @@ export function useWorkstreamSocket(
         const renamed = { title: event.title, titleStatus: event.titleStatus };
         queryClient.setQueryData<WorkstreamDetail>(detailQueryKey, (current) =>
           current ? { ...current, ...renamed } : current);
-        setCachedWorkstreams(queryClient, (current) =>
+        if (substreamId === '0') setCachedWorkstreams(queryClient, (current) =>
           current?.map((workstream) => workstream.id === parentId
             ? { ...workstream, ...renamed }
             : workstream));
@@ -1588,7 +1588,7 @@ export function useWorkstreamSocket(
         // their sidebar row and the header they are reading to agree.
         queryClient.setQueryData<WorkstreamDetail>(detailQueryKey, (current) =>
           current ? { ...current, scope: event.scope } : current);
-        setCachedWorkstreams(queryClient, (current) =>
+        if (substreamId === '0') setCachedWorkstreams(queryClient, (current) =>
           current?.map((workstream) => workstream.id === parentId
             ? { ...workstream, scope: event.scope }
             : workstream));
