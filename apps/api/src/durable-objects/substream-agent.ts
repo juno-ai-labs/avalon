@@ -2077,6 +2077,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const identity = this.objectStore.identity();
     if (!identity || identity.workspaceId !== request.workspaceId || identity.parentId !== request.parentId
       || this.externalSubstreamId() !== request.substreamId) throw new Error('search_content_identity_mismatch');
+    if (this.identityRows.identity()?.archived_at != null) return responseToRpcResult(jsonResponse({ title: '', turns: [], links: [] }));
     return responseToRpcResult(jsonResponse({ title: this.identityRows.identity()?.title ?? '',
       turns: request.turnIds.flatMap((turnId) => {
         const turn = this.transcript.participantTurn(turnId);

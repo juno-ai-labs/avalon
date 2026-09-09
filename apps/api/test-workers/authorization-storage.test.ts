@@ -33,8 +33,9 @@ describe('authorization SQLite state', () => {
   it('preserves re-enqueued discovery during delivery and defers churn during Queue failures', async () => {
     const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName('authorization-storage-delivery'));
     await stub.initializeWorkspace(workspaceId, 'wnam');
-    await stub.registerAuthorizationChildren({ workspaceId, parentId, substreamIds: ['0'] });
-    await runInDurableObject(stub, async (instance, state) => {
+    await runInDurableObject(stub, async (instance, state) => state.blockConcurrencyWhile(async () => {
+      // This test drives dispatch itself; keep the real alarm from racing the controlled Queue callback.
+      await instance.registerAuthorizationChildren({ workspaceId, parentId, substreamIds: ['0'] });
       const queue = createCloudflareTestBinding<Queue>({ sendBatch: async () => {
         await instance.registerAuthorizationChildren({ workspaceId, parentId, substreamIds: ['0'] });
       } });
@@ -49,7 +50,7 @@ describe('authorization SQLite state', () => {
       expect(state.storage.sql.exec<{ not_before: number }>('SELECT not_before FROM authorization_delivery').one().not_before).toBe(now + 5_000);
       await instance.registerAuthorizationChildren({ workspaceId, parentId, substreamIds: ['0'] });
       expect(state.storage.sql.exec<{ not_before: number }>('SELECT not_before FROM authorization_delivery').one().not_before).toBe(now + 5_000);
-    });
+    }));
   });
 
   it('keeps a changed source projection deferred after a Queue failure', async () => {

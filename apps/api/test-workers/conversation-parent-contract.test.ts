@@ -364,6 +364,10 @@ describe("conversation parent contract", () => {
       const restricted = await searchWorkspacePage({ ...TEST_ENV, TURBO_PUFFER_DEV_API_KEY: 'test-only' },
         { ...AUTH, userId: MEMBER_ID, sessionId: memberSession }, { query: 'needle', category: 'all', pageSize: 7 });
       expect(restricted.results.map((row) => row.id)).toEqual(['message-1']);
+      await archiveRoom(WORKSPACE_ROOM_ID);
+      const archived = await searchWorkspacePage({ ...TEST_ENV, TURBO_PUFFER_DEV_API_KEY: 'test-only' }, AUTH,
+        { query: 'needle', category: 'all', pageSize: 7 });
+      expect(archived.results.map((row) => row.id)).not.toContain('message-1');
     } finally { release(); await pending.catch(() => {}); }
   });
 

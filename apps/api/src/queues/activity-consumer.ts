@@ -217,8 +217,8 @@ async function consumeOne(message: Message<unknown>, env: Env,
   indexSearch: ReturnType<typeof createSearchIndexingPipeline>): Promise<void> {
   const searchAuthorizationJob = SearchAuthorizationPushJobSchema.safeParse(message.body);
   if (searchAuthorizationJob.success) {
-    await pushSearchAuthorization(env, searchAuthorizationJob.data, message.attempts);
-    message.ack();
+    try { await pushSearchAuthorization(env, searchAuthorizationJob.data, message.attempts); message.ack(); }
+    catch { message.retry(); } // The push logs its outcome; isolate failure to this message.
     return;
   }
   const authorizationJob = AuthorizationProjectionJobSchema.safeParse(message.body);
