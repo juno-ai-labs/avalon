@@ -99,8 +99,21 @@ prop.
 
 The work-stream host supplies `WorkstreamSidebar` through the surface's
 `renderSidebar` slot, between global navigation and the feed. It displays the
-current work stream, resources whose direction is `artifact`, then participants
-from the same live detail/presence state as the conversation. Artifact selection
+current work stream, its viewer-visible private substreams, resources whose
+direction is `artifact`, then participants from the same live detail/presence
+state as the conversation. Every conversation row in it is the navigation
+sidebar's work-stream row — borderless, one 36px leading slot, the same title
+and the same idle/hover/current fills — and only the mark in that slot says
+which conversation it is: the work stream's own icon tinted with its appearance
+colour for the main conversation, the branch line for a substream, a plus for
+**New substream**. Compact swaps a substream's branch line for the first
+character of its title, capitalized, because a rail of identical lines with no
+titles beside them says only that these are substreams. The main conversation's
+mark reads the parent work stream's appearance off its **sidebar row** rather
+than its cached detail, so a colour or icon change moves both rails on the same
+receipt; the header stays on the detail, which is what retires the picker's
+preview. See [`workstream-appearance.md`](workstream-appearance.md).
+Artifact selection
 uses `useCitations.openPreview` to open the artifact lightbox, including an
 explicit unavailable-preview state rather than an inspector fallback; arrival
 of an artifact never opens a panel. Generated sites open the existing isolated
@@ -109,12 +122,13 @@ Generated artifacts has no **Manage resources** button or resource-list popup.
 File previews still offer individual **Resource details**; their lightbox retains
 refresh, watch, archive and version history, but no navigation to a resource list.
 Changing conversations closes both lightboxes and pending resource dialogs.
-Participant rows open the
-existing management dialog. This sidebar does not add substream navigation.
+Participants are one facepile button onto the
+existing management dialog. Selecting a row switches the feed's substream; the
+rail itself stays at work-stream scope.
 
 Its device-local collapse preference is independent of the global sidebar.
 Expanded width defaults to 280px and is draggable between 240px and 400px;
-the icon rail is 88px, matching the existing Grok navigation. Its trailing-edge
+the icon rail is 96px (`COLLAPSED_SIDEBAR_WIDTH`), matching the existing Grok navigation. Its trailing-edge
 handle also accepts Left/Right keys. Width is persisted separately from global
 navigation. Dragging below 210px collapses it; expanding requires crossing
 220px, retaining the existing ten-pixel hysteresis. It temporarily collapses
@@ -148,6 +162,54 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-09 — A substream's initial identifies it in the collapsed rail
+
+**What changed:** In compact mode a substream row's mark is the first character
+of its title, capitalized, instead of the branch line. Expanded rows are
+unchanged, and a title with no first character still falls back to the line.
+
+**Why:** Compact hides every title, so the row shape that had just been unified
+left the substreams as a column of identical curves — legible as "these are
+substreams", useless for picking one. The main conversation already carries the
+work stream's own icon there, so the substreams were the only rows in the rail
+with nothing of their own to show. A creator avatar was the obvious alternative
+and was rejected: it says who started a substream, not which one it is, and
+several substreams from one person collapse back to identical marks.
+
+**Consequences:** The mark is title-derived, so it changes when a substream is
+renamed — deliberate, since it is a compressed title rather than an identity.
+Two substreams sharing a first letter still collide; the row's `title` attribute
+and its accessible name carry the full title in both modes.
+
+### 2026-09-09 — One row shape across both navigation rails
+
+**What changed:** The center sidebar's conversation rows lost their borders and
+took the navigation sidebar's work-stream row: a 36px leading mark, a 14px/500
+title, and the shared idle/hover/current fills. The main conversation's mark is
+the work stream's own icon tinted with its appearance colour (`WorkstreamMark`,
+beside the existing filled `WorkstreamGlyph`); a substream's mark is the branch
+line, which moved out of its wrapper and into the row's own slot, so substream
+rows are full width like everything else in the rail. **New substream** followed
+the same shape, losing its dashed border and outer connector.
+
+**Why:** Product asked for both streams to read as the work-stream row they sit
+under. The rail previously said "one bordered box per conversation" while the
+navigation beside it said "one row per stream", and two boxes with the same fills
+but different borders read as two lists rather than one. This reverses
+[2026-09-04's "keep navigation quiet"](#2026-09-04--keep-navigation-quiet-and-park-the-right-sidebar),
+which had made this row text-only on the grounds that the glyph was already in
+the main sidebar and the feed header: the identity is repeated deliberately now,
+in a lighter form — a tinted symbol rather than a second filled glyph — because
+it is what tells the main conversation apart from its substreams at a glance.
+
+**Consequences:** A substream row no longer carries its creator's avatar; the
+private children come from the parent control socket and creator attribution now
+lives only in the substream itself. The rail needs the parent's `appearance`,
+which the host passes alongside the parent title, so a colour or icon change
+lands on this row on the same receipt that moves the sidebar row. The branch
+line keeps its eight-pixel lift so its endpoint meets the title, and drops it in
+compact mode, where there is no title to meet.
 
 ### 2026-09-08 — Rename Main and children directly in the title bar
 

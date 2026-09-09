@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useDebugEnabled } from './use-debug-enabled';
 import { useWorkspaceSocket } from './workspace-socket';
 import { setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
+import type { WorkstreamAppearance } from '@rally/contracts';
 import type { WorkstreamSummary } from './types';
 
 /**
@@ -168,6 +169,37 @@ export function useWorkstreamsQuery(): WorkstreamsQuery {
   }, [debugEnabled, queryClient]);
 
   return { ...query, hasMore, isFetchingMore, fetchMore };
+}
+
+/**
+ * The appearance a surface inside one work stream should paint with.
+ *
+ * The list row, not the cached detail, and the difference is visible. Both
+ * receive the versioned projection, but only the row receives the unversioned
+ * writes — the picker's receipt and the naming pass's generated icon — so the
+ * row is never behind the detail and is ahead of it by the projection lag,
+ * which is seconds. Reading it here is what lets a second surface move with
+ * the sidebar row instead of trailing it, without writing the detail: that
+ * entry is the picker's own preview signal and only the projection may move
+ * it, per
+ * [`docs/workstream-appearance.md`](../../../../../docs/workstream-appearance.md).
+ *
+ * `undefined` for a work stream with no row loaded — one opened by deep link
+ * past the first page — so a caller falls back to whatever the detail carries.
+ *
+ * `select` narrows the subscription to the one work stream's appearance.
+ * Without it every unread count, title and run state in the workspace would
+ * re-render the screen holding this hook.
+ */
+export function useCachedWorkstreamAppearance(workstreamId: string): WorkstreamAppearance | undefined {
+  return useQuery<WorkstreamSummary[] | undefined, Error, WorkstreamAppearance | undefined>({
+    queryKey: WORKSTREAMS_QUERY_KEY,
+    // Never fetches: the list has exactly one fetcher, in `useWorkstreamsQuery`
+    // above. This is a read of what that one put there.
+    queryFn: async () => undefined,
+    enabled: false,
+    select: (rows) => rows?.find((row) => row.id === workstreamId)?.appearance,
+  }).data;
 }
 
 /**

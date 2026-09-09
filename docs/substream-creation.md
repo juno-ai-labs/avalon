@@ -26,12 +26,14 @@ platform policies, not controls offered to the user.
 
 ## How it works
 
-The middle sidebar puts **Main log** first, then indented child rows with creator
-avatars and Tabler `border-corner-pill` connectors, and finally a dashed
-**New substream** row with Tabler `plus`. It retains the existing sidebar colors,
-row sizing, drag width and icon-only collapse; compact mode hides connectors and
-labels. A creator absent from the available roster uses a conversation icon
-rather than invented identity. A completed
+The middle sidebar puts the main conversation first, then one full-width row per
+child, then **New substream**. Every row is the navigation sidebar's work-stream
+row — borderless, one 36px leading mark slot — and the mark is what tells them
+apart: the work stream's own tinted icon for the main conversation, a Tabler
+`border-corner-pill` branch line for a child, Tabler `plus` for creation.
+Compact hides the titles and swaps a child's branch line for the first character
+of its title. It retains the existing sidebar colors, row sizing, drag width and
+icon-only collapse. A completed
 main-feed message also offers **New substream** with that message as the cutoff.
 Both enter the same creation flow; there is no context-strategy picker.
 
