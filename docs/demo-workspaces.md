@@ -460,7 +460,7 @@ are closed when access ends ([`access-revocation.md`](access-revocation.md)).
 | `apps/api/test/demo-workspace-visibility.test.ts` | The template, an unpublished candidate and an abandoned one are withheld; a published one, a retired one, and a customer workspace named like a demo are not; and a member in more workspaces than one statement can name is answered in chunks. |
 | `apps/api/test-workers/demo-seeder.test.ts` | A five-step pack — a scripted room, a document, two unscripted lines, a question — seeds through the real creation service, room object, alarm-driven loop and upload, with the provider double recording no call; and a confirmed or half-confirmed action replays without a second write. Proved to fail with the seam removed (every run fails at the provider) and with the classifier skip removed (a seeded line is refused at admission). |
 | `apps/api/test/demo-pack.test.ts` | The playability rules — including a role token in Rally's own prose that names nobody in the cast — that the planner resolves a mention to the bound member at the offsets of the expanded name and expands `@{role}` in Rally's turn to the cast's names, and that the placeholder pack parses. |
-| `apps/api/test/demo-seed-provider.test.ts` | The streamed wire form for `say` and for `ask` — the latter with arguments the real elicitation schema accepts — and the refusal of a second request. |
+| `apps/api/test/demo-seed-provider.test.ts` | The streamed wire form for `say` and for `ask` — the latter with arguments the real elicitation schema accepts — and the refusal of a second request; and the seeded route: an unbound model kept with its fallbacks dropped, an Azure-bound primary stepped past to the first unbound fallback, and a fixed unbound id when every routed model is bound. |
 | `apps/api/test/demo-seed-receipts.test.ts` | Against the real migration: the first confirmation wins, a receipt needs a claimed operation, and an outcome the seeder cannot confirm is refused. |
 | `apps/api/test-workers/demo-readiness.test.ts` | With the effect Queue held, a seeded two-room pack is listed but not Ready — the mention, the new marker and the attention count are named as gaps — and delivering the directory effects through the real consumer makes it Ready with no gaps, including the room the presenter can see without being in, and the order. Proved to fail with the mention comparison removed. |
 | `apps/api/test/demo-readiness.test.ts` | The manifest derived from the placeholder pack — rooms newest first, seats, states, ids from receipts — and its refusal of a pack whose rooms or question were never confirmed; and the schema's check that a viewer's expected rooms are exactly the visible ones. |
@@ -557,7 +557,10 @@ The readiness barrier reads as the member membership says the viewer is and
 refuses a viewer the workspace does not seat; it never fabricates a role. Seed
 prose is pack data behind a schema, never a member's or a model's input, and
 a seeded run skips admission-time memory recall as a human message does, so
-the seed's `fetch` is the only provider it reaches.
+the seed's `fetch` is the only provider it reaches — and the run is routed to
+the client that `fetch` belongs to: an OpenRouter-only model with no fallbacks
+and no Azure transport, because production's default model is Azure-first
+([`agent-harness.md`](agent-harness.md#seeded-runs)).
 
 ## Open questions
 
@@ -581,6 +584,25 @@ the cast discussed is answerable. That was a product defect in every
 multi-person room, not a demo concern, and it is fixed where it lived.
 
 ## Changelog
+
+### 2026-09-09 — A seeded run is routed past Azure
+
+**What changed:** `demoSeedModelRoute` picks the model a seeded run is routed
+under — the resolved primary when it is not Azure-bound, otherwise the first
+unbound fallback, otherwise a fixed unbound id — with no fallbacks, and
+`runWorkstreamHarness` leaves the Azure transport out of a seeded run's config.
+
+**Why:** Found by tracing the production path before the instance-id fix
+below deployed. The seam replaces the OpenRouter client's `fetch` only, and
+production routes `x-ai/grok-4.3` to Azure first: a seeded `say` would have
+been a live model's words and a seeded `ask` would have failed
+`demo_seed_run_outcome_mismatch`. Local and test environments never showed it
+because they route to OpenRouter. [`agent-harness.md`](agent-harness.md)
+records why the route was pinned rather than the seam widened.
+
+**Consequences:** A seeded run records the unbound model as its own, which in
+production is `google/gemini-3.6-flash`. A change to the production model
+variables cannot break seeding, only change that record.
 
 ### 2026-09-09 — The Workflow instance id is one the platform accepts
 

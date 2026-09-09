@@ -50,6 +50,7 @@ import { modelDefaultReasoningEffort } from "./model-inference-defaults";
 
 export * from "./prompts";
 export { hasAvalonToolProse, toolActivityName, type ToolActivityStatus } from "./tool-activity";
+export { isAzureBoundModel } from "./bind-runtime";
 export {
   formatToolArgumentValidationError,
   normalizeToolArguments,
