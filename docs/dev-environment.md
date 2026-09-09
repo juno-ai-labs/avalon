@@ -167,11 +167,15 @@ Workers over their service bindings — run Global on its own config, where the
 flag is honoured and nothing on disk changes:
 
 ```bash
-pnpm --filter @rally/api exec wrangler dev --local \
+pnpm --filter @rally/api exec -- wrangler dev --local \
   --config wrangler.global.jsonc --env-file .dev.vars.global \
   --persist-to .wrangler/state/global --port 8787 --inspector-port 9230 \
   --enable-containers=false
 ```
+
+The `--` matters: without it pnpm 11.13.0 takes `--env-file` as its own option,
+swallows the path, and the run dies at `node: .dev.vars.global: not found`
+before wrangler sees any of it.
 
 `pnpm db:open-authority` then seeds Global and says to re-run for EU, which is
 the same "start the Workers and re-run" message it gives for any region that is

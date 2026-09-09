@@ -609,7 +609,7 @@ export function WorkstreamScreen(): React.JSX.Element {
           attachedSidekicks={context.attachedSidekicks}
           attachedSidekicksError={context.attachedSidekicksError}
           onRemoveSidekick={context.removeSidekick}
-          workstream={{ ...context.detail, title: parent.data?.title ?? context.detail.title, privateChildren: children.data?.privateChildren }}
+          workstream={{ ...context.detail, title: parent.data?.title ?? context.detail.title, appearance: parent.data?.appearance ?? context.detail.appearance, privateChildren: children.data?.privateChildren }}
           presentUserIds={context.presentUserIds}
           onParticipants={context.openParticipantDialog}
           selectedSubstreamId={selectedSubstreamId}

@@ -99,8 +99,14 @@ prop.
 
 The work-stream host supplies `WorkstreamSidebar` through the surface's
 `renderSidebar` slot, between global navigation and the feed. It displays the
-current work stream, resources whose direction is `artifact`, then participants
-from the same live detail/presence state as the conversation. Artifact selection
+current work stream, its viewer-visible private substreams, resources whose
+direction is `artifact`, then participants from the same live detail/presence
+state as the conversation. Every conversation row in it is the navigation
+sidebar's work-stream row — borderless, one 36px leading slot, the same title
+and the same idle/hover/current fills — and only the mark in that slot says
+which conversation it is: the work stream's own icon tinted with its appearance
+colour for the main conversation, the branch line for a substream, a plus for
+**New substream**. Artifact selection
 uses `useCitations.openPreview` to open the artifact lightbox, including an
 explicit unavailable-preview state rather than an inspector fallback; arrival
 of an artifact never opens a panel. Generated sites open the existing isolated
@@ -110,7 +116,8 @@ File previews still offer individual **Resource details**; their lightbox retain
 refresh, watch, archive and version history, but no navigation to a resource list.
 Changing conversations closes both lightboxes and pending resource dialogs.
 Participant rows open the
-existing management dialog. This sidebar does not add substream navigation.
+existing management dialog. Selecting a row switches the feed's substream; the
+rail itself stays at work-stream scope.
 
 Its device-local collapse preference is independent of the global sidebar.
 Expanded width defaults to 280px and is draggable between 240px and 400px;
@@ -148,6 +155,35 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-09 — One row shape across both navigation rails
+
+**What changed:** The center sidebar's conversation rows lost their borders and
+took the navigation sidebar's work-stream row: a 36px leading mark, a 14px/500
+title, and the shared idle/hover/current fills. The main conversation's mark is
+the work stream's own icon tinted with its appearance colour (`WorkstreamMark`,
+beside the existing filled `WorkstreamGlyph`); a substream's mark is the branch
+line, which moved out of its wrapper and into the row's own slot, so substream
+rows are full width like everything else in the rail. **New substream** followed
+the same shape, losing its dashed border and outer connector.
+
+**Why:** Product asked for both streams to read as the work-stream row they sit
+under. The rail previously said "one bordered box per conversation" while the
+navigation beside it said "one row per stream", and two boxes with the same fills
+but different borders read as two lists rather than one. This reverses
+[2026-09-04's "keep navigation quiet"](#2026-09-04--keep-navigation-quiet-and-park-the-right-sidebar),
+which had made this row text-only on the grounds that the glyph was already in
+the main sidebar and the feed header: the identity is repeated deliberately now,
+in a lighter form — a tinted symbol rather than a second filled glyph — because
+it is what tells the main conversation apart from its substreams at a glance.
+
+**Consequences:** A substream row no longer carries its creator's avatar; the
+private children come from the parent control socket and creator attribution now
+lives only in the substream itself. The rail needs the parent's `appearance`,
+which the host passes alongside the parent title, so a colour or icon change
+lands on this row on the same receipt that moves the sidebar row. The branch
+line keeps its eight-pixel lift so its endpoint meets the title, and drops it in
+compact mode, where there is no title to meet.
 
 ### 2026-09-08 — Rename Main and children directly in the title bar
 
