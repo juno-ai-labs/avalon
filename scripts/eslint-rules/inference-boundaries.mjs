@@ -198,6 +198,15 @@ export const requireWebSocketTicketRule = {
       },
       VariableDeclarator(node) {
         const init = unwrapAwait(node.init);
+        if (node.id.type === "Identifier" && init?.type === "Identifier") {
+          const binding = bindingFor(node.id);
+          const source = bindingFor(init);
+          if (node.parent.kind === "const" && binding && ticketBindings.has(source)
+            && !source.references.some((reference) => reference.isWrite() && !reference.init)) {
+            ticketBindings.add(binding);
+          }
+          return;
+        }
         if (node.id.type === "Identifier" && init?.type === "CallExpression") {
           const method = propertyName(init.callee);
           const binding = bindingFor(node.id);

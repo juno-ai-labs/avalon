@@ -1,3 +1,4 @@
+import { TRANSCRIPTION_MAX_FRAME_CHARACTERS, TRANSCRIPTION_MAX_APPEND_BYTES } from '@rally/contracts/realtime-transcription';
 import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
 import type { SocketTicket } from './types';
 import { act, renderHook, waitFor } from '@testing-library/react';
@@ -84,6 +85,7 @@ function installMediaDevices(
 }
 
 beforeEach(() => {
+  installAudioGraph();
   systemAudioBridge.listener = undefined;
   systemAudioBridge.start.mockReset().mockResolvedValue({ channels: 1, sampleRate: 48_000 });
   systemAudioBridge.stop.mockReset().mockResolvedValue(undefined);
@@ -224,10 +226,263 @@ describe('realtime dictation transcript', () => {
     expect(readDevicePreferences().microphoneDeviceId).toBe('studio-microphone');
   });
 
+  it('captures before the ticket and drains unchanged audio immediately after session readiness', async () => {
+    const ticket = deferred<SocketTicket>();
+    installMediaDevices(vi.fn(async () => mediaStream()));
+    const audio = installAudioGraph();
+    const { result, unmount } = renderHook(() => useRealtimeDictation({
+      getTranscriptionSocketTicket: () => ticket.promise,
+    }, vi.fn()));
+    let start!: Promise<void>;
+    act(() => { start = result.current.start(); });
+    await waitFor(() => expect(result.current.state).toBe('listening'));
+    const first = new Uint8Array([1, 2, 3, 4]).buffer;
+    const second = new Uint8Array([5, 6]).buffer;
+    act(() => audio.emitAudio(first));
+    expect(FakeWebSocket.instances).toHaveLength(0);
+    ticket.resolve(socketTicket('wss://example.test/buffered'));
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => audio.emitAudio(second));
+    expect(socket.send).not.toHaveBeenCalled();
+    act(() => socket.dispatchEvent(new MessageEvent('message', {
+      data: JSON.stringify({ type: 'session.updated' }),
+    })));
+    await act(async () => start);
+    act(() => audio.emitAudio(new Uint8Array([7, 8]).buffer));
+    expect(socket.send.mock.calls.map(([value]) => JSON.parse(String(value)).audio)).toEqual([
+      btoa(String.fromCharCode(1, 2, 3, 4, 5, 6)), btoa(String.fromCharCode(7, 8)),
+    ]);
+    unmount();
+  });
+
+  it('preserves a short recording stopped before its ticket arrives, including the final partial frame', async () => {
+    const ticket = deferred<SocketTicket>();
+    installMediaDevices(vi.fn(async () => mediaStream()));
+    const audio = installAudioGraph({ flushBuffer: new Uint8Array([3, 4]).buffer });
+    const onTranscript = vi.fn();
+    const { result } = renderHook(() => useRealtimeDictation({
+      getTranscriptionSocketTicket: () => ticket.promise,
+    }, onTranscript));
+    let start!: Promise<void>;
+    act(() => { start = result.current.start(); });
+    await waitFor(() => expect(result.current.state).toBe('listening'));
+    act(() => audio.emitAudio(new Uint8Array([1, 2]).buffer));
+    let stop!: Promise<void>;
+    act(() => { stop = result.current.stop(); });
+    expect(result.current.state).toBe('finalizing');
+    ticket.resolve(socketTicket('wss://example.test/short-recording'));
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    const socket = FakeWebSocket.instances[0]!;
+    expect(socket.send).not.toHaveBeenCalled();
+    act(() => socket.dispatchEvent(new MessageEvent('message', {
+      data: JSON.stringify({ type: 'session.updated' }),
+    })));
+    await act(async () => start);
+    await waitFor(() => expect(socket.send).toHaveBeenCalledTimes(2));
+    expect(socket.send.mock.calls.map(([value]) => JSON.parse(String(value)))).toEqual([
+      { type: 'input_audio_buffer.append', audio: btoa(String.fromCharCode(1, 2, 3, 4)) },
+      { type: 'input_audio_buffer.commit' },
+    ]);
+    act(() => socket.dispatchEvent(new MessageEvent('message', {
+      data: JSON.stringify({ type: 'conversation.item.input_audio_transcription.completed', transcript: 'Short recording.' }),
+    })));
+    await act(async () => stop);
+    expect(onTranscript).toHaveBeenCalledWith('Short recording.');
+    expect(result.current.state).toBe('idle');
+  });
+
+  it('batches a long backlog within proxy frame limits and drains it faster than real time before commit', async () => {
+    vi.useFakeTimers();
+    installMediaDevices(vi.fn(async () => mediaStream()));
+    const audio = installAudioGraph();
+    const { result } = renderHook(() => useRealtimeDictation({
+      getTranscriptionSocketTicket: async () => socketTicket('wss://example.test/large-backlog'),
+    }, vi.fn()));
+    let start!: Promise<void>;
+    await act(async () => { start = result.current.start(); });
+    expect(result.current.state).toBe('listening');
+    const socket = FakeWebSocket.instances[0]!;
+    // Ten seconds of original 100 ms PCM frames, each distinguishable.
+    for (let index = 0; index < 100; index += 1) {
+      act(() => audio.emitAudio(new Uint8Array(4_800).fill(index).buffer));
+    }
+    let stop!: Promise<void>;
+    await act(async () => { stop = result.current.stop(); });
+    act(() => socket.dispatchEvent(new MessageEvent('message', {
+      data: JSON.stringify({ type: 'session.updated' }),
+    })));
+    await act(async () => start);
+    expect(socket.send).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(socket.send.mock.calls[0]![0])).audio.length).toBe(
+      Math.ceil(TRANSCRIPTION_MAX_APPEND_BYTES / 3) * 4,
+    );
+    await act(async () => vi.advanceTimersByTimeAsync(200));
+    const messages = socket.send.mock.calls.map(([value]) => String(value));
+    expect(messages.every((message) => message.length <= TRANSCRIPTION_MAX_FRAME_CHARACTERS)).toBe(true);
+    const events = messages.map((message) => JSON.parse(message) as { type: string; audio?: string });
+    expect(events.map((event) => event.type)).toEqual([
+      'input_audio_buffer.append', 'input_audio_buffer.append', 'input_audio_buffer.append', 'input_audio_buffer.commit',
+    ]);
+    const decoded = events.flatMap((event) => event.audio ? [...atob(event.audio)].map((byte) => byte.charCodeAt(0)) : []);
+    expect(decoded).toEqual(Array.from({ length: 480_000 }, (_, index) => Math.floor(index / 4_800)));
+    act(() => socket.dispatchEvent(new MessageEvent('message', {
+      data: JSON.stringify({ type: 'conversation.item.input_audio_transcription.completed', transcript: 'Ten seconds.' }),
+    })));
+    await act(async () => stop);
+    expect(result.current.state).toBe('idle');
+  });
+
+  it('rejects Stop and releases captured inputs if the provider closes during startup', async () => {
+    const trackStop = vi.fn();
+    installMediaDevices(vi.fn(async () => mediaStream(trackStop)));
+    const { result } = renderHook(() => useRealtimeDictation({
+      getTranscriptionSocketTicket: async () => socketTicket('wss://example.test/failed-startup-stop'),
+    }, vi.fn()));
+    let start!: Promise<void>;
+    act(() => { start = result.current.start(); });
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    let stop!: Promise<void>;
+    act(() => { stop = result.current.stop(); });
+    const rejection = expect(stop).rejects.toThrow(/closed during setup/);
+    act(() => FakeWebSocket.instances[0]!.close());
+    await act(async () => start);
+    await rejection;
+    await waitFor(() => expect(trackStop).toHaveBeenCalled());
+    expect(result.current.state).toBe('error');
+  });
+
+  it.each([false, true])('ends a stalled ticket request and releases capture (stopped: %s)', async (stopped) => {
+    vi.useFakeTimers();
+    const trackStop = vi.fn();
+    const ticket = deferred<SocketTicket>();
+    const api = { getTranscriptionSocketTicket: vi.fn<(signal?: AbortSignal) => Promise<SocketTicket>>(() => ticket.promise) };
+    installMediaDevices(vi.fn(async () => mediaStream(trackStop)));
+    const audio = installAudioGraph();
+    const { result, unmount } = renderHook(() => useRealtimeDictation(api, vi.fn()));
+    let start!: Promise<void>;
+    await act(async () => { start = result.current.start(); });
+    expect(result.current.state).toBe('listening');
+    act(() => audio.emitAudio(new ArrayBuffer(4_800)));
+    let rejection: Promise<void> | undefined;
+    if (stopped) {
+      let stop!: Promise<void>;
+      await act(async () => { stop = result.current.stop(); });
+      rejection = expect(stop).rejects.toThrow(/too long to connect/);
+    }
+    await act(async () => vi.advanceTimersByTimeAsync(10_000));
+    await rejection;
+    expect(result.current.state).toBe('error');
+    expect(trackStop).toHaveBeenCalled();
+    expect(api.getTranscriptionSocketTicket.mock.calls[0]?.[0]?.aborted).toBe(true);
+    // Even a collaborator that ignores cancellation cannot revive the attempt.
+    ticket.resolve(socketTicket('wss://example.test/late-expired-ticket'));
+    await act(async () => start);
+    expect(FakeWebSocket.instances).toHaveLength(0);
+    unmount();
+  });
+
+  it('uses one connection budget across the ticket and provider handshake', async () => {
+    vi.useFakeTimers();
+    const ticket = deferred<SocketTicket>();
+    installMediaDevices(vi.fn(async () => mediaStream()));
+    const { result } = renderHook(() => useRealtimeDictation({ getTranscriptionSocketTicket: () => ticket.promise }, vi.fn()));
+    let start!: Promise<void>;
+    await act(async () => { start = result.current.start(); });
+    await act(async () => vi.advanceTimersByTimeAsync(9_000));
+    ticket.resolve(socketTicket('wss://example.test/late-handshake'));
+    await act(async () => {});
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    await act(async () => start);
+    expect(result.current.state).toBe('error');
+    expect(result.current.error).toMatch(/too long to connect/);
+    expect(FakeWebSocket.instances[0]!.readyState).toBe(FakeWebSocket.CLOSED);
+  });
+
+  it('pauses and resumes before a ticket exists without losing buffered audio', async () => {
+    const ticket = deferred<SocketTicket>();
+    installMediaDevices(vi.fn(async () => mediaStream()));
+    const audio = installAudioGraph();
+    const { result, unmount } = renderHook(() => useRealtimeDictation({ getTranscriptionSocketTicket: () => ticket.promise }, vi.fn()));
+    let start!: Promise<void>;
+    act(() => { start = result.current.start(); });
+    await waitFor(() => expect(result.current.state).toBe('listening'));
+    act(() => audio.emitAudio(new Uint8Array([1, 2]).buffer));
+    await act(async () => result.current.pause());
+    expect(result.current.state).toBe('paused');
+    expect(FakeWebSocket.instances).toHaveLength(0);
+    await act(async () => result.current.resume());
+    expect(result.current.state).toBe('listening');
+    act(() => audio.emitAudio(new Uint8Array([3, 4]).buffer));
+    ticket.resolve(socketTicket('wss://example.test/paused-startup'));
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ type: 'session.updated' }) })));
+    await act(async () => start);
+    expect(JSON.parse(String(socket.send.mock.calls[0]![0])).audio).toBe(btoa(String.fromCharCode(1, 2, 3, 4)));
+    unmount();
+  });
+
+  it('waits for outbound pressure to subside before draining the backlog', async () => {
+    vi.useFakeTimers();
+    installMediaDevices(vi.fn(async () => mediaStream()));
+    const audio = installAudioGraph();
+    const { result, unmount } = renderHook(() => useRealtimeDictation({
+      getTranscriptionSocketTicket: async () => socketTicket('wss://example.test/backlog-pressure'),
+    }, vi.fn()));
+    let start!: Promise<void>;
+    await act(async () => { start = result.current.start(); });
+    act(() => audio.emitAudio(new Uint8Array([1, 2]).buffer));
+    const socket = FakeWebSocket.instances[0]!;
+    socket.bufferedAmount = 4 * 1_024 * 1_024;
+    act(() => socket.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ type: 'session.updated' }) })));
+    await act(async () => start);
+    await act(async () => vi.advanceTimersByTimeAsync(100));
+    expect(socket.send).not.toHaveBeenCalled();
+    expect(result.current.state).toBe('listening');
+    socket.bufferedAmount = 0;
+    await act(async () => vi.advanceTimersByTimeAsync(100));
+    expect(JSON.parse(String(socket.send.mock.calls[0]![0])).audio).toBe(btoa(String.fromCharCode(1, 2)));
+    unmount();
+  });
+
+  it('sends a flush arriving after the backlog becomes ready before committing', async () => {
+    const nativeDrain = deferred<void>();
+    systemAudioBridge.stop.mockReturnValue(nativeDrain.promise);
+    installMediaDevices(vi.fn(async () => mediaStream()));
+    const audio = installAudioGraph({ flushBuffer: new Uint8Array([3, 4]).buffer });
+    const { result } = renderHook(() => useRealtimeDictation({
+      getTranscriptionSocketTicket: async () => socketTicket('wss://example.test/late-native-flush'),
+    }, vi.fn(), { includeSystemAudio: true }));
+    let start!: Promise<void>;
+    act(() => { start = result.current.start(); });
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => audio.emitAudio(new Uint8Array([1, 2]).buffer));
+    let stop!: Promise<void>;
+    act(() => { stop = result.current.stop(); });
+    act(() => socket.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ type: 'session.updated' }) })));
+    await act(async () => start);
+    expect(socket.send).toHaveBeenCalledTimes(1);
+    nativeDrain.resolve(undefined);
+    await waitFor(() => expect(socket.send).toHaveBeenCalledTimes(3));
+    expect(socket.send.mock.calls.map(([raw]) => JSON.parse(String(raw)))).toEqual([
+      { type: 'input_audio_buffer.append', audio: btoa(String.fromCharCode(1, 2)) },
+      { type: 'input_audio_buffer.append', audio: btoa(String.fromCharCode(3, 4)) },
+      { type: 'input_audio_buffer.commit' },
+    ]);
+    act(() => socket.dispatchEvent(new MessageEvent('message', {
+      data: JSON.stringify({ type: 'conversation.item.input_audio_transcription.completed', transcript: 'Complete.' }),
+    })));
+    await act(async () => stop);
+  });
+
   it('requests and cleans up microphone and computer audio together', async () => {
     const ticket = deferred<SocketTicket>();
     const microphoneStop = vi.fn();
-    installMediaDevices(vi.fn(async () => mediaStream(microphoneStop)));
+    const microphone = deferred<MediaStream>();
+    installMediaDevices(vi.fn(() => microphone.promise));
     const api = { getTranscriptionSocketTicket: vi.fn(() => ticket.promise) };
     const { result } = renderHook(() => useRealtimeDictation(api, vi.fn(), { includeSystemAudio: true }));
 
@@ -235,6 +490,7 @@ describe('realtime dictation transcript', () => {
     act(() => { start = result.current.start(); });
     await waitFor(() => expect(systemAudioBridge.start).toHaveBeenCalledOnce());
     await act(async () => result.current.stop());
+    microphone.resolve(mediaStream(microphoneStop));
     ticket.resolve(socketTicket('wss://example.test/system-audio', 'ticket'));
     await act(async () => start);
 
