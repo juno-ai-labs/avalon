@@ -101,18 +101,16 @@ describe('project palette', () => {
   });
 
   it('given the accent ink rules, when onboarding.css is read, then they mirror the ink table', () => {
-    // The accent set is a subset of the palette, so the CSS has to name the same
-    // exception the table does.
-    const whiteInk = Object.entries(PALETTE_INK)
-      .filter(([, ink]) => ink === 'white')
-      .map(([key]) => key);
-    expect(whiteInk).toContain('black');
-    // Of the accents a person can pick, only `black` takes white ink; the
-    // retired `slate` resolves to it and needs the same rule.
+    // `accent-on` is paired with `accent-base`, a mix toward `text-default`, so
+    // it follows the appearance rather than the accent — one rule, no per-hue
+    // exception. Pinning a per-hue rule here is what locked in near-black ink on
+    // a near-black mix for every light-theme accent.
+    expect(onboarding).toContain("html[data-personal-color] { --av-sys-color-accent-on: var(--av-sys-color-text-on-inverse); }");
+    expect(onboarding).not.toMatch(/--av-sys-color-accent-on: var\(--personal-ink/u);
+
+    // The swatch checkmark does sit on a raw fill, and that one follows the table.
     const whiteAccents = PERSONAL_COLOR_KEYS.filter((key) => PALETTE_INK[key] === 'white');
     expect(whiteAccents).toEqual(['black']);
-    expect(onboarding).toContain("html[data-personal-color] { --av-sys-color-accent-on: var(--personal-ink-dark); }");
-    expect(onboarding).toContain("html[data-personal-color='black'], html[data-personal-color='slate'] { --av-sys-color-accent-on: var(--personal-ink-light); }");
   });
 
   it('given every accent a person can hold, when onboarding.css is read, then each resolves to the token the contract gives', () => {
