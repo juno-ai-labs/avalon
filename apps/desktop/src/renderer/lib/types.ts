@@ -441,6 +441,16 @@ export interface WorkTotal {
 export interface WorkSpan {
   startedAtMs: number;
   endedAtMs: number;
+  /**
+   * Set where the interval's boundary was recovered rather than observed.
+   *
+   * It rides on the span because a span can outlive the row's own aggregate:
+   * a plugin group assembled from tool rows alone — the fallback for a run
+   * whose plugin activity never arrived — has no aggregate accuracy to read,
+   * and a stretch holding it would otherwise print a recovered duration as an
+   * exact one.
+   */
+  timingAccuracy?: 'observed' | 'upper_bound';
 }
 
 export interface Message {

@@ -2058,6 +2058,38 @@ describe('orderedTranscriptMessages plugin runs', () => {
       }]);
   });
 
+  it('leaves an interval the authority could not measure without spans', () => {
+    // Closed, with timestamps, and a null duration: the contract calls that
+    // unmeasurable and `activityDuration` counts it as nothing. Reading the
+    // timestamps anyway would let a drawer report time its rows do not have.
+    const snapshot = brokenJoinSnapshot([run({ toolCallIds: ['call-0'] })]);
+    const messages = orderedTranscriptMessages({
+      ...snapshot,
+      activities: [
+        {
+          activityId: 'turn-tools:activity', parentActivityId: null, scope: 'assistant_turn',
+          subjectId: 'turn-tools', callIndex: 0, label: 'Assistant turn', state: 'completed',
+          intervals: [], revision: 2,
+        },
+        {
+          activityId: 'turn-tools:plugin:rally:core', parentActivityId: 'turn-tools:activity',
+          scope: 'plugin', subjectId: 'rally:core', callIndex: 0, label: 'rally:core',
+          state: 'completed',
+          intervals: [{
+            intervalId: 'i0', startedAtUtc: '2026-08-26T12:00:00.000Z',
+            stoppedAtUtc: '2026-08-26T12:00:09.000Z', durationMs: null,
+            elapsedMsAtSnapshot: null, boundarySource: 'recovered',
+            timingAccuracy: 'upper_bound', revision: 2,
+          }],
+          revision: 2,
+        },
+      ],
+    }, 'workstream-one');
+
+    expect(messages.find((message) => message.messageType === 'plugin_activity')?.workSpans)
+      .toBeUndefined();
+  });
+
   it('leaves a run the activity tree never reached without spans', () => {
     // The server states how long it took; nothing here can state when, and a
     // stretch holding this row therefore reports no total rather than one
@@ -2494,7 +2526,8 @@ describe('collapseSettledWorkIntoAccordion', () => {
     // No one drawer is what the response timer measured, so each says what it
     // holds: the union of its rows' spans. The rows overlap here — the plugin
     // covers the gaps between its own calls that the thinking beside it fills —
-    // and the sum of their durations, 21s, is 6s more than the stretch took.
+    // and the sum of their two 12s spans, 24s, is 9s more than the 15s the
+    // stretch actually took.
     const collapsed = collapseSettledWorkIntoAccordion([
       thinking('thought-one', {
         workSpans: [{ startedAtMs: 1_000_000, endedAtMs: 1_009_000 }],
@@ -2547,6 +2580,29 @@ describe('collapseSettledWorkIntoAccordion', () => {
           durationMs: 4_000, timingAccuracy: 'upper_bound',
           activeVerb: 'Using Slack', completedVerb: 'Used Slack',
         },
+      }),
+      answer('turn-2'),
+    ]);
+
+    expect(collapsed[2]!.workAccordion).toEqual(expect.objectContaining({
+      durationMs: 4_000,
+      timingAccuracy: 'upper_bound',
+    }));
+  });
+
+  it('keeps a recovered boundary\'s accuracy when the span is all that carries it', () => {
+    // A group assembled from tool rows alone — the fallback for a run whose
+    // plugin activity never arrived — has no aggregate accuracy to read, so the
+    // span is the only thing that can say the boundary was recovered.
+    const collapsed = collapseSettledWorkIntoAccordion([
+      thinking('thought-one', {
+        workSpans: [{ startedAtMs: 1_000_000, endedAtMs: 1_009_000 }],
+      }),
+      answer('turn-1', { id: 'turn-1:text', workSummary: undefined }),
+      plugin('plugin-slack', 'Slack', {
+        workSpans: [{
+          startedAtMs: 1_020_000, endedAtMs: 1_024_000, timingAccuracy: 'upper_bound',
+        }],
       }),
       answer('turn-2'),
     ]);
