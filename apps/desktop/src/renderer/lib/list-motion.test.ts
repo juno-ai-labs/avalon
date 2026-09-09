@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   LIST_MOTION,
   LIST_MOTION_TOTAL_MS,
+  layoutRowAt,
   longestIncreasingRun,
   moverKeyframes,
   planListMotion,
@@ -158,5 +159,39 @@ describe('translationOf', () => {
     expect(translationOf('none')).toEqual({ x: 0, y: 0 });
     expect(translationOf('')).toEqual({ x: 0, y: 0 });
     expect(translationOf('matrix3d(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 5, 6, 0, 1)')).toEqual({ x: 0, y: 0 });
+  });
+});
+
+describe('layoutRowAt', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  /** A row laid out at `top`, currently drawn `drawnOffBy` pixels away from it. */
+  function row(top: number, drawnOffBy = 0): HTMLElement {
+    const element = document.createElement('div');
+    element.getBoundingClientRect = () => ({
+      top: top + drawnOffBy, bottom: top + drawnOffBy + ROW, height: ROW, left: 0, right: 100, width: 100, x: 0, y: top + drawnOffBy, toJSON: () => ({}),
+    });
+    element.dataset.drawnOffBy = String(drawnOffBy);
+    return element;
+  }
+
+  it('answers by where a row is laid out, not where its motion has drawn it', () => {
+    vi.spyOn(globalThis, 'getComputedStyle').mockImplementation((element) => ({
+      transform: `matrix(1, 0, 0, 1, 0, ${(element as HTMLElement).dataset.drawnOffBy})`,
+    }) as CSSStyleDeclaration);
+    // `b` is laid out in the second slot but drawn half a slot lower, over the
+    // third; the third slot's layout owner is still `c`.
+    const [a, b, c] = [row(0), row(ROW, 24), row(2 * ROW)];
+    expect(layoutRowAt([a, b, c], 10)).toBe(a);
+    expect(layoutRowAt([a, b, c], ROW + 40)).toBe(b);
+    expect(layoutRowAt([a, b, c], 2 * ROW + 10)).toBe(c);
+    expect(layoutRowAt([a, b, c], 3 * ROW + 10)).toBeUndefined();
+  });
+
+  it('answers nothing for rows that have no layout', () => {
+    const empty = document.createElement('div');
+    expect(layoutRowAt([empty], 0)).toBeUndefined();
   });
 });

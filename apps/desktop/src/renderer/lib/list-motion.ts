@@ -237,3 +237,22 @@ export function translationOf(transform: string): { x: number; y: number } {
     ? { x: x!, y: y! }
     : { x: 0, y: 0 };
 }
+
+/**
+ * The row whose *layout* box contains the viewport y, net of any motion it is
+ * playing. A list that reorders on `dragover` needs this rather than the row
+ * the event reached: a row gliding through the pointer's position mid-motion
+ * is on its way somewhere else, and taking it for the row that belongs there
+ * would reorder against it and send it straight back the way it came. Rows
+ * with no layout — `display: none`, or a test environment that lays nothing
+ * out — contain nothing, so a caller falls back to the row the event reached.
+ */
+export function layoutRowAt<T extends Element>(rows: Iterable<T>, clientY: number): T | undefined {
+  for (const row of rows) {
+    const rect = row.getBoundingClientRect();
+    const drawnOffBy = translationOf(getComputedStyle(row).transform).y;
+    const top = rect.top - drawnOffBy;
+    if (clientY >= top && clientY < top + rect.height) return row;
+  }
+  return undefined;
+}

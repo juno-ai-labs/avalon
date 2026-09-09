@@ -66,6 +66,7 @@ import {
   useUiStore,
 } from '../lib/ui-store';
 import { useDebugEnabled } from '../lib/use-debug-enabled';
+import { layoutRowAt } from '../lib/list-motion';
 import { useListMotion } from '../lib/use-list-motion';
 import { Avatar, Button, IconButton, InlineError, Modal, StatusDot, TitleSkeleton } from './primitives';
 import { ProjectIcon, ProjectSidebarSection } from './project-sidebar-section';
@@ -420,7 +421,8 @@ interface PinnedRowDrag {
   dragging: boolean;
   /** `cancelled` is a drag backed out of rather than dropped on the list. */
   onDragEnd: (cancelled: boolean) => void;
-  onDragOver: (workstream: WorkstreamSummary) => void;
+  /** The pinned work stream whose slot the pointer is over. */
+  onDragOver: (workstreamId: string) => void;
   onDragStart: (workstream: WorkstreamSummary) => void;
   /** Keyboard equivalent of a drag: one step toward the top or the bottom. */
   onMove: (workstream: WorkstreamSummary, direction: -1 | 1) => void;
@@ -567,7 +569,18 @@ function WorkstreamRow({
               // jumping once at the end.
               event.preventDefault();
               event.dataTransfer.dropEffect = 'move';
-              drag.onDragOver(workstream);
+              // The slot under the pointer is the one laid out there, which
+              // mid-motion is not the row drawn there: a row gliding out of
+              // the slot the dragged row just took would otherwise be taken
+              // for the row that belongs to it, and the reorder would send it
+              // straight back. Where rows have no layout — jsdom — the row
+              // the event reached is the slot.
+              const section = event.currentTarget.closest('.pinned-section');
+              const slot = layoutRowAt(
+                section?.querySelectorAll<HTMLElement>('[data-workstream-id]') ?? [],
+                event.clientY,
+              );
+              drag.onDragOver(slot?.dataset.workstreamId ?? workstream.id);
             }
             : undefined}
           onDragStart={(event) => {
@@ -1375,12 +1388,12 @@ export function Sidebar({
       draggingWorkstreamId.current = target.id;
       setDragOrder(pinnedWorkstreams.map((pinned) => pinned.id));
     },
-    onDragOver: (target) => {
+    onDragOver: (targetId) => {
       const draggingId = draggingWorkstreamId.current;
-      if (draggingId === null || draggingId === target.id) return;
+      if (draggingId === null || draggingId === targetId) return;
       setDragOrder((current) => {
         const order = current ?? pinnedWorkstreams.map((pinned) => pinned.id);
-        const targetIndex = order.indexOf(target.id);
+        const targetIndex = order.indexOf(targetId);
         if (targetIndex < 0 || order.indexOf(draggingId) === targetIndex) return order;
         return moveWithin(order, draggingId, targetIndex);
       });
@@ -1586,8 +1599,9 @@ export function Sidebar({
   // it between sections, a drag or an Alt+Arrow in the pinned list — travels
   // there rather than reappearing: out to the left, the rows between closing
   // the gap, then in from the left at its new slot. After the reveal above,
-  // and for the reason given there.
-  useListMotion(scrollRef);
+  // and for the reason given there. The compact toggle relays out every row
+  // for a reason that is not a move, so it names the layout.
+  useListMotion(scrollRef, compact);
 
   const sidekickShortcuts = standaloneSidekicks.length > 0 && (
     <section className="sidebar-automation-strip" aria-label="Sidekick shortcuts" onClick={() => setSidebarOpen(false)}>

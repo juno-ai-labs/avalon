@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, createEvent, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { useState } from 'react';
 import { MemoryRouter } from 'react-router-dom';
@@ -2299,6 +2299,63 @@ describe('pinned work streams', () => {
 
       expect(animate).toHaveBeenCalled();
       expect(scrollIntoView.mock.invocationCallOrder[0]).toBeLessThan(Math.min(...animate.mock.invocationCallOrder));
+    });
+
+    it('resolves a drag target by the slot laid out under the pointer, not the row drawn there', () => {
+      const onReorderPinnedWorkstreams = vi.fn(async (): Promise<void> => undefined);
+      renderWith(
+        [
+          pinned(workstream('ws-a', 'Alpha', 'completed'), 0),
+          pinned(workstream('ws-b', 'Bravo', 'completed'), 1),
+          pinned(workstream('ws-c', 'Charlie', 'completed'), 2),
+        ],
+        { onReorderPinnedWorkstreams },
+      );
+      fireEvent.dragStart(dragTarget(/Charlie/u), { dataTransfer: dataTransfer() });
+      // The row the reader is positioning is placed rather than sent out.
+      expect(dragTarget(/Charlie/u).closest('[data-motion-key]')).toHaveAttribute('data-motion-hold');
+      // The event reaches Alpha's element, but the pointer is over Bravo's
+      // slot — the slots run [Pinned heading, Alpha, Bravo, Charlie] — which
+      // is where a row gliding under the pointer would have been drawn.
+      // jsdom has no `DragEvent`, so the pointer position goes on by hand.
+      const over = createEvent.dragOver(dragTarget(/Alpha/u), { dataTransfer: dataTransfer() });
+      Object.defineProperty(over, 'clientY', { value: 2 * 48 + 10 });
+      fireEvent(dragTarget(/Alpha/u), over);
+      expect(pinnedRowTitles()).toEqual([
+        expect.stringContaining('Alpha'),
+        expect.stringContaining('Charlie'),
+        expect.stringContaining('Bravo'),
+      ]);
+    });
+
+    it('scopes a project\'s members apart from the recent list', () => {
+      const member = workstream('00000000-0000-7000-8000-0000000000e1', 'Roadmap review', 'completed');
+      const project = ProjectSummarySchema.parse({
+        id: '00000000-0000-7000-8000-0000000000f2',
+        name: 'Launch',
+        iconKey: 'briefcase',
+        colorKey: 'blue',
+        scope: 'personal',
+        status: 'active',
+        presentationRevision: 1,
+        audienceGeneration: 1,
+        lifecycleGeneration: 1,
+        participants: [{ userId: '00000000-0000-7000-8000-0000000000f1', state: 'active', generation: 1 }],
+        createdAt: '2026-08-27T00:00:00.000Z',
+        updatedAt: '2026-08-27T00:00:00.000Z',
+        workstreamIds: [member.id],
+      });
+      render(
+        <MemoryRouter><Tooltip.Provider>
+          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} projects={[project]} workspace={workspace} workstreams={[member]} />
+        </Tooltip.Provider></MemoryRouter>,
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'Expand Launch' }));
+      const rows = screen.getAllByRole('link', { name: /Roadmap review/u }).map((link) => link.closest('[data-motion-key]'));
+      expect(rows).toHaveLength(2);
+      const scopes = rows.map((row) => row?.closest('[data-motion-scope]')?.getAttribute('data-motion-scope') ?? null);
+      expect(scopes).toEqual(expect.arrayContaining([`project:${project.id}`, null]));
+      expect(screen.getByText('Launch').closest('[data-motion-key]')).toHaveAttribute('data-motion-hold');
     });
 
     // A row leaves one recency group for another whenever it is touched — its
