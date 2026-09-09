@@ -1088,12 +1088,14 @@ describe('useWorkstreamSocket', () => {
     act(() => socket.message({ type: 'client_command_succeeded', command: 'set_workstream_appearance', operationId: first.operationId }));
     await color;
     await flushPromises();
-    // The receipt is the commit, and the sidebar row and the open detail take
-    // it together without waiting for the directory projection. The patch
-    // merges over the current value, so the color choice keeps the icon.
+    // The receipt is the commit, and the sidebar row takes it without waiting
+    // for the directory projection. The patch merges over the current value,
+    // so the color choice keeps the icon. The detail entry is left to the
+    // versioned push: the header shows the picker's own preview until then,
+    // and moving the detail here would retire that preview early.
     expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.appearance)
       .toEqual({ icon: 'atom', color: 'purple' });
-    expect(queryDetail(queryClient, workstreamId)?.appearance).toEqual({ icon: 'atom', color: 'purple' });
+    expect(queryDetail(queryClient, workstreamId)?.appearance).toEqual(appearance);
     expect(sentFrames(socket).filter((frame) => frame.type === 'set_workstream_appearance')).toHaveLength(2);
     const queued = result.current.setAppearance({ color: 'blue' });
     const rejectedIcon = expect(icon).rejects.toMatchObject({ code: 'workstream_socket_unavailable' });
