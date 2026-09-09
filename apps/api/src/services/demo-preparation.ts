@@ -25,7 +25,6 @@
  */
 import {
   DEMO_PREPARATION_PHASES,
-  DemoOperationStartRequestSchema,
   DemoOperationStatusSchema,
   asWorkspaceId,
   type DemoOperationPhaseStatus,
@@ -39,7 +38,8 @@ import { ApiError } from "../lib/api-error";
 import { uuidV7 } from "../lib/uuid-v7";
 import { logInfo, logWarn } from "../observability/logger";
 import { copyTemplateConnections } from "./demo-connection-copy";
-import { DemoPackSchema, PLACEHOLDER_DEMO_PACK, type DemoPack } from "./demo-pack";
+import { DEMO_PRESENTER_ROLE, DemoPackSchema, PLACEHOLDER_DEMO_PACK, demoCastRoles, type DemoPack } from "./demo-pack";
+import { assertDemoPersonas, ensureDemoPersonas } from "./demo-personas";
 import { checkDemoReadiness, demoReadinessManifest } from "./demo-readiness";
 import {
   applyDemoSeedAction,
@@ -129,7 +129,8 @@ function parseJsonObject(text: string): Record<string, unknown> {
   }
 }
 
-const CastSchema = DemoOperationStartRequestSchema.shape.cast;
+/** The cast as the row stores it: a user id per role, which the status also carries. */
+const CastSchema = DemoOperationStatusSchema.shape.cast;
 
 /** The cast as stored — a row this module wrote, re-parsed rather than trusted. */
 function castOf(record: OperationRecord): Record<string, string> {
@@ -138,14 +139,26 @@ function castOf(record: OperationRecord): Record<string, string> {
   return parsed.data;
 }
 
-function toStatus(record: OperationRecord, phases: PhaseRecord[], confirmed: number): DemoOperationStatus {
+function toStatus(
+  record: OperationRecord,
+  phases: PhaseRecord[],
+  confirmed: number,
+  names: ReadonlyMap<string, string>,
+): DemoOperationStatus {
+  const cast = parseJsonObject(record.cast_json);
   return DemoOperationStatusSchema.parse({
     operationId: record.operation_id,
     companyName: record.company_name,
     presenterUserId: record.presenter_user_id,
     presenterName: record.presenter_name,
     packVersion: record.pack_version,
-    cast: parseJsonObject(record.cast_json),
+    cast,
+    // The directory's own name for each of them, which is what the demo shows
+    // and what a mention is validated against; the id when the row names
+    // somebody this region no longer has.
+    castNames: Object.fromEntries(Object.entries(cast).map(
+      ([role, userId]) => [role, typeof userId === "string" ? names.get(userId) ?? userId : String(userId)],
+    )),
     workspaceId: record.workspace_id,
     workspaceName: record.workspace_name,
     status: record.status,
@@ -183,6 +196,7 @@ async function statusesOf(env: Env, records: OperationRecord[]): Promise<DemoOpe
   const ids = records.map((record) => record.operation_id);
   const phasesByOperation = new Map<string, PhaseRecord[]>();
   const confirmedByOperation = new Map<string, number>();
+  const names = new Map<string, string>();
   // In runs that fit one statement: every operation ever prepared is listed,
   // and D1 refuses a statement past its bound parameter ceiling — which would
   // have taken the whole list, live demos included, down for good once enough
@@ -204,6 +218,18 @@ async function statusesOf(env: Env, records: OperationRecord[]): Promise<DemoOpe
     }
     for (const row of receipts.results ?? []) confirmedByOperation.set(row.operation_id, Number(row.confirmed));
   }
+  // Who the cast are, by the name the directory carries: the operator names a
+  // persona when they start a demo and reads it back here for every demo they
+  // have ever prepared, so it is one read per chunk rather than one per role.
+  const castIds = [...new Set(records.flatMap(
+    (record) => Object.values(parseJsonObject(record.cast_json)).filter((value): value is string => typeof value === "string"),
+  ))];
+  for (const chunk of boundParameterChunks(castIds)) {
+    const rows = await env.DB.prepare(
+      `SELECT id, name FROM users WHERE id IN (${chunk.map(() => "?").join(", ")})`,
+    ).bind(...chunk).all<{ id: string; name: string }>();
+    for (const row of rows.results ?? []) names.set(row.id, row.name);
+  }
   // In pipeline order, not by clock: a retried attempt re-enters the first
   // phase with a fresh `started_at` while a stale later phase keeps its old
   // one, and the page reads the list in order to find where the operation is.
@@ -215,6 +241,7 @@ async function statusesOf(env: Env, records: OperationRecord[]): Promise<DemoOpe
     record,
     phasesByOperation.get(record.operation_id) ?? [],
     confirmedByOperation.get(record.operation_id) ?? 0,
+    names,
   ));
 }
 
@@ -232,12 +259,19 @@ export async function listDemoOperations(env: Env): Promise<DemoOperationStatus[
 }
 
 /**
- * The template's cast candidates: its active members, with the pack's roles.
- * The presenter and the cast are chosen from these by the operator.
+ * What the New demo form is built from: the pack's roles with the name each is
+ * offered under, and the template's active members, who the presenter is
+ * chosen from. Only the presenter comes from this list — every other role is
+ * played by a persona the operator names.
  */
 export async function demoTemplate(env: Env): Promise<{
   workspaceId: string;
-  pack: { version: string; roles: string[] };
+  pack: {
+    version: string;
+    roles: string[];
+    presenterRole: string | null;
+    castDefaults: Record<string, string>;
+  };
   members: { userId: string; name: string; email: string; role: "owner" | "admin" | "member" }[];
 }> {
   const rows = await env.DB.prepare(
@@ -251,7 +285,12 @@ export async function demoTemplate(env: Env): Promise<{
   const pack = activeDemoPack();
   return {
     workspaceId: DEMO_TEMPLATE_WORKSPACE_ID,
-    pack: { version: pack.version, roles: [...pack.roles] },
+    pack: {
+      version: pack.version,
+      roles: [...pack.roles],
+      presenterRole: pack.roles.includes(DEMO_PRESENTER_ROLE) ? DEMO_PRESENTER_ROLE : null,
+      castDefaults: { ...pack.castDefaults },
+    },
     members: (rows.results ?? []).map((row) => ({
       userId: row.user_id,
       name: row.name,
@@ -277,31 +316,21 @@ function requireDriver(env: Env): Workflow {
 }
 
 /**
- * Which of these people are active members of the template. The presenter and
- * every cast member must be: the new workspace is owned by the presenter and
- * receives copies of the template's connections, so a presenter who is not one
- * of the template's own members would be handed its credentials.
+ * The presenter, who must be an active member of the template: the new
+ * workspace is owned by them and receives copies of the template's
+ * connections, so a presenter outside the template would be handed its
+ * credentials. Answers their name, which the cast may not reuse.
  */
-async function templateMembersAmong(env: Env, userIds: readonly string[]): Promise<Set<string>> {
-  const distinct = [...new Set(userIds)];
-  if (distinct.length === 0) return new Set();
-  const rows = await env.DB.prepare(
-    `SELECT user_id FROM workspace_members
-      WHERE workspace_id = ? AND status = 'active' AND user_id IN (${distinct.map(() => "?").join(", ")})`,
-  ).bind(DEMO_TEMPLATE_WORKSPACE_ID, ...distinct).all<{ user_id: string }>();
-  return new Set((rows.results ?? []).map((row) => row.user_id));
-}
-
-async function assertTemplateCast(env: Env, presenterUserId: string, cast: Record<string, string>): Promise<void> {
-  const members = await templateMembersAmong(env, [presenterUserId, ...Object.values(cast)]);
-  if (!members.has(presenterUserId)) {
+async function assertTemplatePresenter(env: Env, presenterUserId: string): Promise<{ name: string; timezone: string }> {
+  const member = await env.DB.prepare(
+    `SELECT user.name AS name, user.timezone AS timezone
+       FROM workspace_members member JOIN users user ON user.id = member.user_id
+      WHERE member.workspace_id = ? AND member.user_id = ? AND member.status = 'active'`,
+  ).bind(DEMO_TEMPLATE_WORKSPACE_ID, presenterUserId).first<{ name: string; timezone: string | null }>();
+  if (!member) {
     throw new ApiError(422, "demo_presenter_not_in_template", "The presenter is not an active member of the template");
   }
-  for (const [role, userId] of Object.entries(cast)) {
-    if (!members.has(userId)) {
-      throw new ApiError(422, "demo_cast_not_in_template", `The member cast as "${role}" is not in the template`);
-    }
-  }
+  return { name: member.name, timezone: member.timezone ?? "America/Los_Angeles" };
 }
 
 /**
@@ -349,10 +378,12 @@ async function launchAttempt(env: Env, operationId: string, attempt: number): Pr
  * Start one preparation, or return the one this operation id already started.
  *
  * Operation identity, not a concurrency limit: two different ids are two demos.
- * The cast must bind every role of the pack in service and nothing else, each
- * role to a different person, and the presenter and every cast member must be
- * active members of the template — refused here, before a row is written, and
- * checked again by the first phase in case membership moved in between.
+ * The request names every role of the pack in service but the presenter's and
+ * nothing else, each under a different name, and the presenter must be an
+ * active member of the template — refused here, before a row is written, and
+ * checked again by the first phase in case membership moved in between. The
+ * named roles are then minted as this operation's personas, so what the row
+ * stores is the user ids every phase after this works in.
  */
 export async function startDemoOperation(
   env: Env,
@@ -362,20 +393,38 @@ export async function startDemoOperation(
   requireDemoRegion(env);
   requireDriver(env);
   const pack = activeDemoPack();
-  const roles = new Set(pack.roles);
-  for (const role of pack.roles) {
-    if (!input.cast[role]) throw new ApiError(422, "demo_pack_role_unbound", `Nobody is cast as "${role}"`);
+  const castRoles = demoCastRoles(pack.roles);
+  const names: Record<string, string> = {};
+  for (const role of castRoles) {
+    const name = input.cast[role]?.trim();
+    if (!name) throw new ApiError(422, "demo_pack_role_unbound", `Nobody is cast as "${role}"`);
+    names[role] = name;
   }
   for (const role of Object.keys(input.cast)) {
-    if (!roles.has(role)) throw new ApiError(422, "demo_pack_role_unknown", `The pack has no role "${role}"`);
+    if (role === DEMO_PRESENTER_ROLE) {
+      // The presenter is an account, not a name: they sign in and the demo is
+      // their own view of it.
+      throw new ApiError(422, "demo_presenter_named", "The presenter is chosen from the template, not named");
+    }
+    if (!castRoles.includes(role)) throw new ApiError(422, "demo_pack_role_unknown", `The pack has no role "${role}"`);
   }
-  if (roles.has("presenter") && input.cast.presenter !== input.presenterUserId) {
-    throw new ApiError(422, "demo_presenter_mismatch", "The presenter must be the member cast as \"presenter\"");
+  const presenter = await assertTemplatePresenter(env, input.presenterUserId);
+  // Two people under one name in one workspace: a mention resolves to a user
+  // id, but nobody watching the demo can tell which of them was named, and the
+  // presenter reading their own name on somebody else's message is worse.
+  const spoken = [...Object.values(names), ...(pack.roles.includes(DEMO_PRESENTER_ROLE) ? [presenter.name] : [])]
+    .map((name) => name.toLowerCase());
+  if (new Set(spoken).size !== spoken.length) {
+    throw new ApiError(422, "demo_cast_duplicate", "Each pack role must be played under a different name");
   }
-  if (new Set(Object.values(input.cast)).size !== Object.values(input.cast).length) {
-    throw new ApiError(422, "demo_cast_duplicate", "Each pack role must be played by a different member");
-  }
-  await assertTemplateCast(env, input.presenterUserId, input.cast);
+  // Minted before the row: the cast is stored as user ids, the way every phase
+  // after this reads it. Derived identity makes this idempotent, so a repeated
+  // submission of the same operation id meets the people it made the first
+  // time rather than a second set.
+  const cast = {
+    ...(pack.roles.includes(DEMO_PRESENTER_ROLE) ? { [DEMO_PRESENTER_ROLE]: input.presenterUserId } : {}),
+    ...await ensureDemoPersonas(env, { operationId: input.operationId, names, timezone: presenter.timezone }),
+  };
   const at = nowIso();
   const inserted = await env.DB.prepare(
     `INSERT INTO demo_operations
@@ -385,7 +434,7 @@ export async function startDemoOperation(
      ON CONFLICT (operation_id) DO NOTHING`,
   ).bind(
     input.operationId, input.companyName, input.presenterUserId, pack.version,
-    JSON.stringify(input.cast), at, at,
+    JSON.stringify(cast), at, at,
   ).run();
   // The insert's own answer decides who launches: exactly one submission of
   // an operation id writes the row, and only it starts the driver. Deciding
@@ -720,7 +769,12 @@ async function phaseBody(
         `SELECT id FROM users WHERE id = ? AND platform_user_id IS NOT NULL`,
       ).bind(record.presenter_user_id).first<{ id: string }>();
       if (!presenter) throw new ApiError(409, "demo_presenter_unknown", "The presenter is not a signed-in member of this region");
-      await assertTemplateCast(env, record.presenter_user_id, cast);
+      await assertTemplatePresenter(env, record.presenter_user_id);
+      await assertDemoPersonas(env, {
+        operationId: record.operation_id,
+        cast,
+        presenterRole: pack.roles.includes(DEMO_PRESENTER_ROLE) ? DEMO_PRESENTER_ROLE : null,
+      });
       const connections = await workspaceRuntimeDatabase(env, DEMO_TEMPLATE_WORKSPACE_ID).prepare(
         `SELECT COUNT(*) AS count FROM connector_connections WHERE workspace_id = ? AND scope = 'workspace'`,
       ).bind(DEMO_TEMPLATE_WORKSPACE_ID).first<{ count: number }>();

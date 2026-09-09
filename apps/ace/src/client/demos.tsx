@@ -80,26 +80,31 @@ export function operationHeadline(operation: DemoOperationStatus): string {
   return label ?? 'Starting';
 }
 
+/** The roles the operator names: every role the presenter does not play. */
+export function castRolesOf(template: DemoTemplate): string[] {
+  return template.pack.roles.filter((role) => role !== template.pack.presenterRole);
+}
+
 /**
- * The cast the form opens with: the presenter in the presenter's role, and the
- * other roles dealt out over the remaining members in order. A default is a
- * suggestion the operator reads before starting, so it has to be the one a
- * person would pick — not shifted by one, and never the same person twice
- * while there are members left.
+ * The names the form opens with: the pack's own defaults, in role order. They
+ * are a suggestion the operator types over — the cast are invented people, and
+ * the names are the ones the company being presented to will read — so the
+ * form is submittable as it opens and nothing about it is fixed.
  */
-export function defaultCast(template: DemoTemplate, presenterUserId: string): Record<string, string> {
-  const others = template.members.filter((member) => member.userId !== presenterUserId);
-  const assigned: Record<string, string> = {};
-  let index = 0;
-  for (const role of template.pack.roles) {
-    if (role === 'presenter') {
-      assigned[role] = presenterUserId;
-      continue;
-    }
-    assigned[role] = others[index % Math.max(others.length, 1)]?.userId ?? presenterUserId;
-    index += 1;
-  }
-  return assigned;
+export function defaultCastNames(template: DemoTemplate): Record<string, string> {
+  return Object.fromEntries(castRolesOf(template).map((role) => [role, template.pack.castDefaults[role] ?? '']));
+}
+
+/**
+ * Who is in this demo besides the presenter, by name — the cast the operator
+ * typed when they started it, which is not recoverable from anywhere else once
+ * the form is gone.
+ */
+function castOf(operation: DemoOperationStatus): string {
+  const names = Object.entries(operation.castNames)
+    .filter(([, name]) => name !== operation.presenterName)
+    .map(([, name]) => name);
+  return names.length > 0 ? names.join(', ') : '—';
 }
 
 /** The gaps a wait phase recorded, in the shape the API writes them (the contract's). */
@@ -112,9 +117,10 @@ function gapsOf(phase: DemoOperationPhaseStatus | undefined): DemoReadinessGap[]
   });
 }
 
-/** The pack role a viewer plays, so a gap names whose projection is behind. */
-function roleOf(operation: DemoOperationStatus, userId: string): string {
-  return Object.entries(operation.cast).find(([, id]) => id === userId)?.[0] ?? userId;
+/** Who a viewer is, by the name the demo carries, so a gap names whose projection is behind. */
+function nameOf(operation: DemoOperationStatus, userId: string): string {
+  const role = Object.entries(operation.cast).find(([, id]) => id === userId)?.[0];
+  return (role === undefined ? undefined : operation.castNames[role]) ?? (role === undefined ? userId : roleLabel(role));
 }
 
 function PhaseRow({ definition, phase, operation }: {
@@ -171,7 +177,7 @@ function PhaseRow({ definition, phase, operation }: {
       {items.length > 0 && <small>{items.join(' · ')}</small>}
       {phaseError && <p className="demo-phase-error"><code>{phaseError.code}</code> {phaseError.message}</p>}
       {gaps.length > 0 && <ul className="demo-gaps" aria-label={status === 'failed' ? 'What had not arrived' : 'What has not arrived yet'}>
-        {gaps.map((gap, index) => <li key={`${gap.viewerUserId}-${gap.room ?? 'workspace'}-${gap.code}-${index}`}>{roleLabel(roleOf(operation, gap.viewerUserId))}: <code>{gap.room ?? 'workspace'}</code> {gap.code.replaceAll('_', ' ')}: {gap.detail}</li>)}
+        {gaps.map((gap, index) => <li key={`${gap.viewerUserId}-${gap.room ?? 'workspace'}-${gap.code}-${index}`}>{nameOf(operation, gap.viewerUserId)}: <code>{gap.room ?? 'workspace'}</code> {gap.code.replaceAll('_', ' ')}: {gap.detail}</li>)}
       </ul>}
     </div>
   </li>;
@@ -188,16 +194,23 @@ function NewDemoForm({ template, onStarted, onFailed, onCancel }: {
   const [operationId] = useState(() => crypto.randomUUID());
   const [companyName, setCompanyName] = useState('');
   const [presenterUserId, setPresenterUserId] = useState(template.members[0]?.userId ?? '');
-  const [cast, setCast] = useState<Record<string, string>>(() => defaultCast(template, template.members[0]?.userId ?? ''));
+  const [cast, setCast] = useState<Record<string, string>>(() => defaultCastNames(template));
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState('');
 
-  const fullCast: Record<string, string> = { ...cast, ...(template.pack.roles.includes('presenter') ? { presenter: presenterUserId } : {}) };
-  const seatedTwice = template.pack.roles.filter((role, index) =>
-    template.pack.roles.findIndex((other) => fullCast[other] === fullCast[role]) !== index);
+  const roles = castRolesOf(template);
+  const presenterName = template.members.find((member) => member.userId === presenterUserId)?.name ?? '';
+  // The presenter is a real person in the demo, so their name is one of the
+  // names that has to be unique; the API refuses the collision either way.
+  const spoken = [...roles.map((role) => cast[role] ?? ''), ...(template.pack.presenterRole ? [presenterName] : [])]
+    .map((name) => name.trim())
+    .filter((name) => name !== '');
+  const folded = spoken.map((name) => name.toLowerCase());
+  // Shown as it was typed, not as it was compared.
+  const duplicate = spoken.find((_name, index) => folded.indexOf(folded[index]!) !== index) ?? '';
   const complete = companyName.trim().length > 0 && presenterUserId !== ''
-    && template.pack.roles.every((role) => (fullCast[role] ?? '') !== '')
-    && seatedTwice.length === 0;
+    && roles.every((role) => (cast[role] ?? '').trim() !== '')
+    && duplicate === '';
 
   const start = async (): Promise<void> => {
     if (!complete || starting) return;
@@ -206,7 +219,12 @@ function NewDemoForm({ template, onStarted, onFailed, onCancel }: {
       const response = await fetch('/api/demos', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ operationId, companyName: companyName.trim(), presenterUserId, cast: fullCast }),
+        body: JSON.stringify({
+          operationId,
+          companyName: companyName.trim(),
+          presenterUserId,
+          cast: Object.fromEntries(roles.map((role) => [role, (cast[role] ?? '').trim()])),
+        }),
       });
       onStarted(await responseBody(response, (value) => DemoOperationStatusSchema.parse(value)));
     } catch (caught) {
@@ -217,23 +235,25 @@ function NewDemoForm({ template, onStarted, onFailed, onCancel }: {
     } finally { setStarting(false); }
   };
 
-  const nameOf = (userId: string): string => template.members.find((member) => member.userId === userId)?.name ?? userId;
-
   return <form className="ace-form" aria-label="New demo" onSubmit={(event) => { event.preventDefault(); void start(); }}>
-    <div className="section-title"><div><h3>New demo</h3><p>Pack {template.pack.version}. The workspace will be named after the company, and each pack role is played by one member of the template.</p></div></div>
+    <div className="section-title"><div><h3>New demo</h3><p>Pack {template.pack.version}. The workspace will be named after the company. The presenter is the person who will show the demo; everyone else is invented for it, and you name them.</p></div></div>
     <div className="demo-form-grid">
       <Field label="Company"><input maxLength={80} placeholder="Alto Capital" value={companyName} onChange={(event) => setCompanyName(event.target.value)} /></Field>
-      <Field label="Presenter"><select value={presenterUserId} onChange={(event) => { setPresenterUserId(event.target.value); setCast(defaultCast(template, event.target.value)); }}>
+      <Field label="Presenter"><select value={presenterUserId} onChange={(event) => setPresenterUserId(event.target.value)}>
         {template.members.map((member) => <option key={member.userId} value={member.userId}>{member.name} · {member.email}</option>)}
       </select></Field>
-      {template.pack.roles.filter((role) => role !== 'presenter').map((role) => <Field key={role} label={`Cast: ${roleLabel(role)}`}>
-        <select value={cast[role] ?? ''} onChange={(event) => setCast((current) => ({ ...current, [role]: event.target.value }))}>
-          {template.members.map((member) => <option key={member.userId} value={member.userId}>{member.name}</option>)}
-        </select>
+      {roles.map((role, index) => <Field key={role} label={`User ${index + 1}`}>
+        <input
+          autoComplete="off"
+          maxLength={80}
+          placeholder={template.pack.castDefaults[role] ?? 'A name'}
+          value={cast[role] ?? ''}
+          onChange={(event) => setCast((current) => ({ ...current, [role]: event.target.value }))}
+        />
       </Field>)}
     </div>
     <p className="ace-form-note">Operation <code>{operationId}</code></p>
-    {seatedTwice.length > 0 && <p className="queue-error" role="alert">{nameOf(fullCast[seatedTwice[0]!]!)} is cast in two roles. Each role needs a different member.</p>}
+    {duplicate !== '' && <p className="queue-error" role="alert">Two people are called {duplicate}. Each name in the demo has to be different.</p>}
     {error && <p className="queue-error" role="alert">{error}</p>}
     <div className="ace-form-actions">
       <Button disabled={!complete || starting} type="submit" variant="primary">{starting ? 'Starting…' : 'Start preparation'}</Button>
@@ -288,11 +308,13 @@ export function DemosView(): React.JSX.Element {
     setTemplate({ state: 'loading' });
     try {
       const template = await responseBody(await fetch('/api/demos/template'), (value) => DemoTemplateSchema.parse(value));
-      // A template with fewer members than the pack has roles cannot cast a
-      // demo, and a form that can never be submitted is worse than saying so:
-      // this is the first-run state before `demo-template` is populated.
-      if (template.members.length < template.pack.roles.length) {
-        setTemplate({ state: 'unavailable', reason: `demo-template has ${template.members.length} active ${template.members.length === 1 ? 'member' : 'members'}; the pack needs ${template.pack.roles.length}, one per role.` });
+      // The cast is named rather than chosen, so the one person the form needs
+      // from the template is the presenter: they own the demo and sign into
+      // it. No members at all is the first-run state before `demo-template`
+      // is populated, and a form that can never be submitted is worse than
+      // saying so.
+      if (template.members.length === 0) {
+        setTemplate({ state: 'unavailable', reason: 'demo-template has no active members; the presenter is cast from them.' });
         return;
       }
       setTemplate({ state: 'ready', template });
@@ -380,12 +402,13 @@ export function DemosView(): React.JSX.Element {
       : selected ? <>
         <header className="queue-detail-header"><div><p>{operationHeadline(selected)}</p><h2>{selected.companyName}-demo</h2><code>operation {selected.operationId}</code></div>
           <div className="demo-detail-actions">
-            {(selected.status === 'failed' || selected.status === 'running') && <Button disabled={acting} onClick={() => void act('retry')} title={selected.status === 'running' ? 'For a preparation that has stopped moving: starts the next attempt from where it left off' : undefined} type="button" variant="primary">{acting ? 'Working…' : 'Retry'}</Button>}
+            {(selected.status === 'failed' || selected.status === 'running') && <Button disabled={acting || selected.status === 'running'} onClick={() => void act('retry')} title={selected.status === 'running' ? 'A preparation that is still running cannot be retried; it becomes available if this one fails' : 'Starts the next attempt of this operation from where it stopped'} type="button" variant="primary">{acting ? 'Working…' : 'Retry'}</Button>}
             {(selected.status === 'failed' || selected.status === 'running') && !abandoning && <Button disabled={acting} onClick={() => setAbandoning(true)} type="button">Abandon…</Button>}
           </div>
         </header>
         <section className="queue-metrics" aria-label="Demo summary">
           <div><span>Presenter</span><strong>{selected.presenterName ?? selected.presenterUserId}</strong></div>
+          <div><span>Cast</span><strong>{castOf(selected)}</strong></div>
           <div><span>Workspace</span><strong>{selected.workspaceName ?? 'Not yet allocated'}</strong>{selected.workspaceId && <code className="ace-id">{selected.workspaceId}</code>}</div>
           <div><span>{selected.readyAt ? 'Ready since' : 'Started'}</span><strong>{formatTime(selected.readyAt ?? selected.createdAt)}</strong></div>
         </section>

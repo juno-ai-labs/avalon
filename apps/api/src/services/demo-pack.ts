@@ -35,6 +35,20 @@ export const DemoPackRoleSchema = z.string().regex(/^[a-z][a-z0-9-]{0,39}$/u);
 export type DemoPackRole = z.infer<typeof DemoPackRoleSchema>;
 
 /**
+ * The one role a real person plays. The presenter signs in and the demo is
+ * their view of it, so their name is their account's; every other role is
+ * played by a persona named when the demo is prepared, which is why the pack
+ * carries a default name for those and none for this one. A pack without this
+ * role is cast entirely from personas.
+ */
+export const DEMO_PRESENTER_ROLE = "presenter";
+
+/** The roles the operator names: every role the presenter does not play. */
+export function demoCastRoles(roles: readonly DemoPackRole[]): DemoPackRole[] {
+  return roles.filter((role) => role !== DEMO_PRESENTER_ROLE);
+}
+
+/**
  * A step's id doubles as the action id on every receipt and seed, and — joined
  * to the operation id — as the client message id the production path dedupes
  * on. 80 is what `DemoSeedSchema.actionId` allows, and the pair fits the 120
@@ -210,8 +224,34 @@ export const DemoPackSchema = z.strictObject({
    * was checked.
    */
   expect: z.array(ViewerExpectationSchema).default([]),
+  /**
+   * The name each cast role is offered under in the New demo form. A
+   * suggestion the operator types over, not a binding: the pack's prose names
+   * people by role token and reads the same whoever plays them.
+   */
+  castDefaults: z.record(DemoPackRoleSchema, z.string().trim().min(1).max(80)).default({}),
 }).superRefine((pack, context) => {
   const roles = new Set(pack.roles);
+  // Every role the operator has to name, and only those: a form field with no
+  // default would open empty, and a default for a role nobody plays is dead
+  // data that would read as a fourth person in the demo.
+  const named = new Set(demoCastRoles(pack.roles));
+  for (const role of named) {
+    if (!pack.castDefaults[role]) {
+      context.addIssue({ code: "custom", path: ["castDefaults"], message: `Role "${role}" has no default name` });
+    }
+  }
+  for (const role of Object.keys(pack.castDefaults)) {
+    if (!named.has(role)) {
+      context.addIssue({ code: "custom", path: ["castDefaults", role], message: `"${role}" is not a role the operator names` });
+    }
+  }
+  // Two people under one name is refused when a demo is started, so a pack
+  // whose defaults collide would open a form that cannot be submitted.
+  const defaults = Object.values(pack.castDefaults).map((name) => name.toLowerCase());
+  if (new Set(defaults).size !== defaults.length) {
+    context.addIssue({ code: "custom", path: ["castDefaults"], message: "Default names must differ" });
+  }
   if (roles.size !== pack.roles.length) {
     context.addIssue({ code: "custom", path: ["roles"], message: "Roles must be unique" });
   }
@@ -504,6 +544,10 @@ const DECISION_MEMO_TITLE = "Insights pricing — decision memo";
 export const PLACEHOLDER_DEMO_PACK = {
   version: "placeholder-2026-09",
   roles: ["presenter", "priya", "marcus", "dana"],
+  // The names the pack was written around: product, sales and legal, in the
+  // order the operator meets them. They are what the form opens with, and the
+  // operator renames them for the company they are presenting to.
+  castDefaults: { priya: "Priya Raman", marcus: "Marcus Hale", dana: "Dana Okafor" },
   steps: [
     {
       kind: "create_workstream",
