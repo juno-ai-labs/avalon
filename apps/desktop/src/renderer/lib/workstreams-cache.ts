@@ -1,5 +1,5 @@
 import type { QueryClient } from '@tanstack/react-query';
-import type { WorkstreamAppearancePatch } from '@rally/contracts';
+import type { WorkstreamAppearance, WorkstreamAppearancePatch } from '@rally/contracts';
 import type { WorkstreamDetail, WorkstreamSummary } from './types';
 
 /** The one cache entry every work-stream list reader and writer shares. */
@@ -55,16 +55,26 @@ export function setCachedWorkstreams(
 
 /**
  * Apply one edit to both places a work stream is read from: its row in the
- * shared list, which the sidebar renders, and the detail entry the open
- * conversation renders — the parent's for Main, the child's when a private
- * substream is open. Writing one and not the other is how the header and the
- * sidebar come to disagree about the same work stream.
+ * shared list, which the sidebar renders, and a detail entry, which the open
+ * conversation renders. Writing one and not the other is how the header and
+ * the sidebar come to disagree about the same work stream.
+ *
+ * `substreamId` chooses the detail entry only. The list row is always the
+ * parent's and is always written, so this is for parent-owned facts: a fact a
+ * child owns, such as its harness status, has its own writer that never
+ * touches the list. Pass `substreamId` only when the fact must land in the
+ * child's entry too, as the read acknowledgement must for the entry its own
+ * loop reads back.
  *
  * This is for unversioned facts: a REST response the caller just received, a
  * pushed event with no waterline of its own, a command receipt. Versioned
  * common and viewer state goes through `applyVersionedWorkstreamState`, whose
  * ledger decides whether a payload applies at all; a later payload from it
- * replaces these fields whole, so it always has the last word.
+ * replaces these fields whole, so it always has the last word. The derived
+ * unread pair is not recomputed here; a caller that moves viewer fields goes
+ * through `patchCachedWorkstreamViewerState` in the state store, which does.
+ * [`docs/choosing-sockets-or-rest.md`](../../../../../docs/choosing-sockets-or-rest.md)
+ * holds the rule.
  */
 export function patchCachedWorkstream(
   queryClient: QueryClient,
@@ -82,44 +92,30 @@ export function patchCachedWorkstream(
 
 /**
  * Show a person's own appearance choice on the sidebar row the moment Main has
- * acknowledged it.
+ * acknowledged it, ahead of the projection that will carry it there.
  *
- * The receipt means the value is committed; what has not happened yet is the
- * projection that carries it to the sidebar — the child outbox, a Queue hop to
- * WorkstreamDO, a second Queue hop to WorkspaceDO, and only then a state push
- * — which is seconds, not the round trip the picker just completed. This is a
- * pushed fact and not a versioned one: `applyVersionedWorkstreamState`
- * replaces `appearance` whole whenever a newer common waterline arrives, so a
- * later authoritative push can always correct it, and a delayed older push is
- * at worst a brief flicker back. The one receipt that must not reach here is a
- * replay: the caller skips this write when the receipt crossed a reconnect,
- * because the room publishes nothing for a replayed command and the newer
- * state may already be cached.
- *
- * Deliberately the list row only, not the detail entry the header renders.
- * The picker draws its own preview over the header and retires it once the
- * cached detail carries the choice; writing the detail here would retire that
- * preview on the receipt, and an older projection already in flight at a
- * newer waterline could then paint the pre-choice value over the header for
- * the rest of the projection window. Left alone, the preview covers the header
- * until the authoritative value lands, and only the row can flicker.
- *
- * The merge over the row's current appearance mirrors Main's merge over its
- * own row (`setAppearanceForAdmittedSocket`), because the receipt carries no
- * payload. The two bases can differ by the projection lag this write exists to
- * hide: an icon-only choice here paints over a color another client may just
- * have changed, until that projection lands. Returning the committed
- * appearance in the receipt would make this the authoritative value and leave
- * one merge rule; that is a socket-contract change and has not been made.
+ * The list row only: the header renders the detail entry under the picker's
+ * own preview, which the picker retires once the detail carries the choice, so
+ * writing the detail here would retire that preview on the receipt and expose
+ * the header to an older projection still in flight. Appearance is Main's, so
+ * there is no substream to address. The merge mirrors Main's own
+ * (`setAppearanceForAdmittedSocket`) because the receipt carries no payload;
+ * the two bases can differ by the projection lag this write hides, and the
+ * caller skips a receipt that crossed a reconnect because it may be a replay.
+ * Why each of those is so, and what a receipt carrying the committed value
+ * would change, is in
+ * [`docs/workstream-appearance.md`](../../../../../docs/workstream-appearance.md).
  */
 export function patchCachedWorkstreamAppearance(
   queryClient: QueryClient,
   workstreamId: string,
   patch: WorkstreamAppearancePatch,
 ): void {
-  setCachedWorkstreams(queryClient, (current) => current?.map((row) => row.id === workstreamId
-    ? { ...row, appearance: { icon: null, color: null, ...row.appearance, ...patch } }
-    : row));
+  setCachedWorkstreams(queryClient, (current) => current?.map((row) => {
+    if (row.id !== workstreamId) return row;
+    const appearance: WorkstreamAppearance = { icon: null, color: null, ...row.appearance, ...patch };
+    return { ...row, appearance };
+  }));
 }
 
 /**

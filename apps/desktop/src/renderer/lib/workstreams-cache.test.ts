@@ -222,6 +222,18 @@ describe('patchCachedWorkstream', () => {
     expect(queryClient.getQueryData<WorkstreamSummary>(['workstream', summary().id])?.scope).toBe('workspace');
   });
 
+  it('leaves an absent detail entry absent for a field patch', () => {
+    const queryClient = new QueryClient();
+    setCachedWorkstreams(queryClient, [summary()]);
+
+    patchCachedWorkstream(queryClient, summary().id, { title: 'Renamed' });
+
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.title).toBe('Renamed');
+    // A materialized entry with only a title would render as a work stream
+    // with no identity; absence has to stay absence.
+    expect(queryClient.getQueryData(['workstream', summary().id])).toBeUndefined();
+  });
+
   it('accepts a per-row updater and leaves an absent detail entry absent', () => {
     const queryClient = new QueryClient();
     setCachedWorkstreams(queryClient, [summary()]);
