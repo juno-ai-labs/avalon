@@ -1,3 +1,4 @@
+import * as Tooltip from '@radix-ui/react-tooltip';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import clsx from 'clsx';
 import {
@@ -66,6 +67,7 @@ const RENAME_HINT = 'Double-click to rename';
 
 export function WorkstreamHeader({
   grokBotMode = false,
+  substreamId = '0',
   workstream,
   socketState,
   onAddParticipant,
@@ -77,6 +79,7 @@ export function WorkstreamHeader({
   workspaceTarget,
 }: {
   grokBotMode?: boolean;
+  substreamId?: string;
   workstream: WorkstreamDetail;
   socketState: SocketState;
   onAddParticipant: () => void;
@@ -226,14 +229,36 @@ export function WorkstreamHeader({
               <h1>{workstream.title}</h1>
           </div>
         )}
-        {RIGHT_SIDEBAR_ENABLED && <IconButton
-          aria-pressed={showing('context')}
-          className="grokbot-computer-button window-no-drag"
-          label={showing('context') ? 'Hide work-stream context' : 'Work-stream context'}
-          onClick={() => toggleRail('context')}
-        >
-          <Monitor size={16} strokeWidth={1.8} />
-        </IconButton>}
+        <div className="grokbot-header-actions window-no-drag">
+          <Tooltip.Root delayDuration={300}>
+            <Tooltip.Trigger asChild>
+              <button
+                className="participant-header-button"
+                aria-label={substreamId === '0' ? 'Manage work-stream participants' : 'Manage substream participants'}
+                aria-description={workstream.participants.map((person) => person.name).join(', ')}
+                onClick={onAddParticipant}
+                type="button"
+              >
+                <AvatarStack members={workstream.participants} currentUserId={currentUserId} presentUserIds={substreamId === '0' ? presentUserIds : []} showTooltip={false} />
+                <UserPlus aria-hidden="true" size={13} />
+              </button>
+            </Tooltip.Trigger>
+            <Tooltip.Portal>
+              <Tooltip.Content className="tooltip" side="bottom" sideOffset={6}>
+                {naming ? 'Participants of this conversation' : `Participants of ${workstream.title}`}
+                <Tooltip.Arrow className="tooltip-arrow" />
+              </Tooltip.Content>
+            </Tooltip.Portal>
+          </Tooltip.Root>
+          {RIGHT_SIDEBAR_ENABLED && <IconButton
+            aria-pressed={showing('context')}
+            className="grokbot-computer-button"
+            label={showing('context') ? 'Hide work-stream context' : 'Work-stream context'}
+            onClick={() => toggleRail('context')}
+          >
+            <Monitor size={16} strokeWidth={1.8} />
+          </IconButton>}
+        </div>
       </header>
     );
   }
@@ -522,11 +547,11 @@ export function WorkstreamScreen(): React.JSX.Element {
           onRemoveSidekick={context.removeSidekick}
           workstream={{ ...context.detail, title: parent.data?.title ?? context.detail.title, privateChildren: children.data?.privateChildren }}
           presentUserIds={context.presentUserIds}
+          onParticipants={context.openParticipantDialog}
           selectedSubstreamId={selectedSubstreamId}
           onSelectSubstream={selectSubstream}
           onNewSubstream={() => startCreation(null)}
           onOpenArtifact={context.openArtifact}
-          onParticipants={context.openParticipantDialog}
           onFocusTranscript={context.focusTranscript}
         />
       )}
@@ -534,6 +559,7 @@ export function WorkstreamScreen(): React.JSX.Element {
         <WorkstreamHeader
           currentUserId={session?.user.id ?? null}
           grokBotMode
+          substreamId={selectedSubstreamId}
           onAddParticipant={context.openParticipantDialog}
           onOpenRail={context.openRail}
           onRename={context.rename}
@@ -544,7 +570,7 @@ export function WorkstreamScreen(): React.JSX.Element {
             region: session.workspace.region,
             workspaceId: session.workspace.id,
           } : null}
-          workstream={parent.data ?? context.detail}
+          workstream={{ ...context.detail, appearance: parent.data?.appearance }}
         />
       )}
       substreamId={selectedSubstreamId}
