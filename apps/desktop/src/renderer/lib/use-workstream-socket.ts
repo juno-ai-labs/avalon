@@ -1591,7 +1591,7 @@ export function useWorkstreamSocket(
         // row takes it if it has no icon of its own; the header waits for the
         // versioned projection. Both conditions are the writer's, and
         // `patchCachedGeneratedIcon` holds the reasons for each.
-        if (event.icon) patchCachedGeneratedIcon(queryClient, parentId, event.icon);
+        if (event.icon && substreamId === '0') patchCachedGeneratedIcon(queryClient, parentId, event.icon);
       } else if (event.type === 'workstream_scope_changed') {
         // Whoever this change excluded has already been disconnected by the
         // room, so everyone still here may read it and only needs the lock on
