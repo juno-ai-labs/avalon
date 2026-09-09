@@ -156,7 +156,8 @@ attachments and no prose still shows the row, holding the cutoff alone: copy,
 speech and the exports each act on the response text and are withheld when there
 is none. Both placements are described in
 [`substream-creation.md`](substream-creation.md). The row owns the hover fade —
-a control inside it must not carry its own. The corner is
+a control inside it must not carry its own — and both rows share one set of
+button metrics, because the same control appears in each. The corner is
 `--turn-bubble-radius`, set on the human turn and read by the bubble, the header
 and the action row: a theme that wants a different corner restates the token, not
 the corner.
@@ -173,6 +174,26 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-09 — Both action rows share one set of button metrics
+
+**What changed:** The agent and human action rows take their button metrics from
+one `:is(.agent-message-actions, .human-message-actions) button` rule; the
+substream control declares only `white-space: nowrap` of its own. The human row
+also dropped an inert `justify-content`.
+
+**Why:** The control's own class restated the row's metrics, and inside the agent
+row `.agent-message-actions button` outranks it — so that copy won on Rally's
+turn and lost under a person's bubble. The values agreed, so nothing looked
+wrong; tuning either row would have moved the control in one place and not the
+other, silently. This is the same failure the corner-radius token exists to
+prevent. The `justify-content` was inert because the row is shrink-to-fit inside
+a column that already aligns it, and it read as if it were doing the work the
+padding does.
+
+**Consequences:** Button metrics for either row go in the shared rule. A CSS
+invariant test holds it, and asserts no `.agent-message-actions button` rule
+comes back to shadow it.
 
 ### 2026-09-09 — Keep the cutoff on a turn that carries no prose
 
