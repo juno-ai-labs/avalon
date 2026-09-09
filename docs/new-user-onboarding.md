@@ -97,8 +97,11 @@ regional workspace credentials can update only their own eligible journey.
 
 Failed saves preserve the current screen and offer retry. Competing revisions
 refresh the appearance draft before another save. A failed identity lookup does
-not lock out a valid regional workspace session; background refetch failures keep
-cached onboarding state. OAuth is retryable or skippable and callbacks return to
+not lock out a valid regional workspace session. That fallback remains active
+while the account lookup retries, so initial socket sync cannot unmount the
+workspace by returning it to Opening Rally. A first lookup still waits for its
+result, and an identity without a workspace retains the retry/sign-out flow.
+Background refetch failures keep cached onboarding state. OAuth is retryable or skippable and callbacks return to
 the onboarding flow that opened them.
 
 Connector choices retain both provider and access scope, using `workspace:` and
@@ -131,6 +134,17 @@ inventory is [the PRD motion audit](PRDs/2026-09-05_new-user-onboarding/motion-r
 Real external OAuth requires configured provider credentials; onboarding no longer starts an agent run.
 
 ## Changelog
+
+### 2026-09-09 — Keep workspace access stable through identity retries
+
+The account gate now retains its authenticated-workspace fallback while a failed
+identity lookup retries. React Query clears the current error during a refetch;
+using that error alone switched back to Opening Rally, unmounted the workspace,
+and caused its next initial socket sync to retry the account query again. The
+query's recorded error timestamp preserves the fallback within its account cache
+scope without disabling profile refreshes or exempting unaffiliated identities.
+Future changes must preserve access through retries without bypassing the first
+lookup or admitting an identity that has no workspace session.
 
 ### 2026-09-09 — Finishing lands on the first work stream
 
