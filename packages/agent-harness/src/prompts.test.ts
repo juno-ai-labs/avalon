@@ -1,5 +1,10 @@
 import { createHash } from "node:crypto";
-import type { AutomationDraft } from "@rally/contracts";
+import {
+  DEFAULT_WORKSTREAM_ICON_KEY,
+  WORKSTREAM_ICON_DESCRIPTIONS,
+  WORKSTREAM_ICON_KEYS,
+  type AutomationDraft,
+} from "@rally/contracts";
 import { describe, expect, it } from "vitest";
 import {
   renderAddressingMessages,
@@ -113,7 +118,7 @@ describe("prompt renderers", () => {
           objective: "Draft an email to Danny sharing the Rally download link.",
           openingMessage: "Draft an email to Danny sharing the Rally download link, and ask him to add Alex to the Tuesday call.",
         }),
-        hash: "790fe925a07d14f7727a87d17867607350d6784b0421bf8a53641bf610faad0d",
+        hash: "18eae9aa53aaf650db4e586954f27154acf2ddc5844f2676efcc292ed32dde26",
       },
       workstreamNameFromConversation: {
         actual: renderWorkstreamNameMessages({
@@ -124,7 +129,7 @@ describe("prompt renderers", () => {
             { author: "person", text: "Use danny@mucker.com and mention the Tuesday call." },
           ],
         }),
-        hash: "4c35e1576ff81ac26804092d233af3ba1cd8fe552caf7b674da9a9c729700782",
+        hash: "22a91d0faaa0d51fa555bcbe657841f54b2ab48d3ffa77c96df2e7243a7ce78b",
       },
       workstreamDescription: {
         actual: renderWorkstreamDescriptionMessages({
@@ -541,6 +546,19 @@ describe("prompt renderers", () => {
     // change the answer, and only safe if a digression cannot.
     expect(policy).toContain("name that instead");
     expect(policy).toContain("keep naming the work the request opened");
+
+    // The icon is a closed set the schema enforces, so the prompt owes the
+    // model a definition for each one — a bare key says nothing about the mark
+    // a person will see. Every key is described, the description says what the
+    // icon draws, and the fallback is named so a work stream no icon suits
+    // still gets a deliberate answer rather than the nearest stretch.
+    for (const icon of WORKSTREAM_ICON_KEYS) {
+      expect(policy).toContain(`- ${icon}: ${WORKSTREAM_ICON_DESCRIPTIONS[icon]}`);
+    }
+    expect(new Set(WORKSTREAM_ICON_KEYS).size).toBe(WORKSTREAM_ICON_KEYS.length);
+    expect(policy).toContain("Choose an icon as well, by its exact key from the catalog below");
+    expect(policy).toContain("take the more specific one");
+    expect(policy).toContain(`take \`${DEFAULT_WORKSTREAM_ICON_KEY}\``);
 
     // The opening message is dropped where it would only repeat the objective,
     // which is what it holds on the ordinary path — the objective is derived

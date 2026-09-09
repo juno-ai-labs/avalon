@@ -72,7 +72,7 @@ import {
 } from './transcript';
 import type { HarnessStatus, Message, WorkstreamDetail, WorkstreamSummary } from './types';
 import { withDerivedUnread } from './workstream-state-store';
-import { evictCachedSubstream, patchCachedWorkstream, patchCachedWorkstreamAppearance, setCachedWorkstreams, WORKSTREAMS_QUERY_KEY, workstreamDetailQueryKey } from './workstreams-cache';
+import { evictCachedSubstream, patchCachedGeneratedAppearance, patchCachedWorkstream, patchCachedWorkstreamAppearance, setCachedWorkstreams, WORKSTREAMS_QUERY_KEY, workstreamDetailQueryKey } from './workstreams-cache';
 import { useWorkstreamSocketResumeState, type StreamCursor } from './workstream-socket-resume';
 import { useWorkstreamControlSocket } from './use-workstream-control-socket';
 
@@ -1583,6 +1583,12 @@ export function useWorkstreamSocket(
         // `settled` when nothing will change it again; the event says which,
         // and neither is a reason to keep waiting.
         patchCachedWorkstream(queryClient, parentId, { title: event.title, titleStatus: event.titleStatus }, substreamId);
+        // A naming pass also chooses the icon, and only where nobody has, so
+        // the event carries one exactly when the server wrote one. Without this
+        // the glyph would keep its id-derived default until the directory
+        // projection arrived, seconds after the name it was chosen with — the
+        // same gap the picker's own receipt closes for a person's choice.
+        if (event.icon) patchCachedGeneratedAppearance(queryClient, parentId, { icon: event.icon });
       } else if (event.type === 'workstream_scope_changed') {
         // Whoever this change excluded has already been disconnected by the
         // room, so everyone still here may read it and only needs the lock on

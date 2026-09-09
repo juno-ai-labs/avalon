@@ -3263,14 +3263,27 @@ describe('useWorkstreamSocket', () => {
       occurredAt: '2026-08-11T09:00:01.000Z',
       title: 'Rally download link email to Danny',
       titleStatus: 'automatic',
+      icon: 'megaphone',
     }));
 
     // The event settles the skeleton as well as the text: `automatic` is a
-    // name, just one a later pass may still improve on.
+    // name, just one a later pass may still improve on. The icon a naming pass
+    // chose rides with it to the header and the row together — the projection
+    // that also carries it is seconds behind, and a glyph that changes after
+    // the name it was chosen with is the lag this write exists to close.
     expect(queryClient.getQueryData<WorkstreamDetail>(['workstream', workstreamId]))
-      .toMatchObject({ title: 'Rally download link email to Danny', titleStatus: 'automatic' });
+      .toMatchObject({
+        title: 'Rally download link email to Danny',
+        titleStatus: 'automatic',
+        appearance: { icon: 'megaphone', color: null },
+      });
     expect(queryClient.getQueryData<WorkstreamSummary[]>(['workstreams'])).toEqual([
-      { id: workstreamId, title: 'Rally download link email to Danny', titleStatus: 'automatic' },
+      {
+        id: workstreamId,
+        title: 'Rally download link email to Danny',
+        titleStatus: 'automatic',
+        appearance: { icon: 'megaphone', color: null },
+      },
       { id: '00000000-0000-7000-8000-000000000402', title: 'August planning', titleStatus: 'settled' },
     ]);
   });
