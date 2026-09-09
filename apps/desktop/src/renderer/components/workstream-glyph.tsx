@@ -102,13 +102,21 @@ const ICON_BY_KEY: Record<string, LucideIcon | undefined> = WORKSTREAM_ICON_COMP
  * renders an undefined component by throwing `Element type is invalid`, which
  * blanks the window rather than dropping one glyph.
  */
-export function resolveWorkstreamAppearance(id: string, saved?: ResolvableAppearance): { Icon: LucideIcon; color: string } {
+export function resolveWorkstreamAppearance(id: string, saved?: ResolvableAppearance): {
+  Icon: LucideIcon;
+  /** The palette key itself, for a caller that has to look something up by it. */
+  colorKey: ProjectColorKey;
+  /** That key as the CSS custom property a fill or a stroke can take directly. */
+  color: string;
+} {
   const generated = workstreamAppearance(id);
+  const colorKey = saved?.color ?? generated.color;
   return {
     Icon: (saved?.icon ? ICON_BY_KEY[saved.icon] : undefined)
       || WORKSTREAM_ICONS[generated.iconIndex]
       || Sparkles,
-    color: `var(--av-sys-color-project-${saved?.color ?? generated.color})`,
+    colorKey,
+    color: `var(--av-sys-color-project-${colorKey})`,
   };
 }
 
@@ -124,12 +132,12 @@ export function WorkstreamMark({ id, size = 24, appearance: saved }: { id: strin
 }
 
 export function WorkstreamGlyph({ id, size = 32, appearance: saved }: { id: string; size?: number; appearance?: SavedAppearance }): React.JSX.Element {
-  const { Icon, color } = resolveWorkstreamAppearance(id, saved);
+  const { Icon, color, colorKey } = resolveWorkstreamAppearance(id, saved);
   return (
     <span
       aria-hidden="true"
       className="workstream-glyph"
-      style={{ height: size, width: size, '--glyph-ink': glyphInk(appearance.color) } as React.CSSProperties}
+      style={{ height: size, width: size, '--glyph-ink': glyphInk(colorKey) } as React.CSSProperties}
     >
       <span
         className="workstream-glyph-shape"
