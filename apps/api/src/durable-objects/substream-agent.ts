@@ -2067,6 +2067,27 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     return { installed: true };
   }
 
+  /** Internal content-only RPC. The Worker has already admitted these candidates through search authz. */
+  async readAdmittedSearchContent(input: unknown) {
+    await this.storageReady;
+    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, parentId: IdSchema,
+      substreamId: SubstreamIdSchema, turnIds: z.array(TranscriptTurnIdSchema),
+      links: z.array(z.strictObject({ turnId: TranscriptTurnIdSchema, linkId: z.string() })),
+    }).parse(input);
+    const identity = this.objectStore.identity();
+    if (!identity || identity.workspaceId !== request.workspaceId || identity.parentId !== request.parentId
+      || this.externalSubstreamId() !== request.substreamId) throw new Error('search_content_identity_mismatch');
+    return responseToRpcResult(jsonResponse({ title: this.identityRows.identity()?.title ?? '',
+      turns: request.turnIds.flatMap((turnId) => {
+        const turn = this.transcript.participantTurn(turnId);
+        return turn?.entryKind === 'conversation' ? [turn] : [];
+      }),
+      links: request.links.map(({ turnId, linkId }) => ({ linkId,
+        link: readConversationSearchLink(this.state.storage.sql, linkId, this.transcript.participantTurn(turnId)),
+      })),
+    }));
+  }
+
   async executeIdentityOperation(input: IdentityOperationRequest): Promise<DurableObjectRpcResult> {
     await this.initialized;
     return objectPortRpcResult(await this.identityOperationOutcome(input));
