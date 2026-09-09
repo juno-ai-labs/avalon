@@ -6,7 +6,7 @@
  * mock. Runtime RPC behavior stays in the workerd suite.
  */
 import { DatabaseSync } from "node:sqlite";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { PROJECT_COLOR_KEYS, PROJECT_ICON_KEYS } from "@rally/contracts";
 
@@ -17,6 +17,28 @@ import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace
 // tests exercise a schema production no longer has — which is how a palette key
 // the current contract offers came to be inserted against the v14 CHECK.
 const PROJECT_SCHEMA_VERSION = 45;
+
+/**
+ * Handles opened by a test, closed from a hook rather than by the last line of
+ * the case: a failing assertion throws past any close at the end of a body and
+ * leaks the handle into the rest of the file, where the next test gets blamed.
+ * `docs/testing.md` states the rule.
+ */
+const openDatabases: DatabaseSync[] = [];
+
+function openDatabase(): DatabaseSync {
+  const database = new DatabaseSync(":memory:");
+  openDatabases.push(database);
+  return database;
+}
+
+afterEach(() => {
+  // Tolerant of a case that already closed its own handle: the hook is a
+  // backstop for the ones a throwing assertion skipped, not the only close.
+  while (openDatabases.length > 0) {
+    try { openDatabases.pop()?.close(); } catch { /* already closed */ }
+  }
+});
 
 function apply(database: DatabaseSync, through: number, after = 0): void {
   database.exec("PRAGMA foreign_keys = ON");
@@ -64,7 +86,7 @@ describe("the WorkspaceDO project authority migration", () => {
     // cannot be turned off inside a Durable Object event that has already
     // touched SQLite — so a child that is not copied out first is silently
     // emptied and nothing fails at the time.
-    const database = new DatabaseSync(":memory:");
+    const database = openDatabase();
     apply(database, 44);
 
     insertProject(database, { colorKey: "teal" });
@@ -107,7 +129,7 @@ describe("the WorkspaceDO project authority migration", () => {
   });
 
   it("given a fresh object, when the ledger runs, then only approved presentation values persist", () => {
-    const database = new DatabaseSync(":memory:");
+    const database = openDatabase();
     apply(database, PROJECT_SCHEMA_VERSION);
 
     expect(() => insertProject(database)).not.toThrow();
@@ -124,7 +146,7 @@ describe("the WorkspaceDO project authority migration", () => {
   });
 
   it("given the shared icon and color registries, when every choice is persisted, then the WorkspaceDO constraint accepts all of them", () => {
-    const database = new DatabaseSync(":memory:");
+    const database = openDatabase();
     apply(database, PROJECT_SCHEMA_VERSION);
     for (const [index, iconKey] of PROJECT_ICON_KEYS.entries()) {
       expect(() => insertProject(database, {
@@ -144,7 +166,7 @@ describe("the WorkspaceDO project authority migration", () => {
   });
 
   it("given an existing project authority, when the publication outbox migration applies, then earlier state survives", () => {
-    const database = new DatabaseSync(":memory:");
+    const database = openDatabase();
     apply(database, PROJECT_SCHEMA_VERSION - 1);
     database.prepare(
       `INSERT INTO workspace_identity
@@ -161,7 +183,7 @@ describe("the WorkspaceDO project authority migration", () => {
   });
 
   it("given private projects with separate audiences, when their names match, then no hidden name is leaked through a conflict", () => {
-    const database = new DatabaseSync(":memory:");
+    const database = openDatabase();
     apply(database, PROJECT_SCHEMA_VERSION);
     insertProject(database);
 
@@ -174,7 +196,7 @@ describe("the WorkspaceDO project authority migration", () => {
   });
 
   it("given one work stream, when two historical project memberships exist, then the schema keeps both", () => {
-    const database = new DatabaseSync(":memory:");
+    const database = openDatabase();
     apply(database, PROJECT_SCHEMA_VERSION);
     insertProject(database);
     insertProject(database, {
