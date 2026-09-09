@@ -81,12 +81,11 @@ import {
   substreamInitialContextQueryKey,
   type SocketState,
   type WorkstreamMessageDeliveryMode,
-  workstreamDetailQueryKey,
 } from '../lib/use-workstream-socket';
 import { useRetainedWorkstreamSocket, useWorkstreamSocketOpenContext } from '../lib/workstream-socket-pool';
 import { useWorkspaceSocket } from '../lib/workspace-socket';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
-import { evictCachedWorkstream, setCachedWorkstreams } from '../lib/workstreams-cache';
+import { evictCachedWorkstream, patchCachedWorkstream, workstreamDetailQueryKey } from '../lib/workstreams-cache';
 import type { ElicitationData, HarnessRunMetadata, HarnessStatus, Message, Participant, ResourceVersion, WorkspaceMember, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import { AgentCompactionIndicator, AgentWorkTiming, type AgentWorkTimingProps } from '../components/agent-work-timing';
 import { InspectorRail } from '../components/inspector-rail';
@@ -1318,12 +1317,7 @@ export function ConversationSurface({
   const renameWorkstream = useMutation({
     mutationFn: (title: string) => api!.renameWorkstream(id, title),
     onSuccess: (updated) => {
-      queryClient.setQueryData<WorkstreamDetail>(detailQueryKey, (current) =>
-        current ? { ...current, title: updated.title } : current,
-      );
-      setCachedWorkstreams(queryClient, (current) =>
-        current?.map((item) => item.id === updated.id ? { ...item, ...updated } : item),
-      );
+      patchCachedWorkstream(queryClient, updated.id, { title: updated.title, titleStatus: updated.titleStatus }, substreamId);
     },
   });
 
@@ -1768,10 +1762,7 @@ export function ConversationSurface({
       currentSurfaceEntrypoint(),
     ).then((updated) => {
       if (activeConversationAddressRef.current !== conversationAddress) return;
-      queryClient.setQueryData<WorkstreamDetail>(detailQueryKey, (current) =>
-        current ? { ...current, ...updated } : current);
-      setCachedWorkstreams(queryClient, (current) =>
-        current?.map((item) => item.id === id ? { ...item, ...updated } : item));
+      patchCachedWorkstream(queryClient, id, updated, substreamId);
     }).catch(() => {
       requestSocketSnapshot();
     }).finally(() => {

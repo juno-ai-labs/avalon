@@ -5,6 +5,23 @@ import type { WorkstreamDetail, WorkstreamSummary } from './types';
 /** The one cache entry every work-stream list reader and writer shares. */
 export const WORKSTREAMS_QUERY_KEY = ['workstreams'] as const;
 
+/**
+ * The detail entry a conversation renders from: the parent's own for Main, and
+ * a child-addressed one for a private substream, so a child opened beside its
+ * parent never overwrites the parent's row.
+ */
+export function workstreamDetailQueryKey(
+  workstreamId: string,
+  substreamId = '0',
+): readonly ['workstream', string] | readonly ['substream-workstream', string, string] {
+  return substreamId === '0'
+    ? ['workstream', workstreamId]
+    : ['substream-workstream', workstreamId, substreamId];
+}
+
+type WorkstreamRowUpdate = Partial<WorkstreamSummary>
+  | (<T extends WorkstreamSummary>(row: T) => T);
+
 type WorkstreamsCacheUpdate = WorkstreamSummary[]
   | ((current: WorkstreamSummary[] | undefined) => WorkstreamSummary[] | undefined);
 
@@ -37,20 +54,30 @@ export function setCachedWorkstreams(
 }
 
 /**
- * Apply one per-row edit to both places a work stream is read from: its row in
- * the shared list, which the sidebar renders, and its detail entry, which the
- * open header renders. Writing one and not the other is how the header and the
+ * Apply one edit to both places a work stream is read from: its row in the
+ * shared list, which the sidebar renders, and the detail entry the open
+ * conversation renders — the parent's for Main, the child's when a private
+ * substream is open. Writing one and not the other is how the header and the
  * sidebar come to disagree about the same work stream.
+ *
+ * This is for unversioned facts: a REST response the caller just received, a
+ * pushed event with no waterline of its own, a command receipt. Versioned
+ * common and viewer state goes through `applyVersionedWorkstreamState`, whose
+ * ledger decides whether a payload applies at all; a later payload from it
+ * replaces these fields whole, so it always has the last word.
  */
-function updateCachedWorkstream(
+export function patchCachedWorkstream(
   queryClient: QueryClient,
   workstreamId: string,
-  update: <T extends WorkstreamSummary>(row: T) => T,
+  update: WorkstreamRowUpdate,
+  substreamId = '0',
 ): void {
+  const apply = <T extends WorkstreamSummary>(row: T): T =>
+    typeof update === 'function' ? update(row) : { ...row, ...update };
   setCachedWorkstreams(queryClient, (current) =>
-    current?.map((workstream) => workstream.id === workstreamId ? update(workstream) : workstream));
-  queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (detail) =>
-    detail ? update(detail) : detail);
+    current?.map((workstream) => workstream.id === workstreamId ? apply(workstream) : workstream));
+  queryClient.setQueryData<WorkstreamDetail>(workstreamDetailQueryKey(workstreamId, substreamId), (detail) =>
+    detail ? apply(detail) : detail);
 }
 
 /**
@@ -72,7 +99,7 @@ export function patchCachedWorkstreamAppearance(
   workstreamId: string,
   patch: WorkstreamAppearancePatch,
 ): void {
-  updateCachedWorkstream(queryClient, workstreamId, (row) => ({
+  patchCachedWorkstream(queryClient, workstreamId, (row) => ({
     ...row,
     appearance: { icon: null, color: null, ...row.appearance, ...patch },
   }));
