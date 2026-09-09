@@ -31,6 +31,7 @@ import {
   type HarnessEvent,
   type HarnessPlugin,
   type HarnessPluginActivationContext,
+  type HarnessResidentContext,
   type HarnessTool,
   type HarnessToolContext,
   type InferenceAttemptEvent,
@@ -3278,9 +3279,9 @@ describe("agent harness", () => {
     // proposed. `persist` stands in for that commit here.
     let committed: string | null = null;
     const render = vi.fn(() => committed);
-    const prepareCompaction = vi.fn((_input: { compactionEventId: string; generation: number; stateRevision: number }) =>
+    const prepareCompaction = vi.fn<HarnessResidentContext["prepareCompaction"]>(() =>
       ({ section, excludedMessagePositions: [1] }));
-    const persist = vi.fn((_checkpoint: unknown) => { committed = section; });
+    const persist = vi.fn<(checkpoint: unknown) => void>(() => { committed = section; });
     const baseInput = runInput(fetcher);
     const outcome = await runHarness({
       ...baseInput,
