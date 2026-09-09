@@ -1317,7 +1317,7 @@ export function ConversationSurface({
   const renameWorkstream = useMutation({
     mutationFn: (title: string) => api!.renameWorkstream(id, title),
     onSuccess: (updated) => {
-      patchCachedWorkstream(queryClient, updated.id, { title: updated.title, titleStatus: updated.titleStatus }, substreamId);
+      patchCachedWorkstream(queryClient, updated.id, { title: updated.title, titleStatus: updated.titleStatus, updatedAt: updated.updatedAt }, substreamId);
     },
   });
 

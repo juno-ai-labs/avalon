@@ -701,7 +701,10 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         onChangeWorkstreamScope={async (workstream, scope) => {
           if (!api) return;
           const updated = await api.setWorkstreamScope(workstream.id, scope);
-          patchCachedWorkstream(queryClient, updated.id, { scope: updated.scope });
+          // The fields this write moves on the server: `updated_at` is stamped
+          // on every PATCH, while `last_people_activity_at` is not, so the
+          // sidebar's sort key is deliberately left alone here.
+          patchCachedWorkstream(queryClient, updated.id, { scope: updated.scope, updatedAt: updated.updatedAt });
         }}
         onDeleteAutomation={async (automation) => {
           if (!api) return;
@@ -735,7 +738,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         onRenameWorkstream={async (workstream, title) => {
           if (!api) return;
           const updated = await api.renameWorkstream(workstream.id, title);
-          patchCachedWorkstream(queryClient, updated.id, { title: updated.title, titleStatus: updated.titleStatus });
+          patchCachedWorkstream(queryClient, updated.id, { title: updated.title, titleStatus: updated.titleStatus, updatedAt: updated.updatedAt });
         }}
         onRunAutomation={async (automation) => {
           if (!api) return;
