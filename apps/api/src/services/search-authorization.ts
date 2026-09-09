@@ -3,10 +3,12 @@ import type { AuthContext, Env } from '../env';
 import { logInfo, logWarn, diagnosticErrorCode } from '../observability/logger';
 import { AuthorizationService, authorizationWorkspace } from './authorization-service';
 import { AccessContext, AuthorizationDecisionSchema, AuthorizationResourceSchema, AuthorizationSubjectSchema,
-  type AuthorizationResource, type AuthorizationSubject, type AuthorizationResolver } from './authorization-policy';
+  type AuthorizationDecision, type AuthorizationResource, type AuthorizationSubject, type AuthorizationResolver } from './authorization-policy';
+
+export const SearchAuthorizationTimingSchema = z.strictObject({ origin: z.enum(['source_mutation', 'workspace_mutation']).optional(), mutationAt: z.number().int().nonnegative(), enqueuedAt: z.number().int().nonnegative() });
 
 export const SearchAuthorizationSnapshotSchema = z.strictObject({
-  version: z.literal(1), subject: AuthorizationSubjectSchema, resource: AuthorizationResourceSchema,
+  version: z.literal(1), generation: z.number().int().nonnegative(), timing: SearchAuthorizationTimingSchema.optional(), subject: AuthorizationSubjectSchema, resource: AuthorizationResourceSchema,
   decision: AuthorizationDecisionSchema, observedAt: z.number().int().nonnegative(),
 });
 export const SearchAuthorizationTargetSchema = z.strictObject({
@@ -14,7 +16,7 @@ export const SearchAuthorizationTargetSchema = z.strictObject({
 });
 export const SearchAuthorizationPushJobSchema = z.strictObject({
   type: z.literal('search_authorization_push_v1'), region: z.enum(['global', 'eu']),
-  timing: z.strictObject({ origin: z.enum(['source_mutation', 'workspace_mutation']).optional(), mutationAt: z.number().int().nonnegative(), enqueuedAt: z.number().int().nonnegative() }).optional(),
+  timing: SearchAuthorizationTimingSchema.optional(),
   workspaceId: AuthorizationSubjectSchema.shape.workspaceId, target: SearchAuthorizationTargetSchema.optional(),
 });
 
@@ -33,15 +35,15 @@ export class SearchAuthorizationResolver implements AuthorizationResolver {
     return (await authorizationWorkspace(this.env, snapshots[0]!.subject.workspaceId)).writeSearchAuthorizationSnapshots(snapshots);
   }
 
-  async project(subject: AuthorizationSubject, resources: readonly AuthorizationResource[], stats?: { written: number; superseded: number; kvWriteMs: number; resolveMs: number }) {
+  async project(subject: AuthorizationSubject, resources: readonly AuthorizationResource[], stats?: { written: number; superseded: number; kvWriteMs: number; resolveMs: number }, timing?: z.infer<typeof SearchAuthorizationTimingSchema>) {
     const startedAt = Date.now();
-    await (await authorizationWorkspace(this.env, subject.workspaceId)).registerSearchAuthorization({ subject, resources });
+    const generations = await (await authorizationWorkspace(this.env, subject.workspaceId)).registerSearchAuthorization({ subject, resources });
     const observedAt = Date.now();
     const decisions = await this.authority.checkMany(subject, resources);
     // An unavailable owner does not revoke an existing projected decision.
     if (stats) stats.resolveMs += Date.now() - startedAt;
     const publication = await this.write(decisions.flatMap((decision, index) => decision.status === 'unavailable' ? [] : [{
-      version: 1 as const, subject, resource: resources[index]!, decision, observedAt,
+      version: 1 as const, generation: generations[index]!, ...(timing ? { timing } : {}), subject, resource: resources[index]!, decision, observedAt,
     }]));
     if (stats) { stats.written += publication.written; stats.superseded += publication.superseded; stats.kvWriteMs += publication.kvWriteMs; }
     return decisions;
@@ -49,21 +51,29 @@ export class SearchAuthorizationResolver implements AuthorizationResolver {
 
   async checkMany(subject: AuthorizationSubject, resources: readonly AuthorizationResource[]) {
     if (!resources.length) return [];
-    const raw = this.env.AVALON_REGION === 'global' && this.env.AUTHORIZATION_CACHE
-      ? await Promise.all(resources.map(async (resource) => this.env.AUTHORIZATION_CACHE!.get(
-        await searchAuthorizationKey(subject, resource), 'json')))
-      : await (await authorizationWorkspace(this.env, subject.workspaceId)).readSearchAuthorizationSnapshots({ subject, resources });
-    const snapshots = raw.map((value, index) => {
-      const parsed = SearchAuthorizationSnapshotSchema.safeParse(value);
+    const unavailable = (): AuthorizationDecision => ({ status: 'unavailable', reason: 'authority_unavailable', retryable: true });
+    let raw: PromiseSettledResult<unknown>[];
+    if (this.env.AVALON_REGION === 'global' && this.env.AUTHORIZATION_CACHE) {
+      raw = await Promise.allSettled(resources.map(async (resource) => this.env.AUTHORIZATION_CACHE!.get(
+        await searchAuthorizationKey(subject, resource), 'json')));
+    } else {
+      try { raw = (await (await authorizationWorkspace(this.env, subject.workspaceId)).readSearchAuthorizationSnapshots({ subject, resources }))
+        .map((value) => ({ status: 'fulfilled' as const, value })); }
+      catch { return resources.map(unavailable); }
+    }
+    const decisions: (AuthorizationDecision | null)[] = raw.map((result, index) => {
+      if (result.status === 'rejected') return unavailable();
+      const parsed = SearchAuthorizationSnapshotSchema.safeParse(result.value);
       return parsed.success && JSON.stringify(parsed.data.subject) === JSON.stringify(subject)
         && JSON.stringify(parsed.data.resource) === JSON.stringify(resources[index])
-        && parsed.data.decision.status !== 'unavailable' ? parsed.data : null;
+        && parsed.data.decision.status !== 'unavailable' ? parsed.data.decision : null;
     });
-    const missing = resources.filter((_, index) => !snapshots[index]);
-    const loaded = missing.length ? await this.project(subject, missing) : [];
+    const missing = resources.filter((_, index) => decisions[index] === null);
+    let loaded: AuthorizationDecision[];
+    try { loaded = missing.length ? await this.project(subject, missing) : []; }
+    catch { loaded = missing.map(unavailable); }
     let index = 0;
-    const decisions = snapshots.map((snapshot) => snapshot?.decision ?? loaded[index++]!);
-    return decisions;
+    return decisions.map((decision) => decision ?? loaded[index++]!);
   }
 }
 
@@ -91,10 +101,16 @@ export async function pushSearchAuthorization(env: Env, job: z.infer<typeof Sear
       group.resources.push(snapshot.resource);
       subjects.set(key, group);
     }
+    let failure: unknown;
     for (const { subject, resources } of subjects.values()) {
-      const decisions = await new SearchAuthorizationResolver(env).project(subject, resources, stats);
-      if (decisions.some((decision) => decision.status === 'unavailable')) throw new Error('search_authorization_push_unavailable');
+      try {
+        const decisions = await new SearchAuthorizationResolver(env).project(subject, resources, stats, job.timing);
+        if (decisions.some((decision) => decision.status === 'unavailable')) failure = new Error('search_authorization_push_unavailable');
+      } catch (error) { failure = error; }
     }
+    // A newer attempt may itself fail before publication; do not retire the mutation's retry intent.
+    if (stats.superseded > 0) failure ??= new Error('search_authorization_push_superseded');
+    if (failure) throw failure;
     outcome = selected === 0 ? 'no_registered_keys' : 'completed';
   } catch (error) {
     errorCode = diagnosticErrorCode(error, 'search_authorization_push_failed');
