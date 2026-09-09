@@ -4,7 +4,7 @@ import { runInDurableObject } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
 import { createCloudflareTestBinding } from '../test/helpers/cloudflare-test';
 import { asSubstreamId, asUserId, asWorkspaceId } from '@rally/contracts';
-import { AUTHORIZATION_PROJECTION_MIGRATION, flushAuthorizationDeliveries, flushAuthorizationProjection } from '../src/durable-objects/authorization-projection';
+import { AUTHORIZATION_PROJECTION_MIGRATION, AUTHORIZATION_PROJECTION_TIMING_MIGRATION, flushAuthorizationDeliveries, flushAuthorizationProjection } from '../src/durable-objects/authorization-projection';
 import { AuthorizationStorage } from '../src/durable-objects/authorization-storage';
 import { type AuthorizationSnapshot } from '../src/services/authorization-policy';
 
@@ -57,9 +57,12 @@ describe('authorization SQLite state', () => {
     await stub.initializeWorkspace(workspaceId, 'wnam');
     await runInDurableObject(stub, async (_instance, state) => {
       state.storage.sql.exec(AUTHORIZATION_PROJECTION_MIGRATION[0]!);
-      state.storage.sql.exec('INSERT INTO authorization_projection_outbox VALUES (1, 1, 0)');
+      for (const statement of AUTHORIZATION_PROJECTION_TIMING_MIGRATION) state.storage.sql.exec(statement);
+      state.storage.sql.exec('INSERT INTO authorization_projection_outbox(id, revision, not_before) VALUES (1, 1, 0)');
+      const mutationAt = state.storage.sql.exec<{ first_mutated_at: number }>('SELECT first_mutated_at FROM authorization_projection_outbox').one().first_mutated_at;
       const now = Date.now();
-      const queue = createCloudflareTestBinding<Queue>({ send: async () => {
+      const queue = createCloudflareTestBinding<Queue>({ send: async (job) => {
+        expect(job).toMatchObject({ mutationAt });
         state.storage.sql.exec('UPDATE authorization_projection_outbox SET revision = revision + 1');
         throw new Error('queue unavailable');
       } });
