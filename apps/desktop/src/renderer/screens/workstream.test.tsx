@@ -202,6 +202,7 @@ function headerElement(
   overrides: {
     currentUserId?: string | null;
     grokBotMode?: boolean;
+    substreamId?: string;
     onRename?: (title: string) => Promise<void>;
     presentUserIds?: readonly string[];
   } = {},
@@ -211,6 +212,7 @@ function headerElement(
       <WorkstreamHeader
         currentUserId={overrides.currentUserId ?? null}
         grokBotMode={overrides.grokBotMode ?? false}
+        substreamId={overrides.substreamId ?? '0'}
         onAddParticipant={vi.fn()}
         onAppearanceChange={vi.fn().mockResolvedValue(undefined)}
         // The screen opens the rail through the same store action.
@@ -267,6 +269,13 @@ describe('WorkstreamHeader presence', () => {
 });
 
 describe('WorkstreamHeader GrokBot shell', () => {
+  it('does not imply child presence from workstream-wide presence', () => {
+    const member = { id: 'member', name: 'Member', email: 'member@example.test', timezone: 'UTC' };
+    const { container } = renderWorkstreamHeader({ ...headerWorkstream, participants: [member] }, { grokBotMode: true, substreamId: 'child', presentUserIds: [member.id] });
+    expect(container.querySelector('.avatar-presence-ping')).toBeNull();
+    expect(container.querySelector('.avatar-stack')).toHaveAttribute('aria-label', 'Member');
+  });
+
   it('keeps the group tooltip neutral while the title is being named', async () => {
     renderWorkstreamHeader({ ...headerWorkstream, title: 'Create a private draft', titleStatus: 'naming', createdAt: new Date().toISOString() }, { grokBotMode: true });
     fireEvent.focus(screen.getByRole('button', { name: 'Manage work-stream participants' }));
