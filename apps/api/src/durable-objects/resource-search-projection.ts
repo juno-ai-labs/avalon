@@ -31,7 +31,7 @@ export const RESOURCE_SEARCH_MIGRATION_STATEMENTS = [
    SELECT id, 1, 1, 0 FROM resources`,
 ];
 
-/** Forward-only replacement: keep this aligned with resourceSearchText/category inputs. */
+/** Migration 43: immutable once shipped; new extraction inputs need a new migration. */
 export const RESOURCE_SEARCH_CONTENT_UPDATE_MIGRATION = [
   'DROP TRIGGER resources_search_update',
   `CREATE TRIGGER resources_search_update AFTER UPDATE ON resources
@@ -44,10 +44,10 @@ export const RESOURCE_SEARCH_CONTENT_UPDATE_MIGRATION = [
       OR OLD.model_mime_type IS NOT NEW.model_mime_type
       OR OLD.model_content_ref IS NOT NEW.model_content_ref
       OR OLD.model_content_sha256 IS NOT NEW.model_content_sha256
-      OR (CASE WHEN json_type(OLD.metadata_json, '$.description') = 'text'
-          THEN json_extract(OLD.metadata_json, '$.description') ELSE '' END)
-        IS NOT (CASE WHEN json_type(NEW.metadata_json, '$.description') = 'text'
-          THEN json_extract(NEW.metadata_json, '$.description') ELSE '' END)
+      OR COALESCE((SELECT CASE WHEN type = 'text' THEN atom ELSE '' END
+          FROM json_each(OLD.metadata_json) WHERE key = 'description' ORDER BY id DESC LIMIT 1), '')
+        IS NOT COALESCE((SELECT CASE WHEN type = 'text' THEN atom ELSE '' END
+          FROM json_each(NEW.metadata_json) WHERE key = 'description' ORDER BY id DESC LIMIT 1), '')
     BEGIN
       INSERT INTO resource_search_versions(resource_id, revision, pending, not_before)
       VALUES (NEW.id, 1, 1, 0)
