@@ -835,8 +835,10 @@ pre {
 .project-color-grid button:hover { background: var(--av-sys-color-surface-raised-hover); }
 .project-icon-grid button.is-selected,
 .project-color-grid button.is-selected { border-color: var(--av-sys-color-text-default); box-shadow: 0 0 0 1px var(--av-sys-color-text-default); }
-.project-color-grid { display: grid; gap: 8px; grid-template-columns: repeat(6, 32px); }
-.project-color-grid button span { border-radius: 50%; height: 17px; width: 17px; }
+/* Seven columns is what closes the palette ring across the row break; the
+   count is mirrored by PROJECT_COLOR_COLUMNS in lib/project-palette.ts. */
+.project-color-grid { display: grid; gap: 8px; grid-template-columns: repeat(7, 32px); }
+.project-color-grid button span { border-radius: 50%; box-shadow: inset 0 0 0 1px var(--av-sys-color-project-edge); height: 17px; width: 17px; }
 .sidebar-section-heading h2,
 .sidebar-group h3 {
   color: var(--av-ref-color-neutral-9);
@@ -5241,7 +5243,9 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 
 .workstream-glyph {
   align-items: center;
-  color: var(--av-sys-color-text-on-inverse);
+  /* Set per glyph from PALETTE_INK — see glyphInk(). A fixed light foreground
+     is illegible on the brighter half of the ring. */
+  color: var(--glyph-ink, var(--av-sys-color-text-on-inverse));
   display: inline-flex;
   flex: 0 0 auto;
   justify-content: center;
@@ -5263,12 +5267,16 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 .workstream-appearance-trigger:hover { background: var(--av-sys-color-surface-raised-hover); }
 .workstream-appearance-popup { width: 288px; max-width: calc(100vw - 24px); max-height: var(--radix-dropdown-menu-content-available-height); display: flex; flex-direction: column; padding: 12px; }
 .workstream-appearance-label { color: var(--av-sys-color-text-subtle); font-size: var(--av-cmp-control-font-size); font-weight: 600; padding: 0 2px 8px; }
-.workstream-appearance-colors, .workstream-appearance-icons { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 4px; }
+.workstream-appearance-colors, .workstream-appearance-icons { display: grid; gap: 4px; }
+.workstream-appearance-icons { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+/* See PROJECT_COLOR_COLUMNS — the swatch grid is seven wide so the second
+   row can run back the other way and meet the first at both ends. */
+.workstream-appearance-colors { grid-template-columns: repeat(7, minmax(0, 1fr)); }
 .workstream-appearance-icons { overflow-y: auto; min-height: 0; max-height: 180px; padding: 2px; }
 .workstream-appearance-choice { color: var(--av-sys-color-text-default); display: flex; align-items: center; justify-content: center; height: 36px; border-radius: var(--av-cmp-control-radius); border: 1px solid transparent; cursor: pointer; outline: none; }
 .workstream-appearance-choice[data-highlighted] { background: var(--av-sys-color-surface-raised-hover); outline: 2px solid var(--av-sys-color-text-subtle); outline-offset: -2px; }
 .workstream-appearance-choice[data-state='checked'] { background: var(--av-sys-color-surface-raised-hover); border-color: var(--av-sys-color-text-default); }
-.workstream-appearance-swatch { height: 20px; width: 20px; border-radius: 50%; }
+.workstream-appearance-swatch { height: 20px; width: 20px; border-radius: 50%; box-shadow: inset 0 0 0 1px var(--av-sys-color-project-edge); }
 .workstream-appearance-divider { height: 1px; flex-shrink: 0; background: var(--av-sys-color-border-default); margin: 12px 0; }
 .workstream-appearance-error { color: var(--av-sys-color-danger-base); font-size: var(--av-cmp-control-font-size); margin: 10px 0 0; }
 
@@ -6560,7 +6568,7 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 .sidebar-row.automation-tile:focus-visible { outline-offset: -2px; }
 .sidebar-automation-strip > .sidebar-context-target:only-child { flex-basis: auto; min-width: 80px; max-width: 100px; }
 .automation-tile-glyph { display: block; height: 60px; position: relative; width: 60px; }
-.automation-glyph { color: var(--av-sys-color-text-on-inverse); display: block; height: 100%; width: 100%; }
+.automation-glyph { color: var(--glyph-ink, var(--av-sys-color-text-on-inverse)); display: block; height: 100%; width: 100%; }
 .automation-tile-name { font-size: 11px; font-weight: 400; letter-spacing: .005em; line-height: 16px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .automation-tile-state {
   background: var(--av-sys-color-surface-default);
