@@ -183,6 +183,12 @@ whenever the cancelled animation's event arrives.
   anyone saw it, and would have to read positions off animations that have not
   started. Anything that makes the hook cancel or restart an animation on an
   unchanged row brings that back.
+- **Anything that scrolls to a row does so before this hook's effect runs.**
+  The motion's first frame puts a moved row back where it came from, and the
+  platform scrolls to the transformed box. A scroll made after the effect, from
+  a later-declared layout effect or a passive effect, reads the row as still on
+  screen and does nothing. The sidebar's reveal is a layout effect declared
+  ahead of the hook for exactly this reason.
 - **Nothing here runs per frame.** The hook does its work once per commit and
   hands the frames to the compositor. A change that animates `top`, `height`, or
   anything but `transform` and `opacity` would move the work back to the main
@@ -196,8 +202,13 @@ the three data attributes, and `LIST_MOTION`.
 It does not decide *where* rows go — the sidebar's ordering functions and
 `orderPinnedWorkstreams` do that, and [`workstream-pinning.md`](workstream-pinning.md)
 owns them. It does not scroll: the sidebar's own reveal, described in that same
-document, still brings a pinned row into view, and the two compose because the
-hook measures against the scroll box's content rather than the viewport. It
+document, still brings a pinned row into view. The two compose on two
+conditions: the hook measures against the scroll box's content rather than the
+viewport, so the scroll does not read as movement, and the reveal runs as a
+layout effect declared *before* the hook, so the row is scrolled to before its
+first frame translates it back to the slot it left — `scrollIntoView` scrolls
+to the box as transformed, and `nearest` would otherwise find the row still on
+screen where it used to be and scroll to nothing. It
 does not animate rows entering or leaving the list, deliberately — see
 [Failure modes and limits](#failure-modes-and-limits). And it does not touch
 the drag itself: what a drag reorders and when it commits is the pinned
@@ -236,7 +247,7 @@ step.
 | --- | --- |
 | `apps/desktop/src/renderer/lib/list-motion.test.ts` | The planner's classification — one mover, two movers together, a held row, a heading never being the mover, scopes ranked apart so a block shifts as one, a row that moved between containers, an interrupted offset — and the exact keyframes and options each kind plays. |
 | `apps/desktop/src/renderer/lib/use-list-motion.test.tsx` | The hook under jsdom: the exit distance measured against the container, shifters starting on the first frame, a row followed across a remount, a held row shifted instead of moved, a render that moved nothing leaving every animation alone, interruption touching only the rows that moved and reading a pending animation's own start, the pointer-events guard surviving a late cancel and released at once on an interruption, reduced motion, and scopes keeping shared keys apart. |
-| `apps/desktop/src/renderer/components/sidebar.test.tsx` (`pinned work streams`) | That the sidebar wires it: a pin moves the row's animation with it into the **Pinned** section, and a touch moves it with the row from one recency group into another. |
+| `apps/desktop/src/renderer/components/sidebar.test.tsx` (`pinned work streams` › `list motion`) | That the sidebar wires it: a pin moves the row's animation with it into the **Pinned** section, a touch moves it with the row from one recency group into another, and the reveal's scroll lands before the motion starts. |
 
 jsdom lays nothing out and implements neither `Element.prototype.animate` nor
 `getAnimations`. The hook tests install `getBoundingClientRect` and `animate`
@@ -259,6 +270,31 @@ work stream from its right-click menu, then pause every animation with
 each one.
 
 ## Changelog
+
+### 2026-09-09 — The reveal scrolls before the motion starts
+
+**What changed:** The sidebar's reveal became a layout effect declared before
+`useListMotion`, and the ordering is an invariant above. Rows are also ranked
+within their scope rather than across the whole list, and each project row is
+held, so a project reordered past another glides with its expanded members.
+
+**Why:** Review found the reveal scrolling to nothing: `scrollIntoView` reads
+the transformed box, and the motion's first frame had already put the pinned
+row back in the slot it left, so `nearest` saw it on screen. Reproduced in the
+running client with a scroll box shrunk to two rows. The same review found two
+expanded projects trading places sending every member out of frame on its own
+while the unkeyed project row jumped, because members were ranked against the
+whole sidebar.
+
+**Considered and rejected:** Scrolling by hand from the row's layout position
+net of its transform, which would have worked but replaced `scrollIntoView`
+and every test on it with arithmetic the platform already does. Delaying the
+reveal until the motion ends, which reads as the sidebar noticing late.
+
+**Consequences:** Anything else that scrolls to a row on the render that moved
+it has to run before the hook's effect. A block that should move as one needs
+its own scope and a held row for its container's own row; the container element
+itself must not carry a key, or its children are carried twice.
 
 ### 2026-09-08 — Document created
 

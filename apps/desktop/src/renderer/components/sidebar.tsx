@@ -32,7 +32,7 @@ import {
   Settings,
   Smartphone,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { workstreamCanonicalUrl } from '@rally/contracts/workstream-links';
 import type { CreateProjectRequest, ProjectSummary, WorkstreamBatchFilter, WorkstreamBatchUpdate } from '@rally/contracts';
@@ -1002,11 +1002,6 @@ export function Sidebar({
   // reason does not scroll the reader again.
   const [reveal, setReveal] = useState<{ id: string; pinned: boolean } | null>(null);
   const scrollRef = useRef<HTMLElement | null>(null);
-  // A row that changes place — a message moving it up its group, a pin moving
-  // it between sections, a drag or an Alt+Arrow in the pinned list — travels
-  // there rather than reappearing: out to the left, the rows between closing
-  // the gap, then in from the left at its new slot.
-  useListMotion(scrollRef);
   /**
    * Ask for the next page as the scroll approaches the end of the list.
    *
@@ -1538,7 +1533,12 @@ export function Sidebar({
     return () => clearTimeout(timer);
   }, [reveal]);
 
-  useEffect(() => {
+  // A layout effect, declared before `useListMotion` below, so that the scroll
+  // happens before the motion starts: the motion's first frame translates the
+  // row back to the slot it left, `scrollIntoView` scrolls to the box as
+  // transformed, and `nearest` would then find the row still on screen where
+  // it used to be and scroll to nothing.
+  useLayoutEffect(() => {
     if (reveal === null) return;
     const row = workstreams.find((workstream) => workstream.id === reveal.id);
     // A row the list does not carry at all is not one that is about to arrive:
@@ -1581,6 +1581,13 @@ export function Sidebar({
       rendered?.querySelector('a')?.focus({ preventScroll: true });
     }
   }, [reveal, workstreams]);
+
+  // A row that changes place — a message moving it up its group, a pin moving
+  // it between sections, a drag or an Alt+Arrow in the pinned list — travels
+  // there rather than reappearing: out to the left, the rows between closing
+  // the gap, then in from the left at its new slot. After the reveal above,
+  // and for the reason given there.
+  useListMotion(scrollRef);
 
   const sidekickShortcuts = standaloneSidekicks.length > 0 && (
     <section className="sidebar-automation-strip" aria-label="Sidekick shortcuts" onClick={() => setSidebarOpen(false)}>
