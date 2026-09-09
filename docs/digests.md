@@ -672,6 +672,7 @@ entry point, and nothing else resolves audience correctly.
 
 | Suite | Covers |
 | --- | --- |
+| `apps/api/test-workers/workspace-read-cost.test.ts` | Activity first-page, resumed, and empty cursor results plus workerd rows-read cost; run with `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/workspace-read-cost.test.ts`. |
 | `apps/api/test/activity-event-projection.test.ts` | Projection from `activities`, audience resolution, target rows, and the cursor. |
 | `apps/api/test/digest-run-context.test.ts` | That the brief reaches the model through the run's trigger context **and** that the transcript row stays invisible to it. The two halves are pinned together deliberately, because a digest run that reaches the model without its window does not report that it cannot see one — it writes that nothing happened, and that shipped. |
 | `apps/api/test/digest-email-content.test.ts` | The digest shell: inline styles, counts, and the preheader. |
@@ -692,6 +693,17 @@ visible change to the email template is looked at through
 preview does *not* reproduce on its own.
 
 ## Changelog
+
+### 2026-09-09 — Seek directly to the activity cursor
+
+Activity reads now add a direct sequence lower bound only when a cursor exists.
+The optional-cursor OR caused SQLite to scan earlier history even for an empty
+window: production inspection measured 108,665 reads versus 1 for the direct
+range. The no-cursor path and audience, digestibility, time, and upper-bound
+filters remain unchanged. No new index or migration is needed. The real-workerd
+`workspace-read-cost.test.ts` covers first, resumed, and empty pages and checks
+physical rows read so the scan cannot silently return.
+
 
 ### 2026-09-08 — Deliver substream notifications without publishing child activity
 
