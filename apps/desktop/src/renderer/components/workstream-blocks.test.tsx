@@ -2252,5 +2252,21 @@ describe('MessageBlock substream cutoff', () => {
       />,
     );
     expect(screen.queryByRole('button', { name: 'Start substream from this message' })).toBeNull();
+
+    // The other two arms of the same predicate: a turn the transcript has no id
+    // for cannot be named as the cutoff, and a row that is not an authored
+    // message is not a place to cut. An automation result is the case that
+    // proves the second arm — it renders the same article a text turn does, so
+    // only the predicate keeps the control off it.
+    rerender(
+      <MessageBlock {...actions} message={{ ...settledAgentTurn, transcriptTurnId: undefined }} onStartSubstream={onStartSubstream} />,
+    );
+    expect(screen.queryByRole('button', { name: 'Start substream from this message' })).toBeNull();
+
+    rerender(
+      <MessageBlock {...actions} message={{ ...settledAgentTurn, messageType: 'automation_activation' }} onStartSubstream={onStartSubstream} />,
+    );
+    expect(screen.getByText('Automation')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Start substream from this message' })).toBeNull();
   });
 });
