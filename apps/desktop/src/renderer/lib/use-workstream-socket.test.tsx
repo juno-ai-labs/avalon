@@ -3350,6 +3350,7 @@ describe('useWorkstreamSocket', () => {
       occurredAt: '2026-08-11T09:00:01.000Z',
       title: 'Rally download link email to Danny',
       titleStatus: 'automatic',
+      icon: 'megaphone',
     }));
 
     // The event settles the skeleton as well as the text: `automatic` is a
