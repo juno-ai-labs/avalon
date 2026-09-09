@@ -1,6 +1,6 @@
 import { resolveWorkspaceEventResources } from "./workspace-event-resources";
 import { WorkstreamAppearanceSchema } from "@rally/contracts";
-import { RESOURCE_SEARCH_MIGRATION_STATEMENTS, ResourceSearchProjectionSchema, ResourceSearchRevisionRequestSchema,
+import { RESOURCE_SEARCH_MIGRATION_STATEMENTS, RESOURCE_SEARCH_CONTENT_UPDATE_MIGRATION, ResourceSearchProjectionSchema, ResourceSearchRevisionRequestSchema,
   resourceSearchRevision, nextResourceSearchDueAt, publishResourceSearch, prepareResourceSearch } from './resource-search-projection';
 import { ONBOARDING_JOURNEY_SQL, OnboardingJourneyStore } from './onboarding-journey';
 import { UpdateOnboardingJourneySchema, type OnboardingJourney, type UpdateOnboardingJourney } from '@rally/contracts';
@@ -2701,6 +2701,10 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
       PRIMARY KEY (parent_kind, parent_id)
     ) STRICT`,
   ],
+}, {
+  version: 43,
+  description: 'invalidate resource search only for content and category changes',
+  statements: RESOURCE_SEARCH_CONTENT_UPDATE_MIGRATION,
 }];
 
 interface AutomationDirectoryRow extends Record<string, SqlStorageValue> {
