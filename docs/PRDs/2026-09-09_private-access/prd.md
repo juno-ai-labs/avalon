@@ -7,7 +7,6 @@
 > The companion implementation PR adds the durable `docs/private-access.md` reference.
 > Read [Current review scope](#current-review-scope) for the consolidated design
 > and [Launch copy](launch-copy.md) for supplied wording and launch checks.
-> The original proposal below is preserved; the decision log records later changes.
 
 ## Summary
 
@@ -17,9 +16,11 @@ invite people when a testing cohort opens. Landing and email copy remain in
 explicit content definitions so final wording can change independently of logic.
 
 A shared download-grant generator serves ad hoc Ace links, access invitation
-emails, and workspace invitations. Each unpredictable bearer link permits one
-download and has no time-based expiration. The recipient need not verify their
-email: the product owner explicitly chose possession of the link as authority.
+emails, and workspace invitations. It supports two explicit modes: single-use
+with no time expiry, and repeatable until an exact expiry. Anyone holding a valid
+link can download without email verification. Manual Ace generation offers both
+modes; onboarding invitations prefer repeatable downloads, with their final
+lifetime policy subject to the decisions below.
 
 ## Motivation
 
@@ -33,8 +34,9 @@ there is no durable acquisition list or operator invitation workflow.
 2. Each normalized address has one durable request and an acknowledgement email.
 3. Ace shows requests, delivery state, and subsequently invitation/download state.
 4. One reusable generator issues links for operators and automated email callers.
-5. Exactly one redemption wins, including concurrent attempts; opening a page or
-   an email scanner fetching it does not consume a grant.
+5. Single-use grants admit exactly one request, including concurrent attempts;
+   timed grants admit repeated and concurrent requests strictly before expiry.
+   Opening a page or an email scanner fetching it does not consume a grant.
 6. Invited teammates can install Rally without joining the public request queue.
 
 ## Non-goals
@@ -42,13 +44,15 @@ there is no durable acquisition list or operator invitation workflow.
 1. A CMS: copy lives in versioned content definitions initially; a live copy editor
    is deferred until requested.
 2. Preventing an authorized recipient from forwarding a bearer link or sharing an
-   installed binary. Neither is promised by one-use download authorization.
+   installed binary. Neither is promised by bearer download authorization.
 3. Charging for access, cohort scoring, and marketing campaigns are deferred.
+4. Approved-account lists and invitation-only account creation or sign-in are
+   rejected as unnecessary. Existing workspace membership checks still apply.
 
 ## Product behavior
 
 The landing page has a brand mark, interchangeable headline and explanation,
-email field, and Request access button. Privacy/terms/support links remain.
+Work email field, and Get early access button. Privacy/terms/support links remain.
 Submitting shows pending, validation/error, or received state without navigating
 away. A repeated address does not create another request or send another already
 acknowledged email. Provider failures retain the request and permit explicit retry.
@@ -56,28 +60,45 @@ acknowledged email. Provider failures retain the request and permit explicit ret
 Ace gains an Access page with a searchable request list and acknowledgement
 status. Generate download link creates a fresh capability, optionally associated
 with a request, and shows it once for copying. It does not itself email anybody.
+Before generation, the operator chooses single-use/no-time-expiry or repeatable
+with an exact future date/time, displayed in their local timezone. Both standalone
+and request-associated links use that choice. There is no inferred default TTL.
 The later Invite action creates a grant using the same generator and sends a
 versioned invitation email, retaining delivery status for recovery.
 
-A download link opens a page with an explicit Download for macOS button. Only its
-POST consumes the grant. GET, HEAD, page previews and scanners consume nothing.
-Redeeming streams the installer without exposing a reusable storage URL. Missing
-installer/storage failure before redemption preserves the grant. A successful
-redemption means the server starts the response, not proof the recipient saved
-the file: browser disconnects require an operator to issue a replacement.
+A download link opens a page with an explicit Download for macOS (Apple silicon)
+button. Only an explicit POST admits a transfer; GET, HEAD and ordinary email
+previews do not. Single-use grants become unavailable after their first admitted
+transfer. Timed grants admit repeated and concurrent transfers strictly before
+the deadline, even after an earlier download. At the deadline or after revocation,
+neither mode admits new transfers; a transfer already admitted can finish.
 
-Workspace invitation emails will include a separate grant from the same issuer.
-Installing consumes only the download grant; accepting membership still requires
-the existing authenticated invited account and regional invitation checks. Resend
-must recover delivery without inadvertently minting extra live grants; revoke or
-supersede must invalidate unused grants linked to that invitation.
+Redeeming streams the installer without exposing a reusable storage URL. Missing
+installer/storage failure before admission preserves the grant. Admission means
+the server starts the response, not proof the recipient saved the file. After a
+browser disconnect, a single-use link needs an operator-issued replacement; a
+timed link can restart a full download before expiry. Resuming a partial download
+requires separate Range handling and is not promised by this first slice.
+
+Workspace invitation emails include a separate grant from the same issuer.
+Installing affects only the download grant; accepting membership still requires
+the existing authenticated invited account and regional invitation checks.
+Revocation or supersession must invalidate any still-active grants linked to that
+invitation, including timed grants previously used. Resend recovers delivery
+without inadvertently minting extra live grants. Both access and workspace
+invitation flows prefer repeatable onboarding links. Their time-only versus
+activation-retirement policy remains a decision before implementing dispatch;
+activation-based retirement requires the recovery path described below.
 
 ## Impact on the product contract
 
 This changes acquisition and distribution, not workspace or work-stream
-semantics. Download authorization is not account authorization. Strictly blocking
-new account creation with an already-obtained binary is a separate product
-choice, not a guarantee made by this download gate.
+semantics. Download authorization is not account authorization. There is no approved-account list or invitation-only account creation/sign-in.
+An already-obtained installer does not require an additional access approval.
+
+## Decision log
+
+None yet.
 
 ## Current review scope
 
@@ -148,15 +169,15 @@ cohort scoring or a general marketing-campaign engine.
   access to Rally itself. Do not retire anonymous access until that replacement
   path is actually available.
 - Anonymous/manual links without a recipient identity use time expiry rather
-  than an email-matching activation event. The explicit single-use mode already
-  built remains a separate operator choice, not the recommended onboarding mode.
-- Full retry and resuming a partial file are different capabilities. The current
+  than an email-matching activation event. The explicit single-use mode
+  remains a separate operator choice, not the recommended onboarding mode.
+- Full retry and resuming a partial file are different capabilities. The proposed
   timed mode permits a fresh full download; resumable transfers require separate
   Range handling and consistent artifact identity and are not promised yet.
 - Workspace invitation emails use the shared issuer in the invitation's region.
   Teammates bypass the public request queue. Existing authenticated membership
   acceptance, invitation revocation and regional boundaries continue to apply.
-- Show platform compatibility before downloading. The current installer endpoint
+- Show platform compatibility before downloading. The first installer endpoint
   serves macOS on Apple silicon; a link must not imply other builds are available.
 
 ### Personal outreach and launch preparation
@@ -181,7 +202,7 @@ an approved-account list.
 
 - Choose whether invitation emails initially use operator-selected time expiry
   alone or include activation-based retirement plus its recovery download page.
-  Time expiry is implementable with the existing grant primitive; activation
+  Time expiry uses the proposed grant primitive; activation
   retirement depends on the additional identity/recovery work described above.
 - Supply the final personal invitation template and any direct phone/text contact
   the launch team wants included. The acknowledgement copy is already supplied.
@@ -207,79 +228,32 @@ an approved-account list.
 - Operator UI accurately distinguishes accepted, delivered, failed, download
   started and activated; it never infers successful installation from a stream.
 
-## Decision log
+## Key design decisions
 
-### 2026-09-09 — Use supplied landing and acknowledgement language
-
-**Decided:** Use the product owner's pasted [launch copy](launch-copy.md) as the
-source for the landing page and first email. The email is from the Rally team at
-`hello@example.com`, with subject “We got your Rally request.” Keep the email-only form
-and put names/profile research in the later personal outreach workflow.
-
-**Why:** The supplied positioning centers on sharing chats, skills, context and
-routines. The first email gives teams three concrete things to prepare.
-
-**Changes:** Placeholder copy is replaced in code, including the capability and
-capacity lines. The sender is frozen per new request using migration 0103.
-Personal research/invitations, the supplied ad/post drafts, checking all three
-workflows in onboarding, and an inspiration page with recorded demos are retained
-as launch work. Applying the copy does not complete those checks or send outreach.
-The supplied sender domain must be verified separately before deployment.
-
-### 2026-09-09 — Keep account admission outside private distribution
-
-**Decided:** Do not add an approved-account list or require an access invitation
-to create an account or sign in. The product owner explicitly rejected that
-additional control as unnecessary.
-
-**Why:** The desired exclusivity concerns the landing page and how Rally supplies
-download links. Preventing someone with a forwarded installer from using Rally
-is not a requirement.
-
-**Changes:** Account admission is a deliberate non-goal, not a remaining rollout
-gate. Existing workspace membership checks still apply. Any future retirement
-of a download link after activation governs that link only; it must not introduce
-a new requirement for permission to use Rally.
-
-### 2026-09-09 — Support time expiry as an alternative to single use
-
-**Decision:** Add an optional exact expiry to the shared issuer and Ace. Timed
-links permit repeat downloads until that instant; omitted expiry retains the
-original single-use/no-time-expiry behavior. All links remain bearer capabilities.
-
-**Why:** The product owner asked whether a link could expire after a period of
-time instead of one or two downloads. Operators choose a date/time; no default
-window or arbitrary count is selected. Future email producers use the same input.
-
-**Changes:** The original single-use lifetime in the proposal now becomes one
-of two options. Timed acceptance includes repeat admission before expiry, rejection
-at the exact deadline (including expiry during storage lookup), and revocation.
-Expiry does not interrupt a download already admitted. Migration 0102 adds the
-nullable deadline and must precede deployment of this enhancement.
-
-### 2026-09-09 — Bearer grants and direct replacement
-
-**Decided:** Anyone holding the random URL may redeem it once. The landing page
-replaces the current page on deployment, without a flag. Both were explicitly
-confirmed by the product owner.
-
-**Why:** Ad hoc sharing must be simple, and the requested change is the public
-acquisition policy rather than an experiment for signed-in users.
-
-**Changes:** No recipient verification; attribution email is bookkeeping only.
-
-### 2026-09-09 — Begin with intake and the reusable grant primitive
-
-**Decided:** The first implementation covers intake, acknowledgement, Ace review
-and ad hoc grant generation/redemption. Invitation email dispatch, workspace
-integration, and closing legacy public artifact paths follow as separate steps.
-
-**Why:** The public R2 release origin also serves Electron updates and release
-verification. Its removal needs coordinated release-publisher and updater changes;
-a cosmetic gate must not be represented as protected distribution.
-
-**Changes:** All goals remain; the first change is explicitly incomplete until
-the remaining acceptance gates below pass.
+1. **Use the supplied landing and acknowledgement copy.** The pasted
+   [launch copy](launch-copy.md) is the source, including the Rally team,
+   `hello@example.com`, and “We got your Rally request.” Freeze the sender, subject and
+   body with each request so changing copy does not change a retry's payload.
+   Keep profile research and personal outreach separate from the automatic
+   acknowledgement. Verify the sender and reply mailbox before launch.
+2. **Keep links as bearer capabilities.** The product owner chose possession of
+   the random URL as authority. Recipient attribution is bookkeeping, not email
+   verification or account admission. The requested exclusivity does not include
+   approved-account lists or preventing installer sharing.
+3. **Offer explicit single-use and timed modes.** The later request for timed
+   expiry expands the original single-use proposal. Timed grants allow full
+   download retries until the operator-selected deadline. No guessed duration or
+   arbitrary download-count cap is introduced. Future email producers use this
+   same issuer; activation-based retirement remains a separate decision.
+4. **Replace the landing page directly.** The product owner explicitly chose
+   replacement on deployment rather than a feature flag.
+5. **Deliver intake and the shared issuer first.** The first implementation
+   covers requests, acknowledgement, Ace review and ad hoc downloads. Invitation
+   dispatch, regional workspace integration and closing public artifact paths
+   follow separately. The public release origin also serves Electron updates and
+   release verification, so hiding the public CTA alone cannot be described as
+   exclusive distribution. The implementation PR assigns migration filenames
+   and records any scope changes when they land.
 
 ## Data model
 
@@ -290,11 +264,50 @@ EU invite email addresses must not be copied into Global for convenience.
 Grants store only the token digest, source, optional source identity, timestamps,
 and operator attribution. Raw URLs are returned only to the issuing caller.
 
+### Data lifecycle and privacy requests
+
+Acquisition records do not inherit workspace deletion: they are collected before
+a workspace exists. Use explicit purpose-ending events for cleanup; do not
+invent numerical retention periods. Any maximum elapsed-time retention policy
+is a separate operator decision, left unset until the team selects it.
+
+| Data class | Retention boundary and cleanup |
+| --- | --- |
+| Uninvited request and acknowledgement snapshot | Keep while the request is waiting or its acknowledgement needs reconciliation. A verified erasure/withdrawal request or closure of the early-access programme ends that purpose: delete the request, frozen content and linked acquisition grants. Invitation/activation alone does not justify retaining these indefinitely; remove acquisition-only content once its delivery/support work is complete. |
+| Researched profile, source and personal notes | Collect only for the personal-outreach phase. Erase when the outreach purpose ends, on verified erasure, or when a proposed match is rejected. Do not retain rejected guesses or copy these into suppression records. |
+| Download grant | Time expiry or revocation ends admission. Retain only until any related delivery/replacement investigation is resolved, then delete the digest and attribution. An unused single-use grant remains live until use, explicit revocation or associated request erasure; cleanup must not invent a hidden expiry. |
+| Invitation send/delivery records | Retain while a send needs reconciliation, retry or support. After completion, erase message content and unnecessary provider identifiers; retain only non-identifying aggregate results if useful. Verified erasure removes recipient-linked history and triggers deletion of provider copies where supported. |
+| Invitation suppression | On opt-out, retain only the normalized destination needed to prevent another invitation, its suppression reason/time and necessary consent evidence. Delete research and message content independently. An ordinary repeated access request does not clear invitation suppression; only an explicit renewed invitation consent does. |
+
+Use the existing privacy contact and identity-verification process. Locate
+pre-account records by normalized email in Global; do not require a Rally account
+or workspace ID to make a request. Follow any grant source IDs to their request
+or invitation, revoke access before deleting attribution, and reconcile/cancel
+pending sends before erasure so a delayed worker cannot recreate the data.
+Global acquisition erasure does not delete a Rally account or workspace.
+
+For a regional workspace invitation, fulfill lookup and erasure in its owning
+region using existing invitation/identity routing. EU addresses, research and
+message content stay in EU; a support operation must not copy them into Global
+as a lookup shortcut. Provider-side deletion follows the provider's supported
+privacy process; record unresolved provider retention separately rather than
+claiming a local deletion erased external copies.
+
+The first intake slice needs an operator runbook for locating and erasing its
+request and manual-grant records through existing administration access. It has
+no background invitation sender or research records. Before the invitation phase
+ships, implement durable invitation suppression and deletion of pending/send
+records, including protection against a sender racing with erasure. Automatic
+age-based cleanup and a self-service privacy UI are deferred; the documented
+operator procedure handles requests in the meantime.
+
 ## Security and trust model
 
 Ace retains Cloudflare Access and same-origin mutation admission. Random tokens
 are cryptographic capabilities, stay in URL fragments, and never enter telemetry.
-The server atomically changes unused to used and bypasses caches for downloads.
+The server atomically admits single-use grants only while unused and timed
+grants only while unexpired, respecting revocation in both modes. Downloads
+bypass caches.
 The initial backend streams R2 through a binding. Existing public DMG and ZIP
 paths remain a rollout blocker for claiming exclusive distribution. The follow-up
 must gate both current and historical artifacts and r2.dev origins, preserve
@@ -303,7 +316,7 @@ legitimate updates, and replace public release checks with authorized checks.
 ## Rollout
 
 No feature flag, per the product owner. Apply migration, deploy API, then Ace and
-site. No production deployment is authorized by this planning/build request.
+site. PRD approval alone does not deploy the implementation.
 
 1. Intake and acknowledgement, then Ace tracking and reusable grant issuance.
 2. Operator Invite email with frozen content, durable delivery/retry state, and
@@ -319,11 +332,28 @@ site. No production deployment is authorized by this planning/build request.
   are not resent; provider failures never lose the request.
 - Ace rejects unauthenticated and cross-origin issuance and exposes no raw tokens
   in its listing responses or logs.
-- Independently created links differ; old unused links remain valid; two
-  concurrent redemptions yield one download; used/revoked/unknown links fail.
+- Independently created links differ. Unused single-use links have no time expiry;
+  two concurrent single-use redemptions yield exactly one admitted download.
+  Subsequent attempts fail even after a disconnected transfer.
+- Timed links permit repeated and concurrent downloads before expiry. Both the
+  preliminary check and final admission reject the exact deadline, including
+  expiry during storage lookup; already-admitted transfers may finish afterward.
+- Revocation and unknown tokens fail in both modes, including revocation of a
+  previously used timed grant. Expired timed links fail.
+- Ace's standalone and request-associated issuers preserve the selected mode and
+  exact expiry. A generated link's displayed lifetime does not change when the
+  operator changes settings for the next link.
 - A GET/HEAD or unavailable installer does not consume a grant.
 - Final invitation and teammate paths use the same issuer and retain correct
   membership authorization after installation.
 - Old public DMG/ZIP URLs cannot bypass the finished gate, while updates work.
 - Real browser inspection at desktop/mobile widths, lint, typecheck, scoped tests,
   and mutation checks pass before considering each implemented slice complete.
+
+- An operator can locate and erase pre-account request/snapshot/manual-grant
+  records without requiring a workspace, and erased links cannot be redeemed.
+  A later explicit signup creates fresh data and does not restore erased content.
+- Before invitation sending ships, erasure cancels pending sends and cannot race
+  with a sender to recreate data. Opt-out suppresses future invitations across
+  duplicate signup and bulk selection without retaining research/message content.
+  Regional invitation erasure and provider-copy handling follow the lifecycle above.
