@@ -6850,7 +6850,8 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 
 .attachment-media-tile .attachment-video-play { color: var(--av-sys-color-text-on-media); }
 
-/* Drafts reuse feed tiles; only their container and upload actions differ. */
+/* Drafts reuse feed tiles at card height; the feed retains double-height media. */
+.composer-attachments { --attachment-media-size: var(--attachment-file-card-height); }
 .composer-attachments { display: flex; flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; align-items: center; }
 :is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-attachments { overflow-x: auto; overflow-y: hidden; }
 .pending-attachment { position: relative; flex: 0 0 auto; }
@@ -6859,3 +6860,6 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 .pending-attachment .message-attachment-image { height: 100%; border-radius: inherit; }
 .pending-attachment:hover .attachment-remove, .pending-attachment:focus-within .attachment-remove { opacity: 1; }
 .pending-attachment.is-file .attachment-remove { top: 50%; transform: translateY(-50%); }
+.composer-attachments .attachment-media-name,
+.composer-attachments .attachment-inline-audio { display: none; }
+.composer-attachments .attachment-media-open { padding: 8px; }
