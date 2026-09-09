@@ -140,8 +140,13 @@ export function demoReadinessManifest(
       if (!upload?.resourceId) throw new ApiError(409, "demo_readiness_upload_unconfirmed", `Upload "${actionId}" has no receipt`);
       return upload.resourceId;
     });
+    // The room's own question, from its main conversation. A substream may park
+    // on one of its own, and that receipt is not this room's closing state:
+    // `packRoomFacts` never counted the child's steps, so matching one here
+    // would answer a `finalState` the child did not contribute to.
     const closing = room.finalState === "needs_input"
-      ? receipts.find((candidate) => candidate.room === room.room && candidate.runOutcome === "needs_input") ?? null
+      ? receipts.find((candidate) =>
+          candidate.room === room.room && candidate.substream === null && candidate.runOutcome === "needs_input") ?? null
       : null;
     if (room.finalState === "needs_input" && !closing?.elicitationId) {
       throw new ApiError(409, "demo_readiness_question_unconfirmed", `Room "${room.room}" has no confirmed question`);

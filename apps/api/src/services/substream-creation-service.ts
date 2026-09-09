@@ -13,7 +13,11 @@ import {
   SUBSTREAM_CONTEXT_POLICY,
   SUBSTREAM_MEMBERSHIP_POLICY,
 } from "./substream-context";
-import { createSubstreamContextTransformServices } from "./substream-context-summary";
+import {
+  createSubstreamContextTransformServicesWithGateway,
+  substreamSummaryGateway,
+  type SubstreamSummaryGateway,
+} from "./substream-context-summary";
 import { provisionalWorkstreamDescription } from "./workstream-description-service";
 import { nameWorkstream, provisionalWorkstreamTitle } from "./workstream-naming-service";
 import { WorkstreamObjectClient } from "./workstream-object-client";
@@ -41,6 +45,15 @@ export class SubstreamCreationService {
      * the same reason.
      */
     private readonly defer?: (task: Promise<unknown>) => void,
+    /**
+     * `summaryGateway` replaces where the starting context's prose comes from,
+     * and nothing else: the same recipe, the same capture, the same checkpoints
+     * and the same authority recheck afterwards. The demo seeder passes one so a
+     * seeded substream opens on the pack's own words rather than on a live
+     * model's, which is what keeps a prepared demo reproducible. Every other
+     * caller omits it and gets the platform's policy.
+     */
+    private readonly summaryGateway?: SubstreamSummaryGateway,
   ) {}
 
   private async parent(parentId: string) {
@@ -89,7 +102,7 @@ export class SubstreamCreationService {
     }
     const preparedContext = await substreamContextPipeline.prepare({
       recipe: operation.recipe, capture: operation.capture, completedParts: operation.completedParts,
-      services: createSubstreamContextTransformServices(this.env, {
+      services: createSubstreamContextTransformServicesWithGateway(this.summaryGateway ?? substreamSummaryGateway(this.env), {
         workspaceId: this.auth.workspaceId, workstreamId: asWorkstreamId(parentId), substreamId: operation.substreamId,
         userId: this.auth.userId, requestId: operation.operationId,
       }),

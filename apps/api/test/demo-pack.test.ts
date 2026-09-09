@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   DemoPackSchema,
   PLACEHOLDER_DEMO_PACK,
+  packRoomFacts,
   planDemoSeed,
   type DemoCast,
 } from "../src/services/demo-pack";
@@ -85,16 +86,24 @@ describe("the pack schema", () => {
     const parsed = DemoPackSchema.safeParse(PLACEHOLDER_DEMO_PACK);
     expect(parsed.success ? [] : parsed.error.issues.map((issue) => issue.message)).toEqual([]);
     const rooms = PLACEHOLDER_DEMO_PACK.steps.filter((step) => step.kind === "create_workstream");
-    expect(rooms.map((step) => step.room)).toEqual(["decision-memo", "northgate-renewal"]);
-    // The demo's punchline: the last thing said in a room is a question the
-    // presenter answers, which is the one real run a demo makes.
-    const lastSpoken = PLACEHOLDER_DEMO_PACK.steps.filter((step) => step.kind === "message").at(-1);
-    expect(lastSpoken?.assistant?.kind).toBe("ask");
+    expect(rooms.map((step) => step.room))
+      .toEqual(["decision-memo", "northgate-renewal", "press-release"]);
+    // The pack's one question, in the renewal room, is the demo's opening beat:
+    // nothing said after it in that room, and no second question anywhere.
+    const asks = PLACEHOLDER_DEMO_PACK.steps.filter(
+      (step) => (step.kind === "create_workstream" || step.kind === "message") && step.assistant?.kind === "ask",
+    );
+    expect(asks.map((step) => step.id)).toEqual(["renewal-marcus-2"]);
     // And one standing Sidekick, published and on a schedule, with one run
     // already behind it.
     const sidekicks = PLACEHOLDER_DEMO_PACK.steps.filter((step) => step.kind === "sidekick");
     expect(sidekicks.map((step) => [step.name, step.scope, step.schedule.timezone, step.firstRun !== undefined]))
       .toEqual([["Morning briefing", "workspace", "America/Los_Angeles", true]]);
+    // The press-release room's private child, which the presenter is in
+    // without being in its parent.
+    const children = PLACEHOLDER_DEMO_PACK.steps.filter((step) => step.kind === "create_substream");
+    expect(children.map((step) => [step.room, step.substream, step.participants]))
+      .toEqual([["press-release", "placement", ["priya", "dana", "presenter"]]]);
   });
 
   it("takes a Sidekick that is in no room, and refuses two under one name", () => {
@@ -228,6 +237,117 @@ describe("the pack schema", () => {
   });
 });
 
+/**
+ * A substream is a second conversation inside a room, with its own roster and
+ * its own question. Every rule the main conversation has, it has separately —
+ * and one it does not: nothing said in it can seat anybody, because the roster
+ * belongs to the parent object rather than to the message.
+ */
+describe("a pack's substreams", () => {
+  function child(overrides: Record<string, unknown> = {}) {
+    return {
+      kind: "create_substream",
+      id: "aside",
+      room: "room",
+      substream: "aside",
+      as: "priya",
+      title: "An aside",
+      participants: ["marcus"],
+      startingContext: "Where this left off.",
+      ...overrides,
+    };
+  }
+
+  it("refuses a substream of a room that does not exist yet", () => {
+    expect(issues(pack([child(), open()])))
+      .toContain('Room "room" is used before it is created');
+  });
+
+  it("refuses the same substream name twice, and the creator listed as a participant", () => {
+    expect(issues(pack([open(), child(), child({ id: "again" })])))
+      .toEqual(expect.arrayContaining(['Substream "aside" is created twice']));
+    expect(issues(pack([open(), child({ participants: ["priya"] })])))
+      .toContain("The creator is in it already");
+  });
+
+  it("refuses a line in a substream from somebody who is only in its parent", () => {
+    // Being in the work stream is not being in its private child, and the
+    // parent object says so explicitly rather than inferring one from the
+    // other. A pack that leans on it would be leaning on nothing.
+    expect(issues(pack([
+      open({ participants: ["marcus", "dana"] }),
+      child(),
+      { kind: "message", id: "line", room: "room", substream: "aside", as: "dana", text: "Me too." },
+    ]))).toContain('Role "dana" is not in room "room/aside"');
+  });
+
+  it("refuses a mention in a substream of somebody who is not in it", () => {
+    // In a work stream a confirmed mention seats the person. A message cannot
+    // do that to a private child's roster, so the mention would land on
+    // somebody who never sees it.
+    expect(issues(pack([
+      open({ participants: ["marcus", "dana"] }),
+      child(),
+      { kind: "message", id: "line", room: "room", substream: "aside", as: "priya", text: "@{dana} thoughts?" },
+    ]))).toContain('Role "dana" is mentioned in substream "room/aside" without being in it');
+  });
+
+  it("lets a workspace room put anybody in its substream, and a personal room only its own", () => {
+    // The parent refuses whoever it would not let read the work stream, and
+    // that is decided by scope: a workspace room admits every member.
+    expect(pack([open(), child({ participants: ["marcus", "dana"] })]).success).toBe(true);
+    expect(issues(pack([
+      open({ scope: "personal" }),
+      child({ participants: ["marcus", "dana"] }),
+    ]))).toContain('Role "dana" cannot be put in a substream of personal room "room" without being in it');
+  });
+
+  it("counts questions per conversation, not per room", () => {
+    // A parked question in the child does not park the parent, and a parked
+    // parent does not stop the child. Each conversation ends once.
+    expect(pack([
+      open(),
+      child(),
+      { kind: "message", id: "child-ask", room: "room", substream: "aside", as: "priya", text: "Decide.", assistant: { kind: "ask", prompt: "Which?", options: ["A", "B"] } },
+      { kind: "message", id: "parent-line", room: "room", as: "priya", text: "Back in the main room." },
+    ]).success).toBe(true);
+    expect(issues(pack([
+      open(),
+      child(),
+      { kind: "message", id: "child-ask", room: "room", substream: "aside", as: "priya", text: "Decide.", assistant: { kind: "ask", prompt: "Which?", options: ["A", "B"] } },
+      { kind: "message", id: "child-after", room: "room", substream: "aside", as: "marcus", text: "Also..." },
+    ]))).toContain('Room "room/aside" continues after its question');
+  });
+
+  it("refuses a role the starting context names that the cast does not bind", () => {
+    expect(issues(pack([open(), child({ startingContext: "@{sam} raised it." })])))
+      .toContain('The starting context names role "sam", which is not in the cast');
+  });
+
+  it("keeps a substream out of the room's facts entirely", () => {
+    // The readiness barrier builds what it waits for from these. A private
+    // child takes no directory row and its activity never reaches the parent's,
+    // so a substream step that moved the room's recency, seats, state or
+    // attachments would make the barrier wait for a projection that is never
+    // coming.
+    const parsed = parsedPack([
+      open(),
+      { kind: "message", id: "parent-line", room: "room", as: "priya", text: "In the main room." },
+      child(),
+      { kind: "upload", id: "child-doc", room: "room", substream: "aside", as: "priya", title: "Aside", fileName: "a.md", mimeType: "text/markdown", content: "# Aside\n" },
+      { kind: "message", id: "child-ask", room: "room", substream: "aside", as: "priya", text: "Decide.", assistant: { kind: "ask", prompt: "Which?", options: ["A", "B"] } },
+    ]);
+    const facts = packRoomFacts(parsed.steps).get("room");
+    expect(facts).toMatchObject({
+      seated: ["priya", "marcus"],
+      // The main room's own last step, not the child's three after it.
+      lastStepIndex: 1,
+      finalState: "completed",
+      uploads: [],
+    });
+  });
+});
+
 describe("planning a pack against a cast", () => {
   it("resolves a mention to the bound member, at the offsets of the expanded name", () => {
     const parsed = parsedPack([
@@ -280,6 +400,37 @@ describe("planning a pack against a cast", () => {
       participantUserIds: [CAST.marcus!.userId],
       scope: "workspace",
       seed: { packVersion: "test", actionId: "open", assistant: SAY },
+    });
+  });
+
+  it("addresses a substream by name and expands the roles in its starting context", () => {
+    const parsed = parsedPack([
+      open(),
+      {
+        kind: "create_substream", id: "aside", room: "room", substream: "aside", as: "priya",
+        title: "An aside", participants: ["marcus"],
+        startingContext: "@{marcus} asked where this left off.",
+      },
+      { kind: "message", id: "line", room: "room", substream: "aside", as: "priya", text: "@{marcus} here." },
+    ]);
+    const [, child, line] = planDemoSeed(parsed, CAST);
+    expect(child).toMatchObject({
+      kind: "create_substream",
+      room: "room",
+      substream: "aside",
+      actorUserId: CAST.priya!.userId,
+      participantUserIds: [CAST.marcus!.userId],
+      startingContext: "Marcus Hale asked where this left off.",
+    });
+    // The room's own steps stay addressed to its main conversation.
+    expect(planDemoSeed(parsed, CAST)[0]).toMatchObject({ substream: null });
+    // A mention in a child is real text, but confirms nobody: the child's
+    // roster is the parent object's and a message cannot add to it.
+    expect(line).toMatchObject({
+      kind: "message",
+      substream: "aside",
+      text: "@Marcus Hale here.",
+      confirmedParticipantUserIds: [],
     });
   });
 

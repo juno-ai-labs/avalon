@@ -206,6 +206,16 @@ history, empty, last-N, range and summary-plus-recent-tail. Add a statically
 registered, versioned plugin and change the one platform policy to select it.
 Do not add conditionals to the coordinator or expose a user picker.
 
+One caller replaces the summary itself rather than the recipe that produces
+it. `SubstreamCreationService` takes an optional `SubstreamSummaryGateway`; the
+demo seeder passes one that returns the pack's own text, so a seeded demo's
+substream opens on words a person approved instead of on a model's, and
+preparing the same pack twice produces the same child. It is not a strategy and
+not a policy: the recipe, the capture, the checkpoints and the authority recheck
+after inference are all unchanged, and the only thing that differs is where the
+summary's prose came from. Every other caller omits it and gets the platform
+policy above. [Demo workspaces](demo-workspaces.md) owns why.
+
 Each plugin validates its configuration. Persisted recipes retain plugin
 versions and canonical hashes; retries validate the old recipe rather than
 substituting the current deployment's policy. Keep old plugin versions available
@@ -363,6 +373,13 @@ surface has already drawn their turn.
   registry row it converges, the durable turn, the unchanged parent title and
   the replay a retried confirmation gets; its mutation proof addresses the
   naming pass at the parent, which leaves the child in `naming`.
+- `apps/api/test-workers/demo-seeder.test.ts`: a demo pack opens a substream
+  through this service on real workerd — prepare, confirm, and one participant
+  add each — with the summary gateway answering from the pack, and asserts the
+  child's own roster, initial context, transcript and loop while the parent's
+  main conversation stays untouched. Proved to fail with the gateway
+  substitution removed, which sends creation's one inference to the provider
+  double the suite forbids.
 - `apps/desktop/src/renderer/components/substream-launch.test.tsx`: the branch
   turns above the composer, the words enter hands to creation, the optimistic
   turn and skeleton while it runs, and the draft coming back on a failure.
@@ -438,6 +455,38 @@ launch surface is open; the operation and message ids live with the launch
 state, so a retry resumes rather than reserving again; the opening turn stays
 idempotent by `clientMessageId`; and a substream's name is written through the
 child's address, never the parent's.
+
+### 2026-09-09 — The starting context's prose is an injectable gateway
+
+**What changed:** `SubstreamCreationService` takes an optional
+`SubstreamSummaryGateway`. Without one it builds the platform's, exactly as
+before; with one, that gateway answers the summary transform instead of the
+shared inference stack. `substreamSummaryGateway` is the platform's, now
+exported under a name rather than living as a private closure.
+
+**Why:** A demo workspace is seeded by playing a pack through Rally's own write
+paths, and the demo pack now opens a substream. Creation's one structured
+inference was the only thing in that path that would have reached a model. Three
+problems with letting it: the summary is prose a presenter reads, so an
+unscripted one is content nobody approved; it is a live call inside the minutes
+an operator spends waiting for a workspace they are about to present; and it
+makes two preparations of the same pack differ.
+
+**The alternative that was rejected** was a new context strategy — a "verbatim
+text" plugin the demo policy selects. That is the extension point this document
+points at, and it is the wrong one here: the recipe is a durable, versioned,
+hash-pinned record of *how* a context was derived, and the demo does not want a
+different derivation. It wants the same derivation with the model's answer
+supplied. A strategy would also have to carry the text through the recipe and
+the persisted operation, where a retry after a deployment validates old plugin
+versions, and the pack would become part of that compatibility surface.
+
+**What a future change has to respect:** the gateway replaces the source of the
+summary's prose and nothing else. Every other property — the frozen capture, the
+pinned recipe, the durable part checkpoints, the authority recheck after
+inference, and creator-only initial membership — is the production path's, and
+a caller that passes a gateway gets all of them. Do not widen it into a seam for
+skipping the capture, the checkpoints, or the recheck.
 
 ### 2026-09-09 — Move the message cutoff into the turn's action row
 

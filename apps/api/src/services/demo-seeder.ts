@@ -46,10 +46,19 @@ import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { logInfo } from "../observability/logger";
 import { AutomationService, createAutomation } from "./automation-service";
+import { demoSeedSummaryGateway } from "./demo-seed-provider";
 import { ResourceService } from "./resource-service";
+import { SubstreamCreationService } from "./substream-creation-service";
 import { WorkstreamObjectClient } from "./workstream-object-client";
 import { WorkstreamObjectCreationService } from "./workstream-object-creation-service";
-import { planDemoSeed, type DemoCast, type DemoPack, type DemoPackRole, type DemoSeedAction } from "./demo-pack";
+import {
+  planDemoSeed,
+  type DemoCast,
+  type DemoPack,
+  type DemoPackRole,
+  type DemoSeedAction,
+  type DemoSeedRoomAction,
+} from "./demo-pack";
 
 /** Why a seeded run says it exists; the run's `reason` and the create's origin. */
 export const DEMO_SEED_REASON = "demo_seed";
@@ -65,6 +74,13 @@ export interface DemoSeedReceipt {
   /** The pack's name for the room, and the work stream it got. Null for a Sidekick. */
   room: string | null;
   workstreamId: string | null;
+  /**
+   * The pack's name for the substream this wrote to, and the conversation it
+   * actually wrote to. `null` and `"0"` for a room's main conversation; both
+   * null for a Sidekick, which is in no room and so in no conversation.
+   */
+  substream: string | null;
+  substreamId: string | null;
   /** The Sidekick this action published, and the one run it seeded for it. */
   sidekickId: string | null;
   sidekickRunId: string | null;
@@ -83,6 +99,8 @@ interface ReceiptRecord {
   kind: DemoSeedAction["kind"];
   room: string | null;
   workstream_id: string | null;
+  substream: string | null;
+  substream_id: string | null;
   sidekick_id: string | null;
   sidekick_run_id: string | null;
   turn_id: string | null;
@@ -94,7 +112,7 @@ interface ReceiptRecord {
 }
 
 const RECEIPT_COLUMNS = `operation_id, action_id, workspace_id, kind, room, workstream_id,
-  sidekick_id, sidekick_run_id, turn_id,
+  substream, substream_id, sidekick_id, sidekick_run_id, turn_id,
   harness_run_id, run_outcome, elicitation_id, resource_id, completed_at`;
 
 function toReceipt(record: ReceiptRecord): DemoSeedReceipt {
@@ -105,6 +123,8 @@ function toReceipt(record: ReceiptRecord): DemoSeedReceipt {
     kind: record.kind,
     room: record.room,
     workstreamId: record.workstream_id,
+    substream: record.substream,
+    substreamId: record.substream_id,
     sidekickId: record.sidekick_id,
     sidekickRunId: record.sidekick_run_id,
     turnId: record.turn_id,
@@ -142,11 +162,12 @@ async function demoSeedReceipt(db: D1Database, operationId: string, actionId: st
 export async function recordDemoSeedReceipt(db: D1Database, receipt: DemoSeedReceipt): Promise<DemoSeedReceipt> {
   await db.prepare(
     `INSERT INTO demo_seed_receipts (${RECEIPT_COLUMNS})
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (operation_id, action_id) DO NOTHING`,
   ).bind(
     receipt.operationId, receipt.actionId, receipt.workspaceId, receipt.kind, receipt.room,
-    receipt.workstreamId, receipt.sidekickId, receipt.sidekickRunId, receipt.turnId,
+    receipt.workstreamId, receipt.substream, receipt.substreamId,
+    receipt.sidekickId, receipt.sidekickRunId, receipt.turnId,
     receipt.harnessRunId, receipt.runOutcome,
     receipt.elicitationId, receipt.resourceId, receipt.completedAt,
   ).run();
@@ -164,12 +185,54 @@ async function roomWorkstreamId(db: D1Database, operationId: string, room: strin
 }
 
 /**
+ * Where an action writes: the work stream, and the conversation inside it.
+ *
+ * Both come from earlier receipts rather than from the plan, because both are
+ * ids the platform minted. A pack names its room and its substream; the create
+ * that ran first is what turns those names into the pair every later action
+ * addresses.
+ */
+async function actionConversation(
+  db: D1Database,
+  operationId: string,
+  action: DemoSeedRoomAction,
+): Promise<{ workstreamId: string; substreamId: string }> {
+  const workstreamId = await roomWorkstreamId(db, operationId, action.room);
+  if (action.substream === null) return { workstreamId, substreamId: "0" };
+  const row = await db.prepare(
+    `SELECT substream_id FROM demo_seed_receipts
+      WHERE operation_id = ? AND room = ? AND substream = ? AND kind = 'create_substream'`,
+  ).bind(operationId, action.room, action.substream).first<{ substream_id: string }>();
+  if (!row) {
+    throw new ApiError(409, "demo_seed_substream_not_created", `Substream "${action.substream}" has not been created yet`);
+  }
+  return { workstreamId, substreamId: row.substream_id };
+}
+
+/**
  * The client message id of a seeded turn: the operation and the action, and
  * nothing that changes between attempts. The production path dedupes a create
  * and a message on it, which is what makes replaying an action safe.
  */
 export function demoSeedClientMessageId(operationId: string, actionId: string): string {
   return `${operationId}:${actionId}`;
+}
+
+/**
+ * The ids a seeded substream's creation is keyed by.
+ *
+ * Creation is a parent-owned operation and adding each participant is another,
+ * and both resume rather than repeat when the operation id comes back the same.
+ * Deriving them from the demo operation and the action is what makes an
+ * interrupted `create_substream` finish the child it started instead of opening
+ * a second one beside it. 180 characters is what the parent allows; a UUID
+ * operation id, an 80-character action id and a UUID member fit.
+ */
+function demoSeedSubstreamOperationId(operationId: string, actionId: string): string {
+  return `demo-seed-substream:${operationId}:${actionId}`;
+}
+function demoSeedSubstreamMemberOperationId(operationId: string, actionId: string, userId: string): string {
+  return `demo-seed-member:${operationId}:${actionId}:${userId}`;
 }
 
 /**
@@ -298,6 +361,8 @@ export type DemoSeedProgress =
       state: "run_pending";
       action: Extract<DemoSeedAction, { kind: "create_workstream" | "message" }>;
       workstreamId: string;
+      /** The conversation the run belongs to; `"0"` for a room's main one. */
+      substreamId: string;
       turnId: string;
       /** When the trigger turn was admitted; the run it started is created after it. */
       turnCreatedAt: string;
@@ -356,14 +421,44 @@ export async function applyDemoSeedAction(
         state: "run_pending",
         action,
         workstreamId: created.workstream.id,
+        substreamId: "0",
         turnId: created.turnId,
         turnCreatedAt: created.workstream.createdAt,
         harnessRunId: created.harnessRunId,
       };
     }
-    case "message": {
+    case "create_substream": {
       const workstreamId = await roomWorkstreamId(env.DB, session.operationId, action.room);
-      const admitted = await new WorkstreamObjectClient(env, auth, workstreamId, "0").createMessage({
+      const operationId = demoSeedSubstreamOperationId(session.operationId, action.actionId);
+      // The production flow exactly: prepare freezes the parent conversation
+      // and resolves the starting context, confirm provisions the child and
+      // installs it. The one substitution is where the context's prose comes
+      // from — the pack, not a model — and it is passed in rather than decided
+      // here, so nothing about creation branches on this being a demo. No
+      // deferral, because seeding has no request to hand the naming pass off
+      // to and no opening message to run one over anyway.
+      const service = new SubstreamCreationService(env, auth, undefined, demoSeedSummaryGateway(action.startingContext));
+      await service.prepare(workstreamId, { operationId, title: action.title, throughTurnId: null });
+      // No opening message: the pack says what is said in the child as its own
+      // `message` steps, so the child opens on the starting context alone and
+      // keeps the title the pack reserved for it.
+      const { substreamId } = await service.confirm(workstreamId, operationId);
+      // A substream opens creator-only, so the pack's roster is one add each,
+      // by the creator, who is the only participant there is to make them.
+      for (const userId of action.participantUserIds) {
+        await service.changeParticipant(workstreamId, substreamId, {
+          userId,
+          operationId: demoSeedSubstreamMemberOperationId(session.operationId, action.actionId, userId),
+        }, true);
+      }
+      return { state: "confirmed", receipt: await confirm(env, session, action, {
+        workstreamId,
+        substreamId,
+      }) };
+    }
+    case "message": {
+      const { workstreamId, substreamId } = await actionConversation(env.DB, session.operationId, action);
+      const admitted = await new WorkstreamObjectClient(env, auth, workstreamId, substreamId).createMessage({
         text: action.text,
         clientMessageId,
         mentions: action.mentions,
@@ -376,6 +471,7 @@ export async function applyDemoSeedAction(
           state: "run_pending",
           action,
           workstreamId,
+          substreamId,
           turnId: admitted.turn.turnId,
           turnCreatedAt: admitted.turn.createdAt,
           harnessRunId: null,
@@ -383,11 +479,12 @@ export async function applyDemoSeedAction(
       }
       return { state: "confirmed", receipt: await confirm(env, session, action, {
         workstreamId,
+        substreamId,
         turnId: admitted.turn.turnId,
       }) };
     }
     case "upload": {
-      const workstreamId = await roomWorkstreamId(env.DB, session.operationId, action.room);
+      const { workstreamId, substreamId } = await actionConversation(env.DB, session.operationId, action);
       const resourceId = await demoSeedResourceId(session.operationId, action.actionId);
       const file = new File([action.content], action.fileName, { type: action.mimeType });
       try {
@@ -397,8 +494,12 @@ export async function applyDemoSeedAction(
         // it and was interrupted before attaching or recording. Attach it.
         if (!(error instanceof ApiError && error.code === "attachment_draft_exists")) throw error;
       }
-      await new WorkstreamObjectClient(env, auth, workstreamId, "0").attachResource(resourceId);
-      return { state: "confirmed", receipt: await confirm(env, session, action, { workstreamId, resourceId }) };
+      await new WorkstreamObjectClient(env, auth, workstreamId, substreamId).attachResource(resourceId);
+      return { state: "confirmed", receipt: await confirm(env, session, action, {
+        workstreamId,
+        substreamId,
+        resourceId,
+      }) };
     }
     case "sidekick": {
       const sidekickId = await demoSeedSidekickId(session.operationId, action.actionId);
@@ -478,6 +579,7 @@ async function confirm(
   action: DemoSeedAction,
   outcome: {
     workstreamId?: string;
+    substreamId?: string;
     sidekickId?: string;
     sidekickRunId?: string;
     turnId?: string;
@@ -494,6 +596,8 @@ async function confirm(
     kind: action.kind,
     room: action.kind === "sidekick" ? null : action.room,
     workstreamId: outcome.workstreamId ?? null,
+    substream: action.kind === "sidekick" ? null : action.substream,
+    substreamId: outcome.substreamId ?? null,
     sidekickId: outcome.sidekickId ?? null,
     sidekickRunId: outcome.sidekickRunId ?? null,
     turnId: outcome.turnId ?? null,
@@ -508,6 +612,7 @@ async function confirm(
     action_id: action.actionId,
     workspace_id: session.workspaceId,
     workstream_id: outcome.workstreamId ?? null,
+    substream_id: outcome.substreamId ?? null,
     sidekick_id: outcome.sidekickId ?? null,
     kind: action.kind,
     run_outcome: outcome.runOutcome ?? null,
@@ -544,7 +649,7 @@ export async function settleDemoSeedAction(
   if (progress.state === "sidekick_run_pending") return settleSeededSidekickRun(env, session, progress, options);
   const { action } = progress;
   const expected: DemoSeedRunOutcome = action.seed.assistant?.kind === "ask" ? "needs_input" : "completed";
-  const client = new WorkstreamObjectClient(env, actorAuth(session, action), progress.workstreamId, "0");
+  const client = new WorkstreamObjectClient(env, actorAuth(session, action), progress.workstreamId, progress.substreamId);
   for (;;) {
     const detail = await client.get();
     const run = detail.latestHarnessRun ?? null;
@@ -578,6 +683,7 @@ export async function settleDemoSeedAction(
       }
       return confirm(env, session, action, {
         workstreamId: progress.workstreamId,
+        substreamId: progress.substreamId,
         turnId: progress.turnId,
         harnessRunId: run.id,
         runOutcome: run.status,
