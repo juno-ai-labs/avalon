@@ -180,7 +180,7 @@ export class WorkstreamObjectClient {
           // is the wire's way of saying "verify my session". (Not a schema
           // necessity — the room declares the key as optional and JSON would
           // drop an `undefined` anyway; the point is the contract.)
-          ...(this.auth.principal === "connector" ? { principal: "connector" } : {}),
+          ...(this.auth.principal ? { principal: this.auth.principal } : {}),
         },
       } as SubstreamProductRequest,
       this.traced,

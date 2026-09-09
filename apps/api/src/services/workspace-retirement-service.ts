@@ -15,6 +15,7 @@ import {
   workstreamDOName,
 } from "../durable-objects/names";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
+import { markDemoWorkspaceRetired } from "./demo-workspace-register";
 import { diagnosticErrorCode, logInfo, logWarn } from "../observability/logger";
 import { ConversationParentRetirementChildrenResultSchema } from "@rally/contracts";
 
@@ -81,9 +82,10 @@ export async function retireWorkspaceGraph(
 ): Promise<WorkspaceRetirementReceipt> {
   // Any workspace. This is an operator tool behind Ace's Access policy, and
   // the decision was made not to gate it on a register of what some feature
-  // created. Retirement is irreversible, so the confirmation an operator
-  // gives before reaching here is the whole of the protection — and it is the
-  // caller's to ask for, not this function's to infer.
+  // created: the demo register still records the demos, but it is not an
+  // authorization input. Retirement is irreversible, so the confirmation an
+  // operator gives before reaching here is the whole of the protection — and
+  // it is the caller's to ask for, not this function's to infer.
   //
   // The running Worker's own region, never the caller's. A region taken as a
   // parameter does not cross a region — it builds an EU-shaped *name* and
@@ -219,6 +221,12 @@ export async function retireWorkspaceGraph(
   receipt.remaining = settled.remaining;
   receipt.complete = settled.complete;
 
+  // The regional shadow of the tombstone, written only once the whole graph is
+  // closed. It is what lets the Demos page list what is live without waking a
+  // retired object to ask it. A workspace this feature never made has no row,
+  // and the update is a no-op for it.
+  if (receipt.complete) await markDemoWorkspaceRetired(env.DB, input.workspaceId, new Date(input.retiredAt).toISOString());
+
   // The region's own record of who closed this workspace. The tombstone names
   // an operator retirement; this line names the operator, and it is the one
   // place in the region that does.
@@ -245,7 +253,8 @@ export async function retireWorkspaceGraph(
  * wrong for a door: an id no workspace in this region owns would be "retired"
  * as a set of brand-new empty objects holding tombstones, and the operator told
  * it succeeded while the real workspace, in the other region, stayed open. So
- * the door checks the row first.
+ * the door checks the row first. An abandoned demo whose workspace was never
+ * created is closed by the operation, not through here.
  */
 export async function retireWorkspaceForOperator(
   env: Env,

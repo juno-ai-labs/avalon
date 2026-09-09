@@ -150,6 +150,8 @@ Before starting a loop, a lightweight classifier returns `agent_action`, `human_
 
 A message that invokes nothing is still a turn the model reads. The conversation object appends every such human or external text turn to the loop's projection at the next text admission, in transcript order, ahead of the input that follows it — rendered with a header saying it was said to the room, not to Rally, and naming its author, so the model reads it as context rather than as a request ([`workstream-durable-object.md`](workstream-durable-object.md)). An elicitation answer carries no such fill; the turns said while the question was open wait for the next text input.
 
+A demo seed action is the one message the classifier never sees. It carries a `seed` ([`demo-workspaces.md`](demo-workspaces.md#seeding-a-demo-from-a-pack)) whose `assistant` turn says whether the line starts a run — present means yes, `null` means no — and the object takes that answer over the room's size and the message's attachments alike. The pack is the authority on which of its lines address Rally, and seeding a scripted conversation cannot wait on a live model's guess about each one. The field reaches the object only over its internal RPC; the message route has none.
+
 ### Naming
 
 A work stream is created under a provisional title — the first non-empty line of its objective — and named by a separate one-shot structured call a moment afterwards. The naming agent gets the objective and the opening message as bounded user-role data: the request is what is being named, never an instruction it follows, and a request asking for a particular name has no more authority than any other outside content. Reasoning is switched off rather than left to the model's default, because the model is relabelling text it has already been handed in full — asking for the lowest *effort* would switch thinking on for a model that does none.
@@ -416,6 +418,29 @@ Web discovery and page reading are bounded Firecrawl tools. Search returns ranke
 ### Elicitation
 
 The canonical `request_elicitation` tool belongs to `rally:core` and is rendered to the model as `core_request_elicitation`. It creates a typed text/radio/single/multi-select block and pauses the shared harness loop. The request row retains the stable original tool slot. When a person answers, the loop atomically accepts one tool result containing that answer and promotes the visible participant response before any later provider call. The participant turn is canonical UI history, not a second Bind user message; the model therefore receives the answer exactly once through the suspended tool protocol. Original tool-call position and dense result-acceptance order are separate identities, so another result accepted while the elicitation waits does not renumber either fact. In a work stream, the work stream becomes `needs_input`; a valid answer clears attention when no blockers remain and activates the same `SubstreamAgent` loop. When drafting an automation, the agent first saves its best partial state with `automation_submit_draft` (a revision that is not `ready`), then calls the same core elicitation tool; the next turn resumes from the saved draft and the answered conversation.
+
+### Seeded runs
+
+A run a demo seed started is an ordinary run with one substitution: the source
+of model output. Its execution context carries the seed, and
+`runWorkstreamHarness` sets `OpenRouterConfig.fetch` — an injection point the
+client already exposes for exactly this purpose — to a function that answers
+the run's one chat-completion request from the seed's turn, in the streamed or
+JSON form the request asked for, and answers everything else emptily so nothing
+leaves the machine. A second chat-completion request is refused with a 400 the
+client does not retry on the same endpoint; the route's remaining candidates
+each get one refusal before the run fails. A seed has one turn because a
+seeded run makes no tool calls, and without tool calls the loop asks once. The
+seam covers the client it is handed to, so a seeded origin is also exempt from
+admission-time memory recall, as a human message is — otherwise the recall
+query would be embedded through the real endpoint, outside the seam. Prose ends the loop as
+`completed`; a question is a call to the real `core_request_elicitation` tool
+with validated arguments, and the run parks on `needs_input` like any other.
+Tools, plugins, receipts, activity rows and settlement are the ordinary path,
+which is what makes the seeded turn history rather than a row written to look
+like it. The run an answer to that question resumes is built from the answer,
+not from the seeded context, so it is never seeded. Owned by
+[`demo-workspaces.md`](demo-workspaces.md).
 
 ### Durable receipts and terminal state
 
@@ -1267,6 +1292,26 @@ The host resolves stored-loadable Sidekicks against execution and conversation a
 
 This composes knowledge with existing execution machinery while keeping one Sidekick identity and preserving authorization boundaries.
 
+### 2026-09-07 — A seeded run answers its own provider requests
+
+**What changed:** `WorkstreamWorkflowInputSchema` gains an optional `seed`, and
+`runWorkstreamHarness` sets `OpenRouterConfig.fetch` to
+`demoSeedProviderFetch(seed)` when it is present, with a stand-in API key for an
+environment that has none. The object skips the addressing classifier for a
+message that carries a seed and starts a run exactly when the seed carries a
+turn.
+
+**Why:** The demo feature needs assistant turns that read as Rally's work
+without a model having done it, and the only honest way to get one is to run
+the ordinary path and replace the bytes at the provider boundary — the
+injection point already existed for that. The classifier is skipped rather than
+answered through a double because the pack, not a model, is the authority on
+which of its lines address Rally. Owned by
+[`demo-workspaces.md`](demo-workspaces.md), which records the alternatives.
+
+**What a future change has to respect:** The seed replaces only the source of
+model output. Anything that moves receipts, activities or settlement out of the
+path a seeded run shares with every other run makes seeded history a fabrication.
 
 ### 2026-09-06 — Accept provider model capitalization in memory embeddings
 
