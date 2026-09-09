@@ -119,6 +119,16 @@ different reason: opening it is what reads it. A batch names every cached row
 its filter took, not only the open one, since the response says only how many
 went.
 
+A skip list that empties every loaded page is not an empty workspace: a batch
+can take the whole first page — the day's work streams, say — while older ones
+sit beyond the cursor. The landing then asks the directory query for its next
+page and keeps its opening state until a candidate arrives or the pages run
+out. It requests a page once per change to the list rather than once per
+settled fetch, because `fetchMore` leaves its cursor in place after a failed
+page; re-requesting on settle would retry that page forever. A failed page
+therefore waits, and the socket's own delivery of the archive's tombstones is
+what changes the list and asks again.
+
 The one deliberate exception is the inert composer route a cross-workspace deep
 link parks on while its resource action resolves. Landing there would open and
 record a visit to an unrelated room in the new workspace a moment before the
@@ -356,6 +366,13 @@ reopening and thereby reading a work stream just marked unread, was the wrong
 half of that inconsistency to keep. The cross-workspace deep link's inert
 composer route is unchanged; a landing there would visit an unrelated room
 before the link's destination arrives.
+
+Review found two gaps in the first cut. The not-found screen set the hash,
+which pushes, so Back returned to the route that had nothing to show; it now
+leaves through the same hook. And a skip list covering every loaded page read
+as an empty workspace while more pages existed, so the landing now pages past
+skipped rows before opening the composer, requesting once per list change so
+a failed page cannot loop.
 
 ### 2026-09-08 — A moved row travels to its new section
 
