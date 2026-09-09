@@ -14,7 +14,11 @@ it is written against a small contract — keyed rows under a scroll box — so
 that a second list could take it without a second implementation. The
 transcript's own arrival motion in `message-feed.tsx` (`data-arrival-id`) is a
 different thing, an entrance for a new message rather than a move, and stays
-where it is.
+where it is. So is the sidebar *box* travelling between its expanded and
+collapsed widths, which is a CSS transition on the width itself and is owned by
+[`conversation-surfaces.md`](conversation-surfaces.md); the rows inside it are
+re-laid-out rather than animated when that happens, which is what naming the
+compact toggle as the layout key does.
 
 Read this before changing when a sidebar row animates, how long any part of the
 choreography takes, or before adding motion to another list.

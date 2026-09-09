@@ -43,6 +43,45 @@ describe('secondary surface focus and layout', () => {
   });
 });
 
+/**
+ * Collapsing a sidebar is the same state change however it was asked for — the
+ * edge double-clicked, the toolbar button, or `⌘B` — so the motion is attached
+ * to the width itself rather than to any one of those handlers, and none of
+ * them has to remember to animate. What that costs is a drag: it writes the
+ * same width many times a second and must land on the pointer, so the gesture
+ * takes its own channel back out for as long as it lasts. These check that the
+ * two halves are still both there, since either alone is a defect that looks
+ * like a working feature — no transition is the cut this replaced, and a
+ * transition left on during a drag is a sidebar that trails the pointer.
+ */
+describe('sidebar collapse motion', () => {
+  it('transitions the navigation width alongside the rail, and drops it for a drag', () => {
+    // Interpolating a custom property at all requires the syntax be declared;
+    // an unregistered one switches over at the halfway point.
+    expect(stylesheet).toMatch(/@property --av-cmp-sidebar-width \{\n {2}syntax: '<length>';/u);
+    // `.workspace-shell` is declared twice; this reads the one that carries the
+    // width channels rather than whichever the rule helper reaches first.
+    expect(stylesheet).toContain(
+      'transition: --rail-width 240ms cubic-bezier(.22, 1, .36, 1),'
+      + ' --av-cmp-sidebar-width var(--sidebar-collapse-motion);',
+    );
+    // The rail is restated rather than left out, so suppressing one channel
+    // during a drag does not silently take the other with it.
+    expect(rule('.workspace-shell:has(.sidebar.is-resizing)'))
+      .toBe(' transition-property: --rail-width; ');
+  });
+
+  it('transitions the work-stream sidebar on the one property that sizes it', () => {
+    expect(rule('.workstream-context-sidebar'))
+      .toContain('transition: flex-basis var(--sidebar-collapse-motion)');
+    expect(rule('.workstream-context-sidebar.is-resizing')).toContain('transition: none');
+  });
+
+  it('spends one duration on both sidebars', () => {
+    expect(rule(':root')).toContain('--sidebar-collapse-motion: 240ms cubic-bezier(.22, 1, .36, 1);');
+  });
+});
+
 describe('work-stream context sidebar layout', () => {
   it('keeps the transcript flexible and anchors the drag target to its panel', () => {
     expect(rule('.conversation-layout')).toContain('display: flex');

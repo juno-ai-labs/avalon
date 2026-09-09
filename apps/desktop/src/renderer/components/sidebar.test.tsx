@@ -274,6 +274,31 @@ describe('Sidebar work-stream markers', () => {
     expect(useUiStore.getState().sidebarCollapsed).toBe(false);
   });
 
+  // The width animates because the width itself is transitioned, and a drag
+  // takes that transition off for the length of the gesture. A double-click is
+  // two grabs of the same handle, so the second release has to have put it back
+  // before the toggle lands — otherwise the sidebar jumps to its collapsed
+  // width and the animation is missing on exactly the gesture that asks for it,
+  // with nothing else to say so.
+  it('leaves the resize suppression off when a double-click on the edge toggles', () => {
+    useUiStore.getState().setSidebarCollapsed(false);
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} conversationOnly automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
+    const edge = screen.getByRole('separator', { name: 'Resize navigation' });
+    edge.setPointerCapture = vi.fn();
+    const navigation = screen.getByRole('complementary', { name: 'Rally navigation' });
+
+    for (const pointerId of [7, 8]) {
+      fireEvent.pointerDown(edge, { button: 0, clientX: 300, pointerId });
+      expect(navigation).toHaveClass('is-resizing');
+      fireEvent.pointerUp(window, { pointerId });
+    }
+
+    expect(navigation).not.toHaveClass('is-resizing');
+    fireEvent.doubleClick(edge);
+    expect(useUiStore.getState().sidebarCollapsed).toBe(true);
+    expect(navigation).not.toHaveClass('is-resizing');
+  });
+
   it('names compact links and connects their hover descriptions to the link', async () => {
     const item = workstream('compact-preview', 'Named compact destination', 'completed');
     render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} compact conversationOnly automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[item]} /></Tooltip.Provider></MemoryRouter>);

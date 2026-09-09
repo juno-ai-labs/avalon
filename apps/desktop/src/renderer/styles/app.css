@@ -17,6 +17,14 @@
      it does not have to know which platform it is on. `docs/assumptions.md`
      item 25 has the reasoning and the rejected alternative. */
   --window-controls-inset: 0px;
+
+  /* How a sidebar travels between its open and collapsed widths. Not an `--av-`
+     token: no theme has an opinion about it, and it is stated once here because
+     both sidebars spend it and a collapse should read the same whichever edge
+     it started at. The width itself is the only thing that moves — the pane
+     beside it makes room over the same span because it is measured from the
+     same custom property. */
+  --sidebar-collapse-motion: 240ms cubic-bezier(.22, 1, .36, 1);
 }
 
 * {
@@ -626,6 +634,20 @@ pre {
   border-right: var(--av-sys-size-border-hairline) solid var(--av-cmp-sidebar-border);
 }
 
+/* Registered so the navigation's width can be transitioned rather than only
+   swapped. An unregistered custom property is a token stream to the engine and
+   interpolates by switching over at the halfway point, which is the cut this
+   animation exists to remove; declaring the syntax makes it a length the engine
+   can walk. The transition itself lives on `.workspace-shell`, the element the
+   property is written to, alongside the right rail's — one channel carrying the
+   width means the panel, the grab handle beside it, the room `.main-pane`
+   leaves for it, and the composer centred over that room all move together,
+   instead of four rules that have to be kept in step by hand. */
+@property --av-cmp-sidebar-width {
+  syntax: '<length>';
+  inherits: true;
+  initial-value: 280px;
+}
 .sidebar {
   bottom: 0;
   display: flex;
@@ -2693,7 +2715,15 @@ pre {
 
 .conversation-layout { display: flex; height: 100%; min-width: 0; }
 .conversation-layout > .workstream-screen { flex: 1; }
-.workstream-context-sidebar { background: var(--av-cmp-sidebar-background); border-right: 1px solid var(--av-cmp-sidebar-border); display: flex; flex: 0 0 280px; flex-direction: column; min-height: 0; min-width: 0; position: relative; }
+/* This sidebar is a flex child of the conversation layout rather than a fixed
+   panel measured from a shell property, so `flex-basis` is the one channel its
+   width is written to and the one thing transitioned. The transcript beside it
+   takes the remaining space and so travels with it for free. Same duration as
+   the navigation's, from the same custom property: collapsing either edge is
+   one gesture with one answer. */
+.workstream-context-sidebar { background: var(--av-cmp-sidebar-background); border-right: 1px solid var(--av-cmp-sidebar-border); display: flex; flex: 0 0 280px; flex-direction: column; min-height: 0; min-width: 0; position: relative; transition: flex-basis var(--sidebar-collapse-motion); }
+/* As above: a drag tracks the pointer, so the gesture opts its own width out. */
+.workstream-context-sidebar.is-resizing { transition: none; }
 .workstream-context-resizer:hover > .sidebar-resizer-handle { opacity: 1; }
 .conversation-layout:has(> .workstream-context-sidebar.is-resizing) { cursor: col-resize; user-select: none; }
 .workstream-context-sidebar.is-compact { flex-basis: 96px; }
@@ -3961,7 +3991,15 @@ body:has(.resource-lightbox) .menu-content { z-index: 1004; }
    remembered width, so a handle or a header cannot part company with a panel the
    window has capped. Each breakpoint that changes the room available restates
    it. */
-.workspace-shell { --rail-max-slot: max(280px, calc(100vw - var(--av-cmp-sidebar-width) - var(--workstream-sidebar-width, 0px) - var(--conversation-min-width))); --rail-slot: min(var(--rail-width), var(--rail-max-slot)); transition: --rail-width 240ms cubic-bezier(.22, 1, .36, 1); }
+.workspace-shell { --rail-max-slot: max(280px, calc(100vw - var(--av-cmp-sidebar-width) - var(--workstream-sidebar-width, 0px) - var(--conversation-min-width))); --rail-slot: min(var(--rail-width), var(--rail-max-slot)); transition: --rail-width 240ms cubic-bezier(.22, 1, .36, 1), --av-cmp-sidebar-width var(--sidebar-collapse-motion); }
+/* A drag has to track the pointer exactly, so for the length of the gesture the
+   navigation's width channel leaves the transitioned set and the sidebar sits
+   where the pointer is. Only that channel: the rail is restated rather than
+   dropped with it, so a rail closing on its own keeps its own motion even if a
+   sidebar drag were somehow live at the same moment. The class is on the
+   sidebar, which is what knows it is being dragged, so the shell reads it back
+   with `:has()` rather than the drag having to reach up and set a second flag. */
+.workspace-shell:has(.sidebar.is-resizing) { transition-property: --rail-width; }
 /* The column is named `minmax(0, 1fr)` rather than left implicit. An `auto`
    column's minimum is the items' min-content, and a markdown document's
    min-content is its longest unwrapped line — so the panel grew with the file
