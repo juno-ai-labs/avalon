@@ -743,19 +743,38 @@ describe('message header meta typography', () => {
   });
 
   /**
-   * The identity line over a person's turn stops where the bubble's top edge
-   * does, so the name and time sit over the flat of the pill rather than over
-   * the round of its corner. That is one number in two rules, and a literal
-   * copied into either drifts the first time the corner is tuned — a few pixels
-   * on one line, which is exactly what a screenshot pass looks past.
+   * The identity line over a person's turn, and the action row under it, stop
+   * where the bubble's top edge does, so the name, the time and the actions sit
+   * over the flat of the pill rather than over the round of its corner. That is
+   * one number in four rules, and a literal copied into any of them drifts the
+   * first time the corner is tuned — a few pixels on one line, which is exactly
+   * what a screenshot pass looks past.
    */
-  it('insets the human identity line by the bubble corner it is named once for', () => {
+  it('insets the human identity line and action row by the bubble corner they are named once for', () => {
     const block = rule(':is(.workstream-screen, .automation-chat-surface) .human-message');
     expect(block).toContain('--turn-bubble-radius:');
     expect(rule(':is(.workstream-screen, .automation-chat-surface) .human-message-bubble'))
       .toContain('border-radius: var(--turn-bubble-radius);');
     expect(rule(':is(.workstream-screen, .automation-chat-surface) .human-message > header'))
       .toContain('padding-inline-end: var(--turn-bubble-radius);');
+    expect(rule(':is(.workstream-screen, .automation-chat-surface) .human-message .human-message-actions'))
+      .toContain('padding-inline-end: var(--turn-bubble-radius);');
+  });
+
+  /**
+   * A theme that wants a different corner restates the token, not the corner.
+   * The work-stream theme wrote `18px` onto the bubble and onto the header's
+   * padding instead, which held only while those two literals agreed: the
+   * action row, reading the token, came out inset by the shared 14px against an
+   * 18px corner.
+   */
+  it('lets the work-stream theme move the corner by the token rather than by a literal', () => {
+    const themed = rule('.workstream-screen .human-message');
+    expect(themed).not.toBeNull();
+    expect(themed).toContain('--turn-bubble-radius:');
+    expect(rule('.workstream-screen .human-message-bubble'))
+      .toContain('border-radius: var(--turn-bubble-radius);');
+    expect(rule('.workstream-screen .human-message > header')).not.toContain('padding-right');
   });
 });
 
