@@ -242,6 +242,26 @@ the file contents it reads today.
 
 ## Decision log
 
+### 2026-09-09 — The gate counts delivered blocks only
+
+**Decided:** The known-resident set the Terminal probe is given holds only
+blocks the model has seen: recorded, delivered at a settled step, and current.
+A block recorded by an earlier call in the same batch and not yet delivered is
+not in it, so every mutation beneath an unread file in that batch is refused
+with `instructions_pending`, and the retry after the settled step proceeds.
+
+**Why:** Review of the implementing pull request found that a recorded but
+undelivered block counted as resident, so a second mutation issued in the same
+tool-call batch as the refused one went through before the model could have
+read the instructions. The gate exists to put the reading before the mutation;
+counting a message the model has not received defeated it.
+
+**Changes:** The **Agent behavior** sentence "a second refusal for the same
+directory in one residency cycle cannot occur" is superseded: it cannot occur
+across batches, and does occur within one. Decision 2's "the retry finds them
+resident" holds for the retry after the settled step, which is the only retry
+the model can make.
+
 ### 2026-09-09 — The implementing change merges with both limits still open
 
 **Decided:** The product owner directed that the implementing pull request

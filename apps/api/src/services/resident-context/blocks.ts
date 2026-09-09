@@ -153,6 +153,17 @@ function omittedLine(block: Pick<ResidentContextBlock, "kind" | "blockId">): str
   return `Omitted: ${policy.locator(block.blockId)} exceeds the instruction budget; read it with ${policy.readerTool}`;
 }
 
+/**
+ * Root to leaf, then by id: the root's block sorts before every nested one
+ * whatever its name, so it is the last to be dropped from a bounded section.
+ */
+export function compareBlockIds(left: Pick<ResidentContextBlock, "blockId">, right: Pick<ResidentContextBlock, "blockId">): number {
+  const depth = (id: string) => id.split("/").length;
+  const byDepth = depth(left.blockId) - depth(right.blockId);
+  if (byDepth !== 0) return byDepth;
+  return left.blockId < right.blockId ? -1 : left.blockId > right.blockId ? 1 : 0;
+}
+
 /** The one-line notice used when naming every omitted block would itself not fit. */
 export function omittedCountLine(kind: ResidentContextKind, count: number): string {
   return `Omitted: ${count} beyond the instruction budget; read them with ${RESIDENT_CONTEXT_KIND_POLICIES[kind].readerTool}`;
@@ -210,7 +221,7 @@ export function renderResidentContextSections(
   for (const kind of RESIDENT_CONTEXT_KINDS) {
     const resident = blocks
       .filter((block) => block.kind === kind && block.residency === "system")
-      .sort((left, right) => left.blockId < right.blockId ? -1 : left.blockId > right.blockId ? 1 : 0);
+      .sort(compareBlockIds);
     if (resident.length === 0) continue;
     sections.push(renderKindSection(kind, resident, maxSectionBytes));
   }

@@ -1288,7 +1288,12 @@ describe("Daytona Terminal runtime", () => {
       });
       expect(files.has("/workspace/src/new.txt")).toBe(false);
       expect(ledger.pendingDeliveries().map((delivery) => delivery.block.blockId)).toEqual(["AGENTS.md", "src/AGENTS.md"]);
-      // Recorded is resident: the retry proceeds even before the settled step delivers.
+      // Recorded is not yet seen: a second mutation in the same batch is refused
+      // the same way, and nothing is recorded twice.
+      await expect(runtime.writeFile(context, "src/new.txt", bytes)).rejects.toMatchObject({ code: "instructions_pending" });
+      expect(ledger.allBlocks()).toHaveLength(2);
+      // The settled step delivers; the retry after it proceeds.
+      ledger.markDeliveredInTransaction(ledger.pendingDeliveries(), Date.now());
       await expect(runtime.writeFile(context, "src/new.txt", bytes)).resolves.toMatchObject({ created: true });
       expect(files.has("/workspace/src/new.txt")).toBe(true);
       // An edit's read and a patch check the same way; both are resident now.
@@ -1327,6 +1332,8 @@ describe("Daytona Terminal runtime", () => {
       await expect(runtime.runCommand(context, { command: "echo hi", timeoutMs: 1_000 }))
         .rejects.toMatchObject({ code: "instructions_pending" });
       expect(workstreamObjectGet(objectStore, "SELECT COUNT(*) AS count FROM terminal_tasks")).toEqual({ count: 0 });
+      expect(ledger.pendingDeliveries()).toHaveLength(1);
+      ledger.markDeliveredInTransaction(ledger.pendingDeliveries(), Date.now());
       expect(ledger.residentBlocks({ kind: "repository_instructions" })).toHaveLength(1);
       await expect(runtime.runCommand(context, { command: "echo hi", timeoutMs: 1_000 })).resolves.toMatchObject({ state: "completed" });
 
