@@ -743,6 +743,22 @@ describe('message header meta typography', () => {
   });
 
   /**
+   * The substream control appears in both action rows, so the rows share one set
+   * of button metrics. Restating them per row is not merely duplication: inside
+   * the agent's row `.agent-message-actions button` outranks the control's own
+   * class, so a per-row copy silently wins there and loses under the bubble, and
+   * tuning one row moves the control on Rally's turn while leaving it behind on
+   * the person's.
+   */
+  it('gives both action rows one set of button metrics', () => {
+    const shared = rule(':is(.agent-message-actions, .human-message-actions) button');
+    expect(shared).not.toBeNull();
+    expect(shared).toContain('font-size: 10px;');
+    expect(shared).toContain('padding: 2px;');
+    expect(rule('.agent-message-actions button')).toBeNull();
+  });
+
+  /**
    * The identity line over a person's turn, and the action row under it, stop
    * where the bubble's top edge does, so the name, the time and the actions sit
    * over the flat of the pill rather than over the round of its corner. That is
@@ -774,7 +790,11 @@ describe('message header meta typography', () => {
     expect(themed).toContain('--turn-bubble-radius:');
     expect(rule('.workstream-screen .human-message-bubble'))
       .toContain('border-radius: var(--turn-bubble-radius);');
-    expect(rule('.workstream-screen .human-message > header')).not.toContain('padding-right');
+    // On the value, not one spelling of the property: a literal creeping back
+    // as `padding-inline-end: 18px` — now the file's usual spelling, and so the
+    // likelier regression — would pass a check that only banned `padding-right`.
+    expect(rule('.workstream-screen .human-message > header'))
+      .not.toMatch(/padding(-right|-inline-end)?:/u);
   });
 });
 
