@@ -9,6 +9,7 @@ import {
   AutomationRunDefinitionV1Schema,
   AutomationRunSchema,
   AutomationSetEvaluatorRulesInputV1Schema,
+  DemoSeedSchema,
   automationAcceptanceSelections,
   sidekickLoadable,
   sidekickReceivesEmail,
@@ -26,6 +27,7 @@ import {
   type AutomationRunDefinitionV1,
   type AutomationRunTriggerV1,
   type AutomationScope,
+  type DemoSeed,
   withoutUnusableAutomationResourceIds,
 } from "@rally/contracts";
 import type {
@@ -88,6 +90,7 @@ import {
   AutomationOwningRoomArchivedRequestSchema,
   AutomationRunNowRequestSchema,
   AutomationRunRequestSchema,
+  AutomationRunSeededRequestSchema,
   AutomationSubmitDefinitionRequestSchema,
   type AutomationActor,
   type AutomationActorRequest,
@@ -97,6 +100,7 @@ import {
   type AutomationOwningRoomArchivedRequest,
   type AutomationRunNowRequest,
   type AutomationRunRequest,
+  type AutomationRunSeededRequest,
   type AutomationSubmitDefinitionRequest,
 } from "./automation-do-protocol";
 import {
@@ -227,6 +231,8 @@ interface RunRow extends Record<string, SqlStorageValue> {
   state: RunState;
   summary: string | null;
   opening_json: string | null;
+  /** A demo seed's script for this run's model bytes; null for every other run. */
+  seed_json: string | null;
   created_at: number;
   started_at: number | null;
   completed_at: number | null;
@@ -344,6 +350,17 @@ export const AUTOMATION_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
     // because the gate answers during constructor recovery, before anything
     // else this object could consult is admitted.
     ...OBJECT_RETIREMENT_SCHEMA_STATEMENTS,
+  ],
+}, {
+  version: 6,
+  description: "where a scripted run's model bytes come from",
+  statements: [
+    // Null on every run but a seeded one, which is every run in production:
+    // only `runSeeded` writes it, and only a demo's seeder calls that. It is a
+    // run-scoped fact, so it lives on the run rather than on the definition or
+    // the schedule, and `provisionRun` hands it to the loop the same way it
+    // hands over the trigger.
+    `ALTER TABLE runs ADD COLUMN seed_json TEXT CHECK (seed_json IS NULL OR json_valid(seed_json))`,
   ],
 }];
 
@@ -821,6 +838,43 @@ export class SidekickDO extends ConversationParentDurableObject {
       `manual:${request.idempotencyKey}`,
       { kind: "manual", requestedByUserId: asUserId(request.actor.userId) },
       null,
+    );
+    return { runId: admitted.runId, reused: admitted.reused };
+  }
+
+  /**
+   * Run once from a script instead of from a model.
+   *
+   * A demo workspace is seeded with a Sidekick that has already produced one
+   * briefing, and that briefing is produced by an ordinary run: the same
+   * admission, provisioning, Bind loop, tool surface and settlement as a run
+   * somebody starts by hand. The only thing the seed replaces is where the
+   * model's bytes come from, and it replaces it exactly where a seeded message
+   * does — the run's execution context, read by the harness.
+   *
+   * Separate from `runNow` rather than an optional field on it, because
+   * `runNow` is what `POST /sidekicks/:id/run` reaches: a seed on that request
+   * shape would be one deserialization away from letting a member script their
+   * own Sidekick's output and keep the result as history. Nothing routes a
+   * client body here. The trigger recorded is `manual` and names the author,
+   * which is what actually happened; inventing a schedule occurrence the
+   * schedule never fired would be the fabricated history this feature refuses
+   * everywhere else. `docs/demo-workspaces.md` owns the seeding rules.
+   */
+  async runSeeded(input: AutomationRunSeededRequest): Promise<{ runId: string; reused: boolean }> {
+    await this.initialized;
+    const request = AutomationRunSeededRequestSchema.parse(input);
+    const row = this.assertAutomation(request.workspaceId, request.automationId);
+    this.assertManager(row, request.actor);
+    if (row.lifecycle !== "active") throw new ApiError(409, "automation_not_active", "Only an active Sidekick can run");
+    if (request.seed.assistant === null) {
+      throw new ApiError(422, "demo_seed_run_without_script", "A seeded run needs a turn to answer with");
+    }
+    const admitted = await this.admitOccurrence(
+      `seed:${request.seed.packVersion}:${request.seed.actionId}`,
+      { kind: "manual", requestedByUserId: asUserId(request.actor.userId) },
+      null,
+      request.seed,
     );
     return { runId: admitted.runId, reused: admitted.reused };
   }
@@ -1343,6 +1397,7 @@ export class SidekickDO extends ConversationParentDurableObject {
     occurrenceKey: string,
     trigger: AutomationRunTriggerV1,
     opening: { textContent: string; structuredContent: Record<string, unknown>; resourceId: string | null } | null,
+    seed: DemoSeed | null = null,
   ): Promise<{ runId: string; reused: boolean }> {
     const row = this.row();
     if (!row || row.accepted_definition_revision === null) {
@@ -1353,8 +1408,8 @@ export class SidekickDO extends ConversationParentDurableObject {
     const inserted = this.state.storage.sql.exec<{ run_id: string }>(
       `INSERT OR IGNORE INTO runs
          (run_id, occurrence_key, trigger_json, definition_revision, harness_run_id, state,
-          summary, opening_json, created_at, started_at, completed_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 'pending', NULL, ?, ?, NULL, NULL, ?)
+          summary, opening_json, seed_json, created_at, started_at, completed_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'pending', NULL, ?, ?, ?, NULL, NULL, ?)
        RETURNING run_id`,
       runId,
       occurrenceKey,
@@ -1362,6 +1417,7 @@ export class SidekickDO extends ConversationParentDurableObject {
       row.accepted_definition_revision,
       uuidV7(now + 1),
       opening ? JSON.stringify(opening) : null,
+      seed ? JSON.stringify(seed) : null,
       now,
       now,
     ).toArray()[0];
@@ -1502,6 +1558,9 @@ export class SidekickDO extends ConversationParentDurableObject {
         trigger: definition.trigger,
       },
       executionPrincipal,
+      // A seeded run answers its own provider requests from here; every other
+      // run carries nothing and reaches the real provider. See `runSeeded`.
+      ...(run.seed_json ? { seed: DemoSeedSchema.parse(JSON.parse(run.seed_json)) } : {}),
       reason: definition.trigger.kind,
     });
     this.state.storage.sql.exec(

@@ -28,8 +28,10 @@ import {
   type DemoSeedReceipt,
   type DemoSeedSession,
 } from "../src/services/demo-seeder";
+import { AutomationService } from "../src/services/automation-service";
 import { WorkstreamObjectClient } from "../src/services/workstream-object-client";
 import {
+  DEMO_BRIEFING_PROSE,
   DEMO_MARCUS_ID,
   DEMO_MEMO_TITLE,
   DEMO_OPENING_PROSE,
@@ -37,7 +39,10 @@ import {
   DEMO_PRESENTER_ID,
   DEMO_PRIYA_ID,
   DEMO_QUESTION,
+  DEMO_SIDEKICK_NAME,
+  DEMO_SIDEKICK_PACK,
   demoRoomStub,
+  demoRunStub,
   demoSeedEnv,
   openDemoTestSession,
   playDemoAction,
@@ -78,7 +83,7 @@ describe("seeding a pack", () => {
       ["message", null],
       ["message", "needs_input"],
     ]);
-    const workstreamId = receipts[0]!.workstreamId;
+    const workstreamId = receipts[0]!.workstreamId!;
     expect(receipts.every((receipt) => receipt.workstreamId === workstreamId)).toBe(true);
     expect(receipts[1]!.resourceId).not.toBeNull();
     expect(receipts[4]!.elicitationId).not.toBeNull();
@@ -160,10 +165,57 @@ describe("seeding a pack", () => {
     const replayed = await playDemoAction(seed, marcus!);
     expect(replayed.turnId).toBe(said.turnId);
 
-    const { transcript } = await roomClient(seed, opened.workstreamId, DEMO_MARCUS_ID).boot();
+    const { transcript } = await roomClient(seed, opened.workstreamId!, DEMO_MARCUS_ID).boot();
     const humans = transcript.ranges.flatMap((range) => range.turns)
       .filter((turn) => turn.entryKind === "conversation" && turn.actor === "human");
     expect(humans).toHaveLength(2);
     expect(provider.calls).toEqual([]);
   }, 60_000);
+
+  it("publishes a scheduled Sidekick, offers it to every member, and gives it one briefing", async () => {
+    const seed = await openDemoTestSession(DEMO_SIDEKICK_PACK);
+    const receipts: DemoSeedReceipt[] = [];
+    for (const action of seed.actions) receipts.push(await playDemoAction(seed, action));
+    const published = receipts.at(-1)!;
+    expect(published).toMatchObject({
+      kind: "sidekick",
+      room: null,
+      workstreamId: null,
+      runOutcome: "completed",
+    });
+    expect(published.sidekickId).not.toBeNull();
+    expect(published.sidekickRunId).not.toBeNull();
+
+    // Published, not merely drafted, and its schedule armed rather than just
+    // accepted: the next run is the pack's 9am, read in the zone the pack
+    // named rather than in anybody's account setting. The directory row a
+    // member is offered arrives afterwards through the effect Queue, which is
+    // the readiness barrier's wait, not this one.
+    const author = new AutomationService(demoSeedEnv(), seed.auth.get(DEMO_PRIYA_ID)!);
+    const detail = await author.detail(published.sidekickId!);
+    expect(detail).toMatchObject({ name: DEMO_SIDEKICK_NAME, scope: "workspace", lifecycle: "active" });
+    expect(detail.acceptedDefinitionRevision).toBe(1);
+    expect(detail.currentDefinition?.triggers).toEqual([{
+      type: "calendar",
+      rrule: "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR;BYHOUR=9;BYMINUTE=0;BYSECOND=0",
+      timezone: "America/Los_Angeles",
+      summary: "Every weekday at 9:00am Pacific",
+    }]);
+    expect(detail.nextRunAt).not.toBeNull();
+    expect(new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/Los_Angeles", hour: "2-digit", minute: "2-digit", hour12: false,
+    }).format(new Date(detail.nextRunAt!))).toBe("09:00");
+
+    // The briefing is an ordinary run of the Sidekick, answered from the pack
+    // rather than from the provider the double stands behind.
+    const turns = await runInDurableObject(
+      demoRunStub(published.sidekickId!, published.sidekickRunId!),
+      (_instance, state) => state.storage.sql.exec<{ role: string; content: string | null }>(
+        `SELECT role, content FROM canonical_conversation_turn_details ORDER BY sequence_number`,
+      ).toArray(),
+    );
+    expect(turns.filter((turn) => turn.role === "assistant").map((turn) => turn.content))
+      .toEqual([DEMO_BRIEFING_PROSE]);
+    expect(provider.calls).toEqual([]);
+  }, 90_000);
 });
