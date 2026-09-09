@@ -991,7 +991,14 @@ export function Sidebar({
     await bridge.openExternal(new URL(path, `${webBaseUrl.replace(/\/$/u, '')}/`).toString());
   }, []);
   const [resizing, setResizing] = useState(false);
+  // Held arrow keys are the keyboard's drag: they write the width repeatedly,
+  // and animating each 16px step leaves the edge trailing the width the
+  // threshold is judged against, so the sidebar collapses at a width the
+  // reader cannot see. Not `resizing`, which also arms the window pointer
+  // listeners — a mouse moved during a keyboard resize would grab the edge.
+  const [keyResizing, setKeyResizing] = useState(false);
   const [dragWidth, setDragWidth] = useState<number | null>(null);
+  const panel = useRef<HTMLElement>(null);
   // The handle stands in the strip beside the sidebar rather than on its edge,
   // so the pointer's own position is not the sidebar's width. Holding the
   // difference from the moment of the grab keeps the edge from jumping out to
@@ -1617,8 +1624,9 @@ export function Sidebar({
       {sidebarOpen && <button aria-label="Close navigation" className="sidebar-scrim" onClick={() => setSidebarOpen(false)} type="button" />}
       <aside
         aria-label="Rally navigation"
-        className={clsx('sidebar', compact && 'is-compact', sidebarOpen && 'is-mobile-open', resizing && 'is-resizing')}
+        className={clsx('sidebar', compact && 'is-compact', sidebarOpen && 'is-mobile-open', (resizing || keyResizing) && 'is-resizing')}
         data-sidebar-collapsed={compact ? '' : undefined}
+        ref={panel}
       >
         <div className="sidebar-titlebar window-drag">
           <IconButton className="window-no-drag mobile-only" label="Close navigation" onClick={() => setSidebarOpen(false)}>
@@ -1971,7 +1979,10 @@ export function Sidebar({
           aria-valuenow={effectiveSidebarWidth}
           className={clsx('sidebar-resizer', pointerNearEdge && 'is-near')}
           onDoubleClick={() => { if (!forcedCompact) setSidebarCollapsed(!sidebarCollapsed); }}
+          onBlur={() => setKeyResizing(false)}
           onKeyDown={(event) => {
+            if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+            setKeyResizing(true);
             if (event.key === 'ArrowLeft' && !compact) {
               resizeSidebar(sidebarWidth > MIN_SIDEBAR_WIDTH
                 ? sidebarWidth - 16
@@ -1979,12 +1990,20 @@ export function Sidebar({
             }
             if (event.key === 'ArrowRight') resizeSidebar(compact ? MIN_SIDEBAR_WIDTH : sidebarWidth + 16);
           }}
+          onKeyUp={() => setKeyResizing(false)}
           onPointerDown={(event) => {
             if (event.button !== 0) return;
             event.preventDefault();
             event.currentTarget.focus();
             event.currentTarget.setPointerCapture(event.pointerId);
-            grabOffset.current = event.clientX - effectiveSidebarWidth;
+            // Measure the panel rather than reading the width state. The handle
+            // is drawn at the sidebar's trailing edge, and while a collapse or
+            // expand is still travelling that edge is not yet the width the
+            // state holds — an offset taken from the state would be wrong by
+            // however far the animation had left to go, and stay wrong for the
+            // whole drag. The work-stream sidebar's handle already measures.
+            const edge = panel.current?.getBoundingClientRect().right;
+            grabOffset.current = event.clientX - (edge ?? effectiveSidebarWidth);
             setResizing(true);
           }}
           role="separator"

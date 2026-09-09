@@ -74,6 +74,29 @@ describe('WorkstreamSidebar', () => {
     expect(edge).toHaveAttribute('aria-valuenow', '280');
   });
 
+  // As for the navigation: `flex-basis` is transitioned, and the drag takes that
+  // transition off while it tracks the pointer. The second release of a
+  // double-click has to have restored it before the toggle lands, or the one
+  // gesture that asks for the animation is the one that does not get it.
+  it('leaves the resize suppression off when a double-click on the edge toggles', () => {
+    setup();
+    const edge = screen.getByRole('separator', { name: 'Resize work-stream sidebar' });
+    edge.setPointerCapture = vi.fn();
+    edge.releasePointerCapture = vi.fn();
+    const sidebar = screen.getByRole('complementary', { name: 'Work-stream sidebar' });
+
+    for (const pointerId of [7, 8]) {
+      fireEvent.pointerDown(edge, { button: 0, clientX: 563, pointerId });
+      expect(sidebar).toHaveClass('is-resizing');
+      fireEvent.pointerUp(edge, { pointerId });
+    }
+
+    expect(sidebar).not.toHaveClass('is-resizing');
+    fireEvent.doubleClick(edge);
+    expect(edge).toHaveAttribute('aria-valuenow', '96');
+    expect(sidebar).not.toHaveClass('is-resizing');
+  });
+
   it('opens artifacts only on click with the clicked button as the preview focus return target', () => {
     const { onOpenArtifact } = setup();
     expect(onOpenArtifact).not.toHaveBeenCalled();
