@@ -1,12 +1,23 @@
-/* Account accents consume the existing palette; status tokens stay semantic. */
-html[data-personal-color='blue'] { --personal-color: var(--av-sys-color-project-blue); }
-html[data-personal-color='teal'] { --personal-color: var(--av-sys-color-project-cyan); }
-html[data-personal-color='green'] { --personal-color: var(--av-sys-color-project-green); }
-html[data-personal-color='amber'] { --personal-color: var(--av-sys-color-project-yellow); }
+/* Account accents consume the palette directly; status tokens stay semantic.
+   One selector per option of `PersonalColorSchema`, resolving to exactly the
+   token `personalColorKey()` returns — the avatar, the message bubble and the
+   app chrome all have to land on the same fill, and this is the only one of the
+   three written by hand. The four retired names follow their alias.
+   `palette.css.node.test.ts` checks every option against the contract, because
+   a missing selector leaves `--personal-color` unset and the `color-mix()`
+   below silently yields nothing rather than failing loudly. */
+html[data-personal-color='rose'] { --personal-color: var(--av-sys-color-project-rose); }
 html[data-personal-color='orange'] { --personal-color: var(--av-sys-color-project-orange); }
-html[data-personal-color='rose'] { --personal-color: var(--av-sys-color-project-pink); }
-html[data-personal-color='violet'] { --personal-color: var(--av-sys-color-project-purple); }
-html[data-personal-color='slate'] { --personal-color: var(--av-sys-color-project-gray); }
+html[data-personal-color='lime'] { --personal-color: var(--av-sys-color-project-lime); }
+html[data-personal-color='emerald'] { --personal-color: var(--av-sys-color-project-emerald); }
+html[data-personal-color='blue'] { --personal-color: var(--av-sys-color-project-blue); }
+html[data-personal-color='violet'] { --personal-color: var(--av-sys-color-project-violet); }
+html[data-personal-color='fuchsia'] { --personal-color: var(--av-sys-color-project-fuchsia); }
+html[data-personal-color='black'] { --personal-color: var(--av-sys-color-project-black); }
+html[data-personal-color='teal'] { --personal-color: var(--av-sys-color-project-emerald); }
+html[data-personal-color='green'] { --personal-color: var(--av-sys-color-project-emerald); }
+html[data-personal-color='amber'] { --personal-color: var(--av-sys-color-project-orange); }
+html[data-personal-color='slate'] { --personal-color: var(--av-sys-color-project-black); }
 html[data-personal-color] {
   --av-cmp-row-background-selected: color-mix(in srgb, var(--personal-color) 17%, transparent);
   --av-sys-color-accent-base: color-mix(in srgb, var(--personal-color) 35%, var(--av-sys-color-text-default));

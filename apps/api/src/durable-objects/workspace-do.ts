@@ -1032,7 +1032,7 @@ function isWorkspaceScheduleAlarmKind(kind: string): kind is WorkspaceScheduleTa
  * that they diverged. Each migration therefore pins the list as it stood when
  * that migration shipped, and widening the vocabulary is a new migration.
  *
- * `projects-palette.test.ts` asserts the newest snapshot still covers
+ * `workspace-project-palette.test.ts` asserts the newest snapshot still covers
  * `PROJECT_COLOR_KEYS_STORABLE`, so adding a colour without a migration fails
  * the build rather than the insert.
  */
