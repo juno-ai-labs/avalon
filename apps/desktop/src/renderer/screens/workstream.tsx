@@ -239,7 +239,7 @@ export function WorkstreamHeader({
                 onClick={onAddParticipant}
                 type="button"
               >
-                <AvatarStack members={workstream.participants} currentUserId={currentUserId} presentUserIds={presentUserIds} showTooltip={false} />
+                <AvatarStack members={workstream.participants} currentUserId={currentUserId} presentUserIds={substreamId === '0' ? presentUserIds : []} showTooltip={false} />
                 <UserPlus aria-hidden="true" size={13} />
               </button>
             </Tooltip.Trigger>

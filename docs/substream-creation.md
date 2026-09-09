@@ -200,7 +200,9 @@ facepile. One tooltip covers the entire title-bar facepile and reads
 “Participants of <conversation name>”; per-person tooltips are suppressed there,
 including for present members. While naming is pending the tooltip uses “Participants
 of this conversation” to avoid exposing the provisional request. The header keeps
-Main’s authoritative appearance while displaying the child title and roster. The parent participant section remains in the sidebar, including while
+Main’s authoritative appearance while displaying the child title and roster.
+Child facepiles omit presence rings because workspace presence is scoped to the
+whole work stream and cannot establish that someone is viewing the private child. The parent participant section remains in the sidebar, including while
 a child is selected. Previously the compact header omitted participant controls,
 so child add/remove APIs had no direct entry point. Both locations reuse the
 participant dialog and preserve their parent or child target.
