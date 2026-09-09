@@ -1,3 +1,4 @@
+import * as Tooltip from '@radix-ui/react-tooltip';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import clsx from 'clsx';
 import {
@@ -36,7 +37,8 @@ import { AvatarStack, Badge, Button, IconButton, InlineError, Modal, SocketStatu
 import { WorkstreamGlyph } from '../components/workstream-glyph';
 import { WorkstreamAppearancePicker } from '../components/workstream-appearance-picker';
 import type { WorkstreamAppearancePatch } from '@rally/contracts';
-import { WorkstreamSidebar } from '../components/workstream-sidebar';
+import { useCachedWorkstreamAppearance } from '../lib/use-workstreams-query';
+import { WorkstreamSidebar, type SubstreamRowTarget } from '../components/workstream-sidebar';
 import { SubstreamContext } from '../components/substream-context';
 import { ConversationSurface } from './conversation-surface';
 
@@ -62,10 +64,11 @@ export {
   workstreamShowsReadyState,
 } from './conversation-surface';
 
-const RENAME_HINT = 'Double-click to rename';
+const RENAME_HINT = 'Click to rename. Press Enter to save.';
 
 export function WorkstreamHeader({
   grokBotMode = false,
+  substreamId = '0',
   workstream,
   socketState,
   onAddParticipant,
@@ -77,6 +80,7 @@ export function WorkstreamHeader({
   workspaceTarget,
 }: {
   grokBotMode?: boolean;
+  substreamId?: string;
   workstream: WorkstreamDetail;
   socketState: SocketState;
   onAddParticipant: () => void;
@@ -108,13 +112,16 @@ export function WorkstreamHeader({
   // editor would otherwise carry the previous stream's draft into the next one.
   // The ref lets an in-flight rename recognize that it is no longer the one on
   // screen: the promise it is waiting on outlives the navigation.
-  const shownWorkstreamId = useRef(workstream.id);
+  const conversationKey = `${workstream.id}:${substreamId}`;
+  const shownWorkstreamId = useRef({ key: conversationKey, visit: 0 });
+  if (shownWorkstreamId.current.key !== conversationKey) {
+    shownWorkstreamId.current = { key: conversationKey, visit: shownWorkstreamId.current.visit + 1 };
+  }
   useEffect(() => {
-    shownWorkstreamId.current = workstream.id;
     setRenameDraft(null);
     setRenameError(null);
     setRenaming(false);
-  }, [workstream.id]);
+  }, [conversationKey]);
   // Closing the editor unmounts the field, which would leave focus on the body
   // and strand a keyboard user at the top of the document. The title button
   // does not exist until the next render, so the focus call waits for it.
@@ -159,7 +166,7 @@ export function WorkstreamHeader({
     // on screen. Navigating away mid-flight otherwise lands the old stream's
     // failure under the new stream's title, or closes an editor the user has
     // since opened on it.
-    const submittedFor = workstream.id;
+    const submittedFor = shownWorkstreamId.current;
     setRenaming(true);
     setRenameError(null);
     try {
@@ -187,6 +194,7 @@ export function WorkstreamHeader({
         region: workspaceTarget.region,
         workspaceId: workspaceTarget.workspaceId,
         workstreamId: workstream.id,
+        ...(substreamId === '0' ? {} : { substreamId }),
       }));
       reportTelemetryProductIntent({
         kind: 'content_copied', contentType: 'workstream_link', resourceType: 'workstream', resourceId: workstream.id,
@@ -210,6 +218,94 @@ export function WorkstreamHeader({
   };
   const naming = useNamingSkeleton(workstream);
 
+  const titleContent = (naming ? (
+    <h1><TitleSkeleton className="title-skeleton-header" /></h1>
+  ) : renameDraft === null ? (
+    <>
+      <h1>
+        <button
+          aria-describedby={renameHintId}
+          aria-keyshortcuts="Enter F2"
+          className="workstream-title-button"
+          onClick={startRename}
+          onKeyDown={(event) => {
+            if (event.key === 'F2') {
+              event.preventDefault();
+              startRename();
+            }
+          }}
+          ref={attachTitleButton}
+          // A clipped title is unreadable anywhere else on the screen,
+          // so the tooltip leads with the name and keeps the hint under
+          // it. The tooltip is for the reader who cannot see the name:
+          // the button's accessible name is its text, which is the
+          // whole title however little of it fits, so `aria-describedby`
+          // above keeps the description down to the hint rather than
+          // letting `title` announce the name a second time.
+          title={titleClipped ? `${workstream.title}\n${RENAME_HINT}` : RENAME_HINT}
+          type="button"
+        >
+          {workstream.title}
+        </button>
+      </h1>
+      {/* Outside the heading on purpose: inside it, this text would
+          join the heading's own name and be read as part of it. */}
+      <span className="sr-only" id={renameHintId}>{RENAME_HINT}</span>
+    </>
+  ) : (
+    <form
+      className="workstream-title-edit"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void submitRename();
+      }}
+    >
+      <input
+        aria-label="Work stream name"
+        autoFocus
+        className="workstream-title-input"
+        disabled={renaming}
+        // The contract caps a title at 180, and the sidebar's dialog
+        // already stops there. Without the same cap the server
+        // rejects the save with a message that never mentions length.
+        maxLength={180}
+        onChange={(event) => {
+          setRenameDraft(event.currentTarget.value);
+          // The reason for a failed save stands in for the status
+          // line, so it cannot outlive the draft that caused it.
+          setRenameError(null);
+        }}
+        onFocus={(event) => event.currentTarget.select()}
+        onKeyDown={(event) => {
+          // While an IME is composing, Escape cancels the candidate
+          // rather than the rename — discarding the draft here would
+          // throw away a name somebody is halfway through typing,
+          // with nothing to undo it. See `../lib/ime.ts`.
+          if (isComposingKeyEvent(event.nativeEvent)) {
+            if (event.key === 'Enter') event.preventDefault();
+            return;
+          }
+          if (event.key === 'Escape') {
+            event.preventDefault();
+            cancelRename();
+          }
+        }}
+        value={renameDraft}
+      />
+      <IconButton
+        className="title-edit-save"
+        disabled={renaming || renameDraft.trim().length === 0}
+        label="Save name"
+        type="submit"
+      >
+        {renaming ? <LoaderCircle className="spin" size={15} /> : <Check size={15} />}
+      </IconButton>
+      <IconButton className="title-edit-cancel" disabled={renaming} label="Cancel rename" onClick={cancelRename}>
+        <X size={15} />
+      </IconButton>
+    </form>
+  ));
+
   if (grokBotMode) {
     return (
       <header className="grokbot-workstream-header window-drag">
@@ -223,17 +319,40 @@ export function WorkstreamHeader({
         ) : (
           <div className="grokbot-conversation-title">
               {onAppearanceChange ? <WorkstreamAppearancePicker key={workstream.id} id={workstream.id} appearance={workstream.appearance} size={20} onChange={onAppearanceChange} /> : <WorkstreamGlyph id={workstream.id} appearance={workstream.appearance} size={20} />}
-              <h1>{workstream.title}</h1>
+              {titleContent}
+              {renameError && <InlineError>{renameError}</InlineError>}
           </div>
         )}
-        {RIGHT_SIDEBAR_ENABLED && <IconButton
-          aria-pressed={showing('context')}
-          className="grokbot-computer-button window-no-drag"
-          label={showing('context') ? 'Hide work-stream context' : 'Work-stream context'}
-          onClick={() => toggleRail('context')}
-        >
-          <Monitor size={16} strokeWidth={1.8} />
-        </IconButton>}
+        <div className="grokbot-header-actions window-no-drag">
+          <Tooltip.Root delayDuration={300}>
+            <Tooltip.Trigger asChild>
+              <button
+                className="participant-header-button"
+                aria-label={substreamId === '0' ? 'Manage work-stream participants' : 'Manage substream participants'}
+                aria-description={workstream.participants.map((person) => person.name).join(', ')}
+                onClick={onAddParticipant}
+                type="button"
+              >
+                <AvatarStack members={workstream.participants} currentUserId={currentUserId} presentUserIds={substreamId === '0' ? presentUserIds : []} showTooltip={false} />
+                <UserPlus aria-hidden="true" size={13} />
+              </button>
+            </Tooltip.Trigger>
+            <Tooltip.Portal>
+              <Tooltip.Content className="tooltip" side="bottom" sideOffset={6}>
+                {naming ? 'Participants of this conversation' : `Participants of ${workstream.title}`}
+                <Tooltip.Arrow className="tooltip-arrow" />
+              </Tooltip.Content>
+            </Tooltip.Portal>
+          </Tooltip.Root>
+          {RIGHT_SIDEBAR_ENABLED && <IconButton
+            aria-pressed={showing('context')}
+            className="grokbot-computer-button"
+            label={showing('context') ? 'Hide work-stream context' : 'Work-stream context'}
+            onClick={() => toggleRail('context')}
+          >
+            <Monitor size={16} strokeWidth={1.8} />
+          </IconButton>}
+        </div>
       </header>
     );
   }
@@ -256,98 +375,7 @@ export function WorkstreamHeader({
             aria-live={renameDraft === null ? 'polite' : 'off'}
             className="workstream-title-line"
           >
-            {naming ? (
-              <h1><TitleSkeleton className="title-skeleton-header" /></h1>
-            ) : renameDraft === null ? (
-              <>
-                <h1>
-                  {/* A heading cannot carry the interaction itself: a focusable
-                      h1 is still announced as a heading, so a screen-reader user
-                      is never told there is anything to activate. A real button
-                      inside it is announced as one, and the heading keeps its
-                      name from the button's text. A mouse click reports a detail
-                      of 1 or more and is ignored — only a double click opens the
-                      editor — while keyboard activation reports 0. */}
-                  <button
-                    aria-describedby={renameHintId}
-                    aria-keyshortcuts="Enter F2"
-                    className="workstream-title-button"
-                    onClick={(event) => { if (event.detail === 0) startRename(); }}
-                    onDoubleClick={startRename}
-                    onKeyDown={(event) => {
-                      if (event.key === 'F2') {
-                        event.preventDefault();
-                        startRename();
-                      }
-                    }}
-                    ref={attachTitleButton}
-                    // A clipped title is unreadable anywhere else on the screen,
-                    // so the tooltip leads with the name and keeps the hint under
-                    // it. The tooltip is for the reader who cannot see the name:
-                    // the button's accessible name is its text, which is the
-                    // whole title however little of it fits, so `aria-describedby`
-                    // above keeps the description down to the hint rather than
-                    // letting `title` announce the name a second time.
-                    title={titleClipped ? `${workstream.title}\n${RENAME_HINT}` : RENAME_HINT}
-                    type="button"
-                  >
-                    {workstream.title}
-                  </button>
-                </h1>
-                {/* Outside the heading on purpose: inside it, this text would
-                    join the heading's own name and be read as part of it. */}
-                <span className="sr-only" id={renameHintId}>{RENAME_HINT}</span>
-              </>
-            ) : (
-              <form
-                className="workstream-title-edit"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  void submitRename();
-                }}
-              >
-                <input
-                  aria-label="Work stream name"
-                  autoFocus
-                  className="workstream-title-input"
-                  disabled={renaming}
-                  // The contract caps a title at 180, and the sidebar's dialog
-                  // already stops there. Without the same cap the server
-                  // rejects the save with a message that never mentions length.
-                  maxLength={180}
-                  onChange={(event) => {
-                    setRenameDraft(event.currentTarget.value);
-                    // The reason for a failed save stands in for the status
-                    // line, so it cannot outlive the draft that caused it.
-                    setRenameError(null);
-                  }}
-                  onFocus={(event) => event.currentTarget.select()}
-                  onKeyDown={(event) => {
-                    // While an IME is composing, Escape cancels the candidate
-                    // rather than the rename — discarding the draft here would
-                    // throw away a name somebody is halfway through typing,
-                    // with nothing to undo it. See `../lib/ime.ts`.
-                    if (isComposingKeyEvent(event.nativeEvent)) return;
-                    if (event.key === 'Escape') {
-                      event.preventDefault();
-                      cancelRename();
-                    }
-                  }}
-                  value={renameDraft}
-                />
-                <IconButton
-                  className="title-edit-save"
-                  disabled={renaming || renameDraft.trim().length === 0}
-                  label="Save name"
-                  type="submit"
-                >
-                  {renaming ? <LoaderCircle className="spin" size={15} /> : <Check size={15} />}
-                </IconButton>
-                <IconButton className="title-edit-cancel" disabled={renaming} label="Cancel rename" onClick={cancelRename}>
-                  <X size={15} />
-                </IconButton>
-              </form>
-            )}
+            {titleContent}
             {/* Only its participant can open this one, so say so where they are
                 reading it rather than only in the sidebar they came from. */}
             {workstream.scope === 'personal' && <Badge className="badge-private"><Lock aria-hidden="true" size={9} /> Private</Badge>}
@@ -412,9 +440,22 @@ export function WorkstreamScreen(): React.JSX.Element {
   const parent = useQuery<WorkstreamDetail | undefined>({
     queryKey: ['workstream', id], queryFn: async () => undefined, enabled: false,
   });
+  // The rail's mark follows the sidebar row rather than this detail, so one
+  // appearance change moves both rails together instead of moving the sidebar
+  // now and this rail when the projection lands. The header keeps the detail:
+  // that entry is what retires the picker's own preview.
+  const rowAppearance = useCachedWorkstreamAppearance(id);
   const children = useQuery<WorkstreamChildDirectory | undefined>({
     queryKey: ['workstream-children', id], queryFn: async () => undefined, enabled: false,
   });
+  // One target per dialog rather than one shared "menu target": both can be
+  // open in sequence on different rows, and a single slot would make cancelling
+  // one clear the other's subject out from under it.
+  const [renameTarget, setRenameTarget] = useState<(SubstreamRowTarget & { parentId: string }) | null>(null);
+  const [renameTitle, setRenameTitle] = useState('');
+  const [archiveTarget, setArchiveTarget] = useState<(SubstreamRowTarget & { parentId: string }) | null>(null);
+  const [substreamPending, setSubstreamPending] = useState(false);
+  const [substreamMenuError, setSubstreamMenuError] = useState<string | null>(null);
   const [creation, setCreation] = useState<{ operationId: string; parentId: string; title: string; throughTurnId: string | null; preparationWaitMs: number } | null>(null);
   const [preview, setPreview] = useState<SubstreamPreparationPreview | null>(null);
   const [creationError, setCreationError] = useState<string | null>(null);
@@ -428,6 +469,59 @@ export function WorkstreamScreen(): React.JSX.Element {
     if (substreamId === '0') next.delete('substream');
     else next.set('substream', substreamId);
     setSearchParams(next, { replace: true });
+  };
+  const previousChildren = useRef<{ parentId: string; ids: Set<string> }>({ parentId: id, ids: new Set() });
+  useEffect(() => {
+    if (!children.data) return;
+    const ids = new Set<string>(children.data.privateChildren?.map((child) => child.substreamId));
+    if (previousChildren.current.parentId === id && previousChildren.current.ids.has(selectedSubstreamId)
+      && !ids.has(selectedSubstreamId)) {
+      setSearchParams((current) => {
+        const next = new URLSearchParams(current);
+        next.delete('substream'); next.delete('turn'); next.delete('sequence');
+        return next;
+      }, { replace: true });
+    }
+    previousChildren.current = { parentId: id, ids };
+  }, [children.data, id, selectedSubstreamId, setSearchParams]);
+  const routeRef = useRef({ id, selectedSubstreamId, visit: 0 });
+  routeRef.current = { id, selectedSubstreamId, visit: routeRef.current.visit + Number(routeRef.current.id !== id || routeRef.current.selectedSubstreamId !== selectedSubstreamId) };
+  const submitSubstreamRename = async (): Promise<void> => {
+    const target = renameTarget;
+    const title = renameTitle.trim();
+    if (!api || !target || !title || substreamPending) return;
+    if (title === target.title) { setRenameTarget(null); return; }
+    const visit = routeRef.current.visit;
+    setSubstreamPending(true);
+    setSubstreamMenuError(null);
+    try {
+      await api.renameSubstream(target.parentId, target.substreamId, title);
+      if (routeRef.current.id !== target.parentId || routeRef.current.visit !== visit) return;
+      setRenameTarget(null);
+    } catch (error) {
+      if (routeRef.current.id !== target.parentId || routeRef.current.visit !== visit) return;
+      setSubstreamMenuError(error instanceof Error ? error.message : 'That substream could not be renamed.');
+    } finally {
+      if (routeRef.current.id === target.parentId && routeRef.current.visit === visit) setSubstreamPending(false);
+    }
+  };
+  const submitSubstreamArchive = async (): Promise<void> => {
+    const target = archiveTarget;
+    if (!api || !target || substreamPending) return;
+    const visit = routeRef.current.visit;
+    setSubstreamPending(true);
+    setSubstreamMenuError(null);
+    try {
+      await api.setSubstreamArchived(target.parentId, target.substreamId, true);
+      if (routeRef.current.id !== target.parentId || routeRef.current.visit !== visit) return;
+      setArchiveTarget(null);
+      if (routeRef.current.selectedSubstreamId === target.substreamId) selectSubstream('0');
+    } catch (error) {
+      if (routeRef.current.id !== target.parentId || routeRef.current.visit !== visit) return;
+      setSubstreamMenuError(error instanceof Error ? error.message : 'That substream could not be archived.');
+    } finally {
+      if (routeRef.current.id === target.parentId && routeRef.current.visit === visit) setSubstreamPending(false);
+    }
   };
   const resetCreation = (): void => {
     creationRef.current = null;
@@ -450,12 +544,13 @@ export function WorkstreamScreen(): React.JSX.Element {
     setCreation({ ...active, operationId: uuidV7(), title: nextTitle, preparationWaitMs: 0 });
   };
   useEffect(() => {
+    setRenameTarget(null); setArchiveTarget(null); setSubstreamPending(false); setSubstreamMenuError(null);
     const active = creationRef.current;
     if (active && active.parentId !== id) {
       if (api) void api.cancelSubstream(active.parentId, active.operationId).catch(() => undefined);
       resetCreation();
     }
-  }, [api, id]);
+  }, [api, id, selectedSubstreamId]);
   const prepare = async (): Promise<void> => {
     const attempt = creationRef.current;
     if (!api || !attempt?.title.trim() || creationPending) return;
@@ -520,20 +615,25 @@ export function WorkstreamScreen(): React.JSX.Element {
           attachedSidekicks={context.attachedSidekicks}
           attachedSidekicksError={context.attachedSidekicksError}
           onRemoveSidekick={context.removeSidekick}
-          workstream={{ ...context.detail, title: parent.data?.title ?? context.detail.title, privateChildren: children.data?.privateChildren }}
+          workstream={{ ...context.detail, title: parent.data?.title ?? context.detail.title, appearance: rowAppearance ?? parent.data?.appearance, privateChildren: children.data?.privateChildren }}
           presentUserIds={context.presentUserIds}
+          onParticipants={context.openParticipantDialog}
           selectedSubstreamId={selectedSubstreamId}
           onSelectSubstream={selectSubstream}
           onNewSubstream={() => startCreation(null)}
           onOpenArtifact={context.openArtifact}
-          onParticipants={context.openParticipantDialog}
           onFocusTranscript={context.focusTranscript}
+          substreamActions={{
+            onRename: (child) => { setRenameTarget({ ...child, parentId: id }); setRenameTitle(child.title); setSubstreamMenuError(null); },
+            onArchive: (child) => { setArchiveTarget({ ...child, parentId: id }); setSubstreamMenuError(null); },
+          }}
         />
       )}
       renderHeader={(context) => (
         <WorkstreamHeader
           currentUserId={session?.user.id ?? null}
           grokBotMode
+          substreamId={selectedSubstreamId}
           onAddParticipant={context.openParticipantDialog}
           onOpenRail={context.openRail}
           onRename={context.rename}
@@ -544,7 +644,7 @@ export function WorkstreamScreen(): React.JSX.Element {
             region: session.workspace.region,
             workspaceId: session.workspace.id,
           } : null}
-          workstream={parent.data ?? context.detail}
+          workstream={{ ...context.detail, appearance: parent.data?.appearance }}
         />
       )}
       substreamId={selectedSubstreamId}
@@ -567,6 +667,50 @@ export function WorkstreamScreen(): React.JSX.Element {
         <p>Context from the main conversation</p>
         <SubstreamContext context={preview.context} />
       </div>}
+    </Modal>
+    <Modal
+      footer={<>
+        <Button disabled={substreamPending} onClick={() => { setRenameTarget(null); setSubstreamMenuError(null); }}>Cancel</Button>
+        <Button
+          className="button-primary"
+          disabled={substreamPending || !renameTitle.trim() || renameTitle.trim() === renameTarget?.title}
+          onClick={() => void submitSubstreamRename()}
+        >Rename</Button>
+      </>}
+      onOpenChange={(open) => { if (!open && !substreamPending) { setRenameTarget(null); setSubstreamMenuError(null); } }}
+      open={Boolean(renameTarget)}
+      title="Rename substream"
+    >
+      {substreamMenuError && <InlineError>{substreamMenuError}</InlineError>}
+      <form onSubmit={(event) => { event.preventDefault(); void submitSubstreamRename(); }}>
+        <label className="form-field">
+          <span>Title</span>
+          <input autoFocus maxLength={180} disabled={substreamPending} onChange={(event) => setRenameTitle(event.target.value)} value={renameTitle} />
+        </label>
+      </form>
+    </Modal>
+    <Modal
+      footer={<>
+        <Button disabled={substreamPending} onClick={() => { setArchiveTarget(null); setSubstreamMenuError(null); }}>Cancel</Button>
+        <Button className="button-danger" disabled={substreamPending} onClick={() => void submitSubstreamArchive()}>Archive</Button>
+      </>}
+      onOpenChange={(open) => { if (!open && !substreamPending) { setArchiveTarget(null); setSubstreamMenuError(null); } }}
+      open={Boolean(archiveTarget)}
+      title="Archive substream"
+    >
+      <p className="modal-copy">
+        <strong>{archiveTarget?.title}</strong> leaves the sidebar for everyone in it, and stops
+        accepting messages. The conversation is kept, but restoring it currently requires the API; there is no restore control in the app.
+      </p>
+      {substreamMenuError && <InlineError>{substreamMenuError}</InlineError>}
+    </Modal>
+    <Modal
+      footer={<Button onClick={() => setSubstreamMenuError(null)}>Close</Button>}
+      onOpenChange={(open) => { if (!open) setSubstreamMenuError(null); }}
+      open={Boolean(substreamMenuError) && !renameTarget && !archiveTarget}
+      title="That could not be updated"
+    >
+      <InlineError>{substreamMenuError}</InlineError>
     </Modal>
     </>
   );

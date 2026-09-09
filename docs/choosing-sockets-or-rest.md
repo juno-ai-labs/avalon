@@ -417,7 +417,30 @@ moment one of the sockets reconnects.
 Rally's receiver is
 `apps/desktop/src/renderer/lib/workstream-state-store.ts`. The control-socket
 hook and the workspace-socket provider both call
-`applyVersionedWorkstreamState`; neither writes the work-stream caches directly.
+`applyVersionedWorkstreamState`; neither writes the work-stream caches directly
+for versioned state. The one class of direct write is a pushed or acknowledged
+fact with no version of its own: a rename or scope event, a REST response the
+caller just received, the appearance receipt. Those go through
+`patchCachedWorkstream` in `workstreams-cache.ts`, which writes Main's list row and
+detail together. A child address updates only that child's detail, so its name or
+scope cannot overwrite Main in the sidebar. Each
+write carries only the fields that are the fact's own news, so the next newer
+versioned payload replaces them whole and the receiver still has the last word.
+
+**Appearance is the exception, and both of its writers are row-only.** The
+cached detail is what the appearance picker reads to decide its own optimistic
+preview is finished, so an unversioned write there retires a person's in-flight
+choice against a value they did not pick. `patchCachedWorkstreamAppearance` (the
+receipt) and `patchCachedGeneratedIcon` (a naming pass) therefore write the
+sidebar row and leave the header to the versioned projection.
+[`workstream-appearance.md`](workstream-appearance.md) owns the rule and the two
+bugs that produced it.
+A REST response is a whole summary; spreading it would write versioned common
+fields through this path too, so viewer responses go through
+`patchCachedWorkstreamViewerState` and take only their viewer half. The harness
+status and attention advances keep their own writers because they are
+substream-owned: a child's status reaches the child's detail entry and never
+the parent's row.
 The predicate it applies, exactly:
 
 - A payload whose `authorityGeneration` is older than the ledger's is discarded
@@ -799,6 +822,37 @@ read survives, and it is not a precedent.
   the caller is made to wait for.
 
 ## Changelog
+
+### 2026-09-08 — Scope the shared cache patch to its conversation
+
+The shared unversioned patch now updates the list only for Main. Private child
+rename and scope events use the same primitive but only change their addressed
+detail; applying them to the list reintroduced the parent-title bug during cache
+consolidation. Parent responses retain the default Main address.
+
+### 2026-09-09 — Appearance is the unversioned write that may not touch the detail (#619)
+
+Review on #619 found this document describing the appearance receipt as writing
+the row and the detail together, which stopped being true when that receipt was
+narrowed to the row on the same day the entry below was written. The reason is
+the part worth keeping here rather than only in the owning doc: the cached
+detail is the appearance picker's own signal that its optimistic preview is
+finished, so any unversioned write there retires a person's in-flight choice
+against a value they did not pick. Both appearance writers — the receipt, and
+the icon a naming pass chooses — are row-only for that reason, and this is the
+one place the "row and detail together" rule above does not hold.
+
+### 2026-09-09 — Name the unversioned write and bound what it may carry
+
+The "one receiver" rule said neither socket hook writes the work-stream caches
+directly, while rename events, harness status, and REST responses already did.
+The rule now says what those writes are: unversioned facts, written through
+`patchCachedWorkstream`, carrying only the fields that are the fact's own news.
+Both halves were forced by the same change. The appearance receipt needed such a
+write and had no rule to follow, and review of it found the existing REST
+writes spreading whole summaries, common fields included, through the very path
+the rule said did not exist. Narrowing them to their own fields is what makes
+the "replaces whole" argument true rather than assumed.
 
 ### 2026-09-04 — Main and child recovery use one socket baseline
 

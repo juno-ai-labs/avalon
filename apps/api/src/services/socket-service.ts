@@ -100,17 +100,17 @@ function signingKey(env: Env): Uint8Array {
 /**
  * A socket ticket is a session credential: admission stores its `sid` on the
  * attachment, and the access-revocation queue matches that id against real
- * `sessions` rows to close what a logout revoked. A connector principal has
- * no session behind its correlation id, so a ticket minted from one would be
- * admitted for reads and then closeable by no session revocation — the
- * documented invariant is that sockets never carry a connector principal,
- * and this is where it is enforced rather than assumed.
+ * `sessions` rows to close what a logout revoked. A connector or demo-seed
+ * principal has no session behind its correlation id, so a ticket minted from
+ * one would be admitted for reads and then closeable by no session revocation
+ * — the documented invariant is that sockets never carry a non-session
+ * principal, and this is where it is enforced rather than assumed.
  */
 function assertSessionPrincipal(auth: AuthContext): void {
-  if (auth.principal === "connector") {
+  if (auth.principal !== undefined) {
     throw new ApiError(
       403,
-      "connector_principal_cannot_hold_socket",
+      "non_session_principal_cannot_hold_socket",
       "This action requires a signed-in session",
     );
   }
@@ -624,9 +624,6 @@ export class WorkstreamControlSocketService {
     headers.set(RALLY_HEADERS.SOCKET_TICKET_ID, claims.ticketId);
     headers.set(RALLY_HEADERS.SOCKET_TICKET_EXPIRES_AT, String(claims.expiresAt));
     const internalUrl = new URL("https://workstream.internal/socket");
-    if (new URL(request.url).searchParams.get("workstreamAppearance") === "1") {
-      internalUrl.searchParams.set("workstreamAppearance", "1");
-    }
     const response = await stub.fetch(
       new Request(internalUrl, { method: "GET", headers }),
     );

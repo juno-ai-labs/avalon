@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Archive, FileText, FolderPlus, Plus, RotateCcw, Trash2, UserPlus } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { NavLink, useNavigate, useParams } from 'react-router-dom';
+import { PROJECT_COLOR_DEFAULT } from '../lib/project-palette';
 import {
   type ProjectColorKey,
   type ProjectDirectory,
@@ -26,11 +27,13 @@ import { useAppSession } from '../lib/app-session';
 import { formatRelative, workstreamMarkerStatus } from '../lib/format';
 import { isComposingKeyEvent } from '../lib/ime';
 import { useProjectDirectories } from '../lib/use-project-directories';
+import { useOpenFirstWorkstream } from '../lib/workstream-landing';
 import { useWorkstreamsQuery } from '../lib/use-workstreams-query';
 
 export function ProjectSpaceScreen(): React.JSX.Element {
   const { api } = useAppSession();
   const navigate = useNavigate();
+  const openFirstWorkstream = useOpenFirstWorkstream();
   const { projectId } = useParams<{ projectId: string }>();
   const queryClient = useQueryClient();
   const workstreams = useWorkstreamsQuery();
@@ -53,7 +56,7 @@ export function ProjectSpaceScreen(): React.JSX.Element {
   const [savingScope, setSavingScope] = useState(false);
   const [scopeError, setScopeError] = useState<string | null>(null);
   const [editIconKey, setEditIconKey] = useState<ProjectIconKey>('briefcase');
-  const [editColorKey, setEditColorKey] = useState<ProjectColorKey>('gray');
+  const [editColorKey, setEditColorKey] = useState<ProjectColorKey>(PROJECT_COLOR_DEFAULT);
   const [editParticipants, setEditParticipants] = useState<Set<string>>(new Set());
   const { active: projects, inactive: inactiveProjects } = useProjectDirectories();
   const resources = useQuery({
@@ -344,7 +347,7 @@ export function ProjectSpaceScreen(): React.JSX.Element {
                 ? current.items.map((item) => item.id === archived.id ? archived : item)
                 : [archived, ...current.items],
             } : current);
-            void navigate('/workstreams/new');
+            openFirstWorkstream();
           }).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : 'The project could not be archived.'));
         }}>Archive project</Button></>}
         onOpenChange={setArchiveConfirmOpen}

@@ -1,5 +1,6 @@
+import { projectColorCells } from '../lib/project-palette';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { PROJECT_COLOR_CHOICES, WORKSTREAM_ICON_KEYS, paintProjectColor, type WorkstreamAppearance, type WorkstreamAppearancePatch } from '@rally/contracts';
+import { WORKSTREAM_ICON_KEYS, type WorkstreamAppearance, type WorkstreamAppearancePatch } from '@rally/contracts';
 import { useEffect, useRef, useState } from 'react';
 import { WORKSTREAM_ICON_COMPONENTS, WorkstreamGlyph, workstreamAppearance } from './workstream-glyph';
 
@@ -68,10 +69,12 @@ export function WorkstreamAppearancePicker({ id, appearance, size, onChange }: {
     <DropdownMenu.Portal>
       <DropdownMenu.Content className="menu-content workstream-appearance-popup" align="start" sideOffset={8} collisionPadding={12} aria-label="Work-stream appearance">
         <DropdownMenu.Label className="workstream-appearance-label">Color</DropdownMenu.Label>
-        <DropdownMenu.RadioGroup value={paintProjectColor(selected.color ?? generated.color)} className="workstream-appearance-colors" aria-label="Color">
-          {PROJECT_COLOR_CHOICES.map((color) => <DropdownMenu.RadioItem key={color} value={color} aria-label={label(color)} title={label(color)} className="workstream-appearance-choice" onSelect={(event) => { event.preventDefault(); change({ color }); }}>
-            <span className="workstream-appearance-swatch" style={{ background: `var(--av-sys-color-project-${color})` }} />
-          </DropdownMenu.RadioItem>)}
+        <DropdownMenu.RadioGroup value={selected.color ?? ''} className="workstream-appearance-colors" aria-label="Color">
+          {projectColorCells().map((color, cell) => (color === null
+            ? <span aria-hidden="true" className="workstream-appearance-gap" key={`gap-${cell}`} />
+            : <DropdownMenu.RadioItem key={color} value={color} aria-label={label(color)} title={label(color)} className="workstream-appearance-choice" onSelect={(event) => { event.preventDefault(); change({ color }); }}>
+              <span className="workstream-appearance-swatch" style={{ background: `var(--av-sys-color-project-${color})` }} />
+            </DropdownMenu.RadioItem>))}
         </DropdownMenu.RadioGroup>
         <DropdownMenu.Separator className="workstream-appearance-divider" />
         <DropdownMenu.Label className="workstream-appearance-label">Icon</DropdownMenu.Label>

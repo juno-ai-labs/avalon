@@ -1,8 +1,26 @@
 import type { QueryClient } from '@tanstack/react-query';
-import type { WorkstreamSummary } from './types';
+import type { WorkstreamAppearance, WorkstreamAppearancePatch } from '@rally/contracts';
+import type { WorkstreamDetail, WorkstreamSummary } from './types';
 
 /** The one cache entry every work-stream list reader and writer shares. */
 export const WORKSTREAMS_QUERY_KEY = ['workstreams'] as const;
+
+/**
+ * The detail entry a conversation renders from: the parent's own for Main, and
+ * a child-addressed one for a private substream, so a child opened beside its
+ * parent never overwrites the parent's row.
+ */
+export function workstreamDetailQueryKey(
+  workstreamId: string,
+  substreamId = '0',
+): readonly ['workstream', string] | readonly ['substream-workstream', string, string] {
+  return substreamId === '0'
+    ? ['workstream', workstreamId]
+    : ['substream-workstream', workstreamId, substreamId];
+}
+
+type WorkstreamRowUpdate = Partial<WorkstreamSummary>
+  | (<T extends WorkstreamSummary>(row: T) => T);
 
 type WorkstreamsCacheUpdate = WorkstreamSummary[]
   | ((current: WorkstreamSummary[] | undefined) => WorkstreamSummary[] | undefined);
@@ -33,6 +51,100 @@ export function setCachedWorkstreams(
     if (next !== undefined) assertWorkstreamList(next);
     return next;
   });
+}
+
+/**
+ * Apply one edit to both places a work stream is read from: its row in the
+ * shared list, which the sidebar renders, and a detail entry, which the open
+ * conversation renders. Writing one and not the other is how the header and
+ * the sidebar come to disagree about the same work stream.
+ *
+ * Main updates reach both its sidebar row and detail entry. A nonzero
+ * `substreamId` addresses only that child's detail: a child title, scope, or
+ * viewer fact must never replace its parent's value in the sidebar.
+ *
+ * This is for unversioned facts: a REST response the caller just received, a
+ * pushed event with no waterline of its own, a command receipt. Versioned
+ * common and viewer state goes through `applyVersionedWorkstreamState`, whose
+ * ledger decides whether a payload applies at all; a later payload from it
+ * replaces these fields whole, so it always has the last word. The derived
+ * unread pair is not recomputed here; a caller that moves viewer fields goes
+ * through `patchCachedWorkstreamViewerState` in the state store, which does.
+ * [`docs/choosing-sockets-or-rest.md`](../../../../../docs/choosing-sockets-or-rest.md)
+ * holds the rule.
+ */
+export function patchCachedWorkstream(
+  queryClient: QueryClient,
+  workstreamId: string,
+  update: WorkstreamRowUpdate,
+  substreamId = '0',
+): void {
+  const apply = <T extends WorkstreamSummary>(row: T): T =>
+    typeof update === 'function' ? update(row) : { ...row, ...update };
+  if (substreamId === '0') setCachedWorkstreams(queryClient, (current) =>
+    current?.map((workstream) => workstream.id === workstreamId ? apply(workstream) : workstream));
+  queryClient.setQueryData<WorkstreamDetail>(workstreamDetailQueryKey(workstreamId, substreamId), (detail) =>
+    detail ? apply(detail) : detail);
+}
+
+/**
+ * Show a person's own appearance choice on the sidebar row the moment Main has
+ * acknowledged it, ahead of the projection that will carry it there.
+ *
+ * The list row only, and that goes for **every** unversioned appearance write,
+ * a naming pass's generated icon included. The header renders the detail entry
+ * under the picker's own preview, and `settled()` retires that preview as soon
+ * as the detail's icon moves off the baseline it was taken against — to any
+ * value, not only the one the person chose, because another person changing the
+ * icon has to retire it too. So a write here of an icon nobody in this window
+ * picked would retire a pending choice to the wrong glyph and hold it there
+ * until the projection lands. The detail is the picker's own signal; only the
+ * versioned projection may move it. Appearance is Main's, so
+ * there is no substream to address. The merge mirrors Main's own
+ * (`setAppearanceForAdmittedSocket`) because the receipt carries no payload;
+ * the two bases can differ by the projection lag this write hides, and the
+ * caller skips a receipt that crossed a reconnect because it may be a replay.
+ * Why each of those is so, and what a receipt carrying the committed value
+ * would change, is in
+ * [`docs/workstream-appearance.md`](../../../../../docs/workstream-appearance.md).
+ */
+export function patchCachedWorkstreamAppearance(
+  queryClient: QueryClient,
+  workstreamId: string,
+  patch: WorkstreamAppearancePatch,
+): void {
+  setCachedWorkstreams(queryClient, (current) => current?.map((row) => {
+    if (row.id !== workstreamId) return row;
+    const appearance: WorkstreamAppearance = { icon: null, color: null, ...row.appearance, ...patch };
+    return { ...row, appearance };
+  }));
+}
+
+/**
+ * Put the icon a naming pass chose on the sidebar row, unless one is there.
+ *
+ * Row-only, for the reason above — the cached detail is the picker's signal and
+ * only the versioned projection may move it.
+ *
+ * The condition is what the receipt-time write does not need. An event carries
+ * an icon only when the object had none at the moment it renamed, so a row that
+ * has one now holds something newer: a choice whose receipt already landed here.
+ * The event can arrive after that receipt, because the two travel different
+ * paths — the room socket and the Main command channel — so without the guard a
+ * person's own icon flickers back to the generated one until the projection
+ * lands. It is not a copy of the object's rule (that one is about what is
+ * stored, and is authoritative); it is the ordering rule for an unversioned
+ * write whose value is known-stale the moment anything else is present.
+ */
+export function patchCachedGeneratedIcon(
+  queryClient: QueryClient,
+  workstreamId: string,
+  icon: NonNullable<WorkstreamAppearance['icon']>,
+): void {
+  setCachedWorkstreams(queryClient, (current) => current?.map((row) =>
+    row.id === workstreamId && !row.appearance?.icon
+      ? { ...row, appearance: { color: null, ...row.appearance, icon } }
+      : row));
 }
 
 /**

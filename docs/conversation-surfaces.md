@@ -66,9 +66,14 @@ Human message dots and bubble backgrounds resolve the sender's current account
 color from the live member-presentation context. The same resolution applies
 to answered elicitations and optimistic answers attributed to the current user.
 Profile changes repaint already-loaded turns without rewriting transcript data.
-The `cmp.member-message.<profile-color>` background, foreground, and dot roles
-are defined independently in each appearance; the feed does not infer contrast
-from the stored color name.
+The fill comes straight from the palette — `sys.color.project.<key>`, resolved
+through `personalColorKey()` so a retired accent name follows its replacement —
+and the ink from `PALETTE_INK`. There is no per-accent component token in
+between: the `cmp.member-message.*` roles that used to restate the fill and ink
+by hand drifted from the palette and could not survive the accent set changing,
+so the feed reads the palette directly. Contrast is still not inferred at render;
+`PALETTE_INK` is a checked-in table that `palette.css.node.test.ts` recomputes
+from the token values.
 Unprofiled and external senders retain their stable identity-color fallback.
 These bubble overrides apply only inside the conversation feed hosts. Author
 labels use semantic default text while the independently themed dot retains the
@@ -94,8 +99,21 @@ prop.
 
 The work-stream host supplies `WorkstreamSidebar` through the surface's
 `renderSidebar` slot, between global navigation and the feed. It displays the
-current work stream, resources whose direction is `artifact`, then participants
-from the same live detail/presence state as the conversation. Artifact selection
+current work stream, its viewer-visible private substreams, resources whose
+direction is `artifact`, then participants from the same live detail/presence
+state as the conversation. Every conversation row in it is the navigation
+sidebar's work-stream row — borderless, one 36px leading slot, the same title
+and the same idle/hover/current fills — and only the mark in that slot says
+which conversation it is: the work stream's own icon tinted with its appearance
+colour for the main conversation, the branch line for a substream, a plus for
+**New substream**. Compact swaps a substream's branch line for the first
+character of its title, capitalized, because a rail of identical lines with no
+titles beside them says only that these are substreams. The main conversation's
+mark reads the parent work stream's appearance off its **sidebar row** rather
+than its cached detail, so a colour or icon change moves both rails on the same
+receipt; the header stays on the detail, which is what retires the picker's
+preview. See [`workstream-appearance.md`](workstream-appearance.md).
+Artifact selection
 uses `useCitations.openPreview` to open the artifact lightbox, including an
 explicit unavailable-preview state rather than an inspector fallback; arrival
 of an artifact never opens a panel. Generated sites open the existing isolated
@@ -104,16 +122,29 @@ Generated artifacts has no **Manage resources** button or resource-list popup.
 File previews still offer individual **Resource details**; their lightbox retains
 refresh, watch, archive and version history, but no navigation to a resource list.
 Changing conversations closes both lightboxes and pending resource dialogs.
-Participant rows open the
-existing management dialog. This sidebar does not add substream navigation.
+Participants are one facepile button onto the
+existing management dialog. Selecting a row switches the feed's substream; the
+rail itself stays at work-stream scope.
 
 Its device-local collapse preference is independent of the global sidebar.
 Expanded width defaults to 280px and is draggable between 240px and 400px;
-the icon rail is 88px, matching the existing Grok navigation. Its trailing-edge
-handle also accepts Left/Right keys. Width is persisted separately from global
+the icon rail is 96px (`COLLAPSED_SIDEBAR_WIDTH`), matching the existing Grok navigation. Its trailing-edge
+handle also accepts Left/Right keys, and a held arrow key suppresses the
+collapse animation exactly as a drag does — it is the same gesture reached from
+the keyboard, writing the width over and over, and the class is raised on
+`keydown` and dropped on `keyup` rather than after a guessed idle period. Width is persisted separately from global
 navigation. Dragging below 210px collapses it; expanding requires crossing
-220px, retaining the existing ten-pixel hysteresis. It temporarily collapses
-when its enclosing pane cannot fit the preferred width
+220px, retaining the existing ten-pixel hysteresis. Reaching either width is
+animated over `--sidebar-collapse-motion`, the one duration both sidebars spend,
+except while a drag is in progress: the gesture must land on the pointer, so
+`.is-resizing` takes the transition off for as long as it lasts. This sidebar
+carries that width on two channels — the `flex-basis` that draws it, and the
+`--workstream-sidebar-width` it publishes to the shell for `--rail-max-slot` —
+and **both** are transitioned over that same interval. A change that adds a
+third consumer of its width adds it to that set: a channel left untransitioned
+reaches its final value in one frame and steps whatever reads it while this
+sidebar is still travelling. It temporarily
+collapses when its enclosing pane cannot fit the preferred width
 plus the existing 424px conversation reservation. Only that pane is observed,
 so collapse cannot change its own measurement and cause oscillation. All paint
 uses the existing light/dark sidebar, row, text, and focus tokens; selectors are
@@ -129,7 +160,20 @@ local optimistic rows are reconciled by stable client turn IDs.
 Finished assistant turns also share the action row. Copy and export remain
 local actions; **Speak** uses the regional authenticated stream documented in
 [`message-speech.md`](message-speech.md) and receives the complete stored
-markdown even when the shared renderer has collapsed its sections.
+markdown even when the shared renderer has collapsed its sections. **New
+substream** closes that row, and every settled human turn — the reader's own and
+a colleague's alike — carries the same control alone in a row beneath its bubble,
+inset by the bubble's corner so it ends on the same vertical as the identity line
+above it. A settled turn carrying
+attachments and no prose still shows the row, holding the cutoff alone: copy,
+speech and the exports each act on the response text and are withheld when there
+is none. Both placements are described in
+[`substream-creation.md`](substream-creation.md). The row owns the hover fade —
+a control inside it must not carry its own — and both rows share one set of
+button metrics, because the same control appears in each. The corner is
+`--turn-bubble-radius`, set on the human turn and read by the bubble, the header
+and the action row: a theme that wants a different corner restates the token, not
+the corner.
 
 Assistant H2 sections use the shared inline Markdown renderer. There is no
 heading-generated card deck or paged document reader.
@@ -143,6 +187,253 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-09 — A sidebar travels between its two widths
+
+**What changed:** Collapsing or expanding either sidebar is animated over 240ms
+rather than cutting between the two widths. The navigation's
+`--av-cmp-sidebar-width` is registered with `@property` as a `<length>` and
+transitioned on `.workspace-shell` beside `--rail-width`; the work-stream
+sidebar transitions both the `flex-basis` that draws it and the
+`--workstream-sidebar-width` it publishes to the shell. A drag is the exception:
+`.is-resizing` drops the width from the transitioned set for the length of the
+gesture, so the edge still lands exactly on the pointer.
+
+**Why:** The double-click on the edge was reported as not reading like a
+toggle — 280px to 96px in one frame is closer to a re-render than to a panel
+closing, and the reader has to re-find the transcript, which has also jumped.
+The motion is attached to the *width* rather than to the double-click handler
+that prompted it, so the toolbar buttons, ⌘B, and the constrained-window
+breakpoint all animate for free and no caller has to remember to; carrying it on
+the custom property means the panel, its grab handle, the room `.main-pane`
+leaves for it, and the composer centred over that room move as one thing instead
+of four rules kept in step by hand.
+
+The work-stream sidebar needs two channels rather than one because it draws
+itself from `flex-basis` and *publishes* its width separately, as
+`--workstream-sidebar-width`, for the shell's `--rail-max-slot`. Transitioning
+only the one that draws left the published copy stepping to its final value in a
+single frame, so with the inspector open and capped by that slot, the inspector's
+width jumped by up to 184px while the sidebar beside it was still travelling —
+the same cut, moved to the other side of the window. Registering the published
+property and transitioning it on the same interval is what keeps the two halves
+of the window telling the same story.
+
+**Considered and rejected:** Animating `width` on `.sidebar` and `margin-left`
+on `.main-pane` separately. That works for the two obvious elements and silently
+leaves behind everything else measured from the same property, which is how a
+panel and its handle part company. Also rejected: making the double-click
+handler play an animation, which would have left the button and ⌘B cutting. And
+rejected for the work-stream sidebar: sizing its `flex-basis` from the published
+custom property to collapse the two channels into one, which would have made the
+component's own width depend on finding a `.workspace-shell` ancestor — correct
+in the app, silently wrong anywhere else it is rendered.
+
+**Also in this change, because animating the width made them wrong:** a path
+that grabs or repeatedly writes the width can no longer assume the rendered edge
+and the width state are the same number. The navigation's resize handle now
+measures the panel on `pointerdown` instead of reading `effectiveSidebarWidth` —
+the work-stream sidebar's handle already did — because the handle is drawn at
+the rendered edge, and an offset taken from the state was wrong by whatever the
+animation had left to run and stayed wrong for the whole drag. Grabbing the
+handle mid-flight ends the animation at its target rather than continuing to
+glide under the pointer, which is the deliberate choice: the drag then tracks
+absolutely from where the pointer is. Arrow-key resize raises the same
+suppression a drag does, for as long as the key is held, on both sidebars; left
+animated, each 16px step restarted the curve and the rendered edge trailed the
+width the collapse threshold is judged against, so the sidebar snapped to the
+rail at a width the reader never saw. Neither is reached through `resizing`
+itself, which also arms the window pointer listeners — a mouse moved during a
+keyboard resize would otherwise take hold of the edge.
+
+**Consequences:** The duration lives once, at `:root` in `app.css`, as
+`--sidebar-collapse-motion`; it is deliberately outside the `--av-` namespace
+because no theme has an opinion about it, and `themes.css.node.test.ts` lists it
+as rule-local for that reason. Two things must stay true: an unregistered custom
+property cannot be interpolated — dropping the `@property` block brings back the
+cut, at half the duration and with no error — and a drag must keep its opt-out,
+or the sidebar trails the pointer. A double-click is two grabs of the same
+handle, so the second release has to clear `.is-resizing` before the toggle
+lands; both sidebars have a test pinning that, because the failure is a missing
+animation on exactly the gesture that asks for it and nothing else reports it.
+Each drag drops only its own
+channel and restates the other two, so dragging one sidebar cannot stop the
+other — or a rail closing on its own — from moving; that re-pairing works by
+position and holds because all three entries carry the same 240ms and curve.
+`prefers-reduced-motion` needs nothing here: the global kill switch in `app.css`
+zeroes every duration.
+
+### 2026-09-09 — Review fixes on the action-row move
+
+**What changed:** The cutoff control's accessible name became "New substream from
+this message", so it contains its visible words. The human row stops hit-testing
+while it is faded out. Both rows share one `prefers-reduced-motion` override. The
+conditional-spread the two new props were passed through became plain assignment.
+
+**Why:** A name that shares no words with the label leaves a person driving by
+voice unable to say what they can see — WCAG 2.5.3, and the one button in the row
+that failed it. The row is inside the article that reveals it, so it can only be
+clicked once revealed *except* during the 120ms fade, and this control creates a
+conversation rather than copying a line; the agent's row is deliberately left
+hit-testable, because it is also visible while speech plays and would otherwise
+take away its own Stop speaking. The spread was justified by
+`exactOptionalPropertyTypes`, which this package sets to `false` — the adjacent
+caller in `conversation-surface.tsx` already passed the same prop plainly.
+
+**Consequences:** A control added to either row states an accessible name that
+contains its visible label. Tests hold the fade's ownership and the source order
+the theme's corner override depends on — both invariants that were previously
+described in prose and provable only by reading pixels.
+
+
+### 2026-09-09 — Both action rows share one set of button metrics
+
+**What changed:** The agent and human action rows take their button metrics from
+one `:is(.agent-message-actions, .human-message-actions) button` rule; the
+substream control declares only `white-space: nowrap` of its own. The human row
+also dropped an inert `justify-content`.
+
+**Why:** The control's own class restated the row's metrics, and inside the agent
+row `.agent-message-actions button` outranks it — so that copy won on Rally's
+turn and lost under a person's bubble. The values agreed, so nothing looked
+wrong; tuning either row would have moved the control in one place and not the
+other, silently. This is the same failure the corner-radius token exists to
+prevent. The `justify-content` was inert because the row is shrink-to-fit inside
+a column that already aligns it, and it read as if it were doing the work the
+padding does.
+
+**Consequences:** Button metrics for either row go in the shared rule. A CSS
+invariant test holds it, and asserts no `.agent-message-actions button` rule
+comes back to shadow it.
+
+### 2026-09-09 — Keep the cutoff on a turn that carries no prose
+
+**What changed:** The assistant action row renders for the substream cutoff
+alone, not only when the turn has text, and copy, speech and the exports are
+withheld from a turn whose text is empty.
+
+**Why:** Moving the cutoff out of the identity line moved it behind that row's
+"has text" condition, and a settled turn may legally carry attachments and an
+empty string — the contract's text block accepts one. Such a turn is still a
+place to branch from, and it silently stopped offering it. The text-bearing
+actions stay gated because each acts on the response text: an empty clipboard,
+silence, and a blank card are worse than an absent button.
+
+**Consequences:** The row's presence and its contents are two questions now. A
+control added to it declares which one it answers — whether it needs the text,
+or only the turn.
+
+### 2026-09-09 — Align the human action row on the bubble's corner, through the token
+
+**What changed:** The action row under a human turn takes
+`padding-inline-end: var(--turn-bubble-radius)`, so it ends where the bubble's
+straight edge ends and the curve takes over — the same vertical the identity line
+above it stops on. The work-stream theme, which rounds that bubble harder than
+the shared default, now restates the corner by setting `--turn-bubble-radius`
+rather than writing `18px` onto `border-radius` and onto the header's
+`padding-right`.
+
+**Why:** The row was flush with the bubble's widest point, so it read as hung off
+the corner rather than as part of the turn. Fixing that exposed the drift the
+token was introduced to prevent: two literals in the theme agreed with each other
+but not with the token, so a third rule reading the token came out inset by the
+shared 14px against an 18px corner.
+
+**Consequences:** The corner is one number in one place. Read it with
+`var(--turn-bubble-radius)`; to change it for a surface, set the token on that
+surface's `.human-message`. A CSS invariant test in `app.css.node.test.ts` holds
+both halves — that the bubble, the header and the action row all read the token,
+and that the work-stream theme moves it by the token rather than by a literal.
+
+
+### 2026-09-09 — The per-message substream cutoff joins the action row
+
+**What changed:** The **New substream** control moved out of the message identity
+line into the turn's action row, last after Copy, Speak, Image and PDF, with a
+one-control row under a human turn's bubble for the same action.
+
+**Considered and rejected:** Moving it only on assistant turns, which would have
+left the same action in two places depending on who spoke.
+
+**Consequences:** The two placements keep identical metrics — the control takes
+the row's font size and padding rather than restating them — and the label stays
+unbroken (`white-space: nowrap`), because its two words wrap mid-control in a
+narrow row. Its accessible name contains its visible words, so voice control can
+reach it by what it says; the row's other buttons already read that way.
+
+**Why:** The identity line answers who spoke and when; an action wedged between
+the author, the timestamp and the turn's labels competed with that. Everything
+else a settled turn can be asked to do already lives in the action row.
+
+**Consequences:** A control added to either row inherits the row's hover fade and
+must not declare its own opacity — nesting the two multiplies them and renders
+the inner control paler than its neighbours.
+
+### 2026-09-09 — A substream's initial identifies it in the collapsed rail
+
+**What changed:** In compact mode a substream row's mark is the first character
+of its title, capitalized, instead of the branch line. Expanded rows are
+unchanged, and a title with no first character still falls back to the line.
+
+**Why:** Compact hides every title, so the row shape that had just been unified
+left the substreams as a column of identical curves — legible as "these are
+substreams", useless for picking one. The main conversation already carries the
+work stream's own icon there, so the substreams were the only rows in the rail
+with nothing of their own to show. A creator avatar was the obvious alternative
+and was rejected: it says who started a substream, not which one it is, and
+several substreams from one person collapse back to identical marks.
+
+**Consequences:** The mark is title-derived, so it changes when a substream is
+renamed — deliberate, since it is a compressed title rather than an identity.
+Two substreams sharing a first letter still collide; the row's `title` attribute
+and its accessible name carry the full title in both modes.
+
+### 2026-09-09 — One row shape across both navigation rails
+
+**What changed:** The center sidebar's conversation rows lost their borders and
+took the navigation sidebar's work-stream row: a 36px leading mark, a 14px/500
+title, and the shared idle/hover/current fills. The main conversation's mark is
+the work stream's own icon tinted with its appearance colour (`WorkstreamMark`,
+beside the existing filled `WorkstreamGlyph`); a substream's mark is the branch
+line, which moved out of its wrapper and into the row's own slot, so substream
+rows are full width like everything else in the rail. **New substream** followed
+the same shape, losing its dashed border and outer connector.
+
+**Why:** Product asked for both streams to read as the work-stream row they sit
+under. The rail previously said "one bordered box per conversation" while the
+navigation beside it said "one row per stream", and two boxes with the same fills
+but different borders read as two lists rather than one. This reverses
+[2026-09-04's "keep navigation quiet"](#2026-09-04--keep-navigation-quiet-and-park-the-right-sidebar),
+which had made this row text-only on the grounds that the glyph was already in
+the main sidebar and the feed header: the identity is repeated deliberately now,
+in a lighter form — a tinted symbol rather than a second filled glyph — because
+it is what tells the main conversation apart from its substreams at a glance.
+
+**Consequences:** A substream row no longer carries its creator's avatar; the
+private children come from the parent control socket and creator attribution now
+lives only in the substream itself. The rail needs the parent's `appearance`,
+which the host passes alongside the parent title, so a colour or icon change
+lands on this row on the same receipt that moves the sidebar row. The branch
+line keeps its eight-pixel lift so its endpoint meets the title, and drops it in
+compact mode, where there is no title to meet.
+
+### 2026-09-08 — Rename Main and children directly in the title bar
+
+Both header layouts use the same inline name editor. Single-clicking a title
+opens a selected text field; its tooltip explains that Enter saves. Escape
+cancels, and failed saves retain the draft. The editor resets when the selected
+conversation changes, including between Main and a child sharing the parent ID.
+The compact header previously rendered inert text while the older header required
+a double click, so neither matched the requested direct editing interaction.
+
+### 2026-09-08 — Keep child rename and archive scoped to the selected conversation
+
+Child rows offer rename and archive using the parent-addressed child API. A
+child rename changes its detail cache and child directory; only Main rename or
+scope events update the workspace work-stream list. The old unconditional cache
+write visibly renamed the parent. Archive returns the selected child to Main;
+late action responses cannot navigate a different work stream. Main participants
+remain in the sidebar and Main title bar; child facepiles manage their own roster.
 
 ### 2026-09-08 — Separate Sidekick management from its conversation
 

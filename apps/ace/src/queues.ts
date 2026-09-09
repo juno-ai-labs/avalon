@@ -21,8 +21,12 @@ async function fanOutRegion(
 ): Promise<void> {
   let after = '';
   for (;;) {
+    // A closed workspace — retired by an operator, or abandoned by its last
+    // member — has nobody connected to receive a flag, and its objects refuse
+    // the notification. Left in, every flag save produced one message per
+    // closed workspace forever.
     const page = await db.prepare(
-      'SELECT id FROM workspaces WHERE id > ? ORDER BY id LIMIT ?',
+      'SELECT id FROM workspaces WHERE id > ? AND abandoned_at IS NULL ORDER BY id LIMIT ?',
     ).bind(after, QUEUE_SEND_BATCH_MAX_MESSAGES).all<{ id: string }>();
     const rows = page.results ?? [];
     const messages = rows.flatMap((row) => flagKeys.map((flagKey) => ({

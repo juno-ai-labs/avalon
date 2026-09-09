@@ -13,7 +13,8 @@ import {
   Workflow,
   type LucideIcon,
 } from 'lucide-react';
-import { PROJECT_COLOR_KEYS, paintProjectColor, type ProjectColorKey, type WorkstreamAppearance as SavedAppearance } from '@rally/contracts';
+import { PROJECT_COLOR_RING, type ProjectColorKey, type WorkstreamAppearance as SavedAppearance } from '@rally/contracts';
+import { glyphInk } from '../lib/project-palette';
 import { PROJECT_ICONS } from './project-icons';
 
 const WORKSTREAM_ICONS = [
@@ -55,10 +56,11 @@ export function workstreamAppearance(id: string): WorkstreamAppearance {
     hash = Math.imul(hash, 16_777_619);
   }
   const unsigned = hash >>> 0;
-  const hashed = PROJECT_COLOR_KEYS[unsigned % PROJECT_COLOR_KEYS.length] ?? 'purple';
   return {
-    color: paintProjectColor(hashed),
-    iconIndex: Math.floor(unsigned / PROJECT_COLOR_KEYS.length) % WORKSTREAM_ICONS.length,
+    // The ring, not the full palette: `black` is the neutral somebody picks, not
+    // a colour to hand out at random.
+    color: PROJECT_COLOR_RING[unsigned % PROJECT_COLOR_RING.length] ?? 'purple',
+    iconIndex: Math.floor(unsigned / PROJECT_COLOR_RING.length) % WORKSTREAM_ICONS.length,
   };
 }
 
@@ -68,17 +70,74 @@ export function WorkstreamSymbol({ id, size, className }: { id: string; size: nu
   return <Icon className={className} size={size} strokeWidth={1.9} />;
 }
 
-export function WorkstreamGlyph({ id, size = 32, appearance: saved }: { id: string; size?: number; appearance?: SavedAppearance }): React.JSX.Element {
+/**
+ * What resolving needs, and no more: a stored icon key this build may not have.
+ *
+ * `string` rather than the contract's union is the honest type. A key is a
+ * stored value, and a client is shipped separately from the catalog it was
+ * built against, so "a key I do not know" is a state this function exists to
+ * survive rather than one the type system can rule out. The colour stays the
+ * union: it is interpolated into a token name, and there is no fallback that
+ * would make an arbitrary string safe there.
+ */
+export interface ResolvableAppearance {
+  icon?: string | null;
+  color?: SavedAppearance['color'];
+}
+
+/** The icon map as a lookup that admits a miss, which is the whole point. */
+const ICON_BY_KEY: Record<string, LucideIcon | undefined> = WORKSTREAM_ICON_COMPONENTS;
+
+/**
+ * One work stream's appearance resolved to what a component actually renders.
+ *
+ * Every treatment goes through this — the filled glyph, the bare mark, and
+ * whatever comes next — so a stored appearance cannot come out as two different
+ * marks in two rails. Resolving it twice is how they drift.
+ *
+ * The fallback chain is `||` rather than a ternary, and that is the fix rather
+ * than a style: written `saved?.icon ? MAP[saved.icon] : ICONS[i] ?? Sparkles`,
+ * the ternary binds first and the fallback only ever guards the *generated*
+ * branch. A stored key the map lacks then resolves to `undefined`, and React
+ * renders an undefined component by throwing `Element type is invalid`, which
+ * blanks the window rather than dropping one glyph.
+ */
+export function resolveWorkstreamAppearance(id: string, saved?: ResolvableAppearance): {
+  Icon: LucideIcon;
+  /** The palette key itself, for a caller that has to look something up by it. */
+  colorKey: ProjectColorKey;
+  /** That key as the CSS custom property a fill or a stroke can take directly. */
+  color: string;
+} {
   const generated = workstreamAppearance(id);
-  const appearance = { ...generated, color: saved?.color ?? generated.color };
-  const Icon = saved?.icon ? WORKSTREAM_ICON_COMPONENTS[saved.icon] : WORKSTREAM_ICONS[generated.iconIndex] ?? Sparkles;
-  const painted = paintProjectColor(appearance.color);
-  const color = `var(--av-sys-color-project-${painted})`;
+  const colorKey = saved?.color ?? generated.color;
+  return {
+    Icon: (saved?.icon ? ICON_BY_KEY[saved.icon] : undefined)
+      || WORKSTREAM_ICONS[generated.iconIndex]
+      || Sparkles,
+    colorKey,
+    color: `var(--av-sys-color-project-${colorKey})`,
+  };
+}
+
+/**
+ * The work stream's identity as a bare tinted mark, for a surface that already
+ * sits inside the work stream. The glyph's filled shape says *which* stream
+ * among many, which is the navigation sidebar's job; a rail that only ever
+ * shows one stream needs the colour and the symbol, not a second badge.
+ */
+export function WorkstreamMark({ id, size = 24, appearance: saved }: { id: string; size?: number; appearance?: SavedAppearance }): React.JSX.Element {
+  const { Icon, color } = resolveWorkstreamAppearance(id, saved);
+  return <Icon aria-hidden="true" className="workstream-mark" size={size} strokeWidth={1.9} style={{ color }} />;
+}
+
+export function WorkstreamGlyph({ id, size = 32, appearance: saved }: { id: string; size?: number; appearance?: SavedAppearance }): React.JSX.Element {
+  const { Icon, color, colorKey } = resolveWorkstreamAppearance(id, saved);
   return (
     <span
       aria-hidden="true"
       className="workstream-glyph"
-      style={{ height: size, width: size }}
+      style={{ height: size, width: size, '--glyph-ink': glyphInk(colorKey) } as React.CSSProperties}
     >
       <span
         className="workstream-glyph-shape"
@@ -94,8 +153,9 @@ export function AutomationGlyph({ id }: { id: string }): React.JSX.Element {
   const appearance = workstreamAppearance(id);
   const Icon = WORKSTREAM_ICONS[appearance.iconIndex] ?? Sparkles;
   return (
-    <svg className="automation-glyph" viewBox="0 0 100 100" fill="none" aria-hidden="true">
-      <path d="M43 6C47 3 52 3 57 6L86 23C91 26 94 30 94 36L94 66C94 72 91 76 86 79L57 95C52 98 47 98 42 95L14 78C9 75 6 71 6 65L6 35C6 29 9 25 14 22Z" fill={`var(--av-sys-color-project-${paintProjectColor(appearance.color)})`} />
+    <svg className="automation-glyph" viewBox="0 0 100 100" fill="none" aria-hidden="true"
+      style={{ '--glyph-ink': glyphInk(appearance.color) } as React.CSSProperties}>
+      <path d="M43 6C47 3 52 3 57 6L86 23C91 26 94 30 94 36L94 66C94 72 91 76 86 79L57 95C52 98 47 98 42 95L14 78C9 75 6 71 6 65L6 35C6 29 9 25 14 22Z" fill={`var(--av-sys-color-project-${appearance.color})`} />
       <Icon x={25} y={25} size={50} strokeWidth={1.9} />
     </svg>
   );

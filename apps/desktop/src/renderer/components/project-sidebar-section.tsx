@@ -7,9 +7,7 @@ import clsx from 'clsx';
 import { Fragment, useRef, useState, type ReactNode } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
-  PROJECT_COLOR_CHOICES,
   PROJECT_ICON_KEYS,
-  paintProjectColor,
   type CreateProjectRequest,
   type ProjectColorKey,
   type ProjectIconKey,
@@ -17,6 +15,7 @@ import {
 } from '@rally/contracts';
 
 import { Button, DropdownSelect, IconButton, InlineError, Modal } from './primitives';
+import { PROJECT_COLOR_DEFAULT, projectColorCells } from '../lib/project-palette';
 import { SidebarSkeletonRows } from './sidebar-skeleton';
 import type { WorkstreamSummary } from '../lib/types';
 
@@ -32,7 +31,7 @@ export function ProjectIcon({ project, size = 15 }: { project: ProjectSummary; s
     <Icon
       aria-hidden="true"
       size={size}
-      stroke={`var(--av-sys-color-project-${paintProjectColor(project.colorKey)})`}
+      stroke={`var(--av-sys-color-project-${project.colorKey})`}
       strokeWidth={1.8}
     />
   );
@@ -56,21 +55,21 @@ export function ProjectAppearancePicker({
         <div className="project-icon-grid">
           {PROJECT_ICON_KEYS.map((key) => {
             const Icon = PROJECT_ICONS[key];
-            return <button aria-label={label(key)} aria-pressed={iconKey === key} className={clsx(iconKey === key && 'is-selected')} key={key} onClick={() => onIconChange(key)} type="button"><Icon aria-hidden="true" size={17} stroke={`var(--av-sys-color-project-${paintProjectColor(colorKey)})`} /></button>;
+            return <button aria-label={label(key)} aria-pressed={iconKey === key} className={clsx(iconKey === key && 'is-selected')} key={key} onClick={() => onIconChange(key)} type="button"><Icon aria-hidden="true" size={17} stroke={`var(--av-sys-color-project-${colorKey})`} /></button>;
           })}
         </div>
       </fieldset>
       <fieldset>
         <legend>Color</legend>
         <div className="project-color-grid">
-          {PROJECT_COLOR_CHOICES.map((key) => (
-            <Tooltip.Root delayDuration={250} key={key}>
+          {projectColorCells().map((key, cell) => (key === null
+            ? <span aria-hidden="true" className="project-color-gap" key={`gap-${cell}`} />
+            : <Tooltip.Root delayDuration={250} key={key}>
               <Tooltip.Trigger asChild>
-                <button aria-label={label(key)} aria-pressed={paintProjectColor(colorKey) === key} className={clsx(paintProjectColor(colorKey) === key && 'is-selected')} onClick={() => onColorChange(key)} type="button"><span style={{ background: `var(--av-sys-color-project-${key})` }} /></button>
+                <button aria-label={label(key)} aria-pressed={colorKey === key} className={clsx(colorKey === key && 'is-selected')} onClick={() => onColorChange(key)} type="button"><span style={{ background: `var(--av-sys-color-project-${key})` }} /></button>
               </Tooltip.Trigger>
               <Tooltip.Portal><Tooltip.Content className="tooltip" sideOffset={5}>{label(key)}<Tooltip.Arrow className="tooltip-arrow" /></Tooltip.Content></Tooltip.Portal>
-            </Tooltip.Root>
-          ))}
+            </Tooltip.Root>))}
         </div>
       </fieldset>
     </div>
@@ -118,7 +117,7 @@ export function ProjectSidebarSection({
   const [recoveryOpen, setRecoveryOpen] = useState(false);
   const [name, setName] = useState('');
   const [iconKey, setIconKey] = useState<ProjectIconKey>('briefcase');
-  const [colorKey, setColorKey] = useState<ProjectColorKey>('gray');
+  const [colorKey, setColorKey] = useState<ProjectColorKey>(PROJECT_COLOR_DEFAULT);
   const [scope, setScope] = useState<'personal' | 'workspace'>('personal');
   const [saving, setSaving] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
@@ -134,7 +133,7 @@ export function ProjectSidebarSection({
     setCreateOpen(false);
     setName('');
     setIconKey('briefcase');
-    setColorKey('gray');
+    setColorKey(PROJECT_COLOR_DEFAULT);
     setScope('personal');
     setModalError(null);
   };
@@ -228,6 +227,11 @@ export function ProjectSidebarSection({
                     event.dataTransfer.setData('application/x-rally-project-id', project.id);
                   }}
                 >
+                  {/* Held: a project reordered past another glides with its
+                      expanded members rather than jumping while they slide.
+                      The row rather than the item carries it, because the
+                      members animate themselves and a moving item would carry
+                      them a second time. See `useListMotion`. */}
                   <div
                     className={clsx(
                       'sidebar-row project-sidebar-row',
@@ -235,6 +239,8 @@ export function ProjectSidebarSection({
                         || location.pathname.startsWith(`/projects/${project.id}/`))
                         && 'is-active',
                     )}
+                    data-motion-hold=""
+                    data-motion-key={`project:${project.id}`}
                   >
                     <button
                       aria-expanded={isExpanded}
@@ -290,7 +296,10 @@ export function ProjectSidebarSection({
                     const missing = project.workstreamIds.length - members.length;
                     return project.workstreamIds.length === 0
                       ? <p className="project-sidebar-empty">No work streams</p>
-                      : <div className="project-sidebar-workstreams">{members.map((workstream) => (
+                      // Its own motion scope: a member is the same row the recent
+                      // list shows, and the sidebar's motion would otherwise take
+                      // the two for one row in two places.
+                      : <div className="project-sidebar-workstreams" data-motion-scope={`project:${project.id}`}>{members.map((workstream) => (
                         <Fragment key={workstream.id}>{renderWorkstream(workstream)}</Fragment>
                       ))}{missing > 0 && <p className="project-sidebar-empty">{project.workstreamIds.length} work streams; load more to see all</p>}</div>;
                   })()}

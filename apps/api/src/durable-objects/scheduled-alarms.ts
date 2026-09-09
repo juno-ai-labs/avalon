@@ -20,8 +20,18 @@
  *
  * `docs/durable-object-alarms.md` is the module document.
  */
+import { WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE } from "@rally/contracts";
+
 import type { Env } from "../env";
 import { InternallyInspectableDurableObject } from "./internally-inspectable-durable-object";
+import {
+  countRetainedOutbox,
+  markInstanceRetired,
+  objectRetirementState,
+  writeObjectRetirement,
+  type ObjectRetirementState,
+  type ObjectRetirementTombstone,
+} from "./object-retirement";
 
 /**
  * Added to an object's own migration history, not applied here.
@@ -662,6 +672,66 @@ export abstract class ScheduledDurableObject<TEnv extends Env = Env>
   /** The re-arm made once this alarm's work has run. Same override rule. */
   protected armAlarmAfterDueWork(): Promise<unknown> {
     return this.armNextAlarm();
+  }
+
+  /**
+   * Close this object permanently.
+   *
+   * Every class that can belong to a workspace extends this base, which is
+   * why the two retirement entry points live here rather than being restated
+   * three times. Both are `permit`ed by each class's gate: retirement that
+   * refused its own second pass could never resume after an interruption, and
+   * an operator who could not read the tombstone could not tell a retired
+   * object from an unreachable one.
+   *
+   * First write wins. A resumed pass converges on the original instant rather
+   * than recording when the retry happened.
+   */
+  async retireObject(input: ObjectRetirementTombstone): Promise<ObjectRetirementState> {
+    await this.migrationsReady();
+    const stored = this.ctx.storage.transactionSync(() => {
+      const tombstone = writeObjectRetirement(this.ctx.storage.sql, input);
+      // Cleared in the same transaction that closes the object. A wake reason
+      // that survived the tombstone would be an object with a live reason to
+      // run and no permission to do anything when it did.
+      this.ctx.storage.sql.exec("DELETE FROM _internal_durable_alarms");
+      return tombstone;
+    });
+    // The gate reads a cache, and this instance is the only writer of the fact
+    // it caches. Without this the object stays open until it is next evicted.
+    markInstanceRetired(this);
+    // The platform's own alarm, deleted rather than left to fire into a handler
+    // that would do nothing. `armNextAlarm` is inert from here, so nothing
+    // re-derives it: this is the last time this object's alarm slot is written.
+    await this.ctx.storage.deleteAlarm();
+    // Every socket this object holds, closed with the code the desktop treats
+    // as permanent. The hibernated callbacks are dropped from here, so a socket
+    // left open would stay "connected" — the runtime answers its keepalive
+    // without waking the object — while every frame it sent was discarded, and
+    // the client would never learn the room was gone. `1008` is the close a
+    // client does not reconnect from; an ordinary close would reconnect into a
+    // 409 and keep trying.
+    for (const socket of this.ctx.getWebSockets()) {
+      try {
+        socket.close(WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, "This workspace has been closed");
+      } catch {
+        // A socket already closing has nothing left to close.
+      }
+    }
+    return {
+      retired: true,
+      retiredAt: stored.retiredAt,
+      operationId: stored.operationId,
+      actorUserId: stored.actorUserId,
+      reason: stored.reason,
+      retainedOutbox: countRetainedOutbox(this.ctx.storage.sql),
+    };
+  }
+
+  /** Read-only inspection, permitted after retirement so an operator can see it. */
+  async objectRetirementState(): Promise<ObjectRetirementState> {
+    await this.migrationsReady();
+    return objectRetirementState(this.ctx.storage.sql);
   }
 
   override async alarm(): Promise<void> {

@@ -245,12 +245,20 @@ describe('token references', () => {
     // the platform's window-chrome geometry, which no theme has an opinion
     // about and the registry does not declare.
     '--window-controls-inset',
+    // Also outside the `--av-` namespace, and for the same reason: how long a
+    // sidebar takes to reach its collapsed width is the shell's behaviour, not
+    // a theme's palette. It is stated once in `app.css` so both sidebars spend
+    // the same figure.
+    '--sidebar-collapse-motion',
     '--turn-bubble-radius'];
 
   // Set at runtime rather than in CSS: some by components as inline styles,
   // three by libraries on their own elements. They cannot be checked from this
   // file, so they are listed to say they were considered.
   const RUNTIME = ['--rail-width', '--person-accent', '--person-dot',
+    // Set per glyph from PALETTE_INK, which is a decision about a fill rather
+    // than about the appearance, so it cannot be a theme token.
+    '--glyph-ink',
     '--markdown-table-columns', '--arrival-index',
     '--workstream-sidebar-width', '--conversation-min-width',
     '--citation-card-played',

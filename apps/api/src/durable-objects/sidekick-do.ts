@@ -48,6 +48,11 @@ import {
 } from "@rally/contracts/conversation-parent";
 
 import type { Env } from "../env";
+import {
+  OBJECT_RETIREMENT_SCHEMA_STATEMENTS,
+  applyRetirementGate,
+  retiredObjectResponse,
+} from "./object-retirement";
 import { connectorActivityTriggerDescriptors } from "../lib/connector-activity-triggers";
 import { ApiError } from "../lib/api-error";
 import { externalEventOpening } from "../lib/external-event-opening";
@@ -330,6 +335,16 @@ export const AUTOMATION_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
   version: 4,
   description: "fence external registration effects across publication and lifecycle changes",
   statements: [`ALTER TABLE automation ADD COLUMN registration_generation INTEGER NOT NULL DEFAULT 0`],
+}, {
+  version: 5,
+  description: "record a permanent retirement tombstone",
+  statements: [
+    // A retired workspace never reopens, and the fence in front of every
+    // method here reads this table. It lives in the object rather than D1
+    // because the gate answers during constructor recovery, before anything
+    // else this object could consult is admitted.
+    ...OBJECT_RETIREMENT_SCHEMA_STATEMENTS,
+  ],
 }];
 
 function first<T extends Record<string, SqlStorageValue>>(cursor: SqlStorageCursor<T>): T | null {
@@ -1945,3 +1960,14 @@ export class SidekickDO extends ConversationParentDurableObject {
     this.enqueueProjection("automation", effect, now);
   }
 }
+
+applyRetirementGate(SidekickDO, {
+  // The shared classification is inherited from ConversationParentDurableObject;
+  // this call is what wraps the doors *this* class overrides for itself.
+  drop: {
+    fetch: () => retiredObjectResponse(),
+    // No socket callbacks: a Sidekick's transcript is served by its
+    // substream agent, not by this object.
+    alarm: () => Promise.resolve(),
+  },
+});

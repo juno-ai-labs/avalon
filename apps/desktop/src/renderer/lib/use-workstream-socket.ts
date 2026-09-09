@@ -1,3 +1,4 @@
+import { safeParseSocketEvent } from "@rally/contracts";
 import type { WorkstreamAppearancePatch } from '@rally/contracts';
 import {
   ServerSocketEventSchema,
@@ -72,7 +73,7 @@ import {
 } from './transcript';
 import type { HarnessStatus, Message, WorkstreamDetail, WorkstreamSummary } from './types';
 import { withDerivedUnread } from './workstream-state-store';
-import { evictCachedSubstream, setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
+import { evictCachedSubstream, patchCachedGeneratedIcon, patchCachedWorkstream, patchCachedWorkstreamAppearance, setCachedWorkstreams, WORKSTREAMS_QUERY_KEY, workstreamDetailQueryKey } from './workstreams-cache';
 import { useWorkstreamSocketResumeState, type StreamCursor } from './workstream-socket-resume';
 import { useWorkstreamControlSocket } from './use-workstream-control-socket';
 
@@ -470,15 +471,6 @@ export function applyActiveStreamCheckpoints(
     }));
   }
   return nextMessages;
-}
-
-export function workstreamDetailQueryKey(
-  workstreamId: string,
-  substreamId = '0',
-): readonly ['workstream', string] | readonly ['substream-workstream', string, string] {
-  return substreamId === '0'
-    ? ['workstream', workstreamId]
-    : ['substream-workstream', workstreamId, substreamId];
 }
 
 export function orderedTranscriptQueryKey(
@@ -1100,8 +1092,24 @@ export function useWorkstreamSocket(
       const command = { type: 'set_workstream_appearance' as const, operationId: uuidV7(), appearance };
       const result = appearanceQueue.then(async () => {
         if (closedByEffect) throw new ApiError('The work stream is no longer available.', 409, 'workstream_socket_unavailable');
-        const receipt = await submitSubstreamCommand(command);
+        const submitted = submitSubstreamCommand(command);
+        // Read after the submit, which starts a connection attempt when none is
+        // open and bumps the generation as it does.
+        const sentOnGeneration = connectGeneration;
+        const receipt = await submitted;
         if (receipt.command !== 'set_workstream_appearance') throw new Error('substream_command_receipt_mismatch');
+        // The sidebar row has no preview of its own and the projection that
+        // would update it is several hops away; the header keeps the picker's
+        // preview, so only the row is written. The receipt is the commit —
+        // on the connection that carried the command. A receipt that arrives
+        // after a reconnect answers a resend, and the room answers a resend of
+        // an already committed operation from its receipt without publishing
+        // anything, so it may describe a value another client has since
+        // replaced and whose newer state this client already holds. The
+        // reconnect's snapshot carries the current value, so the patch is
+        // simply not needed there, and applying it could put the older choice
+        // back with nothing left to correct it.
+        if (sentOnGeneration === connectGeneration) patchCachedWorkstreamAppearance(queryClient, parentId, appearance);
       });
       appearanceQueue = result.catch(() => undefined);
       return result;
@@ -1208,7 +1216,9 @@ export function useWorkstreamSocket(
             { length: assembly.chunkCount },
             (_, index) => assembly.chunks.get(index)!,
           ).join('');
-          const context = SubstreamInitialContextSchema.parse(JSON.parse(json));
+          const parsedContext = safeParseSocketEvent(SubstreamInitialContextSchema, JSON.parse(json));
+          if (!parsedContext.success) throw parsedContext.error;
+          const context = parsedContext.data;
           if (context.source.workstreamId !== parentId || context.source.substreamId !== '0') {
             throw new Error('substream_initial_context_identity_mismatch');
           }
@@ -1575,23 +1585,18 @@ export function useWorkstreamSocket(
         // `automatic` when a later pass may still improve on the name and
         // `settled` when nothing will change it again; the event says which,
         // and neither is a reason to keep waiting.
-        const renamed = { title: event.title, titleStatus: event.titleStatus };
-        queryClient.setQueryData<WorkstreamDetail>(detailQueryKey, (current) =>
-          current ? { ...current, ...renamed } : current);
-        setCachedWorkstreams(queryClient, (current) =>
-          current?.map((workstream) => workstream.id === parentId
-            ? { ...workstream, ...renamed }
-            : workstream));
+        patchCachedWorkstream(queryClient, parentId, { title: event.title, titleStatus: event.titleStatus }, substreamId);
+        // A naming pass also chooses the icon, and only where nobody has, so
+        // the event carries one exactly when the server wrote one. The sidebar
+        // row takes it if it has no icon of its own; the header waits for the
+        // versioned projection. Both conditions are the writer's, and
+        // `patchCachedGeneratedIcon` holds the reasons for each.
+        if (event.icon && substreamId === '0') patchCachedGeneratedIcon(queryClient, parentId, event.icon);
       } else if (event.type === 'workstream_scope_changed') {
         // Whoever this change excluded has already been disconnected by the
         // room, so everyone still here may read it and only needs the lock on
         // their sidebar row and the header they are reading to agree.
-        queryClient.setQueryData<WorkstreamDetail>(detailQueryKey, (current) =>
-          current ? { ...current, scope: event.scope } : current);
-        setCachedWorkstreams(queryClient, (current) =>
-          current?.map((workstream) => workstream.id === parentId
-            ? { ...workstream, scope: event.scope }
-            : workstream));
+        patchCachedWorkstream(queryClient, parentId, { scope: event.scope }, substreamId);
       } else if (event.type === 'stream_completed') {
         const matchingCursors = new Map([...streamCursors].filter(([, cursor]) =>
           cursor.streamId === event.streamId));
@@ -2037,7 +2042,7 @@ export function useWorkstreamSocket(
           }
           try {
             const parsed: unknown = JSON.parse(String(messageEvent.data));
-            const commandResult = WorkstreamSocketCommandResultSchema.safeParse(parsed);
+            const commandResult = safeParseSocketEvent(WorkstreamSocketCommandResultSchema, parsed);
             if (commandResult.success) {
               const pending = pendingSubstreamCommands.get(commandResult.data.operationId);
               if (!pending) return;
@@ -2062,7 +2067,7 @@ export function useWorkstreamSocket(
               }
               return;
             }
-            const event = ServerSocketEventSchema.safeParse(parsed);
+            const event = safeParseSocketEvent(ServerSocketEventSchema, parsed);
             if (event.success) {
               if (event.data.type === 'error'
                 && ['workspace_socket_required', 'invalid_event'].includes(event.data.code)

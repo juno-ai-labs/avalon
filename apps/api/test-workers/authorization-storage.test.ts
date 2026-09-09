@@ -4,7 +4,7 @@ import { runInDurableObject } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
 import { createCloudflareTestBinding } from '../test/helpers/cloudflare-test';
 import { asSubstreamId, asUserId, asWorkspaceId } from '@rally/contracts';
-import { AUTHORIZATION_PROJECTION_MIGRATION, flushAuthorizationDeliveries, flushAuthorizationProjection } from '../src/durable-objects/authorization-projection';
+import { AUTHORIZATION_PROJECTION_MIGRATION, AUTHORIZATION_PROJECTION_TIMING_MIGRATION, flushAuthorizationDeliveries, flushAuthorizationProjection } from '../src/durable-objects/authorization-projection';
 import { AuthorizationStorage } from '../src/durable-objects/authorization-storage';
 import { type AuthorizationSnapshot } from '../src/services/authorization-policy';
 
@@ -33,8 +33,9 @@ describe('authorization SQLite state', () => {
   it('preserves re-enqueued discovery during delivery and defers churn during Queue failures', async () => {
     const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName('authorization-storage-delivery'));
     await stub.initializeWorkspace(workspaceId, 'wnam');
-    await stub.registerAuthorizationChildren({ workspaceId, parentId, substreamIds: ['0'] });
-    await runInDurableObject(stub, async (instance, state) => {
+    await runInDurableObject(stub, async (instance, state) => state.blockConcurrencyWhile(async () => {
+      // This test drives dispatch itself; keep the real alarm from racing the controlled Queue callback.
+      await instance.registerAuthorizationChildren({ workspaceId, parentId, substreamIds: ['0'] });
       const queue = createCloudflareTestBinding<Queue>({ sendBatch: async () => {
         await instance.registerAuthorizationChildren({ workspaceId, parentId, substreamIds: ['0'] });
       } });
@@ -49,7 +50,7 @@ describe('authorization SQLite state', () => {
       expect(state.storage.sql.exec<{ not_before: number }>('SELECT not_before FROM authorization_delivery').one().not_before).toBe(now + 5_000);
       await instance.registerAuthorizationChildren({ workspaceId, parentId, substreamIds: ['0'] });
       expect(state.storage.sql.exec<{ not_before: number }>('SELECT not_before FROM authorization_delivery').one().not_before).toBe(now + 5_000);
-    });
+    }));
   });
 
   it('keeps a changed source projection deferred after a Queue failure', async () => {
@@ -57,9 +58,12 @@ describe('authorization SQLite state', () => {
     await stub.initializeWorkspace(workspaceId, 'wnam');
     await runInDurableObject(stub, async (_instance, state) => {
       state.storage.sql.exec(AUTHORIZATION_PROJECTION_MIGRATION[0]!);
-      state.storage.sql.exec('INSERT INTO authorization_projection_outbox VALUES (1, 1, 0)');
+      for (const statement of AUTHORIZATION_PROJECTION_TIMING_MIGRATION) state.storage.sql.exec(statement);
+      state.storage.sql.exec('INSERT INTO authorization_projection_outbox(id, revision, not_before) VALUES (1, 1, 0)');
+      const mutationAt = state.storage.sql.exec<{ first_mutated_at: number }>('SELECT first_mutated_at FROM authorization_projection_outbox').one().first_mutated_at;
       const now = Date.now();
-      const queue = createCloudflareTestBinding<Queue>({ send: async () => {
+      const queue = createCloudflareTestBinding<Queue>({ send: async (job) => {
+        expect(job).toMatchObject({ mutationAt });
         state.storage.sql.exec('UPDATE authorization_projection_outbox SET revision = revision + 1');
         throw new Error('queue unavailable');
       } });

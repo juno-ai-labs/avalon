@@ -28,39 +28,117 @@ export const PROJECT_ICON_KEYS = [
   "heart",
 ] as const;
 
-export const PROJECT_COLOR_KEYS = [
-  "gray",
-  "brown",
+/**
+ * The hue ring: fourteen colours in wheel order, `pink` adjacent to `rose` so
+ * the sequence closes on itself.
+ *
+ * The pickers rely on that — each runs its first row left to right and its
+ * second right to left, so both seams of the ring meet rather than jumping back
+ * across the grid. Reordering this list reorders the swatches and breaks a seam;
+ * add a hue where it belongs on the wheel, not at the end.
+ */
+export const PALETTE_RING = [
+  "rose",
   "red",
   "orange",
-  "yellow",
+  "amber",
+  "lime",
   "green",
-  "teal",
+  "emerald",
   "cyan",
   "blue",
   "indigo",
+  "violet",
   "purple",
+  "fuchsia",
   "pink",
 ] as const;
 
 /**
- * Colors a picker may offer. `orange` stays in `PROJECT_COLOR_KEYS` so stored
- * appearances remain valid; it is not selectable because its neon-yellow paint
- * fails contrast on chips. `paintProjectColor` maps leftover `orange` to gold.
+ * Keys retired when the palette became the ring. Rows written before that still
+ * hold them, and a stored value has to survive a read —
+ * `WorkstreamAppearanceSchema.parse` runs on every work-stream read and throws
+ * rather than degrading — so they stay storable, keep their design tokens, and
+ * keep rendering exactly as they did. Nothing recolours under anyone; the
+ * colour simply cannot be chosen again.
  */
-export const PROJECT_COLOR_CHOICES = [
+export const PALETTE_RETIRED = [
   "gray",
   "brown",
-  "red",
   "yellow",
-  "green",
   "teal",
-  "cyan",
-  "blue",
-  "indigo",
-  "purple",
-  "pink",
 ] as const;
+
+/**
+ * Every colour the design system defines a token for: the ring, the `black`
+ * neutral, and the retired keys still being rendered for whoever holds one.
+ *
+ * This is the vocabulary, not a menu. What a *project* may be and what a
+ * *person* may be are narrower lists below, and they are deliberately different
+ * — `black` is the account accent's alone.
+ */
+export const PALETTE_KEYS = [...PALETTE_RING, "black", ...PALETTE_RETIRED] as const;
+export type PaletteKey = (typeof PALETTE_KEYS)[number];
+
+/**
+ * What the picker offers for a project or work stream: the ring, and nothing
+ * else.
+ *
+ * `black` is left out on purpose. It reads as an absence of colour rather than a
+ * colour, which is the wrong signal for an object sitting in a list beside
+ * thirteen others it is meant to be told apart from; it belongs to a person,
+ * where only one is on screen at a time.
+ *
+ * Left out of the *menu*, not out of the vocabulary — see
+ * `PROJECT_COLOR_KEYS_STORABLE`. Narrowing what can be stored is how a colour
+ * somebody already holds turns into a failed read.
+ */
+export const PROJECT_COLOR_KEYS = PALETTE_RING;
+
+/**
+ * What a stored project colour may legally hold: every colour the palette
+ * defines, which is deliberately wider than the menu.
+ *
+ * This is the vocabulary for schemas and for the SQLite CHECK constraint. It
+ * carries the retired keys and `black` alike — a value that is no longer
+ * offered still has to parse and still has to render, whether it stopped being
+ * offered because it was retired or because it was reserved for accounts.
+ */
+export const PROJECT_COLOR_KEYS_STORABLE = PALETTE_KEYS;
+
+/** Retained name for the ring; a derived colour has never included the neutral. */
+export const PROJECT_COLOR_RING = PALETTE_RING;
+
+/**
+ * Which ink reads on each fill, decided by WCAG contrast rather than by eye:
+ * for every key the winner beats 4.5:1, so there is no marginal case to argue
+ * about. On this palette black wins almost everywhere, which is what adopting a
+ * light ramp costs — only `black` and the two darkest retired keys take white.
+ * Checked in rather than computed at render so a value change that flips an ink
+ * has to be a visible edit, and `palette.css.node.test.ts` recomputes it from
+ * the tokens in both appearances.
+ */
+export const PALETTE_INK = {
+  rose: "black",
+  red: "black",
+  orange: "black",
+  amber: "black",
+  lime: "black",
+  green: "black",
+  emerald: "black",
+  cyan: "black",
+  blue: "black",
+  indigo: "black",
+  violet: "black",
+  purple: "black",
+  fuchsia: "black",
+  pink: "black",
+  black: "white",
+  gray: "white",
+  brown: "white",
+  yellow: "black",
+  teal: "black",
+} as const satisfies Record<PaletteKey, "white" | "black">;
 
 export const ProjectIdSchema = z.string().uuid().brand<"ProjectId">();
 export type ProjectId = z.infer<typeof ProjectIdSchema>;
@@ -68,14 +146,8 @@ export const asProjectId = (value: string): ProjectId => ProjectIdSchema.parse(v
 
 export const ProjectIconKeySchema = z.enum(PROJECT_ICON_KEYS);
 export type ProjectIconKey = z.infer<typeof ProjectIconKeySchema>;
-export const ProjectColorKeySchema = z.enum(PROJECT_COLOR_KEYS);
+export const ProjectColorKeySchema = z.enum(PROJECT_COLOR_KEYS_STORABLE);
 export type ProjectColorKey = z.infer<typeof ProjectColorKeySchema>;
-export type ProjectColorChoice = (typeof PROJECT_COLOR_CHOICES)[number];
-
-/** Resolve a stored identity key to the token a chip may paint. */
-export function paintProjectColor(key: ProjectColorKey): ProjectColorChoice {
-  return key === "orange" ? "yellow" : key;
-}
 export const ProjectScopeSchema = z.enum(["personal", "workspace"]);
 export type ProjectScope = z.infer<typeof ProjectScopeSchema>;
 export const ProjectStatusSchema = z.enum([

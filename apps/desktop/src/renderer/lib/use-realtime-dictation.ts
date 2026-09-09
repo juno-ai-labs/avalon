@@ -151,10 +151,19 @@ function providerErrorMessage(event: RealtimeTranscriptionEvent): string {
   return event.error?.message ?? 'The transcription service could not transcribe this recording.';
 }
 
+const transcriptionEventTypes = new Set([
+  'session.updated', 'transcription_session.updated', 'input_audio_buffer.committed',
+  'conversation.item.input_audio_transcription.delta', 'response.text.delta',
+  'conversation.item.input_audio_transcription.completed', 'response.text.done',
+  'conversation.item.input_audio_transcription.failed', 'error',
+]);
+
 function parseRealtimeEvent(data: unknown): RealtimeTranscriptionEvent | undefined {
   try {
     const parsed: unknown = JSON.parse(String(data));
-    return parsed && typeof parsed === 'object' ? parsed as RealtimeTranscriptionEvent : undefined;
+    return parsed && typeof parsed === 'object' && 'type' in parsed
+      && typeof parsed.type === 'string' && transcriptionEventTypes.has(parsed.type)
+      ? parsed as RealtimeTranscriptionEvent : undefined;
   } catch {
     return undefined;
   }

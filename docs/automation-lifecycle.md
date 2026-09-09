@@ -472,10 +472,11 @@ siblings in `test-workers/helpers/conversation-effects.ts`.
 
 ## Data model
 
-`SidekickDO` SQLite retains the namespace renamed from `AutomationDO`, with four
+`SidekickDO` SQLite retains the namespace renamed from `AutomationDO`, with five
 ordered object migrations: `automation`, `definition_revisions`,
-`schedules`, `runs`, `inbound_email_receipts`, the shared parent tables, and
-`_internal_durable_alarms`. [`workstream-durable-object.md`](workstream-durable-object.md#automationdo)
+`schedules`, `runs`, `inbound_email_receipts`, the shared parent tables,
+`_internal_durable_alarms`, and the `object_retirement` tombstone
+([`workspace-retirement.md`](workspace-retirement.md)). [`workstream-durable-object.md`](workstream-durable-object.md#automationdo)
 catalogs the columns; the occurrence keys and run states are in the tables
 above. `run_id` is the child substream id, and `harness_run_id` is unique per
 run.

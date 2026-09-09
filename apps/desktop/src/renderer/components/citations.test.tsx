@@ -68,7 +68,7 @@ describe('resource citations', () => {
     expect(document.querySelector('.citation-card-row')).toBeNull();
   });
 
-  it('merges consecutive embed cards into one scrollable row', () => {
+  it('merges consecutive embed cards into one wrapping row', () => {
     render(
       <MarkdownBody citations={context()}>
         {'Two artifacts came out of this.\n\n![The deck](resource://board-deck)\n\n![The deck again](resource://board-deck)\n\nBoth are attached.'}

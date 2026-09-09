@@ -1,7 +1,7 @@
 # Authorization
 
 Rally's internal read authorization primitive composes canonical owner facts into
-an explicit decision. It serves member search and resource reads. Five-minute authorization freshness is a design goal, not a read deadline. The module does not admit
+an explicit decision. It serves member search and resource reads. Search trusts projected decisions across requests; other consumers use canonical resolution. Five-minute authorization freshness is a design goal, not a read deadline. The module does not admit
 participants or become a new canonical owner of memberships.
 
 ## Where the code lives
@@ -9,8 +9,10 @@ participants or become a new canonical owner of memberships.
 | File under `apps/api/src/` | Responsibility |
 | --- | --- |
 | `services/authorization-policy.ts` | Typed addresses, subject, four outcomes, proof composition, evidence validation, `AccessContext` |
+| `services/search-authorization.ts` | KV/regional search decisions, read-through misses and mutation-driven push |
 | `services/authorization-service.ts` | Member policy, batch-local owner observations and HTTP disclosure adapter |
 | `durable-objects/authorization-storage.ts` | Exact attachment locations, inventory revision ordering and shipped migration tables |
+| `durable-objects/search-authorization-projection.ts` | Workspace mutation triggers, coalesced push outbox and Queue dispatch |
 | `durable-objects/authorization-projection.ts` | Transactional child outbox and reference-only Queue contract |
 | `services/authorization-projection-service.ts` | Reloads attachment inventories from their owners when jobs execute |
 | `durable-objects/workspace-do.ts` | Legacy snapshot compatibility validation, resource facts, migration fan-out and discovery status |
@@ -32,9 +34,7 @@ An alternative attachment location can independently grant access. Denial from
 one location does not override a valid grant from another.
 
 Member proofs include a canonical regional workspace-membership observation,
-shared within one authorization batch. Subsequent checks reload
-canonical facts. Search keeps its admission decision for the duration of one
-source batch.
+shared within one authorization batch. Canonical checks reload facts. Search instead reuses a subject-and-resource decision from the regional projection.
 For member reads, a work stream's main SubstreamAgent owns its scope and roster.
 WorkstreamDO adds its canonical private-child membership and ready-state facts.
 An automation supplies its own scope, author, executor and child registry; an
@@ -57,7 +57,7 @@ passed. Future timestamps and empty grants remain invalid. Five-minute freshness
 is a design goal for propagation and performance, with no code-enforced timeout,
 lease duration, or permission-expiration timer.
 
-Each authorization check loads canonical permission facts. Duplicate resources and shared owners reuse observations within that batch only,
+Canonical authorization checks load owner facts; search cache hits do not. Duplicate resources and shared owners reuse observations within that batch only,
 including completed observations. Every later or concurrent check starts its own
 batch and observes the owner again. Search admits each source's candidate batch
 once before loading and formatting its canonical content; it does not recheck
@@ -74,17 +74,49 @@ pagination contract, not a claim that hashing prevents existence inference.
 A resource returns after its first valid attachment grant; unrelated
 alternative locations do not need to be read once access is established.
 
-Cross-request decision snapshots are no longer read or written. Removing their
-expiry alone would have made old grants permanent, because source projection jobs
-do not invalidate decision snapshots. Existing SQLite snapshot tables and Global
-KV bindings remain inert for deployment compatibility. Legacy snapshot RPCs validate
-addresses but return cache misses and accept writes without storing them. A future
-cache needs explicit owner-revision invalidation rather than a time-based lease.
-EU does not access Global KV. Existing SQLite rows are retained but cannot grant
-access and cannot grow through these inert RPCs. After the compatibility rollout,
-remove the legacy RPCs and KV binding and add a new migration dropping
-`authorization_snapshots` and its index; do not edit the shipped migration. The
-typed-table guard continues to protect that table until it is dropped.
+Search decision snapshots use Global `AUTHORIZATION_CACHE` KV, with WorkspaceDO
+SQLite as the regional fallback (including EU). Keys hash the schema version,
+workspace, user, delegation and exact resource address. New keys never read the
+legacy snapshots. A miss resolves canonical authority once and stores allowed,
+denied or not-found decisions. Cache hits never recheck owners or schedule work.
+There is no TTL, age-based denial, or periodic/demand-driven refresh. Relevant
+WorkspaceDO row mutations and accepted child inventory deliveries transactionally
+record a coalesced push intent. The alarm sends a reference-only
+`search_authorization_push_v1` target job to the regional activity queue.
+The consumer reloads registered subjects' canonical decisions and publishes
+replacements through WorkspaceDO. Registration allocates a monotonically increasing
+per-key generation before authority reads; superseded generations cannot publish.
+A superseded push retries so a newer, failed cache fill cannot consume its durable
+mutation intent.
+An instance-local per-key queue orders KV writes without holding a DO-wide
+`blockConcurrencyWhile` across network I/O. Unrelated events and keys remain runnable.
+Unavailable owners preserve the previous decision and retry through the queue.
+Push jobs identify a changed parent, resource or connection. Indexed key addresses
+and a normalized dependency table select
+matching resource addresses, recorded owner dependencies and current attachment
+locations, so new grants and removed grants both reach their keys. Pending
+mutations coalesce per target. Misses register their key before loading owners,
+so concurrent source changes can reach a decision being populated. Unavailable
+placeholders are targeted by address/current locations rather than included in
+every parent push. Failed subjects do not prevent remaining subjects from
+publishing; failed queue messages retry without abandoning sibling messages.
+Registration retains current attachment dependencies before reading owners, so
+a removal during an initial fill still targets that key. Cache-read or
+miss-population failures become unavailable candidates, preserving
+partial search results. Archived conversation content remains excluded by the
+local storage reader, independently of cached authorization.
+Changes reach cached grants and denials without another search. This deliberately
+accepts eventual consistency for grants and revocations, including queue and KV
+propagation delay. Five minutes remains a design goal, never a refresh trigger.
+
+A cache-admitted message or link uses `readAdmittedSearchContent`, an internal
+content-only RPC that checks the object address and waits only for storage
+readiness. It does not seat an automation viewer, resolve parent authority again,
+or call product authorization. Canonical revision/hash checks and passage
+extraction remain. Normal product reads continue through their own access path.
+Legacy snapshot RPCs remain inert for rolling compatibility; the shipped SQLite
+table is reused under the new key prefix and must not be dropped. EU never reads
+Global KV.
 
 The attachment reverse index remains Queue-maintained discovery, never a grant.
 Each positive attachment path is checked against its current canonical owner.
@@ -197,8 +229,8 @@ coverage completes. This operator binding must be provisioned first; it is not a
 product endpoint. The removed synchronous `refreshAuthorizationDiscovery` helper
 was internal to the Worker and had no operational caller; repair stays asynchronous.
 
-Canonical permission and content reads still cost RPCs. Removing cross-request
-snapshot reuse may increase repeated-query latency; this change does not claim
+Cache misses and mutation-driven projection still cost canonical RPCs. Cache-hit hydration avoids
+those calls; this change does not claim
 the production p50/p90 search goals are met. Measure the complete app path after
 deployment, including permission changes and delayed Queue delivery.
 
@@ -215,8 +247,12 @@ projection suites cover the retained integration boundaries.
 
 Run the focused Node tests with `pnpm --filter @rally/api exec vitest run` and
 runtime tests with the same command plus `--config vitest.workers.config.ts`.
-Runtime fixtures must seed regional routing and canonical objects; mocking the
-permission answer cannot prove that a stale projection is ignored.
+Runtime fixtures must seed regional routing and canonical objects.
+`test-workers/search-authorization.test.ts` covers old KV decisions without owner
+reads, initial population, regional persistence, and mutation outbox delivery.
+The conversation contract test proves a cached grant stays usable until a push
+publishes revocation. Deliberately disabling cache reuse, publication, and queue
+delivery makes the corresponding regression tests fail.
 
 ## Regional impact
 
@@ -225,9 +261,10 @@ workspace region. Global Wrangler configuration declares a dedicated KV binding
 for provisioning on first deployment. The pinned Wrangler 4.129.0 CLI enables
 `experimental-provision` and `experimental-auto-create` by default; its binding
 provisioner creates or reuses the named resource. No production deployment was
-performed to verify that operation. KV is an optional accelerator, so it is not
-in the environment contract's required `productionOnlyBindings` list. EU deliberately has no authorization KV
-binding and does not use a Global fallback. See [regionalization](regionalization.md).
+performed to verify that operation. KV stores Global search decisions when bound;
+regional SQLite provides the fallback. The binding is therefore absent from the
+environment contract's required `productionOnlyBindings` list. EU deliberately has
+no authorization KV binding and does not use a Global fallback. See [regionalization](regionalization.md).
 
 ## Operations
 
@@ -239,7 +276,88 @@ attachment lookups while dormant source inventories are discovered; ordinary
 reads also initiate missing discovery. Rolling back the serving implementation
 requires a Worker code rollback, not a per-workspace mode change.
 
+### Measuring propagation
+
+`authz_push_timing` is a content-free Workers Logs diagnostic for every queue
+attempt. `mutation_to_write_ack_ms` measures the oldest coalesced mutation through
+successful publication of the selected decisions. It is populated only for a
+completed attempt that wrote keys. Failed attempts report
+`elapsed_since_mutation_ms` instead; no-key and fully superseded attempts are not
+latency successes. `store` distinguishes Global `kv` from `regional_sqlite`.
+
+The source attachment/roster outbox persists its first mutation timestamp and
+carries it through discovery into the WorkspaceDO outbox (`timing_origin =
+source_mutation`). Workspace-owned changes start in the WorkspaceDO transaction
+(`workspace_mutation`). Directory effects without an originating timestamp also
+start when their WorkspaceDO projection changes; their upstream delivery is not
+included. Keep these origins separate when assessing another platform consumer.
+Existing queued jobs without timing report null totals, not fabricated zeros.
+Coalescing and transport retries preserve the oldest pending timestamp, including
+child discovery coalescing and KV publication retries. A cache-fill retry without
+a source mutation has null timing and is excluded from mutation-latency samples. No timer
+refreshes decisions, and instrumentation adds no cache-read or authority check.
+
+Useful fields are `outbox_ms` (source mutation through final queue dispatch,
+including earlier projection hops), `queue_ms` (dispatch through this attempt,
+including retries), `selection_ms`, `resolve_ms`, `kv_write_ms`, `duration_ms`,
+`selected_keys`, `written_keys`, `superseded_keys`, `attempt`, and `outcome`.
+Publication RPCs return acknowledged counts; a failed RPC does not claim writes
+whose response was lost. `kv_write_ms` sums acknowledged publication RPCs' KV
+call time; `duration_ms` includes RPC transport and all other processing.
+
+In Workers Logs, filter `event = authz_push_timing`, `store = kv`,
+`outcome = completed`, and non-null `mutation_to_write_ack_ms`. Group by region,
+build SHA, timing origin, and key-count range; report count, p50, p90, p99 and max.
+Deduplicate queue retries by workspace, target, mutation timestamp and enqueue
+timestamp, taking the earliest successful completion. Separately report failed
+attempts and retries so slow failures cannot disappear from the success percentiles.
+`authz_push_enqueued` provides the corresponding enqueue record;
+`authz_push_enqueue_failed` reports pending count and oldest pending age. Inspect
+the regional queue/DLQ for jobs without completion, and query
+`search_authorization_push.first_mutated_at` for undelivered outbox age. These
+operational logs follow the existing log-level and Workers Logs retention/sampling
+configuration; they are not a lossless metrics ledger.
+
+The endpoint is **KV write acknowledged**, not globally visible. A successful
+`put` does not establish when another edge serves that version. Before moving a
+consumer that needs a visibility bound, measure it with versioned reads from the
+regions where that consumer runs. Those probes should be an explicit experiment,
+not authorization rechecks on ordinary reads.
+
 ## Changelog
+
+### 2026-09-08 — Verify publication and failure boundaries during review
+
+Review identified timestamp ties, workspace-wide registry scans, and KV network
+I/O under a global object gate. Use per-key generations and publication queues,
+indexed dependencies, and failure isolation at candidate/subject/message level.
+Keep the prior archived-content behavior without rechecking authorization.
+Preserve source timing through discovery coalescing and KV retries, excluding
+untimed initial-fill retries. Alarm arming after committed runtime SQL is
+background work so a scheduling error cannot misreport the write as rejected.
+
+
+### 2026-09-08 — Measure mutation-to-publication latency
+
+The platform needs propagation evidence before reusing search's KV authorization
+model. Preserve source mutation time across durable outboxes, coalescing and
+Queue retries; emit completed/failed attempt timings and acknowledged key counts.
+Separate write acknowledgement from edge visibility and identify measurements
+that begin at a WorkspaceDO directory projection, rather than disguising missing
+upstream time as full source latency. This uses existing operational logs rather
+than adding a measurement service or read-time refresh.
+
+### 2026-09-08 — Trust eventually consistent search decisions
+
+Production searches spent seconds walking canonical conversation owners before
+loading content. The product explicitly chose fast, eventually consistent search
+authorization. Restore cross-request decisions through KV/regional SQLite and
+mutation-driven push, without a five-minute serving deadline or refresh timer. Remove downstream product
+authorization and automation seating from admitted search-content reads. Canonical
+source text and index revisions remain independently validated. This supersedes
+the earlier retirement of cross-request search decisions; future changes must not
+silently restore owner rechecks on cache hits.
+
 
 ### 2026-09-08 — Clarify observable pagination metadata
 

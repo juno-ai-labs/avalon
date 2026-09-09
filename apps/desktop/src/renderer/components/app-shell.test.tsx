@@ -13,6 +13,7 @@ import {
   showsAutomation,
   upsertProjectDirectory,
   windowControlsShellClass,
+  batchArchiveSkipIds,
   workstreamMatchesBatchFilter,
 } from './app-shell';
 
@@ -115,6 +116,22 @@ describe('workstreamMatchesBatchFilter', () => {
       pinned: false,
       includeSystem: false,
     })).toBe(false);
+  });
+});
+
+describe('batchArchiveSkipIds', () => {
+  it('names every cached row the filter took, not only the open one', () => {
+    const filter = {
+      lastActivityAt: { atOrAfter: '2026-08-11T00:00:00.000Z', before: '2026-08-12T00:00:00.000Z' },
+      pinned: false,
+      includeSystem: false,
+    };
+    const taken = summary('completed');
+    const alsoTaken = { ...summary('running'), id: '00000000-0000-7000-8000-000000000031' };
+    const older = { ...summary('completed'), id: '00000000-0000-7000-8000-000000000032', lastActivityAt: '2026-08-01T10:00:00.000Z' };
+    const pinned = { ...summary('completed'), id: '00000000-0000-7000-8000-000000000033', pinPosition: 0 };
+    expect(batchArchiveSkipIds([older, taken, pinned, alsoTaken], filter)).toEqual([taken.id, alsoTaken.id]);
+    expect(batchArchiveSkipIds([], filter)).toEqual([]);
   });
 });
 
