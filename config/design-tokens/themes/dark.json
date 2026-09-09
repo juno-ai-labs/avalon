@@ -85,6 +85,8 @@
     "sys.color.danger.wash": "#1d100c",
     "sys.color.danger.edge": "#3a201a",
     "sys.color.danger.on": "#150b08",
+    "sys.color.palette-ink.light": "#fcfcfc",
+    "sys.color.palette-ink.dark": "#141414",
     "sys.color.project.edge": "rgba(252, 252, 252, 0.22)",
     "sys.color.project.black": "#45454d",
     "sys.color.project.rose": "#f43f5e",

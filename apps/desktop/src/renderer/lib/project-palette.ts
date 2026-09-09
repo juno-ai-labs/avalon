@@ -1,4 +1,4 @@
-import { PROJECT_COLOR_KEYS, type ProjectColorKey } from '@rally/contracts';
+import { PALETTE_INK, PROJECT_COLOR_KEYS, type PaletteKey, type ProjectColorKey } from '@rally/contracts';
 import { serpentineRows } from './grid-layout';
 
 /**
@@ -31,4 +31,21 @@ export const PROJECT_COLOR_DEFAULT: ProjectColorKey = 'blue';
  */
 export function projectColorCells(): (ProjectColorKey | null)[] {
   return serpentineRows(PROJECT_COLOR_KEYS, PROJECT_COLOR_COLUMNS);
+}
+
+/**
+ * The ink to draw a glyph's symbol in, over a palette fill.
+ *
+ * Follows `PALETTE_INK` rather than one fixed near-white: on the previous darker
+ * ramp a single light foreground worked everywhere, and on this one white over
+ * `lime` is 1.98:1, under the 3:1 a meaningful graphical object needs. The inks
+ * are the absolute pair, not the neutral ramp, which inverts with the
+ * appearance — a fill does not change with the theme, so its ink must not
+ * either. `--glyph-ink` is consumed by `.workstream-glyph` and
+ * `.automation-glyph`.
+ */
+export function glyphInk(color: PaletteKey): string {
+  return PALETTE_INK[color] === 'white'
+    ? 'var(--av-sys-color-palette-ink-light)'
+    : 'var(--av-sys-color-palette-ink-dark)';
 }
