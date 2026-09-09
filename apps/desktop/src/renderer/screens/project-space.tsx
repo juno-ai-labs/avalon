@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Archive, FileText, FolderPlus, Plus, RotateCcw, Trash2, UserPlus } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { NavLink, useNavigate, useParams } from 'react-router-dom';
+import { PROJECT_COLOR_DEFAULT } from '../lib/project-palette';
 import {
   type ProjectColorKey,
   type ProjectDirectory,
@@ -55,7 +56,7 @@ export function ProjectSpaceScreen(): React.JSX.Element {
   const [savingScope, setSavingScope] = useState(false);
   const [scopeError, setScopeError] = useState<string | null>(null);
   const [editIconKey, setEditIconKey] = useState<ProjectIconKey>('briefcase');
-  const [editColorKey, setEditColorKey] = useState<ProjectColorKey>('gray');
+  const [editColorKey, setEditColorKey] = useState<ProjectColorKey>(PROJECT_COLOR_DEFAULT);
   const [editParticipants, setEditParticipants] = useState<Set<string>>(new Set());
   const { active: projects, inactive: inactiveProjects } = useProjectDirectories();
   const resources = useQuery({

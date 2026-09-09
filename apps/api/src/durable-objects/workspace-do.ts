@@ -20,8 +20,6 @@ import {
   asAutomationId,
   asWorkspaceId,
   IdSchema,
-  PROJECT_COLOR_KEYS,
-  PROJECT_ICON_KEYS,
   UserIdSchema,
   SubstreamIdSchema,
   WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
@@ -1024,6 +1022,59 @@ function isWorkspaceScheduleAlarmKind(kind: string): kind is WorkspaceScheduleTa
   return (WORKSPACE_SCHEDULE_ALARM_KINDS as readonly string[]).includes(kind);
 }
 
+/**
+ * Palette snapshots, frozen per migration.
+ *
+ * A CHECK vocabulary is baked into the text of the statement that created the
+ * table, so interpolating a live constant here means editing already-shipped
+ * SQL every time the palette moves: objects created before the edit keep the
+ * old vocabulary, objects created after get the new one, and nothing records
+ * that they diverged. Each migration therefore pins the list as it stood when
+ * that migration shipped, and widening the vocabulary is a new migration.
+ *
+ * `projects-palette.test.ts` asserts the newest snapshot still covers
+ * `PROJECT_COLOR_KEYS_STORABLE`, so adding a colour without a migration fails
+ * the build rather than the insert.
+ */
+/**
+ * Every table emptied when `projects` is dropped: four cascade from it
+ * directly, and two more cascade from `project_default_resources` beneath it.
+ * Ordered parents-first so the list can be replayed as inserts.
+ */
+const PROJECT_CASCADE_DEPENDENTS = [
+  "project_participants",
+  "workspace_project_order",
+  "project_workstream_memberships",
+  "project_default_resources",
+  "project_default_resource_targets",
+  "project_default_resource_publications",
+] as const;
+
+const PROJECT_COLOR_KEYS_AT_V14 = [
+  "gray", "brown", "red", "orange", "yellow", "green",
+  "teal", "cyan", "blue", "indigo", "purple", "pink",
+] as const;
+
+/** The v14 twelve, plus the hue ring that replaced them. See above. */
+/**
+ * Icons as they stood at v14, which is also how they stand at v45 — the set has
+ * never changed. Pinned for the same reason the colours are: a CHECK vocabulary
+ * lives in shipped SQL text and must stop moving when the live constant does.
+ */
+const PROJECT_ICON_KEYS_FROZEN = [
+  "briefcase", "target", "calendar-days", "list-checks", "clipboard-list",
+  "file-text", "folder", "lightbulb", "star", "flag",
+  "rocket", "chart-no-axes-combined", "calculator", "coins", "users",
+  "user-search", "handshake", "megaphone", "palette", "image",
+  "pen-tool", "package", "building-2", "globe-2", "heart",
+] as const;
+
+const PROJECT_COLOR_KEYS_AT_V45 = [
+  "black", "rose", "red", "orange", "amber", "lime", "green", "emerald",
+  "cyan", "blue", "indigo", "violet", "purple", "fuchsia", "pink",
+  "gray", "brown", "yellow", "teal",
+] as const;
+
 function projectRegistrySql(values: readonly string[]): string {
   return values.map((value) => `'${value.replaceAll("'", "''")}'`).join(", ");
 }
@@ -1698,8 +1749,8 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
       project_id TEXT PRIMARY KEY,
       name TEXT NOT NULL CHECK (length(trim(name)) > 0),
       normalized_name TEXT NOT NULL CHECK (length(normalized_name) > 0),
-      icon_key TEXT NOT NULL CHECK (icon_key IN (${projectRegistrySql(PROJECT_ICON_KEYS)})),
-      icon_color_key TEXT NOT NULL CHECK (icon_color_key IN (${projectRegistrySql(PROJECT_COLOR_KEYS)})),
+      icon_key TEXT NOT NULL CHECK (icon_key IN (${projectRegistrySql(PROJECT_ICON_KEYS_FROZEN)})),
+      icon_color_key TEXT NOT NULL CHECK (icon_color_key IN (${projectRegistrySql(PROJECT_COLOR_KEYS_AT_V14)})),
       scope TEXT NOT NULL CHECK (scope IN ('personal', 'workspace')),
       status TEXT NOT NULL CHECK (status IN (
         'active', 'archiving', 'archived', 'restoring', 'cancelling_restore'
@@ -2713,7 +2764,67 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
 }, {
   version: 44,
   description: 'push search authorization decisions after source permission mutations',
-  statements: SEARCH_AUTHORIZATION_PUSH_MIGRATION,
+  statements: SEARCH_AUTHORIZATION_PUSH_MIGRATION,}, {
+  version: 45,
+  description: "the project palette becomes the hue ring",
+  statements: [
+    // `icon_color_key` is a CHECK vocabulary and SQLite cannot widen one in
+    // place, so the table is replaced. Six tables cascade from `projects` —
+    // four directly, and two more beneath `project_default_resources` — which
+    // means the implicit delete inside `DROP TABLE` would take a workspace's
+    // project membership, ordering and pending default-resource work with it.
+    //
+    // The children are held rather than rebuilt, exactly as v31 does: each is
+    // copied wholesale, the parent is replaced, and the rows are put back
+    // parents-first. Foreign keys stay enforced throughout — `PRAGMA
+    // foreign_keys = OFF` is a silent no-op once the object event has touched
+    // SQLite — and no child's schema, index or column is restated here, which
+    // is the other way a rebuild quietly loses something.
+    //
+    // Nothing is remapped. `gray`, `brown`, `yellow` and `teal` left the picker
+    // but stay in the vocabulary, so every existing project keeps the colour
+    // its owner chose and this migration only ever widens what is accepted.
+    ...PROJECT_CASCADE_DEPENDENTS.map((table) => (
+      `CREATE TABLE ${table}_v45_hold AS SELECT * FROM ${table}`
+    )),
+    `CREATE TABLE projects_v45 (
+      project_id TEXT PRIMARY KEY,
+      name TEXT NOT NULL CHECK (length(trim(name)) > 0),
+      normalized_name TEXT NOT NULL CHECK (length(normalized_name) > 0),
+      icon_key TEXT NOT NULL CHECK (icon_key IN (${projectRegistrySql(PROJECT_ICON_KEYS_FROZEN)})),
+      icon_color_key TEXT NOT NULL CHECK (icon_color_key IN (${projectRegistrySql(PROJECT_COLOR_KEYS_AT_V45)})),
+      scope TEXT NOT NULL CHECK (scope IN ('personal', 'workspace')),
+      status TEXT NOT NULL CHECK (status IN (
+        'active', 'archiving', 'archived', 'restoring', 'cancelling_restore'
+      )),
+      creator_user_id TEXT NOT NULL,
+      archived_at INTEGER CHECK (archived_at IS NULL OR archived_at >= 0),
+      archived_by_user_id TEXT,
+      created_at INTEGER NOT NULL CHECK (created_at >= 0),
+      updated_at INTEGER NOT NULL CHECK (updated_at >= 0),
+      presentation_revision INTEGER NOT NULL DEFAULT 1 CHECK (presentation_revision > 0),
+      audience_generation INTEGER NOT NULL DEFAULT 1 CHECK (audience_generation > 0),
+      lifecycle_generation INTEGER NOT NULL DEFAULT 1 CHECK (lifecycle_generation > 0),
+      CHECK ((status = 'archived') = (archived_at IS NOT NULL)),
+      CHECK ((archived_at IS NULL) = (archived_by_user_id IS NULL))
+    ) STRICT`,
+    `INSERT INTO projects_v45
+       (project_id, name, normalized_name, icon_key, icon_color_key, scope, status,
+        creator_user_id, archived_at, archived_by_user_id, created_at, updated_at,
+        presentation_revision, audience_generation, lifecycle_generation)
+     SELECT project_id, name, normalized_name, icon_key, icon_color_key, scope, status,
+            creator_user_id, archived_at, archived_by_user_id, created_at, updated_at,
+            presentation_revision, audience_generation, lifecycle_generation
+       FROM projects`,
+    // Empties every dependent, which is why they are held above.
+    `DROP TABLE projects`,
+    `ALTER TABLE projects_v45 RENAME TO projects`,
+    // Parents before children, so each insert sees the rows its keys point at.
+    ...PROJECT_CASCADE_DEPENDENTS.flatMap((table) => [
+      `INSERT INTO ${table} SELECT * FROM ${table}_v45_hold`,
+      `DROP TABLE ${table}_v45_hold`,
+    ]),
+  ],
 }];
 
 interface AutomationDirectoryRow extends Record<string, SqlStorageValue> {
