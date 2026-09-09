@@ -38,6 +38,7 @@ connection lifecycle around that admission protocol.
 | `apps/desktop/src/renderer/lib/use-workstreams-query.ts` | Pages the work-stream directory beyond the first, which the connect payload delivers; it does not fetch page one and widens the list only when Debug enabled asks for system rows. |
 | `apps/desktop/src/renderer/lib/use-workstream-control-socket.ts` | Applies complete waterlined WorkstreamDO metadata snapshots to detail and sidebar caches. |
 | `apps/desktop/src/renderer/lib/workstream-state-store.ts` | Shared common/viewer and WorkspaceDO-directory waterline ledgers used by both parent sockets; independently rejects stale state fields and older pin/page fields. |
+| `apps/desktop/src/renderer/lib/workstreams-cache.ts` | The typed write boundary for the shared work-stream list, the detail query key for Main and for a private child, and `patchCachedWorkstream`, the one write for an unversioned fact (a rename or scope event, a REST response, a command receipt) that the list row and the open detail entry must take together. |
 | `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Keeps a pooled, substream-addressed SubstreamAgent feed, resends idempotent child commands after reconnect until their private operation receipts arrive, explicitly disables legacy feed-derived presence, and invokes the separate WorkstreamDO control lifecycle. |
 | `packages/contracts/src/workstream-transcript.ts` | Ordered turn/block, snapshot-fenced range, gap coverage, and nested UTC activity contracts used by the SubstreamAgent feed. |
 | `apps/desktop/src/renderer/lib/workstream-socket-pool.tsx` | Owns the work-stream sockets above the route, gives each mounted owner one opaque lease ID shared by its control/feed starts, warms one presence-free control/feed pair after a one-second sidebar hover, and retains recently viewed pairs without remounting their connection hooks. |
@@ -694,6 +695,28 @@ the provider's redirect and cannot move; [`security.md`](security.md) records
 what that leaves exposed.
 
 ## Changelog
+
+### 2026-09-09 — One write for unversioned facts on both caches
+
+**What changed:** Eight places wrote a rename, scope change, unread mark, read
+acknowledgement, or appearance receipt to the sidebar list and the open detail
+entry by hand, and three of them disagreed about which fields the detail should
+take. They now call `patchCachedWorkstream` in `workstreams-cache.ts`, which
+takes the fields and the open substream and writes both entries. The detail
+query key moved there from the feed hook so the cache module does not import
+the hook that imports it.
+
+**Why:** The appearance receipt needed exactly this write, and adding a ninth
+copy would have left the header and the sidebar one forgotten `setQueryData`
+away from disagreeing again. REST rename and scope responses were narrowed to
+the fields they change rather than spreading the whole summary over the list
+row: the rest of that summary is viewer and attention state the waterline
+ledger in `workstream-state-store.ts` exists to order, and a plain spread
+bypassed it. The unread mark and the read acknowledgement still spread their
+whole response, as they did before: that response is the viewer state itself,
+and narrowing it is a separate decision this change did not make. The harness status and attention advances were deliberately left
+on their own writers, because they are substream-owned and a child's value must
+not reach the parent's list row.
 
 ### 2026-09-08 — Document personal access frames and cursor recovery
 

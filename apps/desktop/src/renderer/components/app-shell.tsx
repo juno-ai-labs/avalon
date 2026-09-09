@@ -34,9 +34,10 @@ import { WORKSTREAMS_QUERY_KEY, useWorkstreamsQuery } from '../lib/use-workstrea
 import {
   evictCachedWorkstream,
   invalidateCachedWorkstreamDetails,
+  patchCachedWorkstream,
   setCachedWorkstreams,
 } from '../lib/workstreams-cache';
-import type { AutomationSummary, NoteDetail, NoteSummary, Workspace, WorkstreamDetail, WorkstreamSummary } from '../lib/types';
+import type { AutomationSummary, NoteDetail, NoteSummary, Workspace, WorkstreamSummary } from '../lib/types';
 import { Sidebar } from './sidebar';
 import { WorkspaceAccountMenu } from './workspace-account-menu';
 
@@ -700,12 +701,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         onChangeWorkstreamScope={async (workstream, scope) => {
           if (!api) return;
           const updated = await api.setWorkstreamScope(workstream.id, scope);
-          setCachedWorkstreams(queryClient, (current) =>
-            current?.map((item) => item.id === updated.id ? { ...item, ...updated } : item),
-          );
-          queryClient.setQueryData<WorkstreamDetail>(['workstream', updated.id], (current) =>
-            current ? { ...current, scope: updated.scope } : current,
-          );
+          patchCachedWorkstream(queryClient, updated.id, { scope: updated.scope });
         }}
         onDeleteAutomation={async (automation) => {
           if (!api) return;
@@ -723,12 +719,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         onMarkWorkstreamUnread={async (workstream) => {
           if (!api) return;
           const updated = await api.markWorkstreamUnread(workstream.id);
-          setCachedWorkstreams(queryClient, (current) =>
-            current?.map((item) => item.id === updated.id ? { ...item, ...updated } : item),
-          );
-          queryClient.setQueryData<WorkstreamDetail>(['workstream', updated.id], (current) =>
-            current ? { ...current, ...updated } : current,
-          );
+          patchCachedWorkstream(queryClient, updated.id, updated);
           if (location.pathname === `/workstreams/${updated.id}`) void navigate('/workstreams/new');
         }}
         onPinWorkstream={async (workstream, pinned) => {
@@ -744,12 +735,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         onRenameWorkstream={async (workstream, title) => {
           if (!api) return;
           const updated = await api.renameWorkstream(workstream.id, title);
-          setCachedWorkstreams(queryClient, (current) =>
-            current?.map((item) => item.id === updated.id ? { ...item, ...updated } : item),
-          );
-          queryClient.setQueryData<WorkstreamDetail>(['workstream', updated.id], (current) =>
-            current ? { ...current, title: updated.title } : current,
-          );
+          patchCachedWorkstream(queryClient, updated.id, { title: updated.title, titleStatus: updated.titleStatus });
         }}
         onRunAutomation={async (automation) => {
           if (!api) return;

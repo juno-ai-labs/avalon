@@ -419,10 +419,14 @@ Rally's receiver is
 hook and the workspace-socket provider both call
 `applyVersionedWorkstreamState`; neither writes the work-stream caches directly
 for versioned state. The one class of direct write is a pushed or acknowledged
-fact with no version of its own, such as a rename event, a harness status, or
-the appearance receipt in `workstreams-cache.ts`. Each of those is a field the
-next newer versioned payload replaces whole, so the receiver still has the last
-word.
+fact with no version of its own: a rename or scope event, a REST response the
+caller just received, the appearance receipt. Those go through
+`patchCachedWorkstream` in `workstreams-cache.ts`, which writes the list row and
+the open detail entry together so the header and the sidebar cannot disagree,
+and each is a field the next newer versioned payload replaces whole, so the
+receiver still has the last word. The harness status and attention advances keep
+their own writers because they are substream-owned: a child's status reaches the
+child's detail entry and never the parent's row.
 The predicate it applies, exactly:
 
 - A payload whose `authorityGeneration` is older than the ledger's is discarded
