@@ -417,7 +417,12 @@ moment one of the sockets reconnects.
 Rally's receiver is
 `apps/desktop/src/renderer/lib/workstream-state-store.ts`. The control-socket
 hook and the workspace-socket provider both call
-`applyVersionedWorkstreamState`; neither writes the work-stream caches directly.
+`applyVersionedWorkstreamState`; neither writes the work-stream caches directly
+for versioned state. The one class of direct write is a pushed or acknowledged
+fact with no version of its own, such as a rename event, a harness status, or
+the appearance receipt in `workstreams-cache.ts`. Each of those is a field the
+next newer versioned payload replaces whole, so the receiver still has the last
+word.
 The predicate it applies, exactly:
 
 - A payload whose `authorityGeneration` is older than the ledger's is discarded

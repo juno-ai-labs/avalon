@@ -1066,8 +1066,12 @@ describe('useWorkstreamSocket', () => {
       url: `wss://api.rally.test/workstreams/${workstreamId}`,
       ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket'),
     })) });
+    const queryClient = new QueryClient();
+    const appearance = { icon: 'atom', color: 'gray' } as const;
+    setCachedWorkstreams(queryClient, [workstreamSummary({ id: workstreamId, appearance })]);
+    queryClient.setQueryData(['workstream', workstreamId], workstreamDetail({ id: workstreamId, appearance }));
     const { result, rerender } = renderHook(({ id }) => useWorkstreamSocket(api, id, true), {
-      initialProps: { id: workstreamId }, wrapper: createWrapper(),
+      initialProps: { id: workstreamId }, wrapper: createWrapper(queryClient),
     });
     await flushPromises();
     const socket = FakeWebSocket.instances[0]!;
@@ -1077,10 +1081,19 @@ describe('useWorkstreamSocket', () => {
     await flushPromises();
     const commands = sentFrames(socket).filter((frame) => frame.type === 'set_workstream_appearance');
     expect(commands).toHaveLength(1);
+    // Nothing moves on a sent command: the sidebar shows a committed value or
+    // the old one, never a choice the room may still refuse.
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.appearance).toEqual(appearance);
     const first = commands[0]!;
     act(() => socket.message({ type: 'client_command_succeeded', command: 'set_workstream_appearance', operationId: first.operationId }));
     await color;
     await flushPromises();
+    // The receipt is the commit, and the sidebar row and the open detail take
+    // it together without waiting for the directory projection. The patch
+    // merges over the current value, so the color choice keeps the icon.
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.appearance)
+      .toEqual({ icon: 'atom', color: 'purple' });
+    expect(queryDetail(queryClient, workstreamId)?.appearance).toEqual({ icon: 'atom', color: 'purple' });
     expect(sentFrames(socket).filter((frame) => frame.type === 'set_workstream_appearance')).toHaveLength(2);
     const queued = result.current.setAppearance({ color: 'blue' });
     const rejectedIcon = expect(icon).rejects.toMatchObject({ code: 'workstream_socket_unavailable' });

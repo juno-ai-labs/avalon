@@ -5,6 +5,7 @@ import {
   evictCachedWorkstream,
   invalidateCachedWorkstreamDetails,
   mergeCachedWorkstreamPage,
+  patchCachedWorkstreamAppearance,
   setCachedWorkstreams,
   WORKSTREAMS_QUERY_KEY,
 } from './workstreams-cache';
@@ -156,5 +157,33 @@ describe('setCachedWorkstreams', () => {
       '00000000-0000-7000-8000-000000000002',
       'child-b',
     ])?.isInvalidated).toBe(false);
+  });
+});
+
+describe('patchCachedWorkstreamAppearance', () => {
+  it('merges the patch over each row\'s own appearance in the list and the detail', () => {
+    const queryClient = new QueryClient();
+    const other = { ...summary(), id: '00000000-0000-7000-8000-000000000002', appearance: { icon: 'rocket', color: 'blue' } as const };
+    setCachedWorkstreams(queryClient, [{ ...summary(), appearance: { icon: 'atom', color: 'gray' } }, other]);
+    queryClient.setQueryData(['workstream', summary().id], { ...summary(), appearance: { icon: 'atom', color: 'gray' } });
+
+    patchCachedWorkstreamAppearance(queryClient, summary().id, { color: 'purple' });
+
+    const list = queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY);
+    expect(list?.[0]?.appearance).toEqual({ icon: 'atom', color: 'purple' });
+    expect(list?.[1]).toBe(other);
+    expect(queryClient.getQueryData<WorkstreamSummary>(['workstream', summary().id])?.appearance)
+      .toEqual({ icon: 'atom', color: 'purple' });
+  });
+
+  it('fills the untouched field with null when the row still shows the generated default', () => {
+    const queryClient = new QueryClient();
+    setCachedWorkstreams(queryClient, [summary()]);
+
+    patchCachedWorkstreamAppearance(queryClient, summary().id, { icon: 'rocket' });
+
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.appearance)
+      .toEqual({ icon: 'rocket', color: null });
+    expect(queryClient.getQueryData(['workstream', summary().id])).toBeUndefined();
   });
 });
