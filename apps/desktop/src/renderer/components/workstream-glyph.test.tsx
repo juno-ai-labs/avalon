@@ -43,8 +43,11 @@ describe('workstreamAppearance', () => {
     const stored = { icon: 'not-in-this-build', color: 'blue' } satisfies ResolvableAppearance;
     const { Icon, color } = resolveWorkstreamAppearance('launch-room', stored);
 
+    // Which icon it lands on is the id's own, and that moves whenever the
+    // palette's length does — so assert it is that one rather than naming it.
+    expect(Icon).toBe(resolveWorkstreamAppearance('launch-room').Icon);
     const { container } = render(<Icon className="probe" />);
-    expect(container.querySelector('.probe')).toHaveClass('lucide-wand-sparkles');
+    expect(container.querySelector('.probe')).toHaveClass('lucide');
     expect(color).toBe('var(--av-sys-color-project-blue)');
   });
 
