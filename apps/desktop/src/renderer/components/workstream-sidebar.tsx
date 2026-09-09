@@ -123,6 +123,10 @@ export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstrea
         </button>
         <div className="workstream-substream-list">
           {workstream.privateChildren?.map((child) => {
+            // Compact hides the title, and a rail of identical branch lines
+            // says only that these are substreams, not which is which. The
+            // first letter is the only part of the title a 36px mark can hold.
+            const initial = [...child.title.trim()][0]?.toUpperCase();
             const row = (
               <button
                 aria-current={selectedSubstreamId === child.substreamId ? 'page' : undefined}
@@ -133,7 +137,9 @@ export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstrea
                 type="button"
               >
                 <span aria-hidden="true" className="workstream-context-mark">
-                  <IconBorderCornerPill className="workstream-substream-connector" size={24} stroke={1.5} />
+                  {compact && initial
+                    ? <span className="workstream-substream-initial">{initial}</span>
+                    : <IconBorderCornerPill className="workstream-substream-connector" size={24} stroke={1.5} />}
                 </span>
                 <span className="workstream-context-copy"><span>{child.title}</span></span>
               </button>

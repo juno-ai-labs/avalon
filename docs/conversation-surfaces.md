@@ -106,7 +106,9 @@ sidebar's work-stream row — borderless, one 36px leading slot, the same title
 and the same idle/hover/current fills — and only the mark in that slot says
 which conversation it is: the work stream's own icon tinted with its appearance
 colour for the main conversation, the branch line for a substream, a plus for
-**New substream**. Artifact selection
+**New substream**. Compact swaps a substream's branch line for the first
+character of its title, capitalized, because a rail of identical lines with no
+titles beside them says only that these are substreams. Artifact selection
 uses `useCitations.openPreview` to open the artifact lightbox, including an
 explicit unavailable-preview state rather than an inspector fallback; arrival
 of an artifact never opens a panel. Generated sites open the existing isolated
@@ -155,6 +157,25 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-09 — A substream's initial identifies it in the collapsed rail
+
+**What changed:** In compact mode a substream row's mark is the first character
+of its title, capitalized, instead of the branch line. Expanded rows are
+unchanged, and a title with no first character still falls back to the line.
+
+**Why:** Compact hides every title, so the row shape that had just been unified
+left the substreams as a column of identical curves — legible as "these are
+substreams", useless for picking one. The main conversation already carries the
+work stream's own icon there, so the substreams were the only rows in the rail
+with nothing of their own to show. A creator avatar was the obvious alternative
+and was rejected: it says who started a substream, not which one it is, and
+several substreams from one person collapse back to identical marks.
+
+**Consequences:** The mark is title-derived, so it changes when a substream is
+renamed — deliberate, since it is a compressed title rather than an identity.
+Two substreams sharing a first letter still collide; the row's `title` attribute
+and its accessible name carry the full title in both modes.
 
 ### 2026-09-09 — One row shape across both navigation rails
 
