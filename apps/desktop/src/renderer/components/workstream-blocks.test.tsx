@@ -517,6 +517,23 @@ describe('MessageBlock human identity', () => {
     expect(screen.queryByText('Rally')).not.toBeInTheDocument();
   });
 
+  it('places assistant attachments between prose and turn actions', () => {
+    render(<MessageBlock {...actions} message={{ ...baseMessage, authorType: 'agent', author: undefined,
+      attachments: [{ id: 'file', fileName: 'notes.txt', mimeType: 'text/plain', sizeBytes: 4, contentAvailable: true, createdAt: baseMessage.createdAt }] }}
+      loadAttachmentContent={async () => new Blob(['text'])} onOpenAttachment={vi.fn()} />);
+    const attachment = document.querySelector('.message-attachments');
+    expect(document.querySelector('.markdown-body')?.nextElementSibling).toBe(attachment);
+    expect(attachment?.nextElementSibling).toHaveClass('agent-message-actions');
+  });
+
+  it('ends human identity headers with the author after optional context', () => {
+    render(<MessageBlock {...actions} message={{ ...baseMessage, contextLabel: 'Expanded by Rally' }} />);
+    const header = screen.getByLabelText('Message from Adam').querySelector('header')!;
+    expect(header.lastElementChild).toHaveClass('message-author');
+    expect(header.querySelector('.message-context-label')?.nextElementSibling).toHaveClass('message-author-dot');
+    expect(header.querySelector('.message-author-dot')?.nextElementSibling).toBe(header.lastElementChild);
+  });
+
   it('renders sent attachments below and outside the rounded human text bubble', () => {
     const message: Message = {
       ...baseMessage,
