@@ -318,12 +318,12 @@ describe('MessageBlock human identity', () => {
     const otherAccent = other.style.getPropertyValue('--person-accent');
     expect(own).toHaveAttribute('data-profile-color', 'violet');
     expect(own.style.getPropertyValue('--person-accent')).toBe('var(--av-sys-color-text-default)');
-    expect(own.style.getPropertyValue('--person-dot')).toBe('var(--av-cmp-member-message-violet-dot)');
-    expect(own.style.getPropertyValue('--av-cmp-bubble-human-foreground')).toBe('var(--av-cmp-member-message-violet-foreground)');
+    expect(own.style.getPropertyValue('--person-dot')).toBe('var(--av-sys-color-project-violet)');
+    expect(own.style.getPropertyValue('--av-cmp-bubble-human-foreground')).toBe('var(--personal-ink-dark)');
     view.rerender(<MemberPresentationContext.Provider value={new Map([['user-adam', { ...profile, color: 'orange', revision: 2 }]])}>{rows}</MemberPresentationContext.Provider>);
     expect(screen.getByLabelText('Message from Alex Rivera')).toBe(own);
-    expect(own.style.getPropertyValue('--person-dot')).toBe('var(--av-cmp-member-message-orange-dot)');
-    expect(own.style.getPropertyValue('--av-cmp-bubble-human-foreground')).toBe('var(--av-cmp-member-message-orange-foreground)');
+    expect(own.style.getPropertyValue('--person-dot')).toBe('var(--av-sys-color-project-orange)');
+    expect(own.style.getPropertyValue('--av-cmp-bubble-human-foreground')).toBe('var(--personal-ink-dark)');
     expect(other.style.getPropertyValue('--person-accent')).toBe(otherAccent);
     expect(other).not.toHaveAttribute('data-profile-color');
   });
@@ -334,7 +334,7 @@ describe('MessageBlock human identity', () => {
     render(<MemberPresentationContext.Provider value={new Map([['user-adam', profile]])}><MessageBlock {...actions} currentUserId="user-adam" message={message} /></MemberPresentationContext.Provider>);
     const row = screen.getByLabelText('Your elicitation response');
     expect(row).toHaveAttribute('data-profile-color', 'rose');
-    expect(row.style.getPropertyValue('--person-dot')).toBe('var(--av-cmp-member-message-rose-dot)');
+    expect(row.style.getPropertyValue('--person-dot')).toBe('var(--av-sys-color-project-rose)');
     expect(row.querySelector('.message-author')).toHaveTextContent('Alex Rivera');
   });
 

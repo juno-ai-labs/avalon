@@ -66,9 +66,14 @@ Human message dots and bubble backgrounds resolve the sender's current account
 color from the live member-presentation context. The same resolution applies
 to answered elicitations and optimistic answers attributed to the current user.
 Profile changes repaint already-loaded turns without rewriting transcript data.
-The `cmp.member-message.<profile-color>` background, foreground, and dot roles
-are defined independently in each appearance; the feed does not infer contrast
-from the stored color name.
+The fill comes straight from the palette — `sys.color.project.<key>`, resolved
+through `personalColorKey()` so a retired accent name follows its replacement —
+and the ink from `PALETTE_INK`. There is no per-accent component token in
+between: the `cmp.member-message.*` roles that used to restate the fill and ink
+by hand drifted from the palette and could not survive the accent set changing,
+so the feed reads the palette directly. Contrast is still not inferred at render;
+`PALETTE_INK` is a checked-in table that `palette.css.node.test.ts` recomputes
+from the token values.
 Unprofiled and external senders retain their stable identity-color fallback.
 These bubble overrides apply only inside the conversation feed hosts. Author
 labels use semantic default text while the independently themed dot retains the
