@@ -181,9 +181,17 @@ State by state:
   model cloned with `git` itself, imported, or wrote). The first Terminal
   tool call touching any path delivers it, because the root is the first
   candidate of every chain.
-- **Nested `AGENTS.md`.** The first tool call whose target lies beneath that
-  directory is followed by its message, after any ancestors not yet
-  delivered, root to leaf, one message per file.
+- **Nested `AGENTS.md`, first touched by a read.** The read proceeds and is
+  followed by the file's message, after any ancestors not yet delivered,
+  root to leaf, one message per file.
+- **Nested `AGENTS.md`, first touched by a mutation** (`edit_file`,
+  `write_file`, `apply_patch`, `run_command`, `import_resource`). The
+  mutation does not run. The tool returns a recoverable refusal naming the
+  directory whose instructions were just loaded, the instructions arrive
+  with that same batch, and the model retries the call once it has read
+  them. An instruction that forbids or constrains an edit can therefore
+  govern the very first edit beneath it. The same rule covers a mutation
+  that races the background bootstrap's root delivery.
 - **`AGENTS.md` edited during the run**, by the model or by a command. The
   next touch beneath it delivers the new content; the standing sentence
   says the newer copy supersedes the older.
@@ -194,7 +202,9 @@ State by state:
   file arrives at the first settled step after that clone completes, which
   is the step of the first Terminal tool the model calls next.
 - **Context compaction.** The delivered messages are gone with the rest of
-  the transcript. Every ledger entry that was in the transcript moves to the
+  the transcript, and they are also withheld from the summariser's input, so
+  the checkpoint summary cannot carry their content forward under another
+  name. Every ledger entry that was in the transcript moves to the
   system prompt with a residency of two further compactions. The compacted
   context's next turn renders a `# Repository instructions` section holding
   those files, in the same `Instructions added from ./<path>:` shape.
@@ -248,9 +258,15 @@ None yet.
       exit status (an `if [ -f … ]` guard per candidate inside a subshell
       that resets `set +e`, since the bootstrap runs under
       `set -euo pipefail`), which for each candidate reports
-      existence, byte length, SHA-256, and bounded content in a single JSON
-      block. It runs inside the same containment checks the tool's own path
-      already passes, so a symlink out of the root is refused the same way.
+      existence, byte length, SHA-256, and content in a single JSON block.
+      A candidate is read only if it is a regular file that is not a
+      symlink (`[ ! -L ] && [ -f ]`) and its `realpath` stays under the
+      root, the two checks `containmentCommands()` and the `-L` refusal
+      already apply to a tool's own path, applied here to every candidate in
+      its own right rather than inherited from the touched path. A
+      candidate that fails them is reported with `status: not a regular
+      file` and never read, so an `AGENTS.md` symlinked at `.git/config`
+      cannot carry the checkout's Git credential header into the model.
    3. **Context-residency ledger.** An object-local table in the substream's
       SQLite recording, per resident context block `(kind, id, sha256)`: the
       bounded content, the source generation it came from, where it
@@ -335,6 +351,20 @@ None yet.
      heading, verbatim and inert, after the fixed preamble, and nowhere
      else; and that the standing policy above it is byte-identical to the
      uncompacted render.
+
+   The ledger is also the only path by which this content survives a
+   compaction. `compact()` hands every non-system message to the summary
+   turn, and the summary prompt asks the model to keep constraints and
+   facts, so left alone it would paraphrase the instruction messages into
+   the checkpoint, where later compactions carry the checkpoint forward
+   verbatim and the fourth-compaction expiry would remove the section while
+   the summary still held the rules. The harness therefore excludes from
+   the summary turn's input every message whose provenance `sourceKind` is
+   a registered resident-context kind; the Bind loop projection already
+   records `originKind` and `sourceKind` for each `protocol_user_appended`
+   message, so no content matching is involved and the summary prompt's
+   bytes do not change. Acceptance inspects the whole checkpoint for the
+   content, not only the section heading.
 
    Neither the heading nor `sanitizeTerminalOutput` is a role-isolation
    boundary, and the PRD does not claim one: the scrub removes control
@@ -533,6 +563,30 @@ None yet.
    makes the feature not free is the ledger and its transitions, and that
    cost is the same for the root file alone.
 
+   **A mutation waits for the instructions that govern it.** Delivery at
+   the settled step means the model reads an instruction file *after* the
+   batch that discovered it. For a read that is harmless. For a write it
+   defeats the feature on its most common first-touch path: a rule that
+   says "never edit generated files under `apps/api/generated/`" cannot
+   stop the `write_file` that discovers it. So for the mutating tools
+   (`edit_file`, `write_file`, `apply_patch`, `run_command`,
+   `import_resource`) the probe runs in the command's *before* phase, the
+   phase the runtime already uses for pre-mutation containment checks, and
+   when it finds a candidate whose content is not currently resident the
+   command stops before mutating anything and the tool returns the
+   recoverable refusal described under **Agent behavior**. The ledger row
+   and pending message are recorded for that call exactly as for a
+   successful read, so the instructions arrive with the refusal and the
+   retry finds them resident. The cost is one extra round trip per
+   directory that carries an instruction file, paid once per residency
+   cycle; the alternative, mutate first and read second, is the one thing
+   the feature cannot afford. Reads never wait.
+
+   Rejected: delivering the instructions *inside* the tool's own error or
+   result so the retry is unnecessary. That puts the content in a tool
+   message rather than the user-role message decision 2 chose, and would
+   give the same file two shapes.
+
 8. **Content-addressed, not path-addressed.** The ledger keys on
    `(path, sha256)`. An unchanged file is delivered once per residency
    cycle; an edited file is delivered once more; a replaced sandbox retires
@@ -662,11 +716,18 @@ data comes to rest.
   is the one that introduces storage and prompt bytes sized by untrusted
   repository content. It carries only content the model had already been
   shown as a user message.
-- **Path containment is unchanged.** Candidates are built from paths that
-  already passed `safeRelativePath`, and the probe runs after the same
-  containment commands inside the same sandbox command, so an `AGENTS.md`
-  reached through a symlink out of `/workspace` is refused with the tool's
-  existing exit codes.
+- **Every candidate is contained in its own right.** The touched path's
+  `safeRelativePath` and containment checks say nothing about a candidate
+  `AGENTS.md` beside it, and a repository controls what that name points
+  at. The probe therefore applies the runtime's `-L` refusal and
+  `realpath` containment to each candidate before reading it, and reports
+  a symlink or a non-regular file as `not a regular file` with no content.
+  Without this, a repository could plant `AGENTS.md -> .git/config` and the
+  probe would deliver the Basic credential header that
+  `bootstrapTerminalRepository` writes into the checkout's Git config;
+  `sanitizeTerminalOutput` redacts recognisable token shapes, not an
+  arbitrary Basic credential. A test plants exactly that symlink and
+  asserts the refusal.
 - **Provenance is explicit.** Every delivered message carries
   `originKind: "derived"`, `sourceKind: "repository_instructions"`, and the
   ledger key as `sourceId`, so the injection test in `prompts.test.ts` can
@@ -745,6 +806,17 @@ its `filePath` is relative to `/workspace/.rally-output`, not the work-space
 root. Every chain begins at the root, so a tree that arrived without a
 bootstrap has its root file delivered by the first touch.
 
+**The pending-instructions refusal.** A mutating tool whose before-phase
+probe finds a candidate that is not currently resident returns
+`success: false` with the stable code `instructions_pending` and the
+sentence: *Repository instructions for `./apps/api/` were loaded with this
+call and nothing was changed. Read the `Instructions added from` message
+that follows, then retry the same call.* It is a normal domain outcome, not
+a transport failure: the ledger row and the pending message are recorded
+for that call, the retry finds the content resident and proceeds, and a
+second refusal for the same directory in one residency cycle cannot occur.
+`read_file` never refuses.
+
 **Failure and self-healing.** Two rules, one for reading and one for
 recording.
 
@@ -803,16 +875,19 @@ recording.
    `pnpm lint` and `pnpm typecheck` without being told to, and its
    pull-request description follows `docs/pull-requests.md`.
 2. Ask it to edit a file under a directory that has its own `AGENTS.md`.
-   That file's message follows the edit's batch and not before; the root
-   file is not sent again.
+   The first edit call is refused with `instructions_pending` and changes
+   nothing; that file's message follows the same batch; the retry succeeds;
+   the root file is not sent again. Reading a file there first instead is
+   not refused and delivers the same message.
 3. Have the model edit `AGENTS.md`, then touch another file. The new content
    arrives once; a third touch appends nothing.
 4. Force a compaction, then inspect the next request. The system prompt
    carries `# Repository instructions` with the files that were delivered;
-   no user-role instruction message is present. Force two more
-   compactions: the section persists. Force a fourth: the section is gone.
-   Touch a file: the message returns and the ledger row is back in
-   `transcript` residency.
+   no user-role instruction message is present; the checkpoint summary,
+   read in full, does not contain the instruction content. Force two more
+   compactions: the section persists. Force a fourth: the section is gone
+   and the content appears nowhere in the request. Touch a file: the
+   message returns and the ledger row is back in `transcript` residency.
 5. Check out a different repository mid-run. The old checkout's rows are
    `none` once the selection is recorded; the new root file's message
    follows the first Terminal tool batch after the checkout, which is the
@@ -820,6 +895,9 @@ recording.
 6. A repository with no `AGENTS.md`: no message is appended, the ledger is
    empty, and the request bytes to the provider differ from before this
    change only by the standing sentence.
+8. A repository whose `AGENTS.md` is a symlink to `.git/config`: the probe
+   reports `not a regular file`, no content is delivered, and the Git
+   credential header never appears in any request.
 7. Node tests prove the chain primitive, the probe's JSON, the residency
    transitions in decision 4, and the settled-step dedup on replay, each
    broken once in production code per
