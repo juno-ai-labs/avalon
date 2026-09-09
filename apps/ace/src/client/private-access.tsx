@@ -44,7 +44,7 @@ export function AccessView(): React.JSX.Element {
     finally { setGenerating(false); }
   }
   return <main className="access-editor">
-    <header className="editor-header"><div><p>Private preview</p><h1>Access</h1></div></header>
+    <header className="editor-header"><div><p>Early access</p><h1>Access</h1></div></header>
     <p>Anyone holding a link can download. Choose its lifetime before generating a standalone or request-linked download.</p>
     <Panel className="access-generator">
       <Field label="Link lifetime"><select value={timed ? 'timed' : 'single'} disabled={generating} onChange={(event) => setTimed(event.target.value === 'timed')}>

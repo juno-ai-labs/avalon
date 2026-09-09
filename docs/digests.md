@@ -695,13 +695,19 @@ preview does *not* reproduce on its own.
 
 ## Changelog
 
-### 2026-09-09 — Allow an authored sender without changing digest identity
+### 2026-09-09 — Preserve digest identity when introducing authored access mail
 
-The shared Resend caller accepts a trusted per-message From override for the
-new early-access acknowledgement from Adam. Other callers keep existing
-transactional/notification sender resolution; changing the global default would
-have altered unrelated mail. [Private access](private-access.md) owns the frozen
-sender and its domain-verification prerequisite.
+**What changed:** The shared Resend caller accepts a trusted per-message From
+override for the authored acknowledgement.
+
+**Why:** New access mail comes from Adam while digests retain their configured
+notification identity.
+
+**Considered and rejected:** Changing the global sender would also rename digest
+and unrelated transactional mail.
+
+**Consequences:** Existing caller resolution is unchanged. [Private access](private-access.md)
+owns freezing the new message's sender and its domain-verification requirement.
 
 ### 2026-09-09 — Seek directly to the activity cursor
 
