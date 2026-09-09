@@ -129,7 +129,10 @@ rail itself stays at work-stream scope.
 Its device-local collapse preference is independent of the global sidebar.
 Expanded width defaults to 280px and is draggable between 240px and 400px;
 the icon rail is 96px (`COLLAPSED_SIDEBAR_WIDTH`), matching the existing Grok navigation. Its trailing-edge
-handle also accepts Left/Right keys. Width is persisted separately from global
+handle also accepts Left/Right keys, and a held arrow key suppresses the
+collapse animation exactly as a drag does — it is the same gesture reached from
+the keyboard, writing the width over and over, and the class is raised on
+`keydown` and dropped on `keyup` rather than after a guessed idle period. Width is persisted separately from global
 navigation. Dragging below 210px collapses it; expanding requires crossing
 220px, retaining the existing ten-pixel hysteresis. Reaching either width is
 animated over `--sidebar-collapse-motion`, the one duration both sidebars spend,
@@ -225,6 +228,23 @@ rejected for the work-stream sidebar: sizing its `flex-basis` from the published
 custom property to collapse the two channels into one, which would have made the
 component's own width depend on finding a `.workspace-shell` ancestor — correct
 in the app, silently wrong anywhere else it is rendered.
+
+**Also in this change, because animating the width made them wrong:** a path
+that grabs or repeatedly writes the width can no longer assume the rendered edge
+and the width state are the same number. The navigation's resize handle now
+measures the panel on `pointerdown` instead of reading `effectiveSidebarWidth` —
+the work-stream sidebar's handle already did — because the handle is drawn at
+the rendered edge, and an offset taken from the state was wrong by whatever the
+animation had left to run and stayed wrong for the whole drag. Grabbing the
+handle mid-flight ends the animation at its target rather than continuing to
+glide under the pointer, which is the deliberate choice: the drag then tracks
+absolutely from where the pointer is. Arrow-key resize raises the same
+suppression a drag does, for as long as the key is held, on both sidebars; left
+animated, each 16px step restarted the curve and the rendered edge trailed the
+width the collapse threshold is judged against, so the sidebar snapped to the
+rail at a width the reader never saw. Neither is reached through `resizing`
+itself, which also arms the window pointer listeners — a mouse moved during a
+keyboard resize would otherwise take hold of the edge.
 
 **Consequences:** The duration lives once, at `:root` in `app.css`, as
 `--sidebar-collapse-motion`; it is deliberately outside the `--av-` namespace
