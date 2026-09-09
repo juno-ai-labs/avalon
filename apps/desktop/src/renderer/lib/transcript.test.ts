@@ -1425,6 +1425,51 @@ describe('grouping tool calls by plugin', () => {
     expect(grouped.every((message) => message.toolEvent === undefined)).toBe(true);
   });
 
+  it('carries every contribution\'s spans onto the group it built', () => {
+    // The row was spread from the first call, so its own span stands for a
+    // fraction of what the row now says. A stretch unioning these has to see
+    // the whole run.
+    const grouped = groupPluginToolMessages([
+      row('slack-1', {
+        messageType: 'tool_event',
+        workSpans: [{ startedAtMs: 1_000, endedAtMs: 3_000 }],
+        toolEvent: {
+          id: 'slack-1', toolCallId: 'slack-1', name: 'slack_read', status: 'completed',
+          pluginId: 'connection:one', pluginName: 'Slack',
+        },
+      }),
+      row('slack-2', {
+        messageType: 'tool_event',
+        workSpans: [{ startedAtMs: 6_000, endedAtMs: 9_000 }],
+        toolEvent: {
+          id: 'slack-2', toolCallId: 'slack-2', name: 'slack_send', status: 'completed',
+          pluginId: 'connection:one', pluginName: 'Slack',
+        },
+      }),
+    ]);
+
+    expect(grouped[0]!.workSpans).toEqual([
+      { startedAtMs: 1_000, endedAtMs: 3_000 },
+      { startedAtMs: 6_000, endedAtMs: 9_000 },
+    ]);
+  });
+
+  it('drops the group\'s spans when one call cannot say when it worked', () => {
+    const grouped = groupPluginToolMessages([
+      row('slack-1', {
+        messageType: 'tool_event',
+        workSpans: [{ startedAtMs: 1_000, endedAtMs: 3_000 }],
+        toolEvent: {
+          id: 'slack-1', toolCallId: 'slack-1', name: 'slack_read', status: 'completed',
+          pluginId: 'connection:one', pluginName: 'Slack',
+        },
+      }),
+      toolRow('slack-2', 'connection:one', 'Slack'),
+    ]);
+
+    expect(grouped[0]!.workSpans).toBeUndefined();
+  });
+
   it('closes a run at anything a person reads, so later work starts a new row', () => {
     const grouped = groupPluginToolMessages([
       toolRow('slack-1', 'connection:one', 'Slack'),
@@ -1615,6 +1660,30 @@ describe('collapsing a run of thinking', () => {
       activeVerb: 'thinking',
       completedVerb: 'thought',
     });
+  });
+
+  it('carries every segment\'s spans onto the collapsed row', () => {
+    const rows = groupThinkingMessages([
+      thinkingRow('thought-1', { durationMs: 29_000 }),
+      thinkingRow('thought-2', { durationMs: 38_000 }),
+    ].map((message, index) => ({
+      ...message,
+      workSpans: [{ startedAtMs: index * 100_000, endedAtMs: index * 100_000 + 29_000 }],
+    })));
+
+    expect(rows[0]!.workSpans).toEqual([
+      { startedAtMs: 0, endedAtMs: 29_000 },
+      { startedAtMs: 100_000, endedAtMs: 129_000 },
+    ]);
+  });
+
+  it('drops the collapsed row\'s spans when one segment cannot say when it worked', () => {
+    const rows = groupThinkingMessages([
+      { ...thinkingRow('thought-1'), workSpans: [{ startedAtMs: 0, endedAtMs: 29_000 }] },
+      thinkingRow('thought-2'),
+    ]);
+
+    expect(rows[0]!.workSpans).toBeUndefined();
   });
 
   it('keeps the run open across a plugin row that precedes the thinking', () => {
@@ -1953,6 +2022,51 @@ describe('orderedTranscriptMessages plugin runs', () => {
     // Summing only the half that reported would understate the work by exactly
     // the half that did not, and present the shortfall as certain.
     expect(rows[0]!.pluginActivity?.durationMs).toBeNull();
+  });
+
+  it('takes a plugin row\'s spans from the activity that measured it', () => {
+    const snapshot = brokenJoinSnapshot([run({ toolCallIds: ['call-0'] })]);
+    const messages = orderedTranscriptMessages({
+      ...snapshot,
+      activities: [
+        {
+          activityId: 'turn-tools:activity', parentActivityId: null, scope: 'assistant_turn',
+          subjectId: 'turn-tools', callIndex: 0, label: 'Assistant turn', state: 'completed',
+          intervals: [], revision: 2,
+        },
+        {
+          activityId: 'turn-tools:plugin:rally:core', parentActivityId: 'turn-tools:activity',
+          scope: 'plugin', subjectId: 'rally:core', callIndex: 0, label: 'rally:core',
+          state: 'completed',
+          intervals: [{
+            intervalId: 'i0', startedAtUtc: '2026-08-26T12:00:00.000Z',
+            stoppedAtUtc: '2026-08-26T12:00:09.000Z', durationMs: 9_000,
+            elapsedMsAtSnapshot: null, boundarySource: 'rally',
+            timingAccuracy: 'observed', revision: 2,
+          }],
+          revision: 2,
+        },
+      ],
+    }, 'workstream-one');
+
+    // When it worked, not only how long: a folded stretch adds several rows up
+    // and cannot do that from durations alone.
+    expect(messages.find((message) => message.messageType === 'plugin_activity')?.workSpans)
+      .toEqual([{
+        startedAtMs: Date.parse('2026-08-26T12:00:00.000Z'),
+        endedAtMs: Date.parse('2026-08-26T12:00:09.000Z'),
+      }]);
+  });
+
+  it('leaves a run the activity tree never reached without spans', () => {
+    // The server states how long it took; nothing here can state when, and a
+    // stretch holding this row therefore reports no total rather than one
+    // missing it.
+    const messages = orderedTranscriptMessages(brokenJoinSnapshot([run({})]), 'workstream-one');
+
+    const row = messages.find((message) => message.messageType === 'plugin_activity');
+    expect(row?.pluginActivity?.durationMs).toBe(4_000);
+    expect(row?.workSpans).toBeUndefined();
   });
 
   it('lets a live activity supersede the run the snapshot was taken with', () => {
@@ -2374,6 +2488,86 @@ describe('collapseSettledWorkIntoAccordion', () => {
 
     expect(collapsed.map((message) => message.messageType))
       .toEqual(['thought', 'plugin_activity', 'text']);
+  });
+
+  it('reports a stretch of a self-narrating response from when its rows worked', () => {
+    // No one drawer is what the response timer measured, so each says what it
+    // holds: the union of its rows' spans. The rows overlap here — the plugin
+    // covers the gaps between its own calls that the thinking beside it fills —
+    // and the sum of their durations, 21s, is 6s more than the stretch took.
+    const collapsed = collapseSettledWorkIntoAccordion([
+      thinking('thought-one', {
+        workSpans: [{ startedAtMs: 1_000_000, endedAtMs: 1_009_000 }],
+      }),
+      answer('turn-1', { id: 'turn-1:text', workSummary: undefined }),
+      thinking('thought-two', {
+        workSpans: [{ startedAtMs: 1_020_000, endedAtMs: 1_032_000 }],
+      }),
+      plugin('plugin-drive', 'Google Drive + Docs + Sheets', {
+        workSpans: [{ startedAtMs: 1_023_000, endedAtMs: 1_035_000 }],
+      }),
+      answer('turn-2'),
+    ]);
+
+    expect(collapsed[0]!.workAccordion?.durationMs).toBe(9_000);
+    expect(collapsed[2]!.workAccordion?.durationMs).toBe(15_000);
+    // The response's own total still belongs to the answer that produced it.
+    expect(collapsed[3]!.workSummary).toEqual({ durationMs: 2_477_000 });
+  });
+
+  it('says only "Worked" when a row in the stretch cannot say when it worked', () => {
+    // A union over the rest would print a number missing however long that row
+    // took, and present it as the stretch's own.
+    const collapsed = collapseSettledWorkIntoAccordion([
+      thinking('thought-one', {
+        workSpans: [{ startedAtMs: 1_000_000, endedAtMs: 1_009_000 }],
+      }),
+      answer('turn-1', { id: 'turn-1:text', workSummary: undefined }),
+      thinking('thought-two', {
+        workSpans: [{ startedAtMs: 1_020_000, endedAtMs: 1_032_000 }],
+      }),
+      plugin('plugin-drive', 'Google Drive + Docs + Sheets'),
+      answer('turn-2'),
+    ]);
+
+    expect(collapsed[0]!.workAccordion?.durationMs).toBe(9_000);
+    expect(collapsed[2]!.workAccordion?.durationMs).toBeNull();
+  });
+
+  it('reads a stretch holding an upper-bound row as an upper bound itself', () => {
+    const collapsed = collapseSettledWorkIntoAccordion([
+      thinking('thought-one', {
+        workSpans: [{ startedAtMs: 1_000_000, endedAtMs: 1_009_000 }],
+      }),
+      answer('turn-1', { id: 'turn-1:text', workSummary: undefined }),
+      plugin('plugin-slack', 'Slack', {
+        workSpans: [{ startedAtMs: 1_020_000, endedAtMs: 1_024_000 }],
+        pluginActivity: {
+          groupKey: 'name:Slack', name: 'Slack', icon: 'plug', active: false,
+          durationMs: 4_000, timingAccuracy: 'upper_bound',
+          activeVerb: 'Using Slack', completedVerb: 'Used Slack',
+        },
+      }),
+      answer('turn-2'),
+    ]);
+
+    expect(collapsed[2]!.workAccordion).toEqual(expect.objectContaining({
+      durationMs: 4_000,
+      timingAccuracy: 'upper_bound',
+    }));
+  });
+
+  it('prefers the response\'s own total over the stretch it would compute', () => {
+    // One drawer means the drawer is the whole response, and the authority's
+    // measurement of it beats a union of the rows this client happens to hold.
+    const collapsed = collapseSettledWorkIntoAccordion([
+      thinking('thought-one', {
+        workSpans: [{ startedAtMs: 1_000_000, endedAtMs: 1_009_000 }],
+      }),
+      answer('turn-1'),
+    ]);
+
+    expect(collapsed[0]!.workAccordion?.durationMs).toBe(2_477_000);
   });
 
   it('carries an unknown total and a recovered accuracy through to the drawer', () => {
