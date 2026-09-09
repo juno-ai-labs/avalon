@@ -264,13 +264,32 @@ export class WorkstreamIdentityStorage {
       if (!root || root.title_status !== input.from) {
         return { outcome: "superseded" as const, icon: null };
       }
+      // Nothing about the icon may throw between here and the `UPDATE`. The
+      // title write and the `title_status` advance are in this transaction, and
+      // a throw rolls both back — leaving the row in `naming` with a skeleton on
+      // screen that only the second pass can clear, and only once the work
+      // stream has five said messages. The icon is the soft half; it degrades to
+      // "no icon" the way the model's own answer does at
+      // `WorkstreamNameResultSchema`, and for the same reason.
+      //
+      // Both parses are reachable rather than theoretical. The args cross a
+      // Durable Object RPC boundary as JSON, and during a rollout a Worker
+      // whose catalog has a key the resident object's enum does not know sends
+      // exactly that value. `appearance_json` is only guaranteed to be valid
+      // JSON by the column's `json_valid` CHECK — `'null'` satisfies it and is
+      // not an appearance.
       const stored = root.appearance_json
-        ? WorkstreamAppearanceSchema.parse(JSON.parse(root.appearance_json))
+        ? WorkstreamAppearanceSchema.safeParse(JSON.parse(root.appearance_json)).data
         : { icon: null, color: null };
-      const chosen = input.icon ?? null;
-      const icon = chosen !== null && stored.icon === null
-        ? WorkstreamIconKeySchema.parse(chosen)
-        : null;
+      const chosen = input.icon == null
+        ? null
+        : WorkstreamIconKeySchema.safeParse(input.icon).data ?? null;
+      // An appearance this object cannot read is left exactly as it is, rather
+      // than replaced with a generated icon: `docs/workstream-appearance.md`
+      // has malformed durable state fail visibly rather than silently become a
+      // new shared identity, and a naming pass is the last writer that should
+      // overrule that. `stored` is `undefined` only in that case.
+      const icon = chosen !== null && stored?.icon === null ? chosen : null;
       this.sql.exec(
         `UPDATE workstream
             SET title = COALESCE(?, title), title_status = ?,

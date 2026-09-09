@@ -12,7 +12,7 @@ has chosen for gets its icon from the naming pass, out of this same catalog.
 | `packages/contracts/src/workstream-appearance.ts` | Stable icon keys, one model-visible description per key, the default key, color keys, and partial updates. |
 | `apps/desktop/src/renderer/components/workstream-appearance-picker.tsx` | Palette, optimistic preview, ordered clicks, and failures. |
 | `apps/desktop/src/renderer/components/workstream-glyph.tsx` | Shared rendering and deterministic defaults. |
-| `apps/desktop/src/renderer/lib/workstreams-cache.ts` | `patchCachedWorkstreamAppearance`, the one unversioned appearance write: it puts a committed choice, or a naming pass's generated icon, on the sidebar row ahead of the directory projection, and never on the cached detail. Built on `patchCachedWorkstream`, the write for any unversioned fact both caches must agree on. |
+| `apps/desktop/src/renderer/lib/workstreams-cache.ts` | `patchCachedWorkstreamAppearance`, the receipt-time write that puts a committed choice on the sidebar row ahead of the directory projection, and `patchCachedGeneratedIcon`, the naming pass's, which additionally declines a row that already has an icon. Neither touches the cached detail. Built on `patchCachedWorkstream`, the write for any unversioned fact both caches must agree on. |
 | `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Orders the picker's choices on the retained Main socket and applies each one to the caches when its receipt arrives. |
 | `apps/api/src/durable-objects/workstream-object-product.ts` | Authoritative write, command receipt, and common-state publication. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | Main conversation's nullable `workstream.appearance_json`. |
@@ -146,11 +146,20 @@ below, reached through a different writer.
 
 The rule is now stated as a property of the writer rather than of the caller:
 **the cached detail is the picker's own signal, and only the versioned
-projection may move it.** The separate `patchCachedGeneratedAppearance` helper is
-gone; the naming pass uses `patchCachedWorkstreamAppearance` like every other
-unversioned write. The cost is the one the entry below already accepted — the
-header glyph waits for the projection — and it is smaller here, because until it
-lands the header shows the id-derived default rather than a wrong stored value.
+projection may move it.** `patchCachedGeneratedAppearance` is gone;
+`patchCachedGeneratedIcon` replaces it, row-only like the receipt-time write.
+The cost is the one the entry below already accepted — the header glyph waits
+for the projection — and it is smaller here, because until it lands the header
+shows the id-derived default rather than a wrong stored value.
+
+The same review raised the row half, and that one earned a condition rather than
+an argument: an event carries an icon only when the object had none when it
+renamed, so a row that has one holds something newer, and the event can arrive
+after that receipt because the two travel different paths. `patchCachedGeneratedIcon`
+declines a row that already has an icon. That is an ordering rule for a write
+whose value is known-stale the moment anything else is present, not a second
+copy of the object's own "only where none is stored" — which stays
+authoritative.
 
 Patching `settled()` instead was rejected: distinguishing "moved to my value"
 from "moved to someone else's" would break the case that arm exists for. If the

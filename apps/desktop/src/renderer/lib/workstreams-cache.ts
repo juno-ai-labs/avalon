@@ -124,6 +124,33 @@ export function patchCachedWorkstreamAppearance(
 }
 
 /**
+ * Put the icon a naming pass chose on the sidebar row, unless one is there.
+ *
+ * Row-only, for the reason above — the cached detail is the picker's signal and
+ * only the versioned projection may move it.
+ *
+ * The condition is what the receipt-time write does not need. An event carries
+ * an icon only when the object had none at the moment it renamed, so a row that
+ * has one now holds something newer: a choice whose receipt already landed here.
+ * The event can arrive after that receipt, because the two travel different
+ * paths — the room socket and the Main command channel — so without the guard a
+ * person's own icon flickers back to the generated one until the projection
+ * lands. It is not a copy of the object's rule (that one is about what is
+ * stored, and is authoritative); it is the ordering rule for an unversioned
+ * write whose value is known-stale the moment anything else is present.
+ */
+export function patchCachedGeneratedIcon(
+  queryClient: QueryClient,
+  workstreamId: string,
+  icon: NonNullable<WorkstreamAppearance['icon']>,
+): void {
+  setCachedWorkstreams(queryClient, (current) => current?.map((row) =>
+    row.id === workstreamId && !row.appearance?.icon
+      ? { ...row, appearance: { color: null, ...row.appearance, icon } }
+      : row));
+}
+
+/**
  * Remove every per-work-stream cache entry when either room revokes access.
  *
  * The feed and control sockets can close independently. Keeping this boundary
