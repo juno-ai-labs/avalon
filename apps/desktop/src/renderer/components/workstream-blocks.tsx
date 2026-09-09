@@ -1492,6 +1492,7 @@ function AssistantMessageActions({ citations, mentions, onStartSubstream, teleme
 }
 
 export function AssistantMessageContent({
+  afterText,
   citations,
   collapseHeadings = false,
   // The hoisted constant, not `= []`: a per-render array here would feed
@@ -1503,6 +1504,7 @@ export function AssistantMessageContent({
   text,
   telemetry,
 }: {
+  afterText?: React.ReactNode;
   citations?: CitationContext;
   collapseHeadings?: boolean;
   mentions?: MessageMention[];
@@ -1517,6 +1519,7 @@ export function AssistantMessageContent({
       {text ? (
         <MarkdownBody citations={citations} collapseHeadings={collapseHeadings} mentions={mentions} streaming={streaming} telemetry={telemetry}>{text}</MarkdownBody>
       ) : null}
+      {afterText}
       {showCopy && !streaming && (text !== '' || onStartSubstream !== undefined) && (
         <AssistantMessageActions
           citations={citations}
@@ -2468,24 +2471,22 @@ export function MessageBlock({
           turn that answers it only for other people makes the reader's own
           messages the one thing on screen with no time against it. */}
       <header>
-        {human && <span aria-hidden="true" className="message-author-dot" />}
-        <span className="message-author">
-          {human ? humanAuthorName : automation ? 'Automation' : 'Rally'}
-        </span>
-        {message.contextLabel && <span className="message-context-label">{message.contextLabel}</span>}
-        <time dateTime={message.createdAt}>{formatRelative(message.createdAt)}</time>
-        {message.workSummary && <span className="message-work-summary">{workSummaryLabel(message.workSummary)}</span>}
+        {human ? <>
+          <time dateTime={message.createdAt}>{formatRelative(message.createdAt)}</time>
+          {message.workSummary && <span className="message-work-summary">{workSummaryLabel(message.workSummary)}</span>}
+          {message.contextLabel && <span className="message-context-label">{message.contextLabel}</span>}
+          <span aria-hidden="true" className="message-author-dot" />
+          <span className="message-author">{humanAuthorName}</span>
+        </> : <>
+          <span className="message-author">{automation ? 'Automation' : 'Rally'}</span>
+          {message.contextLabel && <span className="message-context-label">{message.contextLabel}</span>}
+          <time dateTime={message.createdAt}>{formatRelative(message.createdAt)}</time>
+          {message.workSummary && <span className="message-work-summary">{workSummaryLabel(message.workSummary)}</span>}
+        </>}
         {!human && collapseHeadings && <MarkdownCollapseAllButton />}
       </header>
       {human ? (
         <div className="human-message-content">
-          {message.attachments?.length && loadAttachmentContent && onOpenAttachment ? (
-            <MessageAttachments
-              attachments={message.attachments}
-              loadContent={loadAttachmentContent}
-              onOpen={onOpenAttachment}
-            />
-          ) : null}
           {message.text ? (
             <HumanMessageBubble disclosure={rowDisclosure} messageId={message.id} text={message.text}>
               <MarkdownBody
@@ -2494,6 +2495,13 @@ export function MessageBlock({
                 verbatim
               >{message.text}</MarkdownBody>
             </HumanMessageBubble>
+          ) : null}
+          {message.attachments?.length && loadAttachmentContent && onOpenAttachment ? (
+            <MessageAttachments
+              attachments={message.attachments}
+              loadContent={loadAttachmentContent}
+              onOpen={onOpenAttachment}
+            />
           ) : null}
           {pendingLabel && <span className="message-delivery-pill">{pendingLabel}</span>}
           {startSubstream && (
@@ -2504,14 +2512,10 @@ export function MessageBlock({
         </div>
       ) : (
         <>
-          {message.attachments?.length && loadAttachmentContent && onOpenAttachment ? (
-            <MessageAttachments
-              attachments={message.attachments}
-              loadContent={loadAttachmentContent}
-              onOpen={onOpenAttachment}
-            />
-          ) : null}
           <AssistantMessageContent
+            afterText={message.attachments?.length && loadAttachmentContent && onOpenAttachment ? (
+              <MessageAttachments attachments={message.attachments} loadContent={loadAttachmentContent} onOpen={onOpenAttachment} />
+            ) : null}
             citations={citations}
             collapseHeadings={collapseHeadings}
             mentions={message.mentions}
@@ -2520,6 +2524,7 @@ export function MessageBlock({
             text={message.text ?? ''}
             telemetry={{ messageId: message.id, workstreamId: message.workstreamId }}
           />
+
         </>
       )}
     </article>
