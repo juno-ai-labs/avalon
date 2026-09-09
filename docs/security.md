@@ -61,6 +61,11 @@ the source credentials, memory, authoring conversation, or run history.
 | `apps/desktop/scripts/mac-signature-policy.mjs`, `apple-notarization.mjs`, `finalize-macos-release.mjs` | Entitlement rules, notarization, and the release verifier. |
 | `.gitleaks.toml`, `scripts/gitleaks-allowlist.test.mjs` | The scan's bounded exceptions and the test that keeps them honest. |
 
+The renderer socket-ticket lint rule follows immutable awaited ticket aliases,
+including transcription tickets acquired before capture setup finishes. Aliases
+from shadowed or reassigned bindings are rejected; the constructor remains
+checked instead of carrying a local lint suppression.
+
 ## How it works
 
 ### Trust boundaries

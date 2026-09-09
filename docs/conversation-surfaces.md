@@ -202,7 +202,12 @@ Stop during local capture drains the final partial frame and waits for connectio
 readiness before committing, so even a recording shorter than startup survives.
 Stop before capture starts cancels setup. Failure or unmount clears the attempt's
 buffer and stops its inputs; late setup results cannot revive an older attempt.
-The existing connection timeout and socket backpressure failure remain in force.
+The existing 10-second connection budget starts with local capture and covers
+the pending ticket, provider acknowledgement, and backlog drain. Expiry aborts
+the ticket request, clears the buffer, stops inputs, and rejects pending Stop or
+commit calls. Permission prompts do not consume that network budget. Startup
+batches wait when outbound socket pressure is high; the same deadline bounds
+that wait. Live capture retains its existing socket backpressure failure.
 The frame-size and rate limits live in `@rally/contracts/realtime-transcription`,
 shared with the proxy. Audio is not persisted to disk.
 
@@ -215,6 +220,24 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-09 — Bound connection startup and preserve ticket lint coverage
+
+**What changed:** Moved the existing 10-second connection deadline to capture
+startup, covering tickets and backlog delivery, with cancellation propagated to
+the API request. Batches wait for socket pressure to subside. Removed the unused
+connecting state and taught the ticket lint rule to follow immutable aliases.
+
+**Why:** Review identified that a stalled ticket could strand Stop and retain
+audio indefinitely before the old socket-only timer began. A deadline already
+exists for this connection; extending its scope avoids inventing a second cap.
+The ticket alias is authenticated and should be checked by lint rather than
+excluded from it.
+
+**Consequences:** Startup can no longer wait indefinitely on a ticket or outbound
+pressure, and late ticket results cannot revive expired capture. Permission and
+device setup precede the network budget; callers see local recording while the
+service connects.
 
 ### 2026-09-09 — Capture dictation while the service connects
 
