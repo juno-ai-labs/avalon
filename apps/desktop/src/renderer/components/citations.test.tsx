@@ -86,6 +86,32 @@ describe('resource citations', () => {
     expect(screen.getByText('Both are attached.')).toBeInTheDocument();
   });
 
+  it('keeps a growing mixed embed run grouped before and after streaming settles', () => {
+    const openPreview = vi.fn();
+    const citations = context({ openPreview, resolve: (id) => ({ id, title: `${id}.png`, resourceType: id === 'notes' ? 'text' : 'image' }) });
+    const first = '![One](resource://one)\n\n';
+    const source = `${first}![Notes](resource://notes)\n\n![Two](resource://two)\n\n![Three](resource://three)\n\n![Four](resource://four)\n`;
+    const view = render(<MarkdownBody citations={citations} streaming>{first}</MarkdownBody>);
+    view.rerender(<MarkdownBody citations={citations} streaming>{source}</MarkdownBody>);
+    expect(document.querySelectorAll('.citation-card-row')).toHaveLength(1);
+    expect(document.querySelectorAll('.message-attachment-image-cell .citation-card')).toHaveLength(4);
+    const overflow = screen.getByRole('button', { name: 'Open three.png' });
+    fireEvent.click(overflow);
+    expect(openPreview).toHaveBeenCalledWith('three', overflow, ['one', 'two', 'three', 'four'], 2);
+    const before = document.querySelector('.citation-card-row')!.textContent;
+    view.rerender(<MarkdownBody citations={citations}>{source}</MarkdownBody>);
+    expect(document.querySelector('.citation-card-row')!.textContent).toBe(before);
+    expect(document.querySelectorAll('.message-attachment-image-cell .citation-card')).toHaveLength(4);
+    expect(document.querySelector('.citation-card-row')!.children[1]).toHaveTextContent('Notes');
+  });
+
+  it('keeps every image title in an exported still instead of hiding it behind a gallery count', () => {
+    const citations = context({ resolve: (id) => ({ id, title: `${id}.png`, resourceType: 'image' }) });
+    render(<MarkdownBody citations={citations} still>{['one', 'two', 'three', 'four'].map((id) => `![${id}](resource://${id})`).join('\n\n')}</MarkdownBody>);
+    for (const id of ['one', 'two', 'three', 'four']) expect(screen.getByRole('button', { name: `Open ${id}.png` })).toHaveTextContent(id);
+    expect(document.querySelector('.message-attachment-more')).toBeNull();
+  });
+
   it('leaves a run of embeds alone when they render as text rather than as cards', () => {
     const run = 'Two of them.\n\n![The deck](resource://board-deck)\n\n![The other deck](resource://board-deck)\n\nBoth above.';
 

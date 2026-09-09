@@ -282,6 +282,10 @@ Two traps:
 
 ## Changelog
 
+### 2026-09-09 — Preserve all image embeds in exports
+
+Still rendering presents image embeds as titled file cards and styles the file wrapper. An exported message retains every delivered resource without fetching live previews or depending on gallery navigation.
+
 ### 2026-09-07 — Use the current brand accent
 
 Replaced the decorative orange export accent with Rally neon yellow (#ccff00),

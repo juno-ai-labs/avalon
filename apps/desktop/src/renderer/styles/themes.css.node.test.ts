@@ -234,7 +234,7 @@ describe('window background', () => {
 describe('token references', () => {
   // Properties the stylesheet defines for its own use rather than taking from a
   // theme. Each is set by a rule in this same file.
-  const RULE_LOCAL = ['--sidebar-row-background', '--pill-overhang', '--rail-slot',
+  const RULE_LOCAL = ['--attachment-file-card-height', '--attachment-media-size', '--sidebar-row-background', '--pill-overhang', '--rail-slot',
     // Runtime layout geometry, not theme-selectable design tokens.
     '--rail-max-slot',
     '--composer-line-height', '--composer-text-padding', '--system-message-lines',

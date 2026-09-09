@@ -116,6 +116,13 @@ serves only generated IDs and enforces the cache's size and integrity checks.
 
 ## Changelog
 
+### 2026-09-09 — Media overlay ink stays light
+
+Media caption overlays use `sys.color.text.on-media`, white in both appearances.
+Gallery arrows and placeholders instead follow ordinary surface text because
+their background changes with the theme. This avoids white-on-white controls in
+light mode while keeping labels over visual media legible.
+
 ### 2026-09-09 — A fill's ink is absolute, and the glyph follows it
 
 **What changed:** `sys.color.palette-ink.light` and `sys.color.palette-ink.dark`

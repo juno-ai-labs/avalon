@@ -188,6 +188,22 @@ prove layout, focus, scroll position, or overlap.
 
 ## Changelog
 
+### 2026-09-09 — Shared media tiles with host-specific layouts
+
+Attachments and embeds share square media and horizontal file cards. Feed media
+is 108px square, twice the 54px file-card height; the input uses the same
+components at 54px in one scrolling row. Feed grids use media-sized tracks with
+file cards spanning two tracks, replacing full-width file rows to tile mixed
+content while keeping every delivered item visible. Image galleries retain all
+entries and keyboard navigation; still exports retain every title.
+
+This follows the requested compact media style and fixes layout changes when
+consecutive embeds finish streaming. Fixed media dimensions supersede intrinsic
+ratios, and the input's compact row deliberately differs from feed wrapping.
+Video originals load only when opened; gallery placeholders do not fetch full
+originals for thumbnails. Audio uses compact playback controls with full preview
+available. Resource access remains checked against the current citation map.
+
 ### 2026-09-09 — A sidebar travels between its two widths
 
 **What changed:** Collapsing or expanding either sidebar is animated over 240ms

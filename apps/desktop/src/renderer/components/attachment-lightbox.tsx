@@ -53,6 +53,20 @@ async function downloadPreview(preview: AttachmentPreview, loadedSource?: string
   if (shouldRevoke) window.setTimeout(() => URL.revokeObjectURL(url!), 0);
 }
 
+function GalleryThumbnail({ preview, active, activeSrc, index, onSelect }: {
+  preview: AttachmentPreview;
+  active: boolean;
+  activeSrc: string | undefined;
+  index: number;
+  onSelect: () => void;
+}): React.JSX.Element {
+  const src = preview.src ?? (active ? activeSrc : undefined);
+  return <button aria-label={`View attachment ${index + 1}: ${preview.name}`} aria-current={active ? 'true' : undefined}
+    className="attachment-gallery-thumbnail" onClick={onSelect} type="button">
+    {src ? <img alt="" src={src} /> : <span>{index + 1}</span>}
+  </button>;
+}
+
 export function AttachmentLightbox({ preview, onClose }: {
   preview: AttachmentPreview | null;
   onClose: () => void;
@@ -81,6 +95,8 @@ export function AttachmentLightbox({ preview, onClose }: {
   useEffect(() => {
     if (!preview) return;
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.target instanceof HTMLElement && event.target.closest('audio, video, input, textarea')) return;
+      if (gallery.length > 1 && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) event.preventDefault();
       if (gallery.length > 1 && event.key === 'ArrowLeft') setActiveIndex((index) => (index - 1 + gallery.length) % gallery.length);
       if (gallery.length > 1 && event.key === 'ArrowRight') setActiveIndex((index) => (index + 1) % gallery.length);
     };
@@ -160,6 +176,8 @@ export function AttachmentLightbox({ preview, onClose }: {
           )}
           {isMedia && (
             <>
+              <button aria-label="Download attachment" className="attachment-media-download attachment-lightbox-action" onClick={() => { void downloadPreview(active, src).catch(() => setDownloadError('Download failed. Please try again.')); }} type="button"><Download size={18} /></button>
+              <Dialog.Close asChild><button aria-label="Close preview" className="attachment-media-close attachment-lightbox-action" type="button"><X size={20} /></button></Dialog.Close>
               {active.onDetails && <button aria-label="Resource details" className="attachment-media-details attachment-lightbox-action" onClick={active.onDetails} type="button"><Info size={18} /></button>}
               <button
                 aria-label={expanded ? 'Fit preview to window' : 'Show preview at full size'}
@@ -178,7 +196,7 @@ export function AttachmentLightbox({ preview, onClose }: {
             </>
           )}
           <div
-            className={`attachment-lightbox-content is-${mode}${expanded ? ' is-expanded' : ''}`}
+            className={`attachment-lightbox-content is-${mode}${expanded ? ' is-expanded' : ''}${gallery.length > 1 ? ' has-gallery' : ''}`}
             onMouseDown={(event) => event.target === event.currentTarget && onClose()}
           >
             {loading && <div className="attachment-lightbox-status" role="status"><LoaderCircle aria-hidden="true" className="spin" size={20} /> Preparing preview…</div>}
@@ -192,6 +210,13 @@ export function AttachmentLightbox({ preview, onClose }: {
             )}
             {mode === 'text' && current?.text !== undefined && <pre className="attachment-lightbox-text">{current.text}</pre>}
           </div>
+          {isMedia && gallery.length > 1 && <footer className="attachment-gallery-footer">
+            <span className="attachment-gallery-caption" aria-live="polite">{active.name}{gallery.length > 1 ? ` · ${activeIndex + 1} / ${gallery.length}` : ''}</span>
+            {gallery.length > 1 && <div className="attachment-gallery-thumbnails" aria-label="Attachment gallery">
+              {gallery.map((item, index) => <GalleryThumbnail key={index} preview={item} index={index}
+                active={index === activeIndex} activeSrc={src} onSelect={() => setActiveIndex(() => index)} />)}
+            </div>}
+          </footer>}
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
