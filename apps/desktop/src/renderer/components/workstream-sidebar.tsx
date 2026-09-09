@@ -1,15 +1,16 @@
 import type { SidekickAttachment } from '@rally/contracts';
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import { AttachedSidekicks } from './attached-sidekicks';
-import { Archive, FileBox, GripVertical, MessageSquare, PanelLeftClose, PanelLeftOpen, Pencil, UserPlus } from 'lucide-react';
+import { Archive, FileBox, GripVertical, PanelLeftClose, PanelLeftOpen, Pencil, UserPlus } from 'lucide-react';
 import { IconBorderCornerPill, IconPlus } from '@tabler/icons-react';
-import { useLayoutEffect, useRef, useState } from 'react';
+import { Fragment, useLayoutEffect, useRef, useState } from 'react';
 import clsx from 'clsx';
 import type { WorkstreamDetail } from '../lib/types';
 import type { WorkstreamChildDirectory } from '../lib/use-workstream-control-socket';
 import { COLLAPSED_SIDEBAR_WIDTH, DEFAULT_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, SIDEBAR_COLLAPSE_DRAG_THRESHOLD, SIDEBAR_CONTENT_MIN_WIDTH, SIDEBAR_EXPAND_DRAG_THRESHOLD } from '../lib/ui-store';
-import { Avatar, AvatarStack, IconButton } from './primitives';
+import { AvatarStack, IconButton } from './primitives';
 import { ResourceIcon } from './markdown-citations';
+import { WorkstreamMark } from './workstream-glyph';
 
 const COLLAPSED_KEY = 'rally.workstream-sidebar-collapsed';
 const WIDTH_KEY = 'rally.workstream-sidebar-width';
@@ -41,7 +42,7 @@ function SubstreamRowMenu({ actions, children, target }: {
 
 /** Work-stream navigation only: no second resource query or substream model. */
 export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstreamId = '0', onSelectSubstream, onNewSubstream, onOpenArtifact, onParticipants, onFocusTranscript, attachedSidekicks, attachedSidekicksError, onRemoveSidekick, substreamActions }: {
-  workstream: Pick<WorkstreamDetail, 'id' | 'title' | 'resources' | 'participants'> & Pick<WorkstreamChildDirectory, 'privateChildren'>;
+  workstream: Pick<WorkstreamDetail, 'id' | 'title' | 'appearance' | 'resources' | 'participants'> & Pick<WorkstreamChildDirectory, 'privateChildren'>;
   presentUserIds: readonly string[];
   attachedSidekicks?: SidekickAttachment[] | undefined;
   attachedSidekicksError?: string | undefined;
@@ -117,12 +118,11 @@ export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstrea
           type="button"
           onClick={() => { onSelectSubstream?.('0'); onFocusTranscript(); }}
         >
-          {compact && <MessageSquare aria-hidden="true" size={20} />}
+          <span className="workstream-context-mark"><WorkstreamMark appearance={workstream.appearance} id={workstream.id} /></span>
           <span className="workstream-context-copy"><span>{workstream.title}</span></span>
         </button>
         <div className="workstream-substream-list">
           {workstream.privateChildren?.map((child) => {
-            const creator = workstream.participants.find((person) => person.id === child.createdByUserId);
             const row = (
               <button
                 aria-current={selectedSubstreamId === child.substreamId ? 'page' : undefined}
@@ -132,25 +132,22 @@ export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstrea
                 title={child.title}
                 type="button"
               >
-                <span className="workstream-substream-avatar" aria-hidden="true">{creator ? <Avatar member={creator} title={null} /> : <MessageSquare size={20} />}</span>
+                <span aria-hidden="true" className="workstream-context-mark">
+                  <IconBorderCornerPill className="workstream-substream-connector" size={24} stroke={1.5} />
+                </span>
                 <span className="workstream-context-copy"><span>{child.title}</span></span>
               </button>
             );
-            return (
-              <div className="workstream-substream-branch" key={child.substreamId}>
-                <IconBorderCornerPill aria-hidden="true" className="workstream-substream-connector" size={24} stroke={1.5} />
-                {substreamActions
-                  ? <SubstreamRowMenu actions={substreamActions} target={{ substreamId: child.substreamId, title: child.title }}>{row}</SubstreamRowMenu>
-                  : row}
-              </div>
-            );
+            return substreamActions
+              ? <SubstreamRowMenu actions={substreamActions} key={child.substreamId} target={{ substreamId: child.substreamId, title: child.title }}>{row}</SubstreamRowMenu>
+              : <Fragment key={child.substreamId}>{row}</Fragment>;
           })}
-          {onNewSubstream && <div className="workstream-substream-branch">
-            <IconBorderCornerPill aria-hidden="true" className="workstream-substream-connector" size={24} stroke={1.5} />
+          {onNewSubstream && (
             <button className="workstream-context-row workstream-new-substream" onClick={onNewSubstream} title="New substream" aria-label="New substream" type="button">
-              <span className="workstream-substream-avatar"><IconPlus aria-hidden="true" size={20} stroke={1.5} /></span><span className="workstream-context-copy"><span>New substream</span></span>
+              <span className="workstream-context-mark"><IconPlus aria-hidden="true" size={22} stroke={1.5} /></span>
+              <span className="workstream-context-copy"><span>New substream</span></span>
             </button>
-          </div>}
+          )}
         </div>
         <section aria-label="Generated artifacts" className="workstream-context-section">
           <h2>Generated artifacts</h2>

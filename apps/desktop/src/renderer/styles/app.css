@@ -2703,18 +2703,22 @@ pre {
 .workstream-context-row { align-items: center; background: transparent; border: 0; border-radius: 10px; color: var(--av-sys-color-text-default); display: flex; font: inherit; gap: 8px; height: 54px; padding: 8px; position: relative; text-align: left; width: 100%; }
 .workstream-context-row:hover { background: var(--av-cmp-row-background-hover); }
 .workstream-context-row.is-current { background: var(--av-cmp-row-background-selected); }
-.workstream-conversation-row { border: 1px solid var(--av-cmp-sidebar-border); }
+/* Every row in this rail is the navigation sidebar's work-stream row: same
+   36px leading slot, same title, same fills. Only the mark inside the slot
+   differs — the stream's own tinted symbol for the main conversation, the
+   branch line for a substream. */
 .workstream-substream-list { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
 .workstream-substream-list:empty { display: none; }
-.workstream-substream-branch { align-items: center; display: flex; gap: 8px; min-width: 0; }
-/* Tabler's right endpoint is y=4: after flipping the 24px icon it sits 8px below center. */
-.workstream-substream-connector { color: var(--av-cmp-sidebar-border); flex: 0 0 24px; transform: translateY(-8px) scaleY(-1); }
-.workstream-substream-branch > .workstream-context-row { flex: 1; min-width: 0; width: auto; }
-.workstream-substream-avatar { align-items: center; display: flex; flex: 0 0 28px; height: 28px; justify-content: center; }
-.workstream-substream-avatar > .avatar { height: 28px; width: 28px; }
-.workstream-new-substream { border: 1px dashed var(--av-cmp-sidebar-border); color: var(--av-sys-color-text-muted); }
+.workstream-context-mark { align-items: center; display: flex; flex: 0 0 36px; height: 36px; justify-content: center; }
+/* Tabler's right endpoint is y=4: after flipping the 24px icon it sits 8px
+   below center, so the curve meets the title rather than the slot's floor. */
+.workstream-substream-connector { color: var(--av-cmp-sidebar-border); transform: translateY(-8px) scaleY(-1); }
+.workstream-new-substream { color: var(--av-sys-color-text-muted); }
 .workstream-context-row:focus-visible { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: -2px; }
 .workstream-context-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; }
+/* The navigation sidebar's row title, so the two rails read as one list. */
+.workstream-conversation-row .workstream-context-copy > span,
+.workstream-new-substream .workstream-context-copy > span { font-size: 14px; font-weight: 500; line-height: 20px; }
 .workstream-context-copy > span,
 .workstream-context-copy > small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workstream-context-copy > small { color: var(--av-sys-color-text-muted); font-size: 13px; line-height: 18px; }
@@ -2726,8 +2730,9 @@ pre {
 .workstream-context-empty svg { flex-shrink: 0; }
 .workstream-context-presence { background: var(--av-sys-color-success-base); border-radius: 50%; flex: 0 0 6px; height: 6px; }
 .workstream-context-sidebar.is-compact .workstream-context-toolbar { justify-content: center; }
-.workstream-context-sidebar.is-compact .workstream-substream-connector { display: none; }
-.workstream-context-sidebar.is-compact .workstream-substream-branch { gap: 0; }
+/* Compact drops the title, so the eight-pixel lift has nothing left to meet;
+   centre the curve in the square instead. */
+.workstream-context-sidebar.is-compact .workstream-substream-connector { transform: scaleY(-1); }
 .workstream-context-sidebar.is-compact .workstream-context-copy,
 .workstream-context-sidebar.is-compact .workstream-context-section h2,
 .workstream-context-sidebar.is-compact .workstream-context-empty span { display: none; }

@@ -70,6 +70,26 @@ export function WorkstreamSymbol({ id, size, className }: { id: string; size: nu
   return <Icon className={className} size={size} strokeWidth={1.9} />;
 }
 
+/**
+ * The work stream's identity as a bare tinted mark, for a surface that already
+ * sits inside the work stream. The glyph's filled shape says *which* stream
+ * among many, which is the navigation sidebar's job; a rail that only ever
+ * shows one stream needs the colour and the symbol, not a second badge.
+ */
+export function WorkstreamMark({ id, size = 24, appearance: saved }: { id: string; size?: number; appearance?: SavedAppearance }): React.JSX.Element {
+  const generated = workstreamAppearance(id);
+  const Icon = saved?.icon ? WORKSTREAM_ICON_COMPONENTS[saved.icon] : WORKSTREAM_ICONS[generated.iconIndex] ?? Sparkles;
+  return (
+    <Icon
+      aria-hidden="true"
+      className="workstream-mark"
+      size={size}
+      strokeWidth={1.9}
+      style={{ color: `var(--av-sys-color-project-${saved?.color ?? generated.color})` }}
+    />
+  );
+}
+
 export function WorkstreamGlyph({ id, size = 32, appearance: saved }: { id: string; size?: number; appearance?: SavedAppearance }): React.JSX.Element {
   const generated = workstreamAppearance(id);
   const appearance = { ...generated, color: saved?.color ?? generated.color };
