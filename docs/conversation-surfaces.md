@@ -134,7 +134,13 @@ navigation. Dragging below 210px collapses it; expanding requires crossing
 220px, retaining the existing ten-pixel hysteresis. Reaching either width is
 animated over `--sidebar-collapse-motion`, the one duration both sidebars spend,
 except while a drag is in progress: the gesture must land on the pointer, so
-`.is-resizing` takes the transition off for as long as it lasts. It temporarily
+`.is-resizing` takes the transition off for as long as it lasts. This sidebar
+carries that width on two channels — the `flex-basis` that draws it, and the
+`--workstream-sidebar-width` it publishes to the shell for `--rail-max-slot` —
+and **both** are transitioned over that same interval. A change that adds a
+third consumer of its width adds it to that set: a channel left untransitioned
+reaches its final value in one frame and steps whatever reads it while this
+sidebar is still travelling. It temporarily
 collapses when its enclosing pane cannot fit the preferred width
 plus the existing 424px conversation reservation. Only that pane is observed,
 so collapse cannot change its own measurement and cause oscillation. All paint
@@ -185,7 +191,8 @@ prove layout, focus, scroll position, or overlap.
 rather than cutting between the two widths. The navigation's
 `--av-cmp-sidebar-width` is registered with `@property` as a `<length>` and
 transitioned on `.workspace-shell` beside `--rail-width`; the work-stream
-sidebar transitions the `flex-basis` that sizes it. A drag is the exception:
+sidebar transitions both the `flex-basis` that draws it and the
+`--workstream-sidebar-width` it publishes to the shell. A drag is the exception:
 `.is-resizing` drops the width from the transitioned set for the length of the
 gesture, so the edge still lands exactly on the pointer.
 
@@ -199,11 +206,25 @@ the custom property means the panel, its grab handle, the room `.main-pane`
 leaves for it, and the composer centred over that room move as one thing instead
 of four rules kept in step by hand.
 
+The work-stream sidebar needs two channels rather than one because it draws
+itself from `flex-basis` and *publishes* its width separately, as
+`--workstream-sidebar-width`, for the shell's `--rail-max-slot`. Transitioning
+only the one that draws left the published copy stepping to its final value in a
+single frame, so with the inspector open and capped by that slot, the inspector's
+width jumped by up to 184px while the sidebar beside it was still travelling —
+the same cut, moved to the other side of the window. Registering the published
+property and transitioning it on the same interval is what keeps the two halves
+of the window telling the same story.
+
 **Considered and rejected:** Animating `width` on `.sidebar` and `margin-left`
 on `.main-pane` separately. That works for the two obvious elements and silently
 leaves behind everything else measured from the same property, which is how a
 panel and its handle part company. Also rejected: making the double-click
-handler play an animation, which would have left the button and ⌘B cutting.
+handler play an animation, which would have left the button and ⌘B cutting. And
+rejected for the work-stream sidebar: sizing its `flex-basis` from the published
+custom property to collapse the two channels into one, which would have made the
+component's own width depend on finding a `.workspace-shell` ancestor — correct
+in the app, silently wrong anywhere else it is rendered.
 
 **Consequences:** The duration lives once, at `:root` in `app.css`, as
 `--sidebar-collapse-motion`; it is deliberately outside the `--av-` namespace
@@ -215,8 +236,12 @@ or the sidebar trails the pointer. A double-click is two grabs of the same
 handle, so the second release has to clear `.is-resizing` before the toggle
 lands; both sidebars have a test pinning that, because the failure is a missing
 animation on exactly the gesture that asks for it and nothing else reports it.
+Each drag drops only its own
+channel and restates the other two, so dragging one sidebar cannot stop the
+other — or a rail closing on its own — from moving; that re-pairing works by
+position and holds because all three entries carry the same 240ms and curve.
 `prefers-reduced-motion` needs nothing here: the global kill switch in `app.css`
-zeroes both durations.
+zeroes every duration.
 
 ### 2026-09-09 — Review fixes on the action-row move
 
