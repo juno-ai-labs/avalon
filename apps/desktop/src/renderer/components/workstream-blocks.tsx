@@ -1349,12 +1349,17 @@ function exportStatusMessage(saving: MessageExportFormat | null, failed: Message
 function StartSubstreamButton({ onStart }: { onStart: () => void }): React.JSX.Element {
   return (
     <button
-      aria-label="Start substream from this message"
+      // The visible words have to appear in the accessible name, or a person
+      // driving by voice cannot say what they can see ("click New substream")
+      // and reach it. The name extends the label rather than replacing it,
+      // which is what every button beside it does — Copy is "Copy response",
+      // PDF is "Save response as a PDF" — and the arrow is decorative, so it
+      // stays out of both the name and the announcement.
+      aria-label="New substream from this message"
       className="message-start-substream"
       onClick={onStart}
-      title="Start substream from this message"
       type="button"
-    >↳ New substream</button>
+    ><span aria-hidden="true">↳</span> New substream</button>
   );
 }
 
@@ -1506,7 +1511,7 @@ export function AssistantMessageContent({
         <AssistantMessageActions
           citations={citations}
           mentions={mentions}
-          {...(onStartSubstream ? { onStartSubstream } : {})}
+          onStartSubstream={onStartSubstream}
           telemetry={telemetry}
           text={text}
         />
@@ -2500,7 +2505,7 @@ export function MessageBlock({
             citations={citations}
             collapseHeadings={collapseHeadings}
             mentions={message.mentions}
-            {...(startSubstream ? { onStartSubstream: startSubstream } : {})}
+            onStartSubstream={startSubstream}
             streaming={message.streaming}
             text={message.text ?? ''}
             telemetry={{ messageId: message.id, workstreamId: message.workstreamId }}
