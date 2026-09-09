@@ -24,6 +24,8 @@ the different question of who a work stream is *for*.
 | `apps/desktop/src/renderer/components/sidebar.tsx` | The **Pinned** section, the right-click **Pin** / **Unpin** item, and the drag-and-keyboard reorder. `orderPinnedWorkstreams` decides what the section renders. |
 | `apps/desktop/src/renderer/lib/workstreams-cache.ts` | The flat-array cache key and the only typed write boundary for it. |
 | `apps/desktop/src/renderer/components/app-shell.tsx` | `applyPinnedWorkstreams` derives the new pin positions before handing the list update to the cache boundary. |
+| `apps/desktop/src/renderer/screens/workstream-landing.tsx` | The root route: resolves to the first pin, else the most recent row, else the composer. |
+| `apps/desktop/src/renderer/lib/workstream-landing.ts` | `useOpenFirstWorkstream`, the one way a screen leaves for that route, and the `skipWorkstreamIds` state it carries. |
 
 ## How it works
 
@@ -90,6 +92,78 @@ The recency headings use access time too. Their bulk commands select
 `recency: "access"`; existing activity-based API callers retain their original
 meaning. Notes retain activity-based grouping, and automations keep their own
 section ordering. Pins remain manually ordered.
+
+### Leaving for the first work stream
+
+The root route resolves to the same row the sidebar shows at the top — the
+first pin, else the most recent by the viewer's access — and it is where every
+screen goes when what it was showing is no longer there to show: an archived
+work stream, note, or project, a deleted automation or archived draft, a work
+stream the reader left, one they marked unread, the not-found screen's way out,
+the end of onboarding, and the main window's hand-off to the Sidekicks window.
+Only a workspace with nothing in it lands on the composer. The composer is
+otherwise reached by an explicit New action alone: the sidebar's New buttons,
+the menu bar item, a project's plus, and the `workstreams/new` and
+`automations/new` deep links, which are create intents even though the second
+no longer has a builder to open.
+
+`useOpenFirstWorkstream` is the one way a screen leaves. It always replaces the
+history entry, so Back cannot return to a screen the API refuses, and it names
+the rows the landing must pass over for that one landing. No leaving screen
+patches the directory: the WorkstreamDO tombstone the socket delivers is what
+removes an archived row, under the directory waterline that orders the removal
+against everything else in flight for it. What a leaving screen does do is
+evict the archived or left work stream's own cache entries, and that eviction
+also drops its row from the list the landing reads. So the skip is doing three
+different jobs. For a single archive or a left personal stream it is a belt
+over that eviction, covering the frame in which a directory page re-delivers
+the row ahead of the tombstone, where it would be the most recent one. For a
+batch archive it is load-bearing: only the open row is evicted, the others the
+batch took stay until their tombstones arrive, and the landing would open the
+next most recent of them. And a row marked unread stays in the list for good
+and is skipped because opening it is what reads it.
+
+The batch's skip list is a reconstruction, `batchArchiveSkipIds`, run over the
+cached rows against the filter the server also evaluated. The response says how
+many went and never which, so a row whose recency crossed the filter's edge
+between the client's snapshot and the server's evaluation lands on the wrong
+side. The two errors are not symmetric: skipping a row that survived costs a
+landing on an older row or a page fetch, while opening a row that went costs
+an error screen. The reconstruction is therefore allowed to be wide, and it
+applies to one landing only, so a live row it wrongly names is passed over
+once rather than for the session.
+
+**Landing opens a work stream, and opening it reads it.** That is true of the
+row the landing chooses after an archive, which is what a mail client does, and
+it is true after mark-as-unread too: leaving the row for later spends the
+unread state of the row landed on instead. That is a deliberate choice and not
+an oversight. The alternative of staying put would re-read the row that was
+just marked, which is the one outcome the action exists to prevent, and the
+composer this used to fall back to was inert only by being nowhere. A reader
+who wants neither can mark the next row unread in turn.
+
+A skip list that empties every loaded page is not an empty workspace: a batch
+can take the whole first page — the day's work streams, say — while older ones
+sit beyond the cursor. The landing then asks the directory query for its next
+page and keeps its opening state until a candidate arrives or the pages run
+out. It requests a page once per change to the list rather than once per
+settled fetch, because `fetchMore` leaves its cursor in place after a failed
+page; re-requesting on settle would retry that page forever. A failed page
+therefore waits, and the socket's own delivery of the archive's tombstones is
+what changes the list and asks again. If the socket is what is down, nothing
+changes the list and the landing keeps its opening state; the sidebar is
+rendered around it and stays usable, which is the way out.
+
+Telemetry still names `/workstreams/new` the `workspace_home` surface. The
+name dates from when the composer was the home; after this change it is the
+New action, and a funnel keyed on that surface reads the leaves above as
+`workstream` views instead. The mapping is left alone rather than migrated,
+but the reading changes meaning at this change.
+
+The one deliberate exception is the inert composer route a cross-workspace deep
+link parks on while its resource action resolves. Landing there would open and
+record a visit to an unrelated room in the new workspace a moment before the
+link's own destination arrives.
 
 ### In the sidebar
 
@@ -215,6 +289,16 @@ it repairs. Focus resting anywhere real belongs to whoever put it there.
 - **Pinning is gated on readability; unpinning is not.** Removing a pin is never
   a question about the work stream, and a pin that has gone dark can only be
   reached by a caller that already knows the id.
+- **`useOpenFirstWorkstream` is the one way a screen leaves for the root
+  route, and every leave replaces.** A screen that navigates to `/` or sets
+  the hash itself pushes an entry the API will refuse on Back, and cannot name
+  the rows the landing must pass over.
+- **No leaving screen patches the directory.** It may evict the work stream it
+  is leaving; which rows the list holds is the socket's, under the directory
+  waterline. A landing that needs a row gone tells the landing, it does not
+  remove the row.
+- **The composer is a create action.** It is reached by an explicit New
+  action or by an empty workspace, never as the place a screen falls back to.
 
 ## Boundary
 
@@ -271,6 +355,8 @@ It deliberately does not:
 | `apps/api/test-workers/durable-object-runtime.test.ts` | Real SQLite-backed WorkspaceDO append/idempotency, per-person isolation, dense unpin, tolerant reorder, pinned-first listing, and hibernating page delivery. |
 | `apps/desktop/src/renderer/components/sidebar.test.tsx` (`pinned work streams`) | The section appearing only when something is pinned, rows leaving the recent list, stored order beating activity order, absence of retired Command-number hints and navigation, the menu toggle, live reorder during a drag, the keyboard move, both error dialogs, and the row's motion following it into the section and between recency groups. |
 | `apps/desktop/src/renderer/components/app-shell.test.tsx` (`applyPinnedWorkstreams`) | That a pin response rewrites every row's position, including the ones it does not name. |
+| `apps/desktop/src/renderer/screens/workstream-landing.test.tsx` | Pin-then-recency resolution, the pending, empty, and failed states, and that named rows are passed over whatever their rank. |
+| `apps/desktop/src/renderer/lib/workstream-landing.test.tsx` | That leaving replaces the entry and carries the skip list, and that a malformed state reads as no skip. |
 
 Two traps in the desktop tests. jsdom implements no `DataTransfer`, so a drag
 event needs the small stub in that file rather than `new DataTransfer()`. And an
@@ -297,6 +383,49 @@ collides with itself. Positions are therefore kept unique by how they are
 allocated — `MAX(position) + 1` inside the insert — rather than by the schema.
 
 ## Changelog
+
+### 2026-09-09 — Every leaving screen opens the first work stream
+
+Archiving the open work stream, a batch archive that took it, marking it
+unread, leaving it, archiving the open note or project, deleting the open
+automation, finishing onboarding, the not-found screen, and the Sidekicks
+hand-off all landed on the new-work-stream composer. That made the composer
+the app's fallback home rather than a create action, and archiving the room
+someone was reading answered with an empty draft instead of the next room. Each
+now leaves through `useOpenFirstWorkstream` for the root route, which already
+resolved the top sidebar row on startup; the composer is reached only by an
+explicit New action or an empty workspace.
+
+The landing gained a `skipWorkstreamIds` state for the same reason the archive
+handler never patched the list: the tombstone or refetch that removes the row
+lands after the screen has to leave, and the row that was open is the most
+recent one. Patching the cache instead was rejected because the directory
+waterline is what orders that removal against everything else in flight for
+the row. Every leave now replaces rather than pushes — the note archive and
+mark-unread paths used to push — since Back returning to a refused note, or
+reopening and thereby reading a work stream just marked unread, was the wrong
+half of that inconsistency to keep. The cross-workspace deep link's inert
+composer route is unchanged; a landing there would visit an unrelated room
+before the link's destination arrives.
+
+Review found two gaps in the first cut. The not-found screen set the hash,
+which pushes, so Back returned to the route that had nothing to show; it now
+leaves through the same hook. And a skip list covering every loaded page read
+as an empty workspace while more pages existed, so the landing now pages past
+skipped rows before opening the composer, requesting once per list change so
+a failed page cannot loop.
+
+A second round corrected the record more than the code. The rationale above
+had said the skip exists because the archived row sits in the list until its
+tombstone; `evictCachedWorkstream` in fact drops the row from the list as it
+clears the work stream's other entries, so at the single-archive and leave
+sites the skip covers only a re-delivered page, and the chained-archive race a
+reviewer raised does not reach the landing for the same reason. The batch is
+where the skip is load-bearing, so its derivation became `batchArchiveSkipIds`,
+exported and tested, with its best-effort nature and the direction it is
+allowed to err in written down. Onboarding's finish, the last leave still
+setting the hash, moved to the hook. And the mark-as-unread landing reading
+the next row was recorded as the decision it is rather than left implicit.
 
 ### 2026-09-08 — A moved row travels to its new section
 
