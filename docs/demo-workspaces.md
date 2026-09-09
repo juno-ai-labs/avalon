@@ -31,7 +31,8 @@ page calls. **Open questions** below says what remains.
 | `apps/api/src/services/demo-workspace-register.ts` | The walk's one write into the register: `markDemoWorkspaceRetired` stamps `retired_at` on the operation row. Not an authorization input, and nothing reads through it. |
 | `apps/api/src/services/demo-connection-copy.ts` | Copying template connections into a demo, with credential re-encryption; `SHAREABLE_CONNECTOR_TYPES` is the list of providers whose grant may be shared. |
 | `apps/api/src/services/demo-workspace-visibility.ts` | The template and unpublished-candidate filter, applied in regional discovery and activation. `DEMO_TEMPLATE_WORKSPACE_ID`, the template's UUID, is declared here and nowhere else. |
-| `apps/api/src/services/demo-pack.ts` | The pack schema and its playability rules, the planner that binds a pack to a cast, and the placeholder pack. |
+| `apps/api/src/services/demo-pack.ts` | The pack schema and its playability rules, the planner that binds a pack to a cast, the default name each role is offered under, and the placeholder pack. |
+| `apps/api/src/services/demo-personas.ts` | The cast who do not exist: minting one regional user per role per operation from the name the operator typed, and proving a cast id is this operation's own persona. |
 | `apps/api/src/services/demo-seeder.ts` | Plays one action at a time through the production write paths, waits for its run to settle as specified, and records the receipt. |
 | `apps/api/src/services/demo-seed-provider.ts` | The `fetch` a seeded run's harness config carries: answers the run's one inference request from the seed and refuses the next. |
 | `apps/api/src/services/demo-readiness.ts` | The manifest of what every verified viewer should find, derived from the pack and the receipts, and the one comparison against their real directory, attention and canonical reads. |
@@ -98,6 +99,42 @@ live demo share. So only a connection whose type is in
 `shared_grant`, beside the personal connections reported as `personal_scope`,
 so the operator hears "the demo has no Linear" before the meeting rather than
 the template losing Linear during one.
+
+### Casting a demo
+
+**Only the presenter is a real person.** They sign in, they own the demo, and
+it is their view of it that the readiness barrier verifies, so they are chosen
+from the template's own members. Every other role is played by a **persona**:
+a regional `users` row this operation mints, carrying the name the operator
+typed in the New demo form and nothing else — no platform identity, so it
+cannot sign in, cannot be discovered, and is never offered a workspace; an
+address under the reserved `.invalid` top-level domain, which nobody can
+register and no mail can reach, because the composer's people picker puts a
+member's address on screen; and the presenter's timezone, so the cast reads as
+one company in one place.
+
+That is what frees a demo from the company's own directory. Casting colleagues
+put their real names and work addresses in front of a customer, limited the
+cast to whoever happened to be in the template, and made the demo read as
+Rally's staff rather than the customer's own team. The pack still names people
+by role token, so it reads the same whoever plays them; what it now also
+carries is a **default name per role** — the form opens on those and the
+operator types over them.
+
+**The ids are the region's, never the operator's.** The start request carries
+names, and preparation mints the people who hold them, so no request can seat
+an account in a demo workspace. Identity is derived rather than stored: a
+persona's `google_subject` is `demo-persona:<operation>:<role>`, which makes
+minting idempotent — a repeated submission or a retry meets the people the
+first submission made, under the names it was given — and lets the template
+check prove, before any write, that every cast id is this operation's own
+persona. A name must be unique among the cast and different from the
+presenter's: two people under one name in one workspace is a mention nobody
+watching can attribute.
+
+A persona outlives the demo it was made for, because a `users` row is
+referenced by everything it wrote. Abandoning a preparation retires the
+workspace and leaves its personas behind, seated nowhere.
 
 ### Seeding a demo from a pack
 
@@ -212,17 +249,19 @@ failed phase and reason when there is one, and the instants the workspace was
 published and closed — the row is also the register discovery and the Demos
 page read. Repeated submission of the same id returns that row's progress and
 starts nothing; two different ids are two demos. This is operation identity,
-not a concurrency limit. Before a row is written the request is checked:
-every pack role bound, each to a different person, the presenter cast as the
-presenter, and the presenter and every cast member an active member of the
-template — the new workspace is owned by the presenter and receives the
-template's credentials, so a presenter outside the template would be handed
-them.
+not a concurrency limit. Before a row is written the request is checked: every
+pack role but the presenter's named, each under a different name and none
+under the presenter's own, and the presenter an active member of the template
+— the new workspace is owned by the presenter and receives the template's
+credentials, so a presenter outside the template would be handed them. The
+named roles are then minted as this operation's personas, so what the row
+stores is the user ids every phase after it works in.
 
 **The phases are the PRD's, and each is safe to run again.** `checking_template`
 verifies the pack in service is the one the operation recorded, the template
-workspace exists in this region, the presenter is a signed-in regional user, and
-the presenter and every cast member are still active members of the template.
+workspace exists in this region, the presenter is a signed-in regional user and
+still an active member of the template, and every other role is played by this
+operation's own persona rather than by an account.
 `creating_workspace` allocates the workspace id onto the operation's row
 *before* creating the workspace, so a crash between the two retries the same
 id — which is why that column carries no foreign key to `workspaces`; creates
@@ -366,6 +405,12 @@ demo's.
   the row before the workspace exists.
 - **One driver at a time.** A phase refuses a driver whose attempt the row has
   moved past, and every status write names the attempt it belongs to.
+- **The cast is named, not chosen.** A start request carries a name per role;
+  the region mints the person who holds it. No request names a user id, so no
+  demo can seat an account, and the template check proves every cast id is this
+  operation's own persona before the first write.
+- **A persona cannot sign in.** No platform identity, an address in a domain
+  that cannot exist, and nothing that offers them a workspace.
 - **A viewer the workspace does not seat is refused, never invented.** The
   barrier reads as the member membership says the viewer is; there is no
   fabricated role.
@@ -465,7 +510,7 @@ are closed when access ends ([`access-revocation.md`](access-revocation.md)).
 | `apps/api/test-workers/demo-readiness.test.ts` | With the effect Queue held, a seeded two-room pack is listed but not Ready — the mention, the new marker and the attention count are named as gaps — and delivering the directory effects through the real consumer makes it Ready with no gaps, including the room the presenter can see without being in, and the order. Proved to fail with the mention comparison removed. |
 | `apps/api/test/demo-readiness.test.ts` | The manifest derived from the placeholder pack — rooms newest first, seats, states, ids from receipts — and its refusal of a pack whose rooms or question were never confirmed; and the schema's check that a viewer's expected rooms are exactly the visible ones. |
 | `apps/api/test-workers/demo-preparation.test.ts` | The launch id handed to the real Workflow binding, so the platform's own instance-id validator judges it (a colon-joined id is refused, the hyphenated one creates an instance). Every phase in order on real objects: the presenter's workspace through onboarding with the cast seated, the template's Google connection copied and left in place, every action confirmed and a completed phase re-run confirming nothing twice, the wait naming its gaps, and Ready published to the register only after the directory effects land; and a failed template check recorded on the operation with its reason. Proved to fail with the register's publication removed from the waiting phase. |
-| `apps/api/test/demo-operations.test.ts` | Against the real migrations: one operation id starts one Workflow and answers a repeat with the same progress; a cast that misses or invents a role, seats one person twice, or reaches outside the template is refused before a row is written; the allocation statement is accepted before the workspace exists; a retry is the next attempt of a failed or a stalled `running` operation; a superseded attempt's phase call writes nothing; the template check runs against the real rows and records a presenter the template lost; a driver that stopped outside a phase is recorded for its own attempt only, with internal text kept off the page; a failed launch marks the operation failed; a retry without a driver leaves the row untouched; the status lists phases in phase order at their latest attempt, and a list past one statement's parameters is answered whole; abandon needs its confirmation, refuses a published demo and closes an operation with no workspace; and the routes — start, list, template, retry, abandon — admit only the `demos` role and reject a malformed start and an unconfirmed abandon. |
+| `apps/api/test/demo-operations.test.ts` | Against the real migrations: one operation id starts one Workflow and answers a repeat with the same progress; a cast that misses or invents a role, names two people alike or reuses the presenter's name, or names the presenter's role at all, is refused before a row is written, as is a presenter outside the template — with nobody minted; the cast is minted as this operation's personas, once, with no platform identity and an address that cannot be delivered to, and a repeat meets the same people; a cast id swapped for an account fails the template check; the allocation statement is accepted before the workspace exists; a retry is the next attempt of a failed or a stalled `running` operation; a superseded attempt's phase call writes nothing; the template check runs against the real rows and records a presenter the template lost; a driver that stopped outside a phase is recorded for its own attempt only, with internal text kept off the page; a failed launch marks the operation failed; a retry without a driver leaves the row untouched; the status lists phases in phase order at their latest attempt, and a list past one statement's parameters is answered whole; abandon needs its confirmation, refuses a published demo and closes an operation with no workspace; and the routes — start, list, template, retry, abandon — admit only the `demos` role and reject a malformed start and an unconfirmed abandon. |
 | `apps/ace/test/demos.test.ts`, `apps/ace/test/demos-client.test.tsx` | Ace's side, owned by [`ace.md`](ace.md#testing): the relay forwards the typed confirmation and answers a regional refusal by its own code, and the page reads a retried operation by its current attempt, keeps polling while offline, and names the presenter beside each gap. |
 | `apps/api/test/socket-ticket-transport.test.ts` | Every socket-ticket issuer refuses a `connector` and a `demo_seed` principal alike. |
 
@@ -584,6 +629,37 @@ the cast discussed is answerable. That was a product defect in every
 multi-person room, not a demo concern, and it is fixed where it lived.
 
 ## Changelog
+
+### 2026-09-09 — The cast is named, not cast from the company directory
+
+**What changed:** A start request carries a name per pack role instead of a
+user id, and preparation mints a **persona** for each — a regional user with
+that name, no platform identity, and an address under `.invalid`
+(`demo-personas.ts`). Only the presenter is still chosen from the template's
+members. The pack carries a default name per role, which is what the New demo
+form opens on. `checking_template` proves every cast id is this operation's
+own persona; `demo_cast_not_in_template` is gone.
+
+**Why:** The form could only cast the people in the Google workspace, so a
+demo for a customer was staffed by Rally's own employees, under their real
+names and work addresses, in front of that customer — and a demo could not be
+prepared at all unless the template happened to seat as many people as the
+pack has roles. Naming the cast is what the operator actually wants to do, and
+the alternative considered — keeping the member pickers and adding personas
+beside them — was rejected: a seeded cast member never signs in, so a real
+account in the cast buys nothing over a name and costs the operator a choice
+they have to make every time.
+
+**Consequences:** The ids in `cast_json` are minted by the region, so nothing
+a request says can seat an account in a demo workspace; that is an invariant
+now, checked twice. A persona's identity is derived from the operation and the
+role rather than stored, which is what makes minting idempotent under a repeat
+or a retry — changing either half of that derivation orphans the people an
+operation already made. Personas are not cleaned up when a demo is abandoned
+or retired: a `users` row is referenced by everything it wrote, and a demo's
+history is what makes it replayable. Whoever adds a second pack has to give
+every role but the presenter's a default name; the schema refuses a pack
+without one.
 
 ### 2026-09-09 — A seeded run is routed past Azure
 
