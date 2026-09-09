@@ -2958,11 +2958,16 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
          last_delivered_at INTEGER NOT NULL,
          PRIMARY KEY (kind, block_id, sha256)
        ) STRICT`,
-      // One row per compaction event whose residency transitions were applied,
-      // so a replayed compaction commit changes the ledger exactly once.
+      // One row per compaction event: written when the harness prepares the
+      // compaction, naming exactly the blocks whose transitions were rendered
+      // into the compacted system message, and stamped when the commit applies
+      // them, so a block recorded in between is left alone and a replayed
+      // commit changes the ledger exactly once.
       `CREATE TABLE resident_context_compactions (
          compaction_event_id TEXT PRIMARY KEY,
-         applied_at INTEGER NOT NULL
+         prepared_keys TEXT NOT NULL,
+         prepared_at INTEGER NOT NULL,
+         applied_at INTEGER
        ) STRICT`,
     ],
   },

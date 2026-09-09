@@ -296,7 +296,7 @@ export async function bootstrapTerminalRepository(
     // Best-effort by contract: a failure here is reported through the
     // instruction files' own observer and the root is rediscovered by the
     // first touch, which begins every chain at the root.
-    await instructions.record({ stdout: result.stdout, marker: instructionProbe.marker, sourceGeneration: sandbox.generation });
+    await instructions.record({ stdout: result.stdout, marker: instructionProbe.marker, exitCode: result.exitCode, sourceGeneration: sandbox.generation });
   }
   if (result.exitCode !== 0) {
     await provider.clearGitHubReadAccess(sandbox.providerSandboxId).catch(() => undefined);

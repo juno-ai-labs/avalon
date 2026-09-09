@@ -291,7 +291,9 @@ personless; it is not duplicated into these product events.
 - **The probe never decides a tool's outcome, and a mutation waits for the
   instructions that govern it.** The fragment runs in an isolated subshell and
   only exit 52 escapes, in abort mode before a mutation, as the recoverable
-  `instructions_pending` refusal; every other probe failure leaves the tool's
+  `instructions_pending` refusal (or `instructions_unavailable` when the ledger
+  could not record what the probe found, after which the probe stops gating
+  for the rest of the run); every other probe failure leaves the tool's
   or the bootstrap's own exit code alone. Each candidate is checked in its own
   right for symlink and root containment before it is read, because a
   repository controls what `AGENTS.md` points at. The trailer the probe prints

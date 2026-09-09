@@ -58,16 +58,26 @@ transcript tail, where it costs nothing the provider has already cached.
 **Compaction.** Before the summary turn the harness calls `prepareCompaction`
 with the compaction event id and the current head. The object answers with the
 sections the ledger *would* render once the transitions in `blocks.ts` have run
-(a pure computation, nothing written) and the projected positions of every
-message the ledger owns. The harness renders the compacted system message from
-those sections, gives the summariser the transcript without those positions
-(the ledger carries them forward itself), and builds the replacement
-transition; the object applies the transitions inside `commitBindCompaction`'s
-transaction, keyed by the event id so a replayed commit changes nothing. From
+and the projected positions of every message the ledger owns. Block rows are
+not touched; the event's row in `resident_context_compactions` records exactly
+which blocks were rendered. The harness renders the compacted system message
+from those sections, gives the summariser the transcript without those
+positions (the ledger carries them forward itself), and builds the replacement
+transition; the object applies the transitions to the prepared blocks, and only
+those, inside `commitBindCompaction`'s transaction, stamping the event applied so
+a replayed commit changes nothing. A block recorded between the prepare and the
+commit (a background bootstrap, a concurrent tool) is absent from the compacted
+system message and stays a pending transcript delivery; the next compaction
+moves it. An event that was never prepared moves nothing. From
 the next turn the section is part of the new stable prefix. A block stays there
 for its kind's lifetime, then leaves; a superseded block leaves at the first
-compaction after its edit. A retired block is not forgotten: its row stays at
-`none`, and the next load is a change of residency rather than a discovery.
+compaction after its edit. A superseded block is rendered but no longer counted
+as resident: if the source reverts to its content before that compaction, the
+probe reports it again and `recordLoaded` reinstates it in place (current
+again, a fresh lifetime, the edit retired) and delivers it once more, so the
+transcript's last word on that path is the content the source has. A retired
+block is not forgotten: its row stays at `none`, and the next load is a change
+of residency rather than a discovery.
 
 **Invalidation.** A kind's source can be replaced wholesale, as a Terminal
 checkout is by `terminal_checkout_repository`. `invalidateKind` moves every
@@ -122,9 +132,19 @@ including the exception this subsystem introduces
   `terminal_instruction_probe_failed` and leaves the tool's or bootstrap's own
   outcome alone; the next touch retries, and the root is rediscovered by every
   chain and by the next run's `refreshed` bootstrap.
+- The first ledger failure in a run (the known set could not be read, a record
+  failed, a stopped command printed no trailer) turns the gate off for the rest
+  of that run: every later probe runs in report mode, so discovery and
+  recording keep being attempted and no mutation waits on a ledger that is not
+  answering. A mutation the probe had already stopped when that happened is
+  refused once with `instructions_unavailable`, which tells the model the retry
+  proceeds. Without this, a stopped mutation would be refused again on every
+  retry for instructions that never arrive.
 - A mutation whose governing file is not resident returns `instructions_pending`
   having changed nothing; the instructions are recorded, arrive with that batch,
-  and the retry proceeds. Reads never wait. `run_command` and `import_resource`
+  and the retry proceeds. When the ledger already had them (the probe's known
+  set was stale), the refusal says so and asks only for the retry. Reads never
+  wait. `run_command` and `import_resource`
   probe in a command of their own before the mutation, since neither the model's
   command nor the resource bridge can carry the fragment; every other tool's
   probe rides its own command.
@@ -179,8 +199,9 @@ substream migration 51 beside the run-scoped tables:
 | `pending_delivery` | Recorded but not yet appended at a settled step. |
 | `first_delivered_at`, `last_delivered_at` | The bookkeeping of what this conversation has loaded. |
 
-`resident_context_compactions` holds one row per compaction event whose
-transitions were applied. No backfill: every existing conversation starts with an
+`resident_context_compactions` holds one row per compaction event: the blocks
+prepared for it (`prepared_keys`, `prepared_at`) and, once the commit has moved
+them, `applied_at`. No backfill: every existing conversation starts with an
 empty ledger, which is correct because none has been delivered a block.
 
 ## Security and trust model
@@ -201,6 +222,37 @@ by the tool loop, which no block can widen. Per-candidate symlink refusal and
 credential header.
 
 ## Changelog
+
+### 2026-09-09 — The commit moves what the prepare rendered, a ledger failure stops the gate, and a revert reinstates
+
+**What changed:** `prepareCompaction(compactionEventId, now)` records the blocks
+it rendered in the event's `resident_context_compactions` row, and
+`applyCompactionInTransaction` moves those blocks and no others, refusing an
+event that was never prepared. `residentBlocks` no longer counts a superseded
+prompt block as resident, and `recordLoaded` reinstates such a block in place
+when its content is loaded again. The Terminal glue degrades to report-mode
+probes after the first ledger failure, and a mutation stopped when nothing could
+be recorded is refused once with `instructions_unavailable`. The harness renders
+the compacted system message the same way with or without a ledger and refuses
+an excluded position that is not a user message.
+
+**Why:** Review of the implementing pull request. A block recorded between the
+prepare and the commit (a background bootstrap) would have been moved into
+`system` while absent from the compacted system message, changing the prefix on
+the next render and delivering its pending message as well. A file edited and
+then reverted before the next compaction left the current content flagged
+`superseded` and retired it, while the stale edit was promoted. A ledger that
+failed to record left the probe's exit 52 authoritative, so the stopped mutation
+was refused again on every retry for the rest of the conversation, for a message
+that never arrived. The harness's ledger-less branch copied the run's system
+message and substituted an empty string for a non-string content, and nothing
+checked that an excluded position was a message the ledger could own.
+
+**What a future change has to respect:** The prepare writes one row and no block
+row; the commit reads that row and never recomputes the set from the live
+ledger. The degraded flag is per plugin instance, which is per run; a new run
+starts gating again. `instructions_unavailable` is a refusal the model retries
+once, not a signal to stop using the tool.
 
 ### 2026-09-09 — The section bound measures the emitted section, and the probe marker is a nonce
 

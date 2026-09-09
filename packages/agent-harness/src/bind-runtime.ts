@@ -1140,12 +1140,26 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             )
           : null;
         const excludedPositions = new Set(residency?.excludedMessagePositions ?? []);
+        // The host names positions in its own projection of this loop; the
+        // in-memory array is that projection (system at 0, appends at the
+        // tail), and the fence on generation and revision keeps them aligned.
+        // A position that is not a user message is a drift between the two,
+        // and excluding it would silently leave something out of the summary.
+        for (const position of excludedPositions) {
+          if (position <= 0 || position >= messages.length || messages[position]?.role !== "user") {
+            throw new Error("resident_context_exclusion_misaligned");
+          }
+        }
         const summaryInput = excludedPositions.size === 0
           ? messages
           : messages.filter((_message, position) => !excludedPositions.has(position));
-        const compactedSystemMessage: ProviderSystemMessage = residency
-          ? { role: "system", content: runtime.renderSystemPrompt(residency.section).content }
-          : { role: "system", content: typeof systemMessage.content === "string" ? systemMessage.content : "" };
+        // The compacted system message is rendered, not copied: the same
+        // render the run's system message came from, with the section the
+        // ledger proposes (or the one it already has, where no ledger is wired).
+        const compactedSystemMessage: ProviderSystemMessage = {
+          role: "system",
+          content: runtime.renderSystemPrompt(residency ? residency.section : residentSection).content,
+        };
         const compactionPrimaryModel = model ?? input.config.primaryModel;
         const fallbackModels = [
           input.config.primaryModel,

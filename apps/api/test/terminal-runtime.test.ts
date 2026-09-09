@@ -1302,6 +1302,26 @@ describe("Daytona Terminal runtime", () => {
         .toEqual([["never write generated files\n", "none"], ["revised\n", "transcript"]]);
     });
 
+    it("refuses once with instructions_unavailable when the ledger fails, then stops gating for the run", async () => {
+      const { runtime, ledger, files, probeFailures } = checkout();
+      const bytes = new TextEncoder().encode("new\n");
+      vi.spyOn(ledger, "recordLoaded").mockImplementationOnce(() => { throw new Error("ledger unavailable"); });
+      // The probe stopped the write; the ledger could not record what it found,
+      // so no instructions message will follow and the refusal says so.
+      await expect(runtime.writeFile(context, "src/new.txt", bytes)).rejects.toMatchObject({
+        code: "instructions_unavailable",
+        message: "The repository instructions governing this call could not be loaded and nothing was changed. Retry the same call; it proceeds without them.",
+      });
+      expect(files.has("/workspace/src/new.txt")).toBe(false);
+      expect(probeFailures).toEqual(["record"]);
+      // The retry is not refused again: the probe reports without gating, and
+      // recording is attempted as before.
+      await expect(runtime.writeFile(context, "src/new.txt", bytes)).resolves.toMatchObject({ created: true });
+      expect(files.has("/workspace/src/new.txt")).toBe(true);
+      expect(ledger.pendingDeliveries().map((delivery) => delivery.block.blockId)).toEqual(["AGENTS.md"]);
+      expect(probeFailures).toEqual(["record"]);
+    });
+
     it("probes before admitting a command's durable task and retires every block when the checkout is replaced", async () => {
       const { runtime, ledger, objectStore, provider, resources, publisher, coordinator, instructions } = checkout();
       await expect(runtime.runCommand(context, { command: "echo hi", timeoutMs: 1_000 }))

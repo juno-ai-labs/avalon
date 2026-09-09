@@ -4216,14 +4216,14 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         fence();
         return this.residentContext.renderSections();
       },
-      prepareResidentContextCompaction: ({ generation, stateRevision }) => {
+      prepareResidentContextCompaction: ({ compactionEventId, generation, stateRevision }) => {
         fence();
         const projection = this.transcript.readBindProjection(input.loopId);
         if (!projection || projection.generation !== generation || projection.stateRevision !== stateRevision) {
           throw new Error("bind_loop_head_conflict");
         }
         return {
-          section: this.residentContext.prepareCompaction(),
+          section: this.residentContext.prepareCompaction(compactionEventId, Date.now()),
           excludedMessagePositions: this.transcript.bindMessagePositionsBySourceKind(
             input.loopId,
             RESIDENT_CONTEXT_KINDS,
