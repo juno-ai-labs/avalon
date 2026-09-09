@@ -84,13 +84,27 @@ WorkspaceDO row mutations and accepted child inventory deliveries transactionall
 record a coalesced push intent. The alarm sends a reference-only
 `search_authorization_push_v1` target job to the regional activity queue.
 The consumer reloads registered subjects' canonical decisions and publishes
-replacements through WorkspaceDO, which orders SQLite and KV publication.
+replacements through WorkspaceDO. Registration allocates a monotonically increasing
+per-key generation before authority reads; superseded generations cannot publish.
+A superseded push retries so a newer, failed cache fill cannot consume its durable
+mutation intent.
+An instance-local per-key queue orders KV writes without holding a DO-wide
+`blockConcurrencyWhile` across network I/O. Unrelated events and keys remain runnable.
 Unavailable owners preserve the previous decision and retry through the queue.
-Push jobs identify a changed parent, resource or connection. The registry selects
+Push jobs identify a changed parent, resource or connection. Indexed key addresses
+and a normalized dependency table select
 matching resource addresses, recorded owner dependencies and current attachment
 locations, so new grants and removed grants both reach their keys. Pending
 mutations coalesce per target. Misses register their key before loading owners,
-so concurrent source changes can reach a decision being populated.
+so concurrent source changes can reach a decision being populated. Unavailable
+placeholders are targeted by address/current locations rather than included in
+every parent push. Failed subjects do not prevent remaining subjects from
+publishing; failed queue messages retry without abandoning sibling messages.
+Registration retains current attachment dependencies before reading owners, so
+a removal during an initial fill still targets that key. Cache-read or
+miss-population failures become unavailable candidates, preserving
+partial search results. Archived conversation content remains excluded by the
+local storage reader, independently of cached authorization.
 Changes reach cached grants and denials without another search. This deliberately
 accepts eventual consistency for grants and revocations, including queue and KV
 propagation delay. Five minutes remains a design goal, never a refresh trigger.
@@ -278,7 +292,9 @@ source_mutation`). Workspace-owned changes start in the WorkspaceDO transaction
 start when their WorkspaceDO projection changes; their upstream delivery is not
 included. Keep these origins separate when assessing another platform consumer.
 Existing queued jobs without timing report null totals, not fabricated zeros.
-Coalescing and transport retries preserve the oldest pending timestamp. No timer
+Coalescing and transport retries preserve the oldest pending timestamp, including
+child discovery coalescing and KV publication retries. A cache-fill retry without
+a source mutation has null timing and is excluded from mutation-latency samples. No timer
 refreshes decisions, and instrumentation adds no cache-read or authority check.
 
 Useful fields are `outbox_ms` (source mutation through final queue dispatch,
@@ -309,6 +325,17 @@ regions where that consumer runs. Those probes should be an explicit experiment,
 not authorization rechecks on ordinary reads.
 
 ## Changelog
+
+### 2026-09-08 — Verify publication and failure boundaries during review
+
+Review identified timestamp ties, workspace-wide registry scans, and KV network
+I/O under a global object gate. Use per-key generations and publication queues,
+indexed dependencies, and failure isolation at candidate/subject/message level.
+Keep the prior archived-content behavior without rechecking authorization.
+Preserve source timing through discovery coalescing and KV retries, excluding
+untimed initial-fill retries. Alarm arming after committed runtime SQL is
+background work so a scheduling error cannot misreport the write as rejected.
+
 
 ### 2026-09-08 — Measure mutation-to-publication latency
 
