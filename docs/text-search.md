@@ -137,8 +137,9 @@ replaces only the update trigger; insert/delete watermarks and pending retries
 survive unchanged. Bookkeeping, hydration status, slug, and unrelated metadata
 edits do not publish indexing work. Keep the trigger aligned with
 `resourceSearchCategory` and `resourceSearchText` when extending extraction.
-`test-workers/resource-update-cost.test.ts` proves the upgrade and invalidation
-contract against real workerd storage.
+Duplicate description keys use the final occurrence, matching `JSON.parse`.
+Content hashes conservatively invalidate same-reference body replacements,
+including the one-time hash backfill during extraction.
 
 `createSearchIndexingPipeline` is the single processing path. It writes the full,
 lossless canonical text for BM25/substring search, then runs the same chunker and
@@ -366,6 +367,11 @@ The cursor follows [Turbopuffer attribute pagination](https://turbopuffer.com/do
 
 ## Testing
 
+`apps/api/test-workers/resource-update-cost.test.ts` exercises the populated v42
+upgrade, each search input, duplicate description keys against canonical extraction,
+no-op writes, and deletion watermarks using real workerd storage.
+
+
 Run `pnpm --filter @rally/api exec vitest run test/text-search.test.ts test/semantic-chunks.test.ts test/search-embedding-policy.test.ts`.
 The external SDK is doubled to prove source filtering and canonical result
 loading. No database or Durable Object runtime is simulated by this suite.
@@ -486,6 +492,8 @@ canonical writers producing the same redundant indexing jobs.
 
 **Consequences:** New extraction inputs must extend the trigger through another
 forward migration. Existing pending work is retained, with no forced backfill.
+
+PR: #611.
 
 ### 2026-09-08 — Validate snapshot revisions and reconcile older search contracts
 
