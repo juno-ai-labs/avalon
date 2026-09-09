@@ -112,8 +112,10 @@ export function WorkstreamHeader({
   // The ref lets an in-flight rename recognize that it is no longer the one on
   // screen: the promise it is waiting on outlives the navigation.
   const conversationKey = `${workstream.id}:${substreamId}`;
-  const shownWorkstreamId = useRef(conversationKey);
-  shownWorkstreamId.current = conversationKey;
+  const shownWorkstreamId = useRef({ key: conversationKey, visit: 0 });
+  if (shownWorkstreamId.current.key !== conversationKey) {
+    shownWorkstreamId.current = { key: conversationKey, visit: shownWorkstreamId.current.visit + 1 };
+  }
   useEffect(() => {
     setRenameDraft(null);
     setRenameError(null);
@@ -163,7 +165,7 @@ export function WorkstreamHeader({
     // on screen. Navigating away mid-flight otherwise lands the old stream's
     // failure under the new stream's title, or closes an editor the user has
     // since opened on it.
-    const submittedFor = conversationKey;
+    const submittedFor = shownWorkstreamId.current;
     setRenaming(true);
     setRenameError(null);
     try {
@@ -191,6 +193,7 @@ export function WorkstreamHeader({
         region: workspaceTarget.region,
         workspaceId: workspaceTarget.workspaceId,
         workstreamId: workstream.id,
+        ...(substreamId === '0' ? {} : { substreamId }),
       }));
       reportTelemetryProductIntent({
         kind: 'content_copied', contentType: 'workstream_link', resourceType: 'workstream', resourceId: workstream.id,
@@ -313,7 +316,7 @@ export function WorkstreamHeader({
         {naming ? (
           <h1><TitleSkeleton className="title-skeleton-header" /></h1>
         ) : (
-          <div className="grokbot-conversation-title window-no-drag">
+          <div className="grokbot-conversation-title">
               {onAppearanceChange ? <WorkstreamAppearancePicker key={workstream.id} id={workstream.id} appearance={workstream.appearance} size={20} onChange={onAppearanceChange} /> : <WorkstreamGlyph id={workstream.id} appearance={workstream.appearance} size={20} />}
               {titleContent}
               {renameError && <InlineError>{renameError}</InlineError>}
@@ -461,41 +464,57 @@ export function WorkstreamScreen(): React.JSX.Element {
     else next.set('substream', substreamId);
     setSearchParams(next, { replace: true });
   };
-  const routeRef = useRef({ id, selectedSubstreamId });
-  routeRef.current = { id, selectedSubstreamId };
+  const previousChildren = useRef<{ parentId: string; ids: Set<string> }>({ parentId: id, ids: new Set() });
+  useEffect(() => {
+    if (!children.data) return;
+    const ids = new Set<string>(children.data.privateChildren?.map((child) => child.substreamId));
+    if (previousChildren.current.parentId === id && previousChildren.current.ids.has(selectedSubstreamId)
+      && !ids.has(selectedSubstreamId)) {
+      setSearchParams((current) => {
+        const next = new URLSearchParams(current);
+        next.delete('substream'); next.delete('turn'); next.delete('sequence');
+        return next;
+      }, { replace: true });
+    }
+    previousChildren.current = { parentId: id, ids };
+  }, [children.data, id, selectedSubstreamId, setSearchParams]);
+  const routeRef = useRef({ id, selectedSubstreamId, visit: 0 });
+  routeRef.current = { id, selectedSubstreamId, visit: routeRef.current.visit + Number(routeRef.current.id !== id || routeRef.current.selectedSubstreamId !== selectedSubstreamId) };
   const submitSubstreamRename = async (): Promise<void> => {
     const target = renameTarget;
     const title = renameTitle.trim();
     if (!api || !target || !title || substreamPending) return;
     if (title === target.title) { setRenameTarget(null); return; }
+    const visit = routeRef.current.visit;
     setSubstreamPending(true);
     setSubstreamMenuError(null);
     try {
       await api.renameSubstream(target.parentId, target.substreamId, title);
-      if (routeRef.current.id !== target.parentId) return;
+      if (routeRef.current.id !== target.parentId || routeRef.current.visit !== visit) return;
       setRenameTarget(null);
     } catch (error) {
-      if (routeRef.current.id !== target.parentId) return;
+      if (routeRef.current.id !== target.parentId || routeRef.current.visit !== visit) return;
       setSubstreamMenuError(error instanceof Error ? error.message : 'That substream could not be renamed.');
     } finally {
-      if (routeRef.current.id === target.parentId) setSubstreamPending(false);
+      if (routeRef.current.id === target.parentId && routeRef.current.visit === visit) setSubstreamPending(false);
     }
   };
   const submitSubstreamArchive = async (): Promise<void> => {
     const target = archiveTarget;
     if (!api || !target || substreamPending) return;
+    const visit = routeRef.current.visit;
     setSubstreamPending(true);
     setSubstreamMenuError(null);
     try {
       await api.setSubstreamArchived(target.parentId, target.substreamId, true);
-      if (routeRef.current.id !== target.parentId) return;
+      if (routeRef.current.id !== target.parentId || routeRef.current.visit !== visit) return;
       setArchiveTarget(null);
       if (routeRef.current.selectedSubstreamId === target.substreamId) selectSubstream('0');
     } catch (error) {
-      if (routeRef.current.id !== target.parentId) return;
+      if (routeRef.current.id !== target.parentId || routeRef.current.visit !== visit) return;
       setSubstreamMenuError(error instanceof Error ? error.message : 'That substream could not be archived.');
     } finally {
-      if (routeRef.current.id === target.parentId) setSubstreamPending(false);
+      if (routeRef.current.id === target.parentId && routeRef.current.visit === visit) setSubstreamPending(false);
     }
   };
   const resetCreation = (): void => {
@@ -525,7 +544,7 @@ export function WorkstreamScreen(): React.JSX.Element {
       if (api) void api.cancelSubstream(active.parentId, active.operationId).catch(() => undefined);
       resetCreation();
     }
-  }, [api, id]);
+  }, [api, id, selectedSubstreamId]);
   const prepare = async (): Promise<void> => {
     const attempt = creationRef.current;
     if (!api || !attempt?.title.trim() || creationPending) return;
@@ -645,14 +664,14 @@ export function WorkstreamScreen(): React.JSX.Element {
     </Modal>
     <Modal
       footer={<>
-        <Button disabled={substreamPending} onClick={() => setRenameTarget(null)}>Cancel</Button>
+        <Button disabled={substreamPending} onClick={() => { setRenameTarget(null); setSubstreamMenuError(null); }}>Cancel</Button>
         <Button
           className="button-primary"
           disabled={substreamPending || !renameTitle.trim() || renameTitle.trim() === renameTarget?.title}
           onClick={() => void submitSubstreamRename()}
         >Rename</Button>
       </>}
-      onOpenChange={(open) => { if (!open) setRenameTarget(null); }}
+      onOpenChange={(open) => { if (!open && !substreamPending) { setRenameTarget(null); setSubstreamMenuError(null); } }}
       open={Boolean(renameTarget)}
       title="Rename substream"
     >
@@ -660,22 +679,22 @@ export function WorkstreamScreen(): React.JSX.Element {
       <form onSubmit={(event) => { event.preventDefault(); void submitSubstreamRename(); }}>
         <label className="form-field">
           <span>Title</span>
-          <input autoFocus disabled={substreamPending} onChange={(event) => setRenameTitle(event.target.value)} value={renameTitle} />
+          <input autoFocus maxLength={180} disabled={substreamPending} onChange={(event) => setRenameTitle(event.target.value)} value={renameTitle} />
         </label>
       </form>
     </Modal>
     <Modal
       footer={<>
-        <Button disabled={substreamPending} onClick={() => setArchiveTarget(null)}>Cancel</Button>
+        <Button disabled={substreamPending} onClick={() => { setArchiveTarget(null); setSubstreamMenuError(null); }}>Cancel</Button>
         <Button className="button-danger" disabled={substreamPending} onClick={() => void submitSubstreamArchive()}>Archive</Button>
       </>}
-      onOpenChange={(open) => { if (!open) setArchiveTarget(null); }}
+      onOpenChange={(open) => { if (!open && !substreamPending) { setArchiveTarget(null); setSubstreamMenuError(null); } }}
       open={Boolean(archiveTarget)}
       title="Archive substream"
     >
       <p className="modal-copy">
         <strong>{archiveTarget?.title}</strong> leaves the sidebar for everyone in it, and stops
-        accepting messages. Nothing is deleted and the conversation is kept.
+        accepting messages. The conversation is kept, but restoring it currently requires the API; there is no restore control in the app.
       </p>
       {substreamMenuError && <InlineError>{substreamMenuError}</InlineError>}
     </Modal>

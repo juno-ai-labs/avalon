@@ -1755,6 +1755,8 @@ export function ConversationSurface({
   }, [id, routedDetail, transcript, transcriptVirtualizer]);
 
   const acknowledgeVisibleMessages = useCallback((): void => {
+    // This endpoint owns Main attention; child ordinals are a separate sequence.
+    if (substreamId !== '0') return;
     const detail = queryClient.getQueryData<WorkstreamDetail>(detailQueryKey);
     const element = transcriptRef.current;
     if (!conversationVisibleRef.current || !api || !detail || !element || document.visibilityState !== 'visible' || !document.hasFocus()) return;

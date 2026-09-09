@@ -685,6 +685,22 @@ describe('WorkstreamHeader inline rename', () => {
     expect(elsewhere).toHaveFocus();
   });
 
+  it('keeps a new editor when an earlier visit to the same conversation finishes', async () => {
+    let finish: (() => void) | undefined;
+    const onRename = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
+    const { rerender } = renderWorkstreamHeader(headerWorkstream, { onRename });
+    fireEvent.click(screen.getByRole('button', { name: headerWorkstream.title }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Work stream name' }), { target: { value: 'First request' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save name' }));
+    rerender(headerElement({ ...headerWorkstream, id: 'other', title: 'Other' }, { onRename }));
+    rerender(headerElement(headerWorkstream, { onRename }));
+    fireEvent.click(screen.getByRole('button', { name: headerWorkstream.title }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Work stream name' }), { target: { value: 'New draft' } });
+    await act(async () => { finish?.(); });
+    expect(screen.getByRole('textbox', { name: 'Work stream name' })).toHaveValue('New draft');
+    expect(screen.getByRole('button', { name: 'Save name' })).not.toBeDisabled();
+  });
+
   it('discards a rename that settles after the header moved to another work stream', async () => {
     let settle: (() => void) | undefined;
     const onRename = vi.fn(() => new Promise<void>((_resolve, reject) => {

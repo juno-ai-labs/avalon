@@ -589,6 +589,23 @@ export class WorkstreamObjectProductService {
     );
   }
 
+  /** Parent-owned archive delivery; stop and archive share the local commit. */
+  async applyPrivateChildLifecycle(version: number, archivedAt: number | null): Promise<void> {
+    const now = Date.now();
+    await this.objectStore.commitWithRegionalEffects((sql) => {
+      const current = first(sql.exec<{ version: number; archived_at: number | null }>(
+        `SELECT version, archived_at FROM private_child_lifecycle_authority WHERE id = 1`));
+      if (current && current.version >= version) return false;
+      sql.exec(`INSERT INTO private_child_lifecycle_authority (id, version, archived_at) VALUES (1, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET version = excluded.version, archived_at = excluded.archived_at`, version, archivedAt);
+      if (archivedAt !== null) this.requestArchiveStopInTransaction(sql, now);
+      sql.exec(`UPDATE workstream SET archived_at = ?,
+        exact_state = CASE WHEN ? IS NOT NULL THEN 'archived' WHEN exact_state = 'archived' THEN 'idle' ELSE exact_state END,
+        listing_epoch = listing_epoch + 1, updated_at = ? WHERE id = 1`, archivedAt, archivedAt, now);
+      return true;
+    }, (_sql, changed) => changed ? [{ partitionKey: "common", effect: this.commonEffect(this.root()) }] : []);
+  }
+
   private beginInputPreparation(inputId: string, now: number): void {
     const claim = this.activeInputPreparations.get(inputId);
     this.activeInputPreparations.set(inputId, {
@@ -2595,9 +2612,10 @@ export class WorkstreamObjectProductService {
     // by child while preserving already-delivered Main identities.
     substreamId?: string;
   }): RegionalEffectCommand[] {
-    const scope = input.substreamId === undefined || input.substreamId === "0"
+    const substreamId = input.substreamId ?? this.externalSubstreamId();
+    const scope = substreamId === "0"
       ? input.root.workstream_key
-      : `${input.root.workstream_key}:${input.substreamId}`;
+      : `${input.root.workstream_key}:${substreamId}`;
     const sourceId = `participant:${scope}:${input.userId}:${input.epoch}`;
     const intentId = `participant_added:${scope}:${input.userId}:${input.epoch}`;
     const occurredAt = new Date(input.now).toISOString();
@@ -2624,7 +2642,7 @@ export class WorkstreamObjectProductService {
           title,
           body: truncateUtf16Safe(
             `${input.actorName} added ${input.recipientName} to this ${
-              input.substreamId === undefined || input.substreamId === "0" ? "work stream" : "substream"
+              substreamId === "0" ? "work stream" : "substream"
             }.`,
             8_000,
           ),

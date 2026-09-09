@@ -31,6 +31,7 @@ import { searchDocumentId } from '../src/services/text-search';
  */
 
 import { env } from "cloudflare:workers";
+import { holdLoopExecuting } from "./helpers/substream-fixture";
 import { reset, runInDurableObject } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -940,9 +941,24 @@ describe("conversation parent contract", () => {
     expect(await listed(AUTHOR_ID)).toBe(1);
     expect(await listed(PARTICIPANT_ID)).toBe(1);
 
+    // Main access alone cannot archive somebody else's private child.
+    const refusal = await runInDurableObject(parent, async (instance) => {
+      try { await instance.setPrivateChildArchived({ ...address, actorUserId: MEMBER_ID, archived: true }); }
+      catch (error) { return String(error); }
+      return null;
+    });
+    expect(refusal).toContain("private_child_participant_required");
+    const child = conversation(PERSONAL_ROOM_ID, substreamId);
+    await runInDurableObject(child, (_instance, state) => { holdLoopExecuting(state, { loopId: state.storage.sql.exec<{ loop_id: string }>(`SELECT loop_id FROM substream_loops WHERE id = 1`).one().loop_id }); });
     // Any participant may archive the shared child.
     expect(await parent.setPrivateChildArchived({ ...address, actorUserId: PARTICIPANT_ID, archived: true }))
       .toMatchObject({ outcome: "archived", archivedAt: expect.any(Number) });
+    await runInDurableObject(child, (_instance, state) => {
+      expect(state.storage.sql.exec(`SELECT archived_at FROM workstream WHERE id = 1`).one())
+        .toMatchObject({ archived_at: expect.any(Number) });
+      expect(state.storage.sql.exec(`SELECT stop_requested_at, stop_reason FROM substream_loops WHERE id = 1`).one())
+        .toMatchObject({ stop_requested_at: expect.any(Number), stop_reason: "workstream_archived" });
+    });
     expect(await listed(AUTHOR_ID)).toBe(0);
     expect(await listed(PARTICIPANT_ID)).toBe(0);
     // Still admitted, and now reported archived — which is what refuses the
@@ -974,6 +990,11 @@ describe("conversation parent contract", () => {
 
     expect(await parent.setPrivateChildArchived({ ...address, actorUserId: AUTHOR_ID, archived: false }))
       .toMatchObject({ outcome: "restored", archivedAt: null });
+    // An older retry must not re-archive a restored child.
+    await child.applyPrivateChildLifecycle({ ...address, version: 1, archivedAt: Date.now() });
+    await runInDurableObject(child, (_instance, state) => {
+      expect(state.storage.sql.exec(`SELECT archived_at FROM workstream WHERE id = 1`).one()).toEqual({ archived_at: null });
+    });
     expect(await listed(AUTHOR_ID)).toBe(1);
     expect(await listed(PARTICIPANT_ID)).toBe(1);
     await expect(new ConversationService(TEST_ENV, AUTH).writableClient(PERSONAL_ROOM_ID, substreamId))
