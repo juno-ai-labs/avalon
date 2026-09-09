@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AccountOnboardingGate, PersonalSetup, WorkspaceOnboardingJourney } from './guided-onboarding';
 import { act } from '@testing-library/react';
 import type { Workspace } from '../lib/types';
+import { MemoryRouter, useLocation, useNavigationType } from 'react-router-dom';
 
 const state = vi.hoisted(() => ({
   signedIn: true,
@@ -19,9 +20,15 @@ vi.mock('../lib/app-session', () => ({ useAppSession: () => ({
   signOut: vi.fn(), setPendingConnectorOAuth: vi.fn(),
 }) }));
 const workspace = { id: 'workspace-1', region: 'global', name: 'Team', currentUser: { id: 'user-1', name: 'Person', role: 'member' } } as Workspace;
+function Route(): React.JSX.Element {
+  const location = useLocation();
+  return <div data-testid="route">{`${useNavigationType()} ${location.pathname}`}</div>;
+}
 function show() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(<QueryClientProvider client={client}><AccountOnboardingGate><WorkspaceOnboardingJourney workspace={workspace}><div>Ordinary workspace</div></WorkspaceOnboardingJourney></AccountOnboardingGate></QueryClientProvider>);
+  // The journey renders inside the app's HashRouter and leaves through it, so
+  // the harness gives it a router and reports where it went.
+  render(<MemoryRouter initialEntries={['/onboarding']}><QueryClientProvider client={client}><AccountOnboardingGate><WorkspaceOnboardingJourney workspace={workspace}><div>Ordinary workspace</div></WorkspaceOnboardingJourney></AccountOnboardingGate></QueryClientProvider><Route /></MemoryRouter>);
   return client;
 }
 beforeEach(() => {
@@ -47,7 +54,7 @@ describe('new-account learning paths', () => {
     expect(await screen.findByText('Ordinary workspace')).toBeInTheDocument();
     expect(state.journey).not.toHaveBeenCalled();
   });
-  it('sends members directly to personal setup and saves their chosen appearance before opening New', async () => {
+  it('sends members directly to personal setup and saves their chosen appearance before opening the first work stream', async () => {
     state.saveAccount.mockResolvedValue({ ...state.account, revision: 1, presentation: { color: 'rose', avatar: 'circle', revision: 1 } });
     state.updateJourney.mockResolvedValue({ path: 'member', stage: 'complete', revision: 1, connectorIds: [] });
     show(); await screen.findByRole('heading', { name: 'This is you in Rally' });
@@ -57,6 +64,8 @@ describe('new-account learning paths', () => {
     await screen.findByText('Ordinary workspace');
     expect(state.saveAccount).toHaveBeenCalledWith({ expectedRevision: 0, presentation: { color: 'rose', avatar: 'circle', displayName: 'Person', initials: 'P' } });
     expect(state.updateJourney).toHaveBeenCalledWith({ expectedRevision: 0, stage: 'complete' });
+    // The finished journey is replaced by the landing, not left behind for Back.
+    expect(screen.getByTestId('route')).toHaveTextContent('REPLACE /');
   });
   it('retains personal setup when the account save fails', async () => {
     state.saveAccount.mockRejectedValue(new Error('Profile changed in another session')); show();
