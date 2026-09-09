@@ -2282,6 +2282,25 @@ describe('pinned work streams', () => {
       expect(playedOn('heading:Yesterday')?.keyframes).toEqual([{ transform: 'translate(0px, -96px)' }, { transform: 'translate(0px, 0px)' }]);
     });
 
+    // `scrollIntoView` scrolls to the box as transformed, and the motion's first
+    // frame puts the row back in the slot it left, so a scroll made after the
+    // motion started finds the row still on screen where it was and scrolls to
+    // nothing. Reproduced in the running client with a scroll box shrunk to
+    // two rows: a pin made at the bottom left the pinned section off screen.
+    it('scrolls the reveal before the motion starts, since the scroll reads the transformed box', async () => {
+      renderPinnable([
+        workstream('ws-first', 'Roadmap review', 'completed', '2026-07-31T21:00:00.000Z'),
+        workstream('ws-recent', 'Quarterly planning', 'completed'),
+      ]);
+
+      fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u }), { clientX: 120, clientY: 90 });
+      fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin' }));
+      await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
+
+      expect(animate).toHaveBeenCalled();
+      expect(scrollIntoView.mock.invocationCallOrder[0]).toBeLessThan(Math.min(...animate.mock.invocationCallOrder));
+    });
+
     // A row leaves one recency group for another whenever it is touched — its
     // heading changes from Yesterday to Today — and the two groups are separate
     // subtrees, so the row is remounted. It is still one row to the reader, and

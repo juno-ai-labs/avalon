@@ -160,7 +160,10 @@ move in the pinned list plays, with the row under the pointer placed rather
 than made to leave on every step. [`list-motion.md`](list-motion.md) owns that
 motion; the sidebar only marks its rows and holds the dragged one. The reveal
 and the motion compose: the scroll follows the row to its new section, and the
-row is on its way in as the viewport arrives.
+row is on its way in as the viewport arrives. The reveal is a layout effect
+declared before the motion's hook, and has to stay one: `scrollIntoView`
+scrolls to the box as transformed, and the motion's first frame puts the row
+back where it came from, so a scroll made after it finds nothing to scroll to.
 
 **Focus moves with the row, not just the viewport.** The two sections are
 separate subtrees, so a row moving between them is unmounted and remounted, and
@@ -314,7 +317,9 @@ every row by what actually changed place is what makes one message and one pin
 look like the same kind of event. [`list-motion.md`](list-motion.md) records
 the design.
 
-**Consequences:** The dragged row must keep `data-motion-hold` while
+**Consequences:** The reveal must run before the motion's hook, as the layout
+effect declared ahead of it; a passive effect there scrolls to nothing. The
+dragged row must keep `data-motion-hold` while
 `dragOrder` is live, or every `dragover` makes it leave and re-enter. The
 project section's scope is what keeps a member row from being taken for the
 recent list's copy of the same work stream; a new place that renders the same
