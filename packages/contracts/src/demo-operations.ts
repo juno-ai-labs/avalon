@@ -22,13 +22,27 @@ export const DemoOperationStatusValueSchema = z.enum(["running", "ready", "faile
 
 const RoleSchema = z.string().regex(/^[a-z][a-z0-9-]{0,39}$/u);
 
-/** What the operator submits. The pack is the regional API's; the cast is the operator's. */
+/**
+ * The name one role is played under. The operator types it and the demo's
+ * directory carries it, so it is one line of ordinary text: a control
+ * character would reach a mention's visible text, which the room validates
+ * against the person it names.
+ */
+export const DemoCastNameSchema = z.string().trim().min(1).max(80).regex(/^[^\p{Cc}]+$/u);
+
+/**
+ * What the operator submits. The pack is the regional API's; the cast is the
+ * operator's — a name per role, not an account. Only the presenter is a real
+ * person, because only the presenter signs in; everyone else is played by a
+ * persona the region mints for this operation, so a demo is not limited to
+ * the people who happen to be in the template.
+ */
 export const DemoOperationStartRequestSchema = z.strictObject({
   operationId: IdSchema,
   companyName: z.string().trim().min(1).max(80),
   presenterUserId: IdSchema,
-  /** Which workspace member plays each pack role. */
-  cast: z.record(RoleSchema, IdSchema),
+  /** The name each pack role but the presenter's is played under. */
+  cast: z.record(RoleSchema, DemoCastNameSchema),
 });
 export type DemoOperationStartRequest = z.infer<typeof DemoOperationStartRequestSchema>;
 
@@ -75,7 +89,10 @@ export const DemoOperationStatusSchema = z.strictObject({
   presenterUserId: IdSchema,
   presenterName: z.string().min(1).max(255).nullable(),
   packVersion: z.string().min(1).max(80),
+  /** Who plays each role, by user id: the presenter, and this operation's personas. */
   cast: z.record(RoleSchema, IdSchema),
+  /** The name each of those carries in the demo's directory, for the page to show. */
+  castNames: z.record(RoleSchema, z.string().min(1).max(255)),
   workspaceId: IdSchema.nullable(),
   workspaceName: z.string().min(1).max(120).nullable(),
   status: DemoOperationStatusValueSchema,
@@ -100,12 +117,20 @@ export const DemoOperationListSchema = z.strictObject({
   operations: z.array(DemoOperationStatusSchema),
 });
 
-/** The template's cast candidates, for the Demos page's pickers. */
+/**
+ * What the New demo form is built from: the pack's roles with the name each
+ * is offered under, and the template's members, who the presenter is chosen
+ * from. Only the presenter comes from that list.
+ */
 export const DemoTemplateSchema = z.strictObject({
   workspaceId: IdSchema,
   pack: z.strictObject({
     version: z.string().min(1).max(80),
     roles: z.array(RoleSchema),
+    /** The role the presenter plays, which is cast from the template's members. */
+    presenterRole: RoleSchema.nullable(),
+    /** The name each other role is offered under before the operator changes it. */
+    castDefaults: z.record(RoleSchema, DemoCastNameSchema),
   }),
   members: z.array(z.strictObject({
     userId: IdSchema,

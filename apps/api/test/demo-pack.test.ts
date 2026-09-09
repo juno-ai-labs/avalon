@@ -26,8 +26,17 @@ const CAST: DemoCast = {
 
 const SAY = { kind: "say" as const, text: "Here is what I found." };
 
+/** A default name per role the operator names; the schema requires one each. */
+function castDefaults(roles: string[]): Record<string, string> {
+  return Object.fromEntries(roles.filter((role) => role !== "presenter").map((role) => [role, CAST[role]!.displayName]));
+}
+
 function pack(steps: unknown[], roles = ["presenter", "priya", "marcus", "dana"]) {
-  return DemoPackSchema.safeParse({ version: "test", roles, steps });
+  return DemoPackSchema.safeParse({ version: "test", roles, steps, castDefaults: castDefaults(roles) });
+}
+
+function parsedPack(steps: unknown[], roles = ["presenter", "priya", "marcus"]) {
+  return DemoPackSchema.parse({ version: "test", roles, steps, castDefaults: castDefaults(roles) });
 }
 
 function open(overrides: Record<string, unknown> = {}) {
@@ -60,6 +69,19 @@ describe("the pack schema", () => {
     expect(rooms.map((step) => step.room)).toEqual(["decision-memo", "northgate-renewal"]);
     const last = PLACEHOLDER_DEMO_PACK.steps.at(-1);
     expect(last?.kind === "message" && last.assistant?.kind).toBe("ask");
+  });
+
+  it("refuses a pack whose cast cannot be named: a role with no default, one nobody plays, two alike", () => {
+    // The defaults are what the New demo form opens with, so a missing one is
+    // an empty field the operator has to fill in blind and two alike are a
+    // form that cannot be submitted — both found here, not in Ace.
+    const parse = (castDefaults: Record<string, string>) => DemoPackSchema.safeParse({
+      version: "test", roles: ["presenter", "priya", "marcus"], steps: [open()], castDefaults,
+    });
+    expect(issues(parse({ priya: "Priya Raman" }))).toContain('Role "marcus" has no default name');
+    expect(issues(parse({ priya: "Priya Raman", marcus: "Marcus Hale", presenter: "Adam" })))
+      .toContain('"presenter" is not a role the operator names');
+    expect(issues(parse({ priya: "Priya Raman", marcus: "Priya Raman" }))).toContain("Default names must differ");
   });
 
   it("refuses a room used before it is created", () => {
@@ -131,14 +153,10 @@ describe("the pack schema", () => {
 
 describe("planning a pack against a cast", () => {
   it("resolves a mention to the bound member, at the offsets of the expanded name", () => {
-    const parsed = DemoPackSchema.parse({
-      version: "test",
-      roles: ["presenter", "priya", "marcus"],
-      steps: [
-        open(),
-        { kind: "message", id: "priya-1", room: "room", as: "priya", text: "@{presenter} you own this call." },
-      ],
-    });
+    const parsed = parsedPack([
+      open(),
+      { kind: "message", id: "priya-1", room: "room", as: "priya", text: "@{presenter} you own this call." },
+    ]);
     const [, message] = planDemoSeed(parsed, CAST);
     expect(message?.kind).toBe("message");
     if (message?.kind !== "message") return;
@@ -159,14 +177,10 @@ describe("planning a pack against a cast", () => {
   it("expands the roles in Rally's own prose to bare names, with no mention", () => {
     // The shipped pack's closing question names three cast members this way;
     // nothing else exercised the resolver that turns them into people.
-    const parsed = DemoPackSchema.parse({
-      version: "test",
-      roles: ["presenter", "priya", "marcus"],
-      steps: [
-        open({ assistant: { kind: "say", text: "@{priya} and @{marcus} disagree." } }),
-        { kind: "message", id: "ask", room: "room", as: "marcus", text: "Decide.", assistant: { kind: "ask", prompt: "@{priya} would hold; which?", options: ["Side with @{priya}", "Side with @{marcus}"] } },
-      ],
-    });
+    const parsed = parsedPack([
+      open({ assistant: { kind: "say", text: "@{priya} and @{marcus} disagree." } }),
+      { kind: "message", id: "ask", room: "room", as: "marcus", text: "Decide.", assistant: { kind: "ask", prompt: "@{priya} would hold; which?", options: ["Side with @{priya}", "Side with @{marcus}"] } },
+    ]);
     const [opening, ask] = planDemoSeed(parsed, CAST);
     expect(opening?.kind).toBe("create_workstream");
     expect(ask?.kind).toBe("message");
@@ -180,7 +194,7 @@ describe("planning a pack against a cast", () => {
   });
 
   it("seats the named participants by id and carries the opening script", () => {
-    const parsed = DemoPackSchema.parse({ version: "test", roles: ["presenter", "priya", "marcus"], steps: [open()] });
+    const parsed = parsedPack([open()]);
     const [create] = planDemoSeed(parsed, CAST);
     expect(create).toMatchObject({
       kind: "create_workstream",
@@ -193,7 +207,7 @@ describe("planning a pack against a cast", () => {
   });
 
   it("refuses a cast that leaves a role unbound", () => {
-    const parsed = DemoPackSchema.parse({ version: "test", roles: ["presenter", "priya", "marcus"], steps: [open()] });
+    const parsed = parsedPack([open()]);
     const partial = Object.fromEntries(Object.entries(CAST).filter(([role]) => role !== "marcus"));
     expect(() => planDemoSeed(parsed, partial)).toThrow("demo_pack_role_unbound:marcus");
   });

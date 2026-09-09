@@ -43,9 +43,8 @@ import { useOpenRouterDouble } from "./helpers/openrouter-double";
 import { useSelectedModel } from "./helpers/selected-model";
 
 const PRESENTER_ID = "00000000-0000-7000-8000-00000000d6a1";
-const PRIYA_ID = "00000000-0000-7000-8000-00000000d6a2";
-const MARCUS_ID = "00000000-0000-7000-8000-00000000d6a3";
-const DANA_ID = "00000000-0000-7000-8000-00000000d6a4";
+/** The names the operator types; the region mints the people who carry them. */
+const CAST = { priya: "Priya Raman", marcus: "Michael Holliway", dana: "Max Bender" };
 const OPERATION_ID = "00000000-0000-7000-8000-00000000d6b1";
 const TEMPLATE_CONNECTION_ID = "00000000-0000-7000-8000-00000000d6c1";
 const CREDENTIALS_KEY = "active-connector-credentials-key-for-tests";
@@ -95,19 +94,17 @@ async function seedControlPlane(): Promise<void> {
     env.DB.prepare(`INSERT INTO workstream_authority_control
       (id, phase, generation, required_serving_contract_version, serving_contract_version)
       VALUES (1, 'durable_object_open', 1, 1, 1)`),
+    // `google_subject` is unique as the migration has it: minting a persona
+    // conflicts on it, which is what makes a repeated start idempotent.
     env.DB.prepare(`CREATE TABLE users (
-      id TEXT PRIMARY KEY, google_subject TEXT, platform_user_id TEXT, email TEXT, name TEXT,
+      id TEXT PRIMARY KEY, google_subject TEXT UNIQUE, platform_user_id TEXT, email TEXT UNIQUE, name TEXT,
       avatar_url TEXT, timezone TEXT, created_at TEXT, updated_at TEXT
     )`),
-    env.DB.prepare(`INSERT INTO users (id, google_subject, platform_user_id, email, name, avatar_url, timezone, created_at, updated_at) VALUES
-      (?, 'sub-presenter', ?, 'adam@example.com', 'Adam', NULL, 'UTC', ?, ?),
-      (?, 'sub-priya', ?, 'priya@example.com', 'Priya Raman', NULL, 'UTC', ?, ?),
-      (?, 'sub-marcus', ?, 'marcus@example.com', 'Marcus Hale', NULL, 'UTC', ?, ?),
-      (?, 'sub-dana', ?, 'dana@example.com', 'Dana Okafor', NULL, 'UTC', ?, ?)`)
-      .bind(
-        PRESENTER_ID, PRESENTER_ID, NOW, NOW, PRIYA_ID, PRIYA_ID, NOW, NOW,
-        MARCUS_ID, MARCUS_ID, NOW, NOW, DANA_ID, DANA_ID, NOW, NOW,
-      ),
+    // Only the presenter exists up front: the cast are personas this
+    // preparation mints from the names the operator typed.
+    env.DB.prepare(`INSERT INTO users (id, google_subject, platform_user_id, email, name, avatar_url, timezone, created_at, updated_at)
+      VALUES (?, 'sub-presenter', ?, 'adam@example.com', 'Adam', NULL, 'UTC', ?, ?)`)
+      .bind(PRESENTER_ID, PRESENTER_ID, NOW, NOW),
     env.DB.prepare(`CREATE TABLE workspaces (
       id TEXT PRIMARY KEY, name TEXT NOT NULL, slug TEXT NOT NULL, region TEXT NOT NULL,
       timezone TEXT NOT NULL DEFAULT 'America/Los_Angeles', placement_affinity TEXT NOT NULL DEFAULT 'wnam',
@@ -121,12 +118,9 @@ async function seedControlPlane(): Promise<void> {
       workspace_id TEXT NOT NULL, user_id TEXT NOT NULL, role TEXT NOT NULL, status TEXT NOT NULL,
       joined_at TEXT, last_seen_at TEXT, PRIMARY KEY (workspace_id, user_id)
     )`),
-    env.DB.prepare(`INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at) VALUES
-      (?, ?, 'owner', 'active', ?), (?, ?, 'member', 'active', ?), (?, ?, 'member', 'active', ?), (?, ?, 'member', 'active', ?)`)
-      .bind(
-        DEMO_TEMPLATE_WORKSPACE_ID, PRESENTER_ID, NOW, DEMO_TEMPLATE_WORKSPACE_ID, PRIYA_ID, NOW,
-        DEMO_TEMPLATE_WORKSPACE_ID, MARCUS_ID, NOW, DEMO_TEMPLATE_WORKSPACE_ID, DANA_ID, NOW,
-      ),
+    env.DB.prepare(`INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
+      VALUES (?, ?, 'owner', 'active', ?)`)
+      .bind(DEMO_TEMPLATE_WORKSPACE_ID, PRESENTER_ID, NOW),
     env.DB.prepare(`CREATE TABLE sessions (
       id TEXT PRIMARY KEY, user_id TEXT NOT NULL, workspace_id TEXT NOT NULL, region TEXT NOT NULL,
       revoked_at TEXT, expires_at TEXT NOT NULL
@@ -241,9 +235,12 @@ describe("preparing a demo", () => {
       operationId: OPERATION_ID,
       companyName: "Alto Capital",
       presenterUserId: PRESENTER_ID,
-      cast: { presenter: PRESENTER_ID, priya: PRIYA_ID, marcus: MARCUS_ID, dana: DANA_ID },
+      cast: CAST,
     });
     expect(started.status).toBe("running");
+    // The cast the operator named, minted as this preparation's own people.
+    expect(started.castNames).toEqual({ presenter: "Adam", ...CAST });
+    const [priya, marcus, dana] = [started.cast.priya!, started.cast.marcus!, started.cast.dana!];
     expect(launched).toHaveLength(1);
     const options = { attempt: 1, deadlineAt: Date.now() + 120_000 };
 
@@ -256,12 +253,13 @@ describe("preparing a demo", () => {
     const members = await env.DB.prepare(
       `SELECT user_id, role FROM workspace_members WHERE workspace_id = ? AND status = 'active' ORDER BY role, user_id`,
     ).bind(workspaceId).all<{ user_id: string; role: string }>();
-    expect(members.results).toEqual([
-      { user_id: PRIYA_ID, role: "member" },
-      { user_id: MARCUS_ID, role: "member" },
-      { user_id: DANA_ID, role: "member" },
+    expect(members.results).toEqual(expect.arrayContaining([
+      { user_id: priya, role: "member" },
+      { user_id: marcus, role: "member" },
+      { user_id: dana, role: "member" },
       { user_id: PRESENTER_ID, role: "owner" },
-    ]);
+    ]));
+    expect(members.results).toHaveLength(4);
     expect(await env.DB.prepare(`SELECT name FROM workspaces WHERE id = ?`).bind(workspaceId).first<{ name: string }>())
       .toEqual({ name: "Alto Capital-demo" });
     expect(await env.DB.prepare(`SELECT action FROM regional_onboarding_operations WHERE operation_id = ?`).bind(OPERATION_ID).first())
@@ -323,7 +321,7 @@ describe("preparing a demo", () => {
       operationId: OPERATION_ID,
       companyName: "Alto Capital",
       presenterUserId: PRESENTER_ID,
-      cast: { presenter: PRESENTER_ID, priya: PRIYA_ID, marcus: MARCUS_ID, dana: DANA_ID },
+      cast: CAST,
     });
     await expect(runDemoPreparationPhase(prepEnv, OPERATION_ID, "checking_template", { attempt: 1 }))
       .rejects.toMatchObject({ code: "demo_template_missing" });
