@@ -1062,9 +1062,11 @@ function continuesPluginActivityRun(message: Message): boolean {
  * row under that sentence rather than reopening the one above it.
  *
  * Timing comes from the plugin activity when the transcript carries one — it
- * measures the plugin, including the time between its calls. Summed tool
- * durations are the fallback for a row whose activity has not arrived, and
- * they undercount by exactly that gap, so an activity always displaces them.
+ * measures the plugin, including the time between its calls, and both its
+ * duration and its spans displace the calls'. Without one the calls are all
+ * there is: their spans union into the row's time where they have them, and
+ * their durations are summed where they do not. Both undercount by exactly the
+ * gaps between calls; only the sum also double-counts a batch that ran at once.
  */
 export function groupPluginToolMessages(messages: readonly Message[]): Message[] {
   interface GroupTiming {
@@ -1079,10 +1081,19 @@ export function groupPluginToolMessages(messages: readonly Message[]): Message[]
     sawActivity: boolean;
     monotonicStartedAt: number[];
     upperBound: boolean;
-    /** When the group worked, for a stretch that has to add several rows up. */
-    spans: WorkSpan[];
-    /** Cleared by any contribution that cannot say when it worked. */
-    spansKnown: boolean;
+    /**
+     * When the group worked, for a stretch that has to add several rows up.
+     *
+     * Tiered exactly as the durations above are, and for the same reason: a
+     * plugin activity's spans cover its own calls, gaps included, so a tool
+     * call that cannot say when it ran subtracts nothing from them. Keeping one
+     * flat set instead let that one nullable join — the shape `pluginRuns`
+     * exists to route around — take the whole row's timing down with it.
+     */
+    activitySpans: WorkSpan[];
+    activitySpansKnown: boolean;
+    toolSpans: WorkSpan[];
+    toolSpansKnown: boolean;
   }
   const groups: GroupTiming[] = [];
   let open = new Map<string, GroupTiming>();
@@ -1121,8 +1132,10 @@ export function groupPluginToolMessages(messages: readonly Message[]): Message[]
         sawActivity: false,
         monotonicStartedAt: [],
         upperBound: false,
-        spans: [],
-        spansKnown: true,
+        activitySpans: [],
+        activitySpansKnown: true,
+        toolSpans: [],
+        toolSpansKnown: true,
       };
       open.set(contribution.key, group);
       groups.push(group);
@@ -1162,26 +1175,40 @@ export function groupPluginToolMessages(messages: readonly Message[]): Message[]
     // advance by all of them or it jumps at settle.
     group.monotonicStartedAt.push(...(contribution.activity.monotonicStartedAt ?? []));
     if (contribution.activity.timingAccuracy === 'upper_bound') group.upperBound = true;
-    // Spans follow the same all-or-nothing rule the durations above do, for a
-    // stricter reason: a stretch adds its rows' spans up, so a group missing
-    // one contribution's would let that stretch report a total with a piece of
-    // itself silently left out.
-    if (message.workSpans === undefined) group.spansKnown = false;
-    else group.spans.push(...message.workSpans);
+    // Spans are collected on the same two tiers, and all-or-nothing within each
+    // one: a stretch adds its rows' spans up, so a tier missing a contribution's
+    // would let that stretch report a total with a piece of itself left out.
+    const spans = contribution.authoritativeDuration ? group.activitySpans : group.toolSpans;
+    if (message.workSpans === undefined) {
+      if (contribution.authoritativeDuration) group.activitySpansKnown = false;
+      else group.toolSpansKnown = false;
+    } else spans.push(...message.workSpans);
   }
   for (const group of groups) {
     const row = rows[group.row]!;
+    // The activity measures the plugin, calls and the gaps between them alike,
+    // so where there is one it answers both questions and the tool tier is not
+    // consulted. The row was spread from the run's first contribution, so its
+    // own spans are already on it and stand for a fraction of what it now says.
+    const spans = group.sawActivity
+      ? group.activitySpansKnown && group.activitySpans.length > 0 ? group.activitySpans : undefined
+      : group.toolSpansKnown && group.toolSpans.length > 0 ? group.toolSpans : undefined;
     rows[group.row] = {
       ...row,
-      // The row was spread from the run's first contribution, so its own spans
-      // are on it already and stand for a fraction of what this row now says.
-      workSpans: group.spansKnown && group.spans.length > 0 ? group.spans : undefined,
+      workSpans: spans,
       pluginActivity: {
         ...group.identity,
         active: group.active,
         durationMs: group.sawActivity
           ? group.activityDurationKnown ? group.activityDurationMs : null
-          : group.toolDurationKnown ? group.toolDurationMs : null,
+          // Without an activity the calls are all there is, and Bind runs a
+          // batch of them at once: summing three concurrent 5s calls reports
+          // 15s of work that took 5, and puts a row inside a folded stretch
+          // claiming more than the stretch itself. Their union is the same
+          // fallback measured without counting a shared second twice, and it
+          // undercounts the gaps between calls exactly as the sum did.
+          : spans !== undefined ? unionDurationMs(spans)
+            : group.toolDurationKnown ? group.toolDurationMs : null,
         ...(group.monotonicStartedAt.length === 0
           ? {}
           : { monotonicStartedAt: group.monotonicStartedAt }),
@@ -1983,31 +2010,35 @@ function unionDurationMs(spans: readonly WorkSpan[]): number {
  * reads "Worked for at most …" exactly as that row does.
  */
 function foldedStretchTotal(rows: readonly Message[]): WorkTotal {
+  const work = rows.filter(isCollapsedWorkRow);
+  // Either source can say the timing is recovered, and both are asked. The row's
+  // aggregate is what a plugin row from the server carries; the spans are what a
+  // group assembled from tool rows alone has, and that group has no aggregate
+  // accuracy of its own to read.
+  const rowAccuracy = (row: Message): 'observed' | 'upper_bound' | undefined =>
+    row.messageType === 'thought' ? row.thoughtEvent?.timingAccuracy : row.pluginActivity?.timingAccuracy;
+  const upperBound = work.some((row) => rowAccuracy(row) === 'upper_bound'
+    || row.workSpans?.some((span) => span.timingAccuracy === 'upper_bound'));
+  const accuracy = upperBound ? { timingAccuracy: 'upper_bound' as const } : {};
+  // One row is the whole stretch, and there is nothing for its own number to be
+  // overlapping with, so the drawer can report it even where the transcript
+  // cannot say *when* it happened. Withholding a total the drawer plainly has
+  // is the failure this label exists to fix.
+  const lone = work.length === 1 ? work[0]! : undefined;
+  if (lone && lone.workSpans === undefined) {
+    const durationMs = lone.messageType === 'thought'
+      ? lone.thoughtEvent?.durationMs ?? null
+      : lone.pluginActivity?.durationMs ?? null;
+    return { durationMs, ...accuracy };
+  }
   const spans: WorkSpan[] = [];
-  let upperBound = false;
-  let sawWork = false;
-  for (const row of rows) {
-    if (!isCollapsedWorkRow(row)) continue;
-    sawWork = true;
+  for (const row of work) {
     if (row.workSpans === undefined) return { durationMs: null };
     spans.push(...row.workSpans);
-    // Either source can say the timing is recovered, and both are asked. The
-    // row's aggregate is what a plugin row from the server carries; the spans
-    // are what a group assembled from tool rows alone has, and that group has
-    // no aggregate accuracy to read.
-    const timingAccuracy = row.messageType === 'thought'
-      ? row.thoughtEvent?.timingAccuracy
-      : row.pluginActivity?.timingAccuracy;
-    if (timingAccuracy === 'upper_bound'
-      || row.workSpans.some((span) => span.timingAccuracy === 'upper_bound')) {
-      upperBound = true;
-    }
   }
-  if (!sawWork || spans.length === 0) return { durationMs: null };
-  return {
-    durationMs: unionDurationMs(spans),
-    ...(upperBound ? { timingAccuracy: 'upper_bound' as const } : {}),
-  };
+  return spans.length === 0
+    ? { durationMs: null }
+    : { durationMs: unionDurationMs(spans), ...accuracy };
 }
 
 /**
