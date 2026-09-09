@@ -2158,3 +2158,78 @@ describe('the card proposing an automation drafted in this room', () => {
     expect(screen.getByRole('group').textContent).toContain('Still being drafted');
   });
 });
+
+describe('MessageBlock substream cutoff', () => {
+  const onStartSubstream = vi.fn();
+
+  beforeEach(() => {
+    onStartSubstream.mockReset();
+    desktopServicesAvailable.mockReturnValue(true);
+  });
+
+  const settledAgentTurn: Message = {
+    ...baseMessage,
+    id: 'message-agent-cutoff',
+    authorType: 'agent',
+    author: undefined,
+    text: 'The settled answer.',
+    transcriptTurnId: 'turn-9',
+  };
+
+  it('closes the agent action row rather than crowding the identity line', () => {
+    const { container } = render(
+      <MessageBlock {...actions} message={settledAgentTurn} onStartSubstream={onStartSubstream} />,
+    );
+
+    const control = screen.getByRole('button', { name: 'Start substream from this message' });
+    const row = container.querySelector('.agent-message-actions');
+    expect(row).toContainElement(control);
+    expect(container.querySelector('header')).not.toContainElement(control);
+    // Last, after the exports: the row reads copy, keep, then branch. Speak
+    // needs a playback provider this render does not mount.
+    expect([...row!.querySelectorAll('button')].map((button) => button.textContent?.trim()))
+      .toEqual(['Copy', 'Image', 'PDF', '↳ New substream']);
+
+    fireEvent.click(control);
+
+    expect(onStartSubstream).toHaveBeenCalledExactlyOnceWith('turn-9');
+  });
+
+  it('sits under a person’s own bubble, the one action their turn has', () => {
+    const { container } = render(
+      <MessageBlock
+        {...actions}
+        message={{ ...baseMessage, transcriptTurnId: 'turn-4' }}
+        onStartSubstream={onStartSubstream}
+      />,
+    );
+
+    const control = screen.getByRole('button', { name: 'Start substream from this message' });
+    expect(container.querySelector('.human-message-actions')).toContainElement(control);
+    expect(container.querySelector('header')).not.toContainElement(control);
+    expect(container.querySelector('.human-message-bubble')?.compareDocumentPosition(control))
+      .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+
+    fireEvent.click(control);
+
+    expect(onStartSubstream).toHaveBeenCalledExactlyOnceWith('turn-4');
+  });
+
+  it('offers no cutoff on a turn that has not settled', () => {
+    // A streaming turn has no fixed end to freeze, and an undelivered one is
+    // not in the transcript the capture reads.
+    const { rerender } = render(
+      <MessageBlock {...actions} message={{ ...settledAgentTurn, streaming: true }} onStartSubstream={onStartSubstream} />,
+    );
+    expect(screen.queryByRole('button', { name: 'Start substream from this message' })).toBeNull();
+
+    rerender(
+      <MessageBlock
+        {...actions}
+        message={{ ...baseMessage, transcriptTurnId: 'turn-4', deliveryState: 'sending' }}
+        onStartSubstream={onStartSubstream}
+      />,
+    );
+    expect(screen.queryByRole('button', { name: 'Start substream from this message' })).toBeNull();
+  });
+});
