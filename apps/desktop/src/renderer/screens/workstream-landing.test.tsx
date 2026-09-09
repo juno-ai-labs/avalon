@@ -7,7 +7,13 @@ import { WorkstreamLandingScreen } from './workstream-landing';
 const socket = vi.hoisted(() => ({ state: 'connecting' }));
 vi.mock('../lib/workspace-socket', () => ({ useWorkspaceSocket: () => socket }));
 
-const directory = vi.hoisted(() => ({ data: undefined as WorkstreamSummary[] | undefined, error: null as Error | null }));
+const directory = vi.hoisted(() => ({
+  data: undefined as WorkstreamSummary[] | undefined,
+  error: null as Error | null,
+  hasMore: false,
+  isFetchingMore: false,
+  fetchMore: vi.fn(),
+}));
 vi.mock('../lib/use-workstreams-query', () => ({ useWorkstreamsQuery: () => directory }));
 
 function stream(id: string, pinPosition: number | null, lastActivityAt: string): WorkstreamSummary {
@@ -31,7 +37,13 @@ function Router({ initial = '/' }: { initial?: string | { pathname: string; stat
 }
 
 describe('default work-stream landing', () => {
-  beforeEach(() => { directory.data = undefined; directory.error = null; socket.state = 'connecting'; });
+  beforeEach(() => {
+    directory.data = undefined;
+    directory.error = null;
+    directory.hasMore = false;
+    directory.fetchMore = vi.fn();
+    socket.state = 'connecting';
+  });
 
   it('waits for the directory and opens the first pin, not the newest arrival', async () => {
     const view = render(<Router />);
@@ -79,6 +91,25 @@ describe('default work-stream landing', () => {
     directory.data = [stream('only', null, '2026-09-05')];
     render(<Router initial={{ pathname: '/', state: { skipWorkstreamIds: ['only'] } }} />);
     expect(await screen.findByTestId('destination')).toHaveTextContent('/workstreams/new');
+  });
+
+  it('asks for the next page when every loaded row is passed over and more exist', async () => {
+    // A batch archive can take a whole loaded page while older, unmatched rows
+    // sit beyond the cursor. That is not an empty workspace.
+    directory.data = [stream('taken', null, '2026-09-05')];
+    directory.hasMore = true;
+    const initial = { pathname: '/', state: { skipWorkstreamIds: ['taken'] } };
+    const view = render(<Router initial={initial} />);
+    expect(screen.getByRole('status')).toHaveTextContent('Opening work streams');
+    expect(screen.queryByTestId('destination')).toBeNull();
+    expect(directory.fetchMore).toHaveBeenCalledTimes(1);
+    // A page that settled without changing the list — it failed — is not
+    // asked for again on its own; only a changed list requests the next one.
+    view.rerender(<Router initial={initial} />);
+    expect(directory.fetchMore).toHaveBeenCalledTimes(1);
+    directory.data = [stream('taken', null, '2026-09-05'), stream('older', null, '2026-08-01')];
+    view.rerender(<Router initial={initial} />);
+    expect(await screen.findByTestId('destination')).toHaveTextContent('/workstreams/older');
   });
 
   it('ignores state that is not a skip list', async () => {
