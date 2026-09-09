@@ -101,37 +101,19 @@ export function PendingAttachmentTile({ actionsDisabled = false, attachment, onO
 }): React.JSX.Element {
   const image = isImageAttachment(attachment.file.type, attachment.file.name);
   const video = isVideoAttachment(attachment.file.type, attachment.file.name);
-  const fileName = splitFileName(attachment.file.name);
-  const audio = pendingFileKind(attachment.file.type, attachment.file.name) === 'audio';
-  if (!image && !video && !audio) {
-    const kind = pendingFileKind(attachment.file.type, attachment.file.name);
-    return (
-      <div className={clsx('attachment-file-card', 'is-pending', attachment.status === 'failed' && 'is-failed')} title={attachment.file.name}>
-        <span className={clsx('attachment-file-icon', `is-${kind}`)}><PendingFileIcon kind={kind} /></span>
-        <span className="attachment-file-details">
-          <span className="attachment-file-name"><span>{fileName.base}</span><span>{fileName.suffix}</span></span>
-          <span className="attachment-file-meta">{formatAttachmentSize(attachment.file.size)}</span>
-        </span>
-        {attachment.status === 'uploading' && <ProgressRing progress={attachment.progress} />}
-        {attachment.status === 'failed' && (
-          <button aria-label={`Retry ${attachment.file.name}`} className="attachment-retry" disabled={actionsDisabled} onClick={onRetry} title={attachment.error} type="button"><RefreshCcw size={14} /></button>
-        )}
-        <button aria-label={`Remove ${attachment.file.name}`} className="attachment-remove" disabled={actionsDisabled} onClick={onRemove} type="button"><X size={13} /></button>
-      </div>
-    );
-  }
+  const media = image || video || pendingFileKind(attachment.file.type, attachment.file.name) === 'audio';
+  const content = useMemo(() => async () => attachment.file, [attachment.file]);
+  const record: MessageAttachment = { id: attachment.localId, fileName: attachment.file.name,
+    mimeType: attachment.file.type, sizeBytes: attachment.file.size, contentAvailable: true, createdAt: '' };
+  const preview: AttachmentPreview = { name: record.fileName, mimeType: record.mimeType,
+    ...(attachment.previewUrl ? { src: attachment.previewUrl } : {}), loadContent: content };
   return (
-    <div className={clsx('attachment-tile', video && 'is-video', attachment.status === 'failed' && 'is-failed')} title={attachment.file.name}>
-      <button
-        aria-label={`Preview ${attachment.file.name}`}
-        className="attachment-tile-content"
-        onClick={(event) => onOpen({ name: attachment.file.name, mimeType: attachment.file.type, ...(attachment.previewUrl ? { src: attachment.previewUrl } : { loadContent: async () => attachment.file }), returnFocus: event.currentTarget })}
-        type="button"
-      >
-        {audio ? <Music2 aria-hidden="true" size={24} /> : image
-          ? <img alt="" src={attachment.previewUrl} />
-          : <><video aria-hidden="true" muted playsInline preload="metadata" src={attachment.previewUrl} /><span className="attachment-video-play"><Play aria-hidden="true" fill="currentColor" size={18} /></span></>}
-      </button>
+    <div className={clsx('pending-attachment', media && 'attachment-tile', video && 'is-video', !media && 'is-file', attachment.status === 'failed' && 'is-failed')}>
+      {image ? <RemoteImageAttachment image={{ attachment: record, src: attachment.previewUrl, aspectRatio: 1 }}
+        gallery={[preview]} index={0} remaining={0} onOpen={onOpen} />
+        : media ? <AttachmentMediaTile name={record.fileName} mimeType={record.mimeType} src={attachment.previewUrl}
+          loadContent={content} onOpen={(returnFocus) => onOpen({ ...preview, returnFocus })} />
+        : <RemoteFileAttachment attachment={record} loadContent={content} onOpen={onOpen} showDownload={false} />}
       {attachment.status === 'uploading' && <ProgressRing progress={attachment.progress} />}
       {attachment.status === 'failed' && (
         <button aria-label={`Retry ${attachment.file.name}`} className="attachment-retry" disabled={actionsDisabled} onClick={onRetry} title={attachment.error} type="button"><RefreshCcw size={14} /></button>
@@ -151,9 +133,10 @@ export function AttachmentImageGroup({ images, renderImage }: {
   ))}</span>;
 }
 
-export function AttachmentMediaTile({ name, mimeType, loadContent, onOpen, disabled = false }: {
+export function AttachmentMediaTile({ name, mimeType, loadContent, onOpen, disabled = false, src: suppliedSrc }: {
   name: string;
   mimeType?: string;
+  src?: string;
   loadContent?: (signal?: AbortSignal) => Promise<Blob>;
   onOpen: (focus: HTMLElement) => void;
   disabled?: boolean;
@@ -161,7 +144,7 @@ export function AttachmentMediaTile({ name, mimeType, loadContent, onOpen, disab
   const video = isVideoAttachment(mimeType ?? '', name);
   const [loaded, setLoaded] = useState<{ loader: typeof loadContent; src: string } | null>(null);
   useEffect(() => {
-    if (!video || !loadContent || disabled) return;
+    if (!video || !loadContent || disabled || suppliedSrc) return;
     const controller = new AbortController();
     let src: string | undefined;
     void loadContent(controller.signal).then((blob) => {
@@ -170,8 +153,8 @@ export function AttachmentMediaTile({ name, mimeType, loadContent, onOpen, disab
       setLoaded({ loader: loadContent, src });
     }).catch(() => undefined);
     return () => { controller.abort(); if (src) URL.revokeObjectURL(src); };
-  }, [disabled, loadContent, video]);
-  const src = loaded?.loader === loadContent ? loaded?.src : undefined;
+  }, [disabled, loadContent, video, suppliedSrc]);
+  const src = suppliedSrc ?? (loaded?.loader === loadContent ? loaded?.src : undefined);
   return <span className="attachment-media-tile">
     <button aria-label={`Preview ${name}`} className="attachment-media-open" disabled={disabled} onClick={(event) => onOpen(event.currentTarget)} type="button">
       {video && src ? <video aria-hidden="true" muted playsInline preload="metadata" src={src} /> : video ? <Film aria-hidden="true" size={32} /> : <Music2 aria-hidden="true" size={32} />}
@@ -235,6 +218,7 @@ function RemoteImageAttachment({ image, gallery, index, remaining, onOpen }: {
     <button
       aria-label={remaining ? `Open the remaining ${remaining} images full screen` : `Preview ${attachment.fileName}`}
       className="message-attachment-image"
+      title={attachment.fileName}
       disabled={!attachment.contentAvailable}
       onClick={(event) => onOpen({ ...preview, gallery, galleryIndex: index, returnFocus: event.currentTarget })}
       style={{
@@ -248,7 +232,8 @@ function RemoteImageAttachment({ image, gallery, index, remaining, onOpen }: {
   );
 }
 
-function RemoteFileAttachment({ attachment, loadContent, onOpen }: {
+function RemoteFileAttachment({ attachment, loadContent, onOpen, showDownload = true }: {
+  showDownload?: boolean;
   attachment: MessageAttachment;
   loadContent: (id: string, signal?: AbortSignal) => Promise<Blob>;
   onOpen: (preview: AttachmentPreview) => void;
@@ -278,7 +263,7 @@ function RemoteFileAttachment({ attachment, loadContent, onOpen }: {
           <span className="attachment-file-meta">{formatAttachmentSize(attachment.sizeBytes)}</span>
         </span>
       </button>
-      {attachment.contentAvailable && (
+      {showDownload && attachment.contentAvailable && (
         <button
           aria-label={`Download ${attachment.fileName}`}
           className="attachment-file-download"

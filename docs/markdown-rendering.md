@@ -711,6 +711,13 @@ The traps, both of which have bitten:
 
 ## Changelog
 
+### 2026-09-09 — Input reuses feed tiles in one scrolling row
+
+Pending attachments now compose the feed image, media, and file components,
+adding upload progress, retry, and remove actions. The input alone uses one
+horizontal scrolling row; delivered attachments and embeds retain their grid.
+This keeps card presentation shared without forcing feed wrapping on the input.
+
 ### 2026-09-09 — Media size follows file-card height
 
 Square media tiles now measure twice the standard file-card height (108px
