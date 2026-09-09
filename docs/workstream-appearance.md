@@ -66,7 +66,12 @@ key also carries one or two sentences describing the icon, in the same file: the
 naming pass chooses an icon from this catalog and needs to know what each key
 draws. They are model-visible strings, so keep them in plain words — no icon
 library names — and add one with every key added, which the exhaustive `Record`
-enforces at compile time.
+enforces at compile time. **Describe the drawing only.** Name what the icon
+depicts and then how it is drawn — "two coins, one face on and one behind it at
+an angle" — and stop. A description must not say what an icon is *for*: matching
+a mark to a work stream belongs to the naming pass's model, which has the
+request, and a test fails a description that carries usage language. See
+[`workstream-naming.md`](workstream-naming.md).
 Colors store semantic keys such as `blue` and `purple`, never hex or RGB values.
 Both the swatch and glyph resolve `sys.color.project.<key>` through the current
 appearance. Tune these keys independently in
@@ -127,9 +132,10 @@ including scrolling, and check another connected window and reopening.
 
 ### 2026-09-09 — Rally chooses the icon a work stream starts with
 
-Every icon key now carries a description in `workstream-appearance.ts`, and the
-work-stream naming pass renders that catalog into its prompt and chooses an icon
-alongside the name — so a sidebar shows marks that mean something instead of a
+Every icon key now carries a description of the mark it draws in
+`workstream-appearance.ts` — the drawing only, never what the icon is for, so
+matching stays with the model that has the request — and the work-stream naming
+pass renders that catalog into its prompt and chooses an icon alongside the name — so a sidebar shows marks that mean something instead of a
 column of id-derived glyphs. The write is in `rename`, in the same transaction as
 the title, and refuses any work stream that already has a stored icon: the
 picker's command is unconditional and a person choosing an icon settles no title,
@@ -137,7 +143,7 @@ so the "already stored" condition is the only thing standing between a naming
 pass and someone's choice. Nothing about the picker, the colour, the projection,
 or the deterministic default changed. The catalog gaining a second audience is
 the thing to respect: an icon added here is now also an icon a model may choose,
-and it needs a description in the same edit. Why the second naming pass may not
+and it needs a description of its shape in the same edit. Why the second naming pass may not
 revisit the first one's icon, and what provenance on the appearance would buy, is
 in [`workstream-naming.md`](workstream-naming.md).
 
