@@ -8,7 +8,7 @@
 .access-availability { margin: 18px auto 0; color: #b0b3a8; font-size: 13px; line-height: 1.6; }
 .access-form { display: flex; gap: 8px; max-width: 480px; margin: auto; }
 .access-form[hidden] { display: none; }
-.access-form input { min-width: 0; flex: 1; background: #1c1e19; border: 1px solid #3d4236; color: #f0efe8; border-radius: 8px; padding: 15px 16px; font: inherit; font-size: 14px; }
+.access-form input { min-width: 0; flex: 1; background: #1c1e19; border: 1px solid #3d4236; color: #f0efe8; border-radius: 8px; padding: 15px 16px; font: inherit; font-size: 16px; }
 .access-form input::placeholder { color: #9b9f93; }
 .access-form button { border: 0; border-radius: 8px; padding: 15px 22px; font: inherit; font-size: 13px; font-weight: 650; color: #111210; background: #ccff00; cursor: pointer; }
 .access-form button:disabled { opacity: .65; cursor: wait; }
@@ -16,6 +16,7 @@
 .access-note { font-size: 11px; color: #898f80; margin-top: 18px; }
 .access-note a { text-decoration: underline; }
 .access-status { font-size: 14px; line-height: 1.6; color: #ccff00; margin: 22px auto 0; max-width: 430px; }
+.access-status[data-state='error'] { color: #ffb4a4; }
 .access-status:empty { margin: 0; }
 .access-home .rally-footer { padding-top: 24px; padding-bottom: 24px; }
 .access-home .rally-footer nav { gap: 16px; }

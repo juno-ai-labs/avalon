@@ -5,24 +5,33 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { issueDownloadGrant, availableDownloadGrantExists } from '@rally/db/private-access';
 import { privateAccessRoutes } from '../src/routes/private-access';
 import migration from '../../../packages/db/migrations/0101_private_access.sql?raw';
-import expiryMigration from '../../../packages/db/migrations/0102_download_grant_expiry.sql?raw';
 
 beforeEach(async () => {
   await reset();
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date('2026-09-09T12:00:00.000Z'));
-  for (const sql of [migration, expiryMigration].join('\n').replace(/^--.*$/gmu, '').split(';').filter((statement) => statement.trim())) await env.DB.prepare(sql).run();
+  for (const sql of migration.replace(/^--.*$/gmu, '').split(';').filter((statement) => statement.trim())) await env.DB.prepare(sql).run();
 });
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
-function redeem(token: string, method = 'POST') {
+function redeem(token: string, method = 'POST', origin: string | null = 'null') {
   return privateAccessRoutes.request('/downloads/redeem', {
-    method, headers: { origin: 'app://rallywithai', 'content-type': 'application/x-www-form-urlencoded' },
+    method, headers: { ...(origin === null ? {} : { origin }), 'content-type': 'application/x-www-form-urlencoded' },
     ...(method === 'POST' ? { body: new URLSearchParams({ token }) } : {}),
   }, env);
 }
 async function issue() { return issueDownloadGrant(env.DB, { source: 'manual', createdBy: 'test-operator' }); }
 
 describe('private installer download on workerd', () => {
+  it('admits valid bearer downloads with opaque, absent and unrelated origins', async () => {
+    await env.DESKTOP_RELEASES!.put('stable/darwin/arm64/Rally.dmg', 'installer-fixture');
+    for (const origin of ['null', null, 'https://elsewhere.example']) {
+      const grant = await issue();
+      const response = await redeem(grant.token, 'POST', origin);
+      expect(response.status).toBe(200);
+      expect(await response.text()).toBe('installer-fixture');
+    }
+  });
+
   it('allows repeated timed downloads, but rejects new downloads at the exact expiry', async () => {
     await env.DESKTOP_RELEASES!.put('stable/darwin/arm64/Rally.dmg', 'installer-fixture');
     const grant = await issueDownloadGrant(env.DB, {
@@ -60,7 +69,18 @@ describe('private installer download on workerd', () => {
   it('streams the real R2 body to exactly one concurrent redemption', async () => {
     await env.DESKTOP_RELEASES!.put('stable/darwin/arm64/Rally.dmg', 'installer-fixture');
     const grant = await issue();
+    const get = env.DESKTOP_RELEASES!.get.bind(env.DESKTOP_RELEASES!);
+    let arrived = 0;
+    let release!: () => void;
+    const barrier = new Promise<void>((resolve) => { release = resolve; });
+    vi.spyOn(env.DESKTOP_RELEASES!, 'get').mockImplementation(async () => {
+      const object = await get('stable/darwin/arm64/Rally.dmg');
+      if (++arrived === 2) release();
+      await barrier;
+      return object;
+    });
     const responses = await Promise.all([redeem(grant.token), redeem(grant.token)]);
+    expect(arrived).toBe(2);
     const bodies = await Promise.all(responses.map((response) => response.text()));
     expect(responses.map((response) => response.status).sort()).toEqual([200, 410]);
     expect(bodies.filter((body) => body === 'installer-fixture')).toHaveLength(1);
@@ -76,7 +96,13 @@ describe('private installer download on workerd', () => {
     for (const method of ['GET', 'HEAD', 'POST']) {
       const response = await redeem(grant.token, method);
       expect(response.status).toBe(method === 'POST' ? 503 : 404);
-      await response.text();
+      const body = await response.text();
+      if (method === 'POST') {
+        expect(response.headers.get('content-type')).toContain('text/html');
+        expect(body).toContain('Try download again');
+        expect(body).toContain(`value="${grant.token}"`);
+        expect(body).toContain('Back to Rally');
+      }
       expect(await availableDownloadGrantExists(env.DB, grant.token)).toBe(true);
     }
     await env.DESKTOP_RELEASES!.put('stable/darwin/arm64/Rally.dmg', 'installer-fixture');

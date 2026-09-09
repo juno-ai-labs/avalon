@@ -212,7 +212,6 @@ describe('public Rally site', () => {
     const page = '<!-- rally-desktop-release:start --><!-- rally-desktop-release:end -->';
 
     expect(renderDesktopRelease(page, unpublishedReleaseFixture())).toContain('src="/brand/apple-logo.svg"');
-    expect(page).not.toContain('<span class="apple-mark"');
     expect(existsSync(new URL('../public/brand/apple-logo.svg', import.meta.url))).toBe(true);
     const release = parseDesktopReleaseConfig(JSON.parse(readProjectFile('release.config.json')) as unknown);
     expect(renderDesktopRelease(page, release)).toContain(
@@ -220,7 +219,7 @@ describe('public Rally site', () => {
     );
   });
 
-  it('publishes the verified installer while keeping the source template free of stale release links', () => {
+  it('renders the legacy release component from the verified release configuration', () => {
     const page = '<!-- rally-desktop-release:start --><!-- rally-desktop-release:end -->';
     const release = parseDesktopReleaseConfig(JSON.parse(readProjectFile('release.config.json')) as unknown);
 
@@ -235,7 +234,6 @@ describe('public Rally site', () => {
     expect(desktopDmgUrl(release)).toBe(
       'https://downloads.rallywith.ai/stable/darwin/arm64/Rally.dmg',
     );
-    expect(page).not.toMatch(/href="[^"]+\.(?:dmg|zip)"/i);
     expect(renderDesktopRelease(page, unpublishedReleaseFixture())).toContain('Downloads opening soon');
     expect(renderDesktopRelease(page, release)).toContain('Download Rally for macOS');
     expect(renderDesktopRelease(page, release)).not.toContain('Preview 0.1.0');

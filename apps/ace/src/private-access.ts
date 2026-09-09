@@ -22,6 +22,8 @@ accessRoutes.post('/downloads', async (c) => {
       source: 'manual', ...(body.data.requestId ? { sourceId: body.data.requestId } : {}), createdBy: c.get('principal').subject,
       ...(body.data.expiresAt ? { expiresAt: body.data.expiresAt } : {}),
     });
+    console.log(JSON.stringify({ event: 'ace_download_grant_issued', actor: c.get('principal').subject,
+      grantId: grant.id, requestId: body.data.requestId ?? null, expiresAt: grant.expiresAt }));
     return c.json({ id: grant.id, url: downloadGrantUrl(grant.token), expiresAt: grant.expiresAt }, 201);
   } catch (error) {
     // A deadline can pass between request validation and the shared issuer.

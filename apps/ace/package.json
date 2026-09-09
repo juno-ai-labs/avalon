@@ -12,12 +12,12 @@
   },
   "dependencies": {
     "@rally/contracts": "workspace:*",
+    "@rally/db": "workspace:*",
     "hono": "4.13.2",
     "jose": "6.2.9",
     "react": "19.2.8",
     "react-dom": "19.2.8",
-    "zod": "catalog:",
-    "@rally/db": "workspace:*"
+    "zod": "catalog:"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260818.1",

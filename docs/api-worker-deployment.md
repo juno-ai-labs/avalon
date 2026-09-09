@@ -22,7 +22,7 @@ and [Versions and gradual deployments](https://developers.cloudflare.com/workers
 
 Global additionally binds the existing `avalon-desktop-releases` R2 bucket as
 `DESKTOP_RELEASES` for [private downloads](private-access.md). Apply
-regional migrations 0101–0103 before releasing the Global API, then Ace and the site.
+regional migration 0101 before releasing the Global API, then Ace and the site.
 EU has no installer binding or public intake route in this first slice.
 
 ## Sidekick staged deployment
@@ -309,32 +309,24 @@ for Azure-bound models in its route plan.
 
 ## Changelog
 
-### 2026-09-09 — Require the acknowledgement sender migration
+### 2026-09-09 — Deploy the access API before its public form
 
-Private-access rollout now includes migration 0103 before the Global API.
-New acknowledgements store Adam's supplied sender with their frozen content so
-retries retain the same payload. Verify `rally.ai` in Resend and the `hello@example.com`
-reply mailbox before launch; this change does not provision either.
+**What changed:** Global binds the existing desktop-release bucket for streamed
+bearer downloads. Migration `0101_private_access.sql` introduces the intake,
+complete grant schema and configurable intake rate buckets.
 
-### 2026-09-09 — Add optional download expiry
+**Why:** The site must reach a migrated, healthy request endpoint as soon as its
+email form is published. Independent merge-triggered workflows do not enforce
+that ordering themselves.
 
-The shared download issuer now supports timed links alongside single-use links,
-following the product owner's request to expire access by time instead of count.
-Migration 0102 preserves existing links with a null deadline; operators choose
-the expiry in Ace rather than inheriting a guessed TTL. See
-[private access](private-access.md) for admission and rollout requirements.
+**Considered and rejected:** Merely documenting migration order while publishing
+the site first would expose a broken form. For this first rollout, dispatch the
+verified API revision through the existing deployment workflow and confirm its
+health before merging the site/Ace change; later merge deployments are idempotent.
 
-
-### 2026-09-09 — Private access foundation
-
-Global additionally binds the existing `avalon-desktop-releases` R2 bucket as
-`DESKTOP_RELEASES` for [single-use private downloads](private-access.md). Apply
-regional migration 0101 before releasing the Global API, then Ace and the site.
-EU has no installer binding or public intake route in this first slice.
-
-This separates request capture and one-use links from the still-public release
-channel, so acquisition can be reviewed without duplicating download authority.
-
+**Consequences:** Verify `rally.ai` in Resend and the `hello@example.com` reply mailbox.
+EU receives schema but no public intake/download binding. See
+[private access](private-access.md) for operational limits and erasure.
 
 ### 2026-09-08 — Retire the temporary Worker class export after the rename
 

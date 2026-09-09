@@ -16,7 +16,7 @@ if (form && email && button && status) {
     event.preventDefault();
     if (pending || !form.reportValidity()) return;
     pending = true; button.disabled = true; email.readOnly = true;
-    button.textContent = accessCopy.pending; status.textContent = '';
+    button.textContent = accessCopy.pending; status.textContent = ''; delete status.dataset.state;
     void (async () => {
       let failure = accessCopy.failure;
       try {
@@ -31,9 +31,11 @@ if (form && email && button && status) {
           throw new Error('Request failed');
         }
         form.hidden = true;
+        status.dataset.state = 'success';
         status.textContent = accessCopy.success;
         status.focus();
       } catch {
+        status.dataset.state = 'error';
         status.textContent = failure;
       } finally {
         pending = false; button.disabled = false; email.readOnly = false;
