@@ -98,7 +98,12 @@ revocation.
 ### The account menu's directory
 
 The menu lists the union of what this device has stored and what Global
-discovery answers, in device recency order. Discovery is the account's
+discovery answers, in device recency order. Discovery withholds two things the
+member belongs to: the demo template, always, and a demo workspace still being
+prepared, until it is published — and activation answers
+`demo_workspace_preparing` for the latter. Both are decided in the regional
+API from the demo operation rows
+([`demo-workspaces.md`](demo-workspaces.md#withholding-a-workspace-from-its-own-member)). Discovery is the account's
 complete membership and needs the identity credential; the stored set is one
 regional credential and cached profile per workspace this device has opened,
 readable with no network at all. `getOnboardingState` never rejects on
@@ -328,7 +333,11 @@ active workspace.
   credential in use, which the regional API re-checks on every request.
 - A stored workspace stays on the account menu whether or not discovery can be
   reached. Only a complete discovery that no longer lists it, a departure, a
-  revocation of its credential, or sign-out removes it.
+  revocation of its credential, or sign-out removes it. A complete discovery
+  omits the demo template and an unpublished demo candidate on purpose, so a
+  device that opened either while it was reachable reconciles its stored
+  credential away on the next complete answer; that is the withholding working
+  as designed, not a lost membership.
 - This device rotates one refresh token at most once at a time.
 - Leaving one workspace cannot delete another workspace's credential, profile,
   query state, or draft.
@@ -384,7 +393,13 @@ workspace_id)`. Regional membership and product state retain their existing
 workspace IDs and gain only the nullable `workspaces.abandoned_at` lifecycle
 column. `platform_workspace_operations` journals UUIDv7 create/accept operations;
 the desktop retains one operation ID until its request reaches a terminal
-answer, so a transport retry reaches the same journal row.
+answer, so a transport retry reaches the same journal row. The regional create
+path has a second caller: demo preparation creates the presenter's workspace
+through `createWorkspaceForMember` — the same rows, journal, placement check and
+object initialization as `create`, with no session — journaled under the demo
+operation's own id, which Ace mints as a random UUID. The journal keys on the
+id's identity, not its version
+([`demo-workspaces.md`](demo-workspaces.md#preparing-a-demo)).
 
 The desktop's encrypted version-2 envelope stores one identity credential and a
 map of regional workspace credentials. Its presentation file stores only the
@@ -411,6 +426,37 @@ encrypts the complete account set, while sign-out erases it locally before
 best-effort remote revocation.
 
 ## Changelog
+
+### 2026-09-08 — Demo preparation creates a workspace without a session
+
+**What changed:** `RegionalOnboardingService.createWorkspaceForMember` is the
+session-less sibling of `create`, journaled under the caller's operation id;
+demo preparation is its one caller. The candidate filter withholds an
+unpublished demo whatever its status, so an abandoned one never appears.
+
+**Why:** A demo workspace is the presenter's own — owner membership, journal,
+placement and object exactly as if they had created it — but a session minted
+on their behalf by an operator is a credential nobody signed in for. Owned by
+[`demo-workspaces.md`](demo-workspaces.md).
+
+### 2026-09-07 — Discovery withholds the demo template and an unpublished candidate
+
+**What changed:** Regional discovery drops the demo template and a demo
+workspace still being prepared from its answer, and activation refuses the
+latter with `demo_workspace_preparing`.
+
+**Why:** A presenter who opened a half-seeded demo would see a sidebar the
+pack had not finished writing, and nobody should find the template — which
+holds the cast's real connections — in their switcher. The filter is the
+regional API's, keyed by the demo operation rows, so the desktop changes
+nothing; but the invariant above that a complete discovery removes a stored
+workspace now has two deliberate cases. Owned by
+[`demo-workspaces.md`](demo-workspaces.md).
+
+**Consequences:** `endedStoredWorkspaces` treats an absence from a complete
+discovery as a lost membership; for these two workspaces that is the intended
+outcome, and a change that wants either to survive on a device has to change
+the filter, not the reconciliation.
 
 ### 2026-09-07 — Simplify the bottom-bar account popup
 

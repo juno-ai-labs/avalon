@@ -1170,7 +1170,7 @@ misrouted product statement now fails because the table or column is absent.
 - **No publish path asks D1 anything.** Losing workspace access is carried by the queue in [`access-revocation.md`](access-revocation.md) and by nothing else — no object polls, revalidates on a timer, or re-reads `workspace_members` before sending. Putting a D1 query back on a publish path is where the waterline ordering bug came from, and the transcript feed would pay it per token frame. An object enforcing its *own* SQL — `canRead`, `product.canRead` — is not that: it is synchronous, local, and answers a question no queue message carries.
 - **D1 workspace membership is rechecked for every WorkspaceDO operation and every WorkstreamDO admission.** SubstreamAgent's fallback admission does the same; a child of an automation, or any substream other than `0`, additionally accepts the parent's forwarded viewer decision, because its own participant row is narrower than what the parent admits. Its prepared fast path rechecks session/membership during ticket transit and spends that result only when the signed identity, role, one-time ticket, expiry, cursor, and authority generation exactly match the room's single request-scoped in-memory preparation; every upgrade still reads current regional maintenance authority. A constant-size revocation fence prevents older in-flight preparation from reappearing. The accepted post-preparation/pre-fan-out revocation window is recorded in [`security.md`](security.md). A direct substream message spends the authority already admitted to that exact socket; it does not re-ask D1. The revocation queue closes that socket when the authority ends, and object-local participation is still checked by the message transaction.
 - **A SubstreamAgent cold wake separates storage readiness from runtime recovery.** Schema, repositories, and durable identity gate socket admission. Lease repair and alarm re-arming begin immediately under `waitUntil` and have their own trace phase, but an accepted read socket does not await them. Any operation that can mutate or run agent work still waits for full initialization. A failed recovery attempt is not cached forever: that caller sees the failure and the next mutation retries the idempotent recovery.
-- **A product request names its auth principal, and each is verified against the fact that owns it.** (An *auth* principal — who is asking — is distinct from the run's `ExecutionPrincipal`, which names whose authority a run spends.) A login session (`principal` absent) is re-verified against its `sessions` row joined to membership, which is what makes a revoked login stop working mid-flight. A connector principal (`principal: "connector"`, connector ingress only) has no session row — its standing authority is the connector link, verified by the Worker on the very message being delivered — so the object re-checks membership alone (`connectorPrincipalAuth`) and refuses staleness as `connector_member_revoked`. Sockets never carry a connector principal; tickets are issued to login sessions only.
+- **A product request names its auth principal, and each is verified against the fact that owns it.** (An *auth* principal — who is asking — is distinct from the run's `ExecutionPrincipal`, which names whose authority a run spends.) A login session (`principal` absent) is re-verified against its `sessions` row joined to membership, which is what makes a revoked login stop working mid-flight. A connector principal (`principal: "connector"`, connector ingress only) has no session row — its standing authority is the connector link, verified by the Worker on the very message being delivered — so the object re-checks membership alone (`connectorPrincipalAuth`) and refuses staleness as `connector_member_revoked`. The demo seeder's principal (`"demo_seed"`, the seeder only) is verified the same way: a cast member never signs in, and the seeder acts as them on a workspace it is preparing ([`demo-workspaces.md`](demo-workspaces.md#seeding-a-demo-from-a-pack)). Sockets never carry either; tickets are issued to login sessions only.
 - **Participant removal leaves an active reader.** Any authorized current reader may remove themself or another participant, but the target check, active count, and state change share one object-local transaction. A client-side disabled action is only presentation; without the authority check, two racing removals could leave a private work stream nobody can open.
 - **A transcript turn id is an opaque key, not an entity id.** A participant turn carries the client message UUID, while an assistant turn's id is derived as `<loopId>:turn:<ordinal>`. Anything that reads a turn id out of `canonical_conversation_turn_details` and passes it on — the manual retry's `transcriptFenceMessageId` above all — validates it as `TranscriptTurnIdSchema`; typed as a UUID it accepts exactly the turns a person wrote and rejects every one the agent did.
 - **Legacy D1 product rows do not exist and are never a fallback.** Fallback would silently split authority after an object failure.
@@ -1783,6 +1783,35 @@ hide archived/system conversation text, while reusing the bounded lookup schema
 made searches fail above 100 scopes. The reader preserves the participant and
 authority-generation predicate; canonical conversation checks remain decisive.
 Shipped in #576.
+
+### 2026-09-07 — A seed rides the message into the run
+
+**What changed:** `WorkstreamObjectCreateMessageInputSchema` and
+`InitializeWorkstreamObjectInputSchema` accept an optional `seed`
+(`DemoSeedSchema`). `createMessage` takes the seed's answer on whether the
+line starts a run instead of classifying it, stores the seed in the pending
+input's `authorization_json`, and activation copies it onto the run's
+`execution_context_json`; `initialize` puts it on the opening run's context
+directly and refuses a seed that says nothing. `ProductAuthSchema.principal`
+accepts `"demo_seed"` beside `"connector"`, verified by the same membership
+check.
+
+**Why:** A message-started run's context is rebuilt from the authorization blob
+at activation, so that blob is the only carrier a seed has; the spike found the
+same and this keeps its route. The object decides addressing from the seed
+rather than from `forcedHarnessOrigin` so there is one statement of intent per
+seeded message, not two that can disagree. A run an elicitation answer resumes
+is built from the answer's own authorization, which carries no seed — the
+presenter's answer must reach a real model. Owned by
+[`demo-workspaces.md`](demo-workspaces.md).
+
+**What a future change has to respect:** The seed is not an instant and must
+not become one; `createMessage` and `initialize` stamp a seeded turn with the
+real clock like any other. A retry of a seeded run keeps its seed — the retry
+spreads the previous context. Preparation does not lean on that: a seeded
+turn is written once, by a derived client message id, so a seeded run that
+failed ends its operation rather than being retried
+([`demo-workspaces.md`](demo-workspaces.md#failure-modes-and-limits)).
 
 ### 2026-09-05 — Durable search delivery
 

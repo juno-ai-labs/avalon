@@ -205,12 +205,12 @@ are canonical storage services, not authorization layers.
   operator UUID and role with timing-safe token comparison — `support` and
   `security` from `TELEMETRY_OPERATORS_JSON`, `demos` from the separate
   `DEMO_OPERATORS_JSON`; every operator router names the roles it admits and
-  the secret it reads, so the `demos` role reaches only the workspace
-  retirement route Ace calls ([`workspace-retirement.md`](workspace-retirement.md#the-operator-door)),
-  and neither telemetry role reaches it. Ace holds one `demos` token per region,
-  each known to that region alone. Raw access and replay derive audit identity
-  from that principal; neither endpoint accepts an operator ID or role in its
-  body.
+  the secret it reads, so the `demos` role reaches only the demo preparation
+  and workspace retirement routes Ace calls
+  ([`demo-workspaces.md`](demo-workspaces.md#preparing-a-demo)), and neither
+  telemetry role reaches those. Ace holds one `demos` token per region, each
+  known to that region alone. Raw access and replay derive audit identity from
+  that principal; neither endpoint accepts an operator ID or role in its body.
 
 ### macOS distribution and updates
 
@@ -285,7 +285,10 @@ membership role. A connector ingress may assert a member's own authority by
 marking its auth `principal: "connector"` — set only after verifying the account
 link on the delivered message, re-checked against current membership by the
 work-stream object, and refused by every socket-ticket issuer (see
-[`workstream-durable-object.md`](workstream-durable-object.md#invariants)).
+[`workstream-durable-object.md`](workstream-durable-object.md#invariants)). The
+demo seeder asserts a cast member's authority the same way under
+`principal: "demo_seed"`, verified and refused identically; only server code
+constructs either value ([`demo-workspaces.md`](demo-workspaces.md#security-and-trust-model)).
 Every connector tool checks its execution principal, connection
 scope, granted capability, and resource visibility. Workspace-scoped connector
 capabilities roll down to every work stream in that workspace and execute as the
@@ -812,6 +815,26 @@ EU rotate independently. [`runbook.md`](runbook.md) owns the procedure and the
 incident response that may prompt it.
 
 ## Changelog
+
+### 2026-09-08 — The demo seeder acts as a cast member without a session
+
+**What changed:** `ProductAuthSchema.principal` accepts `demo_seed` beside
+`connector`. Only server code constructs it, the message route's request
+schema has no `seed` field, the room verifies it against current membership
+as it verifies a connector ingress, and every socket-ticket issuer refuses
+it. The `demos` operator role now also reaches the demo preparation routes.
+A demo receives copies of the template's Google connections only; a
+connection of any other provider is skipped and reported, because a copy
+shares the upstream grant and the presenter's Disconnect would revoke it
+remotely for the template and every live demo.
+
+**Why:** The cast never signs in, and a session minted for them would be a
+credential nobody holds. A distinct principal value rather than a reuse of
+`connector` so a seeded run's authorization record says who acted. Google's
+disconnect is local (`connection-service.ts`, `mayRevokeRemotely`), which is
+the one property that makes a shared grant safe to hold in several
+workspaces. [`demo-workspaces.md`](demo-workspaces.md#security-and-trust-model)
+owns both.
 
 ### 2026-09-08 — The `demos` role moves to its own secret
 

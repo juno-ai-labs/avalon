@@ -1,5 +1,6 @@
 import { CreateWorkstreamRequestSchema, asSubstreamId, asWorkstreamId } from "@rally/contracts";
 import type {
+  DemoSeed,
   ExecutionPrincipal,
   ProjectSummary,
   Scope,
@@ -85,6 +86,12 @@ interface CreateOptions {
    * quiet.
    */
   notifyParticipants?: boolean;
+  /**
+   * The demo seed opening this work stream, when the demo seeder is the
+   * caller. Carried to the object's `initialize` and from there onto the
+   * opening run's execution context; `POST /workstreams` has no field for it.
+   */
+  seed?: DemoSeed;
   /**
    * The caller's open `workstream_create` span. Creation is the slowest thing
    * a person waits on in Avalon, and every step below is an awaited round trip
@@ -438,6 +445,7 @@ export class WorkstreamObjectCreationService {
       originResourceIds,
       modelOverride: body.modelOverride ?? null,
       systemKind: null,
+      ...(options.seed ? { seed: options.seed } : {}),
       createdFromOpportunityId: options.opportunitySnapshot?.opportunityId ?? null,
       opportunityVersion: options.opportunitySnapshot?.version ?? null,
       opportunityDisplayPromptHash: options.opportunitySnapshot?.displayPromptHash ?? null,

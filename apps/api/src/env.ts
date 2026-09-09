@@ -89,6 +89,11 @@ export interface Env {
   CONNECTOR_POLL_WORKFLOW: Workflow;
   CONNECTOR_EVENT_WORKFLOW: Workflow;
   WORK_OPPORTUNITY_WORKFLOW: Workflow;
+  /** Global-only: the demo preparation driver. Absent, the demo write routes
+   * answer 503 (`demo_preparation_unavailable`) and nothing else changes — it
+   * is not in the boot contract on purpose, because a demo tool's binding must
+   * never take a region offline. EU binds nothing; its demo routes refuse. */
+  DEMO_PREPARATION_WORKFLOW?: Workflow;
   EU_IDENTITY_BRIDGE?: RegionalIdentityBridgeRpcBinding;
   EU_GITHUB_BRIDGE?: GitHubRegionalBridgeRpcBinding;
   EU_INBOUND_EMAIL_BRIDGE?: InboundEmailRegionalRpcBinding;
@@ -257,11 +262,17 @@ export interface IdentityAuthContext {
    * principal against current workspace membership instead of `sessions`;
    * see `SubstreamAgent.connectorPrincipalAuth`.
    *
-   * Only connector ingress constructs this value. The auth middleware builds
-   * its context from verified token claims and never sets it, so a client
-   * cannot claim the connector path from outside.
+   * `"demo_seed"` is the same kind of authority for the demo seeder: it acts
+   * as a cast member who never signs in, on a workspace the seeder is
+   * preparing, and the objects verify that member's current membership the
+   * same way (`docs/demo-workspaces.md`).
+   *
+   * Only server code constructs either value — connector ingress the first,
+   * the seeder the second. The auth middleware builds its context from
+   * verified token claims and never sets it, so a client cannot claim a
+   * non-session path from outside.
    */
-  principal?: "connector";
+  principal?: "connector" | "demo_seed";
   /**
    * The analytics surrogates this person and workspace are known by in PostHog
    * — `users.analytics_person_id` and `workspaces.analytics_workspace_id`.
@@ -362,6 +373,7 @@ const EnvContractSchema = z.object({
   CONNECTOR_POLL_WORKFLOW: binding<Workflow>(),
   CONNECTOR_EVENT_WORKFLOW: binding<Workflow>(),
   WORK_OPPORTUNITY_WORKFLOW: binding<Workflow>(),
+  DEMO_PREPARATION_WORKFLOW: binding<Workflow>().optional(),
 
   APP_ENV: z.enum(["development", "test", "staging", "production"]),
   AVALON_REGION: z.enum(["global", "eu"]),
@@ -481,6 +493,8 @@ const productionOnlyBindings = [
   { key: "INFERENCE_LAKEHOUSE", regions: ["global"] },
   { key: "ANALYTICS_LAKEHOUSE_QUEUE", regions: ["global"] },
   { key: "ANALYTICS_LAKEHOUSE", regions: ["global"] },
+  // `DEMO_PREPARATION_WORKFLOW` is deliberately absent: it drives an operator
+  // tool, and a missing binding is that tool's 503, not a region-wide fault.
 ] as const satisfies readonly { key: keyof Env; regions: readonly Region[] }[];
 
 /**

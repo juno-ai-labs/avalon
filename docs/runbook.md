@@ -107,8 +107,8 @@ Set these shared Worker secrets separately in each regional deployment:
   principal (`support` or `security`) accepted by that region's restricted
   telemetry operator surface
 - `DEMO_OPERATORS_JSON`; the same shape, holding the `demos` principal the
-  workspace retirement route Ace calls accepts, and nothing the telemetry
-  surface reads. The token is per region: Global's is what Ace holds as
+  demo preparation and workspace retirement routes Ace calls accept, and
+  nothing the telemetry surface reads. The token is per region: Global's is what Ace holds as
   `RALLY_OPERATOR_TOKEN`, EU's as `RALLY_EU_OPERATOR_TOKEN`, and neither value
   appears in the other region's map. Set and rotated independently of the
   telemetry map, whose tokens it never has to touch

@@ -421,19 +421,268 @@ for a model to fabricate tool receipts.
   appends the unseen turns at the next admission. Fixed in the conversation
   object rather than in the pack, because it was wrong in every room with more
   than one person in it, and the pack format assumes it.
-- **September 8: retirement takes any workspace, and lands on its own.**
-  Supersedes the **Product behavior** paragraph "Only a workspace this feature
-  created can be retired through this surface" and acceptance item 9's
-  refusals "for `demo-template`, for an ordinary customer workspace, for one an
-  operator renames to end in `-demo`, and for a plausible but unknown workspace
-  ID". Decided in review of the combined branch: the register-as-authorization
-  was bookkeeping for a surface one Access policy already admits, and an
-  operator tool that can close any workspace is what was wanted. The typed
-  workspace-id confirmation in Ace, and the regional refusal of an id the
-  region's own table does not hold, replace it. Retirement shipped ahead of the
-  demo feature, in its own pull request and with its own document,
-  [`workspace-retirement.md`](../../workspace-retirement.md), because it is the
-  one change with a production footprint.
+
+### 2026-09-05 — A retired object is fenced at every method, not at the edge
+
+**Decided:** Every callable method of the object classes that can belong to a
+workspace consults a tombstone in the object's own SQLite. Unclassified
+refuses; retirement's own machinery, revocation and read-only inspection are
+permitted; an effect already handed to the Queue answers a terminal
+acknowledgement rather than throwing. A permit covers a *call*, not a method
+name: a permitted method runs against a receiver with the gate lifted, so the
+private helpers it reaches do not refuse it.
+
+**Why:** The spike's best-effort walk could not stop a write that reached a
+room object or an agent directly, and neither can a check at the API edge. The
+first version permitted names, and every permitted entry point then refused
+itself on the first private helper it reached.
+
+**Changes:** Design decision 5 as agreed; this is how it is built. Owned by
+[`workspace-retirement.md`](../../workspace-retirement.md). Shipped in
+[#593](https://github.com/juno-ai-labs/avalon/pull/593).
+
+### 2026-09-05 — Retirement is not gated on the register
+
+**Decided:** Withdrawn the same day it was built: `retireWorkspaceGraph` no
+longer refuses a workspace absent from the demo register. The register records
+what this feature made and what is published; it authorizes nothing.
+
+**Why:** Ace's Access policy already admits the operator, and a tool that
+retires any workspace was what was actually wanted. The cost is stated plainly
+— an irreversible close of a customer workspace is one confirmation away — and
+the confirmation is built to make the operator name the workspace.
+
+**Changes:** Supersedes the **Product behavior** paragraph "Only a workspace
+this feature created can be retired through this surface" and the refusals in
+acceptance item 9 "for `demo-template`, for an ordinary customer workspace, for
+one an operator renames to end in `-demo`, and for a plausible but unknown
+workspace ID". Shipped in [#593](https://github.com/juno-ai-labs/avalon/pull/593).
+
+### 2026-09-05 — Demos are concurrent, and retirement is its own action
+
+**Decided:** "The current demo" and "retire the predecessor once the successor
+is Ready" are gone. **New demo** creates one more; retirement is a separate
+operator action from Ace's workspaces tab; every reader of the register takes
+a list; preparation never retires anything.
+
+**Why:** Demos run concurrently — two presenters, two prospects, the same
+afternoon — so a single current demo was the wrong shape, and a preparation
+that closes another workspace on success couples two things that should not
+know about each other.
+
+**Changes:** Supersedes design decision 11, the **Product behavior** paragraphs
+on the predecessor and the replacement window, the phase table's "Retiring
+previous demo" row, and acceptance item 5's "retire W1" step, which becomes an
+ordinary retirement. Shipped in
+[#593](https://github.com/juno-ai-labs/avalon/pull/593) and
+[#594](https://github.com/juno-ai-labs/avalon/pull/594).
+
+### 2026-09-05 — No demo mode
+
+**Decided:** Background connector suppression is dropped before being built. A
+demo's connectors poll, watch and notify like anyone's.
+
+**Why:** The branching was judged not worth it: scheduled work is something a
+demo might want to show, and a demo that behaves like any other workspace is
+simpler to reason about than one with a second set of rules. A presenter
+interrupted by mail arriving is a pack and account-hygiene concern.
+
+**Changes:** Non-goal 3 is withdrawn (the numbering stays, so
+[`research.md`](research.md)'s "non-goal 4" still names fake tool history);
+design decision 9 and the **Security and trust model** paragraph on demo mode
+are superseded; "Failure to establish this mode blocks Ready" no longer
+applies. Shipped in [#594](https://github.com/juno-ai-labs/avalon/pull/594).
+
+### 2026-09-05 — A personal connection in the template is not copied
+
+**Decided:** Copies are workspace-scoped so the presenter can use them; a
+personal connection is skipped and reported rather than rewritten as
+workspace-scoped.
+
+**Why:** Rewriting one shares one person's refresh token with everybody in the
+demo. The operator learns "the demo has no Slack" before the meeting rather
+than during it.
+
+**Changes:** Refines design decision 10. Shipped in
+[#594](https://github.com/juno-ai-labs/avalon/pull/594).
+
+### 2026-09-07 — The seed decides addressing, and it says one thing
+
+**Decided:** The retained seam is a `seed` on the message: pack version, action
+id, and either one assistant turn or `null`. Its presence skips the addressing
+classifier, and the turn's presence is what starts the run — not
+`forcedHarnessOrigin`. One turn rather than a script of turns; the seam refuses
+a second provider request rather than repeating the turn. `say` completes the
+run; `ask` opens a real room-addressed elicitation and parks on `needs_input`.
+Cast members act under a `demo_seed` auth principal the room verifies against
+current membership exactly as it verifies a connector ingress.
+
+**Why:** One statement of intent per seeded line rather than two that can
+disagree. Seeded history carries no tool calls, and without them Bind asks the
+provider once; the spike's first adapter repeated the turn and wedged the
+runtime. A distinct principal value so a seeded run's authorization record
+says who acted.
+
+**Changes:** Nothing in the agreed scope; this is how **Agent behavior** is
+built. Shipped in [#594](https://github.com/juno-ai-labs/avalon/pull/594).
+
+### 2026-09-07 — Receipts follow confirmation, and replay is by derived id
+
+**Decided:** A `demo_seed_receipts` row is written once the action's run
+settled as specified, the line was admitted, or the resource is attached. The
+client message id and resource id of every seeded write are derived from the
+operation and action.
+
+**Why:** A replay after a crash meets the production path's own receipt
+instead of writing twice, and a receipt written at admission would let a run
+that failed count as seeded.
+
+**Changes:** Nothing in the agreed scope. Shipped in
+[#594](https://github.com/juno-ai-labs/avalon/pull/594).
+
+### 2026-09-07 — Readiness expectations are derived where honest and stated where not
+
+**Decided:** The manifest derives the room set, seats, final state, listing
+order and ids from the pack and the receipts. The per-viewer flags — new,
+unread, mentioned — and the home screen's count are stated in the pack's
+`expect` section; the schema checks the listed rooms against the rooms the pack
+makes visible to that viewer. The placeholder pack verifies the presenter
+alone. Notification delivery is not a readiness precondition.
+
+**Why:** The flags depend on who opened what, and the seeder's own reads open
+rooms for the cast, so a derivation would encode the seeder's reading habits
+as product truth.
+
+**Changes:** Refines design decision 4. Shipped in
+[#594](https://github.com/juno-ai-labs/avalon/pull/594).
+
+### 2026-09-07 — The operation is rows plus a Workflow that only points at them
+
+**Decided:** `demo_operations` is the identity and the receipts; the
+Workflow's payload is the operation id and attempt, re-read on arrival; every
+phase is idempotent. The workspace id is allocated onto the row before
+creation, and the workspace is created through onboarding as the presenter's
+own without minting a session. The wait is a loop of Workflow steps bounded by
+a round count derived from the platform's published steps-per-instance limit,
+and fails as `demo_projection_wait_exhausted` with the last round's gaps kept.
+One migration, one table: the register is the operation row. One driver at a
+time: the attempt number fences every write, a step never retries, a driver
+that dies is recorded, and Retry is the next attempt.
+
+**Why:** A Workflow gives durability and retry; the rows give identity and
+receipts; idempotent phases make the two agree. A session minted for the
+presenter by an operator would be a credential nobody signed in for. A
+shorter wait ceiling remains the team's to set, and would be a constant in
+the driver, not a variable.
+
+**Changes:** Design decision 7 as agreed. The **Open questions** proposal of a
+`DEMO_PROJECTION_WAIT_TIMEOUT_MS` variable is not built: the platform's limit
+bounds the wait, and a ceiling of the team's own goes in code. Supersedes the
+2026-09-05 note that the closing half shipped without a caller — this is the
+caller. Shipped in [#594](https://github.com/juno-ai-labs/avalon/pull/594).
+
+### 2026-09-07 — Ace reaches the regional API with the operator credential in a `demos` role
+
+**Decided:** One secret per region, `TELEMETRY_OPERATORS_JSON`, holds every
+operator token for that region; the `demos` role is what isolates; every
+operator router names the roles it admits; Ace holds one `demos` token per
+region rather than one value in both.
+
+**Why:** A second secret with the same shape would be a second thing to rotate
+for no isolation gained. One value in both jurisdictions was destructive
+authority in both from one leak.
+
+**Changes:** Nothing in the agreed scope. Shipped in
+[#593](https://github.com/juno-ai-labs/avalon/pull/593) and
+[#594](https://github.com/juno-ai-labs/avalon/pull/594).
+
+### 2026-09-07 — No Open in Rally link, until the desktop has a home destination
+
+**Decided:** The Demos page names the workspace to switch to; no link is
+built.
+
+**Why:** The deep-link contract addresses a workspace only with a destination
+inside it, and there is no home-screen destination; a link the desktop would
+reject is worse than a sentence.
+
+**Changes:** The Ready row of the **Product behavior** phase table loses its
+**Open in Rally** button until the desktop gains a home destination
+([`multiple-workspaces.md`](../../multiple-workspaces.md#workspace-addressed-handoffs)).
+Shipped in [#594](https://github.com/juno-ai-labs/avalon/pull/594).
+
+### 2026-09-07 — Access revocation on retirement is cut
+
+**Decided:** The "revoke old workspace access" step of retirement is not
+built. Retirement closes every socket through the objects and fences every D1
+authority read instead, so a session that survives it can open nothing.
+
+**Why:** Picking it up needs a retirement `reason` value the revocation
+mechanism accepts and a per-member fan-out it does not have today.
+
+**Changes:** Cuts that step from **Product behavior**'s retirement sequence.
+To pick it back up: the reason value and the fan-out. Shipped without it in
+[#593](https://github.com/juno-ai-labs/avalon/pull/593).
+
+### 2026-09-08 — Retirement lands on its own, ahead of the demo
+
+**Decided:** Retirement — the tombstone, the gate, the walk, the operator door
+and Ace's workspaces tab — ships in its own pull request with its own document,
+[`workspace-retirement.md`](../../workspace-retirement.md), before the
+preparation feature.
+
+**Why:** It is the one change with a production footprint — a gate on every
+object method — and reviewing and observing it under an additive feature
+nothing runs until an operator starts it would have hidden it.
+
+**Changes:** Nothing in the agreed scope; the order of delivery. Shipped in
+[#593](https://github.com/juno-ai-labs/avalon/pull/593).
+
+### 2026-09-08 — What a demo may share, and what a retry can reach
+
+**Decided:** Only a Google connection is copied from the template; a
+connection of any other provider is skipped and reported as `shared_grant`. A
+seeded run that fails ends the operation: Retry replays the action into the
+same turn and the same failed run, so the way back is Abandon and a new
+operation. Abandon claims the operation row before it retires anything. A
+candidate is withheld from its members while it is unpublished, whatever its
+status, so an abandoned one never appears. EU binds no preparation Workflow,
+and the binding is outside the boot contract in every region. A Ready demo
+reaches its presenter through the account menu, which lists workspaces only
+while their `multiple-workspaces-enabled` flag is on.
+
+**Why:** A copy shares the template's upstream grant, and for every provider
+but Google the presenter's Disconnect would revoke that grant remotely — for
+the template and every live demo at once; Google's disconnect is local. The
+seeded turn is written once by a derived id, so a retry cannot re-run it. A
+check-then-act abandon raced a driver publishing Ready. A missing binding
+must be the tool's 503, never a region-wide fault.
+
+**Changes:** Narrows the 2026-09-07 operation entry's "Retry is the next
+attempt" to every failure but a seeded run's own. Refines design decision 8:
+the copied connections are Google's. **Product behavior**'s rule that a
+connector whose provider rotates refresh tokens on use "is not included until
+that is settled" is now enforced by the copier rather than by hand, and it
+widened: a provider whose disconnect revokes remotely is not included either.
+Shipped in
+[#594](https://github.com/juno-ai-labs/avalon/pull/594).
+
+### 2026-09-08 — Ace's credential has a secret of its own
+
+**Decided:** The `demos` operator token is read from a per-region secret of
+its own, `DEMO_OPERATORS_JSON`, with the same shape as the telemetry
+surface's map. It no longer lives in `TELEMETRY_OPERATORS_JSON`.
+
+**Why:** Reverses the 2026-09-07 entry's "one secret per region holds every
+operator token". A Worker secret cannot be read back, the telemetry map had
+been set by someone else with tokens nobody could name, and adding Ace's
+token meant overwriting all of them. Two credentials set by different people
+for different surfaces should not share a value; the role narrowing that
+isolates the surfaces is unchanged.
+
+**Changes:** Nothing in the agreed scope; **Provider configuration** gains one
+secret to set per region. Shipped in
+[#593](https://github.com/juno-ai-labs/avalon/pull/593) and
+[#594](https://github.com/juno-ai-labs/avalon/pull/594).
 
 ## Key design decisions
 
