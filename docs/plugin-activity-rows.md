@@ -30,7 +30,7 @@ them.
 | `apps/desktop/src/renderer/screens/workspace-settings.tsx` | Settings' provider cards and installed-connection rows, both reaching a mark from the connector's own type. |
 | `apps/desktop/src/renderer/lib/transcript.ts` | `orderedTranscriptMessages` projects tool blocks, thinking blocks, and plugin activities out of the canonical snapshot, and marks the seam where its coverage is not contiguous; `groupPluginToolMessages` collapses the composed feed, `groupThinkingMessages` collapses the thinking left in it, and `collapseSettledWorkIntoAccordion` folds each finished stretch of a run behind the answer that reported on it, carrying the total `foldSettledWorkIntoMessages` resolved where that stretch is the whole response. `thoughtVerb` and `isThinkingEvent` are the one place the two thought rows are told apart. |
 | `apps/desktop/src/renderer/screens/workstream.tsx` | Applies the four passes in order, and is the only caller of any of them. |
-| `apps/desktop/src/renderer/lib/types.ts` | `WorkTotal` — the one shape a settled total has, carried by `workSummary` in a message header and by `workAccordion` on the row over the run, so the total can move between them without the two drifting apart. |
+| `apps/desktop/src/renderer/lib/types.ts` | `WorkTotal` — the one shape a settled total has, carried by `workSummary` in a message header and by `workAccordion` on the row over the run, so the total can move between them without the two drifting apart. `WorkSpan` — when a row's work happened, carried by `workSpans`, which is what a stretch of several rows is added up by. |
 | `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `PluginGlyph` draws a mark; `PluginActivityBlock` renders one grouped row; `ThinkingGlyph` draws the thinking row's brain and `ThoughtBlock` decides which of the two thought rows gets it; `WorkAccordionBlock` is the closed row a reported-on stretch becomes, and `WorkAccordionRow` draws what is inside it through those same two blocks. |
 | `apps/desktop/src/renderer/components/agent-work-timing.tsx` | The shared elapsed-time row; its `icon` slot is what lets a plugin's mark, or the thinking row's brain, stand in for the orb. |
 | `apps/desktop/src/renderer/styles/app.css` | `.plugin-face` and `.plugin-face-active` — the transcript's bare mark box and its pulse, shared by the plugin rows and the thinking row; `.work-accordion` and its toggle. |
@@ -57,8 +57,12 @@ row's material in one field:
 A plugin activity (`scope: 'plugin'`) still hangs off the assistant turn and is
 what `pluginRuns` is computed from. Its elapsed time covers the whole stretch
 the plugin was in play, including the gaps between its calls, which no sum of
-individual call durations can reproduce. The client no longer reads it directly
-except as the legacy fallback below.
+individual call durations can reproduce. The client no longer reads its
+*duration* directly except as the legacy fallback below — but it does read its
+**intervals** on the main path, because they are the only place the transcript
+says *when* a run worked, and a folded stretch adds its rows up by that. A run
+whose activity did not reach the snapshot therefore has an authoritative
+duration and no spans, which is a state the accordion is built to expect.
 
 ### The five steps
 
@@ -443,9 +447,11 @@ is the one that might have been partly unloaded, and what follows it is loaded.
   and otherwise the union of its rows' spans — never a sum of their durations.**
   Thinking overlaps plugin work and a plugin activity covers the gaps between
   its own calls, so a sum overstates the stretch by whatever ran concurrently; a
-  union of the wall-clock stretches those rows occupied does not. A stretch
-  holding a row whose spans never reached this client says "Worked" and no
-  number, and one holding a recovered boundary reads "Worked for at most …" —
+  union of the wall-clock stretches those rows occupied does not. A stretch of
+  several rows, one of whose spans never reached this client, says "Worked" and
+  no number; a stretch of exactly *one* row reports that row's own duration,
+  because there is nothing for it to be overlapping with. One holding a
+  recovered boundary reads "Worked for at most …" —
   that accuracy rides on the span itself, because a plugin group assembled from
   tool rows alone has no aggregate accuracy to read it from.
 - **A response the client has only part of never labels a drawer.** Counting
@@ -653,9 +659,19 @@ the drawers — a turn's thinking row sits above the answer it narrates while th
 plugin row for the same turn sits below it, so the turn's duration would be
 claimed by two drawers at once. Also rejected: adding the spans to
 `TranscriptPluginRun` server-side in this change. It is the more robust source
-and the reason `pluginRuns` exists at all, but the activity tree carries the
-intervals today for every run that produced a row, and a drawer with no spans
-falls back to exactly the sentence it printed before.
+and the reason `pluginRuns` exists at all — the activity tree reaches a snapshot
+through the nullable joins that contract was written to stop depending on, and
+this module's own `brokenJoinSnapshot` fixture is the shape where it does not
+arrive. What makes the client-side read worth starting with is the cost of being
+wrong: a run with no spans keeps its authoritative duration and its drawer says
+what it said before, so the failure is the status quo rather than a wrong
+number. Move it server-side when a drawer is seen reading "Worked" in the field.
+
+Also rejected: two scalars per row and `max(end) − min(start)`, which would
+delete `unionDurationMs` and about half of what this added. It is the same
+number for the common shape and wrong for the one this feature exists to serve:
+a stretch of a self-narrating response holds a thought and a call that ran after
+it, and a start-to-end measure would count the handoff between them as work.
 
 ### 2026-09-03 — Every stretch of a run collapses, not just the last one
 
