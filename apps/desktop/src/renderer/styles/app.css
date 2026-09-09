@@ -3259,9 +3259,16 @@ pre {
    the button — carrying its own hover opacity inside the agent's row multiplied
    the two and left this one button visibly paler than the four beside it. */
 .message-start-substream { white-space: nowrap; }
-.human-message-actions { display: flex; margin-top: 4px; opacity: 0; transition: opacity 120ms; }
-.human-message:hover .human-message-actions, .human-message:focus-within .human-message-actions { opacity: 1; }
-@media (prefers-reduced-motion: reduce) { .human-message-actions { transition: none; } }
+/* Hit-testing follows the fade. The strip is inside the article that reveals it,
+   so a pointer that can reach it has already revealed it — except during the
+   120ms it takes to arrive, where a click would land on a control the reader
+   cannot yet read, and this one creates a conversation rather than copying a
+   line. The agent's row deliberately does not do this: it is also visible while
+   speech is playing and while a save is in flight, so tying its hit-testing to
+   hover would take away the Stop speaking it puts there. */
+.human-message-actions { display: flex; margin-top: 4px; opacity: 0; pointer-events: none; transition: opacity 120ms; }
+.human-message:hover .human-message-actions, .human-message:focus-within .human-message-actions { opacity: 1; pointer-events: auto; }
+@media (prefers-reduced-motion: reduce) { :is(.agent-message-actions, .human-message-actions) { transition: none; } }
 /* A save in flight keeps the row visible and stops a second one starting; the
    two export buttons are the only actions here that take longer than a click. */
 .agent-message-actions button:disabled { color: var(--av-sys-color-text-disabled); cursor: default; }

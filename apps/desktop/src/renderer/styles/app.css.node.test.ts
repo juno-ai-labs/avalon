@@ -750,6 +750,19 @@ describe('message header meta typography', () => {
    * tuning one row moves the control on Rally's turn while leaving it behind on
    * the person's.
    */
+  /**
+   * The defect this PR's action-row move introduced and then fixed: the control
+   * carried its own hover opacity into a row that already fades, the two
+   * multiplied, and it settled paler and later than the four buttons beside it.
+   * The fix is the deletion of a declaration, so this is where it is held —
+   * nothing in the DOM says what opacity a pixel ended up at.
+   */
+  it('leaves the hover fade to the row that holds the control', () => {
+    expect(rule('.message-start-substream')).not.toContain('opacity');
+    expect(rule('.agent-message-actions')).toContain('opacity: 0;');
+    expect(rule('.human-message-actions')).toContain('opacity: 0;');
+  });
+
   it('gives both action rows one set of button metrics', () => {
     const shared = rule(':is(.agent-message-actions, .human-message-actions) button');
     expect(shared).not.toBeNull();
@@ -788,6 +801,12 @@ describe('message header meta typography', () => {
     const themed = rule('.workstream-screen .human-message');
     expect(themed).not.toBeNull();
     expect(themed).toContain('--turn-bubble-radius:');
+    // The two token declarations tie on specificity — `:is()` takes its most
+    // specific argument — so source order is what makes the theme's value win.
+    // Without this, moving the theme rule above the shared one keeps every
+    // assertion here green while restoring the 4px drift they exist to prevent.
+    expect(stylesheet.indexOf('.workstream-screen .human-message {'))
+      .toBeGreaterThan(stylesheet.indexOf(':is(.workstream-screen, .automation-chat-surface) .human-message {'));
     expect(rule('.workstream-screen .human-message-bubble'))
       .toContain('border-radius: var(--turn-bubble-radius);');
     // On the value, not one spelling of the property: a literal creeping back
