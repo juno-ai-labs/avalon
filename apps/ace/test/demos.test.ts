@@ -38,6 +38,7 @@ function operation(overrides: Record<string, unknown> = {}): Record<string, unkn
     presenterName: 'Adam',
     packVersion: 'placeholder-2026-09',
     cast: { presenter: PRESENTER_ID },
+    castNames: { presenter: 'Adam' },
     workspaceId: WORKSPACE_ID,
     workspaceName: 'Alto Capital-demo',
     status: 'running',
@@ -72,7 +73,7 @@ describe('the Demos routes', () => {
   });
 
   it('starts a preparation same-origin only, and relays the regional refusal by its own code', async () => {
-    const body = JSON.stringify({ operationId: OPERATION_ID, companyName: 'Alto Capital', presenterUserId: PRESENTER_ID, cast: { presenter: PRESENTER_ID } });
+    const body = JSON.stringify({ operationId: OPERATION_ID, companyName: 'Alto Capital', presenterUserId: PRESENTER_ID, cast: { priya: 'Priya Raman' } });
     const crossOrigin = await worker.fetch!(new Request('https://ace.internal.rallywith.ai/api/demos', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body,
     }), env(), context);

@@ -3,7 +3,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { DemosView, currentPhase, defaultCast, operationHeadline } from '../src/client/demos';
+import { DemosView, currentPhase, defaultCastNames, operationHeadline } from '../src/client/demos';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -13,6 +13,8 @@ let root: Root;
 const OPERATION_ID = '00000000-0000-7000-8000-0000000000e2';
 const WORKSPACE_ID = '00000000-0000-7000-8000-0000000000f1';
 const PRESENTER_ID = '00000000-0000-7000-8000-0000000000a1';
+const COLLEAGUE_ID = '00000000-0000-7000-8000-0000000000a5';
+// The cast are personas the region minted for this operation, not accounts.
 const PRIYA_ID = '00000000-0000-7000-8000-0000000000a2';
 const MARCUS_ID = '00000000-0000-7000-8000-0000000000a3';
 const DANA_ID = '00000000-0000-7000-8000-0000000000a4';
@@ -24,7 +26,8 @@ function operation(overrides: Record<string, unknown> = {}): Record<string, unkn
     presenterUserId: PRESENTER_ID,
     presenterName: 'Adam',
     packVersion: 'placeholder-2026-09',
-    cast: { presenter: PRESENTER_ID },
+    cast: { presenter: PRESENTER_ID, priya: PRIYA_ID, marcus: MARCUS_ID, dana: DANA_ID },
+    castNames: { presenter: 'Adam', priya: 'Priya Raman', marcus: 'Marcus Hale', dana: 'Dana Okafor' },
     workspaceId: WORKSPACE_ID,
     workspaceName: 'Alto Capital-demo',
     status: 'running',
@@ -49,12 +52,15 @@ function operation(overrides: Record<string, unknown> = {}): Record<string, unkn
 
 const template = {
   workspaceId: '01a06d5d-4624-751e-8269-e7950b51a835',
-  pack: { version: 'placeholder-2026-09', roles: ['presenter', 'priya', 'marcus', 'dana'] },
+  pack: {
+    version: 'placeholder-2026-09',
+    roles: ['presenter', 'priya', 'marcus', 'dana'],
+    presenterRole: 'presenter',
+    castDefaults: { priya: 'Priya Raman', marcus: 'Marcus Hale', dana: 'Dana Okafor' },
+  },
   members: [
     { userId: PRESENTER_ID, name: 'Adam', email: 'adam@example.com', role: 'owner' },
-    { userId: PRIYA_ID, name: 'Priya Raman', email: 'priya@example.com', role: 'member' },
-    { userId: MARCUS_ID, name: 'Marcus Hale', email: 'marcus@example.com', role: 'member' },
-    { userId: DANA_ID, name: 'Dana Okafor', email: 'dana@example.com', role: 'member' },
+    { userId: COLLEAGUE_ID, name: 'Blake', email: 'blake@example.com', role: 'member' },
   ],
 };
 
@@ -111,8 +117,14 @@ describe('the Demos page', () => {
     expect(container.textContent).toContain('Alto Capital-demo');
     expect(container.textContent).toContain('Waiting for workspace');
     expect(container.textContent).toContain('In progress · started');
+    // The gap names the person whose projection is behind, by the name the
+    // demo carries, and the cast is on the page once the form is gone.
+    expect(container.textContent).toContain('Adam: northgate-renewal');
     expect(container.textContent).toContain('the mention has not arrived');
+    expect(container.textContent).toContain('Priya Raman, Marcus Hale, Dana Okafor');
     expect(container.textContent).toContain('9 of 9 actions confirmed');
+    // Retry is for a preparation that has stopped, not one that is working.
+    expect(buttonNamed('Retry').disabled).toBe(true);
     // What was left behind, and why: one reason the template's owner can act
     // on, one they cannot.
     expect(container.textContent).toContain('1 connection copied · 2 left behind: Linear (grant not shareable), Slack (personal)');
@@ -159,32 +171,35 @@ describe('the Demos page', () => {
     expect(container.textContent).toContain('Abandoned');
   });
 
-  it('starts a new demo from the template with one operation id and a cast nobody plays twice', async () => {
+  it('starts a new demo under names the operator types, defaulted from the pack and unique', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(respond([]));
     await render();
     expect(container.textContent).toContain('No demos yet');
     await act(async () => { buttonNamed('New demo').click(); });
     const company = container.querySelector<HTMLInputElement>('input[placeholder="Alto Capital"]')!;
     await act(async () => { type(company, 'Alto Capital'); });
-    // The defaults are the ones a person would pick: each non-presenter role
-    // gets the next member, in order, and the labels are names, not keys.
-    const selects = Array.from(container.querySelectorAll('select'));
-    expect(selects.map((select) => select.value)).toEqual([PRESENTER_ID, PRIYA_ID, MARCUS_ID, DANA_ID]);
-    expect(container.textContent).toContain('Cast: Priya');
-    expect(container.textContent).not.toContain('Cast: priya');
+    // One person is chosen — the presenter, who signs in — and the rest are
+    // named, opening on the pack's defaults so the form is submittable as it is.
+    expect(Array.from(container.querySelectorAll('select')).map((select) => select.value)).toEqual([PRESENTER_ID]);
+    const names = Array.from(container.querySelectorAll<HTMLInputElement>('.demo-form-grid input'))
+      .filter((input) => input !== company);
+    expect(names.map((input) => input.value)).toEqual(['Priya Raman', 'Marcus Hale', 'Dana Okafor']);
+    expect(container.textContent).toContain('User 1');
+    expect(container.textContent).toContain('User 3');
+    expect(container.textContent).not.toContain('Cast: Priya');
 
-    // Seating one member twice blocks Start and says who.
-    const marcusSelect = selects[2]!;
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(marcusSelect, PRIYA_ID);
-      marcusSelect.dispatchEvent(new Event('change', { bubbles: true }));
-    });
+    // Two people under one name blocks Start and says which name.
+    await act(async () => { type(names[1]!, 'Priya Raman'); });
     expect(buttonNamed('Start preparation').disabled).toBe(true);
-    expect(container.textContent).toContain('Priya Raman is cast in two roles');
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(marcusSelect, MARCUS_ID);
-      marcusSelect.dispatchEvent(new Event('change', { bubbles: true }));
-    });
+    expect(container.textContent).toContain('Two people are called Priya Raman');
+    // So does the presenter's own name, who is in the demo too.
+    await act(async () => { type(names[1]!, 'Adam'); });
+    expect(buttonNamed('Start preparation').disabled).toBe(true);
+    // An empty name is not a person either.
+    await act(async () => { type(names[1]!, '  '); });
+    expect(buttonNamed('Start preparation').disabled).toBe(true);
+
+    await act(async () => { type(names[1]!, ' Michael Holliway ');  });
     const start = buttonNamed('Start preparation');
     expect(start.disabled).toBe(false);
     await act(async () => { start.click(); });
@@ -193,7 +208,8 @@ describe('the Demos page', () => {
     const body = JSON.parse(String(startCall?.[1]?.body)) as { operationId: string; companyName: string; presenterUserId: string; cast: Record<string, string> };
     expect(body.companyName).toBe('Alto Capital');
     expect(body.presenterUserId).toBe(PRESENTER_ID);
-    expect(body.cast).toEqual({ presenter: PRESENTER_ID, priya: PRIYA_ID, marcus: MARCUS_ID, dana: DANA_ID });
+    // Names, not ids, and the presenter is not among them.
+    expect(body.cast).toEqual({ priya: 'Priya Raman', marcus: 'Michael Holliway', dana: 'Dana Okafor' });
     expect(body.operationId).toMatch(/^[0-9a-f-]{36}$/u);
     expect(container.textContent).toContain('Alto Capital-demo');
   });
@@ -275,12 +291,11 @@ describe('the Demos page', () => {
     expect(container.textContent).toContain('From attempt 1 · not reached yet by this attempt');
   });
 
-  it('says why when the template is too small to cast a demo, instead of a form that cannot be submitted', async () => {
-    vi.spyOn(globalThis, 'fetch').mockImplementation(respond([], { template: () => Response.json({ ...template, members: template.members.slice(0, 1) }) }));
+  it('says why when the template seats nobody to present, instead of a form that cannot be submitted', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(respond([], { template: () => Response.json({ ...template, members: [] }) }));
     await render();
-    expect(container.textContent).toContain('demo-template has 1 active member; the pack needs 4, one per role.');
+    expect(container.textContent).toContain('demo-template has no active members; the presenter is cast from them.');
     expect(buttonNamed('New demo').disabled).toBe(true);
-    expect(container.textContent).not.toContain('is cast in two roles');
   });
 });
 
@@ -296,9 +311,7 @@ describe('what an operation says about itself', () => {
     expect(operationHeadline(operation({ phases: [] }) as never)).toBe('Starting');
   });
 
-  it('deals the default cast out in order, never seating the presenter twice', () => {
-    expect(defaultCast(template as never, PRESENTER_ID)).toEqual({ presenter: PRESENTER_ID, priya: PRIYA_ID, marcus: MARCUS_ID, dana: DANA_ID });
-    // Another presenter: the others shift to fill the roles in order.
-    expect(defaultCast(template as never, MARCUS_ID)).toEqual({ presenter: MARCUS_ID, priya: PRESENTER_ID, marcus: PRIYA_ID, dana: DANA_ID });
+  it('opens the form on the pack\'s own default names, and never on the presenter\'s role', () => {
+    expect(defaultCastNames(template as never)).toEqual({ priya: 'Priya Raman', marcus: 'Marcus Hale', dana: 'Dana Okafor' });
   });
 });
