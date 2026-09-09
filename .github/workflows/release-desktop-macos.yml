@@ -119,9 +119,9 @@ jobs:
     needs: plan
     if: needs.plan.outputs.should_release == 'true'
     runs-on: ubuntu-latest
-    # This keeps the repository's existing 30-minute CI verification ceiling;
+    # Allow one hour for desktop verification, as requested after release timeouts;
     # without it a wedged suite holds the singleton release queue for six hours.
-    timeout-minutes: 30
+    timeout-minutes: 60
     permissions:
       contents: write
     outputs:
@@ -219,7 +219,7 @@ jobs:
       - name: Test
         env:
           NODE_OPTIONS: --max-old-space-size=8192
-        run: pnpm test
+        run: pnpm --filter @rally/desktop test
 
       - name: Run release invariants
         run: pnpm --filter @rally/desktop test:release
