@@ -1,5 +1,6 @@
 import type { QueryClient } from '@tanstack/react-query';
-import type { WorkstreamSummary } from './types';
+import type { WorkstreamAppearancePatch } from '@rally/contracts';
+import type { WorkstreamDetail, WorkstreamSummary } from './types';
 
 /** The one cache entry every work-stream list reader and writer shares. */
 export const WORKSTREAMS_QUERY_KEY = ['workstreams'] as const;
@@ -33,6 +34,48 @@ export function setCachedWorkstreams(
     if (next !== undefined) assertWorkstreamList(next);
     return next;
   });
+}
+
+/**
+ * Apply one per-row edit to both places a work stream is read from: its row in
+ * the shared list, which the sidebar renders, and its detail entry, which the
+ * open header renders. Writing one and not the other is how the header and the
+ * sidebar come to disagree about the same work stream.
+ */
+function updateCachedWorkstream(
+  queryClient: QueryClient,
+  workstreamId: string,
+  update: <T extends WorkstreamSummary>(row: T) => T,
+): void {
+  setCachedWorkstreams(queryClient, (current) =>
+    current?.map((workstream) => workstream.id === workstreamId ? update(workstream) : workstream));
+  queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (detail) =>
+    detail ? update(detail) : detail);
+}
+
+/**
+ * Show a person's own appearance choice everywhere the moment Main has
+ * acknowledged it.
+ *
+ * The receipt means the value is committed; what has not happened yet is the
+ * projection that carries it to the sidebar — the child outbox, a Queue hop to
+ * WorkstreamDO, a second Queue hop to WorkspaceDO, and only then a state push
+ * — which is seconds, not the round trip the picker just completed. Each row
+ * merges the patch over its own current appearance, the way Main does, so an
+ * icon-only choice keeps the color. This is a pushed fact and not a versioned
+ * one: `applyVersionedWorkstreamState` replaces `appearance` whole whenever a
+ * newer common waterline arrives, so a later authoritative push can always
+ * correct it, and a delayed older push is at worst a brief flicker back.
+ */
+export function patchCachedWorkstreamAppearance(
+  queryClient: QueryClient,
+  workstreamId: string,
+  patch: WorkstreamAppearancePatch,
+): void {
+  updateCachedWorkstream(queryClient, workstreamId, (row) => ({
+    ...row,
+    appearance: { icon: null, color: null, ...row.appearance, ...patch },
+  }));
 }
 
 /**

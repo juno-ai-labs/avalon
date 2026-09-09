@@ -11,6 +11,8 @@ Each choice saves immediately and keeps the palette open.
 | `packages/contracts/src/workstream-appearance.ts` | Stable icon keys, color keys, and partial updates. |
 | `apps/desktop/src/renderer/components/workstream-appearance-picker.tsx` | Palette, optimistic preview, ordered clicks, and failures. |
 | `apps/desktop/src/renderer/components/workstream-glyph.tsx` | Shared rendering and deterministic defaults. |
+| `apps/desktop/src/renderer/lib/workstreams-cache.ts` | `patchCachedWorkstreamAppearance`: the receipt-time write that puts a committed choice on the sidebar row and the cached detail ahead of the directory projection. |
+| `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Orders the picker's choices on the retained Main socket and applies each one to the caches when its receipt arrives. |
 | `apps/api/src/durable-objects/workstream-object-product.ts` | Authoritative write, command receipt, and common-state publication. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | Main conversation's nullable `workstream.appearance_json`. |
 | `apps/api/src/durable-objects/workspace-do.ts` | Directory projection for all workspace surfaces. |
@@ -24,6 +26,20 @@ outbox effect together. WorkstreamDO forwards that common state to WorkspaceDO
 and publishes it to its control sockets. Existing versioned state handling
 updates the header, sidebar, and cached detail. Reconnection obtains the same
 appearance in the canonical snapshot.
+
+That projection is the durable path, not the fast one. From the commit it
+crosses Main's outbox alarm, a Queue hop to WorkstreamDO, WorkstreamDO's outbox
+alarm, a second Queue hop to WorkspaceDO, and only then a state push: seconds,
+while the receipt comes back in one socket round trip. The picker previews its
+own trigger locally, so the header moved at once and the sidebar row did not. The
+client now closes that gap on the receipt: when Main acknowledges a choice, the
+socket hook merges the patch over the current appearance on the sidebar row and
+the cached detail, the way Main merges it. The write is unversioned and the
+versioned receiver replaces `appearance` whole on the next newer common
+waterline, so the authoritative push always wins; a delayed older push can at
+worst flicker the row back until the one carrying the choice lands. Nothing is
+written on send: the row shows a committed value or the previous one, never a
+choice the room may still refuse.
 
 New control clients request `workstreamAppearance=1` when issuing a socket ticket.
 The server includes it in the socket URL. The Worker forwards that capability, and WorkstreamDO stores it in the hibernating
@@ -70,7 +86,10 @@ The scroll viewport is a layout choice, not a cap on the catalog or server data.
 ## Testing
 
 The picker component suite covers immediate selection, ordered rapid clicks,
-staying open, Escape focus restoration, and failed saves. The real-workerd
+staying open, Escape focus restoration, and failed saves. The socket hook suite
+proves the caches hold the old appearance until the receipt and the merged value
+after it; the cache suite covers the merge over a stored and a generated
+appearance. The real-workerd
 `message-to-output-pipeline.test.ts` appearance case covers partial updates,
 idempotent replay, and persistence across object eviction. Its dropped-write
 mutation must fail the reopened snapshot assertion. Client control/state tests
@@ -78,6 +97,22 @@ cover the common cache path. Inspect the actual Electron popup in light and dark
 including scrolling, and check another connected window and reopening.
 
 ## Changelog
+
+### 2026-09-08 — Sidebar row follows the receipt, not the projection
+
+Choosing a color or icon updated the header at once and the sidebar rail seconds
+later, because the rail reads the work-stream list and nothing wrote to it before
+the directory projection arrived through two Durable Object alarms and two Queue
+hops. The socket hook now patches the list row and the cached detail when Main's
+receipt arrives, through one shared cache primitive that writes both places a
+work stream is read from. Writing on send was rejected: a refused command would
+then need a revert path and could show a value the room never held. Publishing
+the appearance directly from Main's feed socket was rejected for now as a server
+change that would still leave other clients on the full path; the client patch is
+the cheaper, reversible fix, and it stays correct because the versioned receiver
+replaces the field whole on the next newer waterline. A future change must keep
+that: an unversioned write here is only safe while a later authoritative push can
+overwrite it.
 
 ### 2026-09-08 — Reconcile individual optimistic choices
 

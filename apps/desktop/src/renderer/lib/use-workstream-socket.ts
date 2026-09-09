@@ -72,7 +72,7 @@ import {
 } from './transcript';
 import type { HarnessStatus, Message, WorkstreamDetail, WorkstreamSummary } from './types';
 import { withDerivedUnread } from './workstream-state-store';
-import { evictCachedSubstream, setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
+import { evictCachedSubstream, patchCachedWorkstreamAppearance, setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 import { useWorkstreamSocketResumeState, type StreamCursor } from './workstream-socket-resume';
 import { useWorkstreamControlSocket } from './use-workstream-control-socket';
 
@@ -1102,6 +1102,9 @@ export function useWorkstreamSocket(
         if (closedByEffect) throw new ApiError('The work stream is no longer available.', 409, 'workstream_socket_unavailable');
         const receipt = await submitSubstreamCommand(command);
         if (receipt.command !== 'set_workstream_appearance') throw new Error('substream_command_receipt_mismatch');
+        // The sidebar row has no preview of its own and the projection that
+        // would update it is several hops away. The receipt is the commit.
+        patchCachedWorkstreamAppearance(queryClient, parentId, appearance);
       });
       appearanceQueue = result.catch(() => undefined);
       return result;
