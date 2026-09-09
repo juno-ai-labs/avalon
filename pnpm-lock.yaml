@@ -407,6 +407,9 @@ importers:
         specifier: workspace:*
         version: link:../../packages/contracts
     devDependencies:
+      jsdom:
+        specifier: 30.0.1
+        version: 30.0.1(@noble/hashes@2.2.0)
       typescript:
         specifier: 'catalog:'
         version: 5.9.3

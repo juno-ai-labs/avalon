@@ -18,7 +18,7 @@ ready for a coordinated deployment, not deployed by this change.
 | `apps/api/src/routes/private-access.ts` | Global public intake and explicit POST download redemption. |
 | `packages/contracts/src/private-access.ts` | Runtime-validated public and Ace contracts. |
 | `packages/db/src/private-access.ts` | Shared grant issuer, hash, URL builder, redemption and request listing. |
-| `packages/db/migrations/0101_private_access.sql`–`0103_access_acknowledgement_sender.sql` | Access requests, download grants, optional expiry and frozen acknowledgement sender. |
+| `packages/db/migrations/0101_private_access.sql` | Access requests, download grants, optional expiry and frozen acknowledgement sender. |
 | `apps/ace/src/private-access.ts`, `client/private-access.tsx` | Access-protected request list and ad hoc grant generator. |
 | `apps/site/download/index.html`, `src/download.ts` | Fragment-based grant handoff and deliberate Download button. |
 
@@ -104,8 +104,8 @@ introduce a new permission to use Rally.
 
 ## Failure modes and limits
 
-Malformed emails fail before persistence. A disallowed/missing Origin fails before
-any write. EU intake returns 404; there is no acquisition-data fallback from EU.
+Malformed emails fail before persistence. A disallowed/missing Origin fails intake before any write. Download admission
+uses the bearer token, including native no-referrer POSTs with `Origin: null`. EU intake returns 404; there is no acquisition-data fallback from EU.
 A provider error leaves the request as failed, and the page says it was saved but
 asks the visitor to retry confirmation. There is no background delivery queue or
 operator resend action yet. A request remaining pending/failed is visible in Ace.
@@ -114,7 +114,9 @@ uncertain outcome. An explicit retry reuses Resend's idempotency key and frozen
 body; beyond the provider's deduplication window an acknowledgement can repeat.
 Exactly-once external email delivery is not claimed.
 
-Invalid, expired, used single-use or revoked links return 410. Missing installer
+Invalid, expired, used single-use or revoked links return a branded 410 page.
+A missing installer returns a branded 503 page with an explicit retry form that
+retains the validated token; failures do not strand the user without navigation. Missing installer
 or missing binding
 returns 503 before consumption. A storage or database exception also prevents a
 successful download response. Once the claim commits, a response failure or
@@ -128,6 +130,19 @@ No arbitrary retention, TTL, cooldown or request cap has been selected. General
 public-intake anti-abuse controls and age-based retention remain rollout decisions;
 this first slice should not be represented as a fully hardened campaign system.
 
+### Configurable intake guards
+
+`MAX_ACCESS_REQUESTS_PER_IP_PER_HOUR` and `MAX_PRIVATE_ACCESS_REQUEST_BYTES` in
+`access-request-limits.ts` are `LIMIT UNSET` open upper bounds. The first bounds
+new address/mail attempts per edge IP; choose it from the email budget divided
+by active hours, allowing for a whole office sharing an IP. The second bounds
+JSON/form bytes before parsing; choose it from legitimate email/token envelope
+sizes against concurrent Worker memory. Both are +Infinity until the team picks
+values: rate storage and body middleware are skipped in that state. Finite
+values return 429/413 before request persistence or provider calls. This remains
+unprotected against abuse/oversized bodies while open; allowed origins and email
+deduplication are not replacements for those limits.
+
 ## Testing
 
 `apps/api/test/private-access.test.ts` uses the checked-in regional migrations and
@@ -135,7 +150,7 @@ real SQLite, replacing only Resend's external HTTP response. It covers normalize
 deduplication, persist-before-send failure/retry, regional/origin admission,
 development suppression, distinct hashed grants, default non-expiry and shared
 issuer expiry validation.
-`apps/api/test-workers/private-downloads.test.ts` applies migrations 0101–0102 to real
+`apps/api/test-workers/private-downloads.test.ts` applies migration 0101 to real
 D1 and streams real R2 objects through Hono on workerd. It covers concurrent
 redemption, repeat timed downloads, exact expiry, expiry during R2 lookup,
 missing installers, scanner GET/HEAD and revoked/invalid tokens.
@@ -144,16 +159,9 @@ through the actual Access middleware and shared issuer, including UTC normalizat
 and rejection of past, current or ambiguous expiries; site tests retain
 legacy release-renderer coverage separately from the new form template.
 
-Mutation checks replaced the request address write, removed the unused-grant
-condition, and removed Ace’s same-origin guard. The corresponding tests failed
-with 500 instead of 202, two successful concurrent downloads, and 201 instead of
-403 respectively. Expiry checks additionally skipped the final deadline predicate,
-dropped Ace's deadline forwarding, and removed shared future-date validation.
-The tests failed with an admitted expired download (200 instead of 410), a null
-deadline, and an accepted past expiry respectively. Each mutation was reverted
-and the focused suites re-run. Sender checks additionally removed the authored
-From override and replaced the stored sender with current copy; they failed on
-the incorrect sender and changed retry payload, then passed after restoration.
+Mutation checks prove the write, token admission, forced concurrent claim,
+origin, expiry, rate/body guards and sender/idempotency paths fail when their
+production behavior is broken. The focused tests pass again after restoration.
 
 The test fixture installer is text bytes, never executable software. Browser
 verification uses the actual Vite pages and explicitly synthetic Ace records; no
@@ -161,8 +169,8 @@ production requests, emails or grants are created.
 
 ## Regional impact
 
-Requests are pre-workspace Global data, disclosed in the privacy policy. Migrations
-0101–0103 create empty schema in both regional databases because they share the
+Requests are pre-workspace Global data, disclosed in the privacy policy. Migration
+0101 creates empty schema in both regional databases because they share the
 migration chain. The issuer is database-parameterized so future workspace grants
 can use the invitation's existing region. The first browser redemption endpoint
 is Global only; EU workspace grants must not be issued until regional redemption
@@ -170,40 +178,27 @@ and regional links are wired together.
 
 ## Launch copy and outreach
 
-The product owner's supplied copy is retained in the PRD's
-[launch copy](PRDs/2026-09-09_private-access/launch-copy.md). The landing page now
-leads with “Stop copy/pasting great AI work into Slack,” followed by the shared
-chats/skills/context/workflows description, capability line, Work email field,
-Get early access CTA and capacity note. Work email is a label, not a new email
-domain restriction. Content remains in `access-copy.ts`.
-
-The acknowledgement uses the supplied three-things-to-share prompt and Adam's
-signature from `access-request-content.ts`. The longer headline uses a wider
-responsive content column; the form remains the only acquisition action.
-
-Personal outreach is a later operator workflow: the form supplies email only,
-so a name/profile must be researched and confirmed rather than inferred as fact.
-The planned personal invitation is distinct from the automatic acknowledgement.
-The source also records the X/personal-post drafts, three onboarding workflow
-checks and an inspiration page with recorded demos. Those are launch work, not
-features implemented by this copy update.
+[Launch copy](PRDs/2026-09-09_private-access/launch-copy.md) holds the supplied
+wording and launch checklist. The content modules in the path table are the
+editable landing/email definitions. Personal outreach, profile research and
+onboarding demos remain separate launch work.
 
 ## Operations
 
-Apply migrations 0101–0103 before deploying the Global API and then Ace/site. The Global
+Apply migration 0101 before deploying the Global API and then Ace/site. The Global
 Worker binds the existing `avalon-desktop-releases` bucket as `DESKTOP_RELEASES`;
 no new bucket or Cloudflare admin credential is needed. Acknowledgements use the
 existing production Resend key. New acknowledgements use the supplied
 `Adam @ Rally <hi@rally.ai>` From address, frozen alongside the subject/body.
-Legacy rows with a null sender retain the configured transactional sender.
 Before launch, verify `rally.ai` in Resend and confirm Adam can receive replies
 at `hi@rally.ai`; the code does not provision DNS or mailboxes. Other transactional
 mail retains its existing sender. Landing copy is compiled
 at build time; changing it requires a site deploy. New email copy affects new
 requests, while retries retain their original sender and content.
 
-The independent deployment workflows do not yet enforce this ordering; coordinate
-the rollout before merging/deploying the first release. Invitation dispatch and
+The independent deployment workflows do not enforce this ordering. For the first
+release, dispatch the verified API revision through the existing deployment
+workflow, confirm migrations and regional health, then merge the site/Ace change. Invitation dispatch and
 closing legacy distribution remain the next implementation phases in the PRD.
 
 ### Handling an acquisition erasure request
@@ -255,96 +250,24 @@ privacy operations stay in the owning region; the current slice creates none.
 
 ## Changelog
 
-### 2026-09-09 — Document pre-account erasure operations
+### 2026-09-09 — Introduce early-access intake and reusable downloads
 
-**What changed:** Added the operator procedure for locating a verified request,
-revoking and deleting associated grants, removing frozen acknowledgement data,
-and handling provider copies. Kept the approved PRD changes in the implementation
-branch and recorded the first slice in its decision log.
+**What changed:** Added the authored request form and frozen acknowledgement,
+Global intake, Ace tracking/issuance/audit events, shared hashed grants and R2
+streaming. One founding migration defines the complete undeployed schema. Added
+operator erasure, explicit timed mode, retryable error pages and open intake guards.
 
-**Why:** Acquisition data exists before workspace deletion can cover it. Review
-identified that privacy requests need a concrete operator path in this first
-slice even though bulk sending and research remain future work.
+**Why:** Rally needs gradual team intake and reusable download issuance. Timed
+links allow interrupted downloads to restart. Review found that no-referrer native
+POSTs carry opaque origins, requiring bearer-only redemption rather than the
+intake origin gate; concurrency coverage now forces both claims past preflight.
 
-**Considered and rejected:** Inventing a numerical retention deadline or building
-a new privacy UI was unnecessary for this intake slice. Treating local deletion
-as erasure of provider copies would promise an outcome the database cannot prove.
+**Considered and rejected:** Public storage redirects bypass grant admission;
+single-use streaming cannot prove a file was saved. Changing the global sender
+would rename unrelated mail, and invented TTL/rate/size values would set product
+policy without an owner. Additional account approval was explicitly rejected.
 
-**Consequences:** Operators coordinate active issuance and reconcile provider
-calls before cleanup; future durable sending still requires suppression and
-cancellation controls. No production data was erased by this documentation change.
-
-### 2026-09-09 — Apply supplied early-access copy and Adam's sender
-
-**What changed:** Replaced placeholder landing and acknowledgement copy with the
-product owner's source. Added editable capability, field-label and capacity
-copy; widened the headline layout. New requests freeze their authored From
-address in migration 0103, and the shared email sender accepts that trusted
-per-message override. Recorded outreach and demo/onboarding launch checks.
-
-**Why:** Final launch language now exists and positions Rally around sharing AI
-work with a team. The first email should come from Adam rather than inheriting
-the generic transactional sender, and retries must preserve that same message.
-
-**Considered and rejected:** Changing the global sender would also rename
-unrelated workspace/digest mail. Recomputing the sender on retry could change
-an already submitted idempotent message. Adding a name field would change the
-requested email-only landing flow; profile research belongs to later outreach.
-
-**Consequences:** Apply 0103 before deployment; verify the supplied `rally.ai`
-sender domain and mailbox before sending. Existing acknowledgements preserve
-their old content and sender resolution. Ad copy is retained as planning material;
-no outreach, advertising, sender provisioning or production deployment occurred.
-
-### 2026-09-09 — Exclude additional account admission controls
-
-**What changed:** Recorded that private distribution must not introduce an
-approved-account list or invitation requirement for account creation or sign-in.
-
-**Why:** The product owner considers that level of control unnecessary; the
-request concerns acquisition and download distribution.
-
-**Considered and rejected:** Blocking people with forwarded installers at sign-in
-would add a product restriction beyond the desired private landing page.
-
-**Consequences:** Account admission is not a rollout prerequisite. Existing
-workspace permissions remain authoritative, and any later link retirement must
-not be interpreted as an account access policy. No authentication code changed.
-
-### 2026-09-09 — Offer timed download links through the shared issuer
-
-**What changed:** Added an optional normalized UTC deadline to grants and a
-local date/time choice in Ace. Timed links allow repeat downloads until expiry;
-existing and default grants remain single-use. Admission rechecks the deadline
-after fetching R2, and `used_at` retains the first-use timestamp.
-
-**Why:** The product owner asked for time expiry instead of a download count.
-This also permits full retries after an interrupted transfer during the chosen
-window. Both manual generation and future email producers need the same policy.
-
-**Considered and rejected:** A guessed fixed TTL would make a product decision
-without a chosen duration. Separate timed storage URLs would split authorization
-and lose revocation through the shared grant. No arbitrary download-count option
-or range-resume protocol was added.
-
-**Consequences:** Expiry denies new downloads, not an already admitted stream.
-Apply migration 0102 before this code; null deadlines deliberately preserve
-previous single-use links. Anyone holding a timed link may reuse or share it
-until expiry, consistent with the existing bearer-link decision.
-
-### 2026-09-09 — Persist intake and share one download issuer
-
-**What changed:** Added a request-only landing page, stored acknowledgements,
-Ace request review, and one hashed bearer-grant issuer used by the ad hoc UI and
-available to future email producers. Redemption streams R2 after an atomic claim.
-
-**Why:** Rally is admitting a select testing group and needs to retain interest
-without publicly offering its installer. The product owner also explicitly
-required ad hoc and automated links to come from the same mechanism.
-
-**Considered and rejected:** Separate email tokens and operator links would split
-expiry and redemption behavior. A signed R2 URL alone is reusable until expiry,
-which does not implement the requested lifetime. Recipient verification was
-explicitly declined. Removing public release access in this slice would break
-update and publication paths without their coordinated replacement; that remains
-a named rollout gate rather than a security guarantee made prematurely.
+**Consequences:** Apply migration 0101 before the API and publish the form afterward.
+Verify the supplied sender separately. Invitation dispatch, suppression, workspace
+integration and closing legacy public artifact paths remain future work. The two
+open guards below do not constrain abuse or memory until the team sets values.

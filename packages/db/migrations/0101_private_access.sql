@@ -6,6 +6,7 @@ CREATE TABLE access_requests (
   created_at TEXT NOT NULL,
   acknowledgement_subject TEXT NOT NULL,
   acknowledgement_markdown TEXT NOT NULL,
+  acknowledgement_from TEXT NOT NULL,
   acknowledgement_status TEXT NOT NULL DEFAULT 'pending'
     CHECK (acknowledgement_status IN ('pending', 'sent', 'failed', 'skipped')),
   acknowledged_at TEXT
@@ -19,6 +20,16 @@ CREATE TABLE download_grants (
   created_by TEXT NOT NULL,
   created_at TEXT NOT NULL,
   used_at TEXT,
+  expires_at TEXT,
   revoked_at TEXT
 );
 CREATE INDEX download_grants_source ON download_grants(source, source_id);
+
+-- Only populated when the operator-selected intake rate guard is finite.
+-- Old hourly buckets are discarded on the next guarded request; no raw IPs.
+CREATE TABLE access_request_rate_buckets (
+  subject_hash TEXT PRIMARY KEY,
+  bucket INTEGER NOT NULL,
+  count INTEGER NOT NULL
+);
+CREATE INDEX access_request_rate_buckets_window ON access_request_rate_buckets(bucket);

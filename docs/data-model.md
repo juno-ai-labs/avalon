@@ -73,6 +73,22 @@ SidekickDO migration 3 adds automation.loadable, atomically maintained with the 
 
 ## How it works
 
+### Early-access acquisition
+
+- `access_requests`: Global normalized email uniqueness, original request time,
+  frozen acknowledgement sender/subject/body and provider-acceptance state.
+- `download_grants`: SHA-256 token digest, manual/invitation source attribution,
+  operator, first admission, revocation and optional exact UTC expiry. Null expiry
+  means single-use without time expiry; a deadline allows repeated admission.
+- `access_request_rate_buckets`: hashed edge IP and current hourly count, written
+  only for a finite configured intake cap. Old buckets are removed on the next
+  guarded request; raw IPs are never stored.
+
+All arrive in `0101_private_access.sql`. These pre-workspace records have no
+workspace association; existing workspace deletion does not erase them. Both
+regions share schema, while this slice writes only Global. [Private access](private-access.md)
+owns their lookup, erasure, admission and delivery semantics.
+
 ### Search projection state
 
 WorkspaceDO migration 33 owns `resource_search_versions`: a retained resource revision, pending flag, and dispatch time. Resource insert/delete and search-relevant update triggers advance it in the same transaction as the canonical write. SubstreamAgent migration 42 adds `conversation_search_links` and transcript-triggered `search_projection_v1` entries in `durable_outbox`. Both migrations enqueue existing records; these are projections, never new content authority. See [text search](text-search.md).
@@ -988,32 +1004,23 @@ perform the regional audit/control write explicitly through
 
 ## Changelog
 
-### 2026-09-09 — Freeze authored acknowledgement senders
+### 2026-09-09 — Add pre-workspace access requests and download grants
 
-Migration 0103 adds `access_requests.acknowledgement_from` because the supplied
-launch email comes from Adam, and a retry must retain that sender with the
-original subject/body. A null value deliberately preserves existing requests'
-transactional sender resolution. See [private access](private-access.md).
+**What changed:** Migration `0101_private_access.sql` creates normalized requests
+with frozen acknowledgement sender/content, hashed grants with nullable expiry,
+and an IP-hash rate bucket table populated only when the intake cap is enabled.
 
-### 2026-09-09 — Add optional download expiry
+**Why:** Intake precedes workspace membership, while retrying email and download
+authorization both need durable state independent of the browser.
 
-The shared download issuer now supports timed links alongside single-use links,
-following the product owner's request to expire access by time instead of count.
-Migration 0102 preserves existing links with a null deadline; operators choose
-the expiry in Ace rather than inheriting a guessed TTL. See
-[private access](private-access.md) for admission and rollout requirements.
+**Considered and rejected:** Three incremental migrations for this never-deployed
+schema added fictitious legacy states. One founding migration defines the complete
+shape. Email uniqueness replaces duplicate request rows, and only token hashes
+persist rather than reusable bearer URLs.
 
-
-### 2026-09-09 — Private access foundation
-
-Migration 0101 adds Global pre-workspace `access_requests` and hashed
-`download_grants`. Their lifecycle and regional boundaries are in
-[private access](private-access.md). The shared migration creates empty EU schema;
-public acquisition writes only in Global.
-
-This separates request capture and one-use links from the still-public release
-channel, so acquisition can be reviewed without duplicating download authority.
-
+**Consequences:** Both regions receive schema; active intake stays Global. Timed
+grants preserve first admission while allowing repeats until expiry. The lifecycle
+and erasure procedure are in [private access](private-access.md).
 
 ### 2026-09-09 — The context-residency ledger
 

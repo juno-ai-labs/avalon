@@ -3,7 +3,7 @@ import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { listAccessRequests, issueDownloadGrant, redeemDownloadGrant, downloadGrantUrl } from '@rally/db/private-access';
 import type { Env, HonoAppEnv } from '../src/env';
-import { privateAccessRoutes } from '../src/routes/private-access';
+import { createPrivateAccessRoutes, privateAccessRoutes } from '../src/routes/private-access';
 import { errorHandler } from '../src/middleware/errors';
 import { accessAcknowledgementContent } from '../src/services/access-request-content';
 import { createTestEnv } from './helpers/cloudflare-test';
@@ -23,11 +23,45 @@ beforeEach(() => {
   sqlite = migratedSqliteDatabase();
   env = createTestEnv({ DB: sqliteD1(sqlite), AVALON_REGION: 'global', APP_ENV: 'production',
     ALLOWED_ORIGINS: 'https://rallywith.ai', RESEND_API_KEY: 'test-not-a-key', RESEND_FROM_EMAIL: 'Rally <test@example.com>' });
-  provider = vi.spyOn(globalThis, 'fetch').mockResolvedValue(Response.json({ id: 'test-email' }));
+  provider = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => Response.json({ id: 'test-email' }));
 });
 afterEach(() => { sqlite.close(); Object.assign(accessAcknowledgementContent, originalContent); vi.restoreAllMocks(); });
 
 describe('private access against regional migrations', () => {
+  it('enforces the configured per-IP rate before saving or emailing another address', async () => {
+    const limited = new Hono<HonoAppEnv>().route('/access', createPrivateAccessRoutes(1)).onError(errorHandler);
+    const send = (email: string) => limited.request('/access/requests', {
+      method: 'POST', headers: { origin: 'https://rallywith.ai', 'content-type': 'application/json', 'cf-connecting-ip': '192.0.2.1' },
+      body: JSON.stringify({ email }),
+    }, env);
+    expect((await send('first@example.com')).status).toBe(202);
+    const refused = await send('second@example.com');
+    expect(refused.status).toBe(429);
+    expect(await refused.json()).toMatchObject({ error: { code: 'access_request_rate_limited' } });
+    expect(provider).toHaveBeenCalledTimes(1);
+    expect(await listAccessRequests(env.DB)).toHaveLength(1);
+    expect(JSON.stringify(sqlite.prepare('SELECT * FROM access_request_rate_buckets').all())).not.toContain('192.0.2.1');
+  });
+
+  it('leaves the default rate guard inert without persisting IP buckets', async () => {
+    expect((await submit('first@example.com')).status).toBe(202);
+    expect((await submit('second@example.com')).status).toBe(202);
+    expect(provider).toHaveBeenCalledTimes(2);
+    expect(sqlite.prepare('SELECT * FROM access_request_rate_buckets').all()).toEqual([]);
+  });
+
+  it('rejects an oversized body before parsing or saving when the byte guard is configured', async () => {
+    const limited = new Hono<HonoAppEnv>().route('/access', createPrivateAccessRoutes(Number.POSITIVE_INFINITY, 16)).onError(errorHandler);
+    const response = await limited.request('/access/requests', {
+      method: 'POST', headers: { origin: 'https://rallywith.ai', 'content-type': 'application/json' },
+      body: JSON.stringify({ email: 'person@example.com' }),
+    }, env);
+    expect(response.status).toBe(413);
+    expect(await response.json()).toMatchObject({ error: { code: 'access_body_too_large' } });
+    expect(await listAccessRequests(env.DB)).toEqual([]);
+    expect(provider).not.toHaveBeenCalled();
+  });
+
   it('normalizes and persists a request, acknowledges it once, and lists it for Ace', async () => {
     expect((await submit('  Person@Example.com ')).status).toBe(202);
     expect((await submit('person@example.com')).status).toBe(202);
@@ -56,17 +90,9 @@ describe('private access against regional migrations', () => {
     expect((await submit('retry@example.com')).status).toBe(202);
     expect(provider.mock.calls[1]?.[1]?.body).toEqual(provider.mock.calls[0]?.[1]?.body);
     expect(provider.mock.calls[1]?.[1]?.headers).toEqual(provider.mock.calls[0]?.[1]?.headers);
+    const row = sqlite.prepare('SELECT id FROM access_requests WHERE email = ?').get('retry@example.com') as { id: string };
+    expect(new Headers(provider.mock.calls[0]?.[1]?.headers).get('idempotency-key')).toBe(`rally-access-request/${row.id}`);
     expect(await listAccessRequests(env.DB)).toMatchObject([{ acknowledgementStatus: 'sent' }]);
-  });
-
-  it('keeps legacy acknowledgements on the configured transactional sender', async () => {
-    sqlite.prepare(`INSERT INTO access_requests
-      (id, email, created_at, acknowledgement_subject, acknowledgement_markdown)
-      VALUES (?, ?, ?, ?, ?)`).run(crypto.randomUUID(), 'legacy@example.com', new Date().toISOString(), 'Original subject', 'Original body');
-    expect((await submit('legacy@example.com')).status).toBe(202);
-    expect(JSON.parse(String(provider.mock.calls[0]?.[1]?.body))).toMatchObject({
-      from: 'Rally <test@example.com>', subject: 'Original subject', text: 'Original body',
-    });
   });
 
   it('rejects invalid addresses and disallowed origins without storing or emailing', async () => {

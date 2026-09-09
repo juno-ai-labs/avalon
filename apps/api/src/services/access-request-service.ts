@@ -7,7 +7,7 @@ interface RequestRow {
   id: string;
   acknowledgement_subject: string;
   acknowledgement_markdown: string;
-  acknowledgement_from: string | null;
+  acknowledgement_from: string;
   acknowledgement_status: 'pending' | 'sent' | 'failed' | 'skipped';
 }
 
@@ -27,7 +27,7 @@ export async function requestAccess(env: Env, email: string): Promise<void> {
     const status = await sendResendEmail(env, {
       recipientEmail: email,
       subject: row.acknowledgement_subject,
-      ...(row.acknowledgement_from ? { from: row.acknowledgement_from } : {}),
+      from: row.acknowledgement_from,
       html: `<div style="background:#111210;color:#ecebe5;padding:32px;font-family:Arial,sans-serif">${markdownToEmailHtml(row.acknowledgement_markdown)}</div>`,
       text: markdownToEmailText(row.acknowledgement_markdown),
       idempotencyKey: `rally-access-request/${row.id}`,

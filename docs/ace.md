@@ -244,7 +244,9 @@ active Queue dead letters. Flagship owns flag configuration, evaluation, and
 its changelog.
 Cloudflare Queues owns queue configuration, backlog metrics, message retention,
 and peek semantics. Regional D1 owns identity, membership, and workspace lookup
-data; Ace reads it directly and writes none of it. Regional API Workers own
+data; Ace reads that identity/membership data without writing it. The Access
+page separately issues `download_grants` in Global D1, through its existing
+operator authentication and same-origin write boundary. Regional API Workers own
 their Durable Object namespaces and the socket protocol.
 
 Ace does not manage the Control Tower cadence or targeted model-rollout
@@ -442,27 +444,20 @@ When a save succeeds but clients do not change, inspect in order:
 
 ## Changelog
 
-### 2026-09-09 — Add optional download expiry
+### 2026-09-09 — Add access intake review and download issuance
 
-The shared download issuer now supports timed links alongside single-use links,
-following the product owner's request to expire access by time instead of count.
-Migration 0102 preserves existing links with a null deadline; operators choose
-the expiry in Ace rather than inheriting a guessed TTL. See
-[private access](private-access.md) for admission and rollout requirements.
+**What changed:** Added Access request review and manual single-use/timed grant
+issuance through the shared issuer, with operator audit events.
 
+**Why:** Operators need to track early-access interest and supply downloads
+without coupling the UI to a future invitation sender.
 
-### 2026-09-09 — Private access foundation
+**Considered and rejected:** A separate Ace-only token generator would duplicate
+download authority. New workspace/EU write privileges are outside this slice.
 
-The **Access** page lists Global pre-workspace email requests and their
-acknowledgement state. It also generates ad hoc single-use downloads, optionally
-associated with a request, through the shared database issuer. Ace now writes
-`download_grants` in Global D1; it still does not modify workspace identity or
-membership. It sends no invitation email yet. [Private access](private-access.md)
-owns that lifecycle and the remaining distribution work.
-
-This separates request capture and one-use links from the still-public release
-channel, so acquisition can be reviewed without duplicating download authority.
-
+**Consequences:** Ace writes Global `download_grants` only; identity and membership
+remain read-only. Generation sends no mail. [Private access](private-access.md)
+owns the grant lifecycle and operator erasure/revocation procedure.
 
 ### 2026-09-09 — New demo names its cast
 
