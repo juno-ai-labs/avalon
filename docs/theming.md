@@ -116,6 +116,13 @@ serves only generated IDs and enforces the cache's size and integrity checks.
 
 ## Changelog
 
+### 2026-09-09 — Media overlay ink stays light
+
+Attachment gallery arrows, folded-image counts, and thumbnail placeholders use
+`sys.color.text.on-media`, white in both appearances because their scrims stay
+dark. The inverse-surface text token became dark in dark mode and made these
+controls illegible. Gallery captions instead follow ordinary surface text.
+
 ### 2026-09-09 — A fill's ink is absolute, and the glyph follows it
 
 **What changed:** `sys.color.palette-ink.light` and `sys.color.palette-ink.dark`

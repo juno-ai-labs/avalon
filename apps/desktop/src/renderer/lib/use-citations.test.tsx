@@ -34,6 +34,23 @@ beforeEach(() => {
 });
 
 describe('useCitations', () => {
+  it('builds a selected gallery only from resources carried by the current work stream', async () => {
+    const first = { ...DECK, id: 'first', title: 'First image', mimeType: 'image/png', contentAvailable: true };
+    const second = { ...first, id: 'second', title: 'Second image' };
+    const onOpenPreview = vi.fn<(preview: AttachmentPreview) => void>();
+    const loadResourceContent = vi.fn(async () => new Blob(['image']));
+    const { result } = renderHook(() => useCitations({ resources: [first, second], onOpenPreview, loadResourceContent }));
+    act(() => result.current.openPreview('second', document.body, ['first', 'missing', 'second']));
+    const preview = onOpenPreview.mock.calls[0]![0];
+    expect(preview.galleryIndex).toBe(1);
+    expect(preview.gallery?.map((member) => member.name)).toEqual(['First image', 'Second image']);
+    const signal = new AbortController().signal;
+    await preview.gallery![1]!.loadContent!(signal);
+    expect(loadResourceContent).toHaveBeenCalledWith('second', signal);
+    await expect(result.current.loadContent!('missing')).rejects.toThrow('no preview');
+    expect(loadResourceContent).toHaveBeenCalledTimes(1);
+  });
+
   it('resolves a resource the loaded work stream carries', () => {
     const { result } = renderHook(() => useCitations({ resources: [DECK] }));
 

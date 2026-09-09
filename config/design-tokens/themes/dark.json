@@ -48,6 +48,7 @@
     "sys.color.surface.elevated": "#2f2f2f",
     "sys.color.surface.elevated-hover": "#3d3d3d",
     "sys.color.surface.inverse-hover": "#eeeeee",
+    "sys.color.text.on-media": "#ffffff",
     "sys.color.text.on-inverse": "#141414",
     "sys.color.border.highlight": "rgba(252, 252, 252, 0.05)",
     "sys.color.brand.base": "#ccff00",

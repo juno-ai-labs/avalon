@@ -77,6 +77,7 @@ import {
 } from './markdown-collapse';
 import { MarkdownMermaid } from './markdown-mermaid';
 import {
+  CitationEmbedRow,
   CitationFootnoteItem,
   CitationFootnoteSection,
   CitationImage,
@@ -848,6 +849,7 @@ export function splitStreamingMarkdown(source: string): { settled: string[]; tai
   let segmentStart = 0;
   let offset = 0;
   let previousBlank = false;
+  let previousEmbed = false;
   /**
    * The marker character of the top-level list the current segment run is in
    * (`-`, `*`, `+`, `.`, `)`), or null outside one. Blank lines keep it (a
@@ -866,6 +868,7 @@ export function splitStreamingMarkdown(source: string): { settled: string[]; tai
     const line = lines[index]!;
     const blank = BLANK_LINE.test(line);
     const kind = kinds[index]!;
+    const embed = /^ {0,3}(?:!\[[^\]\n]*\]\(resource:[^\n)]+\)[ \t]*)+$/u.test(line);
     // Only the fence kinds matter here: a fenced block is a boundary this
     // function must not cut inside, while an indented one is ordinary
     // continuation that `CONTINUES_ACROSS_BLANK` already refuses to cut before.
@@ -883,13 +886,14 @@ export function splitStreamingMarkdown(source: string): { settled: string[]; tai
         )) cut();
         listMarker = marker;
       } else if (!blank) {
-        if (previousBlank && offset > segmentStart && !CONTINUES_ACROSS_BLANK.test(line)) {
+        if (previousBlank && offset > segmentStart && !CONTINUES_ACROSS_BLANK.test(line) && !(embed && previousEmbed)) {
           cut();
           listMarker = null;
         }
       }
     }
     // A blank line inside a fence is code, not a paragraph seam.
+    if (!blank) previousEmbed = embed && !fenced;
     previousBlank = blank && !fenced;
     offset += line.length + 1;
   }
@@ -1079,6 +1083,12 @@ export function MarkdownBody({
           return <ConnectorEmbedCard connectorType={connectorType} label={alt} />;
         }
         return <CitationImage alt={alt} image={{ ...props, alt, src }} src={src} />;
+      },
+      div: ({ children: divChildren, node, ...props }) => {
+        if (!glance && node?.properties?.className instanceof Array && node.properties.className.includes('citation-card-row')) {
+          return <CitationEmbedRow node={node}>{divChildren}</CitationEmbedRow>;
+        }
+        return <div {...props}>{divChildren}</div>;
       },
       li: ({ children: itemChildren, node, ...props }) => {
         void node;
