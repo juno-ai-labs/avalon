@@ -86,6 +86,7 @@ import { useRetainedWorkstreamSocket, useWorkstreamSocketOpenContext } from '../
 import { useWorkspaceSocket } from '../lib/workspace-socket';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
 import { evictCachedWorkstream, patchCachedWorkstream, workstreamDetailQueryKey } from '../lib/workstreams-cache';
+import { patchCachedWorkstreamViewerState } from '../lib/workstream-state-store';
 import type { ElicitationData, HarnessRunMetadata, HarnessStatus, Message, Participant, ResourceVersion, WorkspaceMember, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import { AgentCompactionIndicator, AgentWorkTiming, type AgentWorkTimingProps } from '../components/agent-work-timing';
 import { InspectorRail } from '../components/inspector-rail';
@@ -1317,7 +1318,9 @@ export function ConversationSurface({
   const renameWorkstream = useMutation({
     mutationFn: (title: string) => api!.renameWorkstream(id, title),
     onSuccess: (updated) => {
-      patchCachedWorkstream(queryClient, updated.id, { title: updated.title, titleStatus: updated.titleStatus, updatedAt: updated.updatedAt }, substreamId);
+      // The rename addresses the parent, and the header renders the parent's
+      // entry over a child's, so the parent's entry is the one to move.
+      patchCachedWorkstream(queryClient, updated.id, { title: updated.title, titleStatus: updated.titleStatus, updatedAt: updated.updatedAt });
     },
   });
 
@@ -1762,13 +1765,15 @@ export function ConversationSurface({
       currentSurfaceEntrypoint(),
     ).then((updated) => {
       if (activeConversationAddressRef.current !== conversationAddress) return;
-      patchCachedWorkstream(queryClient, id, updated, substreamId);
+      // The entry this loop reads back is the addressed one, so it is the one
+      // that has to carry the new read waterline or the next scroll re-sends.
+      patchCachedWorkstreamViewerState(queryClient, id, updated, substreamId);
     }).catch(() => {
       requestSocketSnapshot();
     }).finally(() => {
       if (readAckInFlightRef.current === ackKey) readAckInFlightRef.current = null;
     });
-  }, [api, id, queryClient, requestSocketSnapshot, transcript, transcriptVirtualizer]);
+  }, [api, conversationAddress, detailQueryKey, id, queryClient, requestSocketSnapshot, substreamId, transcript, transcriptVirtualizer]);
 
   const scheduleReadAcknowledgement = useVisibleReadAcknowledgement(acknowledgeVisibleMessages);
 

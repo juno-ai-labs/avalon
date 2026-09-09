@@ -698,25 +698,29 @@ what that leaves exposed.
 
 ### 2026-09-09 — One write for unversioned facts on both caches
 
-**What changed:** Eight places wrote a rename, scope change, unread mark, read
-acknowledgement, or appearance receipt to the sidebar list and the open detail
-entry by hand, and three of them disagreed about which fields the detail should
-take. They now call `patchCachedWorkstream` in `workstreams-cache.ts`, which
-takes the fields and the open substream and writes both entries. The detail
+**What changed:** Seven places wrote a rename, scope change, unread mark, or
+read acknowledgement to the sidebar list and the open detail entry by hand, and
+three of them disagreed about which fields the detail should take. They now
+call `patchCachedWorkstream` in `workstreams-cache.ts`, which takes the fields
+and the detail entry to address and writes the list row with it; the new
+appearance receipt joined them rather than becoming an eighth copy. The detail
 query key moved there from the feed hook so the cache module does not import
 the hook that imports it.
 
-**Why:** The appearance receipt needed exactly this write, and adding a ninth
-copy would have left the header and the sidebar one forgotten `setQueryData`
-away from disagreeing again. REST rename and scope responses were narrowed to
-the fields they change rather than spreading the whole summary over the list
-row: the rest of that summary is viewer and attention state the waterline
-ledger in `workstream-state-store.ts` exists to order, and a plain spread
-bypassed it. The unread mark and the read acknowledgement still spread their
-whole response, as they did before: that response is the viewer state itself,
-and narrowing it is a separate decision this change did not make. The harness status and attention advances were deliberately left
-on their own writers, because they are substream-owned and a child's value must
-not reach the parent's list row.
+**Why:** Adding one more hand-rolled copy would have left the header and the
+sidebar one forgotten `setQueryData` away from disagreeing again. Every REST
+response was narrowed to the fields that are its own news. A rename or scope
+change carries the title, scope, and `updatedAt` it moved. A read
+acknowledgement or unread mark carries only its viewer fields, through
+`patchCachedWorkstreamViewerState` in `workstream-state-store.ts`, which also
+rederives the unread pair; spreading the whole summary had written its common
+fields (appearance, harness status, scope) through an unversioned path, where
+a response computed before a later change and delivered after it puts the
+older value back. A rename issued while a private child is open now writes the
+parent's entry, which is the one the header renders, rather than the child's.
+The harness status and attention advances were deliberately left on their own
+writers, because they are substream-owned and a child's value must not reach
+the parent's list row.
 
 ### 2026-09-08 — Document personal access frames and cursor recovery
 

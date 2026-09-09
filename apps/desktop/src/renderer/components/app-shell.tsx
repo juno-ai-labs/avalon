@@ -37,6 +37,7 @@ import {
   patchCachedWorkstream,
   setCachedWorkstreams,
 } from '../lib/workstreams-cache';
+import { patchCachedWorkstreamViewerState } from '../lib/workstream-state-store';
 import type { AutomationSummary, NoteDetail, NoteSummary, Workspace, WorkstreamSummary } from '../lib/types';
 import { Sidebar } from './sidebar';
 import { WorkspaceAccountMenu } from './workspace-account-menu';
@@ -722,7 +723,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         onMarkWorkstreamUnread={async (workstream) => {
           if (!api) return;
           const updated = await api.markWorkstreamUnread(workstream.id);
-          patchCachedWorkstream(queryClient, updated.id, updated);
+          patchCachedWorkstreamViewerState(queryClient, updated.id, updated);
           if (location.pathname === `/workstreams/${updated.id}`) void navigate('/workstreams/new');
         }}
         onPinWorkstream={async (workstream, pinned) => {
