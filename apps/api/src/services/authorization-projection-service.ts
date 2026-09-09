@@ -26,7 +26,7 @@ export async function projectAuthorization(env: Env, job: AuthorizationProjectio
     }
     if (job.substreamId === undefined || !substreamIds.includes(job.substreamId)) {
       await workspace.registerAuthorizationChildren({ workspaceId: job.workspaceId, parentId: job.parentId,
-        substreamIds, refreshExisting: job.substreamId === undefined ? refreshExisting : false });
+        substreamIds, ...(job.mutationAt === undefined ? {} : { mutationAt: job.mutationAt }), refreshExisting: job.substreamId === undefined ? refreshExisting : false });
       return;
     }
   }
@@ -34,5 +34,6 @@ export async function projectAuthorization(env: Env, job: AuthorizationProjectio
   if (!identity) throw new Error('authorization_projection_conversation_not_ready');
   const facts = await createResourceObjectPort(env, job.workspaceId, job.parentId, undefined, job.substreamId).readAuthorizationFacts();
   await workspace.applyAuthorizationLocations({ workspaceId: job.workspaceId, parentId: job.parentId, substreamId: job.substreamId,
+    ...(job.mutationAt === undefined ? {} : { mutationAt: job.mutationAt }),
     parentKind: identity.parent_kind === 'automation' ? 'automation' : 'workstream', ...facts });
 }

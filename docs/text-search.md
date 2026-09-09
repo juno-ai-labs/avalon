@@ -80,7 +80,7 @@ recency). This deterministic position is never an authorization grant.
 Continuation exposes matching index progress even if the page has no admitted
 results; it does not guarantee a readable match on a subsequent page. Each page obtains
 readable conversation scopes from WorkspaceDO and filters retrieval by those
-scopes. Each source admits its candidate batch once through `checkMany`, then
+scopes. Each source admits its candidate batch through the eventually consistent search authorization projection (`checkMany`), then
 loads canonical content without repeating authorization after asynchronous reads.
 Conversation messages and links are grouped by parent/substream. Resources load
 metadata and revisions in one WorkspaceDO RPC, then load bodies concurrently.
@@ -89,8 +89,7 @@ Canonical revision and content-hash checks still reject stale index candidates.
 Older clients omit `pageSize` and retain the array response shape with up to 50
 results from one candidate batch. They receive no pagination or timing fields and
 do not trigger hidden refill scans. The 250ms typing debounce, REST, and final
-workspace membership check remain unchanged. No search-result cache or permission
-cache is introduced.
+workspace membership check remain unchanged. Search decisions are cached in regional KV/SQLite and updated by DO mutation pushes through the activity queue. Reads do not trigger refresh, and decisions do not expire by age. No search-result cache is introduced.
 
 The user-facing targets are p50 <= 500ms and p90 <= 1000ms from the last
 keystroke to painted results, including debounce. An empty page with continuation
@@ -478,6 +477,16 @@ through Queue failure rather than silent truncation. Document-size and capture
 budgets require team policy; no arbitrary new caps are introduced here.
 
 ## Changelog
+
+### 2026-09-08 — Remove canonical authorization from cache-hit hydration
+
+Trust the search authorization projection across requests to avoid serial owner
+round trips seen in production. Admitted conversation text uses a storage-only
+RPC, without another product authorization or viewer seating. Permissions are
+eventually consistent; missing decisions still resolve through canonical owners,
+and source mutations push replacement decisions while cached decisions remain usable. Revision/hash checks
+continue to reject stale indexed content.
+
 
 ### 2026-09-08 — Index resource content changes, not bookkeeping
 
