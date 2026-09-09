@@ -24,8 +24,10 @@ import {
   withNegotiatedSubprotocol,
 } from "./socket-service";
 
-const MAX_CLIENT_FRAME_CHARACTERS = 256_000;
-const MAX_CLIENT_FRAMES_PER_SECOND = 30;
+import {
+  TRANSCRIPTION_MAX_FRAME_CHARACTERS as MAX_CLIENT_FRAME_CHARACTERS,
+  TRANSCRIPTION_MAX_FRAMES_PER_SECOND as MAX_CLIENT_FRAMES_PER_SECOND,
+} from "@rally/contracts/realtime-transcription";
 const SESSION_LEASE_REFRESH_MS = 60 * 1_000;
 const RELEASE_RETRY_DELAYS_MS = [0, 50, 200] as const;
 

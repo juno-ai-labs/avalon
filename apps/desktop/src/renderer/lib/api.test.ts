@@ -194,6 +194,19 @@ afterEach(() => {
 });
 
 describe('Rally API wire adapter', () => {
+  it('cancels transcription ticket acquisition even when the transport does not settle', async () => {
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(() => new Promise<Response>(() => {}));
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new RallyApi('https://api.rally.test', session);
+    const controller = new AbortController();
+    const ticket = api.getTranscriptionSocketTicket(controller.signal);
+    const rejection = expect(ticket).rejects.toMatchObject({ name: 'AbortError' });
+    expect(fetchMock.mock.calls[0]?.[1]?.signal).toBe(controller.signal);
+    controller.abort();
+    await rejection;
+  });
+
+
   it('does not erase a directory visit when a child response is merged', () => {
     const child = mapWorkstreamSummary(WorkstreamSchema.parse(detail));
     expect(child).not.toHaveProperty('lastAccessedAt');
