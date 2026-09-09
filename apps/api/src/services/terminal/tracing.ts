@@ -45,7 +45,8 @@ export type TerminalUtilityOperation =
   | "repository.publish.push"
   | "lifecycle.final_diff"
   | "lifecycle.backup"
-  | "lifecycle.backup_cleanup";
+  | "lifecycle.backup_cleanup"
+  | "instructions.probe";
 
 export interface TerminalProviderRequestMeasurement {
   operation: TerminalProviderRequestOperation;
