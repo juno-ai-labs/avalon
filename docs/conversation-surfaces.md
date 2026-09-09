@@ -178,6 +178,34 @@ the corner.
 Assistant H2 sections use the shared inline Markdown renderer. There is no
 heading-generated card deck or paged document reader.
 
+## Dictation capture and connection startup
+
+`lib/use-realtime-dictation.ts` owns microphone capture for the shared composer
+and also serves meeting recording. It requests audio permission and a socket
+ticket concurrently, then starts the 24 kHz PCM16 worklet as soon as the requested
+inputs are available. `listening` means local capture is running; it does not
+wait for the ticket or the provider's session acknowledgement. OS permission,
+device startup, and worklet loading remain prerequisites for capture.
+
+Each attempt retains worklet frames in memory until the provider acknowledges
+its session configuration. It then combines adjacent frames into messages that fit the shared 256,000-character
+proxy limit, sending a batch every 100 ms until caught up. A batch holds roughly
+four seconds of PCM, allowing about 40 times real-time transport while remaining
+below the proxy's existing 30-message-per-second admission limit. Live frames and
+commits follow the backlog in order. Samples and
+sample rate stay unchanged. Azure's [audio-buffer API](https://learn.microsoft.com/en-us/azure/foundry-classic/openai/realtime-audio-reference-ga#input_audio_bufferappend)
+accepts buffered bytes; Rally disables server VAD and commits explicitly.
+Faster transport therefore preserves the audio signal, though equivalent model
+accuracy is an inference from that contract, not a measured provider guarantee.
+
+Stop during local capture drains the final partial frame and waits for connection
+readiness before committing, so even a recording shorter than startup survives.
+Stop before capture starts cancels setup. Failure or unmount clears the attempt's
+buffer and stops its inputs; late setup results cannot revive an older attempt.
+The existing connection timeout and socket backpressure failure remain in force.
+The frame-size and rate limits live in `@rally/contracts/realtime-transcription`,
+shared with the proxy. Audio is not persisted to disk.
+
 ## Testing
 
 Shared components have fixture-level component tests for settled, streaming,
@@ -187,6 +215,21 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-09 — Capture dictation while the service connects
+
+**What changed:** Local capture and its recording indicator precede service
+readiness. Per-attempt PCM buffering drains in order on acknowledgement, and
+Stop preserves recordings made entirely during connection setup.
+
+**Why:** Waiting for the network before starting the worklet lost the first
+words spoken after clicking the microphone. Replaying the backlog at real time
+would retain that delay throughout the recording, so transport sends the original
+frames in larger transport batches while preserving their samples and sample rate.
+
+**Consequences:** Local listening and remote readiness are separate facts.
+Commits must await the drain, and cancellation must release both buffered audio
+and late-arriving inputs. OS audio startup still bounds the first captured sample.
 
 ### 2026-09-09 — Shared media tiles with host-specific layouts
 
