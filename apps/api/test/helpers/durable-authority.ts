@@ -1,5 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { vi } from "vitest";
+import type { WorkstreamAppearance } from "@rally/contracts";
 
 import { applyWorkstreamObjectSchema } from "../../src/durable-objects/workstream-object-schema";
 import {
@@ -286,6 +287,8 @@ export interface WorkstreamObjectRootFields {
   emailAddress?: string | null;
   emailRouteStatus?: string;
   modelOverride?: string | null;
+  /** The shared icon and colour, stated as the object stores it. */
+  appearance?: WorkstreamAppearance | null;
   archivedAt?: number | null;
   nextSequenceNumber?: number;
   nextAttentionOrdinal?: number;
@@ -366,6 +369,7 @@ const ROOT_FIELD_COLUMNS: ReadonlyArray<[keyof WorkstreamObjectRootFields, strin
   ["emailAddress", "email_address"],
   ["emailRouteStatus", "email_route_status"],
   ["modelOverride", "model_override"],
+  ["appearance", "appearance_json"],
   ["archivedAt", "archived_at"],
   ["nextSequenceNumber", "next_sequence_number"],
   ["nextAttentionOrdinal", "next_attention_ordinal"],
@@ -391,7 +395,10 @@ export function applyWorkstreamObjectRootFields(
     const value = fields[field];
     if (value === undefined) continue;
     assignments.push(`${column} = ?`);
-    values.push(value);
+    // The one field the object stores as JSON. Serializing here keeps a fixture
+    // stating the appearance rather than the encoding, and keeps the column's
+    // `json_valid` check something the fixture cannot get wrong.
+    values.push(typeof value === "object" && value !== null ? JSON.stringify(value) : value);
   }
   if (assignments.length === 0) return;
   database.prepare(
