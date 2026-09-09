@@ -1271,6 +1271,14 @@ export function ConversationSurface({
     }
   }, [jumpToLatest, loadNewerMessages, loadOlderMessages, socketState]);
 
+  const cacheAddedParticipant = (target: string, member: WorkspaceMember): void => {
+    queryClient.setQueryData<WorkstreamDetail>(workstreamDetailQueryKey(id, target), (current) => current ? {
+      ...current,
+      participants: current.participants.some((person) => person.id === member.id)
+        ? current.participants : [...current.participants, member],
+    } : current);
+  };
+
   const addParticipant = useMutation({
     mutationFn: async ({ member, target }: { member: WorkspaceMember; target: string }): Promise<WorkstreamDetail | undefined> => {
       if (target === '0') return api!.addParticipant(id, member.id);
@@ -1279,11 +1287,7 @@ export function ConversationSurface({
     },
     onSuccess: (updated, { target, member }) => {
       if (updated) queryClient.setQueryData(workstreamDetailQueryKey(id, target), updated);
-      else queryClient.setQueryData<WorkstreamDetail>(workstreamDetailQueryKey(id, target), (current) => current ? {
-        ...current,
-        participants: current.participants.some((person) => person.id === member.id)
-          ? current.participants : [...current.participants, member],
-      } : current);
+      else cacheAddedParticipant(target, member);
       setParticipantDialogOpen(false);
     },
   });
@@ -1300,7 +1304,7 @@ export function ConversationSurface({
         participants: current.participants.filter((participant) => participant.id !== member.id),
       } : current);
       void queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
-      if (member.id === session?.user.id && previous?.scope === 'personal') {
+      if (member.id === session?.user.id && (target !== '0' || previous?.scope === 'personal')) {
         setParticipantDialogOpen(false);
         if (target !== '0') {
           queryClient.removeQueries({ queryKey: targetKey, exact: true });
@@ -1626,11 +1630,21 @@ export function ConversationSurface({
       });
     });
     try {
+      // Private-child membership belongs to the parent. The generic message
+      // confirmation only updates the conversation-local participant roster,
+      // which cannot grant discovery or socket admission to a private child.
+      if (parentKind === 'workstream' && substreamId !== '0') {
+        for (const userId of confirmedParticipantUserIds) {
+          await api.addSubstreamParticipant(id, substreamId, userId);
+          const member = members.data?.find((person) => person.id === userId);
+          if (member) cacheAddedParticipant(substreamId, member);
+        }
+      }
       const created = await socketConnection.createMessage({
         text,
         clientId,
         mentions,
-        confirmedParticipantUserIds,
+        confirmedParticipantUserIds: parentKind === 'workstream' && substreamId !== '0' ? [] : confirmedParticipantUserIds,
         attachmentIds: readyAttachments.flatMap((attachment) => attachment.resource ? [attachment.resource.id] : []),
         ...(deliveryMode ? { runMode: deliveryMode } : {}),
       });
