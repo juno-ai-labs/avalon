@@ -10,6 +10,16 @@ the primary model and ordered fallback array for every model-using agent role.
 New internal tools extend the same Hono application and Ace-owned component
 library instead of creating another operator site or visual language.
 
+The **Access** page lists Global pre-workspace email requests and their
+acknowledgement state. It also generates ad hoc single-use or timed downloads, optionally
+associated with a request, through the shared database issuer. Ace now writes
+`download_grants` in Global D1; it still does not modify workspace identity or
+membership. It sends no invitation email yet. [Private access](private-access.md)
+owns that lifecycle and the remaining distribution work.
+
+Timed links use an operator-chosen local date/time and permit repeat downloads
+until that deadline. Both generation actions share the current lifetime choice.
+
 ## Where the code lives
 
 | Path | Responsibility |
@@ -431,6 +441,28 @@ When a save succeeds but clients do not change, inspect in order:
    response even if a live notification was lost.
 
 ## Changelog
+
+### 2026-09-09 — Add optional download expiry
+
+The shared download issuer now supports timed links alongside single-use links,
+following the product owner's request to expire access by time instead of count.
+Migration 0102 preserves existing links with a null deadline; operators choose
+the expiry in Ace rather than inheriting a guessed TTL. See
+[private access](private-access.md) for admission and rollout requirements.
+
+
+### 2026-09-09 — Private access foundation
+
+The **Access** page lists Global pre-workspace email requests and their
+acknowledgement state. It also generates ad hoc single-use downloads, optionally
+associated with a request, through the shared database issuer. Ace now writes
+`download_grants` in Global D1; it still does not modify workspace identity or
+membership. It sends no invitation email yet. [Private access](private-access.md)
+owns that lifecycle and the remaining distribution work.
+
+This separates request capture and one-use links from the still-public release
+channel, so acquisition can be reviewed without duplicating download authority.
+
 
 ### 2026-09-09 — New demo names its cast
 

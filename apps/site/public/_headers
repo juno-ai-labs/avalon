@@ -1,5 +1,5 @@
 /*
-  Content-Security-Policy: default-src 'self'; style-src 'self'; img-src 'self' data:; script-src 'self'; connect-src https://api.rallywith.ai https://api.with-avalon.com; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'; upgrade-insecure-requests
+  Content-Security-Policy: default-src 'self'; style-src 'self'; img-src 'self' data:; script-src 'self'; connect-src https://api.rallywith.ai https://api.with-avalon.com; object-src 'none'; base-uri 'self'; form-action https://api.rallywith.ai/access/downloads/redeem; frame-ancestors 'none'; upgrade-insecure-requests
   Permissions-Policy: accelerometer=(), camera=(), geolocation=(), gyroscope=(), microphone=(), payment=(), usb=()
   Referrer-Policy: strict-origin-when-cross-origin
   X-Content-Type-Options: nosniff
@@ -46,3 +46,7 @@
 
 /app/workstreams/*
   Cache-Control: no-store
+
+/download/*
+  Cache-Control: no-store
+  Referrer-Policy: no-referrer
