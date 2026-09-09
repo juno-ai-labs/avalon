@@ -242,6 +242,33 @@ the file contents it reads today.
 
 ## Decision log
 
+### 2026-09-09 — The commit moves what the prepare rendered, a ledger failure turns the gate off, and a revert reinstates
+
+**Decided:** The prepare step records, per compaction event, exactly the blocks
+it rendered into the compacted system message, and the commit moves those and
+no others; an event never prepared moves nothing. A superseded prompt block is
+not counted as resident, so a source that reverts to that content is reported
+again and reinstated in place (current, fresh lifetime, delivered once more).
+After the first ledger failure in a run the Terminal probe runs in report mode
+only; a mutation it had already stopped is refused once with
+`instructions_unavailable`, whose message says the retry proceeds.
+
+**Why:** Review of the implementing pull request found three gaps in the
+agreed design. Decision 3's "prepare, then commit inside the transaction"
+recomputed the transitions at commit from the live ledger, so a block recorded
+in between (the background bootstrap of decision 8) was moved into the prompt
+without being in the compacted system message. The `superseded` flag of the
+2026-09-09 review round was sticky: an edit followed by a revert retired the
+current content and promoted the stale one. And `instructions_pending` treated
+the probe's exit 52 as authoritative even when nothing was recorded, so one
+ledger failure refused every later mutation for a message that never came.
+
+**Changes:** Decision 3 gains the prepared-set rule; the residency table gains
+the reinstatement row; the failure-and-self-healing rule under **Agent
+behavior** gains the degraded mode and the second refusal code. The system
+message's standing sentence is unchanged: the new refusal's own text carries the
+instruction to retry.
+
 ### 2026-09-09 — The section bound measures the emitted section, and the probe trailer is keyed by a nonce
 
 **Decided:** `MAX_RESIDENT_CONTEXT_SECTION_BYTES` bounds the whole section a

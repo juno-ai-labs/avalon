@@ -1281,12 +1281,15 @@ mid-run; a compaction is the one moment the prefix can change for free, so the
 port is shaped around that moment. The harness learns one seam and no concept,
 the same division the skill and plugin catalogs use.
 
-**What a future change has to respect:** `prepareCompaction` must stay pure on
-the host side and the transitions it proposes must be applied only inside the
-checkpoint commit, or a crash between the two leaves a projection that carries
-blocks the ledger says are still in the transcript. Positions are projected
-indices with the system message at zero; a host must answer against the head
-the harness named or refuse.
+**What a future change has to respect:** `prepareCompaction` must move no block
+on the host side (it may record what it proposed) and the transitions it
+proposes must be applied only inside the checkpoint commit, and only to the
+blocks it proposed, or a crash or a concurrent load between the two leaves a
+projection and a ledger that disagree. Positions are projected indices with the
+system message at zero; a host must answer against the head the harness named
+or refuse, and the harness refuses a position that is not a user message. The
+compacted system message is always `renderSystemPrompt(section)`, never a copy
+of the running system message, so the two branches cannot drift.
 
 ### 2026-09-09 — A seeded run is routed where its seam is
 
