@@ -2,10 +2,10 @@
 
 A work stream is created faster than a model can name it, so it is created with a
 placeholder and named a moment later. This document owns that gap: the
-provisional title creation writes, the two passes that replace it, the
-`title_status` column that says which of those has happened, the sixty-second
-grace that bounds how long a reader is asked to wait, and the skeleton every
-surface renders while the wait is on.
+provisional title creation writes, the two passes that replace it, the icon each
+pass chooses beside the name, the `title_status` column that says which of those
+has happened, the sixty-second grace that bounds how long a reader is asked to
+wait, and the skeleton every surface renders while the wait is on.
 
 The promise the whole design turns on is narrow and worth stating plainly: **a
 title skeleton means a name is seconds away.** Everything below exists so that
@@ -17,8 +17,10 @@ mid-call, or the event carrying the name never lands.
 | Path | Responsibility |
 | --- | --- |
 | `apps/api/src/services/workstream-naming-service.ts` | Both passes, the provisional title, the model call, the compare-and-set that advances `title_status`, and the rename event. The single source of every generated title. |
-| `packages/agent-harness/src/prompts/` | `renderWorkstreamNameMessages` — the naming agent's prompt. See [`writing-prompts.md`](writing-prompts.md). |
+| `packages/agent-harness/src/prompts/` | `renderWorkstreamNameMessages` — the naming agent's prompt, including the icon catalog rendered into it. See [`writing-prompts.md`](writing-prompts.md). |
+| `packages/contracts/src/workstream-appearance.ts` | The icon keys, one description per key, and the default. Shared with the picker; see [`workstream-appearance.md`](workstream-appearance.md). |
 | `packages/contracts/src/index.ts` | `WORKSTREAM_NAMING_GRACE_MS`, `WorkstreamNameResultSchema`, and `titleStatus` on every work-stream shape. |
+| `apps/api/src/durable-objects/workstream-identity-storage.ts` | `rename` — the one write that advances the status, sets the title, and offers the icon. |
 | `apps/api/src/services/workstream-object-creation-service.ts` | The first pass's caller on the desktop create path, and the routed environment it is given. |
 | `apps/api/src/services/slack-workspace-workstream-service.ts` | The first pass's caller for a work stream summoned from Slack. |
 | `apps/api/src/durable-objects/substream-agent.ts` | The second pass's caller, at the end of a run (`settleAgentRun`). |
@@ -127,6 +129,75 @@ provisional title, which is the person's own first line, and a title a person
 typed. So a sidebar holds both kinds, and nothing downstream may assume a title
 is short.
 
+### The icon chosen with the name
+
+Each pass asks for an icon in the same call as the name, out of the closed
+catalog in `packages/contracts/src/workstream-appearance.ts` — the same keys the
+header's picker offers, so nothing the model can choose is a mark a person could
+not have chosen themselves.
+
+**Every key in that catalog carries one or two sentences describing it**, and the
+prompt renders all of them. A key on its own tells a model nothing — it has never
+seen this catalog, and `spline`, `aperture` and `component` name drawings rather
+than subjects — so each line names what the icon depicts and then how it is
+drawn: *"A camera aperture: a ring of straight, angled blades that overlap and
+spiral inward, leaving a small opening at the centre."*
+
+**A description says what the icon draws and stops there.** None of them says
+what kind of work an icon is for, and none should. Which mark suits a work stream
+is the model's call, made with the request in front of it and the whole catalog
+to compare against; a usage note in the catalog is that call taken in advance by
+whoever last edited the file, and it narrows the icon to the subjects that person
+happened to list. The prompt says the same thing to the model in as many words,
+so it does not read the descriptions as a lookup table. A test rejects a description
+containing usage language, because this would come back one line at a time — it
+is a denylist of the phrasings that would actually be reached for ("fits",
+"suits", "represents", "good for", "for tracking"), not a semantic check, so it
+is a tripwire rather than a proof.
+
+**Naming the thing is part of describing it, and geometry alone is not enough.**
+The line for `coins` says it is two coins before it says one is face on and one
+is behind it at an angle. A version that gave only the geometry — two overlapping
+discs, ticked lines above an unticked one — left the model to work out what the
+shapes *were*, and it put `list-checks` on an invoice reconciliation. Say what a
+person would call the thing, then how it is drawn; that is a fact about the
+picture, not an opinion about its use.
+
+The only opinions the product keeps about *choosing* are in the prompt, where
+[`writing-prompts.md`](writing-prompts.md) requires them: the tie-break when two
+marks suit (the more specific one, and the catalog's own order when neither is),
+and one fallback for work none of them suits, so that case resolves deliberately
+instead of by stretching the nearest icon.
+
+**The fallback is `circle-dot`, and deliberately not `sparkles`.** Sparkles is
+the obvious generic mark and the wrong one here: it is already Rally's own glyph
+in this product — the mention icon in the composer, and the account menu — so
+using it for "no icon suits this" would badge exactly the work streams Rally
+could not characterize as the ones the agent did something to. A plain dot in a
+ring says nothing, which is what this fallback should say.
+
+Descriptions are free to be reworded; the keys are stored values and cannot
+change without a migration, which is why the two sit in the same file but are
+separate structures. A `Record` keyed by the icon type makes the set exhaustive
+by construction — adding a key without describing it does not compile.
+
+**A generated icon is written only where no icon is stored.** This is a stricter
+rule than the one on the title, and it has to be, because the fence that protects
+the title cannot protect the icon: choosing an icon from the header changes no
+title and settles nothing, so the row a second pass is still entitled to rename
+is exactly the row whose icon a person may have just picked. Refusing to overwrite
+any stored icon is what makes the two safe together. The cost is that a second
+pass improves the name without revisiting the icon the first pass chose from
+less; telling a generated icon from a chosen one would need provenance the
+`appearance_json` column does not carry.
+
+The icon is also tied to the name rather than written on its own. A pass whose
+name normalized away to nothing, or whose model could not be reached, writes no
+icon either — it is reporting that it produced nothing usable, and the one icon
+the work stream gets should not be spent by it. And an icon that comes back off
+the catalog degrades to no icon rather than failing the parse: the name is the
+half a person is watching a skeleton for.
+
 ### Advancing the title is a compare-and-set
 
 `advanceTitle` writes `title = COALESCE(<generated>, title)` and the new status
@@ -141,8 +212,27 @@ made already told everyone.
 Two paths, and both matter because they serve different readers:
 
 - **The work stream's room.** `publishWorkstreamEvent` publishes
-  `workstream_renamed` with the title and the new status, which reaches anyone
-  with that work stream open — in practice, the person who just created it.
+  `workstream_renamed` with the title, the new status, and the icon *if one was
+  written* — the object reports which, so a refused icon is never published and
+  no open client paints over the choice it was refused for. The event reaches
+  anyone with that work stream open, in practice the person who just created it.
+  The client puts the icon on the **sidebar row only, and only where that row
+  has no icon**; the header waits for the projection below. Two conditions, two
+  reasons.
+
+  *Row only*, because the cached detail behind the header is what the appearance
+  picker reads to decide its own pending preview is finished, and `settled()`
+  retires that preview as soon as the detail's icon moves off the baseline it
+  was taken against — to any value, since another person changing the icon has
+  to retire it too. An icon written there that nobody in this window picked
+  would retire somebody's in-flight choice to the generated glyph and hold the
+  header on it until the projection lands.
+
+  *Only where the row has none*, because the event carries an icon exactly when
+  the object had none at the moment it renamed, so a row that has one now holds
+  something newer — a choice whose receipt already landed. The two travel
+  different paths, the room socket and the Main command channel, so the event
+  can arrive after that receipt.
 - **The workspace directory.** The `UPDATE` names `workstreams`, so the
   work-stream object commits a `directory_common` effect beside it, which flows
   `SubstreamAgent -> WorkstreamDO -> WorkspaceDO` and is pushed to every
@@ -189,6 +279,19 @@ text under another's header.
   broken screen.
 - **Every advance is a compare-and-set on the status it started from.** Writing
   the title unconditionally silently discards a person's rename.
+- **A generated icon is written only where no icon is stored.** The status fence
+  above does not cover it — a person picking an icon settles no title — so this
+  condition is the whole of what protects their choice, and it lives in the same
+  transaction as the title write rather than in the caller.
+- **Nothing about the icon may throw inside `rename`.** Both parses there are
+  non-throwing on purpose: the title write and the status advance share that
+  transaction, so an unreadable icon or appearance would roll back the name and
+  leave the permanent skeleton this module's first invariant forbids. The icon
+  is the soft half everywhere — at the model parse, at the write, and on the
+  client.
+- **What is published is what was written.** The object returns the icon it
+  actually stored; publishing the icon the pass *asked* for would tell every open
+  client to show an icon the object had just declined to write.
 - **A surface that renders a skeleton from a cached row applies
   `useNamingSkeleton`.** Reading `titleStatus === 'naming'` directly is correct
   only for a value that just came off a fetch; anywhere else it is the
@@ -218,7 +321,15 @@ document renders this module's skeleton and defers to this one for what the
 skeleton means. It does not own how a name is delivered: the room event is
 [`workstream-durable-object.md`](workstream-durable-object.md)'s socket and the
 sidebar push is its directory projection, and which of the two carries what is
-[`choosing-sockets-or-rest.md`](choosing-sockets-or-rest.md). It does not own the
+[`choosing-sockets-or-rest.md`](choosing-sockets-or-rest.md).
+
+It owns *choosing* an icon and the rule for when that choice may be written, and
+nothing else about appearance. The catalog of keys, the descriptions beside them,
+the header picker, the colour, the id-derived default a work stream falls back
+to, and the projection that carries a stored appearance to every surface all
+belong to [`workstream-appearance.md`](workstream-appearance.md). A change to
+what icons exist is that document's; a change to how the model picks among them
+is this one's. It does not own the
 prompt's wording ([`writing-prompts.md`](writing-prompts.md)) or which model runs
 it ([`feature-flags.md`](feature-flags.md)). A title a person types is an
 ordinary work-stream update and belongs to the object's product service.
@@ -226,8 +337,27 @@ ordinary work-stream update and belongs to the object's product service.
 ## Failure modes and limits
 
 - **`OPENROUTER_API_KEY` is unset, or the model is unreachable.** No name is
-  produced. The first pass settles the provisional title as `automatic`; the
-  second leaves an `automatic` row for the next run.
+  produced, and therefore no icon. The first pass settles the provisional title
+  as `automatic`; the second leaves an `automatic` row for the next run. The work
+  stream keeps the id-derived glyph, which is what an unnamed one shows anyway.
+- **The model answers with an icon that is not in the catalog.** The name still
+  lands and the icon is dropped. The request advertises the catalog as an enum
+  under `strict: true`, so a provider that honours it cannot produce this; the
+  leniency is for the one that does not, and for a key renamed out from under a
+  request already in flight.
+- **A key the *object* does not know, or a stored appearance it cannot read.**
+  Same outcome, enforced a second time and for a harder reason: `rename` parses
+  both without throwing, because the title write and the `title_status` advance
+  are in that transaction and a throw rolls them back — which is the permanent
+  skeleton this whole module exists to prevent. The key case is a rollout, where
+  a Worker one deploy ahead sends a catalog key the resident object's enum does
+  not have; the appearance case is any value the column's `json_valid` CHECK
+  admits that the schema does not, `'null'` among them. An unreadable stored
+  appearance is left exactly as it is rather than replaced with a generated
+  icon, per [`workstream-appearance.md`](workstream-appearance.md).
+- **A person picked an icon first.** The write is refused, nothing about the icon
+  is published, and the name lands as usual. This is also the outcome when they
+  pick one between the two passes.
 - **The model answers with something unusable** — a quoted phrase, a Markdown
   heading, TeX, a trailing full stop, an answer that starts mid-sentence, one
   that runs past the cap. `normalizeGeneratedTitle` repairs each of those rather
@@ -244,7 +374,9 @@ ordinary work-stream update and belongs to the object's product service.
   the grace, which is exactly what a fresh read would have said. The generated
   name arrives at the next event that touches the row, or the next reconnect that
   finds the row's version advanced.
-- **Limits.** A generated title is capped at 30 characters, cut back to the last
+- **Limits.** One icon per work stream, written once and never over a stored
+  one. The catalog costs about 5,500 bytes of system prompt on every naming
+  call, uncached. A generated title is capped at 30 characters, cut back to the last
   whole word — `title` holds 180, but a generated name is a label rather than a
   sentence, and the tail of a word cut mid-way reads as a typo. At this length
   the cut is a backstop: it fired on 4 of the 89 replayed work streams. The
@@ -257,14 +389,44 @@ ordinary work-stream update and belongs to the object's product service.
   checked-in schema and a real work-stream object store: the compare-and-set, the
   message-count threshold, the unreachable model, the normalizer, and that
   nothing it does can fail its caller. It executes the object's SQL directly, so
-  it proves the write and the room event but not the directory effect.
+  it proves the write and the room event but not the directory effect. The icon
+  cases run through the same real `WorkstreamIdentityStorage`: break them by
+  dropping the `appearance_json` value from `rename`'s `UPDATE` (the two passes'
+  icon assertions fail), by removing the `stored.icon === null` condition beside
+  it (*"keeps an icon a person chose"* fails, with the person's `rocket` replaced),
+  or by dropping `.catch(null)` from `WorkstreamNameResultSchema` (the
+  off-catalog case loses the name along with the icon). The two non-throwing
+  parses have a case each — *"still renames when the icon is a catalog key this
+  object cannot read"*, dispatched at the storage operation because the service's
+  own parse degrades that value long before the write, and *"names the work
+  stream past an appearance it cannot read"*. Restore either `.parse` and both
+  fail with the row stuck in `naming`.
+- `packages/agent-harness/src/prompts.test.ts` asserts a description line for
+  every key in the catalog, not a sample of them. A key added without one fails
+  to compile first; this is what catches one described in a way the prompt never
+  renders. It also rejects a description containing usage language — a denylist
+  of the phrasings someone would actually write, not a semantic check, guarding a
+  rule nothing else enforces and that would erode one line at a time.
 - `apps/api/test-workers/durable-object-runtime.test.ts` covers the other half on
   real workerd — *"pushes a generated name to a participant who never opened the
   work stream"* runs the naming statement through the runtime port and asserts the
   frame that arrives on a second member's workspace socket, with no work-stream
-  room socket anywhere in the test. Break it by removing `workstreams` from the
+  room socket anywhere in the test. It carries the icon too, because that
+  participant has no room socket and the projection is their only path to the
+  glyph as well as the name. Break it by removing `workstreams` from the
   `affectsDirectory` pattern in `workstream-runtime-sql.ts`; it then times out
-  waiting for a push that is never enqueued.
+  waiting for a push that is never enqueued. Break the icon half by dropping the
+  `appearance_json` value from `rename`'s `UPDATE`, and the pushed row arrives
+  with no appearance.
+- `apps/desktop/src/renderer/lib/use-workstream-socket.test.tsx` covers the
+  delivery half — *"shows the name Rally gives a work stream in its header and
+  its sidebar row"* asserts the icon reaches the sidebar row with the name **and
+  that the cached detail is left without an appearance**, which is the guard on
+  the picker-preview rule above. Break it by writing the detail as well, through
+  `patchCachedWorkstream`, and the `not.toHaveProperty('appearance')` assertion
+  fails. *"leaves an icon a person already chose alone when a naming event
+  arrives after it"* covers the other condition; break it by dropping
+  `!row.appearance?.icon` from `patchCachedGeneratedIcon`.
 - `apps/desktop/src/renderer/components/sidebar.test.tsx` and
   `screens/workstream.test.tsx` cover the two surfaces of `useNamingSkeleton`,
   each with a row inside the grace and one past it. The rule is a function of
@@ -275,6 +437,46 @@ ordinary work-stream update and belongs to the object's product service.
   file's hard-coded date asserts nothing.
 
 ## Changelog
+
+### 2026-09-09 — The naming pass chooses an icon as well as a name (#619)
+
+**What changed:** Both passes ask the model for a name *and* an icon in one
+call, out of the catalog the header picker already offers. Every key in it
+carries a description of the mark it draws, which the prompt renders. `rename`
+writes the chosen icon in the same transaction as the title, only where no icon
+is stored, and `workstream_renamed` carries what was written.
+
+**Why:** A work stream's glyph was an FNV hash of its id, so a sidebar was a
+column of arbitrary marks. The one thing in the product that already reads the
+request closely enough to choose better was running a second after creation;
+adding an enum to that request costs a field and the catalog.
+
+**Considered and rejected:** Pairing each description with the work it fits — a
+lookup table built by whoever last edited the file, so an icon only ever gets
+chosen for the subjects that person listed; the section above has the replay
+that settled it, including why pure geometry was worse still. `sparkles` as the
+fallback — it is already Rally's own glyph in this product, so it would badge
+the work streams Rally could not characterize as ones the agent acted on;
+`circle-dot` says nothing, which is the job. A second model call for the icon — a
+second reading of the same request, agreeing with the first only by luck. Writing through the
+picker's appearance command — a second commit and projection beside the rename,
+and one that could land for a pass whose rename had just been superseded.
+Letting the second pass replace the first pass's icon — `appearance_json` records
+no provenance, so a person's icon and Rally's are the same value, and a person
+who picks one settles no title; overwriting would silently undo them. Provenance
+on the appearance (an icon source beside the key, what `title_status` already is
+for the title) is the change to make if the second pass's icon ever matters more
+than the column.
+
+**Consequences:** A naming pass now writes a second column, so anything added to
+`rename` has to keep the rule that only the title may fail it. The catalog is
+model-visible: adding an icon means adding a description of its drawing in the
+same edit, and moves the golden prompt hashes. It costs about 5,500 bytes of
+system prompt on every naming call, uncached. Nothing may assume a work stream
+Rally named has an icon.
+
+The reasoning behind describing rather than prescribing, and the replay that
+settled it, is in the section above rather than repeated here.
 
 ### 2026-09-05 — Sentence case, two to four words, thirty characters
 

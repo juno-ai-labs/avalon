@@ -1,6 +1,6 @@
 import { prepareMentionMarkdown } from '@rally/contracts/message-mentions';
 import type { MentionIdentity } from './api';
-import type { ElicitationData, Message, MessageMention, PluginActivityData, ThoughtEventData, ToolEventData, WorkspaceMember } from './types';
+import type { ElicitationData, Message, MessageMention, PluginActivityData, ThoughtEventData, ToolEventData, WorkSpan, WorkTotal, WorkspaceMember } from './types';
 import { pluginGroup } from './plugin-groups';
 import {
   AutomationDraftProposedV1Schema,
@@ -425,10 +425,12 @@ export function orderedTranscriptMessages(
           rememberOrder(block.blockId);
           const activity = activities.get(block.activityId);
           const timing = activityTiming(activity);
+          const spans = activityWorkSpans(activity);
           return {
             ...base,
             authorType: 'agent',
             messageType: 'thought',
+            ...(spans === undefined ? {} : { workSpans: spans }),
             thoughtEvent: {
               status: activity?.state === 'active' ? 'started' : 'completed',
               durationMs: timing.durationMs,
@@ -454,10 +456,12 @@ export function orderedTranscriptMessages(
           : undefined;
         const pluginName = run?.displayName ?? owner?.label;
         rememberOrder(block.blockId);
+        const toolSpans = activityWorkSpans(activity);
         return {
           ...base,
           authorType: 'agent',
           messageType: 'tool_event',
+          ...(toolSpans === undefined ? {} : { workSpans: toolSpans }),
           toolEvent: {
             id: block.toolCallId,
             toolCallId: block.toolCallId,
@@ -568,6 +572,12 @@ export function orderedTranscriptMessages(
     const group = pluginGroup(run.pluginId, run.displayName);
     if (!group) continue;
     const timing = pluginRunTiming(run);
+    // The run's own id is the plugin activity's, so the tree the snapshot
+    // happens to carry answers *when* this run worked without another join.
+    // The server states the duration either way; only the spans come from
+    // here, and a run whose activity did not reach this snapshot simply has
+    // none — see `activityWorkSpans`.
+    const spans = activityWorkSpans(activities.get(run.pluginRunId));
     messages.push({
       id: run.pluginRunId,
       transcriptTurnId: lastTurn.turnId,
@@ -578,6 +588,7 @@ export function orderedTranscriptMessages(
       authorType: 'agent',
       messageType: 'plugin_activity',
       createdAt: lastTurn.createdAtUtc,
+      ...(spans === undefined ? {} : { workSpans: spans }),
       pluginActivity: {
         groupKey: group.key,
         name: group.name,
@@ -1051,9 +1062,11 @@ function continuesPluginActivityRun(message: Message): boolean {
  * row under that sentence rather than reopening the one above it.
  *
  * Timing comes from the plugin activity when the transcript carries one — it
- * measures the plugin, including the time between its calls. Summed tool
- * durations are the fallback for a row whose activity has not arrived, and
- * they undercount by exactly that gap, so an activity always displaces them.
+ * measures the plugin, including the time between its calls, and both its
+ * duration and its spans displace the calls'. Without one the calls are all
+ * there is: their spans union into the row's time where they have them, and
+ * their durations are summed where they do not. Both undercount by exactly the
+ * gaps between calls; only the sum also double-counts a batch that ran at once.
  */
 export function groupPluginToolMessages(messages: readonly Message[]): Message[] {
   interface GroupTiming {
@@ -1068,6 +1081,19 @@ export function groupPluginToolMessages(messages: readonly Message[]): Message[]
     sawActivity: boolean;
     monotonicStartedAt: number[];
     upperBound: boolean;
+    /**
+     * When the group worked, for a stretch that has to add several rows up.
+     *
+     * Tiered exactly as the durations above are, and for the same reason: a
+     * plugin activity's spans cover its own calls, gaps included, so a tool
+     * call that cannot say when it ran subtracts nothing from them. Keeping one
+     * flat set instead let that one nullable join — the shape `pluginRuns`
+     * exists to route around — take the whole row's timing down with it.
+     */
+    activitySpans: WorkSpan[];
+    activitySpansKnown: boolean;
+    toolSpans: WorkSpan[];
+    toolSpansKnown: boolean;
   }
   const groups: GroupTiming[] = [];
   let open = new Map<string, GroupTiming>();
@@ -1106,6 +1132,10 @@ export function groupPluginToolMessages(messages: readonly Message[]): Message[]
         sawActivity: false,
         monotonicStartedAt: [],
         upperBound: false,
+        activitySpans: [],
+        activitySpansKnown: true,
+        toolSpans: [],
+        toolSpansKnown: true,
       };
       open.set(contribution.key, group);
       groups.push(group);
@@ -1145,21 +1175,50 @@ export function groupPluginToolMessages(messages: readonly Message[]): Message[]
     // advance by all of them or it jumps at settle.
     group.monotonicStartedAt.push(...(contribution.activity.monotonicStartedAt ?? []));
     if (contribution.activity.timingAccuracy === 'upper_bound') group.upperBound = true;
+    // Spans are collected on the same two tiers, and all-or-nothing within each
+    // one: a stretch adds its rows' spans up, so a tier missing a contribution's
+    // would let that stretch report a total with a piece of itself left out.
+    const spans = contribution.authoritativeDuration ? group.activitySpans : group.toolSpans;
+    if (message.workSpans === undefined) {
+      if (contribution.authoritativeDuration) group.activitySpansKnown = false;
+      else group.toolSpansKnown = false;
+    } else spans.push(...message.workSpans);
   }
   for (const group of groups) {
     const row = rows[group.row]!;
+    // The activity measures the plugin, calls and the gaps between them alike,
+    // so where there is one it answers both questions and the tool tier is not
+    // consulted. The row was spread from the run's first contribution, so its
+    // own spans are already on it and stand for a fraction of what it now says.
+    const spans = group.sawActivity
+      ? group.activitySpansKnown && group.activitySpans.length > 0 ? group.activitySpans : undefined
+      : group.toolSpansKnown && group.toolSpans.length > 0 ? group.toolSpans : undefined;
+    // A tool contribution carries no aggregate accuracy — `pluginGroupContribution`
+    // builds one from a tool row and has none to give — so where this row's own
+    // number came from those calls' spans, the spans are also the only thing
+    // that can say a boundary was recovered rather than observed.
+    const upperBound = group.upperBound
+      || (spans?.some((span) => span.timingAccuracy === 'upper_bound') ?? false);
     rows[group.row] = {
       ...row,
+      workSpans: spans,
       pluginActivity: {
         ...group.identity,
         active: group.active,
         durationMs: group.sawActivity
           ? group.activityDurationKnown ? group.activityDurationMs : null
-          : group.toolDurationKnown ? group.toolDurationMs : null,
+          // Without an activity the calls are all there is, and Bind runs a
+          // batch of them at once: summing three concurrent 5s calls reports
+          // 15s of work that took 5, and puts a row inside a folded stretch
+          // claiming more than the stretch itself. Their union is the same
+          // fallback measured without counting a shared second twice, and it
+          // undercounts the gaps between calls exactly as the sum did.
+          : spans !== undefined ? unionDurationMs(spans)
+            : group.toolDurationKnown ? group.toolDurationMs : null,
         ...(group.monotonicStartedAt.length === 0
           ? {}
           : { monotonicStartedAt: group.monotonicStartedAt }),
-        ...(group.upperBound ? { timingAccuracy: 'upper_bound' as const } : {}),
+        ...(upperBound ? { timingAccuracy: 'upper_bound' as const } : {}),
       },
     };
   }
@@ -1567,6 +1626,49 @@ function activityDuration(activity: TranscriptActivity | undefined): number {
   );
 }
 
+/**
+ * The stretches of wall clock an activity occupied, or nothing.
+ *
+ * Nothing rather than an empty list, and the two mean different things: an
+ * empty list would say the activity did no work, while every case answered
+ * with `undefined` here is one where this client cannot see *when* the work
+ * happened — the activity never reached the snapshot, or it is still running
+ * and has no end yet. A caller that sums these has to know the difference,
+ * because a stretch missing one row's spans is a stretch whose total is
+ * unknown rather than shorter.
+ *
+ * A duration is deliberately not derived from these. The row's own number
+ * comes from the authority that measured it; this exists only so several rows
+ * can be added up without counting a second that two of them shared.
+ */
+function activityWorkSpans(activity: TranscriptActivity | undefined): readonly WorkSpan[] | undefined {
+  if (!activity || activity.intervals.length === 0) return undefined;
+  const spans: WorkSpan[] = [];
+  for (const interval of activity.intervals) {
+    // A closed interval that recorded no duration is one the authority calls
+    // unmeasurable, and its timestamps do not overrule that: `activityDuration`
+    // already counts it as nothing, so deriving a span from them would make a
+    // drawer report time the rows inside it do not have.
+    if (interval.stoppedAtUtc === null || interval.durationMs === null) return undefined;
+    const startedAtMs = Date.parse(interval.startedAtUtc);
+    const endedAtMs = Date.parse(interval.stoppedAtUtc);
+    if (!Number.isFinite(startedAtMs) || !Number.isFinite(endedAtMs) || endedAtMs < startedAtMs) {
+      return undefined;
+    }
+    spans.push({
+      startedAtMs,
+      endedAtMs,
+      // Carried on the span rather than read back off the row: a group built
+      // from tool rows alone has no aggregate to read it from, and a recovered
+      // boundary is a property of the interval either way.
+      ...(interval.timingAccuracy === 'upper_bound'
+        ? { timingAccuracy: 'upper_bound' as const }
+        : {}),
+    });
+  }
+  return spans;
+}
+
 function activityTiming(activity: TranscriptActivity | undefined): {
   durationMs: number;
   monotonicStartedAt?: number;
@@ -1680,6 +1782,8 @@ export function groupThinkingMessages(messages: readonly Message[]): Message[] {
   interface Run {
     row: number;
     segments: ThoughtEventData[];
+    /** When the run's segments worked; null once one of them cannot say. */
+    spans: WorkSpan[] | null;
   }
   const runs: Run[] = [];
   let open: Run | null = null;
@@ -1693,9 +1797,16 @@ export function groupThinkingMessages(messages: readonly Message[]): Message[] {
     }
     if (open) {
       open.segments.push(segment);
+      open.spans = open.spans === null || message.workSpans === undefined
+        ? null
+        : [...open.spans, ...message.workSpans];
       continue;
     }
-    open = { row: rows.length, segments: [segment] };
+    open = {
+      row: rows.length,
+      segments: [segment],
+      spans: message.workSpans === undefined ? null : [...message.workSpans],
+    };
     runs.push(open);
     rows.push(message);
   }
@@ -1727,6 +1838,10 @@ export function groupThinkingMessages(messages: readonly Message[]): Message[] {
     const first = run.segments[0]!;
     rows[run.row] = {
       ...row,
+      // The row keeps the first segment's identity, and its spans came with it
+      // — they say when one segment of a run this row now stands for happened,
+      // so they go the same way the first segment's duration did.
+      workSpans: run.spans ?? undefined,
       thoughtEvent: {
         status: run.segments.some((segment) => segment.status === 'started') ? 'started' : 'completed',
         durationMs,
@@ -1848,6 +1963,91 @@ function isStillRunningWorkRow(message: Message): boolean {
 }
 
 /**
+ * How long a set of spans covers, counting a shared second once.
+ *
+ * The union is the only way to add work rows up. Bind runs a batch's tool
+ * calls concurrently, and a plugin row covers the gaps between its own calls
+ * that the thinking row beside it is filling — so a sum overstates a stretch
+ * by however much of it ran at the same time, which is why the accordion never
+ * had a total of its own before these spans existed.
+ */
+function unionDurationMs(spans: readonly WorkSpan[]): number {
+  const ordered = [...spans].sort((left, right) => left.startedAtMs - right.startedAtMs);
+  let total = 0;
+  let openedAt: number | null = null;
+  let closesAt = 0;
+  for (const span of ordered) {
+    if (openedAt === null) {
+      openedAt = span.startedAtMs;
+      closesAt = span.endedAtMs;
+      continue;
+    }
+    if (span.startedAtMs > closesAt) {
+      total += closesAt - openedAt;
+      openedAt = span.startedAtMs;
+      closesAt = span.endedAtMs;
+      continue;
+    }
+    closesAt = Math.max(closesAt, span.endedAtMs);
+  }
+  return openedAt === null ? 0 : total + (closesAt - openedAt);
+}
+
+/**
+ * What a folded stretch says it worked for, from the rows it holds.
+ *
+ * The response's own total is the better answer where it applies, and
+ * {@link collapseSettledWorkIntoAccordion} prefers it: it is the authority's
+ * measurement of the whole run, and where the drawer *is* the whole run it
+ * moves onto it unchanged. This is what the other drawers get. A stretch of a
+ * self-narrating response has no total of its own reported anywhere, and the
+ * alternative to computing one here is the bare "Worked" every such drawer
+ * used to read — a row asking to be opened while saying nothing about whether
+ * that is worth doing.
+ *
+ * Every work row it holds has to be able to say when it worked, or the stretch
+ * reports nothing. A row whose spans never reached this client took an unknown
+ * amount of time, and a union over the rest would print a number quietly
+ * missing it — the same reason a thinking run with one unmeasured segment
+ * reports no total rather than a shorter one.
+ *
+ * The accuracy comes from the rows themselves: a stretch holding a row whose
+ * own timing is an upper bound is a stretch whose total is one too, and it
+ * reads "Worked for at most …" exactly as that row does.
+ */
+function foldedStretchTotal(rows: readonly Message[]): WorkTotal {
+  const work = rows.filter(isCollapsedWorkRow);
+  // Either source can say the timing is recovered, and both are asked. The row's
+  // aggregate is what a plugin row from the server carries; the spans are what a
+  // group assembled from tool rows alone has, and that group has no aggregate
+  // accuracy of its own to read.
+  const rowAccuracy = (row: Message): 'observed' | 'upper_bound' | undefined =>
+    row.messageType === 'thought' ? row.thoughtEvent?.timingAccuracy : row.pluginActivity?.timingAccuracy;
+  const upperBound = work.some((row) => rowAccuracy(row) === 'upper_bound'
+    || row.workSpans?.some((span) => span.timingAccuracy === 'upper_bound'));
+  const accuracy = upperBound ? { timingAccuracy: 'upper_bound' as const } : {};
+  // One row is the whole stretch, and there is nothing for its own number to be
+  // overlapping with, so the drawer can report it even where the transcript
+  // cannot say *when* it happened. Withholding a total the drawer plainly has
+  // is the failure this label exists to fix.
+  const lone = work.length === 1 ? work[0]! : undefined;
+  if (lone && lone.workSpans === undefined) {
+    const durationMs = lone.messageType === 'thought'
+      ? lone.thoughtEvent?.durationMs ?? null
+      : lone.pluginActivity?.durationMs ?? null;
+    return { durationMs, ...accuracy };
+  }
+  const spans: WorkSpan[] = [];
+  for (const row of work) {
+    if (row.workSpans === undefined) return { durationMs: null };
+    spans.push(...row.workSpans);
+  }
+  return spans.length === 0
+    ? { durationMs: null }
+    : { durationMs: unionDurationMs(spans), ...accuracy };
+}
+
+/**
  * Fold each finished stretch of machinery behind the answer it produced.
  *
  * While a stretch is running, every row of it is progress: the reader watches
@@ -1889,9 +2089,13 @@ function isStillRunningWorkRow(message: Message): boolean {
  * response, and a total covering all of them printed on the last would claim
  * 3m 12s for a drawer holding 21s of rows. It stays in the final answer's header
  * instead, which is the one place it was ever a fact about: "Rally · 11 minutes
- * ago · Worked for 2m 52s". The remaining accordions say only "Worked" — never a
- * sum of the rows inside, which would overstate the stretch by however much of
- * it ran concurrently; see the invariant in `plugin-activity-rows.md`.
+ * ago · Worked for 2m 52s".
+ *
+ * **The remaining accordions report their own stretch**, from the union of when
+ * their rows worked — never a sum of those rows, which would overstate the
+ * stretch by however much of it ran concurrently; see `foldedStretchTotal` and
+ * the invariant in `plugin-activity-rows.md`. A stretch holding a row that
+ * cannot say when it worked still reads a plain "Worked".
  *
  * The settled response total is the only response boundary this feed carries,
  * so it is the only thing that starts the count over. A row a person read is
@@ -1992,14 +2196,19 @@ export function collapseSettledWorkIntoAccordion(messages: readonly Message[]): 
         thoughtEvent: undefined,
         toolEvent: undefined,
         workAccordion: {
-          // A stretch that is not known to be the whole response has no honest
-          // total of its own — the rows inside overlap, so summing them
-          // overstates it — and reads as a plain "Worked", the same sentence an
-          // unknown duration already produces.
-          durationMs: movesTotal ? summary.durationMs : null,
-          ...(movesTotal && summary.timingAccuracy !== undefined
-            ? { timingAccuracy: summary.timingAccuracy }
-            : {}),
+          // The response's own total where this drawer is the whole response,
+          // and otherwise the stretch's own: the union of when its rows worked,
+          // which is what a set of overlapping rows can honestly be added up
+          // by. Where even that cannot be established the drawer still reads a
+          // plain "Worked" — see `foldedStretchTotal`.
+          ...(movesTotal
+            ? {
+              durationMs: summary.durationMs,
+              ...(summary.timingAccuracy === undefined
+                ? {}
+                : { timingAccuracy: summary.timingAccuracy }),
+            }
+            : foldedStretchTotal(collapsed)),
           rows: collapsed,
         },
       });

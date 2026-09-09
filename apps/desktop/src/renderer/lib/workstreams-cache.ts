@@ -91,10 +91,15 @@ export function patchCachedWorkstream(
  * Show a person's own appearance choice on the sidebar row the moment Main has
  * acknowledged it, ahead of the projection that will carry it there.
  *
- * The list row only: the header renders the detail entry under the picker's
- * own preview, which the picker retires once the detail carries the choice, so
- * writing the detail here would retire that preview on the receipt and expose
- * the header to an older projection still in flight. Appearance is Main's, so
+ * The list row only, and that goes for **every** unversioned appearance write,
+ * a naming pass's generated icon included. The header renders the detail entry
+ * under the picker's own preview, and `settled()` retires that preview as soon
+ * as the detail's icon moves off the baseline it was taken against — to any
+ * value, not only the one the person chose, because another person changing the
+ * icon has to retire it too. So a write here of an icon nobody in this window
+ * picked would retire a pending choice to the wrong glyph and hold it there
+ * until the projection lands. The detail is the picker's own signal; only the
+ * versioned projection may move it. Appearance is Main's, so
  * there is no substream to address. The merge mirrors Main's own
  * (`setAppearanceForAdmittedSocket`) because the receipt carries no payload;
  * the two bases can differ by the projection lag this write hides, and the
@@ -113,6 +118,33 @@ export function patchCachedWorkstreamAppearance(
     const appearance: WorkstreamAppearance = { icon: null, color: null, ...row.appearance, ...patch };
     return { ...row, appearance };
   }));
+}
+
+/**
+ * Put the icon a naming pass chose on the sidebar row, unless one is there.
+ *
+ * Row-only, for the reason above — the cached detail is the picker's signal and
+ * only the versioned projection may move it.
+ *
+ * The condition is what the receipt-time write does not need. An event carries
+ * an icon only when the object had none at the moment it renamed, so a row that
+ * has one now holds something newer: a choice whose receipt already landed here.
+ * The event can arrive after that receipt, because the two travel different
+ * paths — the room socket and the Main command channel — so without the guard a
+ * person's own icon flickers back to the generated one until the projection
+ * lands. It is not a copy of the object's rule (that one is about what is
+ * stored, and is authoritative); it is the ordering rule for an unversioned
+ * write whose value is known-stale the moment anything else is present.
+ */
+export function patchCachedGeneratedIcon(
+  queryClient: QueryClient,
+  workstreamId: string,
+  icon: NonNullable<WorkstreamAppearance['icon']>,
+): void {
+  setCachedWorkstreams(queryClient, (current) => current?.map((row) =>
+    row.id === workstreamId && !row.appearance?.icon
+      ? { ...row, appearance: { color: null, ...row.appearance, icon } }
+      : row));
 }
 
 /**

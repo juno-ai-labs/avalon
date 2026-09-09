@@ -426,6 +426,15 @@ detail together. A child address updates only that child's detail, so its name o
 scope cannot overwrite Main in the sidebar. Each
 write carries only the fields that are the fact's own news, so the next newer
 versioned payload replaces them whole and the receiver still has the last word.
+
+**Appearance is the exception, and both of its writers are row-only.** The
+cached detail is what the appearance picker reads to decide its own optimistic
+preview is finished, so an unversioned write there retires a person's in-flight
+choice against a value they did not pick. `patchCachedWorkstreamAppearance` (the
+receipt) and `patchCachedGeneratedIcon` (a naming pass) therefore write the
+sidebar row and leave the header to the versioned projection.
+[`workstream-appearance.md`](workstream-appearance.md) owns the rule and the two
+bugs that produced it.
 A REST response is a whole summary; spreading it would write versioned common
 fields through this path too, so viewer responses go through
 `patchCachedWorkstreamViewerState` and take only their viewer half. The harness
@@ -821,6 +830,17 @@ rename and scope events use the same primitive but only change their addressed
 detail; applying them to the list reintroduced the parent-title bug during cache
 consolidation. Parent responses retain the default Main address.
 
+### 2026-09-09 — Appearance is the unversioned write that may not touch the detail (#619)
+
+Review on #619 found this document describing the appearance receipt as writing
+the row and the detail together, which stopped being true when that receipt was
+narrowed to the row on the same day the entry below was written. The reason is
+the part worth keeping here rather than only in the owning doc: the cached
+detail is the appearance picker's own signal that its optimistic preview is
+finished, so any unversioned write there retires a person's in-flight choice
+against a value they did not pick. Both appearance writers — the receipt, and
+the icon a naming pass chooses — are row-only for that reason, and this is the
+one place the "row and detail together" rule above does not hold.
 
 ### 2026-09-09 — Name the unversioned write and bound what it may carry
 

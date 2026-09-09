@@ -2271,6 +2271,7 @@ describe("Durable Objects in the Workers runtime", () => {
       operation: "rename",
       args: [{
         title: "Avalon pricing conversation",
+        icon: "coins",
         from: "naming",
         to: "automatic",
         now: Date.now(),
@@ -2286,7 +2287,15 @@ describe("Durable Objects in the Workers runtime", () => {
     expect(await push).toMatchObject({
       type: "workspace_workstream_state",
       workstreamId: WORKSTREAM_ID,
-      workstream: { title: "Avalon pricing conversation", titleStatus: "automatic" },
+      // The icon the pass chose rides the same legs as the name. This
+      // participant has no room socket, so the `workstream_renamed` event that
+      // carries the icon to an open header reaches nobody here — the directory
+      // projection is their only path to the glyph as well as to the name.
+      workstream: {
+        title: "Avalon pricing conversation",
+        titleStatus: "automatic",
+        appearance: { icon: "coins", color: null },
+      },
     });
   });
 
