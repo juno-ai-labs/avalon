@@ -182,13 +182,73 @@ export const DEMO_TWO_ROOM_PACK = DemoPackSchema.parse({
   }],
 });
 
+export const DEMO_STARTING_CONTEXT = [
+  "**Request.** Settle the memo's recommendation before the renewal.",
+  "",
+  "**Open.** Where the aside goes.",
+].join("\n");
+export const DEMO_CHILD_PROSE = "Both of you are answering different questions.";
+
+/**
+ * The test pack with a substream hanging off its one room.
+ *
+ * Three properties in one pack. A private child is created through the real
+ * preparation, confirmation and membership path. Its starting context is the
+ * pack's words, so nothing in creation reaches a model. And the presenter is
+ * put in the child without being in its parent — the shape the shipped pack
+ * uses, and the one that would break if parent membership were inferred from a
+ * child's roster or the other way round.
+ */
+export const DEMO_SUBSTREAM_PACK = DemoPackSchema.parse({
+  ...DEMO_TEST_PACK,
+  version: "workerd-substream-test",
+  steps: [
+    DEMO_TEST_PACK.steps[0],
+    {
+      kind: "create_substream",
+      id: "aside-open",
+      room: "memo",
+      substream: "aside",
+      as: "priya",
+      title: "Where the aside goes",
+      participants: ["marcus", "presenter"],
+      startingContext: DEMO_STARTING_CONTEXT,
+    },
+    {
+      kind: "message",
+      id: "aside-marcus-1",
+      room: "memo",
+      substream: "aside",
+      as: "marcus",
+      text: "Away from the main room: I would hold the line item.",
+    },
+    {
+      kind: "message",
+      id: "aside-priya-1",
+      room: "memo",
+      substream: "aside",
+      as: "priya",
+      text: "Rally, settle it.",
+      assistant: { kind: "say", text: DEMO_CHILD_PROSE },
+    },
+  ],
+  // The presenter can see the workspace-scoped room without being in it, and
+  // is in its child — which contributes nothing here, because a private child
+  // takes no directory row.
+  expect: [{
+    viewer: "presenter",
+    attention: { waitingForYou: 0, waitingReason: null },
+    rooms: { memo: { unseen: false, hasUnread: true, mentioned: false } },
+  }],
+});
+
 export function demoWorkspaceStub() {
   return env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", DEMO_WORKSPACE_ID)));
 }
 
-export function demoRoomStub(workstreamId: string): DurableObjectStub<SubstreamAgent> {
+export function demoRoomStub(workstreamId: string, substreamId = "0"): DurableObjectStub<SubstreamAgent> {
   return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
-    conversationObjectName("global", DEMO_WORKSPACE_ID, workstreamId),
+    conversationObjectName("global", DEMO_WORKSPACE_ID, workstreamId, asSubstreamId(substreamId)),
   )) as DurableObjectStub<SubstreamAgent>;
 }
 
@@ -269,14 +329,16 @@ export async function seedDemoWorkspaceControlPlane(): Promise<void> {
       .bind(DEMO_OPERATION_ID, DEMO_PRESENTER_ID, DEMO_WORKSPACE_ID),
     env.DB.prepare(`CREATE TABLE demo_seed_receipts (
       operation_id TEXT NOT NULL, action_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
-      kind TEXT NOT NULL, room TEXT, workstream_id TEXT, sidekick_id TEXT, sidekick_run_id TEXT,
-      turn_id TEXT,
+      kind TEXT NOT NULL, room TEXT, workstream_id TEXT, substream TEXT, substream_id TEXT,
+      sidekick_id TEXT, sidekick_run_id TEXT, turn_id TEXT,
       harness_run_id TEXT, run_outcome TEXT, elicitation_id TEXT, resource_id TEXT,
       completed_at TEXT NOT NULL, PRIMARY KEY (operation_id, action_id),
       CHECK (
         CASE kind
-          WHEN 'sidekick' THEN room IS NULL AND workstream_id IS NULL AND sidekick_id IS NOT NULL
-          ELSE room IS NOT NULL AND workstream_id IS NOT NULL AND sidekick_id IS NULL
+          WHEN 'sidekick' THEN room IS NULL AND workstream_id IS NULL
+            AND substream IS NULL AND substream_id IS NULL AND sidekick_id IS NOT NULL
+          ELSE room IS NOT NULL AND workstream_id IS NOT NULL
+            AND substream_id IS NOT NULL AND sidekick_id IS NULL
         END
       )
     )`),
@@ -304,7 +366,11 @@ export async function playDemoAction(
   action: DemoSeedSession["actions"][number],
 ): Promise<DemoSeedReceipt> {
   const progress = await applyDemoSeedAction(demoSeedEnv(), session, action);
-  if (progress.state === "run_pending") await runDurableObjectAlarm(demoRoomStub(progress.workstreamId));
+  if (progress.state === "run_pending") {
+    // The conversation the turn landed in, which is the substream's own object
+    // when the pack addressed one rather than the room's main conversation.
+    await runDurableObjectAlarm(demoRoomStub(progress.workstreamId, progress.substreamId));
+  }
   if (progress.state === "sidekick_run_pending") {
     // Two alarms, in order: the Sidekick's, which provisions the run and hands
     // it to its own conversation, and then that conversation's, which executes
