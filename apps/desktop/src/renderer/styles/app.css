@@ -5994,7 +5994,7 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 
 :is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-attachments .attachment-tile {
   border-radius: 12px;
-  flex: 0 0 64px;
+  flex: 0 0 var(--attachment-media-size);
   height: var(--attachment-media-size);
   width: var(--attachment-media-size);
 }
@@ -6849,3 +6849,13 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 .composer-attachments .attachment-file-card { min-width: 0; width: 100%; }
 
 .attachment-media-tile .attachment-video-play { color: var(--av-sys-color-text-on-media); }
+
+/* Drafts reuse feed tiles; only their container and upload actions differ. */
+.composer-attachments { display: flex; flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; align-items: center; }
+:is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-attachments { overflow-x: auto; overflow-y: hidden; }
+.pending-attachment { position: relative; flex: 0 0 auto; }
+.pending-attachment.is-file { width: 220px; }
+.pending-attachment .attachment-file-card { margin: 0; padding-right: 28px; }
+.pending-attachment .message-attachment-image { height: 100%; border-radius: inherit; }
+.pending-attachment:hover .attachment-remove, .pending-attachment:focus-within .attachment-remove { opacity: 1; }
+.pending-attachment.is-file .attachment-remove { top: 50%; transform: translateY(-50%); }
