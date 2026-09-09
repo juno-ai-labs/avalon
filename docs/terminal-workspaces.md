@@ -294,7 +294,9 @@ personless; it is not duplicated into these product events.
   `instructions_pending` refusal; every other probe failure leaves the tool's
   or the bootstrap's own exit code alone. Each candidate is checked in its own
   right for symlink and root containment before it is read, because a
-  repository controls what `AGENTS.md` points at.
+  repository controls what `AGENTS.md` points at. The trailer the probe prints
+  starts with a marker minted for that invocation, so output the repository
+  controls cannot end a tool's result early or pass itself off as the probe's.
 
 ## Boundary
 
