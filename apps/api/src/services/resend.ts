@@ -22,6 +22,8 @@ export interface ResendEmail {
   category: string;
   region: Region;
   replyTo?: string;
+  /** Trusted, caller-owned sender for authored mail; never taken from a public request. */
+  from?: string;
   /**
    * `notification` prefers the notification sender and falls back to the
    * transactional one; `transactional` only ever uses the transactional sender.
@@ -49,9 +51,9 @@ export async function sendResendEmail(
 
   const apiKey = env.RESEND_API_KEY?.trim();
   const transactional = env.RESEND_FROM_EMAIL?.trim();
-  const from = email.sender === "notification"
+  const from = email.from?.trim() || (email.sender === "notification"
     ? env.RESEND_NOTIFICATION_FROM_EMAIL?.trim() || transactional
-    : transactional;
+    : transactional);
   if (!apiKey || !from) {
     throw new ApiError(503, email.errors.unavailable.code, email.errors.unavailable.message);
   }

@@ -25,6 +25,7 @@ import {
   ManagedModelUpdateSchema,
   ModelValidationRequestSchema,
 } from './protocol';
+import { accessRoutes } from './private-access';
 import { consumeFlagChanges } from './queues';
 import { relayRegionalError, retireWorkspace } from './regional-api';
 
@@ -60,6 +61,8 @@ app.use('*', async (c, next) => {
   c.set('principal', access.principal);
   return next();
 });
+
+app.route('/api/access', accessRoutes);
 
 app.get('/api/session', (c) => c.json({
   email: c.get('principal').email,

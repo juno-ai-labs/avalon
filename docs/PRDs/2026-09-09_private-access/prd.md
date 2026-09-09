@@ -5,6 +5,7 @@
 > Request-only acquisition, operator invitations, and reusable download grants.
 > Standing contract: [Rally implementation brief](../2026-08-05_avalon-implementation-brief/prd.md).
 > Supplied wording and launch checks: [Launch copy](launch-copy.md).
+> Implementation reference: [Private access](../../private-access.md).
 
 ## Summary
 
@@ -191,7 +192,20 @@ An already-obtained installer does not require an additional access approval.
 
 ## Decision log
 
-None yet.
+### 2026-09-09 — Ship intake and manual downloads as the first slice
+
+**Decided:** Implement normalized request persistence, frozen acknowledgement
+content, Ace review, and shared single-use/timed grant issuance and redemption.
+Keep the remaining invitation workflow and distribution changes in later slices.
+
+**Why:** Operators need durable intake and ad hoc download links now. Invitation
+sending needs its own delivery/suppression lifecycle, and closing public installer
+origins must preserve desktop updates and release verification.
+
+**Changes:** Implements rollout step 1 in [#637](https://github.com/juno-ai-labs/avalon/pull/637).
+Bulk invitation sending, regional workspace grants, activation/recovery downloads
+and exclusive artifact distribution remain incomplete. The subsystem reference
+owns concrete migration filenames, deployment prerequisites and erasure operations.
 
 ## Key design decisions
 

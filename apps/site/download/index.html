@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="referrer" content="no-referrer" />
+    <link rel="icon" href="/favicon.png" />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <title>Download Rally</title>
+  </head>
+  <body class="invite-page">
+    <main class="invite-shell"><section class="invite-card">
+      <a class="brand invite-brand" href="/" aria-label="Rally home"><img src="/brand/rally-mark-ink.svg" width="24" height="24" alt="" /><span>rally</span></a>
+      <p class="eyebrow">Your private preview</p><h1>Welcome to Rally.</h1>
+      <p>Download Rally for macOS on Apple silicon.</p>
+      <form id="download-form" method="post" hidden>
+        <input type="hidden" name="token" id="download-token" />
+        <button class="button button-primary invite-open" type="submit">Download for macOS ↗</button>
+      </form>
+      <p class="invite-help">Keep this page open until the download starts. If your link is no longer available, ask the sender for a new one.</p>
+      <p role="alert" id="download-error" hidden>This link is incomplete or invalid. Ask the sender for a new link.</p>
+      <noscript>Enable JavaScript to use your private download link.</noscript>
+    </section></main>
+    <script type="module" src="/src/download.ts"></script>
+  </body>
+</html>
