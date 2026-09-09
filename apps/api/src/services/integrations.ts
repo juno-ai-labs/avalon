@@ -109,7 +109,7 @@ import { z } from "zod";
 import { automationDOName, conversationObjectName, workspaceDOName, workstreamDOName } from "../durable-objects/names";
 import { AutomationService, createAutomation } from "./automation-service";
 import { ResourceService } from "./resource-service";
-import { DEMO_SEED_PROVIDER_KEY, demoSeedProviderFetch } from "./demo-seed-provider";
+import { DEMO_SEED_PROVIDER_KEY, demoSeedModelRoute, demoSeedProviderFetch } from "./demo-seed-provider";
 import type { TranscriptCompactionContinuation } from "../durable-objects/workstream-transcript-storage";
 import { rpcResultBody } from "../durable-objects/rpc-result";
 import { WorkspaceConnectorEventSchema } from "../durable-objects/workspace-connector-event-protocol";
@@ -2809,6 +2809,9 @@ export async function runWorkstreamHarness(
     workspaceId: input.workspaceId,
     workstreamId: input.parentId,
   });
+  // A seeded run is routed where the seam is: the OpenRouter client, an
+  // unbound model, no fallbacks, no Azure transport. See `demoSeedModelRoute`.
+  const seedRoute = seedProvider ? demoSeedModelRoute(modelRouting) : null;
 
   if (!runtime?.persistentLoop && await isHarnessStopped(runs, input.harnessRunId)) {
     stopController.abort("stopped_by_user");
@@ -2923,10 +2926,10 @@ export async function runWorkstreamHarness(
         // never presents one anywhere; the stand-in keeps a sandbox without a
         // key able to seed. Production always has the real one.
         apiKey: seedProvider ? env.OPENROUTER_API_KEY || DEMO_SEED_PROVIDER_KEY : env.OPENROUTER_API_KEY,
-        primaryModel: modelRouting.model,
-        fallbackModels: modelRouting.fallbackModels,
+        primaryModel: seedRoute ? seedRoute.model : modelRouting.model,
+        fallbackModels: seedRoute ? seedRoute.fallbackModels : modelRouting.fallbackModels,
         appName: "Rally",
-        ...azureInferenceConfig(env),
+        ...(seedRoute ? {} : azureInferenceConfig(env)),
         ...runLimits,
         ...(seedProvider ? { fetch: seedProvider } : {}),
         toolTimeoutMs: numericEnv(env, "TOOL_DEFAULT_TIMEOUT_MS", 30_000),
