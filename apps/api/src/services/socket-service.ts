@@ -1,4 +1,4 @@
-import { RALLY_HEADERS, rallyHeaderAliases } from "@rally/contracts/http-headers";
+import { RALLY_HEADERS, rallyHeaderAliases, readRallyHeader } from "@rally/contracts/http-headers";
 import { jwtVerify, SignJWT } from "jose";
 import {
   asSubstreamId,
@@ -419,6 +419,52 @@ export function withNegotiatedSubprotocol(request: Request, response: Response):
   return new Response(null, { status: 101, webSocket: response.webSocket, headers });
 }
 
+/**
+ * Separate the edge's total wait from the room's accept handler duration.
+ * The remainder includes routing, activation, constructor/storage readiness,
+ * and queueing; it cannot identify platform activation alone. Instance age is
+ * context, not a duration to subtract (another call may have woken the room).
+ * Internal headers are stripped independently of whether their values parse.
+ * Rejections remain untouched, as in `withNegotiatedSubprotocol`.
+ */
+export function roomUpgradeDiagnostics(
+  response: Response,
+  roomUpgradeMs: number,
+): { attributes: Record<string, number>; response: Response } {
+  const acceptMs = nonNegativeInteger(readRallyHeader(response.headers, RALLY_HEADERS.ROOM_ACCEPT_MS));
+  const instanceAgeMs = nonNegativeInteger(
+    readRallyHeader(response.headers, RALLY_HEADERS.ROOM_INSTANCE_AGE_MS),
+  );
+  const attributes: Record<string, number> = {};
+  if (acceptMs !== undefined) {
+    attributes["rally.socket.room_accept_ms"] = acceptMs;
+    attributes["rally.socket.room_outside_accept_ms"] = Math.max(0, roomUpgradeMs - acceptMs);
+  }
+  if (instanceAgeMs !== undefined) attributes["rally.socket.room_instance_age_ms"] = instanceAgeMs;
+  const diagnosticNames = [
+    ...rallyHeaderAliases(RALLY_HEADERS.ROOM_ACCEPT_MS),
+    ...rallyHeaderAliases(RALLY_HEADERS.ROOM_INSTANCE_AGE_MS),
+  ];
+  if (
+    !diagnosticNames.some((name) => response.headers.has(name))
+    || response.status !== 101
+    || !response.webSocket
+  ) {
+    return { attributes, response };
+  }
+  const headers = new Headers(response.headers);
+  for (const name of diagnosticNames) headers.delete(name);
+  return {
+    attributes,
+    response: new Response(null, { status: 101, webSocket: response.webSocket, headers }),
+  };
+}
+
+function nonNegativeInteger(value: string | undefined): number | undefined {
+  if (value === undefined || !/^\d{1,15}$/.test(value)) return undefined;
+  return Number(value);
+}
+
 export class SocketService {
   constructor(private readonly env: Env) {}
 
@@ -529,9 +575,17 @@ export class SocketService {
       // No trace header is written: the room's spans are already children of
       // this one, because a Durable Object call is a traced binding call and
       // everything inside it runs in this span's async context.
-      const response = await span.step("workstream.socket.room_upgrade", () => stub
+      // Timed on the same pinned clock the step uses, so the two agree to the
+      // millisecond: this wait, less what the room says its accept took, is
+      // time outside the accept handler — see `roomUpgradeDiagnostics`.
+      const roomUpgradeStartedAt = Date.now();
+      const roomResponse = await span.step("workstream.socket.room_upgrade", () => stub
         .fetch(new Request("https://room.internal/socket", { method: "GET", headers })));
-      span.setAttributes({ "http.response.status_code": response.status });
+      const { attributes, response } = roomUpgradeDiagnostics(
+        roomResponse,
+        Date.now() - roomUpgradeStartedAt,
+      );
+      span.setAttributes({ "http.response.status_code": response.status, ...attributes });
       // The room answers the upgrade; the subprotocol is negotiated out here so
       // it stays a transport concern the room never has to know about.
       return withNegotiatedSubprotocol(request, response);

@@ -54,6 +54,16 @@ export const RALLY_HEADERS = Object.freeze({
   PARENT_KIND: "x-rally-parent-kind",
   PLACEMENT_AFFINITY: "x-rally-placement-affinity",
   REGION: "x-rally-region",
+  /**
+   * What a conversation object reports on the 101 it answers a feed upgrade
+   * with: how long its own accept ran, and how old the object instance that
+   * ran it was. The edge records the wait outside the accept separately;
+   * it includes routing, activation, constructor work, and queueing. Both
+   * headers are internal, stripped before the client handshake.
+   * `docs/performance-tracing.md` owns the attributes they become.
+   */
+  ROOM_ACCEPT_MS: "x-rally-room-accept-ms",
+  ROOM_INSTANCE_AGE_MS: "x-rally-room-instance-age-ms",
   SESSION_ID: "x-rally-session-id",
   SIGNATURE: "x-rally-signature",
   SOCKET_ADMISSION_AUTHORITY_GENERATION: "x-rally-socket-admission-authority-generation",
