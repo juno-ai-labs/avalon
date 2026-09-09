@@ -205,12 +205,16 @@ Two paths, and both matter because they serve different readers:
   `workstream_renamed` with the title, the new status, and the icon *if one was
   written* — the object reports which, so a refused icon is never published and
   no open client paints over the choice it was refused for. The event reaches
-  anyone with that work stream open, in practice the person who just created it,
-  and the client applies the icon to the header and the sidebar row together. It
-  is on this event rather than left to the projection below because that
-  projection is two Durable Object alarms and two Queue hops behind: a glyph
-  that changed seconds after the name it was chosen with is the same lag the
-  appearance picker's own receipt exists to close.
+  anyone with that work stream open, in practice the person who just created it.
+  The client puts the icon on the **sidebar row only** and leaves the header to
+  the projection below, which is the rule for every unversioned appearance
+  write: the cached detail behind the header is what the appearance picker reads
+  to decide its own pending preview is finished, and `settled()` retires that
+  preview as soon as the detail's icon moves off the baseline it was taken
+  against — to any value, since another person changing the icon has to retire
+  it too. An icon written there that nobody in this window picked would retire
+  somebody's in-flight choice to the generated glyph and hold the header on it
+  until the projection lands.
 - **The workspace directory.** The `UPDATE` names `workstreams`, so the
   work-stream object commits a `directory_common` effect beside it, which flows
   `SubstreamAgent -> WorkstreamDO -> WorkspaceDO` and is pushed to every
@@ -376,9 +380,11 @@ ordinary work-stream update and belongs to the object's product service.
   with no appearance.
 - `apps/desktop/src/renderer/lib/use-workstream-socket.test.tsx` covers the
   delivery half — *"shows the name Rally gives a work stream in its header and
-  its sidebar row"* now asserts the icon reaches both caches with the name.
-  Break it by dropping the `patchCachedGeneratedAppearance` call from the
-  `workstream_renamed` branch.
+  its sidebar row"* asserts the icon reaches the sidebar row with the name **and
+  that the cached detail is left without an appearance**, which is the guard on
+  the picker-preview rule above. Break it by writing the detail as well, through
+  `patchCachedWorkstream`, and the `not.toHaveProperty('appearance')` assertion
+  fails.
 - `apps/desktop/src/renderer/components/sidebar.test.tsx` and
   `screens/workstream.test.tsx` cover the two surfaces of `useNamingSkeleton`,
   each with a row inside the grace and one past it. The rule is a function of
@@ -397,7 +403,7 @@ call. The icon comes from the catalog the header picker already offers, every
 key in it carries a one-to-two-sentence description that the prompt renders, and
 `rename` writes the chosen icon in the same transaction as the title — but only
 where no icon is stored. `workstream_renamed` carries the icon that was actually
-written, and the client applies it to the header and the sidebar row together.
+written, and the client applies it to the sidebar row.
 
 **Why:** A work stream's glyph was derived from a hash of its id, so a sidebar
 was a column of arbitrary marks. Nothing about the work was in them, and the one

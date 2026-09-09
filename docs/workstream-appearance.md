@@ -12,7 +12,7 @@ has chosen for gets its icon from the naming pass, out of this same catalog.
 | `packages/contracts/src/workstream-appearance.ts` | Stable icon keys, one model-visible description per key, the default key, color keys, and partial updates. |
 | `apps/desktop/src/renderer/components/workstream-appearance-picker.tsx` | Palette, optimistic preview, ordered clicks, and failures. |
 | `apps/desktop/src/renderer/components/workstream-glyph.tsx` | Shared rendering and deterministic defaults. |
-| `apps/desktop/src/renderer/lib/workstreams-cache.ts` | `patchCachedWorkstreamAppearance`, the receipt-time write that puts a committed choice on the sidebar row ahead of the directory projection, and `patchCachedGeneratedAppearance`, which writes the header too because a generated icon has no preview to retire. Both share one merge rule, and `patchCachedWorkstream` under it is the one write for any unversioned fact both caches must agree on. |
+| `apps/desktop/src/renderer/lib/workstreams-cache.ts` | `patchCachedWorkstreamAppearance`, the one unversioned appearance write: it puts a committed choice, or a naming pass's generated icon, on the sidebar row ahead of the directory projection, and never on the cached detail. Built on `patchCachedWorkstream`, the write for any unversioned fact both caches must agree on. |
 | `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Orders the picker's choices on the retained Main socket and applies each one to the caches when its receipt arrives. |
 | `apps/api/src/durable-objects/workstream-object-product.ts` | Authoritative write, command receipt, and common-state publication. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | Main conversation's nullable `workstream.appearance_json`. |
@@ -118,7 +118,7 @@ The scroll viewport is a layout choice, not a cap on the catalog or server data.
 The picker component suite covers immediate selection, ordered rapid clicks,
 staying open, Escape focus restoration, and failed saves. The socket hook suite
 proves the caches hold the old appearance until the receipt and the merged value
-after it, and that a naming pass's icon reaches the header and the row together;
+after it, and that a naming pass's icon reaches the row and not the detail;
 the cache suite covers the merge over a stored and a generated appearance. The
 refusal that protects a person's choice from a naming pass is proved in
 `apps/api/test/workstream-naming.test.ts`. The real-workerd
@@ -129,6 +129,35 @@ cover the common cache path. Inspect the actual Electron popup in light and dark
 including scrolling, and check another connected window and reopening.
 
 ## Changelog
+
+### 2026-09-09 — Every unversioned appearance write is row-only, generated icons included
+
+Review on #619 caught the naming pass's generated icon being written to the
+cached detail as well as the sidebar row, on the reasoning that a generated icon
+has no optimistic preview to retire. That reasoning was wrong in one direction it
+did not consider: the icon has no preview of *its own*, but the detail is where
+`settled()` looks to retire **somebody else's**, and its `changed` arm fires when
+the detail's icon moves off the baseline to *any* value — deliberately, because
+another person changing the icon has to retire a pending choice too. So a
+generated icon landing between a person's receipt and their projection retired
+their in-flight choice to the generated glyph and held the header there for the
+seconds the projection takes. That is the same defect as the 2026-09-09 entry
+below, reached through a different writer.
+
+The rule is now stated as a property of the writer rather than of the caller:
+**the cached detail is the picker's own signal, and only the versioned
+projection may move it.** The separate `patchCachedGeneratedAppearance` helper is
+gone; the naming pass uses `patchCachedWorkstreamAppearance` like every other
+unversioned write. The cost is the one the entry below already accepted — the
+header glyph waits for the projection — and it is smaller here, because until it
+lands the header shows the id-derived default rather than a wrong stored value.
+
+Patching `settled()` instead was rejected: distinguishing "moved to my value"
+from "moved to someone else's" would break the case that arm exists for. If the
+header ever needs a generated icon immediately, the fix is the one the entry
+below already names — a receipt or event carrying the committed appearance and a
+version, so the write is authoritative rather than optimistic — not a second
+unversioned writer with its own exception.
 
 ### 2026-09-09 — Rally chooses the icon a work stream starts with
 

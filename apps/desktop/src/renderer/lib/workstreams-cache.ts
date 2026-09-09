@@ -94,10 +94,15 @@ export function patchCachedWorkstream(
  * Show a person's own appearance choice on the sidebar row the moment Main has
  * acknowledged it, ahead of the projection that will carry it there.
  *
- * The list row only: the header renders the detail entry under the picker's
- * own preview, which the picker retires once the detail carries the choice, so
- * writing the detail here would retire that preview on the receipt and expose
- * the header to an older projection still in flight. Appearance is Main's, so
+ * The list row only, and that goes for **every** unversioned appearance write,
+ * a naming pass's generated icon included. The header renders the detail entry
+ * under the picker's own preview, and `settled()` retires that preview as soon
+ * as the detail's icon moves off the baseline it was taken against — to any
+ * value, not only the one the person chose, because another person changing the
+ * icon has to retire it too. So a write here of an icon nobody in this window
+ * picked would retire a pending choice to the wrong glyph and hold it there
+ * until the projection lands. The detail is the picker's own signal; only the
+ * versioned projection may move it. Appearance is Main's, so
  * there is no substream to address. The merge mirrors Main's own
  * (`setAppearanceForAdmittedSocket`) because the receipt carries no payload;
  * the two bases can differ by the projection lag this write hides, and the
@@ -111,39 +116,11 @@ export function patchCachedWorkstreamAppearance(
   workstreamId: string,
   patch: WorkstreamAppearancePatch,
 ): void {
-  setCachedWorkstreams(queryClient, (current) => current?.map((row) =>
-    row.id === workstreamId ? { ...row, appearance: mergedAppearance(row, patch) } : row));
-}
-
-/**
- * Put an icon Rally chose on the header and the sidebar row together.
- *
- * The other half of the rule above, and the reason that one is row-only: what
- * keeps the header off a receipt-time write is the picker's preview, and a
- * generated icon has no preview to retire — nobody clicked anything. It is
- * written where no icon is stored, so it lands beside the name it was chosen
- * with instead of arriving with the directory projection seconds later, while
- * the glyph shows the id-derived default in between. The same unversioned-write
- * rule applies: the next newer common waterline replaces `appearance` whole and
- * has the last word.
- */
-export function patchCachedGeneratedAppearance(
-  queryClient: QueryClient,
-  workstreamId: string,
-  patch: WorkstreamAppearancePatch,
-): void {
-  patchCachedWorkstream(queryClient, workstreamId, (row) => ({
-    ...row,
-    appearance: mergedAppearance(row, patch),
+  setCachedWorkstreams(queryClient, (current) => current?.map((row) => {
+    if (row.id !== workstreamId) return row;
+    const appearance: WorkstreamAppearance = { icon: null, color: null, ...row.appearance, ...patch };
+    return { ...row, appearance };
   }));
-}
-
-/** One merge rule for both writers, mirroring Main's own over its row. */
-function mergedAppearance(
-  row: WorkstreamSummary,
-  patch: WorkstreamAppearancePatch,
-): WorkstreamAppearance {
-  return { icon: null, color: null, ...row.appearance, ...patch };
 }
 
 /**
