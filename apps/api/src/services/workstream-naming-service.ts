@@ -4,8 +4,10 @@ import {
   type WorkstreamNameContextMessage,
 } from "@rally/agent-harness";
 import {
+  WORKSTREAM_ICON_KEYS,
   WORKSTREAM_NAME_RESULT_MAX_LENGTH,
   WorkstreamNameResultSchema,
+  type WorkstreamIconKey,
 } from "@rally/contracts";
 
 import type { Env } from "../env";
@@ -64,8 +66,15 @@ const nameJsonSchema = {
   additionalProperties: false,
   properties: {
     title: { type: "string", minLength: 1, maxLength: WORKSTREAM_NAME_RESULT_MAX_LENGTH },
+    // Required rather than optional because the request goes out `strict: true`,
+    // which is what makes the enum a decoding constraint: the provider can only
+    // emit one of these keys, so the catalog in the prompt and the catalog here
+    // cannot disagree about what the model is allowed to answer. An answer that
+    // reaches the parser off the catalog anyway is dropped to "no icon" there
+    // rather than failing the name with it.
+    icon: { type: "string", enum: [...WORKSTREAM_ICON_KEYS] },
   },
-  required: ["title"],
+  required: ["title", "icon"],
 };
 
 /**
@@ -95,7 +104,8 @@ export interface WorkstreamNamingInput {
 }
 
 /**
- * Name one work stream from the request that opened it, in the background.
+ * Name one work stream from the request that opened it, and give it an icon, in
+ * the background.
  *
  * Never rejects and never throws — the model call and the write alike. Some
  * callers await this inline, having already created the work stream and
@@ -105,7 +115,7 @@ export interface WorkstreamNamingInput {
  */
 export async function nameWorkstream(env: Env, input: WorkstreamNamingInput): Promise<void> {
   await guarded(env, input.workspaceId, input.workstreamId, async () => {
-    const title = await generateName(env, {
+    const generated = await generateName(env, {
       workspaceId: input.workspaceId,
       workstreamId: input.workstreamId,
       userId: input.userId,
@@ -120,7 +130,7 @@ export async function nameWorkstream(env: Env, input: WorkstreamNamingInput): Pr
       workstreamId: input.workstreamId,
       from: "naming",
       to: "automatic",
-      title,
+      ...generated,
       standingTitle: input.provisionalTitle,
     });
   });
@@ -210,7 +220,7 @@ export async function refreshWorkstreamName(env: Env, input: {
       .saidMessageCount({ messageTypes: { include: ["text"] }, limit: RENAME_AFTER_MESSAGE_COUNT });
     if (saidCount < RENAME_AFTER_MESSAGE_COUNT) return;
 
-    const title = await generateName(env, {
+    const generated = await generateName(env, {
       workspaceId: input.workspaceId,
       workstreamId: input.workstreamId,
       userId: input.userId,
@@ -225,13 +235,13 @@ export async function refreshWorkstreamName(env: Env, input: {
     // to be unreachable. Left alone, the next message or run tries again. A row
     // still in `naming` is the exception: it is the first pass that never
     // finished, and its promise is the one that has to be kept.
-    if (title === null && row.title_status === "automatic") return;
+    if (generated.title === null && row.title_status === "automatic") return;
     await advanceTitle(env, {
       workspaceId: input.workspaceId,
       workstreamId: input.workstreamId,
       from: row.title_status,
-      to: title === null ? "automatic" : "settled",
-      title,
+      to: generated.title === null ? "automatic" : "settled",
+      ...generated,
       standingTitle: row.title,
     });
   });
@@ -261,8 +271,23 @@ async function loadNamingContext(
   }));
 }
 
+/** What one pass got out of the model: either half may be missing. */
+interface GeneratedName {
+  title: string | null;
+  icon: WorkstreamIconKey | null;
+}
+
+const NOTHING_GENERATED: GeneratedName = { title: null, icon: null };
+
 /**
- * Ask the naming agent for a name, or `null` when there is nothing usable.
+ * Ask the naming agent for a name and an icon, or for nothing usable.
+ *
+ * One call for both because they are one judgement about one work stream: the
+ * icon has to stand for whatever the name leads with, and a second call would
+ * be a second model reading the same request and agreeing with the first only
+ * by luck. It costs a closed catalog in the prompt — every icon a person can
+ * pick, each described — which is why the catalog is rendered from the shared
+ * keys rather than written out beside them.
  *
  * Reasoning is turned off rather than left to the model's default. Naming is a
  * one-shot relabelling of text the model has already been handed in full, so
@@ -270,8 +295,8 @@ async function loadNamingContext(
  * who created the work stream is watching for — asking for the lowest *effort*
  * instead would switch thinking on for a model that does none by default.
  *
- * Never throws. Every caller's alternative to a name is the title already on
- * the work stream, so a failure is logged and reported as "no name".
+ * Never throws. Every caller's alternative is the title and icon already on the
+ * work stream, so a failure is logged and reported as "nothing generated".
  */
 async function generateName(env: Env, input: {
   workspaceId: string;
@@ -280,8 +305,8 @@ async function generateName(env: Env, input: {
   objective: string;
   openingMessage: string;
   recentMessages?: WorkstreamNameContextMessage[];
-}): Promise<string | null> {
-  if (!env.OPENROUTER_API_KEY) return null;
+}): Promise<GeneratedName> {
+  if (!env.OPENROUTER_API_KEY) return NOTHING_GENERATED;
   try {
     const { result } = await runStructuredInference(env, {
       role: "workstream_naming",
@@ -300,7 +325,13 @@ async function generateName(env: Env, input: {
       parse: (value) => WorkstreamNameResultSchema.parse(value),
       reasoningEffort: "none",
     });
-    return normalizeGeneratedTitle(result.title);
+    const title = normalizeGeneratedTitle(result.title);
+    // Tied to the name rather than written on its own. An icon is only ever
+    // chosen alongside a name, and an answer whose name normalized away to
+    // nothing is one this pass is reporting as unusable — writing its icon
+    // anyway would spend the one icon a work stream gets on the pass that
+    // failed.
+    return title === null ? NOTHING_GENERATED : { title, icon: result.icon ?? null };
   } catch (error) {
     logStructuredEvent(env, "warn", "workstream_naming_failed", {
       workspace_id: input.workspaceId,
@@ -309,13 +340,13 @@ async function generateName(env: Env, input: {
       error_name: error instanceof Error ? error.name : "UnknownError",
       error_message: error instanceof Error ? error.message : "Work-stream naming failed",
     });
-    return null;
+    return NOTHING_GENERATED;
   }
 }
 
 /**
- * Move the title on one step: write the generated name if there is one, and
- * record that this pass has run.
+ * Move the title on one step: write the generated name and icon if there are
+ * any, and record that this pass has run.
  *
  * Matching on the status the pass started from is what makes this safe to run
  * a second — or a thousandth — later. A person can rename a work stream from
@@ -323,6 +354,10 @@ async function generateName(env: Env, input: {
  * generated name arriving afterwards must not undo their edit. Losing that race
  * means the human's title stands and nothing is published, because the rename
  * they made already told everyone.
+ *
+ * The icon is offered on the same write and refused by it where one is already
+ * stored, so what is published is the icon the object actually wrote rather
+ * than the one this pass asked for.
  */
 async function advanceTitle(env: Env, input: {
   workspaceId: string;
@@ -330,10 +365,17 @@ async function advanceTitle(env: Env, input: {
   from: "naming" | "automatic";
   to: "automatic" | "settled";
   title: string | null;
+  icon: WorkstreamIconKey | null;
   standingTitle: string;
 }): Promise<void> {
   const result = await createIdentityObjectPort(env, input.workspaceId, input.workstreamId)
-    .rename({ title: input.title, from: input.from, to: input.to, now: Date.now() });
+    .rename({
+      title: input.title,
+      icon: input.icon,
+      from: input.from,
+      to: input.to,
+      now: Date.now(),
+    });
   if (result.outcome === "superseded") {
     logStructuredEvent(env, "debug", "workstream_name_superseded", {
       workspace_id: input.workspaceId,
@@ -349,11 +391,13 @@ async function advanceTitle(env: Env, input: {
     pass: input.from,
     generated: input.title !== null,
     title_length: title.length,
+    icon: result.icon,
   });
   await publishWorkstreamEvent(env, input.workspaceId, input.workstreamId, {
     type: "workstream_renamed",
     title,
     titleStatus: input.to,
+    ...(result.icon ? { icon: result.icon } : {}),
   });
 }
 
