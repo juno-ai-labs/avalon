@@ -242,6 +242,26 @@ the file contents it reads today.
 
 ## Decision log
 
+### 2026-09-09 — The implementing change merges with both limits still open
+
+**Decided:** The product owner directed that the implementing pull request
+(#627) merge with `MAX_RESIDENT_CONTEXT_BLOCK_BYTES` and
+`MAX_RESIDENT_CONTEXT_SECTION_BYTES` still open. Open question 4 stays open,
+the `LIMIT UNSET` placeholders stay where they are, and the `content` column's
+`CHECK` waits for the numbers. This supersedes the earlier entry's "does not
+ship until they are set".
+
+**Why:** The reasoning beyond "keep all open for now" was not recorded. What is
+known: the numbers are the team's to set, not the change's to guess, and the
+enforcement already sits where an open value is inert, so setting them later is
+a one-constant change plus a follow-up object migration.
+
+**Changes:** The rollout ships without the bound the security section describes
+as bounding the prefix in size. Until the numbers land, the only bound on a
+delivered block is the sandbox's own file limits (`terminal_read_file` reads at
+most 10 MiB) and the compaction checkpoint's `messages_json` cap on the
+transcript side; the prompt section has no bound.
+
 ### 2026-09-09 — The commit moves what the prepare rendered, a ledger failure turns the gate off, and a revert reinstates
 
 **Decided:** The prepare step records, per compaction event, exactly the blocks
