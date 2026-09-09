@@ -5605,7 +5605,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
              FROM workspace_activity_event_targets
             WHERE user_id = ? GROUP BY event_id, user_id
          ) target ON target.event_id = event.event_id
-        WHERE (? IS NULL OR event.event_sequence > ?)
+        WHERE ${request.from == null ? "1 = 1" : "event.event_sequence > ?"}
           AND event.event_sequence <= ?
           AND (? IS NULL OR event.created_at >= ?)
           AND (? = 0 OR event.digestible = 1)
@@ -5625,8 +5625,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           )
         ORDER BY event.event_sequence LIMIT ?`,
       request.userId,
-      request.from ?? null,
-      request.from ?? null,
+      ...(request.from == null ? [] : [request.from]),
       request.through,
       epoch(request.notBefore ?? null),
       epoch(request.notBefore ?? null),

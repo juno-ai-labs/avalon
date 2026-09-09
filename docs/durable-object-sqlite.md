@@ -235,7 +235,13 @@ category cannot recur through a different branch of the same lifecycle.
   row into correctness.
 - Bind all values. SQL parameters cannot bind table names, column names, sort
   directions, or fragments; any dynamic identifier must come from a closed
-  code-owned allowlist.
+  code-owned allowlist. Fixed predicate fragments may also be selected from
+  code-owned literals; keep their positional bindings aligned and never
+  interpolate request values.
+- Optional predicates such as `(? IS NULL OR sequence > ?)` can prevent a
+  primary-key range seek. Select a direct range predicate when the cursor exists
+  and verify actual workerd `rowsRead` on populated history, including an empty
+  page. An existing index alone does not prove the query uses its lower bound.
 - Keep pagination deterministic with a stable tie-breaker, normally the primary
   key. A `LIMIT` without a complete order can skip or repeat rows between alarm
   passes.
@@ -332,6 +338,23 @@ mandatory review target. Do not silence the rule or cast a Promise-shaped result
 to make it pass—make the prepare/commit split explicit instead.
 
 ## Changelog
+
+### 2026-09-09 — Preserve cursor range seeks
+
+**What changed:** Added guidance for optional cursor predicates and fixed,
+code-owned SQL fragments with aligned bindings.
+
+**Why:** Workspace activity pagination read 108,665 rows for an empty window
+because an optional-parameter OR prevented its primary-key lower-bound seek.
+
+**Considered and rejected:** An additional index: the existing primary key
+already supports the direct range, without adding index writes or a migration.
+
+**Consequences:** Check physical rows read, not only returned rows. Avoid
+reintroducing an optional OR that hides a range from SQLite's planner.
+
+Shipped in [#628](https://github.com/juno-ai-labs/avalon/pull/628).
+
 
 ### 2026-09-03 — Disabling foreign keys for a rebuild does not work
 

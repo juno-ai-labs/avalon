@@ -672,6 +672,7 @@ entry point, and nothing else resolves audience correctly.
 
 | Suite | Covers |
 | --- | --- |
+| `apps/api/test-workers/workspace-read-cost.test.ts` | Activity first-page, resumed, and empty cursor results plus workerd rows-read cost; run with `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/workspace-read-cost.test.ts`. |
 | `apps/api/test/activity-event-projection.test.ts` | Projection from `activities`, audience resolution, target rows, and the cursor. |
 | `apps/api/test/digest-run-context.test.ts` | That the brief reaches the model through the run's trigger context **and** that the transcript row stays invisible to it. The two halves are pinned together deliberately, because a digest run that reaches the model without its window does not report that it cannot see one — it writes that nothing happened, and that shipped. |
 | `apps/api/test/digest-email-content.test.ts` | The digest shell: inline styles, counts, and the preheader. |
@@ -692,6 +693,28 @@ visible change to the email template is looked at through
 preview does *not* reproduce on its own.
 
 ## Changelog
+
+### 2026-09-09 — Seek directly to the activity cursor
+
+**What changed:** Activity reads add a direct sequence lower bound when a cursor
+exists. The RPC regression test covers zero, resumed, and empty cursors, mixed
+filters, and the first digest's non-null time floor.
+
+**Why:** The optional-cursor OR prevented SQLite from seeking past history.
+Production inspection measured 108,665 reads versus 1 for an empty direct range.
+
+**Considered and rejected:** Adding an index or migration: the primary key
+already supports the range. Retained the explicit no-cursor branch instead of
+substituting zero, preserving its unbounded semantics. Fixed SQL fragments and
+their conditional binding must change together.
+
+**Consequences:** Keep the supplied cursor as a direct range, guarded by workerd
+rows-read assertions. This guarantee concerns the main-table resumed seek only:
+the first digest's time-filtered, sequence-ordered path can still scan history,
+and target aggregation can read targets outside the cursor window. Neither cost
+is claimed fixed here. Audience and other filters retain their existing behavior.
+
+Shipped in [#628](https://github.com/juno-ai-labs/avalon/pull/628).
 
 ### 2026-09-08 — Deliver substream notifications without publishing child activity
 
