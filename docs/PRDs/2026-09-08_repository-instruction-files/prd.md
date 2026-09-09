@@ -97,8 +97,10 @@ context.
    regardless of how it was populated. Nothing in the mechanism reads the
    `terminal_repository` row or knows about GitHub.
 4. Delivery is prompt-cache-safe: while a run is uncompacted, nothing
-   per-repository or per-file changes in the system prompt, and an
-   instruction file already in context is never re-sent while it is there.
+   per-repository or per-file is added to the system prompt, the one
+   permitted change being the retirement of a prompt-resident block whose
+   file was edited, and an instruction file already in context is never
+   re-sent while it is there.
 5. Instruction files are presented as repository guidance that ranks below
    Rally policy and participant instructions, and they cannot widen what the
    run may do.
