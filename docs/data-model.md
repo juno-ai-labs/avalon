@@ -66,13 +66,18 @@ SidekickDO migration 3 adds automation.loadable, atomically maintained with the 
 
 ### Search projection state
 
-WorkspaceDO migration 33 owns `resource_search_versions`: a retained resource revision, pending flag, and dispatch time. Resource create/edit/delete triggers update it in the same transaction as the canonical write. SubstreamAgent migration 42 adds `conversation_search_links` and transcript-triggered `search_projection_v1` entries in `durable_outbox`. Both migrations enqueue existing records; these are projections, never new content authority. See [text search](text-search.md).
+WorkspaceDO migration 33 owns `resource_search_versions`: a retained resource revision, pending flag, and dispatch time. Resource insert/delete and search-relevant update triggers advance it in the same transaction as the canonical write. SubstreamAgent migration 42 adds `conversation_search_links` and transcript-triggered `search_projection_v1` entries in `durable_outbox`. Both migrations enqueue existing records; these are projections, never new content authority. See [text search](text-search.md).
 
 WorkspaceDO migration 39 adds partial indexes for draft upload cleanup
 (`resources_expired_drafts_idx`), missing slugs (`resources_missing_slug_idx`),
 and pending search revisions (`resource_search_pending_due_idx`). They bound
 these reads to pending work rather than the entire retained resource inventory;
 completed search watermarks remain durable. No table or authority is replaced.
+
+WorkspaceDO migration 43 replaces the resource search update trigger with a
+comparison of search content/category inputs. Non-search metadata and bookkeeping
+updates preserve the revision and pending/retry state; insert/delete triggers
+remain unchanged. `resource-update-cost.test.ts` verifies a populated v42 upgrade.
 
 ### Identity and tenancy
 
@@ -935,6 +940,20 @@ perform the regional audit/control write explicitly through
 
 ## Changelog
 
+### 2026-09-08 — Preserve search revisions across non-content updates
+
+**What changed:** WorkspaceDO migration 43 replaces only the resource update
+trigger, leaving existing rows, pending work, and deletion watermarks intact.
+
+**Why:** Broad update invalidation amplified routine resource bookkeeping into
+indexing reads and requests. Editing migration 33 would not upgrade deployed
+objects and would violate the migration ledger.
+
+**Consequences:** Search extraction changes must update the trigger in a new
+migration; no-op discovery leaves `updated_at` at the last meaningful change.
+
+PR: #611.
+
 ### 2026-09-08 — Index pending WorkspaceDO resource work
 
 Migration 39 adds partial indexes for expired upload drafts, missing resource
@@ -1025,7 +1044,7 @@ column to what its scan covered, never to its own turn. Owned by
 
 **What changed:** WorkstreamDO migration 7 adds child readiness/title fields,
 retryable preparation receipts, the authoritative per-child roster, and its
-durable membership-effect outbox. SubstreamAgent migration 41 adds the
+durable membership-effect outbox. SubstreamAgent migration 43 adds the
 per-user/version membership mirror used for socket and command admission.
 
 **Why:** A private non-main conversation needs an authority distinct from both

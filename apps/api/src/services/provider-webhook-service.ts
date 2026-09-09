@@ -898,6 +898,8 @@ export class ProviderWebhookService {
     );
   }
 
+  // Historical no-namespace D1 path: retain its receipt-fenced write behavior.
+  // Deployed WorkspaceDO discovery owns no-op suppression in workspace-resources-storage.ts.
   private resourceUpsertStatement(
     database: D1Database,
     connection: ConnectorConnectionContext,
