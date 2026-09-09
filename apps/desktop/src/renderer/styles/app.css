@@ -2731,8 +2731,12 @@ pre {
 .workstream-context-presence { background: var(--av-sys-color-success-base); border-radius: 50%; flex: 0 0 6px; height: 6px; }
 .workstream-context-sidebar.is-compact .workstream-context-toolbar { justify-content: center; }
 /* Compact drops the title, so the eight-pixel lift has nothing left to meet;
-   centre the curve in the square instead. */
+   centre the curve in the square instead. It only shows for a substream whose
+   title has no first character to stand in for it. */
 .workstream-context-sidebar.is-compact .workstream-substream-connector { transform: scaleY(-1); }
+/* The trim centres the cap height rather than the line box: an uppercase
+   letter carries no descender and would otherwise sit a pixel high. */
+.workstream-substream-initial { font-size: 17px; font-weight: 600; text-box: trim-both cap alphabetic; }
 .workstream-context-sidebar.is-compact .workstream-context-copy,
 .workstream-context-sidebar.is-compact .workstream-context-section h2,
 .workstream-context-sidebar.is-compact .workstream-context-empty span { display: none; }
