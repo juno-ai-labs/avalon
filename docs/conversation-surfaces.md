@@ -131,8 +131,11 @@ Expanded width defaults to 280px and is draggable between 240px and 400px;
 the icon rail is 96px (`COLLAPSED_SIDEBAR_WIDTH`), matching the existing Grok navigation. Its trailing-edge
 handle also accepts Left/Right keys. Width is persisted separately from global
 navigation. Dragging below 210px collapses it; expanding requires crossing
-220px, retaining the existing ten-pixel hysteresis. It temporarily collapses
-when its enclosing pane cannot fit the preferred width
+220px, retaining the existing ten-pixel hysteresis. Reaching either width is
+animated over `--sidebar-collapse-motion`, the one duration both sidebars spend,
+except while a drag is in progress: the gesture must land on the pointer, so
+`.is-resizing` takes the transition off for as long as it lasts. It temporarily
+collapses when its enclosing pane cannot fit the preferred width
 plus the existing 424px conversation reservation. Only that pane is observed,
 so collapse cannot change its own measurement and cause oscillation. All paint
 uses the existing light/dark sidebar, row, text, and focus tokens; selectors are
@@ -175,6 +178,45 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-09 — A sidebar travels between its two widths
+
+**What changed:** Collapsing or expanding either sidebar is animated over 240ms
+rather than cutting between the two widths. The navigation's
+`--av-cmp-sidebar-width` is registered with `@property` as a `<length>` and
+transitioned on `.workspace-shell` beside `--rail-width`; the work-stream
+sidebar transitions the `flex-basis` that sizes it. A drag is the exception:
+`.is-resizing` drops the width from the transitioned set for the length of the
+gesture, so the edge still lands exactly on the pointer.
+
+**Why:** The double-click on the edge was reported as not reading like a
+toggle — 280px to 96px in one frame is closer to a re-render than to a panel
+closing, and the reader has to re-find the transcript, which has also jumped.
+The motion is attached to the *width* rather than to the double-click handler
+that prompted it, so the toolbar buttons, ⌘B, and the constrained-window
+breakpoint all animate for free and no caller has to remember to; carrying it on
+the custom property means the panel, its grab handle, the room `.main-pane`
+leaves for it, and the composer centred over that room move as one thing instead
+of four rules kept in step by hand.
+
+**Considered and rejected:** Animating `width` on `.sidebar` and `margin-left`
+on `.main-pane` separately. That works for the two obvious elements and silently
+leaves behind everything else measured from the same property, which is how a
+panel and its handle part company. Also rejected: making the double-click
+handler play an animation, which would have left the button and ⌘B cutting.
+
+**Consequences:** The duration lives once, at `:root` in `app.css`, as
+`--sidebar-collapse-motion`; it is deliberately outside the `--av-` namespace
+because no theme has an opinion about it, and `themes.css.node.test.ts` lists it
+as rule-local for that reason. Two things must stay true: an unregistered custom
+property cannot be interpolated — dropping the `@property` block brings back the
+cut, at half the duration and with no error — and a drag must keep its opt-out,
+or the sidebar trails the pointer. A double-click is two grabs of the same
+handle, so the second release has to clear `.is-resizing` before the toggle
+lands; both sidebars have a test pinning that, because the failure is a missing
+animation on exactly the gesture that asks for it and nothing else reports it.
+`prefers-reduced-motion` needs nothing here: the global kill switch in `app.css`
+zeroes both durations.
 
 ### 2026-09-09 — Review fixes on the action-row move
 

@@ -245,6 +245,11 @@ describe('token references', () => {
     // the platform's window-chrome geometry, which no theme has an opinion
     // about and the registry does not declare.
     '--window-controls-inset',
+    // Also outside the `--av-` namespace, and for the same reason: how long a
+    // sidebar takes to reach its collapsed width is the shell's behaviour, not
+    // a theme's palette. It is stated once in `app.css` so both sidebars spend
+    // the same figure.
+    '--sidebar-collapse-motion',
     '--turn-bubble-radius'];
 
   // Set at runtime rather than in CSS: some by components as inline styles,
