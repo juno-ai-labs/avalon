@@ -99,6 +99,12 @@ import {
 } from "../runtime/harness-run-runtime";
 import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
 import { createToolReceiptObjectPort, createToolReceiptPortFactory } from "../runtime/tool-receipt-port";
+import { WorkstreamResidentContextStorage } from "./workstream-resident-context-storage";
+import { RESIDENT_CONTEXT_KINDS, renderResidentContextBlock } from "../services/resident-context/blocks";
+import {
+  type ResidentContextOperationRequest,
+  ResidentContextOperationRequestSchema,
+} from "./workstream-resident-context-protocol";
 import {
   loadToolReplayOutput,
   runWorkstreamHarness,
@@ -876,6 +882,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private product!: WorkstreamObjectProductService;
   private terminal!: WorkstreamTerminalStorage;
   private toolReceipts!: WorkstreamToolReceiptStorage;
+  private residentContext!: WorkstreamResidentContextStorage;
   private scheduling!: WorkstreamSchedulingStorage;
 
   private messages!: WorkstreamMessageStorage;
@@ -975,6 +982,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       );
       this.terminal = new WorkstreamTerminalStorage(state.storage);
       this.toolReceipts = new WorkstreamToolReceiptStorage(state.storage);
+      this.residentContext = new WorkstreamResidentContextStorage(state.storage);
       this.scheduling = new WorkstreamSchedulingStorage(state.storage);
       this.messages = new WorkstreamMessageStorage(state.storage);
       this.resources = new WorkstreamResourceStorage(state.storage);
@@ -1590,6 +1598,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     if (request.method === "POST" && url.pathname === "/internal/tool-receipt") {
       return this.acceptToolReceiptOperation(request);
     }
+    if (request.method === "POST" && url.pathname === "/internal/resident-context") {
+      return this.acceptResidentContextOperation(request);
+    }
     if (request.method === "POST" && url.pathname === "/internal/scheduling") {
       return this.acceptSchedulingOperation(request);
     }
@@ -1995,6 +2006,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     return responseToRpcResult(await this.acceptToolReceiptOperation(this.rpcRequest(input)));
   }
 
+  async executeResidentContextOperation(
+    input: ResidentContextOperationRequest,
+  ): Promise<DurableObjectRpcResult> {
+    await this.initialized;
+    return responseToRpcResult(await this.acceptResidentContextOperation(this.rpcRequest(input)));
+  }
+
   async executeMessageOperation(input: MessageOperationRequest): Promise<DurableObjectRpcResult> {
     await this.initialized;
     return objectPortRpcResult(await this.messageOperationOutcome(input));
@@ -2252,6 +2270,31 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private async acceptToolReceiptOperation(request: Request): Promise<Response> {
     const outcome = await this.toolReceiptOperationOutcome(await request.json().catch(() => null));
     return jsonResponse(outcome.payload, outcome.status);
+  }
+
+  /**
+   * The context-residency ledger's endpoint, for the producers of resident
+   * context blocks (the Terminal plugin today). Same fence as every other typed
+   * endpoint: the addressed object, still authoritative.
+   */
+  private async acceptResidentContextOperation(request: Request): Promise<Response> {
+    const outcome = await this.residentContextOperationOutcome(await request.json().catch(() => null));
+    return jsonResponse(outcome.payload, outcome.status);
+  }
+
+  private async residentContextOperationOutcome(body: unknown): Promise<ObjectPortOutcome> {
+    const parsed = ResidentContextOperationRequestSchema.safeParse(body);
+    if (!parsed.success) {
+      return { status: 400, payload: { ok: false, error: "invalid_resident_context_operation" } };
+    }
+    const refusal = this.objectPortRefusal(
+      parsed.data,
+      "workstream_resident_context_identity_mismatch",
+    );
+    if (refusal) return refusal;
+    const method = this.residentContext[parsed.data.operation] as (...args: unknown[]) => unknown;
+    const value = await method.apply(this.residentContext, parsed.data.args);
+    return { status: 200, payload: { ok: true, value: value ?? null } };
   }
 
   private async toolReceiptOperationOutcome(body: unknown): Promise<ObjectPortOutcome> {
@@ -4148,13 +4191,44 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       },
       commitBindCompaction: async (compaction) => {
         const current = fence();
-        await this.transcript.commitBindCompaction(compaction, {
+        const now = Date.now();
+        await this.transcript.commitBindCompaction({
+          ...compaction,
+          now,
+          // The ledger's residency transitions ride the checkpoint's commit:
+          // either the compacted context carries the blocks and the ledger
+          // says `system`, or neither happened.
+          applyInTransaction: () => {
+            this.residentContext.applyCompactionInTransaction(
+              compaction.commit.transition.compactionEventId,
+              now,
+            );
+          },
+        }, {
           executionId: execution.runId,
           executionEpoch: execution.executionEpoch,
           leaseOwner: execution.leaseOwner,
           expectedBindStateRevision: current.bind_state_revision,
         });
         await this.flushSemanticRealtimeOutboxBestEffort();
+      },
+      renderResidentContext: () => {
+        fence();
+        return this.residentContext.renderSections();
+      },
+      prepareResidentContextCompaction: ({ generation, stateRevision }) => {
+        fence();
+        const projection = this.transcript.readBindProjection(input.loopId);
+        if (!projection || projection.generation !== generation || projection.stateRevision !== stateRevision) {
+          throw new Error("bind_loop_head_conflict");
+        }
+        return {
+          section: this.residentContext.prepareCompaction(),
+          excludedMessagePositions: this.transcript.bindMessagePositionsBySourceKind(
+            input.loopId,
+            RESIDENT_CONTEXT_KINDS,
+          ),
+        };
       },
       reserveAssistantTurn: ({ turnId, modelTurnIndex, streamId }) => {
         const loop = fence();
@@ -4240,6 +4314,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       || loop.bind_state_revision !== step.stateRevision) {
       throw new Error("substream_loop_step_fence_mismatch");
     }
+    // Resident context blocks a tool recorded during the batch (a checkout's
+    // AGENTS.md, say) are delivered here, ahead of any participant steer, and
+    // their ledger rows are closed in the same commit that appends them.
+    const now = Date.now();
+    const pendingResidentContext = this.residentContext.pendingDeliveries();
     const settled = await this.transcript.settlePendingSteersAtStep({
       loopId: loop.loop_id,
       executionId: execution.runId,
@@ -4253,7 +4332,24 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       modelTurnIndex: step.modelTurnIndex,
       enqueueRegionalEffectsInTransaction: (effects) =>
         this.product.enqueueRegionalEffectsInTransaction(effects),
-      now: Date.now(),
+      derivedInputs: pendingResidentContext.map((delivery) => ({
+        key: delivery.sourceId,
+        message: { role: "user", content: renderResidentContextBlock(delivery.block) },
+        provenance: {
+          originKind: "derived",
+          sourceKind: delivery.sourceKind,
+          sourceId: delivery.sourceId,
+          sourceRevision: null,
+        },
+      })),
+      markDerivedInputsDeliveredInTransaction: (keys) => {
+        const delivered = new Set(keys);
+        this.residentContext.markDeliveredInTransaction(
+          pendingResidentContext.filter((delivery) => delivered.has(delivery.sourceId)),
+          now,
+        );
+      },
+      now,
     });
     await this.flushSemanticRealtimeOutboxBestEffort();
     return { transitions: settled.transitions, stop: settled.stop };
@@ -4503,6 +4599,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       scheduling: resident((body) => this.schedulingOperationOutcome(body)),
       transcript: resident((body) => this.transcriptOperationOutcome(body)),
       toolReceipt: resident((body) => this.toolReceiptOperationOutcome(body)),
+      residentContext: resident((body) => this.residentContextOperationOutcome(body)),
       terminal: (operation, args) => this.runTerminalOperation({
         workspaceId,
         workstreamId,

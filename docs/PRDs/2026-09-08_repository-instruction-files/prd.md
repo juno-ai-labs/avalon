@@ -9,7 +9,9 @@
 > user-role message at the tail of the transcript; a durable ledger records
 > what was loaded; after a compaction the loaded files move into the system
 > prompt for a bounded number of further compactions, then drop out until a
-> file beneath them is touched again. Companion: [state](state.md).
+> file beneath them is touched again. Companions: [state](state.md),
+> [plan](plan.md). Subsystem document once built:
+> [`resident-context.md`](../../resident-context.md).
 > Subsystem references: [Terminal work spaces](../../terminal-workspaces.md),
 > [agent harness](../../agent-harness.md),
 > [writing prompts](../../writing-prompts.md),
@@ -240,7 +242,66 @@ the file contents it reads today.
 
 ## Decision log
 
-None yet.
+### 2026-09-09 — The implementing change is built with both limits open, and does not ship until they are set
+
+**Decided:** `MAX_RESIDENT_CONTEXT_BLOCK_BYTES` and
+`MAX_RESIDENT_CONTEXT_SECTION_BYTES` are open placeholders in `blocks.ts`, the
+probe is given the block bound only when it is finite, truncation is applied in
+TypeScript after the read, and the `content` column carries no `CHECK`. The
+pull request that carries this change names both numbers as the blocker.
+
+**Why:** Decision 9 requires finite numbers before the change ships, not before
+it is written; the mechanism had to exist for the numbers to be tested against,
+and everything else in the PRD could be built and proved without them. Placing
+the enforcement where an open value is inert is what lets the code be complete
+while the numbers are the product owner's.
+
+**Changes:** Nothing in the agreed scope. Open question 4 stays open and blocks
+the merge, not the build.
+
+### 2026-09-09 — Two tools probe in a command of their own
+
+**Decided:** `run_command` and `import_resource` run the probe as a separate
+`instructions.probe` utility command before the mutation. Every other tool's
+probe rides its own sandbox command as the PRD describes.
+
+**Why:** `run_command` executes the model's own text, which the probe cannot be
+folded into without altering the command the durable task records and hashes;
+`import_resource` lands through the resource bridge's own commands. One extra
+round trip on the two heaviest mutations was judged cheaper than either
+rewriting a recorded command or threading the probe through the bridge.
+
+**Changes:** Decision 7's claim that the probe adds no provider round trip
+holds for `read_file`, `edit_file`, `write_file`, `apply_patch`, and the
+bootstrap, and not for these two. The Terminal document's limits section says so.
+
+### 2026-09-09 — The summariser's exclusions come from the object, not the harness
+
+**Decided:** `prepareCompaction` answers with the projected positions of every
+message a resident-context kind owns, read from `bind_loop_state_messages`
+joined to `transcript_facts`, and the harness filters the summary input by
+position.
+
+**Why:** Decision 3 described excluding messages by their provenance in the
+harness. The harness keeps no provenance per message once a transition is
+applied; the object's durable projection does, exactly. Positions are the seam
+that already exists between the two.
+
+**Changes:** Nothing in behavior. Decision 3's mechanism sentence is superseded
+by this one.
+
+### 2026-09-09 — The ledger has its own object-port authority
+
+**Decided:** Producers reach the ledger through a `residentContext` authority
+(`createResidentContextPortFactory`), not through the Terminal port, and the
+Terminal plugin is its first caller.
+
+**Why:** Decision 5 says a second kind must not need Terminal; a ledger operation
+on the Terminal protocol would have made every future producer a Terminal
+dependant. The generic object-port shape already existed for exactly this.
+
+**Changes:** Nothing in the agreed scope; the data model and rollout sections
+name the port.
 
 ## Key design decisions
 

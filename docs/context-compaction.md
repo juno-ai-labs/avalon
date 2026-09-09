@@ -157,7 +157,12 @@ two compactions remain two checkpoint identities and two completed edges.
   reasonable the message — pins it: a stored checkpoint becomes the next run's
   prefix, so whatever sits at a fixed index survives every later compaction and
   keeps re-spending context long after the summary superseded it. That is not
-  hypothetical; it is what the 2026-08-12 entry below is about.
+  hypothetical; it is what the 2026-08-12 entry below is about. Resident
+  context blocks ([`resident-context.md`](resident-context.md)) are the one
+  content that does cross a compaction, and they cross through the ledger, not
+  the checkpoint: they move into the system prompt for their kind's lifetime
+  and leave on its own count, and the messages they came from are withheld from
+  the summariser so the summary cannot pin them a second way.
 - **The summary is the only record, so the prompt is load-bearing.** Anything the
   prompt does not ask for is gone for the rest of the work stream, silently and
   permanently. A change that removes a section from `COMPACTION_SUMMARY_PROMPT`
@@ -176,7 +181,8 @@ two compactions remain two checkpoint identities and two completed edges.
   boundary, not only to summary quality.
 - **The persisted checkpoint never includes the system message.** A later run
   renders its own current policy; storing one would replay stale policy as
-  conversation.
+  conversation. The resident-context section is part of that render, from the
+  ledger's committed state, never from the checkpoint.
 - **The persisted checkpoint is plain text.** No `data:` URL, file part, or audio
   part may reach the row — attachment bytes are neither replayable nor safe to
   keep, and the summary is expected to have described whatever mattered.
@@ -208,7 +214,10 @@ sequence boundary, and the replay assembly.
 
 Compaction deliberately does **not** prune tool output, drop old messages
 individually, or trim attachments — it is all-or-nothing on the whole context
-(see [Open questions](#open-questions)). It adds no transcript message: the work
+(see [Open questions](#open-questions)). The one selection it makes is on the
+summariser's *input*: messages the context-residency ledger owns are left out,
+because the ledger carries them forward itself and a paraphrase in the summary
+would outlive their residency. It adds no transcript message: the work
 stream transcript in the product is a separate durable record, unaffected by a
 compaction. The only user-visible surface is the transient, reconnect-safe
 activity indicator. Scheduling, receipts, and everything else about the run stay in
@@ -284,6 +293,36 @@ results.
   every routed model.
 
 ## Changelog
+
+### 2026-09-09 — Resident context moves into the prefix at the compaction, and out of the summary
+
+**What changed:** Before the summary turn, `compact()` asks the host's
+`residentContext.prepareCompaction` for the prompt sections the ledger would
+render after this compaction and the projected positions of the messages it
+owns. The compacted system message is rendered from those sections and takes the
+next system projection revision when its bytes change; the summariser sees the
+transcript without those positions; the host applies the ledger's transitions
+inside `commitBindCompaction`'s transaction, keyed by the compaction event id.
+The checkpoint row is unchanged and still carries no system message.
+
+**Why:** A checkout's `AGENTS.md` has to survive compaction without pinning a
+slot in the checkpoint. Moving it into the prefix at the compaction costs
+nothing the compaction had not already cost, and a bounded lifetime keeps it
+from outliving the work. Left in the summariser's input it would be paraphrased
+into the checkpoint and outlive its residency there.
+
+**Considered and rejected:** A second user-role message after the checkpoint
+carrying the blocks (keeps the role boundary, and is the PRD's recorded
+fallback, but every later compaction would have to carry it again); a
+post-commit hook to move the ledger (the replacement projection is already
+durable by then, and a crash between the two loses the blocks).
+
+**Consequences:** `prepareCompaction` is the one place a prompt section is
+rendered from proposed rather than committed state; whoever changes compaction
+ordering has to keep it before the summary turn and its commit inside the
+checkpoint's transaction. The checkpoint's messages are positions in the live
+array, so anything that reorders `state.messages` before `compact()` invalidates
+the positions the host answers with.
 
 ### 2026-09-05 — A checkpoint covers what the projection considered, not what the transcript holds
 

@@ -104,6 +104,8 @@ const EXPECTED_TABLES = [
   "projection_keys",
   "realtime_state",
   "repository_publications",
+  "resident_context_blocks",
+  "resident_context_compactions",
   "resource_inventory_revision",
   "run_lifecycle_events",
   "run_memory_contexts",
@@ -448,6 +450,28 @@ describe("the Workstream Durable Object relational schema", () => {
       expect(() => database.exec(`INSERT INTO sidekick_skill_names VALUES ('second', 'sidekick-editor')`)).toThrow(/UNIQUE/);
       applyWorkstreamObjectSchema(storage, "worker-v46", 3_000);
       expect(database.prepare(`SELECT * FROM sidekick_skill_names`).all()).toEqual([{ sidekick_id: "first", name: "sidekick-editor" }]);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("adds the v51 context-residency ledger without touching earlier rows and re-applies idempotently", () => {
+    const database = new DatabaseSync(":memory:");
+    const storage = objectStorage(database);
+    try {
+      applyDurableObjectSqliteMigrations({ storage, migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 50), component: "substream_agent_do", workerVersionId: "worker-v50", now: 1_000 });
+      database.exec(`INSERT INTO sidekick_skill_names VALUES ('first', 'sidekick-editor')`);
+      applyWorkstreamObjectSchema(storage, "worker-v51", 2_000);
+      expect(database.prepare(`SELECT * FROM sidekick_skill_names`).all()).toEqual([{ sidekick_id: "first", name: "sidekick-editor" }]);
+      database.exec(`INSERT INTO resident_context_blocks
+        (kind, block_id, sha256, source_generation, content, truncated, residency, superseded, compactions_remaining, pending_delivery, first_delivered_at, last_delivered_at)
+        VALUES ('repository_instructions', 'AGENTS.md', 'abc', 1, 'rules', 0, 'transcript', 0, 0, 1, 2000, 2000)`);
+      expect(() => database.exec(`INSERT INTO resident_context_blocks
+        (kind, block_id, sha256, source_generation, content, truncated, residency, superseded, compactions_remaining, pending_delivery, first_delivered_at, last_delivered_at)
+        VALUES ('repository_instructions', 'AGENTS.md', 'abc', 1, 'rules', 0, 'transcript', 0, 0, 1, 2000, 2000)`)).toThrow(/UNIQUE|PRIMARY KEY/u);
+      expect(() => database.exec(`UPDATE resident_context_blocks SET residency = 'prompt'`)).toThrow(/CHECK/u);
+      applyWorkstreamObjectSchema(storage, "worker-v51", 3_000);
+      expect(database.prepare(`SELECT block_id, residency FROM resident_context_blocks`).all()).toEqual([{ block_id: "AGENTS.md", residency: "transcript" }]);
     } finally {
       database.close();
     }
