@@ -2479,13 +2479,6 @@ export function MessageBlock({
       </header>
       {human ? (
         <div className="human-message-content">
-          {message.attachments?.length && loadAttachmentContent && onOpenAttachment ? (
-            <MessageAttachments
-              attachments={message.attachments}
-              loadContent={loadAttachmentContent}
-              onOpen={onOpenAttachment}
-            />
-          ) : null}
           {message.text ? (
             <HumanMessageBubble disclosure={rowDisclosure} messageId={message.id} text={message.text}>
               <MarkdownBody
@@ -2494,6 +2487,13 @@ export function MessageBlock({
                 verbatim
               >{message.text}</MarkdownBody>
             </HumanMessageBubble>
+          ) : null}
+          {message.attachments?.length && loadAttachmentContent && onOpenAttachment ? (
+            <MessageAttachments
+              attachments={message.attachments}
+              loadContent={loadAttachmentContent}
+              onOpen={onOpenAttachment}
+            />
           ) : null}
           {pendingLabel && <span className="message-delivery-pill">{pendingLabel}</span>}
           {startSubstream && (
@@ -2504,13 +2504,6 @@ export function MessageBlock({
         </div>
       ) : (
         <>
-          {message.attachments?.length && loadAttachmentContent && onOpenAttachment ? (
-            <MessageAttachments
-              attachments={message.attachments}
-              loadContent={loadAttachmentContent}
-              onOpen={onOpenAttachment}
-            />
-          ) : null}
           <AssistantMessageContent
             citations={citations}
             collapseHeadings={collapseHeadings}
@@ -2520,6 +2513,13 @@ export function MessageBlock({
             text={message.text ?? ''}
             telemetry={{ messageId: message.id, workstreamId: message.workstreamId }}
           />
+          {message.attachments?.length && loadAttachmentContent && onOpenAttachment ? (
+            <MessageAttachments
+              attachments={message.attachments}
+              loadContent={loadAttachmentContent}
+              onOpen={onOpenAttachment}
+            />
+          ) : null}
         </>
       )}
     </article>
