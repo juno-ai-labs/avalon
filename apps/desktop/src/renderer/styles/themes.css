@@ -153,18 +153,26 @@
    * personal accents. Stored color keys remain stable; each light/dark
    * appearance defines its own values so shades can be tuned for contrast
    * without changing saved choices. */
+  --av-sys-color-project-edge: rgba(20, 20, 20, 0.16);
+  --av-sys-color-project-black: #17171a;
+  --av-sys-color-project-rose: #f43f5e;
+  --av-sys-color-project-red: #ef4444;
+  --av-sys-color-project-orange: #f97316;
+  --av-sys-color-project-amber: #f59e0b;
+  --av-sys-color-project-lime: #84cc16;
+  --av-sys-color-project-green: #22c55e;
+  --av-sys-color-project-emerald: #10b981;
+  --av-sys-color-project-cyan: #06b6d4;
+  --av-sys-color-project-blue: #3b82f6;
+  --av-sys-color-project-indigo: #6366f1;
+  --av-sys-color-project-violet: #8b5cf6;
+  --av-sys-color-project-purple: #a855f7;
+  --av-sys-color-project-fuchsia: #d946ef;
+  --av-sys-color-project-pink: #ec4899;
   --av-sys-color-project-gray: #6b7280;
   --av-sys-color-project-brown: #92400e;
-  --av-sys-color-project-red: #dc2626;
-  --av-sys-color-project-orange: #ccff00;
   --av-sys-color-project-yellow: #ca8a04;
-  --av-sys-color-project-green: #16a34a;
   --av-sys-color-project-teal: #0d9488;
-  --av-sys-color-project-cyan: #0891b2;
-  --av-sys-color-project-blue: #2563eb;
-  --av-sys-color-project-indigo: #4f46e5;
-  --av-sys-color-project-purple: #9333ea;
-  --av-sys-color-project-pink: #db2777;
 
   /* One colour per state a work stream can show a person in the sidebar and on
    * the home screen. Every marker in the product draws from this group and
@@ -465,34 +473,6 @@
   --av-cmp-button-primary-background: #070707;
   --av-cmp-button-primary-color: #fcfcfc;
   --av-cmp-button-primary-hover: #2f2f2f;
-
-  /* Profile color roles for human message backgrounds, foregrounds, and author
-   * dots. Each appearance tunes each role independently of avatars and project
-   * icons. */
-  --av-cmp-member-message-blue-background: #2563eb;
-  --av-cmp-member-message-blue-foreground: var(--av-ref-color-neutral-1);
-  --av-cmp-member-message-blue-dot: #2563eb;
-  --av-cmp-member-message-teal-background: #0891b2;
-  --av-cmp-member-message-teal-foreground: var(--av-ref-color-neutral-14);
-  --av-cmp-member-message-teal-dot: #0891b2;
-  --av-cmp-member-message-green-background: #16a34a;
-  --av-cmp-member-message-green-foreground: var(--av-ref-color-neutral-14);
-  --av-cmp-member-message-green-dot: #16a34a;
-  --av-cmp-member-message-amber-background: #ca8a04;
-  --av-cmp-member-message-amber-foreground: var(--av-ref-color-neutral-14);
-  --av-cmp-member-message-amber-dot: #ca8a04;
-  --av-cmp-member-message-orange-background: #ccff00;
-  --av-cmp-member-message-orange-foreground: var(--av-ref-color-neutral-14);
-  --av-cmp-member-message-orange-dot: #ccff00;
-  --av-cmp-member-message-rose-background: #db2777;
-  --av-cmp-member-message-rose-foreground: var(--av-ref-color-neutral-1);
-  --av-cmp-member-message-rose-dot: #db2777;
-  --av-cmp-member-message-violet-background: #9333ea;
-  --av-cmp-member-message-violet-foreground: var(--av-ref-color-neutral-1);
-  --av-cmp-member-message-violet-dot: #9333ea;
-  --av-cmp-member-message-slate-background: #6b7280;
-  --av-cmp-member-message-slate-foreground: var(--av-ref-color-neutral-1);
-  --av-cmp-member-message-slate-dot: #6b7280;
 }
 /* Rally Dark — The dark GrokBot-inspired Rally appearance. */
 [data-theme='dark'] {
@@ -595,18 +575,26 @@
   --av-sys-color-danger-edge: #3a201a;
   --av-sys-color-danger-on: #150b08;
 
+  --av-sys-color-project-edge: rgba(252, 252, 252, 0.22);
+  --av-sys-color-project-black: #45454d;
+  --av-sys-color-project-rose: #f43f5e;
+  --av-sys-color-project-red: #ef4444;
+  --av-sys-color-project-orange: #f97316;
+  --av-sys-color-project-amber: #f59e0b;
+  --av-sys-color-project-lime: #84cc16;
+  --av-sys-color-project-green: #22c55e;
+  --av-sys-color-project-emerald: #10b981;
+  --av-sys-color-project-cyan: #06b6d4;
+  --av-sys-color-project-blue: #3b82f6;
+  --av-sys-color-project-indigo: #6366f1;
+  --av-sys-color-project-violet: #8b5cf6;
+  --av-sys-color-project-purple: #a855f7;
+  --av-sys-color-project-fuchsia: #d946ef;
+  --av-sys-color-project-pink: #ec4899;
   --av-sys-color-project-gray: #6b7280;
   --av-sys-color-project-brown: #92400e;
-  --av-sys-color-project-red: #dc2626;
-  --av-sys-color-project-orange: #ccff00;
   --av-sys-color-project-yellow: #ca8a04;
-  --av-sys-color-project-green: #16a34a;
   --av-sys-color-project-teal: #0d9488;
-  --av-sys-color-project-cyan: #0891b2;
-  --av-sys-color-project-blue: #2563eb;
-  --av-sys-color-project-indigo: #4f46e5;
-  --av-sys-color-project-purple: #9333ea;
-  --av-sys-color-project-pink: #db2777;
 
   --av-sys-color-workstream-running: #5cb3e0;
   --av-sys-color-workstream-needs-input: #dcb45f;
@@ -811,29 +799,4 @@
   --av-cmp-button-primary-background: #fcfcfc;
   --av-cmp-button-primary-color: #070707;
   --av-cmp-button-primary-hover: #dedede;
-
-  --av-cmp-member-message-blue-background: #2563eb;
-  --av-cmp-member-message-blue-foreground: var(--av-ref-color-neutral-14);
-  --av-cmp-member-message-blue-dot: #2563eb;
-  --av-cmp-member-message-teal-background: #0891b2;
-  --av-cmp-member-message-teal-foreground: var(--av-ref-color-neutral-1);
-  --av-cmp-member-message-teal-dot: #0891b2;
-  --av-cmp-member-message-green-background: #16a34a;
-  --av-cmp-member-message-green-foreground: var(--av-ref-color-neutral-1);
-  --av-cmp-member-message-green-dot: #16a34a;
-  --av-cmp-member-message-amber-background: #ca8a04;
-  --av-cmp-member-message-amber-foreground: var(--av-ref-color-neutral-1);
-  --av-cmp-member-message-amber-dot: #ca8a04;
-  --av-cmp-member-message-orange-background: #ccff00;
-  --av-cmp-member-message-orange-foreground: var(--av-ref-color-neutral-1);
-  --av-cmp-member-message-orange-dot: #ccff00;
-  --av-cmp-member-message-rose-background: #db2777;
-  --av-cmp-member-message-rose-foreground: var(--av-ref-color-neutral-14);
-  --av-cmp-member-message-rose-dot: #db2777;
-  --av-cmp-member-message-violet-background: #9333ea;
-  --av-cmp-member-message-violet-foreground: var(--av-ref-color-neutral-14);
-  --av-cmp-member-message-violet-dot: #9333ea;
-  --av-cmp-member-message-slate-background: #6b7280;
-  --av-cmp-member-message-slate-foreground: var(--av-ref-color-neutral-14);
-  --av-cmp-member-message-slate-dot: #6b7280;
 }

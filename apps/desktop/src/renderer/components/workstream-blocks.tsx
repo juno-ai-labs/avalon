@@ -1,4 +1,5 @@
 import clsx from 'clsx';
+import { personalColor, personalColorInk } from './personal-avatar';
 import { MemberPresentationContext } from '../lib/member-presentation';
 import {
   IconBrain,
@@ -2269,10 +2270,15 @@ export function MessageBlock({
   const profile = profileUserId ? presentations.get(profileUserId) : undefined;
   const personStyle = {
     '--person-accent': profile ? 'var(--av-sys-color-text-default)' : turnAccent(message),
+    // Straight from the palette. There used to be a `cmp.member-message.*` token
+    // per accent name restating the same fill and ink; it duplicated the palette
+    // by hand, had already drifted from it, and could not survive the accent set
+    // changing. The accent *is* a palette colour now, so there is nothing left
+    // to indirect through.
     ...(profile ? {
-      '--person-dot': `var(--av-cmp-member-message-${profile.color}-dot)`,
-      '--av-cmp-bubble-human-background': `var(--av-cmp-member-message-${profile.color}-background)`,
-      '--av-cmp-bubble-human-foreground': `var(--av-cmp-member-message-${profile.color}-foreground)`,
+      '--person-dot': personalColor(profile.color),
+      '--av-cmp-bubble-human-background': personalColor(profile.color),
+      '--av-cmp-bubble-human-foreground': personalColorInk(profile.color),
     } : {}),
   } as React.CSSProperties;
   if (message.messageType === 'thought') return <div className="transcript-event" id={`message-${message.id}`}><ThoughtBlock message={message} /></div>;

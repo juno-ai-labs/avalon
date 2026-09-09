@@ -104,9 +104,13 @@ html[data-personal-color] {
 .avatar > .personal-avatar { width: 100%; height: 100%; }
 html { --personal-ink-light: var(--av-ref-color-neutral-1); --personal-ink-dark: var(--av-ref-color-neutral-14); }
 html[data-theme='dark'] { --personal-ink-light: var(--av-ref-color-neutral-14); --personal-ink-dark: var(--av-ref-color-neutral-1); }
-html[data-personal-color] { --av-sys-color-accent-on: var(--personal-ink-light); }
-html[data-personal-color='amber'], html[data-personal-color='orange'], html[data-personal-color='green'], html[data-personal-color='teal'] { --av-sys-color-accent-on: var(--personal-ink-dark); }
-.personal-colors button { color: var(--personal-ink-light); }
+/* Mirrors PALETTE_INK in @rally/contracts, which is the source of truth and is
+   asserted against these rules by palette.css.node.test.ts. Every accent takes
+   black ink except the two that resolve to a dark neutral: `black` itself, and
+   the retired `slate` that now follows it. */
+html[data-personal-color] { --av-sys-color-accent-on: var(--personal-ink-dark); }
+html[data-personal-color='black'], html[data-personal-color='slate'] { --av-sys-color-accent-on: var(--personal-ink-light); }
+.personal-colors button { color: var(--personal-ink-dark); }
 
 .intro-scene.is-exiting { animation: onboarding-exit 100ms ease-in both; }
 @keyframes onboarding-exit { from { opacity: 1; } to { opacity: 0; } }

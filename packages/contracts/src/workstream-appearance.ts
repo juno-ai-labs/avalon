@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { PROJECT_COLOR_KEYS, PROJECT_ICON_KEYS } from "./projects";
+import { PROJECT_COLOR_KEYS_STORABLE, PROJECT_ICON_KEYS } from "./projects";
 
 export const WORKSTREAM_ICON_KEYS = [
   "aperture", "atom", "boxes", "circle-dot", "circuit-board", "component",
@@ -104,8 +104,14 @@ export const WORKSTREAM_ICON_DESCRIPTIONS: Record<WorkstreamIconKey, string> = {
 
 export const WorkstreamAppearanceSchema = z.strictObject({
   icon: WorkstreamIconKeySchema.nullable(),
-  /** Stable semantic palette key; resolve through the current appearance tokens, never store a CSS color. */
-  color: z.enum(PROJECT_COLOR_KEYS).nullable(),
+  /**
+   * Stable semantic palette key; resolve through the current appearance tokens,
+   * never store a CSS color. Validated against the *storable* vocabulary, not the
+   * pickable one: this schema parses on every work-stream read, so narrowing it to
+   * what the picker currently offers would make a retired colour throw instead of
+   * render.
+   */
+  color: z.enum(PROJECT_COLOR_KEYS_STORABLE).nullable(),
 });
 export const WorkstreamAppearancePatchSchema = WorkstreamAppearanceSchema.partial();
 export type WorkstreamAppearance = z.infer<typeof WorkstreamAppearanceSchema>;

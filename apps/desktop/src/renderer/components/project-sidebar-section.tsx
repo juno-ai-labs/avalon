@@ -7,7 +7,6 @@ import clsx from 'clsx';
 import { Fragment, useRef, useState, type ReactNode } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
-  PROJECT_COLOR_KEYS,
   PROJECT_ICON_KEYS,
   type CreateProjectRequest,
   type ProjectColorKey,
@@ -16,13 +15,13 @@ import {
 } from '@rally/contracts';
 
 import { Button, DropdownSelect, IconButton, InlineError, Modal } from './primitives';
+import { PROJECT_COLOR_DEFAULT, projectColorCells } from '../lib/project-palette';
 import { SidebarSkeletonRows } from './sidebar-skeleton';
 import type { WorkstreamSummary } from '../lib/types';
 
 
 
 function label(value: string): string {
-  if (value === 'orange') return 'Neon yellow';
   return value.split('-').map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`).join(' ');
 }
 
@@ -63,14 +62,14 @@ export function ProjectAppearancePicker({
       <fieldset>
         <legend>Color</legend>
         <div className="project-color-grid">
-          {PROJECT_COLOR_KEYS.map((key) => (
-            <Tooltip.Root delayDuration={250} key={key}>
+          {projectColorCells().map((key, cell) => (key === null
+            ? <span aria-hidden="true" className="project-color-gap" key={`gap-${cell}`} />
+            : <Tooltip.Root delayDuration={250} key={key}>
               <Tooltip.Trigger asChild>
                 <button aria-label={label(key)} aria-pressed={colorKey === key} className={clsx(colorKey === key && 'is-selected')} onClick={() => onColorChange(key)} type="button"><span style={{ background: `var(--av-sys-color-project-${key})` }} /></button>
               </Tooltip.Trigger>
               <Tooltip.Portal><Tooltip.Content className="tooltip" sideOffset={5}>{label(key)}<Tooltip.Arrow className="tooltip-arrow" /></Tooltip.Content></Tooltip.Portal>
-            </Tooltip.Root>
-          ))}
+            </Tooltip.Root>))}
         </div>
       </fieldset>
     </div>
@@ -118,7 +117,7 @@ export function ProjectSidebarSection({
   const [recoveryOpen, setRecoveryOpen] = useState(false);
   const [name, setName] = useState('');
   const [iconKey, setIconKey] = useState<ProjectIconKey>('briefcase');
-  const [colorKey, setColorKey] = useState<ProjectColorKey>('gray');
+  const [colorKey, setColorKey] = useState<ProjectColorKey>(PROJECT_COLOR_DEFAULT);
   const [scope, setScope] = useState<'personal' | 'workspace'>('personal');
   const [saving, setSaving] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
@@ -134,7 +133,7 @@ export function ProjectSidebarSection({
     setCreateOpen(false);
     setName('');
     setIconKey('briefcase');
-    setColorKey('gray');
+    setColorKey(PROJECT_COLOR_DEFAULT);
     setScope('personal');
     setModalError(null);
   };

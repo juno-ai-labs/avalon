@@ -13,7 +13,7 @@ import {
   Workflow,
   type LucideIcon,
 } from 'lucide-react';
-import { PROJECT_COLOR_KEYS, type ProjectColorKey, type WorkstreamAppearance as SavedAppearance } from '@rally/contracts';
+import { PROJECT_COLOR_RING, type ProjectColorKey, type WorkstreamAppearance as SavedAppearance } from '@rally/contracts';
 import { PROJECT_ICONS } from './project-icons';
 
 const WORKSTREAM_ICONS = [
@@ -56,8 +56,10 @@ export function workstreamAppearance(id: string): WorkstreamAppearance {
   }
   const unsigned = hash >>> 0;
   return {
-    color: PROJECT_COLOR_KEYS[unsigned % PROJECT_COLOR_KEYS.length] ?? 'purple',
-    iconIndex: Math.floor(unsigned / PROJECT_COLOR_KEYS.length) % WORKSTREAM_ICONS.length,
+    // The ring, not the full palette: `black` is the neutral somebody picks, not
+    // a colour to hand out at random.
+    color: PROJECT_COLOR_RING[unsigned % PROJECT_COLOR_RING.length] ?? 'purple',
+    iconIndex: Math.floor(unsigned / PROJECT_COLOR_RING.length) % WORKSTREAM_ICONS.length,
   };
 }
 
