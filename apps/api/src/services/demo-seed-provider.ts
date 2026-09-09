@@ -15,6 +15,7 @@
  * seam's place in the run.
  */
 import type { DemoSeed, DemoSeedTurn } from "@rally/contracts";
+import { isAzureBoundModel } from "@rally/agent-harness";
 
 /** Every chat-completions endpoint the harness can route to ends in this. */
 const CHAT_COMPLETIONS_SUFFIX = "/chat/completions";
@@ -37,6 +38,30 @@ export const DEMO_SEED_EXHAUSTED_CODE = "demo_seed_exhausted";
  * a sandbox without one can still seed.
  */
 export const DEMO_SEED_PROVIDER_KEY = "demo-seed-no-provider";
+
+/**
+ * The model a seeded run is routed under, and no fallbacks.
+ *
+ * The seam replaces the OpenRouter client's `fetch` and nothing else, so a
+ * seeded run has to be one the planner sends to OpenRouter alone. A model
+ * bound to the Azure transport — production's default `x-ai/grok-4.3` is one —
+ * is tried there first or only there, and the seed would never be asked: the
+ * turn would come from a live model, and an `ask` would fail its settlement.
+ * So the route keeps the resolved model when it is unbound, otherwise the
+ * first unbound fallback, otherwise a fixed unbound id. The seam answers
+ * whatever name the request carries, so the choice affects only what the run
+ * records about itself. Fallbacks are dropped because the seam refuses a
+ * second request, and a fallback stage would spend that refusal for nothing.
+ */
+export const DEMO_SEED_FALLBACK_MODEL = "google/gemini-2.5-flash-lite";
+
+export function demoSeedModelRoute(
+  routing: { model: string; fallbackModels: readonly string[] },
+): { model: string; fallbackModels: string[] } {
+  const unbound = [routing.model, ...routing.fallbackModels]
+    .find((model) => model.length > 0 && !isAzureBoundModel(model));
+  return { model: unbound ?? DEMO_SEED_FALLBACK_MODEL, fallbackModels: [] };
+}
 
 const USAGE = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
 
