@@ -157,6 +157,10 @@ family. A new automation is created by `POST /automations` before its
 conversation is opened, so its page starts on a durable id. Socket snapshots remain authoritative after reconnect;
 local optimistic rows are reconciled by stable client turn IDs.
 
+Delivered attachments follow the message body and precede its action row. Human
+identity headers render time, optional work summary, optional context label,
+then the person dot and username. The username ends at the bubble-radius inset.
+
 Finished assistant turns also share the action row. Copy and export remain
 local actions; **Speak** uses the regional authenticated stream documented in
 [`message-speech.md`](message-speech.md) and receives the complete stored
@@ -255,10 +259,20 @@ Commits must await the drain, and cancellation must release both buffered audio
 and late-arriving inputs. OS audio startup still bounds the first captured sample.
 ### 2026-09-09 — Attachments follow the message, author ends at the corner
 
-Delivered attachments now follow message content, including human bubbles, so
-files read as the material attached to the preceding words. Human identity
-headers put the author last and use the bubble radius as their trailing inset;
-timestamps no longer occupy the author's alignment edge.
+**What changed:** Attachments follow human bubbles and assistant prose, before
+turn actions. Human headers put the username last in DOM and visual order.
+
+**Why:** The reported file appeared above the words referring to it, while the
+timestamp occupied the identity alignment edge. This supersedes the September 2
+header order: the existing radius inset now belongs to the username.
+
+**Considered and rejected:** CSS ordering would diverge from screen-reader order
+and leave optional context labels ambiguous. Explicit human header markup keeps
+context adjacent to the identity. Assistant attachments use a slot before the
+actions rather than following the entire content-and-actions component.
+
+**Consequences:** Preserve body → attachments → actions and keep optional header
+metadata before the author so its trailing edge stays aligned with the corner.
 
 ### 2026-09-09 — Shared media tiles with host-specific layouts
 
