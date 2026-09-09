@@ -1,3 +1,5 @@
+import { SEARCH_AUTHORIZATION_PUSH_MIGRATION, nextSearchAuthorizationPush, flushSearchAuthorizationPush } from './search-authorization-projection';
+import { SearchAuthorizationSnapshotSchema, SearchAuthorizationTargetSchema, searchAuthorizationKey } from '../services/search-authorization';
 import { resolveWorkspaceEventResources } from "./workspace-event-resources";
 import { WorkstreamAppearanceSchema } from "@rally/contracts";
 import { RESOURCE_SEARCH_MIGRATION_STATEMENTS, RESOURCE_SEARCH_CONTENT_UPDATE_MIGRATION, ResourceSearchProjectionSchema, ResourceSearchRevisionRequestSchema,
@@ -832,6 +834,7 @@ import {
 
 const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
   ...AUTHORIZATION_STORAGE_TABLES,
+  'search_authorization_push',
   "resource_search_versions",
   "onboarding_journeys",
   "workstream_notification_intents",
@@ -2705,6 +2708,10 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   version: 43,
   description: 'invalidate resource search only for content and category changes',
   statements: RESOURCE_SEARCH_CONTENT_UPDATE_MIGRATION,
+}, {
+  version: 44,
+  description: 'push search authorization decisions after source permission mutations',
+  statements: SEARCH_AUTHORIZATION_PUSH_MIGRATION,
 }];
 
 interface AutomationDirectoryRow extends Record<string, SqlStorageValue> {
@@ -3233,6 +3240,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       const request = WorkspaceRuntimeSqlRequestSchema.parse(input);
       this.assertWorkspace(request.workspaceId);
       const results = this.runWorkspaceSql(request);
+      if (nextSearchAuthorizationPush(this.state.storage.sql) !== null) await this.armNextAlarm();
       const kinds = new Set<WorkspaceScheduleTargetKind>();
       for (const statement of request.statements) {
         const target = workspaceMutationTarget(statement.sql);
@@ -3574,12 +3582,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     ).one().created_at;
     const publication = this.projectStorage().nextDefaultPublicationDueAt();
     const search = nextResourceSearchDueAt(this.state.storage.sql, this.env);
+    const searchAuthorization = nextSearchAuthorizationPush(this.state.storage.sql);
     const authorization = this.state.storage.sql.exec<{ due: number | null }>('SELECT MIN(not_before) AS due FROM authorization_delivery').one().due;
     return [
       ...(oldest === null ? [] : [Number(oldest) + ACTIVITY_EVENT_RETENTION_MS]),
       ...(publication === null ? [] : [publication]),
       ...(search === null ? [] : [search]),
       ...(authorization === null ? [] : [authorization]),
+      ...(searchAuthorization === null ? [] : [searchAuthorization]),
     ];
   }
 
@@ -3593,6 +3603,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   protected override async runDueAlarmWork(now: number): Promise<void> {
     const workspaceId = this.workspaceId();
     if (workspaceId) {
+      try { await flushSearchAuthorizationPush(this.state.storage.sql, this.env, workspaceId); }
+      catch { logWarn(this.env, 'search_authorization_push_deferred', { region: this.env.AVALON_REGION }); }
       try { await flushAuthorizationDeliveries(this.state.storage.sql, this.env.ACTIVITY_QUEUE, now); }
       catch { logWarn(this.env, 'authorization_backfill_dispatch_deferred', { region: this.env.AVALON_REGION }); }
       try { await publishResourceSearch(this.state.storage.sql, this.env, workspaceId); }
@@ -4251,6 +4263,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       return { applied: true };
     });
     if (result.applied) this.publishSidebarList("automations");
+    await this.armNextAlarm();
     return result;
   }
 
@@ -6092,6 +6105,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           : [...users].map((userId) => this.publishWorkstreamState(workstreamId, userId))
       )));
     }
+    await this.armNextAlarm();
     return WorkspaceDirectoryApplyResultSchema.parse({ accepted, directoryChanged });
   }
 
@@ -8501,6 +8515,99 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     });
   }
 
+  async readSearchAuthorizationSnapshots(input: unknown) {
+    await this.initialized;
+    const request = z.strictObject({ subject: AuthorizationSubjectSchema, resources: z.array(AuthorizationResourceSchema) }).parse(input);
+    this.assertWorkspace(request.subject.workspaceId);
+    return Promise.all(request.resources.map(async (resource) => {
+      this.assertWorkspace(resource.workspaceId);
+      const key = await searchAuthorizationKey(request.subject, resource);
+      const row = this.state.storage.sql.exec<{ snapshot_json: string }>(
+        'SELECT snapshot_json FROM authorization_snapshots WHERE cache_key = ?', key).toArray()[0];
+      return row ? JSON.parse(row.snapshot_json) as unknown : null;
+    }));
+  }
+
+  async registerSearchAuthorization(input: unknown) {
+    await this.initialized;
+    const request = z.strictObject({ subject: AuthorizationSubjectSchema, resources: z.array(AuthorizationResourceSchema) }).parse(input);
+    this.assertWorkspace(request.subject.workspaceId);
+    for (const resource of request.resources) {
+      this.assertWorkspace(resource.workspaceId);
+      const key = await searchAuthorizationKey(request.subject, resource);
+      // Register before resolving owners so a concurrent mutation can already target this key.
+      const pending = { version: 1, subject: request.subject, resource, observedAt: 0,
+        decision: { status: 'unavailable', reason: 'projection_incomplete', retryable: true } };
+      this.state.storage.sql.exec('INSERT INTO authorization_snapshots VALUES (?, ?, 0) ON CONFLICT(cache_key) DO NOTHING',
+        key, JSON.stringify(pending));
+    }
+  }
+
+  async listSearchAuthorizationSnapshots(input: { workspaceId: string; target?: z.infer<typeof SearchAuthorizationTargetSchema> }) {
+    await this.initialized;
+    this.assertWorkspace(WorkspaceIdSchema.parse(input.workspaceId));
+    const target = input.target ? SearchAuthorizationTargetSchema.parse(input.target) : undefined;
+    const snapshots = this.state.storage.sql.exec<{ snapshot_json: string }>(
+      "SELECT snapshot_json FROM authorization_snapshots WHERE cache_key LIKE 'search-authz:v1:%'").toArray()
+      .map((row) => SearchAuthorizationSnapshotSchema.parse(JSON.parse(row.snapshot_json)));
+    return snapshots.filter(({ resource, decision }) => {
+      if (!target) return true;
+      if (target.kind === 'resource') return resource.kind === 'resource' && resource.resourceId === target.id;
+      if (target.kind === 'connection') return resource.kind === 'resource' && this.state.storage.sql.exec(
+        'SELECT 1 FROM resources WHERE id = ? AND connection_id = ?', resource.resourceId, target.id).toArray().length > 0;
+      if (resource.kind === 'conversation' && resource.parentId === target.id) return true;
+      if (decision.status === 'unavailable') return true;
+      if (decision.evidence.some((evidence) =>
+        evidence.owner === target.id || evidence.owner.startsWith(`${target.id}/`))) return true;
+      // Current locations discover new grants; prior decision evidence above also reaches removed grants.
+      if (resource.kind === 'resource') return this.state.storage.sql.exec(`SELECT 1 FROM authorization_locations location
+        LEFT JOIN automation_directory automation ON automation.automation_id = location.parent_id
+        WHERE location.resource_id = ? AND (location.parent_id = ? OR automation.owning_workstream_id = ?)`,
+        resource.resourceId, target.id, target.id).toArray().length > 0;
+      return resource.kind === 'conversation' && this.state.storage.sql.exec(
+        'SELECT 1 FROM automation_directory WHERE automation_id = ? AND owning_workstream_id = ?',
+        resource.parentId, target.id).toArray().length > 0;
+    });
+  }
+
+  async writeSearchAuthorizationSnapshots(input: unknown) {
+    await this.initialized;
+    const snapshots = z.array(SearchAuthorizationSnapshotSchema).parse(input);
+    const stats = { written: 0, superseded: 0, kvWriteMs: 0 };
+    // One regional publisher orders SQLite and KV per key, including retry deliveries.
+    for (const snapshot of snapshots) {
+      this.assertWorkspace(snapshot.subject.workspaceId);
+      this.assertWorkspace(snapshot.resource.workspaceId);
+      const key = await searchAuthorizationKey(snapshot.subject, snapshot.resource);
+      try {
+        const publicationError = await this.state.blockConcurrencyWhile(async () => {
+          const previous = this.state.storage.sql.exec<{ validated_at: number }>(
+            'SELECT validated_at FROM authorization_snapshots WHERE cache_key = ?', key).toArray()[0];
+          if (previous && previous.validated_at > snapshot.observedAt) { stats.superseded++; return; }
+          this.state.storage.sql.exec(`INSERT INTO authorization_snapshots(cache_key, snapshot_json, validated_at) VALUES (?, ?, ?)
+            ON CONFLICT(cache_key) DO UPDATE SET snapshot_json = excluded.snapshot_json, validated_at = excluded.validated_at`,
+            key, JSON.stringify(snapshot), snapshot.observedAt);
+          if (this.env.AVALON_REGION === 'global' && this.env.AUTHORIZATION_CACHE) {
+            const writeStartedAt = Date.now();
+            try { await this.env.AUTHORIZATION_CACHE.put(key, JSON.stringify(snapshot)); }
+            catch (error) {
+              this.state.storage.sql.exec(`INSERT INTO search_authorization_push VALUES (?, ?, 1, 0, CAST(unixepoch('subsec') * 1000 AS INTEGER), 'workspace_mutation')
+                ON CONFLICT(kind, target_id) DO UPDATE SET revision = revision + 1`,
+                snapshot.resource.kind === 'resource' ? 'resource' : 'parent',
+                snapshot.resource.kind === 'resource' ? snapshot.resource.resourceId : snapshot.resource.kind === 'conversation' ? snapshot.resource.parentId : snapshot.resource.scopeId);
+              return error;
+            } finally { stats.kvWriteMs += Date.now() - writeStartedAt; }
+          }
+          stats.written++;
+        });
+        if (publicationError) throw publicationError;
+      } finally {
+        if (nextSearchAuthorizationPush(this.state.storage.sql) !== null) await this.armNextAlarm();
+      }
+    }
+    return stats;
+  }
+
   async readAuthorizationSnapshots(input: unknown) {
     await this.initialized;
     const request = z.strictObject({ subject: AuthorizationSubjectSchema, resources: z.array(AuthorizationResourceSchema) }).parse(input);
@@ -8528,8 +8635,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(request.workspaceId);
     this.state.storage.transactionSync(() => {
       new AuthorizationStorage(this.state.storage).replaceLocations(request);
+      if (request.mutationAt !== undefined) this.state.storage.sql.exec(
+        "UPDATE search_authorization_push SET timing_origin = CASE WHEN ? <= first_mutated_at THEN 'source_mutation' ELSE timing_origin END, first_mutated_at = MIN(first_mutated_at, ?) WHERE kind = 'parent' AND target_id = ?",
+        request.mutationAt, request.mutationAt, request.parentId);
       this.state.storage.sql.exec('UPDATE authorization_backfill_children SET completed = 1 WHERE parent_id = ? AND substream_id = ?', request.parentId, request.substreamId);
     });
+    await this.armNextAlarm();
   }
 
   /** Internal migration control; source permissions remain in their original objects. */
@@ -8561,9 +8672,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     JSON.stringify([job.parentId, job.substreamId ?? null]), JSON.stringify(job));
   }
 
-  async registerAuthorizationChildren(input: { workspaceId: string; parentId: string; substreamIds: string[]; refreshExisting?: boolean }) {
+  async registerAuthorizationChildren(input: { workspaceId: string; parentId: string; substreamIds: string[]; refreshExisting?: boolean; mutationAt?: number }) {
     await this.initialized;
-    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, parentId: IdSchema, substreamIds: z.array(SubstreamIdSchema), refreshExisting: z.boolean().optional() }).parse(input);
+    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, parentId: IdSchema, substreamIds: z.array(SubstreamIdSchema), refreshExisting: z.boolean().optional(), mutationAt: z.number().int().nonnegative().optional() }).parse(input);
     this.assertWorkspace(request.workspaceId);
     this.state.storage.transactionSync(() => {
       // Reconcile the exact registry: deleted/failed children must not leave immortal pending receipts.
@@ -8585,9 +8696,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         this.state.storage.sql.exec(`INSERT INTO authorization_backfill_children(parent_id, substream_id) VALUES (?, ?)
           ON CONFLICT(parent_id, substream_id) DO UPDATE SET completed = 0`, request.parentId, substreamId);
         this.enqueueAuthorizationDiscovery({ type: 'authorization_projection_v1', region: this.env.AVALON_REGION,
-          workspaceId: request.workspaceId, parentId: request.parentId, substreamId });
+          workspaceId: request.workspaceId, parentId: request.parentId, substreamId,
+          ...(request.mutationAt === undefined ? {} : { mutationAt: request.mutationAt }) });
       }
       this.state.storage.sql.exec('UPDATE authorization_backfill SET completed = 1 WHERE parent_id = ?', request.parentId);
+      if (request.mutationAt !== undefined) this.state.storage.sql.exec(
+        "UPDATE search_authorization_push SET timing_origin = CASE WHEN ? <= first_mutated_at THEN 'source_mutation' ELSE timing_origin END, first_mutated_at = MIN(first_mutated_at, ?) WHERE kind = 'parent' AND target_id = ?",
+        request.mutationAt, request.mutationAt, request.parentId);
     });
     await this.armNextAlarm();
   }
