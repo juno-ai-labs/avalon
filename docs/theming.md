@@ -116,6 +116,49 @@ serves only generated IDs and enforces the cache's size and integrity checks.
 
 ## Changelog
 
+### 2026-09-09 — The identity palette becomes a hue ring, and accents step it in twos
+
+**What changed:** `sys.color.project.*` moved to fourteen hues in wheel order —
+`rose` through `pink`, on a lighter ramp — plus `black`, a near-black that each
+appearance tunes separately (`#17171a` light, `#45454d` dark) so it stays legible
+as a glyph stroke rather than vanishing into a dark sidebar. `gray`, `brown`,
+`yellow` and `teal` keep their tokens but left the picker. `#ccff00` is no longer
+a palette entry: it stays `sys.color.brand.base` and nothing else. A new
+`sys.color.project.edge` gives every swatch a hairline, and the
+`cmp.member-message.*` fills now reference the palette instead of restating its
+hexes.
+
+**Why:** The previous palette carried the brand lime in a slot named `orange`,
+so the one colour that must stay reserved for the brand was also a colour any
+person could paint a project. Separating them is the point of the change; the
+ring ordering is what lets the picker close into an oval rather than reading as
+two unrelated rows. The `cmp.member-message.*` hexes were duplicating palette
+values by hand and had already drifted, which is why they became references.
+
+The palette is now a vocabulary rather than a menu. `PALETTE_KEYS` is every
+colour with a token; `PROJECT_COLOR_KEYS` is the ring, which is what projects and
+work streams offer; `PERSONAL_COLOR_KEYS` is every *other* colour around the ring
+plus `black`, which is what an account offers. Stepping the ring in twos is what
+makes eight accents distinguishable — adjacent hues are neighbours by
+construction, so a contiguous eight would collect the least separable colours.
+`black` is offered only to accounts: a person appears once on a screen, where an
+absence of colour reads as a choice, while a work stream sits in a list where it
+reads as one that failed to get a colour. It stays storable everywhere regardless
+— narrowing what can be stored is how a held colour becomes a failed read.
+
+The `cmp.member-message.*` tokens are gone entirely, twenty-four of them. They
+restated palette fills and inks by hand for each accent name, had already drifted
+from the palette, and could not survive the accent set changing; the accent is a
+palette colour now, so message bubbles read the palette directly.
+
+**Consequences:** The label "Neon yellow" is gone — the 2026-09-07 entry below is
+superseded on that point, and `orange` is an actual orange now. Ink is no longer
+guessed from a list of four dark fills: `PROJECT_COLOR_INK` in `@rally/contracts`
+is the table, black wins on every fill but `black` itself, and
+`palette.css.node.test.ts` recomputes it from the token values in both
+appearances. A fill whose contrast flips must move the table in the same change
+or that test fails.
+
 ### 2026-09-08 — Give member messages independent appearance roles
 
 Human message colors use `cmp.member-message.<profile-color>.background`,

@@ -54,8 +54,7 @@
     "cmp.connector": "Connector faces. Each keeps enough of the provider's own colour to be recognised at 20px, on a block the theme can still sit behind.",
     "cmp.button": "Neutral primary actions, separate from brand identity and semantic danger or success states.",
     "cmp.control": "Shared secondary controls, independent of message and sidebar geometry.",
-    "cmp.surface": "Shared secondary cards, dialogs and menus, independent of message bubbles.",
-    "cmp.member-message": "Profile color roles for human message backgrounds, foregrounds, and author dots. Each appearance tunes each role independently of avatars and project icons."
+    "cmp.surface": "Shared secondary cards, dialogs and menus, independent of message bubbles."
   },
   "tokens": {
     "cmp.control.radius": {
@@ -310,10 +309,13 @@
     "sys.color.danger.on": {
       "$type": "color"
     },
-    "sys.color.project.gray": {
+    "sys.color.project.edge": {
       "$type": "color"
     },
-    "sys.color.project.brown": {
+    "sys.color.project.black": {
+      "$type": "color"
+    },
+    "sys.color.project.rose": {
       "$type": "color"
     },
     "sys.color.project.red": {
@@ -322,13 +324,16 @@
     "sys.color.project.orange": {
       "$type": "color"
     },
-    "sys.color.project.yellow": {
+    "sys.color.project.amber": {
+      "$type": "color"
+    },
+    "sys.color.project.lime": {
       "$type": "color"
     },
     "sys.color.project.green": {
       "$type": "color"
     },
-    "sys.color.project.teal": {
+    "sys.color.project.emerald": {
       "$type": "color"
     },
     "sys.color.project.cyan": {
@@ -340,10 +345,28 @@
     "sys.color.project.indigo": {
       "$type": "color"
     },
+    "sys.color.project.violet": {
+      "$type": "color"
+    },
     "sys.color.project.purple": {
       "$type": "color"
     },
+    "sys.color.project.fuchsia": {
+      "$type": "color"
+    },
     "sys.color.project.pink": {
+      "$type": "color"
+    },
+    "sys.color.project.gray": {
+      "$type": "color"
+    },
+    "sys.color.project.brown": {
+      "$type": "color"
+    },
+    "sys.color.project.yellow": {
+      "$type": "color"
+    },
+    "sys.color.project.teal": {
       "$type": "color"
     },
     "sys.color.workstream.running": {
@@ -833,78 +856,6 @@
       "$type": "color"
     },
     "cmp.button.primary-hover": {
-      "$type": "color"
-    },
-    "cmp.member-message.blue.background": {
-      "$type": "color"
-    },
-    "cmp.member-message.blue.foreground": {
-      "$type": "color"
-    },
-    "cmp.member-message.blue.dot": {
-      "$type": "color"
-    },
-    "cmp.member-message.teal.background": {
-      "$type": "color"
-    },
-    "cmp.member-message.teal.foreground": {
-      "$type": "color"
-    },
-    "cmp.member-message.teal.dot": {
-      "$type": "color"
-    },
-    "cmp.member-message.green.background": {
-      "$type": "color"
-    },
-    "cmp.member-message.green.foreground": {
-      "$type": "color"
-    },
-    "cmp.member-message.green.dot": {
-      "$type": "color"
-    },
-    "cmp.member-message.amber.background": {
-      "$type": "color"
-    },
-    "cmp.member-message.amber.foreground": {
-      "$type": "color"
-    },
-    "cmp.member-message.amber.dot": {
-      "$type": "color"
-    },
-    "cmp.member-message.orange.background": {
-      "$type": "color"
-    },
-    "cmp.member-message.orange.foreground": {
-      "$type": "color"
-    },
-    "cmp.member-message.orange.dot": {
-      "$type": "color"
-    },
-    "cmp.member-message.rose.background": {
-      "$type": "color"
-    },
-    "cmp.member-message.rose.foreground": {
-      "$type": "color"
-    },
-    "cmp.member-message.rose.dot": {
-      "$type": "color"
-    },
-    "cmp.member-message.violet.background": {
-      "$type": "color"
-    },
-    "cmp.member-message.violet.foreground": {
-      "$type": "color"
-    },
-    "cmp.member-message.violet.dot": {
-      "$type": "color"
-    },
-    "cmp.member-message.slate.background": {
-      "$type": "color"
-    },
-    "cmp.member-message.slate.foreground": {
-      "$type": "color"
-    },
-    "cmp.member-message.slate.dot": {
       "$type": "color"
     }
   }
