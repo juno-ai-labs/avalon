@@ -9,10 +9,15 @@ import {
   type ListMotionRow,
 } from './list-motion';
 
-/** An animation in flight on a row, with the offset it started from. */
+/** The animation in flight on a row, with the offset it started from. */
 interface Running {
   animation: Animation;
   from: { x: number; y: number };
+}
+
+/** A row as last measured: where it was, and which element it was. */
+interface Seen extends ListMotionFrom {
+  element: HTMLElement;
 }
 
 /**
@@ -25,9 +30,21 @@ interface Running {
  * `data-motion-scope` on any ancestor separates rows that would otherwise
  * share a key, such as a work stream listed both under its project and in the
  * recent list, and ranks the rows inside it only against one another, so a
- * scope moving as a block shifts as a block; `data-motion-hold` on a row asks
- * for it to be shifted into place like a neighbour rather than leave and
- * re-enter.
+ * scope moving as a block shifts as a block. A row is *held* — shifted into
+ * place like a neighbour rather than made to leave and re-enter — when it
+ * carries `data-motion-hold`, or when it kept its element and has focus
+ * inside it: a row the reader is acting on, by keyboard or by the click that
+ * opened it, stays under them rather than flying off through the slot they
+ * are looking at. A remounted row with focus is not the reader's doing — the
+ * sidebar repairs focus onto a pinned row — and travels.
+ *
+ * A row with no layout — `display: none` — is neither measured nor
+ * remembered; it is closer to not being there than to being at the top of the
+ * container, which is what its empty rect would say.
+ *
+ * `layoutKey` names the layout the rows are in. When it changes, every row is
+ * measured afresh and nothing plays: the sidebar's compact toggle moves every
+ * row's position for a reason that is not a reorder.
  *
  * The container is the scroll box the rows live in: positions are measured
  * relative to its content, so scrolling between two renders is not read as
@@ -42,45 +59,41 @@ interface Running {
  *
  * Every animation is a compositor-driven `transform` through the Web
  * Animations API, so the rows travel at the display's own frame rate and
- * nothing here runs per frame. `docs/list-motion.md` owns the design.
+ * nothing here runs per frame. Rows stay pointer targets throughout; a caller
+ * that reorders on `dragover` resolves the target by layout — see
+ * `layoutRowAt` — rather than by the row drawn under the pointer, which mid-
+ * motion is a row on its way somewhere else. `docs/list-motion.md` owns the
+ * design.
  */
-export function useListMotion(containerRef: RefObject<HTMLElement | null>): void {
-  const lastSeen = useRef<Map<string, ListMotionFrom>>(new Map());
-  const running = useRef<Map<HTMLElement, Running[]>>(new Map());
-  const pointerEventsBefore = useRef<WeakMap<HTMLElement, string>>(new WeakMap());
+export function useListMotion(containerRef: RefObject<HTMLElement | null>, layoutKey?: unknown): void {
+  const lastSeen = useRef<Map<string, Seen>>(new Map());
+  const lastLayoutKey = useRef<unknown>(layoutKey);
+  const running = useRef<Map<HTMLElement, Running>>(new Map());
 
   useLayoutEffect(() => {
     const container = containerRef.current;
     if (container === null) return;
 
-    /** Back to being a target, once nothing is playing on the row any more. */
-    const release = (element: HTMLElement): void => {
-      if (running.current.has(element) || !pointerEventsBefore.current.has(element)) return;
-      element.style.pointerEvents = pointerEventsBefore.current.get(element) ?? '';
-      pointerEventsBefore.current.delete(element);
-    };
     // What each row still playing is doing to its box right now. A measured
     // rect includes it, so it is taken back out to get the layout position —
     // reading a row half-way through a shift as having moved would interrupt
     // it every render, and remember its half-way point as its slot. Where the
-    // reader sees the row is the same offset, except for an animation that has
-    // not drawn a frame yet and so applies nothing: that row is wherever it
-    // was about to start from.
+    // reader sees the row is the same offset; for an animation that has not
+    // started, the offset it is about to start from says the same thing.
     const applied = new Map<HTMLElement, { x: number; y: number }>();
     const visible = new Map<HTMLElement, { x: number; y: number }>();
-    for (const [element, entries] of running.current) {
+    for (const [element, entry] of running.current) {
       if (!element.isConnected) continue;
-      const last = entries.at(-1)!;
       const offset = translationOf(getComputedStyle(element).transform);
       applied.set(element, offset);
-      visible.set(element, last.animation.pending ? last.from : offset);
+      visible.set(element, entry.animation.pending ? entry.from : offset);
     }
     /** Stop what a row is playing, answering where the reader saw it. */
     const interrupt = (element: HTMLElement): { x: number; y: number } | undefined => {
-      const entries = running.current.get(element);
-      if (entries === undefined) return undefined;
+      const entry = running.current.get(element);
+      if (entry === undefined) return undefined;
       running.current.delete(element);
-      for (const entry of entries) entry.animation.cancel();
+      entry.animation.cancel();
       return visible.get(element) ?? { x: 0, y: 0 };
     };
 
@@ -90,28 +103,35 @@ export function useListMotion(containerRef: RefObject<HTMLElement | null>): void
       if (!element.isConnected) interrupt(element);
     }
 
+    const previous = lastSeen.current;
     const containerRect = container.getBoundingClientRect();
     const scrollTop = container.scrollTop;
-    const rows = [...container.querySelectorAll<HTMLElement>('[data-motion-key]')].map((element) => {
+    const rows = [...container.querySelectorAll<HTMLElement>('[data-motion-key]')].flatMap((element) => {
       const rect = element.getBoundingClientRect();
+      if (rect.width === 0 && rect.height === 0) return [];
       const offset = applied.get(element) ?? { x: 0, y: 0 };
       const scope = element.closest<HTMLElement>('[data-motion-scope]')?.dataset.motionScope ?? '';
+      const key = `${scope}\n${element.dataset.motionKey ?? ''}`;
       const row: ListMotionRow = {
-        key: `${scope}\n${element.dataset.motionKey ?? ''}`,
+        key,
         scope,
         top: rect.top - offset.y - containerRect.top + scrollTop,
-        hold: element.hasAttribute('data-motion-hold'),
+        hold: element.hasAttribute('data-motion-hold')
+          || (previous.get(key)?.element === element && element.contains(document.activeElement)),
       };
-      return {
-        element,
-        row,
-        exitDistance: -(rect.right - offset.x - containerRect.left + LIST_MOTION.exitClearancePx),
-      };
+      return [{ element, row, exitDistance: -(rect.right - offset.x - containerRect.left + LIST_MOTION.exitClearancePx) }];
     });
-    const previous = lastSeen.current;
     // Remembered whatever happens next, so a change made while the window was
     // hidden is not replayed when it is shown again.
-    lastSeen.current = new Map(rows.map(({ row }) => [row.key, { top: row.top }]));
+    lastSeen.current = new Map(rows.map(({ element, row }) => [row.key, { top: row.top, element }]));
+
+    // A new layout is not a move: the rows are where they now are, and what
+    // they were playing was measured against a layout that no longer exists.
+    if (lastLayoutKey.current !== layoutKey) {
+      lastLayoutKey.current = layoutKey;
+      for (const element of [...running.current.keys()]) interrupt(element);
+      return;
+    }
 
     const changed = rows.filter(({ row }) => {
       const seen = previous.get(row.key);
@@ -123,72 +143,52 @@ export function useListMotion(containerRef: RefObject<HTMLElement | null>): void
     // visibly was. The rest keep playing, and enter the plan at rest so the
     // planner can rank the whole list.
     const before = new Map<string, ListMotionFrom>();
-    const interrupted: HTMLElement[] = [];
     for (const { element, row } of changed) {
-      const offset = interrupt(element);
-      if (offset !== undefined) interrupted.push(element);
-      before.set(row.key, { top: previous.get(row.key)!.top, ...offset });
+      before.set(row.key, { top: previous.get(row.key)!.top, ...interrupt(element) });
     }
     for (const { row } of rows) {
       const seen = previous.get(row.key);
       if (seen !== undefined && !before.has(row.key)) before.set(row.key, { top: seen.top });
     }
 
-    const plays = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches !== true
-      && document.visibilityState !== 'hidden';
-    if (plays) {
-      const plan = planListMotion(before, rows.map(({ row }) => row));
-      const byKey = new Map(changed.map((entry) => [entry.row.key, entry]));
-      const play = (
-        element: HTMLElement,
-        from: { fromX: number; fromY: number },
-        { keyframes, options }: { keyframes: Keyframe[]; options: KeyframeAnimationOptions },
-      ): void => {
-        if (typeof element.animate !== 'function') return;
-        // A row on its way somewhere is not a target: the pointer resting where
-        // it is about to pass would otherwise hover it, and during a drag would
-        // reorder against it, sending it straight back the way it came. The
-        // value it had is kept from the first animation to the last, because a
-        // cancelled animation settles asynchronously — after the one that
-        // replaced it has started — and must not undo its successor.
-        if (!pointerEventsBefore.current.has(element)) {
-          pointerEventsBefore.current.set(element, element.style.pointerEvents);
-        }
-        element.style.pointerEvents = 'none';
-        const animation = element.animate(keyframes, options);
-        const settle = (): void => {
-          const remaining = running.current.get(element)?.filter((entry) => entry.animation !== animation) ?? [];
-          if (remaining.length > 0) running.current.set(element, remaining);
-          else running.current.delete(element);
-          release(element);
-        };
-        animation.onfinish = settle;
-        animation.oncancel = settle;
-        running.current.set(element, [
-          ...(running.current.get(element) ?? []),
-          { animation, from: { x: from.fromX, y: from.fromY } },
-        ]);
+    if (
+      window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true
+      || document.visibilityState === 'hidden'
+    ) return;
+
+    const plan = planListMotion(before, rows.map(({ row }) => row));
+    const byKey = new Map(changed.map((entry) => [entry.row.key, entry]));
+    const play = (
+      element: HTMLElement,
+      from: { fromX: number; fromY: number },
+      { keyframes, options }: { keyframes: Keyframe[]; options: KeyframeAnimationOptions },
+    ): void => {
+      if (typeof element.animate !== 'function') return;
+      const animation = element.animate(keyframes, options);
+      // A cancelled animation settles asynchronously, after the one that
+      // replaced it has been registered; only the animation still on record
+      // clears the record.
+      const settle = (): void => {
+        if (running.current.get(element)?.animation === animation) running.current.delete(element);
       };
-      // A mover the layout did not move — two rows of equal height trading
-      // places can read that way — is left where it is rather than sent out.
-      for (const mover of plan.movers) {
-        const entry = byKey.get(mover.key);
-        if (entry !== undefined) play(entry.element, mover, moverKeyframes(mover, entry.exitDistance));
-      }
-      for (const shifter of plan.shifters) {
-        const entry = byKey.get(shifter.key);
-        if (entry !== undefined) play(entry.element, shifter, shifterKeyframes(shifter));
-      }
+      animation.onfinish = settle;
+      animation.oncancel = settle;
+      running.current.set(element, { animation, from: { x: from.fromX, y: from.fromY } });
+    };
+    // A mover the layout did not move — two rows of equal height trading
+    // places can read that way — is left where it is rather than sent out.
+    for (const mover of plan.movers) {
+      const entry = byKey.get(mover.key);
+      if (entry !== undefined) play(entry.element, mover, moverKeyframes(mover, entry.exitDistance));
     }
-    // Interrupted and given nothing new to play: a target again now, rather
-    // than whenever the cancelled animation gets round to saying so.
-    for (const element of interrupted) release(element);
+    for (const shifter of plan.shifters) {
+      const entry = byKey.get(shifter.key);
+      if (entry !== undefined) play(entry.element, shifter, shifterKeyframes(shifter));
+    }
   });
 
   useLayoutEffect(() => () => {
-    for (const entries of running.current.values()) {
-      for (const entry of entries) entry.animation.cancel();
-    }
+    for (const entry of running.current.values()) entry.animation.cancel();
     running.current.clear();
   }, []);
 }
