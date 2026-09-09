@@ -88,6 +88,22 @@ describe('new-account learning paths', () => {
     show();
     expect(await screen.findByText('Ordinary workspace')).toBeInTheDocument();
   });
+  it('keeps the workspace mounted while retrying a failed account lookup', async () => {
+    state.getAccount.mockRejectedValue(new Error('Identity unavailable'));
+    const client = show();
+    const workspaceElement = await screen.findByText('Ordinary workspace');
+    let rejectLookup!: (error: Error) => void;
+    state.getAccount.mockImplementation(() => new Promise((_resolve, reject) => { rejectLookup = reject; }));
+    await act(async () => {
+      void client.invalidateQueries({ queryKey: ['account-onboarding'] });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(state.getAccount).toHaveBeenCalledTimes(2);
+    expect(workspaceElement).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Opening Rally' })).not.toBeInTheDocument();
+    await act(async () => { rejectLookup(new Error('Identity still unavailable')); });
+    expect(screen.getByText('Ordinary workspace')).toBe(workspaceElement);
+  });
   it('refreshes an open appearance draft when a newer account revision arrives', async () => {
     const client = show();
     await screen.findByRole('heading', { name: 'This is you in Rally' });
