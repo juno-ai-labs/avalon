@@ -67,6 +67,11 @@ export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstrea
   });
   const [paneWidth, setPaneWidth] = useState(Number.POSITIVE_INFINITY);
   const [resizing, setResizing] = useState(false);
+  // The keyboard's drag: held arrow keys write the width repeatedly, and
+  // animating each step would leave the edge trailing the width the collapse
+  // threshold is judged against. Separate from `resizing` so it raises the
+  // class without entering the pointer drag's state.
+  const [keyResizing, setKeyResizing] = useState(false);
   const [dragWidth, setDragWidth] = useState<number | null>(null);
   const drag = useRef<{ pointerId: number; offset: number } | null>(null);
   // Observe the available pane, never this sidebar or the transcript. Its
@@ -107,7 +112,7 @@ export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstrea
   };
   const artifacts = workstream.resources.filter((resource) => resource.direction === 'artifact');
   return (
-    <aside aria-label="Work-stream sidebar" className={clsx('workstream-context-sidebar', compact && 'is-compact', resizing && 'is-resizing')} ref={sidebar} style={{ flexBasis: effectiveWidth }}>
+    <aside aria-label="Work-stream sidebar" className={clsx('workstream-context-sidebar', compact && 'is-compact', (resizing || keyResizing) && 'is-resizing')} ref={sidebar} style={{ flexBasis: effectiveWidth }}>
       <div className="workstream-context-toolbar window-drag" />
       <div className="workstream-context-scroll">
         <button
@@ -197,12 +202,15 @@ export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstrea
         className={clsx('sidebar-resizer workstream-context-resizer', resizing && 'is-near')}
         tabIndex={0}
         onDoubleClick={() => { if (!narrow) saveCollapsed(!collapsed); }}
+        onBlur={() => setKeyResizing(false)}
         onKeyDown={(event) => {
           if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
           event.preventDefault();
+          setKeyResizing(true);
           if (event.key === 'ArrowLeft' && !compact) resize(width > MIN_SIDEBAR_WIDTH ? width - 16 : SIDEBAR_COLLAPSE_DRAG_THRESHOLD - 1);
           if (event.key === 'ArrowRight') resize(compact ? MIN_SIDEBAR_WIDTH : width + 16);
         }}
+        onKeyUp={() => setKeyResizing(false)}
         onPointerDown={(event) => {
           if (event.button !== 0) return;
           event.preventDefault();
