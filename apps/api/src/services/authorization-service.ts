@@ -63,6 +63,14 @@ export class AuthorizationService {
 
   async checkMany(subject: AuthorizationSubject, resources: readonly AuthorizationResource[]): Promise<AuthorizationDecision[]> {
     if (resources.length === 0) return [];
+    if (resources.some((resource) => resource.kind === 'memory') && !resources.every((resource) => resource.kind === 'memory')) {
+      const [memory, other] = await Promise.all([
+        this.checkMany(subject, resources.filter((resource) => resource.kind === 'memory')),
+        this.checkMany(subject, resources.filter((resource) => resource.kind !== 'memory')),
+      ]);
+      let memoryIndex = 0; let otherIndex = 0;
+      return resources.map((resource) => resource.kind === 'memory' ? memory[memoryIndex++]! : other[otherIndex++]!);
+    }
     if (resources.every((resource) => resource.kind === 'memory')) {
       try {
         return await projectMemorySearchAccess(this.env, subject, resources);

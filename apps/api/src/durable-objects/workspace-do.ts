@@ -2830,6 +2830,22 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
       `DROP TABLE ${table}_v45_hold`,
     ]),
   ],
+}, {
+  version: 46,
+  description: 'persist initialization retry intent with pending search projections',
+  statements: [
+    `CREATE TRIGGER search_authz_pending_insert AFTER INSERT ON authorization_snapshots
+      WHEN json_extract(NEW.snapshot_json, '$.decision.status') = 'unavailable'
+      BEGIN INSERT OR IGNORE INTO search_authorization_push
+        SELECT CASE WHEN resource_id IS NULL THEN 'parent' ELSE 'resource' END,
+          COALESCE(resource_id, parent_id), 1, 0, NULL, 'cache_fill'
+        FROM search_authorization_keys WHERE cache_key = NEW.cache_key; END`,
+    `INSERT OR IGNORE INTO search_authorization_push
+      SELECT CASE WHEN k.resource_id IS NULL THEN 'parent' ELSE 'resource' END,
+        COALESCE(k.resource_id, k.parent_id), 1, 0, NULL, 'cache_fill'
+      FROM search_authorization_keys k JOIN authorization_snapshots s USING(cache_key)
+      WHERE json_extract(s.snapshot_json, '$.decision.status') = 'unavailable'`,
+  ],
 }];
 
 interface AutomationDirectoryRow extends Record<string, SqlStorageValue> {
@@ -4097,6 +4113,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const occurredAt = new Date(occurredAtMs).toISOString();
     const eventId = uuidV7(occurredAtMs);
     const waterline = this.state.storage.transactionSync(() => {
+      if (requested.has('member_directory')) this.state.storage.sql.exec(`INSERT INTO search_authorization_push
+        SELECT CASE WHEN resource_id IS NULL THEN 'parent' ELSE 'resource' END,
+          COALESCE(resource_id, parent_id), 1, 0, ?, 'workspace_mutation'
+        FROM search_authorization_keys WHERE resource_id IS NOT NULL OR parent_id IS NOT NULL
+        GROUP BY 1, 2
+        ON CONFLICT(kind, target_id) DO UPDATE SET revision = revision + 1,
+          first_mutated_at = COALESCE(first_mutated_at, excluded.first_mutated_at)`, occurredAtMs);
       const row = this.state.storage.sql.exec<{ waterline: number }>(
         `INSERT INTO workspace_sync_events(event_id, topics_json, occurred_at)
          VALUES (?, ?, ?) RETURNING waterline`,
@@ -4130,6 +4153,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         // full invalidation or replays the bounded SQL log.
       }
     }
+    if (requested.has('member_directory')) await this.armNextAlarm();
     return waterline;
   }
 
@@ -8650,21 +8674,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }));
   }
 
-  /** Failed first fills become durable queue work; searches never repeat the owner walk. */
-  async queueSearchAuthorizationFill(input: unknown) {
-    await this.initialized;
-    const request = z.strictObject({ subject: AuthorizationSubjectSchema, resources: z.array(AuthorizationResourceSchema) }).parse(input);
-    this.assertWorkspace(request.subject.workspaceId);
-    for (const resource of request.resources) {
-      this.assertWorkspace(resource.workspaceId);
-      this.state.storage.sql.exec(`INSERT INTO search_authorization_push VALUES (?, ?, 1, 0, NULL, 'cache_fill')
-        ON CONFLICT(kind, target_id) DO UPDATE SET revision = revision + 1`,
-      resource.kind === 'conversation' ? 'parent' : 'resource',
-      resource.kind === 'conversation' ? resource.parentId : resource.kind === 'resource' ? resource.resourceId : resource.scopeId);
-    }
-    await this.armNextAlarm();
-  }
-
   async registerSearchAuthorization(input: unknown) {
     await this.initialized;
     const request = z.strictObject({ subject: AuthorizationSubjectSchema, resources: z.array(AuthorizationResourceSchema) }).parse(input);
@@ -8692,6 +8701,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       if (resource.kind === 'conversation') this.state.storage.sql.exec(`INSERT OR IGNORE INTO search_authorization_dependencies
         SELECT owning_workstream_id, ? FROM automation_directory WHERE automation_id = ? AND owning_workstream_id IS NOT NULL`, key, resource.parentId);
     }
+    await this.armNextAlarm();
     return generations;
   }
 

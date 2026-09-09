@@ -75,6 +75,16 @@ describe('projected search authorization', () => {
     expect(authority).toHaveBeenCalledTimes(1);
   });
 
+  it('records retry intent before an initial authority lookup can fail', async () => {
+    const stub = env.WORKSPACE_DOS.getByName('search-authorization-atomic-fill');
+    await stub.initializeWorkspace(subject.workspaceId, 'wnam');
+    await stub.registerSearchAuthorization({ subject, resources: [resource] });
+    await runInDurableObject(stub, async (_instance, state) => {
+      expect(state.storage.sql.exec('SELECT target_id FROM search_authorization_push').toArray())
+        .toContainEqual({ target_id: resource.resourceId });
+    });
+  });
+
   it('persists regional snapshots independently of the legacy inert RPCs', async () => {
     const stub = env.WORKSPACE_DOS.getByName('search-authorization-regional-snapshots');
     await stub.initializeWorkspace(subject.workspaceId, 'wnam');

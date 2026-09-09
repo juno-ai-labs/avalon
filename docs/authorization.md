@@ -346,14 +346,24 @@ after the experiment. Pair these results with mutation-to-write-ack queue events
 
 ## Changelog
 
+### 2026-09-09 — Make projection recovery write-owned
+
+Pending registration and retry intent now share a SQLite insert trigger; migration
+46 queues inherited pending rows. This closes the separate-RPC failure gap without
+adding read-time repair. Membership directory sync queues existing projection
+targets so removal, departure, and activation publish replacement decisions.
+Mixed memory and non-memory batches preserve input ordering across their resolvers.
+
 ### 2026-09-09 — Remove remaining search authority work
 
 KV misses now consult the existing durable projection before canonical resolution,
 because cached negative lookups otherwise repeat owner reads after publication.
 An unavailable first fill is retained as pending and retried through the durable
 outbox; later searches return partial results without repeating that owner walk.
-At rollout, enqueue existing unavailable registrations once through the operator
-WorkspaceDO outbox, using null mutation timing because this is initialization work.
+WorkspaceDO migration 46 queues existing pending registrations once. A SQLite
+insert trigger records new pending snapshots and retry intent atomically, with null
+mutation timing for initialization work. Membership directory sync queues registered
+projection targets, including memory grants, on the existing write-side outbox.
 Paginated search no longer requires a directory read before retrieval: candidate
 admission already uses projected decisions. Memory search shares that resolver,
 with host-run scope selection and canonical resolution only on initial population
