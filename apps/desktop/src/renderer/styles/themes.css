@@ -86,6 +86,7 @@
   --av-sys-color-surface-inverse-hover: #2f2f2f;
 
   /* Text tones, strongest to faintest. */
+  --av-sys-color-text-on-media: #ffffff;
   --av-sys-color-text-on-inverse: #fcfcfc;
   --av-sys-color-text-default: var(--av-ref-color-neutral-14);
   --av-sys-color-text-subtle: var(--av-ref-color-neutral-12);
@@ -531,6 +532,7 @@
   --av-sys-color-surface-elevated-hover: #3d3d3d;
   --av-sys-color-surface-inverse-hover: #eeeeee;
 
+  --av-sys-color-text-on-media: #ffffff;
   --av-sys-color-text-on-inverse: #141414;
   --av-sys-color-text-default: var(--av-ref-color-neutral-14);
   --av-sys-color-text-subtle: var(--av-ref-color-neutral-12);

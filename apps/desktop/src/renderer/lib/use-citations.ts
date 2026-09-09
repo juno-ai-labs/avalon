@@ -215,16 +215,10 @@ export function useCitations({ loadResourceContent, onOpenPreview, onOpenResourc
     return read;
   }, [loadResourceContent, local]);
 
-  const openPreview = useCallback((resourceId: string, returnFocus: HTMLElement): void => {
+  const attachmentPreview = useCallback((resourceId: string, returnFocus: HTMLElement): AttachmentPreview | undefined => {
     const entry = local.get(resourceId);
-    if (!entry) return;
-    // Site content is a manifest, not a document. Its dedicated detail mints
-    // access and presents an isolated native viewer; never request conversion.
-    if (entry.citation.resourceType === 'generated_site') {
-      onOpenResourceDetails(entry.citation.id, returnFocus);
-      return;
-    }
-    onOpenPreview({
+    if (!entry || entry.citation.resourceType === 'generated_site') return undefined;
+    return {
       name: entry.citation.title,
       ...(entry.citation.mimeType ? { mimeType: entry.citation.mimeType } : {}),
       ...(entry.contentAvailable && loadResourceContent ? {
@@ -232,8 +226,36 @@ export function useCitations({ loadResourceContent, onOpenPreview, onOpenResourc
       } : {}),
       onDetails: () => onOpenResourceDetails(entry.citation.id, returnFocus),
       returnFocus,
+    };
+  }, [loadResourceContent, local, onOpenResourceDetails]);
+
+  const openPreview = useCallback((resourceId: string, returnFocus: HTMLElement, resourceIds?: readonly string[], selectedIndex?: number): void => {
+    const entry = local.get(resourceId);
+    if (!entry) return;
+    if (entry.citation.resourceType === 'generated_site') {
+      onOpenResourceDetails(entry.citation.id, returnFocus);
+      return;
+    }
+    const selected = attachmentPreview(resourceId, returnFocus);
+    if (!selected) return;
+    const members = resourceIds?.flatMap((id) => {
+      const preview = attachmentPreview(id, returnFocus);
+      return preview ? [{ id, preview }] : [];
     });
-  }, [loadResourceContent, local, onOpenPreview, onOpenResourceDetails]);
+    const galleryIndex = selectedIndex !== undefined && members?.[selectedIndex]?.id === resourceId ? selectedIndex : members?.findIndex(({ id }) => id === resourceId) ?? -1;
+    onOpenPreview(members && galleryIndex >= 0 ? {
+      ...selected, gallery: members.map(({ preview }) => preview), galleryIndex,
+    } : selected);
+  }, [attachmentPreview, local, onOpenPreview, onOpenResourceDetails]);
+
+  const currentContent = useRef({ local, loadResourceContent });
+  useEffect(() => { currentContent.current = { local, loadResourceContent }; }, [local, loadResourceContent]);
+  const loadContent = useCallback(async (resourceId: string, signal?: AbortSignal): Promise<Blob> => {
+    const current = currentContent.current;
+    const entry = current.local.get(resourceId);
+    if (!entry?.contentAvailable || !current.loadResourceContent || entry.citation.resourceType === 'generated_site') throw new Error('This resource has no preview available.');
+    return current.loadResourceContent(entry.citation.id, signal);
+  }, []);
 
   const open = useCallback((target: CitationTarget): void => {
     if (target.scheme === 'external') {
@@ -246,5 +268,5 @@ export function useCitations({ loadResourceContent, onOpenPreview, onOpenResourc
     openPreview(target.resourceId, document.activeElement instanceof HTMLElement ? document.activeElement : document.body);
   }, [openPreview]);
 
-  return useMemo(() => ({ open, openPreview, preview, resolve }), [open, openPreview, preview, resolve]);
+  return useMemo(() => ({ open, openPreview, preview, resolve, loadContent }), [open, openPreview, preview, resolve, loadContent]);
 }
