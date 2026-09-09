@@ -160,15 +160,15 @@ here rather than reading `workstreamAppearance` and picking colours itself.
 
 Which cache it reads was the harder half. The rail first read the parent's
 cached detail, the way the header does, and review pointed out what the two
-entries above had already decided: every unversioned write lands on the row and
+receipt-time entries below had already decided: every unversioned write lands on the row and
 none of them touches the detail, so a person's own icon change moved the
 navigation sidebar on the receipt and left this rail on the old mark until the
 projection — the two rails disagreeing about one work stream, which is the
 opposite of what putting the mark there was for. `useCachedWorkstreamAppearance`
 reads the row instead. That is sound in one direction only, and the direction is
 the point: the row takes the projection **and** the unversioned writes, so it is
-never behind the detail. Writing the detail to close the gap is what the entries
-above reject, and reading the row is the other half of that rule finally being
+never behind the detail. Writing the detail to close the gap is what those entries
+reject, and reading the row is the other half of that rule finally being
 used — a surface that needs the fast value reads where the fast value is written.
 The header is deliberately left on the detail: that entry is what retires the
 picker's preview, and moving the header onto the row would reintroduce the
