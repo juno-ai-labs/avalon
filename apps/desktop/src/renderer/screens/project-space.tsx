@@ -26,11 +26,13 @@ import { useAppSession } from '../lib/app-session';
 import { formatRelative, workstreamMarkerStatus } from '../lib/format';
 import { isComposingKeyEvent } from '../lib/ime';
 import { useProjectDirectories } from '../lib/use-project-directories';
+import { useOpenFirstWorkstream } from '../lib/workstream-landing';
 import { useWorkstreamsQuery } from '../lib/use-workstreams-query';
 
 export function ProjectSpaceScreen(): React.JSX.Element {
   const { api } = useAppSession();
   const navigate = useNavigate();
+  const openFirstWorkstream = useOpenFirstWorkstream();
   const { projectId } = useParams<{ projectId: string }>();
   const queryClient = useQueryClient();
   const workstreams = useWorkstreamsQuery();
@@ -344,7 +346,7 @@ export function ProjectSpaceScreen(): React.JSX.Element {
                 ? current.items.map((item) => item.id === archived.id ? archived : item)
                 : [archived, ...current.items],
             } : current);
-            void navigate('/workstreams/new');
+            openFirstWorkstream();
           }).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : 'The project could not be archived.'));
         }}>Archive project</Button></>}
         onOpenChange={setArchiveConfirmOpen}
