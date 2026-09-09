@@ -149,7 +149,7 @@ as a glyph stroke rather than vanishing into a dark sidebar. `gray`, `brown`,
 `yellow` and `teal` keep their tokens but left the picker. `#ccff00` is no longer
 a palette entry: it stays `sys.color.brand.base` and nothing else. A new
 `sys.color.project.edge` gives every swatch a hairline, and the
-the `cmp.member-message.*` tokens are gone, message bubbles reading the palette
+`cmp.member-message.*` tokens are gone, message bubbles reading the palette
 directly.
 
 **Why:** The previous palette carried the brand lime in a slot named `orange`,
