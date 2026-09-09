@@ -163,19 +163,21 @@ describe('setCachedWorkstreams', () => {
 });
 
 describe('patchCachedWorkstreamAppearance', () => {
-  it('merges the patch over each row\'s own appearance in the list and the detail', () => {
+  it('merges the patch over the row\'s own appearance in the list and leaves the detail to the versioned push', () => {
     const queryClient = new QueryClient();
     const other = { ...summary(), id: '00000000-0000-7000-8000-000000000002', appearance: { icon: 'rocket', color: 'blue' } as const };
     setCachedWorkstreams(queryClient, [{ ...summary(), appearance: { icon: 'atom', color: 'gray' } }, other]);
-    queryClient.setQueryData(['workstream', summary().id], { ...summary(), appearance: { icon: 'atom', color: 'gray' } });
+    const detail = { ...summary(), appearance: { icon: 'atom', color: 'gray' } };
+    queryClient.setQueryData(['workstream', summary().id], detail);
 
     patchCachedWorkstreamAppearance(queryClient, summary().id, { color: 'purple' });
 
     const list = queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY);
     expect(list?.[0]?.appearance).toEqual({ icon: 'atom', color: 'purple' });
     expect(list?.[1]).toBe(other);
-    expect(queryClient.getQueryData<WorkstreamSummary>(['workstream', summary().id])?.appearance)
-      .toEqual({ icon: 'atom', color: 'purple' });
+    // The header renders the detail under the picker's own preview; retiring
+    // that preview on the receipt is what this write must not do.
+    expect(queryClient.getQueryData(['workstream', summary().id])).toBe(detail);
   });
 
   it('fills the untouched field with null when the row still shows the generated default', () => {
