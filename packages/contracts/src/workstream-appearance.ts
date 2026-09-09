@@ -17,8 +17,15 @@ export type WorkstreamIconKey = z.infer<typeof WorkstreamIconKeySchema>;
  * rather than a fact about the drawing: something has to be picked when nothing
  * fits, and the prompt's fallback and the one a caller reaches for must not
  * drift apart.
+ *
+ * `circle-dot` rather than `sparkles`, which reads as the obvious "generic"
+ * mark and is the wrong one here: sparkles is already Rally's own glyph in this
+ * product — the mention icon in the composer and the account menu — so putting
+ * it on every work stream no icon suits would badge exactly those rows as "the
+ * agent did this". A plain dot in a ring says nothing, which is what a fallback
+ * should say.
  */
-export const DEFAULT_WORKSTREAM_ICON_KEY = "sparkles" satisfies WorkstreamIconKey;
+export const DEFAULT_WORKSTREAM_ICON_KEY = "circle-dot" satisfies WorkstreamIconKey;
 
 /**
  * What each icon draws.
@@ -65,7 +72,7 @@ export const WORKSTREAM_ICON_DESCRIPTIONS: Record<WorkstreamIconKey, string> = {
   dices: "Two dice drawn in perspective and overlapping slightly, with round pips on the faces that show.",
   orbit: "An orbit: a circle with a wide ellipse looping around it on a tilt, and one small filled body riding on that ellipse.",
   sparkles: "One large four-pointed star with concave sides, and two much smaller stars of the same shape near its corners.",
-  spline: "A spline curve running between two small square control handles, one at each end, as drawn in a vector editor.",
+  spline: "A curve running between two small squares, one at each end, that mark its ends and set how it bends.",
   "wand-sparkles": "A magic wand lying on a diagonal with a narrow band near its lower end, and small four-pointed sparks scattered off its tip.",
   workflow: "A flow chart of two rounded boxes, one above the other and offset sideways, joined by a line that leaves the first, turns a right angle, and enters the second.",
   briefcase: "A briefcase: a rectangular case with a short handle standing above its top edge and a horizontal band across the middle where it opens.",

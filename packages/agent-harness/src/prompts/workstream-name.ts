@@ -64,7 +64,7 @@ Thirty characters leaves room for the distinguishing detail and little else, so 
 
 Spell people, products, files, and identifiers exactly as the request spells them, and never add a specific the request does not contain — when it is vague, name what it does contain and stop there.
 
-Choose an icon as well, by its exact key from the catalog below. Each line is one key and a description of the mark it draws — what suits this work is yours to judge, not something the catalog states. Choose against what the work is about, the same detail the name leads with, and not against a word that happens to appear in the request. Where two marks suit it, take the one that is more specific to this work; where none does, take \`${DEFAULT_WORKSTREAM_ICON_KEY}\` rather than stretching one that nearly fits.
+Choose an icon as well, by its exact key from the catalog below. Each line is one key and a description of the mark it draws — what suits this work is yours to judge, not something the catalog states. Choose against what the work is about, the same detail the name leads with, and not against a word that happens to appear in the request. Where two marks suit it, take the one that is more specific to this work, and where neither is more specific than the other, take whichever of them the catalog lists first; where none suits it, take \`${DEFAULT_WORKSTREAM_ICON_KEY}\` rather than stretching one that nearly fits.
 
 ${ICON_CATALOG}
 
