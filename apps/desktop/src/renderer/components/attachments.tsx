@@ -1,5 +1,6 @@
+import { classifyAttachmentKind } from '@rally/contracts';
 import clsx from 'clsx';
-import { Download, File, FileText, Play, RefreshCcw, Table2, X } from 'lucide-react';
+import { Download, File, FileText, Film, Music2, Play, RefreshCcw, Table2, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import type { PendingAttachment } from '../lib/use-file-attachments';
 import type { MessageAttachment } from '../lib/types';
@@ -46,7 +47,9 @@ function formatAttachmentSize(bytes: number): string {
   return `${(bytes / 1_000_000).toFixed(bytes < 10_000_000 ? 1 : 0)}MB`;
 }
 
-function pendingFileKind(mimeType: string, fileName: string): 'markdown' | 'spreadsheet' | 'text' | 'generic' {
+function pendingFileKind(mimeType: string, fileName: string): 'audio' | 'pdf' | 'markdown' | 'spreadsheet' | 'text' | 'generic' {
+  const kind = classifyAttachmentKind({ mimeType, fileName });
+  if (kind === 'audio' || kind === 'pdf') return kind;
   if (mimeType === 'text/markdown' || /\.(?:md|mdown|markdown)$/iu.test(fileName)) return 'markdown';
   if (mimeType === 'text/csv' || /\.(?:csv|numbers|ods|tsv|xls|xlsx)$/iu.test(fileName)) return 'spreadsheet';
   if (mimeType.startsWith('text/') || /\.(?:log|rtf|text|txt)$/iu.test(fileName)) return 'text';
@@ -54,6 +57,8 @@ function pendingFileKind(mimeType: string, fileName: string): 'markdown' | 'spre
 }
 
 function PendingFileIcon({ kind }: { kind: ReturnType<typeof pendingFileKind> }): React.JSX.Element {
+  if (kind === 'audio') return <Music2 aria-hidden="true" size={19} />;
+  if (kind === 'pdf') return <FileText aria-hidden="true" size={19} />;
   if (kind === 'markdown') return <span aria-hidden="true" className="attachment-markdown-glyph">M↧</span>;
   if (kind === 'spreadsheet') return <Table2 aria-hidden="true" size={19} />;
   if (kind === 'text') return <FileText aria-hidden="true" size={19} />;
@@ -94,10 +99,11 @@ export function PendingAttachmentTile({ actionsDisabled = false, attachment, onO
   onRemove: () => void;
   onRetry: () => void;
 }): React.JSX.Element {
-  const image = isImageAttachment(attachment.file.type, attachment.file.name) && attachment.previewUrl;
-  const video = isVideoAttachment(attachment.file.type, attachment.file.name) && attachment.previewUrl;
+  const image = isImageAttachment(attachment.file.type, attachment.file.name);
+  const video = isVideoAttachment(attachment.file.type, attachment.file.name);
   const fileName = splitFileName(attachment.file.name);
-  if (!image && !video) {
+  const audio = pendingFileKind(attachment.file.type, attachment.file.name) === 'audio';
+  if (!image && !video && !audio) {
     const kind = pendingFileKind(attachment.file.type, attachment.file.name);
     return (
       <div className={clsx('attachment-file-card', 'is-pending', attachment.status === 'failed' && 'is-failed')} title={attachment.file.name}>
@@ -119,10 +125,10 @@ export function PendingAttachmentTile({ actionsDisabled = false, attachment, onO
       <button
         aria-label={`Preview ${attachment.file.name}`}
         className="attachment-tile-content"
-        onClick={(event) => onOpen({ name: attachment.file.name, mimeType: attachment.file.type, src: attachment.previewUrl!, returnFocus: event.currentTarget })}
+        onClick={(event) => onOpen({ name: attachment.file.name, mimeType: attachment.file.type, ...(attachment.previewUrl ? { src: attachment.previewUrl } : { loadContent: async () => attachment.file }), returnFocus: event.currentTarget })}
         type="button"
       >
-        {image
+        {audio ? <Music2 aria-hidden="true" size={24} /> : image
           ? <img alt="" src={attachment.previewUrl} />
           : <><video aria-hidden="true" muted playsInline preload="metadata" src={attachment.previewUrl} /><span className="attachment-video-play"><Play aria-hidden="true" fill="currentColor" size={18} /></span></>}
       </button>
@@ -135,10 +141,88 @@ export function PendingAttachmentTile({ actionsDisabled = false, attachment, onO
   );
 }
 
-function RemoteImageAttachment({ image, gallery, index, onOpen }: {
+/** All media stay visible; the parent grid owns wrapping and tile sizing. */
+export function AttachmentImageGroup({ images, renderImage }: {
+  images: readonly { key: string; aspectRatio: number }[];
+  renderImage: (index: number, remaining: number) => React.ReactNode;
+}): React.JSX.Element {
+  return <span className="message-attachment-images">{images.map((image, index) => (
+    <span className="message-attachment-image-cell" key={image.key}>{renderImage(index, 0)}</span>
+  ))}</span>;
+}
+
+export function AttachmentMediaTile({ name, mimeType, loadContent, onOpen, disabled = false }: {
+  name: string;
+  mimeType?: string;
+  loadContent?: (signal?: AbortSignal) => Promise<Blob>;
+  onOpen: (focus: HTMLElement) => void;
+  disabled?: boolean;
+}): React.JSX.Element {
+  const video = isVideoAttachment(mimeType ?? '', name);
+  const [loaded, setLoaded] = useState<{ loader: typeof loadContent; src: string } | null>(null);
+  useEffect(() => {
+    if (!video || !loadContent || disabled) return;
+    const controller = new AbortController();
+    let src: string | undefined;
+    void loadContent(controller.signal).then((blob) => {
+      if (controller.signal.aborted) return;
+      src = URL.createObjectURL(blob);
+      setLoaded({ loader: loadContent, src });
+    }).catch(() => undefined);
+    return () => { controller.abort(); if (src) URL.revokeObjectURL(src); };
+  }, [disabled, loadContent, video]);
+  const src = loaded?.loader === loadContent ? loaded?.src : undefined;
+  return <span className="attachment-media-tile">
+    <button aria-label={`Preview ${name}`} className="attachment-media-open" disabled={disabled} onClick={(event) => onOpen(event.currentTarget)} type="button">
+      {video && src ? <video aria-hidden="true" muted playsInline preload="metadata" src={src} /> : video ? <Film aria-hidden="true" size={32} /> : <Music2 aria-hidden="true" size={32} />}
+      <span className="attachment-media-name">{name}</span>
+      {video && <span className="attachment-video-play"><Play aria-hidden="true" size={24} /></span>}
+    </button>
+    {!video && loadContent && !disabled && <AttachmentAudio name={name} loadContent={loadContent} />}
+  </span>;
+}
+
+/** Fetch audio only after Play. A failed read is retryable and a removed card
+ * cannot start playback after its pending download completes. */
+export function AttachmentAudio({ name, loadContent }: {
+  name: string;
+  loadContent: (signal?: AbortSignal) => Promise<Blob>;
+}): React.JSX.Element {
+  const [requested, setRequested] = useState(false);
+  const [loaded, setLoaded] = useState<{ loader: typeof loadContent; src: string } | null>(null);
+  const [error, setError] = useState(false);
+  const src = loaded?.loader === loadContent ? loaded.src : undefined;
+  useEffect(() => {
+    if (!requested) return;
+    const controller = new AbortController();
+    let url: string | undefined;
+    setError(false);
+    void loadContent(controller.signal).then((blob) => {
+      if (controller.signal.aborted) return;
+      url = URL.createObjectURL(blob);
+      setLoaded({ loader: loadContent, src: url });
+    }).catch(() => {
+      if (!controller.signal.aborted) { setError(true); setRequested(false); }
+    });
+    return () => { controller.abort(); if (url) URL.revokeObjectURL(url); };
+  }, [loadContent, requested]);
+  return (
+    <span className="attachment-inline-audio">
+      {src ? <audio aria-label={`Audio: ${name}`} autoPlay controls src={src} /> : (
+        <button aria-label={`Play ${name}`} disabled={requested} onClick={() => setRequested(true)} type="button">
+          <Play aria-hidden="true" size={16} /> {requested ? 'Loading audio…' : 'Play audio'}
+        </button>
+      )}
+      {error && <span role="alert">Audio unavailable. Try again.</span>}
+    </span>
+  );
+}
+
+function RemoteImageAttachment({ image, gallery, index, remaining, onOpen }: {
   image: LoadedImage;
   gallery: AttachmentPreview[];
   index: number;
+  remaining: number;
   onOpen: (preview: AttachmentPreview) => void;
 }): React.JSX.Element {
   const { attachment, src } = image;
@@ -149,13 +233,13 @@ function RemoteImageAttachment({ image, gallery, index, onOpen }: {
   };
   return (
     <button
-      aria-label={`Preview ${attachment.fileName}`}
+      aria-label={remaining ? `Open the remaining ${remaining} images full screen` : `Preview ${attachment.fileName}`}
       className="message-attachment-image"
       disabled={!attachment.contentAvailable}
       onClick={(event) => onOpen({ ...preview, gallery, galleryIndex: index, returnFocus: event.currentTarget })}
       style={{
-        aspectRatio: String(image.aspectRatio),
-        width: gallery.length === 1 ? Math.min(560, Math.max(64, image.aspectRatio * 200)) : undefined,
+        aspectRatio: '1',
+        width: '100%',
       }}
       type="button"
     >
@@ -170,12 +254,16 @@ function RemoteFileAttachment({ attachment, loadContent, onOpen }: {
   onOpen: (preview: AttachmentPreview) => void;
 }): React.JSX.Element {
   const name = splitFileName(attachment.fileName);
-  const preview: AttachmentPreview = {
-    name: attachment.fileName,
-    mimeType: attachment.mimeType,
-    loadContent: (signal) => loadContent(attachment.id, signal),
-  };
+  const content = useMemo(() => (signal?: AbortSignal) => loadContent(attachment.id, signal), [attachment.id, loadContent]);
+  const kind = pendingFileKind(attachment.mimeType, attachment.fileName);
+  const preview: AttachmentPreview = { name: attachment.fileName, mimeType: attachment.mimeType, loadContent: content };
+  const [downloadError, setDownloadError] = useState(false);
+  if (kind === 'audio' || isVideoAttachment(attachment.mimeType, attachment.fileName)) {
+    return <AttachmentMediaTile name={attachment.fileName} mimeType={attachment.mimeType} loadContent={content}
+      disabled={!attachment.contentAvailable} onOpen={(returnFocus) => onOpen({ ...preview, returnFocus })} />;
+  }
   return (
+    <div className="attachment-file-with-player">
     <div className="attachment-file-card" title={attachment.fileName}>
       <button
         aria-label={`Preview ${attachment.fileName}`}
@@ -184,7 +272,7 @@ function RemoteFileAttachment({ attachment, loadContent, onOpen }: {
         onClick={(event) => onOpen({ ...preview, returnFocus: event.currentTarget })}
         type="button"
       >
-        <span className="attachment-file-icon"><File aria-hidden="true" size={19} /></span>
+        <span className={clsx('attachment-file-icon', `is-${kind}`)}><PendingFileIcon kind={kind} /></span>
         <span className="attachment-file-details">
           <span className="attachment-file-name"><span>{name.base}</span><span>{name.suffix}</span></span>
           <span className="attachment-file-meta">{formatAttachmentSize(attachment.sizeBytes)}</span>
@@ -194,12 +282,14 @@ function RemoteFileAttachment({ attachment, loadContent, onOpen }: {
         <button
           aria-label={`Download ${attachment.fileName}`}
           className="attachment-file-download"
-          onClick={() => void downloadAttachment(attachment.fileName, preview.loadContent!)}
+          onClick={() => { setDownloadError(false); void downloadAttachment(attachment.fileName, content).catch(() => setDownloadError(true)); }}
           type="button"
         >
           <Download aria-hidden="true" size={19} />
         </button>
       )}
+    </div>
+    {downloadError && <span role="alert">Download failed. Please try again.</span>}
     </div>
   );
 }
@@ -264,17 +354,10 @@ function RemoteImageGroup({ attachments, loadContent, onOpen }: {
     ...(src ? { src } : {}),
     loadContent: (signal) => loadContent(attachment.id, signal),
   })), [images, loadContent]);
-  const visible = images.slice(0, 3);
-  return (
-    <div className={clsx('message-attachment-images', images.length === 1 ? 'is-single' : 'is-gallery')}>
-      {visible.map((image, index) => (
-        <span className="message-attachment-image-cell" key={image.attachment.id} style={{ flexGrow: image.aspectRatio }}>
-          <RemoteImageAttachment gallery={gallery} image={image} index={index} onOpen={onOpen} />
-          {index === visible.length - 1 && images.length > visible.length && <span className="message-attachment-more" aria-hidden="true">+{images.length - visible.length}</span>}
-        </span>
-      ))}
-    </div>
-  );
+  return <AttachmentImageGroup
+    images={images.map((image) => ({ key: image.attachment.id, aspectRatio: image.aspectRatio }))}
+    renderImage={(index, remaining) => <RemoteImageAttachment gallery={gallery} image={images[index]!} index={index} remaining={remaining} onOpen={onOpen} />}
+  />;
 }
 
 export function MessageAttachments({ attachments, loadContent, onOpen }: {

@@ -38,12 +38,14 @@ describe('attachment presentation', () => {
     vi.unstubAllGlobals();
   });
 
-  it('opens only the selected gallery entry on the first render', async () => {
+  it('opens the selected gallery entry while loading navigation thumbnails', async () => {
     const first = { name: 'first.png', mimeType: 'image/png', loadContent: vi.fn(async () => new Blob(['first'])) };
     const second = { name: 'second.png', mimeType: 'image/png', loadContent: vi.fn(async () => new Blob(['second'])) };
     render(<AttachmentLightbox preview={{ ...second, gallery: [first, second], galleryIndex: 1 }} onClose={vi.fn()} />);
     await screen.findByRole('img', { name: 'second.png' });
-    expect(first.loadContent).not.toHaveBeenCalled();
+    expect(screen.getByRole('dialog')).toHaveAccessibleName('Preview of second.png');
+    expect(screen.getByRole('button', { name: 'View attachment 2: second.png' })).toHaveAttribute('aria-current', 'true');
+    expect(first.loadContent).toHaveBeenCalledOnce();
     expect(second.loadContent).toHaveBeenCalledOnce();
   });
 
@@ -170,6 +172,43 @@ describe('attachment presentation', () => {
     expect(screen.getByRole('img', { name: 'settled.png' })).toBe(image);
     expect(loadContent).toHaveBeenCalledOnce();
     expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+  });
+
+  it('keeps every image visible and opens its matching gallery entry', async () => {
+    const attachments = Array.from({ length: 4 }, (_, index): MessageAttachment => ({
+      id: `image-${index}`, fileName: `image-${index}.png`, mimeType: 'image/png', sizeBytes: 5,
+      contentAvailable: true, createdAt: '2026-09-09T00:00:00.000Z',
+    }));
+    const loadContent = vi.fn(async () => new Blob(['image'], { type: 'image/png' }));
+    function Example(): React.JSX.Element {
+      const [preview, setPreview] = useState<AttachmentPreview | null>(null);
+      return <><MessageAttachments attachments={attachments} loadContent={loadContent} onOpen={setPreview} /><AttachmentLightbox preview={preview} onClose={() => setPreview(null)} /></>;
+    }
+    render(<Example />);
+    expect(document.querySelectorAll('.message-attachment-image')).toHaveLength(4);
+    expect(screen.queryByText('+2')).toBeNull();
+    const overflow = screen.getByRole('button', { name: 'Preview image-2.png' });
+    fireEvent.click(overflow);
+    expect(await screen.findByRole('dialog', { name: 'Preview of image-2.png' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'View attachment 4: image-3.png' }));
+    expect(screen.getByRole('dialog', { name: 'Preview of image-3.png' })).toBeVisible();
+    fireEvent.keyDown(window, { key: 'ArrowLeft' });
+    expect(screen.getByRole('dialog', { name: 'Preview of image-2.png' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Close preview' }));
+    await waitFor(() => expect(overflow).toHaveFocus());
+  });
+
+  it('loads inline audio only after Play and retries failed reads', async () => {
+    const attachment: MessageAttachment = { id: 'audio', fileName: 'sample.wav', mimeType: 'audio/wav',
+      sizeBytes: 8, contentAvailable: true, createdAt: '2026-09-09T00:00:00.000Z' };
+    const loadContent = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValue(new Blob(['audio']));
+    render(<MessageAttachments attachments={[attachment]} loadContent={loadContent} onOpen={vi.fn()} />);
+    expect(loadContent).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Play sample.wav' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Audio unavailable');
+    fireEvent.click(screen.getByRole('button', { name: 'Play sample.wav' }));
+    expect(await screen.findByLabelText('Audio: sample.wav')).toHaveAttribute('controls');
+    expect(loadContent).toHaveBeenCalledTimes(2);
   });
 
   it('loads generated audio lazily and exposes an AI-voice player', async () => {
