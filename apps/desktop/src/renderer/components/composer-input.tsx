@@ -263,7 +263,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
     requestAnimationFrame(() => resizeTextarea());
   });
   const dictationActive = !['idle', 'error'].includes(dictation.state);
-  const dictationBlocking = ['requesting', 'connecting', 'listening'].includes(dictation.state);
+  const dictationBlocking = ['requesting', 'listening'].includes(dictation.state);
   const dictationEditingBlocked = dictationBlocking || dictation.state === 'finalizing';
   const messageCapsule = layout === 'message-capsule';
   const showSubmit = submitting || value.trim().length > 0 || attachments.length > 0;
@@ -325,7 +325,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
         }
       }}
     >
-      {dictation.state === 'requesting' || dictation.state === 'connecting' || dictation.state === 'transcribing' || dictation.state === 'finalizing'
+      {dictation.state === 'requesting' || dictation.state === 'transcribing' || dictation.state === 'finalizing'
         ? <LoaderCircle className="spin" size={15} />
         : <Mic size={15} />}
     </IconButton>

@@ -4,7 +4,7 @@ import type { RallyApi } from './api';
 import { readDevicePreferences, setDeviceMicrophoneId } from './device-preferences';
 import { desktopBridge } from './platform';
 
-export type DictationState = 'idle' | 'requesting' | 'connecting' | 'listening' | 'paused' | 'transcribing' | 'finalizing' | 'error';
+export type DictationState = 'idle' | 'requesting' | 'listening' | 'paused' | 'transcribing' | 'finalizing' | 'error';
 
 export interface MicrophoneDevice {
   deviceId: string;
@@ -28,6 +28,8 @@ interface DictationAttempt {
   connection: { ready: boolean; promise: Promise<void>; resolve: () => void; reject: (error: Error) => void };
   pendingAudio: ArrayBuffer[];
   backlogTimer?: number;
+  connectionTimer?: number;
+  controller: AbortController;
   finalization?: {
     itemId?: string;
     promise: Promise<void>;
@@ -55,6 +57,9 @@ export interface RealtimeDictationOptions {
 
 const AUDIO_FLUSH_TIMEOUT_MS = 2_000;
 const AUDIO_CONTROL_TIMEOUT_MS = 2_000;
+// The existing 10-second connection budget now includes ticket acquisition
+// and backlog drain once capture starts; permission prompts do not consume it.
+const CONNECTION_TIMEOUT_MS = 10_000;
 const COMPLETION_TIMEOUT_MS = 60_000;
 const MAX_SOCKET_BUFFERED_BYTES = 4 * 1_024 * 1_024;
 
@@ -181,15 +186,10 @@ async function waitForTranscriptionSession(
   return new Promise((resolve, reject) => {
     let ready = false;
     let settled = false;
-    const timer = window.setTimeout(() => {
-      socket.close();
-      reject(new Error('Dictation took too long to connect.'));
-    }, 10_000);
 
     const failBeforeReady = (message: string): void => {
       if (settled) return;
       settled = true;
-      window.clearTimeout(timer);
       reject(new Error(message));
     };
 
@@ -199,7 +199,6 @@ async function waitForTranscriptionSession(
       if ((event.type === 'session.updated' || event.type === 'transcription_session.updated') && !settled) {
         ready = true;
         settled = true;
-        window.clearTimeout(timer);
         resolve();
         return;
       }
@@ -367,6 +366,8 @@ async function cleanupAttempt(attempt: DictationAttempt): Promise<void> {
     window.clearTimeout(attempt.completionTimer);
     attempt.completionTimer = undefined;
   }
+  attempt.controller.abort();
+  if (attempt.connectionTimer !== undefined) window.clearTimeout(attempt.connectionTimer);
   if (attempt.backlogTimer !== undefined) window.clearTimeout(attempt.backlogTimer);
   attempt.pendingAudio.length = 0;
   attempt.connection.reject(new Error('Recording ended before the transcription service connected.'));
@@ -477,7 +478,7 @@ export function useRealtimeDictation(
       await attempt.finalization?.promise;
       return;
     }
-    if (stateRef.current === 'requesting' || stateRef.current === 'connecting') {
+    if (stateRef.current === 'requesting') {
       attemptRef.current = undefined;
       setWarning(undefined);
       transition('idle');
@@ -571,11 +572,13 @@ export function useRealtimeDictation(
   const commit = useCallback(async (): Promise<string> => {
     const attempt = attemptRef.current;
     if (!attempt) return '';
-    if (attemptRef.current?.segmentCommit) return attemptRef.current.segmentCommit.promise;
+    if (attempt.segmentCommit) return attempt.segmentCommit.promise;
     if (stateRef.current !== 'listening') return '';
     if (!attempt.connection.ready) await attempt.connection.promise;
     if (attemptRef.current !== attempt || !attempt.socket) return '';
-    if (attemptRef.current?.segmentCommit) return attemptRef.current.segmentCommit.promise;
+    // Another commit or Stop may have arrived while readiness was pending.
+    const pendingSegment = attemptRef.current.segmentCommit;
+    if (pendingSegment) return pendingSegment.promise;
     if (stateRef.current !== 'listening') return '';
     if (attempt.socket.readyState !== WebSocket.OPEN) {
       const message = 'The dictation connection closed before the transcript segment could be saved.';
@@ -621,6 +624,7 @@ export function useRealtimeDictation(
     });
     void connectionPromise.catch(() => undefined);
     const attempt: DictationAttempt = {
+      controller: new AbortController(),
       connection: { ready: false, promise: connectionPromise, resolve: resolveConnection, reject: rejectConnection },
       pendingAudio: [],
       id: nextAttemptIdRef.current + 1,
@@ -683,7 +687,7 @@ export function useRealtimeDictation(
             return undefined;
           })] : []),
       ]);
-      const ticketPromise = api.getTranscriptionSocketTicket();
+      const ticketPromise = api.getTranscriptionSocketTicket(attempt.controller.signal);
       void ticketPromise.catch((caught: unknown) => {
         if (attemptRef.current === attempt) finish(attempt, 'error', captureErrorMessage(caught));
       });
@@ -723,6 +727,9 @@ export function useRealtimeDictation(
         await cleanupAttempt(attempt);
         return;
       }
+      attempt.connectionTimer = window.setTimeout(() => {
+        finish(attempt, 'error', 'Dictation took too long to connect.');
+      }, CONNECTION_TIMEOUT_MS);
       await capture.start();
       if (attemptRef.current !== attempt) {
         await cleanupAttempt(attempt);
@@ -733,10 +740,10 @@ export function useRealtimeDictation(
       transition('listening');
       void refreshDevices();
       const ticket = await ticketPromise;
-      if (attemptRef.current !== attempt) return;
-      // ticketPromise comes directly from the authenticated ticket API above;
-      // the lint rule cannot trace the promise alias across capture startup.
-      // eslint-disable-next-line rally/require-websocket-ticket
+      if (attemptRef.current !== attempt) {
+        await cleanupAttempt(attempt);
+        return;
+      }
       const socket = new WebSocket(ticket.url, ticket.protocols);
       attempt.socket = socket;
       await waitForTranscriptionSession(
@@ -795,6 +802,13 @@ export function useRealtimeDictation(
       // size or message cadence. Never alter sample rate or discard samples.
       const drainBacklog = (): void => {
         if (attemptRef.current !== attempt) return;
+        // Startup batches can fill the socket much faster than live audio.
+        // Wait for outbound bytes to drain instead of dropping a recovered
+        // recording. The same connection deadline bounds this wait.
+        if (socket.bufferedAmount + TRANSCRIPTION_MAX_APPEND_BYTES * 4 / 3 > MAX_SOCKET_BUFFERED_BYTES) {
+          attempt.backlogTimer = window.setTimeout(drainBacklog, TRANSCRIPTION_BACKLOG_SEND_INTERVAL_MS);
+          return;
+        }
         let bytes = 0;
         for (const buffer of attempt.pendingAudio) bytes += buffer.byteLength;
         const batch = new Uint8Array(Math.min(bytes, TRANSCRIPTION_MAX_APPEND_BYTES));
@@ -813,6 +827,8 @@ export function useRealtimeDictation(
           attempt.backlogTimer = window.setTimeout(drainBacklog, TRANSCRIPTION_BACKLOG_SEND_INTERVAL_MS);
           return;
         }
+        if (attempt.connectionTimer !== undefined) window.clearTimeout(attempt.connectionTimer);
+        attempt.connectionTimer = undefined;
         sessionReady = true;
         attempt.connection.ready = true;
         attempt.connection.resolve();
