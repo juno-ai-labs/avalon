@@ -433,7 +433,9 @@ are closed when access ends ([`access-revocation.md`](access-revocation.md)).
   a constant beside these.
 - **A driver that dies outside a phase is recorded.** The Workflow's `run`
   catches whatever escapes a step and marks the operation failed for the
-  attempt that owns it; a launch that fails does the same. Retry is the way
+  attempt that owns it; a launch that fails does the same
+  (`demo_preparation_launch_failed`, with the platform's error in the
+  `demo_operation_launch_failed` log line). Retry is the way
   back from both — a seeded run's own failure, above, is the one it cannot
   reach.
 - **Lists are chunked to D1's bound-parameter ceiling.** Discovery's withheld
@@ -458,11 +460,11 @@ are closed when access ends ([`access-revocation.md`](access-revocation.md)).
 | `apps/api/test/demo-workspace-visibility.test.ts` | The template, an unpublished candidate and an abandoned one are withheld; a published one, a retired one, and a customer workspace named like a demo are not; and a member in more workspaces than one statement can name is answered in chunks. |
 | `apps/api/test-workers/demo-seeder.test.ts` | A five-step pack — a scripted room, a document, two unscripted lines, a question — seeds through the real creation service, room object, alarm-driven loop and upload, with the provider double recording no call; and a confirmed or half-confirmed action replays without a second write. Proved to fail with the seam removed (every run fails at the provider) and with the classifier skip removed (a seeded line is refused at admission). |
 | `apps/api/test/demo-pack.test.ts` | The playability rules — including a role token in Rally's own prose that names nobody in the cast — that the planner resolves a mention to the bound member at the offsets of the expanded name and expands `@{role}` in Rally's turn to the cast's names, and that the placeholder pack parses. |
-| `apps/api/test/demo-seed-provider.test.ts` | The streamed wire form for `say` and for `ask` — the latter with arguments the real elicitation schema accepts — and the refusal of a second request. |
+| `apps/api/test/demo-seed-provider.test.ts` | The streamed wire form for `say` and for `ask` — the latter with arguments the real elicitation schema accepts — and the refusal of a second request; and the seeded route: an unbound model kept with its fallbacks dropped, an Azure-bound primary stepped past to the first unbound fallback, and a fixed unbound id when every routed model is bound. |
 | `apps/api/test/demo-seed-receipts.test.ts` | Against the real migration: the first confirmation wins, a receipt needs a claimed operation, and an outcome the seeder cannot confirm is refused. |
 | `apps/api/test-workers/demo-readiness.test.ts` | With the effect Queue held, a seeded two-room pack is listed but not Ready — the mention, the new marker and the attention count are named as gaps — and delivering the directory effects through the real consumer makes it Ready with no gaps, including the room the presenter can see without being in, and the order. Proved to fail with the mention comparison removed. |
 | `apps/api/test/demo-readiness.test.ts` | The manifest derived from the placeholder pack — rooms newest first, seats, states, ids from receipts — and its refusal of a pack whose rooms or question were never confirmed; and the schema's check that a viewer's expected rooms are exactly the visible ones. |
-| `apps/api/test-workers/demo-preparation.test.ts` | Every phase in order on real objects: the presenter's workspace through onboarding with the cast seated, the template's Google connection copied and left in place, every action confirmed and a completed phase re-run confirming nothing twice, the wait naming its gaps, and Ready published to the register only after the directory effects land; and a failed template check recorded on the operation with its reason. Proved to fail with the register's publication removed from the waiting phase. |
+| `apps/api/test-workers/demo-preparation.test.ts` | The launch id handed to the real Workflow binding, so the platform's own instance-id validator judges it (a colon-joined id is refused, the hyphenated one creates an instance). Every phase in order on real objects: the presenter's workspace through onboarding with the cast seated, the template's Google connection copied and left in place, every action confirmed and a completed phase re-run confirming nothing twice, the wait naming its gaps, and Ready published to the register only after the directory effects land; and a failed template check recorded on the operation with its reason. Proved to fail with the register's publication removed from the waiting phase. |
 | `apps/api/test/demo-operations.test.ts` | Against the real migrations: one operation id starts one Workflow and answers a repeat with the same progress; a cast that misses or invents a role, seats one person twice, or reaches outside the template is refused before a row is written; the allocation statement is accepted before the workspace exists; a retry is the next attempt of a failed or a stalled `running` operation; a superseded attempt's phase call writes nothing; the template check runs against the real rows and records a presenter the template lost; a driver that stopped outside a phase is recorded for its own attempt only, with internal text kept off the page; a failed launch marks the operation failed; a retry without a driver leaves the row untouched; the status lists phases in phase order at their latest attempt, and a list past one statement's parameters is answered whole; abandon needs its confirmation, refuses a published demo and closes an operation with no workspace; and the routes — start, list, template, retry, abandon — admit only the `demos` role and reject a malformed start and an unconfirmed abandon. |
 | `apps/ace/test/demos.test.ts`, `apps/ace/test/demos-client.test.tsx` | Ace's side, owned by [`ace.md`](ace.md#testing): the relay forwards the typed confirmation and answers a regional refusal by its own code, and the page reads a retried operation by its current attempt, keeps polling while offline, and names the presenter beside each gap. |
 | `apps/api/test/socket-ticket-transport.test.ts` | Every socket-ticket issuer refuses a `connector` and a `demo_seed` principal alike. |
@@ -555,7 +557,10 @@ The readiness barrier reads as the member membership says the viewer is and
 refuses a viewer the workspace does not seat; it never fabricates a role. Seed
 prose is pack data behind a schema, never a member's or a model's input, and
 a seeded run skips admission-time memory recall as a human message does, so
-the seed's `fetch` is the only provider it reaches.
+the seed's `fetch` is the only provider it reaches — and the run is routed to
+the client that `fetch` belongs to: an OpenRouter-only model with no fallbacks
+and no Azure transport, because production's default model is Azure-first
+([`agent-harness.md`](agent-harness.md#seeded-runs)).
 
 ## Open questions
 
@@ -579,6 +584,46 @@ the cast discussed is answerable. That was a product defect in every
 multi-person room, not a demo concern, and it is fixed where it lived.
 
 ## Changelog
+
+### 2026-09-09 — A seeded run is routed past Azure
+
+**What changed:** `demoSeedModelRoute` picks the model a seeded run is routed
+under — the resolved primary when it is not Azure-bound, otherwise the first
+unbound fallback, otherwise a fixed unbound id — with no fallbacks, and
+`runWorkstreamHarness` leaves the Azure transport out of a seeded run's config.
+
+**Why:** Found by tracing the production path before the instance-id fix
+below deployed. The seam replaces the OpenRouter client's `fetch` only, and
+production routes `x-ai/grok-4.3` to Azure first: a seeded `say` would have
+been a live model's words and a seeded `ask` would have failed
+`demo_seed_run_outcome_mismatch`. Local and test environments never showed it
+because they route to OpenRouter. [`agent-harness.md`](agent-harness.md)
+records why the route was pinned rather than the seam widened.
+
+**Consequences:** A seeded run records the unbound model as its own, which in
+production is `google/gemini-3.6-flash`. A change to the production model
+variables cannot break seeding, only change that record.
+
+### 2026-09-09 — The Workflow instance id is one the platform accepts
+
+**What changed:** `demoPreparationInstanceId` builds the launch id as
+`demo-preparation-<operation>-<attempt>`; it was `demo-preparation:<operation>:<attempt>`.
+The test Worker binds the real `DemoPreparationWorkflow`, and a workerd test
+hands both forms to it.
+
+**Why:** The first production launch failed with
+`demo_preparation_launch_failed`. Cloudflare accepts an instance id only if
+it matches `^[a-zA-Z0-9_][a-zA-Z0-9-_]*$` (the validator in
+`workflows-shared`, which Miniflare bundles), and colons are outside it. No
+test caught it because the Node suite's driver is a fake that accepts any id
+and the workerd suite drove the phases by hand; the new test is the missing
+one, and reproduces the refusal locally. Every other Workflow id in this
+Worker already used hyphens.
+
+**Consequences:** An operation that failed at launch before this change
+retries cleanly — Retry launches attempt 2 under the new id. A Workflow id
+built anywhere in this Worker should be handed to the real binding in a test
+at least once.
 
 ### 2026-09-08 — The demo routes read `DEMO_OPERATORS_JSON`
 

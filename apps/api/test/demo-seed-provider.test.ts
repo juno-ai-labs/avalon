@@ -1,7 +1,7 @@
 import { RequestElicitationInputSchema } from "@rally/agent-harness";
 import { describe, expect, it } from "vitest";
 
-import { DEMO_SEED_EXHAUSTED_CODE, demoSeedProviderFetch } from "../src/services/demo-seed-provider";
+import { DEMO_SEED_EXHAUSTED_CODE, DEMO_SEED_FALLBACK_MODEL, demoSeedModelRoute, demoSeedProviderFetch } from "../src/services/demo-seed-provider";
 
 /**
  * The seam answers one inference request from the seed and refuses the next.
@@ -91,5 +91,26 @@ describe("the seeded provider", () => {
 
   it("cannot be built from a seed that says nothing", () => {
     expect(() => demoSeedProviderFetch(seed(null))).toThrow("demo_seed_run_without_script");
+  });
+});
+
+describe("the seeded run's route", () => {
+  // The seam covers the OpenRouter client only. The bindings consulted here
+  // are the harness's real table: `x-ai/grok-4.3` (production's default) is
+  // Azure-first, `openai/gpt-5.6-sol` is Azure-only, the Gemini ids are unbound.
+  it("keeps an unbound model and drops the fallbacks", () => {
+    expect(demoSeedModelRoute({ model: "google/gemini-3.6-flash", fallbackModels: ["x-ai/grok-4.3"] }))
+      .toEqual({ model: "google/gemini-3.6-flash", fallbackModels: [] });
+  });
+
+  it("steps past an Azure-bound primary to the first unbound fallback", () => {
+    expect(demoSeedModelRoute({ model: "x-ai/grok-4.3", fallbackModels: ["openai/gpt-5.6-sol", "google/gemini-3.6-flash"] }))
+      .toEqual({ model: "google/gemini-3.6-flash", fallbackModels: [] });
+  });
+
+  it("falls back to a fixed unbound id when every routed model is bound or absent", () => {
+    expect(demoSeedModelRoute({ model: "x-ai/grok-4.3", fallbackModels: ["x-ai/grok-4.6"] }))
+      .toEqual({ model: DEMO_SEED_FALLBACK_MODEL, fallbackModels: [] });
+    expect(demoSeedModelRoute({ model: "", fallbackModels: [] }).model).toBe(DEMO_SEED_FALLBACK_MODEL);
   });
 });

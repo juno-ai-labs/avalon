@@ -15,6 +15,7 @@ import {
   retryDemoOperation,
   runDemoPreparationPhase,
   startDemoOperation,
+  demoPreparationInstanceId,
 } from "../src/services/demo-preparation";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
@@ -143,7 +144,7 @@ describe("a demo preparation operation", () => {
       seeding: { confirmed: 0, total: activeDemoPack().steps.length },
     });
     expect(launched).toEqual([{
-      id: `demo-preparation:${OPERATION_ID}:1`,
+      id: `demo-preparation-${OPERATION_ID}-1`,
       params: { region: "global", operationId: OPERATION_ID, attempt: 1 },
     }]);
 
@@ -198,7 +199,7 @@ describe("a demo preparation operation", () => {
     ).bind(OPERATION_ID).run();
     const retried = await retryDemoOperation(env, OPERATION_ID);
     expect(retried).toMatchObject({ status: "running", attempt: 2, failedPhase: null, error: null });
-    expect(launched.at(-1)).toMatchObject({ id: `demo-preparation:${OPERATION_ID}:2`, params: { attempt: 2 } });
+    expect(launched.at(-1)).toMatchObject({ id: `demo-preparation-${OPERATION_ID}-2`, params: { attempt: 2 } });
 
     // A driver the platform ended without a word leaves the row `running`;
     // the operator's Retry is the way back, and it is the next attempt.
@@ -369,7 +370,7 @@ describe("the operator routes", () => {
     expect(started.status).toBe(200);
     await expect(started.json()).resolves.toMatchObject({ operationId: OPERATION_ID, status: "running", attempt: 1 });
     // The route starts the real Workflow binding, with the pointer payload.
-    expect(launched).toEqual([{ id: `demo-preparation:${OPERATION_ID}:1`, params: { region: "global", operationId: OPERATION_ID, attempt: 1 } }]);
+    expect(launched).toEqual([{ id: `demo-preparation-${OPERATION_ID}-1`, params: { region: "global", operationId: OPERATION_ID, attempt: 1 } }]);
 
     const repeated = await app.request("/internal/demos", { method: "POST", headers, body }, env);
     expect(repeated.status).toBe(200);
@@ -399,7 +400,7 @@ describe("the operator routes", () => {
     const retried = await app.request(`/internal/demos/${OPERATION_ID}/retry`, { method: "POST", headers }, env);
     expect(retried.status).toBe(200);
     await expect(retried.json()).resolves.toMatchObject({ operationId: OPERATION_ID, status: "running", attempt: 2 });
-    expect(launched.map((launch) => launch.id)).toEqual([`demo-preparation:${OPERATION_ID}:1`, `demo-preparation:${OPERATION_ID}:2`]);
+    expect(launched.map((launch) => launch.id)).toEqual([`demo-preparation-${OPERATION_ID}-1`, `demo-preparation-${OPERATION_ID}-2`]);
     const unknown = await app.request("/internal/demos/00000000-0000-7000-8000-00000000dead/retry", { method: "POST", headers }, env);
     expect(unknown.status).toBe(404);
   });
@@ -418,5 +419,17 @@ describe("the operator routes", () => {
     expect(wrong.status).toBe(409);
     await expect(wrong.json()).resolves.toMatchObject({ error: { code: "demo_abandon_unconfirmed" } });
     expect((await row(env, OPERATION_ID)).status).toBe("running");
+  });
+});
+
+describe("the Workflow instance id", () => {
+  it("is one the platform accepts: hyphens only, under the length limit", () => {
+    // The rule Cloudflare enforces on `create` (`workflows-shared` validators).
+    // The first id joined its parts with colons and failed every production
+    // launch while the fake driver here accepted anything.
+    const id = demoPreparationInstanceId(OPERATION_ID, 12);
+    expect(id).toMatch(/^[a-zA-Z0-9_][a-zA-Z0-9-_]*$/u);
+    expect(id.length).toBeLessThanOrEqual(100);
+    expect(id).toBe(`demo-preparation-${OPERATION_ID}-12`);
   });
 });
