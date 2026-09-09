@@ -5381,6 +5381,12 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 .grokbot-shell .workstream-row {
   border-radius: 10px;
   gap: 8px;
+  /* The track has to carry the icon this shell actually draws. Left at the
+     base 30px it under-measures the 36px slot below, so the glyph overflowed
+     into the gap and the title started six pixels earlier than the mark's own
+     width puts it — which is where this row and the work-stream rail's,
+     built from the same numbers, came apart. */
+  grid-template-columns: 36px minmax(0, 1fr) auto;
   height: 54px;
   min-height: 54px;
   padding: 8px;
