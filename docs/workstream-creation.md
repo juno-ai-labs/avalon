@@ -384,6 +384,26 @@ with the backfill first. See [`regionalization.md`](regionalization.md).
 
 ## Changelog
 
+### 2026-09-09 — The launcher is reached only by an explicit New action
+
+**What changed:** Nothing in this screen. The screens that used to fall back to
+`/workstreams/new` when what they showed went away — an archived work stream,
+note, or project, a deleted automation, a work stream left or marked unread,
+the not-found screen, the end of onboarding — now open the first sidebar work
+stream instead. The composer opens for a New action or an empty workspace.
+
+**Why:** The launcher had become the app's default home by accident of being
+the safe route to leave for, so archiving the room someone was reading handed
+them an empty draft rather than their next conversation. The rule, the
+`skipWorkstreamIds` state that keeps the just-archived row from being reopened,
+and the one deliberate exception are recorded in
+[`workstream-pinning.md`](workstream-pinning.md#leaving-for-the-first-work-stream),
+which owns the root route.
+
+**Consequences:** `returnTo` still lets the sidebar's New close back to where it
+was opened from; that state is set only by the New links and never by a leaving
+screen.
+
 ### 2026-09-04 — New chat uses GrokBot's recipient-first launcher without losing create semantics
 
 **What changed:** A workspace-level new chat opens with a `To:` recipient bar,

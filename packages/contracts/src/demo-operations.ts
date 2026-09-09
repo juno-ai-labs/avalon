@@ -1,0 +1,125 @@
+import { z } from "zod";
+
+import { IdSchema } from "./identifiers";
+
+/**
+ * The demo preparation operation on the wire: what Ace asks the regional API
+ * to start, and what it reads back while it runs. `docs/demo-workspaces.md`
+ * owns the feature; these are the shapes both ends parse.
+ */
+
+export const DEMO_PREPARATION_PHASES = [
+  "checking_template",
+  "creating_workspace",
+  "copying_connections",
+  "seeding_conversations",
+  "waiting_for_workspace",
+] as const;
+export const DemoPreparationPhaseSchema = z.enum(DEMO_PREPARATION_PHASES);
+export type DemoPreparationPhase = z.infer<typeof DemoPreparationPhaseSchema>;
+
+export const DemoOperationStatusValueSchema = z.enum(["running", "ready", "failed", "abandoned"]);
+
+const RoleSchema = z.string().regex(/^[a-z][a-z0-9-]{0,39}$/u);
+
+/** What the operator submits. The pack is the regional API's; the cast is the operator's. */
+export const DemoOperationStartRequestSchema = z.strictObject({
+  operationId: IdSchema,
+  companyName: z.string().trim().min(1).max(80),
+  presenterUserId: IdSchema,
+  /** Which workspace member plays each pack role. */
+  cast: z.record(RoleSchema, IdSchema),
+});
+export type DemoOperationStartRequest = z.infer<typeof DemoOperationStartRequestSchema>;
+
+/**
+ * The confirmation the page collected before abandoning: the operator named
+ * the operation they are closing. Carried to the API so the irreversible
+ * retirement of the candidate is refused unless the two agree, rather than
+ * trusting the page to have asked.
+ */
+export const DemoOperationAbandonRequestSchema = z.strictObject({
+  confirmOperationId: IdSchema,
+});
+export type DemoOperationAbandonRequest = z.infer<typeof DemoOperationAbandonRequestSchema>;
+
+/** One thing a viewer's projection does not yet show; the wait phase's detail carries a list of these. */
+export const DemoReadinessGapSchema = z.strictObject({
+  viewerUserId: IdSchema,
+  room: z.string().nullable(),
+  code: z.string().min(1),
+  detail: z.string(),
+});
+export type DemoReadinessGap = z.infer<typeof DemoReadinessGapSchema>;
+
+export const DemoOperationErrorSchema = z.strictObject({
+  code: z.string().min(1).max(120),
+  message: z.string().min(1).max(1200),
+});
+
+export const DemoOperationPhaseStatusSchema = z.strictObject({
+  phase: DemoPreparationPhaseSchema,
+  status: z.enum(["running", "completed", "failed"]),
+  attempt: z.number().int().positive(),
+  /** A small object the page renders; its keys are the phase's own. */
+  detail: z.record(z.string(), z.unknown()),
+  error: DemoOperationErrorSchema.nullable(),
+  startedAt: z.string().datetime({ offset: true }),
+  finishedAt: z.string().datetime({ offset: true }).nullable(),
+});
+export type DemoOperationPhaseStatus = z.infer<typeof DemoOperationPhaseStatusSchema>;
+
+export const DemoOperationStatusSchema = z.strictObject({
+  operationId: IdSchema,
+  companyName: z.string().min(1).max(80),
+  presenterUserId: IdSchema,
+  presenterName: z.string().min(1).max(255).nullable(),
+  packVersion: z.string().min(1).max(80),
+  cast: z.record(RoleSchema, IdSchema),
+  workspaceId: IdSchema.nullable(),
+  workspaceName: z.string().min(1).max(120).nullable(),
+  status: DemoOperationStatusValueSchema,
+  attempt: z.number().int().positive(),
+  failedPhase: DemoPreparationPhaseSchema.nullable(),
+  error: DemoOperationErrorSchema.nullable(),
+  createdAt: z.string().datetime({ offset: true }),
+  updatedAt: z.string().datetime({ offset: true }),
+  /** From the register: when the demo was published, and when it was closed. */
+  readyAt: z.string().datetime({ offset: true }).nullable(),
+  retiredAt: z.string().datetime({ offset: true }).nullable(),
+  phases: z.array(DemoOperationPhaseStatusSchema).max(DEMO_PREPARATION_PHASES.length),
+  /** Seed actions confirmed so far, out of the pack's total. */
+  seeding: z.strictObject({
+    confirmed: z.number().int().nonnegative(),
+    total: z.number().int().nonnegative(),
+  }),
+});
+export type DemoOperationStatus = z.infer<typeof DemoOperationStatusSchema>;
+
+export const DemoOperationListSchema = z.strictObject({
+  operations: z.array(DemoOperationStatusSchema),
+});
+
+/** The template's cast candidates, for the Demos page's pickers. */
+export const DemoTemplateSchema = z.strictObject({
+  workspaceId: IdSchema,
+  pack: z.strictObject({
+    version: z.string().min(1).max(80),
+    roles: z.array(RoleSchema),
+  }),
+  members: z.array(z.strictObject({
+    userId: IdSchema,
+    name: z.string().min(1).max(255),
+    email: z.string().max(254),
+    role: z.enum(["owner", "admin", "member"]),
+  })),
+});
+export type DemoTemplate = z.infer<typeof DemoTemplateSchema>;
+
+/** The Workflow's payload: a pointer, re-read on arrival. */
+export const DemoPreparationWorkflowInputSchema = z.strictObject({
+  region: z.enum(["global", "eu"]),
+  operationId: IdSchema,
+  attempt: z.number().int().positive(),
+});
+export type DemoPreparationWorkflowInput = z.infer<typeof DemoPreparationWorkflowInputSchema>;

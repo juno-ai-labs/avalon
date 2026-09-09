@@ -3,7 +3,7 @@ import { IdSchema, SubstreamIdSchema, WorkspaceIdSchema } from '@rally/contracts
 
 export const AuthorizationProjectionJobSchema = z.strictObject({
   type: z.literal('authorization_projection_v1'), region: z.enum(['global', 'eu']),
-  workspaceId: WorkspaceIdSchema, parentId: IdSchema, substreamId: SubstreamIdSchema.optional(),
+  workspaceId: WorkspaceIdSchema, parentId: IdSchema, substreamId: SubstreamIdSchema.optional(), mutationAt: z.number().int().nonnegative().optional(),
 });
 export type AuthorizationProjectionJob = z.infer<typeof AuthorizationProjectionJobSchema>;
 
@@ -20,15 +20,24 @@ export const AUTHORIZATION_PROJECTION_MIGRATION = [
    SELECT 1, 1, 0 WHERE EXISTS (SELECT 1 FROM workstream)`,
 ];
 
+/** Preserve the earliest pending source mutation across coalescing and retries. */
+export const AUTHORIZATION_PROJECTION_TIMING_MIGRATION = [
+  `ALTER TABLE authorization_projection_outbox ADD COLUMN first_mutated_at INTEGER`,
+  `CREATE TRIGGER authorization_projection_timestamp AFTER INSERT ON authorization_projection_outbox
+   WHEN NEW.first_mutated_at IS NULL BEGIN
+     UPDATE authorization_projection_outbox SET first_mutated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER) WHERE id = NEW.id;
+   END`,
+];
+
 export function nextAuthorizationProjectionAt(sql: SqlStorage): number | null {
   return sql.exec<{ not_before: number }>('SELECT not_before FROM authorization_projection_outbox WHERE id = 1').toArray()[0]?.not_before ?? null;
 }
 
 export async function flushAuthorizationProjection(sql: SqlStorage, queue: Queue, job: AuthorizationProjectionJob): Promise<void> {
-  const row = sql.exec<{ revision: number }>('SELECT revision FROM authorization_projection_outbox WHERE id = 1 AND not_before <= ?', Date.now()).toArray()[0];
+  const row = sql.exec<{ revision: number; first_mutated_at: number | null }>('SELECT revision, first_mutated_at FROM authorization_projection_outbox WHERE id = 1 AND not_before <= ?', Date.now()).toArray()[0];
   if (!row) return;
   try {
-    await queue.send(job);
+    await queue.send({ ...job, ...(row.first_mutated_at === null ? {} : { mutationAt: row.first_mutated_at }) });
     sql.exec('DELETE FROM authorization_projection_outbox WHERE id = 1 AND revision = ?', row.revision);
   } catch (error) {
     // Match the established regional outbox dispatch retry, rather than hot-looping an alarm.

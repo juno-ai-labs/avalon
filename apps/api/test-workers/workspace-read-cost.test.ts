@@ -240,6 +240,9 @@ it('repairs a terminal deadline on exact directory replay after a post-commit fa
     await instance.applyWorkstreamDirectoryEffects(request);
     expect(sql.exec("SELECT alarm_key, due_at FROM _internal_durable_alarms WHERE kind = 'terminal'").toArray())
       .toEqual([{ alarm_key: workstreamId, due_at: Date.parse(dueAt) }]);
-    expect(await state.storage.getAlarm()).toBe(Date.parse(dueAt));
+    // Mutation publication can wake the shared alarm before the repaired deadline.
+    const alarm = await state.storage.getAlarm();
+    expect(alarm).not.toBeNull();
+    expect(alarm!).toBeLessThanOrEqual(Date.parse(dueAt));
   });
 });

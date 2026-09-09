@@ -92,6 +92,12 @@ export function applyWorkspaceResourceSchema(database: DatabaseSync, workspaceId
      VALUES (1, ?, 'global', 'wnam', 0, 0)`,
   ).run(workspaceId);
   for (const migration of resourceSchemaMigrations()) {
-    for (const statement of migration.statements) database.exec(statement);
+    for (const statement of migration.statements) {
+      // Mixed migrations also install triggers on DO-only tables absent from
+      // this regional resource fixture. Keep every trigger whose source exists.
+      const triggerTable = /^\s*CREATE TRIGGER\s+\S+[\s\S]*?\bON\s+(\w+)/u.exec(statement)?.[1];
+      if (triggerTable && !database.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(triggerTable)) continue;
+      database.exec(statement);
+    }
   }
 }

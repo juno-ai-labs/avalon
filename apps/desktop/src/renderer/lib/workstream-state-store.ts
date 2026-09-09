@@ -2,7 +2,7 @@ import type { WorkstreamStateVersion } from '@rally/contracts';
 import type { QueryClient } from '@tanstack/react-query';
 
 import type { WorkstreamDetail, WorkstreamSummary } from './types';
-import { evictCachedWorkstream, setCachedWorkstreams } from './workstreams-cache';
+import { evictCachedWorkstream, patchCachedWorkstream, setCachedWorkstreams } from './workstreams-cache';
 
 export const WORKSTREAM_STATE_WATERLINES_KEY = ['workstream-state-waterlines'] as const;
 export const WORKSPACE_DIRECTORY_WATERLINES_KEY = ['workspace-directory-waterlines'] as const;
@@ -184,6 +184,28 @@ export function applyVersionedWorkstreamState(
     detail ? merge(detail) : detail
   ));
   return { commonApplied, viewerApplied };
+}
+
+/**
+ * Take the viewer half of a REST response the caller just received — a read
+ * acknowledgement, an unread mark — and nothing else from it.
+ *
+ * Those responses are a whole `WorkstreamSummary` from Main's row, and spreading
+ * one over the caches would also write its common fields (appearance, harness
+ * status, scope) through an unversioned path, where a response computed before
+ * a later change and delivered after it puts the older value back. Only the
+ * viewer fields are the response's own news, so only they are taken, and the
+ * derived unread pair is recomputed here rather than copied, per the rule on
+ * `withDerivedUnread`.
+ */
+export function patchCachedWorkstreamViewerState(
+  queryClient: QueryClient,
+  workstreamId: string,
+  summary: WorkstreamSummary,
+  substreamId = '0',
+): void {
+  const { viewer } = workstreamSummaryState(summary);
+  patchCachedWorkstream(queryClient, workstreamId, (row) => withDerivedUnread({ ...row, ...viewer }), substreamId);
 }
 
 /** Workspace-only fields use WorkspaceDO's own directory/page ordering. */

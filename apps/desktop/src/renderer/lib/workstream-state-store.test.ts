@@ -6,6 +6,7 @@ import { setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache
 import {
   applyVersionedWorkstreamState,
   applyWorkspaceWorkstreamFields,
+  patchCachedWorkstreamViewerState,
 } from './workstream-state-store';
 
 const id = '00000000-0000-7000-8000-000000000001';
@@ -218,5 +219,58 @@ describe('applyVersionedWorkstreamState', () => {
       participantUserIds: [],
       participantExtraCount: 0,
     });
+  });
+});
+
+describe('patchCachedWorkstreamViewerState', () => {
+  it('takes only the viewer fields from the response and rederives the unread pair', () => {
+    const queryClient = new QueryClient();
+    const cached = summary({
+      appearance: { icon: 'atom', color: 'purple' },
+      harnessStatus: 'running',
+      latestAttentionSequenceNumber: 9,
+      readThroughSequenceNumber: 3,
+      hasUnread: true,
+      firstUnreadSequenceNumber: 4,
+    });
+    setCachedWorkstreams(queryClient, [cached]);
+    queryClient.setQueryData(['workstream', id], cached);
+    // A response computed before a color change and a run start, delivered
+    // after both: its common fields are stale and must not come along.
+    const response = summary({
+      appearance: { icon: 'atom', color: 'gray' },
+      harnessStatus: 'completed',
+      latestAttentionSequenceNumber: 9,
+      readThroughSequenceNumber: 9,
+      hasUnread: true,
+      firstUnreadSequenceNumber: 4,
+    });
+
+    patchCachedWorkstreamViewerState(queryClient, id, response);
+
+    for (const row of [
+      queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0],
+      queryClient.getQueryData<WorkstreamSummary>(['workstream', id]),
+    ]) {
+      expect(row?.appearance).toEqual({ icon: 'atom', color: 'purple' });
+      expect(row?.harnessStatus).toBe('running');
+      expect(row?.readThroughSequenceNumber).toBe(9);
+      // Derived here from the new waterline, not copied from a response that
+      // still said unread.
+      expect(row?.hasUnread).toBe(false);
+      expect(row?.firstUnreadSequenceNumber).toBeNull();
+    }
+  });
+
+  it('writes the addressed child entry as well as the list row', () => {
+    const queryClient = new QueryClient();
+    setCachedWorkstreams(queryClient, [summary({ readThroughSequenceNumber: 1 })]);
+    queryClient.setQueryData(['substream-workstream', id, 'child'], summary({ readThroughSequenceNumber: 1 }));
+
+    patchCachedWorkstreamViewerState(queryClient, id, summary({ readThroughSequenceNumber: 5 }), 'child');
+
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.readThroughSequenceNumber).toBe(5);
+    expect(queryClient.getQueryData<WorkstreamSummary>(['substream-workstream', id, 'child'])?.readThroughSequenceNumber).toBe(5);
+    expect(queryClient.getQueryData(['workstream', id])).toBeUndefined();
   });
 });
