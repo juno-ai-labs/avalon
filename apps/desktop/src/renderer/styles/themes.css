@@ -149,6 +149,14 @@
   --av-sys-color-danger-edge: #f2c9c6;
   --av-sys-color-danger-on: #ffffff;
 
+  /* The two inks a palette fill can carry, absolute in both appearances. A
+   * fill does not change with the theme, so the ink over it must not either —
+   * the neutral ramp inverts and is the wrong source here. Which one a given
+   * fill takes is PALETTE_INK in @rally/contracts, not a judgement made in
+   * CSS. */
+  --av-sys-color-palette-ink-light: #fcfcfc;
+  --av-sys-color-palette-ink-dark: #141414;
+
   /* The semantic identity palette shared by projects, work streams, and
    * personal accents. Stored color keys remain stable; each light/dark
    * appearance defines its own values so shades can be tuned for contrast
@@ -574,6 +582,9 @@
   --av-sys-color-danger-wash: #1d100c;
   --av-sys-color-danger-edge: #3a201a;
   --av-sys-color-danger-on: #150b08;
+
+  --av-sys-color-palette-ink-light: #fcfcfc;
+  --av-sys-color-palette-ink-dark: #141414;
 
   --av-sys-color-project-edge: rgba(252, 252, 252, 0.22);
   --av-sys-color-project-black: #45454d;

@@ -12,7 +12,7 @@ import {
   personalColorKey,
 } from '@rally/contracts';
 
-import { PROJECT_COLOR_COLUMNS, projectColorCells } from '../lib/project-palette';
+import { PROJECT_COLOR_COLUMNS, glyphInk, projectColorCells } from '../lib/project-palette';
 
 // Read from disk for the same reason `themes.css.node.test.ts` does: Vite hands
 // `?raw` an empty string for a file it is already processing as CSS.
@@ -125,6 +125,29 @@ describe('project palette', () => {
     for (const option of PersonalColorSchema.options) {
       const rule = `html[data-personal-color='${option}'] { --personal-color: var(--av-sys-color-project-${personalColorKey(option)}); }`;
       expect(onboarding, `no accent rule for "${option}" matching personalColorKey()`).toContain(rule);
+    }
+  });
+
+  it('given every fill a glyph can take, when its symbol is drawn, then the ink clears the graphical-object threshold', () => {
+    // The glyph paints an icon straight onto a palette fill. A single light
+    // foreground used to work because the old ramp was dark; on this one white
+    // over `lime` is 1.98:1. WCAG asks 3:1 of a meaningful graphical object, so
+    // check the ink `glyphInk()` actually picks, in both appearances.
+    // Resolved from the theme JSON so the test follows a token edit rather than
+    // restating one; both inks are absolute, so neither varies by appearance.
+    const inkFor = (expression: string, theme: 'light' | 'dark'): string => {
+      const token = /var\(--av-sys-color-palette-ink-(light|dark)\)/u.exec(expression)?.[1];
+      expect(token, `glyphInk returned an unexpected expression: ${expression}`).toBeDefined();
+      return themeValues(theme)[`sys.color.palette-ink.${token}`] as string;
+    };
+
+    for (const theme of ['light', 'dark'] as const) {
+      const tokens = themeValues(theme);
+      for (const key of PALETTE_KEYS) {
+        const fill = tokens[`sys.color.project.${key}`] as string;
+        const ratio = contrast(luminance(inkFor(glyphInk(key), theme)), luminance(fill));
+        expect(ratio, `${key} in ${theme}: glyph symbol at ${ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(3);
+      }
     }
   });
 });
