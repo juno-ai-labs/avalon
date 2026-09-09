@@ -115,12 +115,14 @@ html[data-personal-color] {
 .avatar > .personal-avatar { width: 100%; height: 100%; }
 html { --personal-ink-light: var(--av-ref-color-neutral-1); --personal-ink-dark: var(--av-ref-color-neutral-14); }
 html[data-theme='dark'] { --personal-ink-light: var(--av-ref-color-neutral-14); --personal-ink-dark: var(--av-ref-color-neutral-1); }
-/* Mirrors PALETTE_INK in @rally/contracts, which is the source of truth and is
-   asserted against these rules by palette.css.node.test.ts. Every accent takes
-   black ink except the two that resolve to a dark neutral: `black` itself, and
-   the retired `slate` that now follows it. */
-html[data-personal-color] { --av-sys-color-accent-on: var(--personal-ink-dark); }
-html[data-personal-color='black'], html[data-personal-color='slate'] { --av-sys-color-accent-on: var(--personal-ink-light); }
+/* Not `PALETTE_INK`, which answers what reads on a *raw* fill. `accent-on` is
+   only ever paired with `accent-base`, and that is a 35% mix of the accent into
+   `text-default` — so its lightness tracks the appearance rather than the hue,
+   and the ink that reads on it is simply the one that reads against
+   `text-default`. That token already exists and is correct in both themes,
+   which is why no accent needs a rule of its own here. Keying this off the hue
+   made every light-theme accent near-black ink on a near-black mix. */
+html[data-personal-color] { --av-sys-color-accent-on: var(--av-sys-color-text-on-inverse); }
 .personal-colors button { color: var(--personal-ink-dark); }
 
 .intro-scene.is-exiting { animation: onboarding-exit 100ms ease-in both; }

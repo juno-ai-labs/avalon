@@ -1023,20 +1023,6 @@ function isWorkspaceScheduleAlarmKind(kind: string): kind is WorkspaceScheduleTa
 }
 
 /**
- * Palette snapshots, frozen per migration.
- *
- * A CHECK vocabulary is baked into the text of the statement that created the
- * table, so interpolating a live constant here means editing already-shipped
- * SQL every time the palette moves: objects created before the edit keep the
- * old vocabulary, objects created after get the new one, and nothing records
- * that they diverged. Each migration therefore pins the list as it stood when
- * that migration shipped, and widening the vocabulary is a new migration.
- *
- * `workspace-project-palette.test.ts` asserts the newest snapshot still covers
- * `PROJECT_COLOR_KEYS_STORABLE`, so adding a colour without a migration fails
- * the build rather than the insert.
- */
-/**
  * Every table emptied when `projects` is dropped: four cascade from it
  * directly, and two more cascade from `project_default_resources` beneath it.
  * Ordered parents-first so the list can be replayed as inserts.
@@ -1050,12 +1036,25 @@ const PROJECT_CASCADE_DEPENDENTS = [
   "project_default_resource_publications",
 ] as const;
 
+/**
+ * Palette snapshots, frozen per migration.
+ *
+ * A CHECK vocabulary is baked into the text of the statement that created the
+ * table, so interpolating a live constant here means editing already-shipped
+ * SQL every time the palette moves: objects created before the edit keep the
+ * old vocabulary, objects created after get the new one, and nothing records
+ * that they diverged. Each migration therefore pins the list as it stood when
+ * that migration shipped, and widening the vocabulary is a new migration.
+ *
+ * `workspace-project-palette.test.ts` asserts the newest snapshot still covers
+ * `PROJECT_COLOR_KEYS_STORABLE`, so adding a colour without a migration fails
+ * the build rather than the insert.
+ */
 const PROJECT_COLOR_KEYS_AT_V14 = [
   "gray", "brown", "red", "orange", "yellow", "green",
   "teal", "cyan", "blue", "indigo", "purple", "pink",
 ] as const;
 
-/** The v14 twelve, plus the hue ring that replaced them. See above. */
 /**
  * Icons as they stood at v14, which is also how they stand at v45 — the set has
  * never changed. Pinned for the same reason the colours are: a CHECK vocabulary
@@ -1069,6 +1068,11 @@ const PROJECT_ICON_KEYS_FROZEN = [
   "pen-tool", "package", "building-2", "globe-2", "heart",
 ] as const;
 
+/**
+ * The v14 twelve, plus the hue ring that replaced them and the `black` the
+ * account accents took. This is what migration 45 builds its CHECK from; see
+ * the snapshot rationale on `PROJECT_COLOR_KEYS_AT_V14`.
+ */
 const PROJECT_COLOR_KEYS_AT_V45 = [
   "black", "rose", "red", "orange", "amber", "lime", "green", "emerald",
   "cyan", "blue", "indigo", "violet", "purple", "fuchsia", "pink",
@@ -2764,7 +2768,8 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
 }, {
   version: 44,
   description: 'push search authorization decisions after source permission mutations',
-  statements: SEARCH_AUTHORIZATION_PUSH_MIGRATION,}, {
+  statements: SEARCH_AUTHORIZATION_PUSH_MIGRATION,
+}, {
   version: 45,
   description: "the project palette becomes the hue ring",
   statements: [

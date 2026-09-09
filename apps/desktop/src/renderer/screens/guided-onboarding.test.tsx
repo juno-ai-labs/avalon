@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AccountOnboardingGate, PersonalSetup, WorkspaceOnboardingJourney } from './guided-onboarding';
 import { act } from '@testing-library/react';
@@ -143,6 +143,27 @@ describe('new-account learning paths', () => {
 
 
 describe('Account profile settings', () => {
+  it('given an account holding a retired accent, when the picker opens, then the swatch it resolves to reads as selected', async () => {
+    // Existing accounts are exactly the population holding `teal`, `green`,
+    // `amber` or `slate`, and settings is the surface they open. Comparing the
+    // stored name against the pickable keys leaves every swatch unpressed, so
+    // the avatar shows emerald above a row that says nothing is chosen — and a
+    // screen reader reports all eight as unpressed.
+    //
+    // The resolved account overrides only this test's mock: `state.account` is
+    // module-level and nothing restores it, so assigning to it would follow the
+    // rest of the file.
+    state.getAccount.mockResolvedValue({ eligible: true, introduced: true, revision: 3,
+      presentation: { displayName: 'Person', initials: 'P', avatar: 'circle', color: 'teal', revision: 3 } });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}><AccountOnboardingGate><PersonalSetup variant="settings" /></AccountOnboardingGate></QueryClientProvider>);
+    await screen.findByLabelText('Avatar initials');
+
+    const swatches = screen.getByRole('group', { name: 'Color' });
+    expect(within(swatches).getByRole('button', { name: 'emerald' })).toHaveAttribute('aria-pressed', 'true');
+    expect(within(swatches).getAllByRole('button').filter((button) => button.getAttribute('aria-pressed') === 'true')).toHaveLength(1);
+  });
+
   it('saves field edits without a save action and keeps pending updates when leaving the pane', async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     let release!: (account: unknown) => void;
