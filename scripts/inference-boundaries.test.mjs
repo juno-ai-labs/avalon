@@ -107,6 +107,33 @@ test("requires renderer WebSockets to consume an authenticated ticket URL", () =
   `, "require-websocket-ticket").length, 1);
 });
 
+test("follows immutable awaited ticket aliases without trusting shadowed or reassigned values", () => {
+  assert.equal(lint(`
+    const pending = api.getTranscriptionSocketTicket(signal);
+    const ticket = await pending;
+    new WebSocket(ticket.url, ticket.protocols);
+  `, "require-websocket-ticket").length, 0);
+  assert.equal(lint(`
+    const pending = api.getTranscriptionSocketTicket();
+    function unsafe(pending) {
+      const ticket = pending;
+      return new WebSocket(ticket.url);
+    }
+  `, "require-websocket-ticket").length, 1);
+  assert.equal(lint(`
+    let pending = api.getTranscriptionSocketTicket();
+    pending = attackerControlled;
+    const ticket = await pending;
+    new WebSocket(ticket.url);
+  `, "require-websocket-ticket").length, 1);
+  assert.equal(lint(`
+    const pending = api.getTranscriptionSocketTicket();
+    let ticket = await pending;
+    ticket = attackerControlled;
+    new WebSocket(ticket.url);
+  `, "require-websocket-ticket").length, 1);
+});
+
 test("rejects bare Zod URL validators but permits imported explicit contracts", () => {
   assert.equal(lint(`
     import { z } from "zod";

@@ -1820,8 +1820,17 @@ export class RallyApi {
     });
   }
 
-  getTranscriptionSocketTicket(): Promise<SocketTicket> {
-    return this.request('/realtime/transcription/socket', { schema: socketTicketSchema });
+  async getTranscriptionSocketTicket(signal?: AbortSignal): Promise<SocketTicket> {
+    signal?.throwIfAborted();
+    const request = this.request('/realtime/transcription/socket', { schema: socketTicketSchema, signal });
+    if (!signal) return request;
+    // A shared credential renewal can outlive fetch cancellation. Settle this
+    // caller immediately without cancelling another caller's credential renewal.
+    return new Promise((resolve, reject) => {
+      const abort = (): void => reject(signal.reason);
+      signal.addEventListener('abort', abort, { once: true });
+      void request.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort));
+    });
   }
 
   async getConnections(signal?: AbortSignal): Promise<WorkstreamConnection[]> {
