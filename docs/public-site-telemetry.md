@@ -7,6 +7,11 @@ real web events. EU traffic stays in Rally's EU Cloudflare resources and is
 page-scoped: the site does not read or write a persistent analytics identifier
 for an affirmative EU route.
 
+The request-only landing submits its email solely to `/access/requests`; neither
+email values nor submission bodies enter telemetry. `/download/` deliberately
+skips telemetry initialization so its bearer fragment cannot reach analytics.
+The former landing download/CTA click listeners were removed with the public hero.
+
 ## Where the code lives
 
 | Path | Responsibility |
@@ -197,6 +202,17 @@ avoids writing a disposable D1 journey merely to decide whether browser storage
 is allowed.
 
 ## Changelog
+
+### 2026-09-09 — Private access foundation
+
+The request-only landing submits its email solely to `/access/requests`; neither
+email values nor submission bodies enter telemetry. `/download/` deliberately
+skips telemetry initialization so its bearer fragment cannot reach analytics.
+The former landing download/CTA click listeners were removed with the public hero.
+
+This separates request capture and one-use links from the still-public release
+channel, so acquisition can be reviewed without duplicating download authority.
+
 
 ### 2026-09-02 — Public policies move under one Trust Center route
 

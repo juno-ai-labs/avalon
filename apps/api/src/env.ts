@@ -41,6 +41,8 @@ export interface Env {
   /** Shared, content-free routing authority available to both product regions. */
   PLATFORM_DB: D1Database;
   PAYLOADS: R2Bucket;
+  /** Global-only installer stream for private download grants. */
+  DESKTOP_RELEASES?: R2Bucket;
   TELEMETRY_PAYLOADS: R2Bucket;
   /** One globally replicated cache shared by the Global and EU Workers. */
   INFERENCE_PRICING_CACHE: KVNamespace;
