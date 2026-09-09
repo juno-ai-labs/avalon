@@ -43,7 +43,8 @@ describe("the context-residency ledger", () => {
     const { ledger } = open();
     expect(ledger.recordLoaded({ kind: KIND, sourceGeneration: 1, blocks: [root, nested], now: NOW }))
       .toEqual({ recorded: ["AGENTS.md", "apps/api/AGENTS.md"], alreadyResident: [] });
-    expect(ledger.residentBlocks({ kind: KIND })).toEqual([`AGENTS.md@${root.sha256}`, `apps/api/AGENTS.md@${nested.sha256}`]);
+    // Recorded is not yet seen: the gate's known set fills at delivery.
+    expect(ledger.residentBlocks({ kind: KIND })).toEqual([]);
     expect(ledger.pendingDeliveries().map((delivery) => delivery.sourceId))
       .toEqual([`AGENTS.md@${root.sha256}`, `apps/api/AGENTS.md@${nested.sha256}`]);
     expect(ledger.recordLoaded({ kind: KIND, sourceGeneration: 1, blocks: [root], now: NOW + 1 }))
@@ -51,6 +52,7 @@ describe("the context-residency ledger", () => {
     expect(ledger.markDeliveredInTransaction(ledger.pendingDeliveries(), NOW + 2))
       .toEqual([`AGENTS.md@${root.sha256}`, `apps/api/AGENTS.md@${nested.sha256}`]);
     expect(ledger.pendingDeliveries()).toEqual([]);
+    expect(ledger.residentBlocks({ kind: KIND })).toEqual([`AGENTS.md@${root.sha256}`, `apps/api/AGENTS.md@${nested.sha256}`]);
     // A second mark finds nothing left to close.
     expect(ledger.markDeliveredInTransaction([{ block: ledger.allBlocks()[0]!, sourceKind: KIND, sourceId: "x" }], NOW + 3)).toEqual([]);
   });
@@ -64,7 +66,26 @@ describe("the context-residency ledger", () => {
       .toEqual({ recorded: ["AGENTS.md"], alreadyResident: [] });
     expect(ledger.allBlocks().map((block) => [block.sha256[0], block.residency]))
       .toEqual([["a", "none"], ["c", "transcript"]]);
+    ledger.markDeliveredInTransaction(ledger.pendingDeliveries(), NOW + 2);
     expect(ledger.residentBlocks({ kind: KIND })).toEqual([`AGENTS.md@${edited.sha256}`]);
+  });
+
+  it("promotes a still-pending block into the prompt without delivering it as a message too, and skips a row of an unknown kind", () => {
+    const { ledger, database } = open();
+    ledger.recordLoaded({ kind: KIND, sourceGeneration: 1, blocks: [root], now: NOW });
+    compact(ledger, 1, NOW + 1);
+    expect(ledger.allBlocks().map((block) => [block.residency, block.compactionsRemaining])).toEqual([["system", 2]]);
+    expect(ledger.pendingDeliveries()).toEqual([]);
+    expect(ledger.renderSections()).toContain("root rules");
+    // A replayed prepare for the applied event answers with what it produced.
+    expect(ledger.prepareCompaction("loop:compaction:1", NOW + 3)).toBe(ledger.renderSections());
+    // A row this build does not register is ignored by every read.
+    database.exec(`INSERT INTO resident_context_blocks
+      (kind, block_id, sha256, source_generation, content, truncated, residency, superseded, compactions_remaining, pending_delivery, first_delivered_at, last_delivered_at)
+      VALUES ('future_kind', 'x', '${"f".repeat(64)}', NULL, 'later', 0, 'system', 0, 1, 0, ${NOW}, ${NOW})`);
+    expect(ledger.allBlocks()).toHaveLength(1);
+    expect(ledger.renderSections()).not.toContain("later");
+    expect(ledger.pendingDeliveries()).toEqual([]);
   });
 
   it("moves transcript blocks into the prompt at a compaction, once per event, and renders the section from the proposed state first", () => {
@@ -111,6 +132,7 @@ describe("the context-residency ledger", () => {
     expect(ledger.allBlocks().map((block) => [block.sha256[0], block.residency, block.superseded]))
       .toEqual([["a", "system", true], ["c", "transcript", false]]);
     // Superseded is rendered but no longer current, so it is not in the known set.
+    ledger.markDeliveredInTransaction(ledger.pendingDeliveries(), NOW + 3);
     expect(ledger.residentBlocks({ kind: KIND })).toEqual([`AGENTS.md@${edited.sha256}`]);
     compact(ledger, 2, NOW + 4);
     expect(ledger.allBlocks().map((block) => [block.sha256[0], block.residency, block.compactionsRemaining]))
@@ -136,6 +158,8 @@ describe("the context-residency ledger", () => {
     expect(ledger.allBlocks().map((block) => [block.sha256[0], block.residency, block.superseded, block.compactionsRemaining]))
       .toEqual([["a", "system", false, 2], ["c", "none", false, 0]]);
     expect(ledger.pendingDeliveries().map((delivery) => delivery.sourceId)).toEqual([`AGENTS.md@${root.sha256}`]);
+    expect(ledger.residentBlocks({ kind: KIND })).toEqual([]);
+    ledger.markDeliveredInTransaction(ledger.pendingDeliveries(), NOW + 5);
     expect(ledger.residentBlocks({ kind: KIND })).toEqual([`AGENTS.md@${root.sha256}`]);
     // The prefix did not change: the block was in the prompt throughout.
     expect(ledger.renderSections()).toContain("root rules");

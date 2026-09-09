@@ -624,8 +624,8 @@ utility additionally supplies one fixed `operation_detail`: `path.resolve`,
 `file.inspect`, `file.read_page`, `file.replace`, `file.apply_patch`,
 `file.temp_cleanup`, `resource.publish.inspect_before`,
 `resource.publish.inspect_after`, `resource.import.inspect`,
-`resource.import.finalize`, `repository.bootstrap`, one of the six
-`repository.publish.*` inspection phases, `lifecycle.final_diff`,
+`resource.import.finalize`, `repository.bootstrap`, `instructions.probe`, one
+of the six `repository.publish.*` inspection phases, `lifecycle.final_diff`,
 `lifecycle.backup`, or `lifecycle.backup_cleanup`.
 
 Each `terminal_provider_request_finished` record carries

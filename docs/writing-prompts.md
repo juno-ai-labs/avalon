@@ -217,12 +217,16 @@ and never the system one. A new renderer that carries outside content belongs in
 that test.
 
 There is one deliberate exception to the third rule, and it is narrow. A
-resident context block ([`resident-context.md`](resident-context.md)), a
-checkout's `AGENTS.md` today, enters the system message only at a compaction,
+resident context block of the kind `repository_instructions`
+([`resident-context.md`](resident-context.md)), a
+checkout's `AGENTS.md`, enters the system message only at a compaction,
 only under a heading that names it as repository content subordinate to
 everything above it and to any participant, and only for a bounded number of
 compactions before it leaves. During an uncompacted run it is a user-role
-message like any other outside content. The exception exists because the
+message like any other outside content. The exception is for that kind and no
+other: a future resident-context kind that wants prefix residency is a new
+decision to record here, not one this paragraph has already made. The
+exception exists because the
 alternative, losing the instructions at every compaction, is the failure a
 member notices, and because a compaction is the one moment the prefix can change
 without evicting the provider's cached prefix. Nothing else may take it: a new

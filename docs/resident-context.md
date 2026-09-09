@@ -33,6 +33,11 @@ and renders `./<path>`.
 
 **Load.** A producer finds a block and calls `recordLoaded`. A block already in
 context at that content is reported as already resident and nothing happens.
+The known set a producer's gate checks against (`residentBlocks`) holds only
+blocks the model has seen: recorded, delivered, current. A block recorded but
+not yet delivered is not in it, so a second mutation in the same batch is
+refused like the first, and the retry after the settled step, when the message
+has landed, proceeds.
 Otherwise every other content for the same id is retired (a transcript block to
 `none`, a prompt-resident one flagged `superseded` so the prefix does not change
 mid-run), and the new block is written in `transcript` residency with a pending
@@ -128,6 +133,9 @@ including the exception this subsystem introduces
 
 ## Failure modes and limits
 
+- The render before every model call reads only prompt-resident rows, and a row
+  whose kind this build does not register (left by a rolled-back deploy) is
+  skipped, never thrown on.
 - A probe that errors, or a ledger call that fails while recording, logs through
   `terminal_instruction_probe_failed` and leaves the tool's or bootstrap's own
   outcome alone; the next touch retries, and the root is rediscovered by every
@@ -142,9 +150,10 @@ including the exception this subsystem introduces
   retry for instructions that never arrive.
 - A mutation whose governing file is not resident returns `instructions_pending`
   having changed nothing; the instructions are recorded, arrive with that batch,
-  and the retry proceeds. When the ledger already had them (the probe's known
-  set was stale), the refusal says so and asks only for the retry. Reads never
-  wait. `run_command` and `import_resource`
+  and the retry after the settled step proceeds. A second mutation beneath the
+  same file in the same batch is refused the same way, because the model has
+  not seen the message yet. The `read_file` tool never waits; the read that
+  precedes an edit does, because the edit will. `run_command` and `import_resource`
   probe in a command of their own before the mutation, since neither the model's
   command nor the resource bridge can carry the fragment; every other tool's
   probe rides its own command.
@@ -223,6 +232,35 @@ credential header.
 
 ## Changelog
 
+### 2026-09-09 — The gate counts delivered blocks, the render reads prompt rows, unknown kinds are skipped
+
+**What changed:** `residentBlocks` excludes a block whose delivery is still
+pending, so the Terminal gate refuses every mutation beneath an unread file
+until the settled step has delivered it, not only the first. `renderSections`
+reads only `system` rows, `allBlocks` skips a row of an unregistered kind, a
+prepare for an already-applied event answers with the committed render, a
+promotion into the prompt closes the block's pending delivery, the section
+sorts root to leaf by depth before id, and the probe refuses invalid UTF-8
+before it cuts.
+
+**Why:** Review of the implementing pull request. A pending block counted as
+resident let a second mutation in the same tool-call batch proceed before the
+model had seen the instructions, which is the one thing the gate exists to
+prevent. The render ran on every model call over every row ever recorded, and
+one row of an unknown kind would have thrown ahead of every turn. A replayed
+prepare re-derived transitions on committed state and bumped the prompt
+revision for nothing. A promoted block could be delivered again as a message.
+Plain string order put `ABC/AGENTS.md` before the root. The truncating decode
+ignored invalid bytes that the non-truncating one refused.
+
+**Consequences:** A repository's first mutation in a batch is refused and the
+batch's other mutations beneath the same file are refused with it; the retry
+after the settled step is where work resumes. The probe re-sends a pending
+block's content once per batch until delivery, which is the cost of the gate
+being honest.
+
+Shipped in #627. Design: `docs/PRDs/2026-09-08_repository-instruction-files/prd.md`.
+
 ### 2026-09-09 — The commit moves what the prepare rendered, a ledger failure stops the gate, and a revert reinstates
 
 **What changed:** `prepareCompaction(compactionEventId, now)` records the blocks
@@ -248,11 +286,13 @@ that never arrived. The harness's ledger-less branch copied the run's system
 message and substituted an empty string for a non-string content, and nothing
 checked that an excluded position was a message the ledger could own.
 
-**What a future change has to respect:** The prepare writes one row and no block
+**Consequences:** The prepare writes one row and no block
 row; the commit reads that row and never recomputes the set from the live
 ledger. The degraded flag is per plugin instance, which is per run; a new run
 starts gating again. `instructions_unavailable` is a refusal the model retries
 once, not a signal to stop using the tool.
+
+Shipped in #627. Design: `docs/PRDs/2026-09-08_repository-instruction-files/prd.md`.
 
 ### 2026-09-09 — The section bound measures the emitted section, and the probe marker is a nonce
 
@@ -275,11 +315,13 @@ behind it. The nonce closes both; the alternative of parsing only the last
 occurrence was rejected because a probe that failed to print would then have
 let planted bytes stand in for it.
 
-**What a future change has to respect:** The floor (heading, preamble,
+**Consequences:** The floor (heading, preamble,
 counting line) is emitted even under a bound that cannot hold it; the bound's
 derivation has to stay above the floor. The marker prefix is fixed so a test
 can recognise a marker, but the parser matches only the full value it was
 handed, never the prefix.
+
+Shipped in #627. Design: `docs/PRDs/2026-09-08_repository-instruction-files/prd.md`.
 
 ### 2026-09-09 — Document created
 

@@ -108,9 +108,10 @@ export interface InstructionProbeResult {
  * The probe. Arguments: `root mode max_bytes known_json marker candidate...`.
  *
  * For each candidate beneath the root it refuses a symlink or a non-regular
- * file, refuses a real path that escapes the root, hashes the bytes, and, when
- * `<path>@<sha>` is not in the caller's known-resident list, reports the content
- * (cut on a code-point boundary at or below `max_bytes`, where 0 means no cut).
+ * file, refuses a real path that escapes the root, hashes the bytes, refuses a
+ * file that is not valid UTF-8 whatever its size, and, when `<path>@<sha>` is
+ * not in the caller's known-resident list, reports the content (cut on a
+ * code-point boundary at or below `max_bytes`, where 0 means no cut).
  * It prints the marker it was given followed by one JSON object on the same
  * line, and in `abort` mode
  * exits 52 when any candidate is not resident so the enclosing command stops
@@ -122,9 +123,9 @@ export const TERMINAL_INSTRUCTION_PROBE_PYTHON = [
   "root, mode, max_bytes, known, marker, candidates = os.path.realpath(sys.argv[1]), sys.argv[2], int(sys.argv[3]), set(json.loads(sys.argv[4])), sys.argv[5], sys.argv[6:]",
   "entries, pending = [], False",
   "def cut(data, limit):",
-  "    if limit <= 0 or len(data) <= limit: return data.decode('utf-8'), False",
-  "    text = data[:limit].decode('utf-8', 'ignore')",
-  "    return text, True",
+  "    text = data.decode('utf-8')",
+  "    if limit <= 0 or len(data) <= limit: return text, False",
+  "    return data[:limit].decode('utf-8', 'ignore'), True",
   "for rel in candidates:",
   "    path = os.path.join(root, rel)",
   "    if not os.path.lexists(path): continue",

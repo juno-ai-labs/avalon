@@ -133,9 +133,8 @@ function directoriesOf(paths: readonly string[]): string {
  * outcome, not a transport failure. Which message the model is told to expect
  * depends on what the ledger did with the probe's findings:
  *
- * - recorded: the instructions arrive with this batch; read them, then retry;
- * - already resident (the probe's known set was stale): nothing new arrives;
- *   retry;
+ * - recorded, or recorded by an earlier call in the same batch and not yet
+ *   delivered: the instructions arrive with this batch; read them, then retry;
  * - failed, or nothing found: the ledger is unavailable, the probe has stopped
  *   gating for the rest of the run, and the retry proceeds without them.
  */
@@ -144,18 +143,12 @@ export function instructionsPendingError(outcome: {
   alreadyResidentPaths: readonly string[];
   failed: boolean;
 }): TerminalToolError {
-  if (outcome.recordedPaths.length > 0 && !outcome.failed) {
+  const loaded = [...outcome.recordedPaths, ...outcome.alreadyResidentPaths];
+  if (loaded.length > 0 && !outcome.failed) {
     return new TerminalToolError(
       "instructions_pending",
-      `Repository instructions for ${directoriesOf(outcome.recordedPaths)} were loaded with this call and nothing was changed. Read the \`Instructions added from\` message that follows, then retry the same call.`,
+      `Repository instructions for ${directoriesOf(loaded)} were loaded with this call and nothing was changed. Read the \`Instructions added from\` message that follows, then retry the same call.`,
       { reason: "Read the repository instructions message that follows this result, then retry the same call unchanged." },
-    );
-  }
-  if (outcome.alreadyResidentPaths.length > 0 && !outcome.failed) {
-    return new TerminalToolError(
-      "instructions_pending",
-      `Repository instructions for ${directoriesOf(outcome.alreadyResidentPaths)} are already in context and nothing was changed. Retry the same call.`,
-      { reason: "Retry the same call unchanged; the instructions it needs are already in context." },
     );
   }
   return new TerminalToolError(
