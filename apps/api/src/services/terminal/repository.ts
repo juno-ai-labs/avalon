@@ -284,7 +284,7 @@ export async function bootstrapTerminalRepository(
     `  git branch --set-upstream-to=${shellQuote(`origin/${selection.headRef}`)} ${shellQuote(selection.headRef)}`,
     "fi",
     "grep -qxF '.rally/' .git/info/exclude || printf '.rally/\\n' >> .git/info/exclude",
-    ...(instructionProbe ? [instructionProbe] : []),
+    ...(instructionProbe ? [instructionProbe.text] : []),
   ].join("\n");
   const result = await provider.runUtilityCommand(sandbox.providerSandboxId, {
     operation: "repository.bootstrap",
@@ -292,11 +292,11 @@ export async function bootstrapTerminalRepository(
     cwd: "/workspace",
     timeoutMs: 180_000,
   });
-  if (result.exitCode === 0 && instructions) {
+  if (result.exitCode === 0 && instructions && instructionProbe) {
     // Best-effort by contract: a failure here is reported through the
     // instruction files' own observer and the root is rediscovered by the
     // first touch, which begins every chain at the root.
-    await instructions.record({ stdout: result.stdout, sourceGeneration: sandbox.generation });
+    await instructions.record({ stdout: result.stdout, marker: instructionProbe.marker, sourceGeneration: sandbox.generation });
   }
   if (result.exitCode !== 0) {
     await provider.clearGitHubReadAccess(sandbox.providerSandboxId).catch(() => undefined);

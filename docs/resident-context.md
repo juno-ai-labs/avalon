@@ -39,7 +39,10 @@ mid-run), and the new block is written in `transcript` residency with a pending
 delivery. The Terminal kind loads from a probe that rides the tool's own sandbox
 command: after a read, or before a mutation in `abort` mode, where a candidate
 that is not yet resident stops the command with exit 52 before anything
-changes and the tool returns `instructions_pending`. The repository bootstrap,
+changes and the tool returns `instructions_pending`. The probe's JSON trailer
+starts with a marker minted for that one invocation, and the parser is handed
+the same value; the tool's own output, which is untrusted and precedes the
+trailer, cannot contain it. The repository bootstrap,
 the moment a checkout exists, probes the root the same way for a fresh clone
 and a restored one.
 
@@ -131,8 +134,12 @@ including the exception this subsystem introduces
   `MAX_RESIDENT_CONTEXT_BLOCK_BYTES` (one block's content, cut on a code-point
   boundary at or below it, applied in TypeScript after an unbounded read and
   passed to the probe only when finite) and `MAX_RESIDENT_CONTEXT_SECTION_BYTES`
-  (one kind's prompt section, admitted by id with a fixed omission line per
-  block left out). The PRD says the implementing change does not ship until
+  (one kind's whole prompt section as emitted, heading and preamble included;
+  blocks are dropped from the leaf end until it fits, and the ones left out
+  are named one per line, or counted on one line when naming them would not
+  fit). The heading, preamble, and counting line are the section's floor: a
+  bound below it admits nothing and still emits the floor. The PRD says the
+  implementing change does not ship until
   both are finite, because this change introduces the allocation and the
   `content` column's eventual `CHECK` is not an inert site; the numbers are the
   team's and are asked for in the pull request.
@@ -194,6 +201,33 @@ by the tool loop, which no block can widen. Per-candidate symlink refusal and
 credential header.
 
 ## Changelog
+
+### 2026-09-09 — The section bound measures the emitted section, and the probe marker is a nonce
+
+**What changed:** `renderResidentContextSections` sizes the whole section it
+emits (heading, preamble, separators, admitted blocks, omission notice) against
+`MAX_RESIDENT_CONTEXT_SECTION_BYTES`, dropping blocks from the leaf end until
+it fits and falling back from one named line per omitted block to one counting
+line when the names would not fit. The Terminal probe prints a marker minted
+per invocation (`instructionProbeMarker`) instead of a fixed string, and the
+parser is handed the same value.
+
+**Why:** Review of the implementing pull request found both. The first render
+counted only the admitted block bodies, so a finite bound would have been
+exceeded by the fixed text and by every omission line, and enough omitted
+blocks could grow the section without limit under a bound meant to cap it. The
+fixed marker was searched for anywhere in stdout, and everything before the
+trailer is repository-controlled: a file or a command printing the marker would
+have truncated the tool's output at that point and hidden the real trailer
+behind it. The nonce closes both; the alternative of parsing only the last
+occurrence was rejected because a probe that failed to print would then have
+let planted bytes stand in for it.
+
+**What a future change has to respect:** The floor (heading, preamble,
+counting line) is emitted even under a bound that cannot hold it; the bound's
+derivation has to stay above the floor. The marker prefix is fixed so a test
+can recognise a marker, but the parser matches only the full value it was
+handed, never the prefix.
 
 ### 2026-09-09 — Document created
 

@@ -3,6 +3,7 @@ import type { ResidentContextLoadedBlock } from "../../durable-objects/workstrea
 import {
   instructionFileCandidates,
   instructionProbeFragment,
+  instructionProbeMarker,
   splitInstructionProbeTrailer,
   type InstructionProbeMode,
 } from "./instruction-files";
@@ -19,9 +20,15 @@ import { sanitizeTerminalOutput, TerminalToolError } from "./tools";
  * It never throws into a tool: a probe that fails leaves the tool's own outcome
  * alone and reports through `onFailure`, and the next touch retries discovery.
  */
+/** One probe invocation: the shell text a command carries and the marker its trailer starts with. */
+export interface TerminalInstructionProbe {
+  text: string;
+  marker: string;
+}
+
 export interface TerminalInstructionFiles {
-  fragment(input: { mode: InstructionProbeMode; touched: readonly string[] }): Promise<string>;
-  record(input: { stdout: string; sourceGeneration: number }): Promise<{
+  fragment(input: { mode: InstructionProbeMode; touched: readonly string[] }): Promise<TerminalInstructionProbe>;
+  record(input: { stdout: string; marker: string; sourceGeneration: number }): Promise<{
     stdout: string;
     pending: boolean;
     /** Paths whose instructions were recorded with a pending delivery by this call. */
@@ -48,15 +55,20 @@ export function createTerminalInstructionFiles(
         // twice, so the cost of this failure is one probe that read more.
         onFailure(error, "resident");
       }
-      return instructionProbeFragment({
-        root: TERMINAL_WORKSPACE_ROOT,
-        mode,
-        candidates: instructionFileCandidates(touched),
-        knownResident,
-      });
+      const marker = instructionProbeMarker();
+      return {
+        marker,
+        text: instructionProbeFragment({
+          root: TERMINAL_WORKSPACE_ROOT,
+          mode,
+          candidates: instructionFileCandidates(touched),
+          knownResident,
+          marker,
+        }),
+      };
     },
-    async record({ stdout, sourceGeneration }) {
-      const split = splitInstructionProbeTrailer(stdout);
+    async record({ stdout, marker, sourceGeneration }) {
+      const split = splitInstructionProbeTrailer(stdout, marker);
       if (!split.probe) return { stdout: split.stdout, pending: false, recordedPaths: [] };
       const blocks: ResidentContextLoadedBlock[] = split.probe.entries
         .filter((entry) => !entry.resident)
