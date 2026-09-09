@@ -49,6 +49,14 @@ So the two stay separate, and connector activity is **projected** into
 that workspace-local log once it has been processed. Every surface that wants "what
 happened, for this person, since this instant" reads one table.
 
+### Private child notifications
+
+Substream mentions and participant additions use the existing direct Slack/email
+notification pipeline with child-addressed links. Their activity events remain
+inside the parent and are excluded from the shared activity log and digests.
+Direct notification delivery does not require publishing child activity or
+aggregating its unread count into the work stream.
+
 ### The log
 
 `workspace_activity_events` is append-only. Four things make it generic rather than a
@@ -684,6 +692,14 @@ visible change to the email template is looked at through
 preview does *not* reproduce on its own.
 
 ## Changelog
+
+### 2026-09-08 — Deliver substream notifications without publishing child activity
+
+Direct child mention and membership notifications now reach their recipient
+through the existing transport. The parent still suppresses child activity, so
+making a tag audible does not put private conversation excerpts into shared
+activity or digest inputs. Notification links open the addressed child; email
+reply routing remains unchanged.
 
 ### 2026-08-30 — A bare `<br/>` becomes a line break in email prose
 

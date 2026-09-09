@@ -1244,7 +1244,12 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       throw new Error("private_child_membership_identity_mismatch");
     }
     const now = Date.now();
-    const outcome = this.state.storage.transactionSync(() => {
+    // Read before the commit, because the effects that carry them are built
+    // inside it and an effect callback cannot await a regional round trip.
+    // This is the same preparation `addParticipant` does for the main
+    // conversation's add.
+    const names = await this.product.participantEffectNames(request.actorUserId, request.userId);
+    const { result: outcome } = await this.objectStore.commitWithRegionalEffects(() => {
       const current = this.state.storage.sql.exec<{ version: number; active: number }>(
         `SELECT version, active FROM private_child_membership_authority WHERE user_id = ?`,
         request.userId,
@@ -1283,7 +1288,15 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         );
       }
       return "applied" as const;
-    });
+    }, (_sql, applied) => applied !== "applied" ? [] : this.product.privateChildMembershipEffects({
+      substreamId: request.substreamId,
+      userId: request.userId,
+      actorUserId: request.actorUserId,
+      actorName: names.actorName,
+      recipientName: names.recipientName,
+      active: request.active,
+      now,
+    }));
     if (!request.active && outcome === "applied") this.evictReadersWhoLostLocalAccess();
     return { outcome };
   }
@@ -4798,6 +4811,18 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     await this.mutateSocketSubstream(socket, attachment, parsed.data);
   }
 
+  // Membership is already fenced locally on every socket command; only the
+  // parent-owned lifecycle state needs this lookup.
+  private async assertPrivateChildNotArchived(attachment: SocketAttachment): Promise<void> {
+    const identity = this.objectStore.identity();
+    if (!identity || identity.parentKind !== "workstream" || this.externalSubstreamId() === "0") return;
+    const parent = await durableObjectStubForWorkspace(this.env, this.env.WORKSTREAM_DOS,
+      identity.workspaceId, workstreamDOName(this.env.AVALON_REGION, identity.workspaceId, asWorkstreamId(identity.parentId)));
+    const access = await parent.authorizeViewer({ workspaceId: identity.workspaceId, parentId: identity.parentId,
+      substreamId: this.externalSubstreamId(), userId: asUserId(attachment.userId) });
+    if (access.archived) throw new ApiError(409, "substream_archived", "This substream is archived");
+  }
+
   private async mutateSocketSubstream(
     socket: WebSocket,
     attachment: SocketAttachment,
@@ -4832,6 +4857,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         throw new ApiError(503, "workstream_maintenance", "Work streams are temporarily unavailable");
       }
       assertParentWritable(attachment);
+      await this.assertPrivateChildNotArchived(attachment);
       const auth = await this.socketViewerAuth(attachment);
       if (!auth) {
         disconnect(socket, 1012, "Reconnect for substream commands");
@@ -5014,6 +5040,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           throw new ApiError(503, "workstream_maintenance", "Work streams are temporarily unavailable");
         }
         assertParentWritable(attachment);
+        await this.assertPrivateChildNotArchived(attachment);
         if (!attachment.sessionId || !attachment.role) {
           // A socket admitted before this command path existed has no role in
           // its hibernation attachment. A normal reconnect obtains a fresh
