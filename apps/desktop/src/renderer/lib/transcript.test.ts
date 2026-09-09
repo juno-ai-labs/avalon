@@ -1501,6 +1501,28 @@ describe('grouping tool calls by plugin', () => {
     expect(grouped[0]!.pluginActivity?.durationMs).toBe(5_000);
   });
 
+  it('carries a recovered call\'s accuracy onto the row it is grouped into', () => {
+    // Without an activity the row's number now comes from the calls' spans, so
+    // the row has to inherit what those spans say about how well they are known
+    // — or it prints a recovered boundary as an exact time, under a drawer that
+    // says "at most".
+    const grouped = groupPluginToolMessages([
+      row('slack-1', {
+        messageType: 'tool_event',
+        workSpans: [{ startedAtMs: 1_000, endedAtMs: 6_000, timingAccuracy: 'upper_bound' }],
+        toolEvent: {
+          id: 'slack-1', toolCallId: 'slack-1', name: 'slack_read', status: 'completed',
+          pluginId: 'connection:one', pluginName: 'Slack', durationMs: 5_000,
+        },
+      }),
+    ]);
+
+    expect(grouped[0]!.pluginActivity).toEqual(expect.objectContaining({
+      durationMs: 5_000,
+      timingAccuracy: 'upper_bound',
+    }));
+  });
+
   it('drops the group\'s spans when one call cannot say when it worked', () => {
     const grouped = groupPluginToolMessages([
       row('slack-1', {
