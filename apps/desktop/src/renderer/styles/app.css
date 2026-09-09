@@ -3246,17 +3246,19 @@ pre {
 .agent-message:hover .agent-message-actions,
 .agent-message:focus-within .agent-message-actions,
 .agent-message-actions.is-speaking { opacity: 1; }
-.agent-message-actions button { align-items: center; background: transparent; color: var(--av-sys-color-text-muted); display: flex; font-size: 10px; gap: 4px; padding: 2px; }
-.agent-message-actions button:hover { color: var(--av-sys-color-text-default); }
-/* The same control in two rows: last in the agent's action row, and alone under
-   a person's own bubble, where there is no other action to sit beside. It takes
-   the action row's own metrics so it reads as one of that row's buttons rather
-   than as something appended to it, and its two words never break across lines.
-   The fade belongs to whichever row holds it, never to the button: carrying its
-   own hover opacity inside the agent's row multiplied the two and left this one
-   button visibly paler than the four beside it. */
-.message-start-substream { align-items: center; background: transparent; color: var(--av-sys-color-text-muted); display: flex; font: inherit; font-size: 10px; gap: 4px; padding: 2px; white-space: nowrap; }
-.message-start-substream:hover { color: var(--av-sys-color-text-default); }
+/* One set of metrics for both action rows — the agent's four-or-five buttons and
+   the single one under a person's own bubble — because the substream control
+   appears in both and has to read as the same control. Stating them per row
+   instead would put `10px`/`2px`/`4px` in two places, and tuning one row would
+   move that control on the agent's turn and leave it behind on the person's. */
+:is(.agent-message-actions, .human-message-actions) button { align-items: center; background: transparent; color: var(--av-sys-color-text-muted); display: flex; font-size: 10px; gap: 4px; padding: 2px; }
+:is(.agent-message-actions, .human-message-actions) button:hover { color: var(--av-sys-color-text-default); }
+/* The only thing the substream control needs beyond the row's metrics: it is the
+   one two-word label here, and in a tight row it breaks mid-control while its
+   neighbours stay whole. The fade belongs to whichever row holds it, never to
+   the button — carrying its own hover opacity inside the agent's row multiplied
+   the two and left this one button visibly paler than the four beside it. */
+.message-start-substream { white-space: nowrap; }
 .human-message-actions { display: flex; margin-top: 4px; opacity: 0; transition: opacity 120ms; }
 .human-message:hover .human-message-actions, .human-message:focus-within .human-message-actions { opacity: 1; }
 @media (prefers-reduced-motion: reduce) { .human-message-actions { transition: none; } }
@@ -5094,9 +5096,13 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
    column between two aligned edges rather than as a bubble with something hung
    off its corner. The control gives up its own trailing padding here because the
    header's last child has none: it is the label that has to land on that edge,
-   not the button box around it. */
+   not the button box around it.
+
+   The padding is the whole mechanism. The row's right edge comes from the
+   column's `align-items: flex-end` above, which sizes it to its content, so
+   there is no free main-axis space and a `justify-content` here would do
+   nothing but look like it was doing the work. */
 :is(.workstream-screen, .automation-chat-surface) .human-message .human-message-actions {
-  justify-content: flex-end;
   padding-inline-end: var(--turn-bubble-radius);
 }
 
