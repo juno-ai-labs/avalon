@@ -472,7 +472,6 @@ export function applyActiveStreamCheckpoints(
   return nextMessages;
 }
 
-
 export function orderedTranscriptQueryKey(
   workstreamId: string,
   substreamId = '0',

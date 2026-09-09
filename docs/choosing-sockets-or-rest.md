@@ -422,11 +422,15 @@ for versioned state. The one class of direct write is a pushed or acknowledged
 fact with no version of its own: a rename or scope event, a REST response the
 caller just received, the appearance receipt. Those go through
 `patchCachedWorkstream` in `workstreams-cache.ts`, which writes the list row and
-the open detail entry together so the header and the sidebar cannot disagree,
-and each is a field the next newer versioned payload replaces whole, so the
-receiver still has the last word. The harness status and attention advances keep
-their own writers because they are substream-owned: a child's status reaches the
-child's detail entry and never the parent's row.
+a detail entry together so the header and the sidebar cannot disagree, and each
+write carries only the fields that are the fact's own news, so the next newer
+versioned payload replaces them whole and the receiver still has the last word.
+A REST response is a whole summary; spreading it would write versioned common
+fields through this path too, so viewer responses go through
+`patchCachedWorkstreamViewerState` and take only their viewer half. The harness
+status and attention advances keep their own writers because they are
+substream-owned: a child's status reaches the child's detail entry and never
+the parent's row.
 The predicate it applies, exactly:
 
 - A payload whose `authorityGeneration` is older than the ledger's is discarded
@@ -808,6 +812,18 @@ read survives, and it is not a precedent.
   the caller is made to wait for.
 
 ## Changelog
+
+### 2026-09-09 — Name the unversioned write and bound what it may carry
+
+The "one receiver" rule said neither socket hook writes the work-stream caches
+directly, while rename events, harness status, and REST responses already did.
+The rule now says what those writes are: unversioned facts, written through
+`patchCachedWorkstream`, carrying only the fields that are the fact's own news.
+Both halves were forced by the same change. The appearance receipt needed such a
+write and had no rule to follow, and review of it found the existing REST
+writes spreading whole summaries, common fields included, through the very path
+the rule said did not exist. Narrowing them to their own fields is what makes
+the "replaces whole" argument true rather than assumed.
 
 ### 2026-09-04 — Main and child recovery use one socket baseline
 
