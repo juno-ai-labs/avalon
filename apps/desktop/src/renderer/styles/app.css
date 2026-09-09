@@ -3248,10 +3248,18 @@ pre {
 .agent-message-actions.is-speaking { opacity: 1; }
 .agent-message-actions button { align-items: center; background: transparent; color: var(--av-sys-color-text-muted); display: flex; font-size: 10px; gap: 4px; padding: 2px; }
 .agent-message-actions button:hover { color: var(--av-sys-color-text-default); }
-.message-start-substream { background: transparent; color: var(--av-sys-color-text-muted); font: inherit; font-size: 11px; margin-left: 8px; opacity: 0; padding: 2px 4px; transition: opacity 120ms; }
-.message-block:hover .message-start-substream, .message-block:focus-within .message-start-substream { opacity: 1; }
+/* The same control in two rows: last in the agent's action row, and alone under
+   a person's own bubble, where there is no other action to sit beside. It takes
+   the action row's own metrics so it reads as one of that row's buttons rather
+   than as something appended to it, and its two words never break across lines.
+   The fade belongs to whichever row holds it, never to the button: carrying its
+   own hover opacity inside the agent's row multiplied the two and left this one
+   button visibly paler than the four beside it. */
+.message-start-substream { align-items: center; background: transparent; color: var(--av-sys-color-text-muted); display: flex; font: inherit; font-size: 10px; gap: 4px; padding: 2px; white-space: nowrap; }
 .message-start-substream:hover { color: var(--av-sys-color-text-default); }
-@media (prefers-reduced-motion: reduce) { .message-start-substream { transition: none; } }
+.human-message-actions { display: flex; margin-top: 4px; opacity: 0; transition: opacity 120ms; }
+.human-message:hover .human-message-actions, .human-message:focus-within .human-message-actions { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .human-message-actions { transition: none; } }
 /* A save in flight keeps the row visible and stops a second one starting; the
    two export buttons are the only actions here that take longer than a click. */
 .agent-message-actions button:disabled { color: var(--av-sys-color-text-disabled); cursor: default; }
